@@ -4388,12 +4388,50 @@ class TestImportExportFilters:
                 for name, filter_id in picker.filters.selections
             }
 
+            # Markdown stays importable via its own dedicated sub-filter, but
+            # is NOT part of the broad "Character Cards" default (task-431
+            # AC#1): a plain docs folder full of .md files should not read
+            # as a folder of character cards.
             assert "Markdown Files" in filter_by_name
-            assert filter_by_name["Character Cards"](Path("character.md")) is True
-            assert filter_by_name["Character Cards"](Path("character.markdown")) is True
+            assert filter_by_name["Character Cards"](Path("character.md")) is False
+            assert (
+                filter_by_name["Character Cards"](Path("character.markdown"))
+                is False
+            )
             assert filter_by_name["Markdown Files"](Path("character.md")) is True
             assert filter_by_name["Markdown Files"](Path("character.markdown")) is True
             assert filter_by_name["Markdown Files"](Path("character.json")) is False
+
+    async def test_import_filters_character_cards_accepts_webp_not_md(
+        self, mock_app_instance, stub_characters
+    ):
+        """task-431 AC#1: primary filter accepts .webp, drops .md as a card."""
+        from pathlib import Path
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            picker = await self._capture_picker(
+                pilot, screen, screen._import_dialog_worker
+            )
+            filter_by_name = {
+                name: picker.filters[filter_id]
+                for name, filter_id in picker.filters.selections
+            }
+
+            character_cards = filter_by_name["Character Cards"]
+            assert character_cards(Path("x.webp")) is True
+            assert character_cards(Path("x.png")) is True
+            assert character_cards(Path("x.json")) is True
+            assert character_cards(Path("README.md")) is False
+            assert character_cards(Path("x.markdown")) is False
+
+            assert "Card Images (PNG/WebP)" in filter_by_name
+            card_images = filter_by_name["Card Images (PNG/WebP)"]
+            assert card_images(Path("x.png")) is True
+            assert card_images(Path("x.webp")) is True
+            assert card_images(Path("x.json")) is False
+
 
     async def test_export_json_filters_are_callable(
         self, mock_app_instance, stub_characters
@@ -4457,3 +4495,28 @@ class TestImportExportFilters:
                 )
             else:
                 assert "image" not in editor.get_character_data()
+
+
+async def test_character_import_filters_helper_accepts_webp_not_md():
+    """Unit-level guard on the module-level filter helper itself (task-431 AC#1).
+
+    Exercises ``_character_import_filters`` directly (no screen mount) so the
+    primary "Character Cards" tester's behavior is pinned independently of
+    the dialog-worker integration test in ``TestImportExportFilters``. Marked
+    ``async`` (with no ``await``) only to match this module's file-wide
+    ``pytestmark = pytest.mark.asyncio`` and avoid its inapplicable-mark
+    warning on sync functions.
+    """
+    from pathlib import Path
+
+    filters = personas_screen_module._character_import_filters()
+    filter_by_name = {
+        name: filters[filter_id] for name, filter_id in filters.selections
+    }
+    character_cards = filter_by_name["Character Cards"]
+
+    assert character_cards(Path("x.webp")) is True
+    assert character_cards(Path("x.png")) is True
+    assert character_cards(Path("x.json")) is True
+    assert character_cards(Path("README.md")) is False
+    assert character_cards(Path("x.markdown")) is False

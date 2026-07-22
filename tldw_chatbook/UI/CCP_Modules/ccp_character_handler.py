@@ -911,15 +911,23 @@ class CCPCharacterHandler:
         try:
             # Create filters for character card files
             # Filters need callable testers; glob strings crash the picker.
+            # import_and_save_character_from_file extracts embedded card JSON
+            # from both .png and .webp images (task-431 AC#1) - keep this
+            # route's "Character Cards" default in sync with that.
             filters = Filters(
                 (
                     "Character Cards",
-                    lambda p: p.suffix.lower() in (".json", ".png", ".yaml", ".yml"),
+                    lambda p: p.suffix.lower()
+                    in (".json", ".png", ".webp", ".yaml", ".yml"),
                 ),
                 ("JSON Files", lambda p: p.suffix.lower() == ".json"),
                 (
                     "PNG Files (with embedded data)",
                     lambda p: p.suffix.lower() == ".png",
+                ),
+                (
+                    "WEBP Files (with embedded data)",
+                    lambda p: p.suffix.lower() == ".webp",
                 ),
                 ("YAML Files", lambda p: p.suffix.lower() in (".yaml", ".yml")),
                 ("All Files", lambda p: True),

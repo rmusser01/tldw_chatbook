@@ -209,6 +209,39 @@ PERSONAS_WORLDBOOK_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 AVATAR_THUMB_COLS = 24
 AVATAR_THUMB_LINES = 10
 
+
+def _character_import_filters() -> Any:
+    """Build the file-picker filters for the Character Cards import dialog.
+
+    Module-level (rather than inline in ``_import_dialog_worker``) so the
+    primary "Character Cards" tester can be unit-tested without mounting the
+    screen. ``import_and_save_character_from_file`` only extracts embedded
+    card JSON from ``.png``/``.webp`` images and reads ``.json``/``.md`` as
+    text (task-431 AC#1): the broad "Character Cards" default matches the
+    image formats plus JSON, but deliberately excludes Markdown so a plain
+    docs folder doesn't read as a folder of character cards. Markdown import
+    stays available via its own dedicated sub-filter.
+    """
+    from ...Widgets.enhanced_file_picker import Filters
+
+    return Filters(
+        (
+            "Character Cards",
+            lambda p: p.suffix.lower() in (".json", ".png", ".webp"),
+        ),
+        ("JSON Files", lambda p: p.suffix.lower() == ".json"),
+        (
+            "Card Images (PNG/WebP)",
+            lambda p: p.suffix.lower() in (".png", ".webp"),
+        ),
+        (
+            "Markdown Files",
+            lambda p: p.suffix.lower() in (".md", ".markdown"),
+        ),
+        ("All Files", lambda p: True),
+    )
+
+
 # 80-column terminals need a tighter three-pane split than the default
 # 2:4:2 workbench minimums. Keep this screen-owned so a later rail-collapse
 # task can replace it without changing pane widgets.
@@ -4163,29 +4196,12 @@ class PersonasScreen(BaseAppScreen):
     async def _import_dialog_worker(self) -> None:
         # Same dialog family as the legacy CCP import route
         # (ccp_character_handler.handle_import).
-        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen
 
         try:
             picker = EnhancedFileOpen(
                 title="Import Character Card",
-                filters=Filters(
-                    (
-                        "Character Cards",
-                        lambda p: (
-                            p.suffix.lower() in (".json", ".md", ".markdown", ".png")
-                        ),
-                    ),
-                    ("JSON Files", lambda p: p.suffix.lower() == ".json"),
-                    (
-                        "Markdown Files",
-                        lambda p: p.suffix.lower() in (".md", ".markdown"),
-                    ),
-                    (
-                        "PNG Files (with embedded data)",
-                        lambda p: p.suffix.lower() == ".png",
-                    ),
-                    ("All Files", lambda p: True),
-                ),
+                filters=_character_import_filters(),
                 context="character_import",
             )
             try:
