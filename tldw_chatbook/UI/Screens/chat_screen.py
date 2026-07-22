@@ -505,6 +505,24 @@ def _character_session_identity_from_handoff(
     return character_id, character_name, assistant_id
 
 
+def _is_personas_preview_handoff(payload: ChatHandoffPayload) -> bool:
+    """Return whether a handoff is a Personas "Open in Console" preview transcript.
+
+    These are staged by ``PersonasPreviewController.open_in_console`` with the
+    workbench's fixed ``source="personas"`` identity and a
+    ``"preview-conversation"`` item type. They carry no ``start_chat`` intent,
+    so they miss the character-session path (task-427); task-428 routes them
+    into a fresh, dedicated Console conversation rather than reusing (and
+    polluting) whatever conversation happens to be active. The predicate is
+    deliberately narrow: Personas "Start Chat" (``"{kind}-card"``) and "Attach"
+    handoffs do not match.
+    """
+    return (
+        str(payload.source or "").strip() == "personas"
+        and str(payload.item_type or "").strip() == "preview-conversation"
+    )
+
+
 def _source_mentions_rag(source: Any) -> bool:
     """Return whether a source label explicitly includes a RAG token.
 
@@ -9845,24 +9863,44 @@ class ChatScreen(BaseAppScreen):
         suggested_prompt = launch_payload["suggested_prompt"]
         if suggested_prompt:
             store = self._ensure_console_chat_store()
-            session = store.ensure_session(
-                title=self._console_initial_session_title_for_workspace(
-                    store.workspace_context.active_workspace_id
-                ),
-                workspace_id=store.workspace_context.active_workspace_id,
-                settings=self._default_console_session_settings(),
-            )
-            if not store.session_draft(session.id).strip():
-                store.set_session_draft(session.id, suggested_prompt)
-            try:
-                composer = self.query_one(
-                    "#console-native-composer", ConsoleComposerBar
+            if _is_personas_preview_handoff(payload):
+                # task-428: a Roleplay "Open in Console" handoff must land in
+                # its own fresh, focused conversation -- never bleed into (or
+                # reuse) whatever Console conversation is already active.
+                # ``create_session`` also pre-activates the new session, so the
+                # native sync pass below focuses it and loads its draft into the
+                # composer. We deliberately do NOT poke the composer here: it
+                # still reflects the previously-active session, and the
+                # draft-swap sync (TASK-339) would save this prompt back into
+                # THAT session. ``title`` (a sanitized ``payload.title``) is a
+                # real, non-default title, so the send-time auto-titler
+                # (``_maybe_auto_title_session``) leaves it as-is rather than
+                # renaming it after the prefilled instruction.
+                session = store.create_session(
+                    title=title,
+                    workspace_id=store.workspace_context.active_workspace_id,
+                    settings=self._default_console_session_settings(),
                 )
-            except QueryError:
-                pass
+                store.set_session_draft(session.id, suggested_prompt)
             else:
-                if not composer.draft_text().strip():
-                    composer.load_draft(suggested_prompt)
+                session = store.ensure_session(
+                    title=self._console_initial_session_title_for_workspace(
+                        store.workspace_context.active_workspace_id
+                    ),
+                    workspace_id=store.workspace_context.active_workspace_id,
+                    settings=self._default_console_session_settings(),
+                )
+                if not store.session_draft(session.id).strip():
+                    store.set_session_draft(session.id, suggested_prompt)
+                try:
+                    composer = self.query_one(
+                        "#console-native-composer", ConsoleComposerBar
+                    )
+                except QueryError:
+                    pass
+                else:
+                    if not composer.draft_text().strip():
+                        composer.load_draft(suggested_prompt)
 
         self.run_worker(
             self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
