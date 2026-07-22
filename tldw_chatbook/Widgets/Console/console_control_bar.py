@@ -25,6 +25,10 @@ from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 from tldw_chatbook.Widgets.Console.console_retrieval_scope_row import (
     UNSCOPED_LABEL as SCOPE_ROW_UNSCOPED_LABEL,
 )
+from tldw_chatbook.Widgets.Console.console_status_chips import (
+    ConsoleApprovalsChip,
+    ConsoleChip,
+)
 
 
 CONSOLE_CONTROL_BAR_HEIGHT = 2
@@ -80,40 +84,6 @@ def _summary_line(state: ConsoleControlState) -> str:
             state.approvals_label,
         )
     )
-
-
-class ConsoleChip(Static):
-    """Focusable Console readiness chip.
-
-    Chips ellipsize at 22 cells; focusing a chip lifts that cap (see
-    `.console-control-chip:focus` in `_agentic_terminal.tcss`) so the full
-    label is reachable from the keyboard, while the tooltip keeps carrying
-    the same full text on hover.
-    """
-
-    can_focus = True
-
-
-class ConsoleApprovalsChip(ConsoleChip):
-    """Approvals readiness chip that doubles as an approval-review action.
-
-    Activating it (Enter/Space while focused, or click) asks the control
-    bar to focus the pending approval card in the transcript.
-    """
-
-    BINDINGS = [
-        Binding("enter", "review_approval", "Review pending approval", show=False),
-        Binding("space", "review_approval", "Review pending approval", show=False),
-    ]
-
-    class ReviewRequested(Message):
-        """Posted when the approvals chip is activated from keyboard or mouse."""
-
-    def action_review_approval(self) -> None:
-        self.post_message(self.ReviewRequested())
-
-    def _on_click(self, event: events.Click) -> None:
-        self.post_message(self.ReviewRequested())
 
 
 class ConsoleScopeChip(ConsoleChip):
