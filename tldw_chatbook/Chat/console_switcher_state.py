@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
-
 from datetime import datetime, timezone
+from typing import Iterable
 
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserInputRow,
@@ -78,6 +77,9 @@ def build_console_switcher_entries(
         query: Whitespace-separated tokens; every token must match the row's
             title, workspace label, or status (case-insensitive substring).
         limit: Maximum number of entries returned.
+        now: Reference time used to derive a recency label from ``updated_sort``
+            when a row carries no precomputed ``updated_label``; defaults to the
+            current UTC time.
 
     Returns:
         Up to ``limit`` entries, active row first, then most recent.

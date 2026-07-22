@@ -43,13 +43,10 @@ _STATUS_LABELS = {
     "active": "active",
     "open": "open",
 }
-_STATUS_DETAIL_LABELS = {
-    "workspace-thread": "saved chat",
-    "workspace": "saved chat",
-    "in-progress": "saved chat",
-    "active": "active session",
-    "open": "open session",
-}
+# TASK-356: the "saved chat"/"active session"/"open session" detail vocabulary
+# now lives once in conversation_browser_state.console_conversation_status_detail
+# (which `_conversation_detail_status` below delegates to); the former local
+# `_STATUS_DETAIL_LABELS` copy was removed to keep a single source of truth.
 _CONVERSATION_BROWSER_HEADER_HEIGHT = 1
 _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT = 1
 

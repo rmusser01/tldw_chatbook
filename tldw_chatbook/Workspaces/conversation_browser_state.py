@@ -43,7 +43,20 @@ _CONSOLE_CONVERSATION_STATUS_DETAIL = {
 
 
 def console_conversation_status_detail(status: str) -> str:
-    """Return the shared friendly state label for a conversation row status."""
+    """Return the shared friendly state label for a conversation row status.
+
+    The one vocabulary used by both the rail conversation browser and the
+    Ctrl+K switcher (TASK-356) so the two surfaces never contradict each other:
+    ``saved chat`` / ``active session`` / ``open session``.
+
+    Args:
+        status: Raw persisted/internal status (e.g. ``in-progress``,
+            ``workspace-thread``, ``active``); ``None`` is tolerated.
+
+    Returns:
+        The friendly label, an empty string for a blank status, or the status
+        with dashes spaced out when it is not a known state.
+    """
     normalized = str(status or "").strip().lower()
     if not normalized:
         return ""
