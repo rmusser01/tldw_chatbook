@@ -1,5 +1,8 @@
 import json
+import json as _json
+
 import pytest
+
 from tldw_chatbook.RAG_Search.config_profiles import ConfigProfileManager, ProfileConfig
 from tldw_chatbook.RAG_Search.simplified.config import (
     RAGConfig, EmbeddingConfig, ChunkingConfig, VectorStoreConfig,
@@ -108,9 +111,6 @@ def test_profileconfig_id_backfilled_and_round_trips():
     assert legacy_restored.read_only is False
 
 
-import json as _json
-
-
 def test_user_profile_saved_as_own_file(tmp_path):
     m = _mgr(tmp_path)
     from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
@@ -144,6 +144,46 @@ def test_legacy_blob_migrated_to_per_file(tmp_path):
     _mgr(tmp_path)
 
 
+def test_legacy_blob_migration_isolates_per_entry_failures(tmp_path):
+    # Review finding (Important): the whole `for pdata in ...` loop in
+    # _migrate_legacy_blob was one try/except. If ProfileConfig.from_dict
+    # raised on one entry (e.g. an old blob with a renamed/unknown
+    # rag_config sub-key -> TypeError from `EmbeddingConfig(**data)`), the
+    # WHOLE migration aborted: the blob was never renamed, and every OTHER
+    # valid custom profile in the same blob silently vanished on upgrade.
+    # Per-entry isolation must let the valid entries still migrate, and the
+    # blob must still be renamed even though one entry failed.
+    pdir = tmp_path / "profiles"
+    pdir.mkdir(parents=True)
+    from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
+    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+
+    bad_entry = {
+        "name": "Broken",
+        "description": "d",
+        "profile_type": "custom",
+        # Unknown/renamed key -> EmbeddingConfig(**data) raises TypeError
+        # inside RAGConfig.from_dict, which ProfileConfig.from_dict propagates.
+        "rag_config": {"embedding": {"nonexistent_field_xyz": True}},
+    }
+    valid = ProfileConfig(
+        name="Still Good", description="d", profile_type="custom",
+        rag_config=RAGConfig(),
+    )
+    (pdir / "custom_profiles.json").write_text(
+        _json.dumps({"profiles": [bad_entry, valid.to_dict()]}, default=str))
+
+    m = _mgr(tmp_path)  # construction must not raise / must not abort entirely
+
+    # The valid profile (listed AFTER the bad one) still migrated + is loadable.
+    assert m.get_profile(valid.id) is not None
+    assert (pdir / f"{valid.id}.json").exists()
+
+    # The blob is renamed regardless of the partial failure.
+    assert (pdir / "custom_profiles.json.migrated").exists()
+    assert not (pdir / "custom_profiles.json").exists()
+
+
 def test_cannot_mutate_builtins(tmp_path):
     m = _mgr(tmp_path)
     with pytest.raises(ValueError):
@@ -152,6 +192,32 @@ def test_cannot_mutate_builtins(tmp_path):
         m.rename_profile("hybrid_basic", "Nope")
     with pytest.raises(ValueError):
         m.save_profile(m.get_profile("hybrid_basic"))  # read_only
+
+
+def test_builtin_readonly_flag_cannot_be_flipped_to_bypass_guards(tmp_path):
+    # Review finding (Important): delete_profile/rename_profile/save_profile
+    # guarded on `profile.read_only`, checked on the SHARED ProfileConfig
+    # instance that get_profile() returns. A caller could flip
+    # `read_only = False` on that shared object and then delete/rename/save
+    # a builtin -- save_profile's `existing is not profile` collision check
+    # is bypassed entirely since it IS the same object. The guard must
+    # additionally be keyed off an immutable, un-flippable record of which
+    # ids are builtins (captured once at construction), not the mutable flag.
+    m = _mgr(tmp_path)
+    b = m.get_profile("hybrid_basic")
+    b.read_only = False  # attacker flips the mutable flag on the shared object
+
+    with pytest.raises(ValueError):
+        m.delete_profile("hybrid_basic")
+    with pytest.raises(ValueError):
+        m.rename_profile("hybrid_basic", "X")
+    with pytest.raises(ValueError):
+        m.save_profile(b)
+
+    # The builtin is intact: same object, unrenamed, still on the manager.
+    assert m.get_profile("hybrid_basic") is b
+    assert m.get_profile("hybrid_basic").name == "Hybrid Basic"
+    assert not (tmp_path / "profiles" / "hybrid_basic.json").exists()
 
 
 def test_clone_builtin_creates_writable_copy(tmp_path):
@@ -450,3 +516,89 @@ def test_save_profile_allows_user_over_user_same_id(tmp_path):
     m.save_profile(first)
     m.save_profile(second)  # must not raise
     assert m.get_profile("shared_id").name == "Second"
+
+
+def test_profile_path_rejects_non_slug_id(tmp_path):
+    # Review finding (Important), defense-in-depth: _profile_path built
+    # `profiles_dir / f"{id}.json"` directly from whatever id it was given.
+    # An id that is not already a bare slug (e.g. containing "..", "/", or
+    # an absolute path) must be rejected outright so every file operation
+    # keyed by id (_save_one, delete_profile, migration) can never escape
+    # profiles_dir.
+    m = _mgr(tmp_path)
+    with pytest.raises(ValueError):
+        m._profile_path("../x")
+    with pytest.raises(ValueError):
+        m._profile_path("../../tmp/pwned")
+    with pytest.raises(ValueError):
+        m._profile_path("/etc/passwd")
+    with pytest.raises(ValueError):
+        m._profile_path("Not A Slug")
+
+
+def test_hand_edited_id_path_traversal_is_neutralized_by_filename_authority(tmp_path):
+    # Review finding (Important): ProfileConfig.from_dict trusts the JSON's
+    # internal "id" field verbatim (__post_init__ only backfills when it's
+    # falsy). A hand-edited profile file with a crafted internal id like
+    # "../../pwned" was registered in self._profiles under THAT unsafe key,
+    # so any later save/delete keyed by id could write/unlink outside
+    # profiles_dir. The FILENAME (stem) must be authoritative on load, never
+    # the JSON's internal id.
+    pdir = tmp_path / "profiles"
+    pdir.mkdir(parents=True)
+    from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
+    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+
+    evil = ProfileConfig(
+        id="../../pwned", name="Evil", description="d",
+        profile_type="custom", rag_config=RAGConfig(), read_only=False,
+    )
+    (pdir / "evil.json").write_text(_json.dumps(evil.to_dict(), default=str))
+
+    m = _mgr(tmp_path)
+
+    # Registered under the SAFE stem-derived id, never the traversal id.
+    assert m.get_profile("evil") is not None
+    assert m.get_profile("../../pwned") is None
+    assert "../../pwned" not in m._profiles
+    assert m.get_profile("evil").id == "evil"
+
+    # No file was ever written outside profiles_dir.
+    assert not (tmp_path / "pwned.json").exists()
+    assert not (tmp_path.parent / "pwned.json").exists()
+
+    # And the safe id is fully usable through normal CRUD:
+    assert m.delete_profile("evil") is True
+    assert not (pdir / "evil.json").exists()
+
+
+def test_load_uses_filename_stem_as_authoritative_id(tmp_path):
+    # Review finding (Important), companion case: even a non-malicious
+    # divergence between a profile file's name and its internal JSON id
+    # (e.g. from manual editing, or copying a file to a new name) must not
+    # be trusted -- the on-disk stem is the id, full stop. Otherwise files
+    # get orphaned and delete_profile(<stem>) doesn't stick.
+    pdir = tmp_path / "profiles"
+    pdir.mkdir(parents=True)
+    from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
+    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+
+    mismatched = ProfileConfig(
+        id="b", name="Mismatched", description="d",
+        profile_type="custom", rag_config=RAGConfig(), read_only=False,
+    )
+    (pdir / "a.json").write_text(_json.dumps(mismatched.to_dict(), default=str))
+
+    m = _mgr(tmp_path)
+    assert m.get_profile("a") is not None
+    assert m.get_profile("a").id == "a"
+    assert m.get_profile("b") is None
+
+    assert m.delete_profile("a") is True
+    assert m.get_profile("a") is None
+    assert not (pdir / "a.json").exists()
+
+    # Fresh manager: it must NOT reappear (e.g. from a leftover/duplicate file).
+    m2 = _mgr(tmp_path)
+    assert m2.get_profile("a") is None
+    assert m2.get_profile("b") is None

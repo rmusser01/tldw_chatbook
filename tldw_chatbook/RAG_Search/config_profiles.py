@@ -6,6 +6,7 @@ along with utilities for experiment tracking and A/B testing.
 """
 
 import json
+import os
 import re
 import time
 from typing import Dict, Any, Optional, List, Literal, Tuple
@@ -193,6 +194,13 @@ class ConfigProfileManager:
 
         # Load built-in profiles
         self._load_builtin_profiles()
+
+        # Immutable, un-flippable record of which ids are builtins. Mutation
+        # guards (save/delete/rename) check THIS set, not the mutable
+        # `ProfileConfig.read_only` field on a shared instance -- a caller
+        # cannot bypass the guard by doing
+        # `manager.get_profile("x").read_only = False`.
+        self._builtin_ids = frozenset(self._profiles.keys())
 
         # Load custom profiles
         self._load_custom_profiles()
@@ -499,7 +507,24 @@ class ConfigProfileManager:
         logger.info(f"Loaded {len(self._profiles)} built-in profiles")
 
     def _profile_path(self, profile_id: str) -> Path:
-        """Path to a user profile's own JSON file."""
+        """Path to a user profile's own JSON file.
+
+        Args:
+            profile_id: Candidate profile id. Must already be a bare,
+                filesystem-safe slug (i.e. equal to ``_slugify(profile_id)``).
+                This is defense-in-depth against a crafted or hand-edited
+                profile id (e.g. ``"../../etc/passwd"``) escaping
+                ``profiles_dir`` via any id-keyed file operation
+                (``_save_one``, ``delete_profile``, legacy-blob migration).
+
+        Returns:
+            The per-profile JSON file path under ``profiles_dir``.
+
+        Raises:
+            ValueError: If ``profile_id`` is not already a bare slug.
+        """
+        if profile_id != _slugify(profile_id):
+            raise ValueError(f"unsafe profile id: {profile_id!r}")
         return self.profiles_dir / f"{profile_id}.json"
 
     def _save_one(self, profile: "ProfileConfig") -> None:
@@ -510,7 +535,20 @@ class ConfigProfileManager:
             json.dump(profile.to_dict(), f, indent=2, default=str)
 
     def _load_custom_profiles(self):
-        """Load user profiles from per-file JSON; migrate a legacy blob once."""
+        """Load user profiles from per-file JSON; migrate a legacy blob once.
+
+        The FILENAME (stem) is authoritative for a profile's id -- never the
+        JSON's internal ``"id"`` field, which may be missing, hand-edited,
+        stale, or (if untrusted) even crafted for path traversal. If the
+        stem-derived id collides with an already-registered profile (a
+        builtin, or a profile loaded earlier in this same pass), it is
+        reassigned to a unique id. Whenever the canonical filename for the
+        resolved id doesn't match the file it was loaded from -- because the
+        stem needed slugifying, or the id was reassigned -- the profile is
+        self-healed on disk: written under its canonical name first, then
+        the stale file is removed, so a crash between the two steps never
+        loses data.
+        """
         self._migrate_legacy_blob()
         for path in self.profiles_dir.glob("*.json"):
             if path.name in _RESERVED_PROFILE_FILES:
@@ -519,33 +557,69 @@ class ConfigProfileManager:
                 with open(path, "r") as f:
                     profile = ProfileConfig.from_dict(json.load(f))
                 profile.read_only = False
-                existing = self._profiles.get(profile.id)
-                if existing is not None and existing.read_only:
-                    # A hand-placed or stale file is shadowing a read-only
-                    # builtin id. Never let it win: reassign to a unique id
-                    # and self-heal the on-disk file so this can't recur.
-                    old_id = profile.id
-                    profile.id = self._unique_id_reserving_disk(profile.id)
-                    self._save_one(profile)
-                    if path.exists():
-                        path.unlink()
+
+                desired_id = _slugify(path.stem)
+                if desired_id in self._profiles:
+                    # Collides with a builtin or an already-loaded profile
+                    # (e.g. a hand-placed <builtin_id>.json, or two files
+                    # whose stems slugify to the same id). Never let it win:
+                    # reassign to a unique id, checking disk too, since the
+                    # in-memory dict is only partially populated mid-glob.
+                    old_id = desired_id
+                    desired_id = self._unique_id_reserving_disk(desired_id)
                     logger.warning(
-                        f"Profile file {path.name} collided with read-only "
-                        f"builtin '{old_id}'; reassigned to id '{profile.id}'"
+                        f"Profile file {path.name} collided with id "
+                        f"'{old_id}'; reassigned to id '{desired_id}'"
                     )
-                self._profiles[profile.id] = profile
+
+                profile.id = desired_id
+                self._profiles[desired_id] = profile
+
+                canonical_path = self._profile_path(desired_id)
+                if canonical_path != path:
+                    # Self-heal: write under the canonical name FIRST, then
+                    # remove the stale/incorrectly-named file.
+                    self._save_one(profile)
+                    try:
+                        if path.exists():
+                            path.unlink()
+                    except OSError as e:
+                        logger.warning(
+                            f"Failed to remove stale profile file {path}: {e}"
+                        )
+                    logger.warning(
+                        f"Profile file {path.name} did not match its "
+                        f"canonical id '{desired_id}'; self-healed to "
+                        f"{canonical_path.name}"
+                    )
             except Exception as e:
                 logger.error(f"Failed to load profile {path.name}: {e}")
 
     def _migrate_legacy_blob(self):
-        """One-time split of the old custom_profiles.json blob into per-file."""
+        """One-time split of the old custom_profiles.json blob into per-file.
+
+        Each profile entry is migrated independently: a single bad or
+        unparseable entry (e.g. an old blob with a renamed/unknown
+        ``rag_config`` sub-key, raising ``TypeError`` from
+        ``ProfileConfig.from_dict``) is logged and skipped rather than
+        aborting the whole migration -- otherwise one corrupt entry would
+        silently take every OTHER valid custom profile in the blob down with
+        it. The blob is renamed to ``.migrated`` unconditionally once it has
+        been successfully read, so it is never reprocessed on a later boot
+        even if every entry in it failed to migrate.
+        """
         blob = self.profiles_dir / "custom_profiles.json"
         if not blob.exists():
             return
         try:
             with open(blob, "r") as f:
                 data = json.load(f)
-            for pdata in data.get("profiles", []):
+        except Exception as e:
+            logger.error(f"Legacy profile blob migration failed to read {blob}: {e}")
+            return
+
+        for pdata in data.get("profiles", []):
+            try:
                 profile = ProfileConfig.from_dict(pdata)
                 profile.read_only = False
                 existing = self._profiles.get(profile.id)
@@ -557,10 +631,19 @@ class ConfigProfileManager:
                 if not target.exists():  # never clobber an existing per-file profile
                     with open(target, "w") as out:
                         json.dump(profile.to_dict(), out, indent=2, default=str)
-            blob.rename(self.profiles_dir / "custom_profiles.json.migrated")
+            except Exception as e:
+                entry_name = pdata.get("name", "<unknown>") if isinstance(pdata, dict) else "<unknown>"
+                logger.error(
+                    f"Skipping unmigratable legacy profile entry '{entry_name}': {e}"
+                )
+
+        try:
+            # os.replace is an atomic overwrite on both POSIX and Windows
+            # (Path.rename raises on Windows if the destination exists).
+            os.replace(str(blob), str(blob.parent / "custom_profiles.json.migrated"))
             logger.info("Migrated legacy custom_profiles.json to per-file profiles")
-        except Exception as e:
-            logger.error(f"Legacy profile blob migration failed: {e}")
+        except OSError as e:
+            logger.error(f"Failed to rename migrated legacy blob {blob}: {e}")
 
     def get_profile(self, name: str) -> Optional[ProfileConfig]:
         """Get a configuration profile by name."""
@@ -587,8 +670,28 @@ class ConfigProfileManager:
         return candidate
 
     def save_profile(self, profile: "ProfileConfig") -> "ProfileConfig":
-        """Persist a user profile (refuses read-only builtins, incoming or existing)."""
-        if profile.read_only:
+        """Persist a user profile.
+
+        Refuses to persist a read-only builtin, whether the incoming
+        ``profile`` object is itself read-only or its id merely collides
+        with an existing read-only builtin.
+
+        Args:
+            profile: The profile to save. Its ``id`` determines both the
+                in-memory key and the on-disk filename it is written to.
+
+        Returns:
+            The same ``profile`` instance, now registered and persisted.
+
+        Raises:
+            ValueError: If ``profile.read_only`` is ``True``, or
+                ``profile.id`` names a builtin (checked against the
+                immutable ``self._builtin_ids`` set, which cannot be
+                defeated by flipping ``read_only`` on a shared instance), or
+                ``profile.id`` collides with a different, read-only,
+                already-registered profile.
+        """
+        if profile.read_only or profile.id in self._builtin_ids:
             raise ValueError(f"Profile '{profile.id}' is read-only")
         existing = self._profiles.get(profile.id)
         if existing is not None and existing is not profile and existing.read_only:
@@ -600,6 +703,23 @@ class ConfigProfileManager:
         return profile
 
     def delete_profile(self, profile_id: str) -> bool:
+        """Delete a user profile by id, removing both its in-memory entry
+        and its on-disk file.
+
+        Args:
+            profile_id: The id of the profile to delete.
+
+        Returns:
+            ``True`` if a profile was found and deleted, ``False`` if no
+            profile with that id is registered.
+
+        Raises:
+            ValueError: If ``profile_id`` names a builtin profile. Checked
+                against both ``self._builtin_ids`` (immutable, un-flippable)
+                and the profile's own ``read_only`` flag.
+        """
+        if profile_id in self._builtin_ids:
+            raise ValueError(f"Builtin profile '{profile_id}' cannot be deleted")
         prof = self._profiles.get(profile_id)
         if prof is None:
             return False
@@ -612,6 +732,26 @@ class ConfigProfileManager:
         return True
 
     def rename_profile(self, profile_id: str, new_name: str) -> "ProfileConfig":
+        """Rename a user profile's display name in place.
+
+        The profile's ``id`` (and therefore its on-disk filename) is left
+        unchanged -- only ``name`` is updated -- so the profile remains
+        reachable under the same id before and after the rename.
+
+        Args:
+            profile_id: The id of the profile to rename.
+            new_name: The new display name.
+
+        Returns:
+            The renamed profile.
+
+        Raises:
+            ValueError: If no profile with ``profile_id`` is registered, or
+                it names a builtin profile (checked against both
+                ``self._builtin_ids`` and ``read_only``).
+        """
+        if profile_id in self._builtin_ids:
+            raise ValueError(f"Builtin profile '{profile_id}' cannot be renamed")
         prof = self._profiles.get(profile_id)
         if prof is None:
             raise ValueError(f"Profile '{profile_id}' not found")
@@ -622,6 +762,22 @@ class ConfigProfileManager:
         return prof
 
     def clone_profile(self, source_id: str, new_name: str) -> "ProfileConfig":
+        """Clone an existing profile (builtin or user) into a new, writable profile.
+
+        Args:
+            source_id: Id of the profile to clone from.
+            new_name: Display name for the clone. Its id is derived from
+                this name via ``_slugify`` and uniquified against existing
+                ids, so it never collides with the source (or any other
+                profile) even if the display name matches.
+
+        Returns:
+            The newly created, persisted, writable clone.
+
+        Raises:
+            ValueError: If ``source_id`` does not resolve to a registered
+                profile.
+        """
         src = self._profiles.get(source_id)
         if src is None:
             raise ValueError(f"Source profile '{source_id}' not found")
