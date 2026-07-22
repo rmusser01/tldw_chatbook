@@ -1,11 +1,16 @@
 ---
 id: TASK-322
 title: Bound Console conversation history by tokens before dispatch
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-20 18:45'
-labels: [console, llm]
-dependencies: [task-320, task-321]
+updated_date: '2026-07-22 14:03'
+labels:
+  - console
+  - llm
+dependencies:
+  - task-320
+  - task-321
 priority: high
 ---
 
@@ -23,3 +28,9 @@ The native Console send path sends the entire conversation to the provider on ev
 - [ ] #4 A conversation that exceeds the model window remains continuable (no overflow-driven provider 400)
 - [ ] #5 Tests cover the trim boundary and system-prompt preservation
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Docs/superpowers/plans/2026-07-22-console-history-token-budget.md
+<!-- SECTION:PLAN:END -->
