@@ -77,14 +77,17 @@ class TestTokenCounter:
         assert get_model_token_limit("gemini-1.5-pro", "google") == 2097152
         assert get_model_token_limit("mistral-large", "mistral") == 128000
 
-    def test_get_model_token_limit_prefers_capabilities_over_table(self):
-        # A novel dated gpt-4o variant is not a table key; capabilities resolves it.
-        assert get_model_token_limit("gpt-4o-2099-12-31", "openai") == 128000
+    def test_get_model_token_limit_prefers_capabilities_over_table(self, monkeypatch):
+        # Capabilities must be consulted before the table: patch get_context_window
+        # to a sentinel and confirm even a model WITH a table entry returns it.
+        import tldw_chatbook.model_capabilities as mc
+        monkeypatch.setattr(mc, "get_context_window", lambda provider, model: 999999)
+        assert get_model_token_limit("gpt-4", "openai") == 999999  # table would say 8192
 
     def test_get_model_token_limit_longest_prefix_wins(self):
-        # "gpt-4" (8192) must not shadow a more specific match; a bare gpt-4 variant
-        # with no capability pattern falls to the gpt-4 table prefix.
-        assert get_model_token_limit("gpt-4-some-variant", "openai") == 8192
+        # No capability pattern matches "gpt-4-32k-custom"; both "gpt-4" (8192) and
+        # "gpt-4-32k" (32768) are table prefixes, so the LONGEST must win.
+        assert get_model_token_limit("gpt-4-32k-custom", "openai") == 32768
 
     def test_get_model_token_limit_anthropic_default_bumped(self):
         # Unknown modern Claude falls back to the 200k floor, not the stale 100k.
