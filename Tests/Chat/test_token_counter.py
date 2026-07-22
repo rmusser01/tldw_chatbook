@@ -13,6 +13,7 @@ from tldw_chatbook.Utils.token_counter import (
     format_token_display,
     TIKTOKEN_AVAILABLE,
 )
+from tldw_chatbook.Utils.token_counter import estimate_tokens, count_tokens_messages
 #
 ########################################################################################################################
 #
@@ -176,6 +177,30 @@ class TestTokenCounter:
 
         result = count_tokens_chat_history(history)
         assert result > 0  # Should handle mixed formats gracefully
+
+
+class TestEstimator:
+    def test_empty_text_is_zero(self):
+        assert estimate_tokens("", "gpt-4o", "openai") == 0
+
+    def test_cjk_floor_at_least_one_token_per_char(self):
+        # CJK code points are >= ~1 token each; a conservative floor never under-counts.
+        cjk = "你好世界" * 10  # 40 CJK chars
+        assert estimate_tokens(cjk, "gemini-1.5-pro", "google") >= len(cjk)
+
+    def test_code_sample_exceeds_word_count(self):
+        code = "def f(x):\n    return [i*i for i in range(x) if i % 2 == 0]\n" * 3
+        assert estimate_tokens(code, "claude-3-5-sonnet-20241022", "anthropic") > len(code.split())
+
+    def test_ascii_100_chars_in_band(self):
+        # Keeps the pinned test_character_estimation_fallback assumptions valid.
+        assert 25 < estimate_tokens("A" * 100, "unknown", "unknown") < 50
+
+    def test_messages_and_chat_history_agree_for_one_message(self):
+        msg = [{"role": "user", "content": "hello world foo bar"}]
+        assert count_tokens_chat_history(msg, model="claude-3-5-sonnet-20241022",
+                                         provider="anthropic") == \
+            count_tokens_messages(msg, "claude-3-5-sonnet-20241022", "anthropic")
 
 
 #

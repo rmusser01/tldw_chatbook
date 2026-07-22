@@ -97,21 +97,6 @@ class ResponseFormat(BaseModel):
     )
 
 
-def approximate_token_count(history):
-    try:
-        total_text = ""
-        for user_msg, bot_msg in history:
-            if user_msg:
-                total_text += user_msg + " "
-            if bot_msg:
-                total_text += bot_msg + " "
-        total_tokens = len(total_text.split())
-        return total_tokens
-    except Exception as e:
-        logger.error(f"Error calculating token count: {str(e)}")
-        return 0
-
-
 # 1. Dispatch table for handler functions
 API_CALL_HANDLERS = {
     "openai": chat_with_openai,

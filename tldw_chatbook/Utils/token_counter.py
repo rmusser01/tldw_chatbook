@@ -11,13 +11,18 @@ from loguru import logger
 #
 # Local Imports - Import with error handling to avoid circular imports
 try:
-    from .custom_tokenizers import count_tokens_with_custom, count_messages_with_custom
+    from .custom_tokenizers import (
+        count_tokens_with_custom,
+        count_messages_with_custom,
+        custom_tokenizers_available,
+    )
 
     CUSTOM_TOKENIZERS_AVAILABLE = True
 except ImportError:
     CUSTOM_TOKENIZERS_AVAILABLE = False
     count_tokens_with_custom = None
     count_messages_with_custom = None
+    custom_tokenizers_available = None
 #
 ########################################################################################################################
 #
@@ -79,6 +84,52 @@ TOKENS_PER_CHAR_ESTIMATES = {
     "openrouter": 0.25,  # Depends on underlying model
     "default": 0.25,  # Default fallback
 }
+
+# Conservative chars-based estimate constants (used when no tokenizer is available).
+CJK_TOKENS_PER_CHAR = 1.0   # each CJK code point is >= ~1 token
+ESTIMATE_HEADROOM = 1.2     # documented headroom so estimates lean high (safe)
+
+_CJK_RANGES = (
+    (0x3040, 0x30FF),  # Hiragana + Katakana
+    (0x3400, 0x4DBF),  # CJK Unified Ext-A
+    (0x4E00, 0x9FFF),  # CJK Unified Ideographs
+    (0xAC00, 0xD7AF),  # Hangul syllables
+    (0xF900, 0xFAFF),  # CJK Compatibility Ideographs
+    (0xFF00, 0xFFEF),  # Fullwidth / halfwidth (CJK punctuation)
+)
+
+
+def _is_cjk(ch: str) -> bool:
+    cp = ord(ch)
+    return any(lo <= cp <= hi for lo, hi in _CJK_RANGES)
+
+
+def _chars_estimate(text: str, provider: str) -> int:
+    """Conservative chars-based token floor; weights CJK higher, applies headroom."""
+    cjk = sum(1 for ch in text if _is_cjk(ch))
+    other = len(text) - cjk
+    base_ratio = TOKENS_PER_CHAR_ESTIMATES.get(
+        provider or "default", TOKENS_PER_CHAR_ESTIMATES["default"]
+    )
+    return int((other * base_ratio + cjk * CJK_TOKENS_PER_CHAR) * ESTIMATE_HEADROOM)
+
+
+def estimate_tokens(text: str, model: str = "gpt-3.5-turbo", provider: str = "") -> int:
+    """Single text token estimator: custom tokenizer (gated) -> tiktoken -> chars floor.
+
+    Never uses whitespace word counts. `provider` only selects the chars-path
+    ratio; CJK weighting and the tiktoken/custom tiers are provider-independent.
+    """
+    if not text:
+        return 0
+    if CUSTOM_TOKENIZERS_AVAILABLE and custom_tokenizers_available():
+        custom = count_tokens_with_custom(text, model, provider)
+        if custom is not None:
+            return custom
+    if TIKTOKEN_AVAILABLE:
+        return count_tokens_tiktoken(text, model)
+    return _chars_estimate(text, provider)
+
 
 # Token limits per model (approximate)
 MODEL_TOKEN_LIMITS = {
@@ -158,66 +209,34 @@ def count_tokens_tiktoken(text: str, model: str = "gpt-3.5-turbo") -> int:
 
 
 def count_tokens_messages(
-    messages: List[Dict[str, Any]], model: str = "gpt-3.5-turbo"
+    messages: List[Dict[str, Any]], model: str = "gpt-3.5-turbo", provider: str = ""
 ) -> int:
-    """
-    Count tokens for a list of messages in OpenAI format.
-
-    Args:
-        messages: List of message dicts with 'role' and 'content' keys
-        model: The model name for accurate token counting
-
-    Returns:
-        Total token count including message formatting overhead
-    """
+    """Count tokens for OpenAI-format messages (framing overhead + estimate_tokens)."""
     if not messages:
         return 0
 
-    # Different models have different message formatting overhead
     if model.startswith("gpt-3.5") or model.startswith("gpt-4"):
-        # Each message has overhead: <|start|>role<|end|>content<|end|>
         tokens_per_message = 3
-        tokens_per_name = 1  # If name is present
-        base_tokens = 3  # Every reply is primed with <|start|>assistant<|message|>
+        tokens_per_name = 1
+        base_tokens = 3
     else:
-        # Conservative estimate for other models
         tokens_per_message = 2
         tokens_per_name = 1
         base_tokens = 2
 
     total_tokens = base_tokens
-
     for message in messages:
         total_tokens += tokens_per_message
-
-        # Count tokens in role
         role = message.get("role", "")
         if role:
-            total_tokens += (
-                count_tokens_tiktoken(role, model)
-                if TIKTOKEN_AVAILABLE
-                else len(role.split())
-            )
-
-        # Count tokens in content
+            total_tokens += estimate_tokens(role, model, provider)
         content = message.get("content", "")
         if content:
-            total_tokens += (
-                count_tokens_tiktoken(content, model)
-                if TIKTOKEN_AVAILABLE
-                else len(content.split())
-            )
-
-        # Count tokens in name if present
+            total_tokens += estimate_tokens(content, model, provider)
         name = message.get("name", "")
         if name:
             total_tokens += tokens_per_name
-            total_tokens += (
-                count_tokens_tiktoken(name, model)
-                if TIKTOKEN_AVAILABLE
-                else len(name.split())
-            )
-
+            total_tokens += estimate_tokens(name, model, provider)
     return total_tokens
 
 
@@ -226,64 +245,24 @@ def count_tokens_chat_history(
     model: str = "gpt-3.5-turbo",
     provider: str = "openai",
 ) -> int:
-    """
-    Count tokens in chat history format (list of tuples or message dicts).
-
-    Args:
-        history: Chat history in various formats
-        model: The model name for accurate counting
-        provider: The LLM provider name
-
-    Returns:
-        Total estimated token count
-    """
+    """Count tokens in chat-history format (tuples or message dicts) via the one estimator."""
     if not history:
         return 0
 
-    # Convert history to message format
-    messages = []
-
+    messages: List[Dict[str, Any]] = []
     for item in history:
         if isinstance(item, tuple) and len(item) == 2:
-            # (user_msg, bot_msg) format
             user_msg, bot_msg = item
             if user_msg:
                 messages.append({"role": "user", "content": user_msg})
             if bot_msg:
                 messages.append({"role": "assistant", "content": bot_msg})
         elif isinstance(item, dict) and "role" in item and "content" in item:
-            # Already in message format
             messages.append(item)
         else:
             logger.warning(f"Unknown history format: {type(item)}")
 
-    # Try custom tokenizers first
-    if CUSTOM_TOKENIZERS_AVAILABLE and count_messages_with_custom:
-        custom_count = count_messages_with_custom(messages, model, provider)
-        if custom_count is not None:
-            logger.debug(
-                f"Using custom tokenizer for {model} ({provider}): {custom_count} tokens"
-            )
-            return custom_count
-
-    # Use provider-specific counting if available
-    if provider == "openai" and TIKTOKEN_AVAILABLE:
-        return count_tokens_messages(messages, model)
-    else:
-        # Fallback to character-based estimation
-        total_chars = 0
-        for msg in messages:
-            content = msg.get("content", "")
-            total_chars += len(content)
-
-        # Add some overhead for message formatting
-        total_chars += len(messages) * 10  # Rough estimate for role and formatting
-
-        # Use provider-specific ratio
-        ratio = TOKENS_PER_CHAR_ESTIMATES.get(
-            provider, TOKENS_PER_CHAR_ESTIMATES["default"]
-        )
-        return int(total_chars * ratio)
+    return count_tokens_messages(messages, model, provider)
 
 
 def get_model_token_limit(model: str, provider: str = "openai") -> int:
@@ -357,12 +336,7 @@ def estimate_remaining_tokens(
 
     # Add system prompt if present
     if system_prompt:
-        if provider == "openai" and TIKTOKEN_AVAILABLE:
-            current_tokens += count_tokens_tiktoken(system_prompt, model)
-        else:
-            current_tokens += int(
-                len(system_prompt) * TOKENS_PER_CHAR_ESTIMATES.get(provider, 0.25)
-            )
+        current_tokens += estimate_tokens(system_prompt, model, provider)
 
     # Get model limit
     total_limit = get_model_token_limit(model, provider)

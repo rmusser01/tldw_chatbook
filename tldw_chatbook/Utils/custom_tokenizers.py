@@ -191,6 +191,10 @@ class CustomTokenizerManager:
 
         return None
 
+    def has_tokenizers(self) -> bool:
+        """Cheap availability check (no metrics, no I/O) — are any mappings loaded?"""
+        return bool(self._model_mappings)
+
     def count_tokens(self, text: str, model: str, provider: str) -> Optional[int]:
         """
         Count tokens using a custom tokenizer if available.
@@ -419,6 +423,11 @@ def get_tokenizer_manager() -> CustomTokenizerManager:
     if _tokenizer_manager is None:
         _tokenizer_manager = CustomTokenizerManager()
     return _tokenizer_manager
+
+
+def custom_tokenizers_available() -> bool:
+    """True only when a custom tokenizer could actually resolve (mappings loaded)."""
+    return get_tokenizer_manager().has_tokenizers()
 
 
 def count_tokens_with_custom(text: str, model: str, provider: str) -> Optional[int]:
