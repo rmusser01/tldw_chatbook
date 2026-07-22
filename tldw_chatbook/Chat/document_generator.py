@@ -138,13 +138,24 @@ class DocumentGenerator:
             List of message dictionaries
         """
         try:
-            messages = self.db.get_messages_by_conversation_id(
-                conversation_id, limit=limit
+            messages = self.db.get_messages_for_conversation(
+                conversation_id, limit=limit, include_image_data=False
             )
-            return [msg.to_dict() for msg in messages]
         except Exception as e:
             logger.error(f"Failed to get conversation context: {e}")
             return []
+        # DB rows carry 'sender'; normalize to the {role, content, timestamp}
+        # shape format_context_for_llm() reads (it looked up a non-existent
+        # 'role' key before, which — together with the wrong DB method name —
+        # made generated documents silently contextless).
+        return [
+            {
+                "role": msg.get("sender", "unknown"),
+                "content": msg.get("content", ""),
+                "timestamp": msg.get("timestamp", ""),
+            }
+            for msg in messages
+        ]
 
     def format_context_for_llm(
         self, messages: List[Dict[str, Any]], specific_message: Optional[str] = None
