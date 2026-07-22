@@ -894,6 +894,82 @@ class SettingsURLInput(Input):
         return strip.apply_style(self.rich_style)
 
 
+def _mask_url_userinfo(url: object) -> str:
+    """Mask a password embedded in a URL's userinfo before display.
+
+    ``redact_secret_text`` is assignment-name based and misses credentials in
+    ``scheme://user:pass@host`` form, so mask them positionally here. Non-URL
+    or password-less input is returned unchanged.
+
+    Args:
+        url: A candidate endpoint string.
+
+    Returns:
+        The URL with any userinfo password replaced by ``***``.
+    """
+    from urllib.parse import urlsplit, urlunsplit
+
+    text = str(url or "")
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return text
+    # Reconstruct from the raw netloc substring rather than the lazy
+    # ``.hostname``/``.port`` properties: ``.port`` raises ValueError on a
+    # malformed/out-of-range port (crashing the Test on a typo'd endpoint), and
+    # ``.hostname`` strips IPv6 brackets. Keep host:port verbatim; only the
+    # userinfo password is masked. (Never fall back to returning ``text`` with
+    # the password intact -- redact_secret_text can't catch ``user:pass@host``.)
+    netloc = parts.netloc
+    userinfo, at, hostport = netloc.rpartition("@")
+    if not at or ":" not in userinfo:
+        # No userinfo, or a username with no password -> nothing to mask.
+        return text
+    user = userinfo.partition(":")[0]
+    masked = f"{user}:***@{hostport}" if user else f"***@{hostport}"
+    return urlunsplit((parts.scheme, masked, parts.path, parts.query, parts.fragment))
+
+
+def overlay_provider_draft_config(
+    app_config,
+    *,
+    provider_save_key: str,
+    endpoint_key: str,
+    draft_endpoint: str | None,
+    draft_env_var: str | None,
+    draft_api_key: str | None,
+) -> dict:
+    """Return a deep copy of ``app_config`` with unsaved draft provider fields overlaid.
+
+    Args:
+        app_config: The loaded application configuration.
+        provider_save_key: The ``api_settings`` section key to overlay onto.
+        endpoint_key: The endpoint setting key for this provider (e.g. ``api_url``).
+        draft_endpoint: Draft endpoint, or ``None`` to leave the saved endpoint.
+        draft_env_var: Draft credential env-var name, or ``None`` to leave saved.
+        draft_api_key: Draft API key (``""`` models an explicit clear), or ``None``.
+
+    Returns:
+        A new config dict; ``app_config`` is never mutated.
+    """
+    merged = copy.deepcopy(dict(app_config)) if isinstance(app_config, Mapping) else {}
+    api_settings = merged.get("api_settings")
+    if not isinstance(api_settings, dict):
+        api_settings = {}
+        merged["api_settings"] = api_settings
+    section = api_settings.get(provider_save_key)
+    if not isinstance(section, dict):
+        section = {}
+        api_settings[provider_save_key] = section
+    if draft_endpoint is not None:
+        section[endpoint_key] = draft_endpoint
+    if draft_env_var is not None:
+        section["api_key_env_var"] = draft_env_var
+    if draft_api_key is not None:
+        section["api_key"] = draft_api_key
+    return merged
+
+
 class SettingsScreen(BaseAppScreen):
     """Global preferences, appearance, accounts, storage, and app behavior."""
 
@@ -5134,6 +5210,45 @@ class SettingsScreen(BaseAppScreen):
             is not None
         )
 
+    def _provider_test_staged_config(self, provider: str) -> Mapping[str, object]:
+        """Return app_config with the unsaved draft provider fields overlaid.
+
+        Only dirty fields are overlaid, so a provider with no unsaved edits tests
+        exactly the saved config (task-432).
+
+        Args:
+            provider: The provider whose Test is running (the draft widget value).
+
+        Returns:
+            A config mapping the Test's readiness check can evaluate.
+        """
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        draft = self._provider_draft()
+        dirty = draft.dirty_keys if draft is not None else set()
+        if not ({"endpoint", "credential_env_var", "api_key"} & dirty):
+            return app_config
+        provider_save_key, _config = self._provider_config_entry(provider)
+        provider_save_key = provider_save_key or provider_config_key(provider)
+        if not provider_save_key:
+            return app_config
+        try:
+            endpoint = self.query_one("#settings-provider-endpoint-value", Input).value.strip()
+            env_var = self.query_one("#settings-provider-credential-env-var", Input).value.strip()
+            api_key = self.query_one("#settings-provider-api-key", Input).value.strip()
+        except QueryError:
+            values = self._provider_setting_values_mapping()
+            endpoint = str(values.get("endpoint") or "").strip()
+            env_var = str(values.get("credential_env_var") or "").strip()
+            api_key = str(values.get("api_key") or "").strip()
+        return overlay_provider_draft_config(
+            app_config,
+            provider_save_key=provider_save_key,
+            endpoint_key=self._provider_endpoint_setting_key(provider),
+            draft_endpoint=endpoint if "endpoint" in dirty else None,
+            draft_env_var=env_var if "credential_env_var" in dirty else None,
+            draft_api_key=api_key if "api_key" in dirty else None,
+        )
+
     def _provider_discovery_staged_settings(self, provider: str) -> dict[str, object]:
         provider_key = provider_config_key(provider)
         if not provider_key:
@@ -5495,7 +5610,7 @@ class SettingsScreen(BaseAppScreen):
         save_settings_to_cli_config(section_values)
 
     def _provider_readiness_test_report(self) -> tuple[str, str, bool]:
-        """Run the local provider readiness test.
+        """Run the local provider readiness test against the DRAFT config.
 
         Returns:
             Tuple of (detail line for the results row, toast summary stating
@@ -5504,33 +5619,96 @@ class SettingsScreen(BaseAppScreen):
         try:
             provider = self._provider_widget_value()
             model = self.query_one("#settings-model-value", Input).value.strip()
+            draft_endpoint = self.query_one(
+                "#settings-provider-endpoint-value", Input
+            ).value.strip()
         except QueryError:
             values = self._provider_setting_values()
             provider = str(values.get("provider") or "").strip()
             model = str(values.get("model") or "").strip()
-
+            draft_endpoint = str(values.get("endpoint") or "").strip()
+        draft = self._provider_draft()
+        dirty = draft.dirty_keys if draft is not None else set()  # dirty_keys is a @property
         readiness = get_provider_readiness(
-            provider,
-            getattr(self.app_instance, "app_config", {}) or {},
+            provider, self._provider_test_staged_config(provider)
+        )
+        return self._build_provider_readiness_findings(
+            provider, model, readiness, draft_endpoint=draft_endpoint, dirty=dirty
         )
 
-        findings: list[str] = ["Provider test"]
-        findings.append(readiness.user_message)
+    def _build_provider_readiness_findings(
+        self,
+        provider: str,
+        model: str,
+        readiness,
+        *,
+        draft_endpoint: str,
+        dirty: set[str],
+    ) -> tuple[str, str, bool]:
+        """Assemble the Test evidence line + toast from resolved inputs.
+
+        Reads only ``app_config`` (via helpers) and ``os.environ`` -- never widgets
+        -- so it is unit-testable on a bare screen instance.
+
+        Args:
+            provider: Provider under test (draft widget value).
+            model: Model under test (draft widget value).
+            readiness: ``ProviderReadiness`` from the draft-overlaid config.
+            draft_endpoint: The endpoint the test used (draft widget, may be empty).
+            dirty: The provider draft's dirty field keys.
+
+        Returns:
+            Tuple of (redacted detail line, redacted toast summary, passed).
+        """
+        provider_key = provider_config_key(provider)
+        findings: list[str] = ["Provider test", readiness.user_message]
+
         if not model:
             findings.append("model=missing")
         else:
-            findings.append(f"model={model}")
+            findings.append(f"model={model}{' (draft)' if 'model' in dirty else ''}")
 
+        # This literal marker holds no secret material (just a provenance
+        # label). redact_secret_text() pattern-matches on "...key...=value",
+        # so if it were run through the same redaction pass as the other
+        # findings it would truncate the word "draft" right after "=". It is
+        # therefore excluded from redaction below (see `api_key_relabelled`).
+        draft_api_key_label = "api_key_source=draft api_key (unsaved)"
+        api_key_relabelled = False
         if readiness.api_key_source:
-            findings.append(f"api_key_source={readiness.api_key_source}")
+            if (
+                "api_key" in dirty
+                and readiness.api_key_source
+                == f"config:api_settings.{provider_key}.api_key"
+            ):
+                findings.append(draft_api_key_label)
+                api_key_relabelled = True
+            else:
+                findings.append(f"api_key_source={readiness.api_key_source}")
         if readiness.env_var:
-            raw_value = os.environ.get(readiness.env_var)
+            # Report presence only, never the raw value. ``redact_secret_text``
+            # is name-pattern based (it redacts only ``*_API_KEY``/``TOKEN``/...),
+            # so a custom-named credential env var (e.g. ``MY_LLAMA_CRED``) would
+            # otherwise print its secret verbatim into this screenshot-able UI.
+            # Emitting the established ``<redacted>`` marker for any set value
+            # keeps the standard-name output identical while closing that gap
+            # (folds in task-483).
+            env_present = bool(os.environ.get(readiness.env_var))
+            env_tag = " (draft env var)" if "credential_env_var" in dirty else ""
             findings.append(
-                f"{readiness.env_var}={raw_value if raw_value else 'missing'}"
+                f"{readiness.env_var}={'<redacted>' if env_present else 'missing'}{env_tag}"
             )
         elif not readiness.requires_api_key:
             findings.append("api_key=not required")
-        findings.append(self._provider_endpoint_summary(provider))
+
+        # Mask any password embedded in the endpoint's userinfo before display
+        # (name-pattern redaction misses ``scheme://user:pass@host``).
+        endpoint_summary = self._provider_endpoint_summary(
+            provider, endpoint=_mask_url_userinfo(draft_endpoint)
+        )
+        if "endpoint" in dirty:
+            endpoint_summary = f"{endpoint_summary} (draft)"
+        findings.append(endpoint_summary)
 
         passed = bool(readiness.ready and model)
         findings.append(f"status={'ready' if passed else 'blocked'}")
@@ -5544,9 +5722,18 @@ class SettingsScreen(BaseAppScreen):
             if not model:
                 summary += " Also set a default model."
         else:
-            summary = f"Provider test failed: {display_name} is ready but no default model is set."
+            summary = (
+                f"Provider test failed: {display_name} is ready but no default model is set."
+            )
+        if api_key_relabelled:
+            detail = " | ".join(
+                finding if finding == draft_api_key_label else redact_secret_text(finding)
+                for finding in findings
+            )
+        else:
+            detail = redact_secret_text(" | ".join(findings))
         return (
-            redact_secret_text(" | ".join(findings)),
+            detail,
             redact_secret_text(summary),
             passed,
         )
