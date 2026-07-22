@@ -9729,6 +9729,32 @@ class ChatScreen(BaseAppScreen):
         if pending_skill_name is not None:
             self._console_pending_skill_marker_name = None
             self._append_console_skill_run_marker(pending_skill_name)
+        # task-351(a): echo the just-appended USER message immediately rather
+        # than waiting up to a full 0.2s transcript-poll cycle (and a heavy
+        # first poll after it). The composer clears here at acceptance, so
+        # without this the transcript still read "No messages yet" for ~600ms
+        # after the text vanished — reading as "not sent". This hook only fires
+        # once submit_draft has confirmed the turn actually proceeds (never for
+        # a blocked/refused send), so the USER row is already in the store.
+        # `_sync_native_console_chat_ui` coalesces against a running sync via
+        # its own `_console_sync_in_progress`/`_console_sync_requested` guard
+        # (a concurrent call sets "requested" and the in-progress run re-fires
+        # from its `finally`), so the echo still lands. NOT `exclusive=True`:
+        # that would CANCEL a console-sync worker mid-flight, and a sync
+        # cancelled after it advanced a scope sentinel but before its awaited
+        # refresh completed would leave inspector/summary caches stale until the
+        # scope next changes (Qodo #2). Coalescing gives the echo without that
+        # cancellation. `exit_on_error=False`: best-effort acknowledgment — if
+        # the screen is tearing down (or a send races a navigation away) the
+        # sync can hit a removed widget and raise `NoMatches`; the poll runs the
+        # same coroutine from a timer whose exceptions Textual already absorbs,
+        # so a transient failure here must likewise never crash the app (default
+        # `exit_on_error=True` would) — the next poll re-renders regardless.
+        self.run_worker(
+            self._sync_native_console_chat_ui(),
+            group="console-sync",
+            exit_on_error=False,
+        )
 
     def _console_pending_image_attachment(self):
         """Return a staged image attachment, if any staged item qualifies.
