@@ -206,7 +206,7 @@ from ...Widgets.Library import (
     skill_context_toggle_label,
     skill_disable_model_label,
     skill_editor_warning_lines,
-    skill_trust_remediation_copy,
+    skill_trust_panel_remediation_copy,
     skill_trust_review_enabled,
     skill_trust_review_preview,
     skill_trust_state_line,
@@ -1099,6 +1099,19 @@ class LibraryScreen(BaseAppScreen):
         # recompose scrolls the action row (Save + status) back into view
         # instead of landing at the top away from what the user pressed.
         self._library_skill_scroll_pending: bool = False
+        # Task 5 (skills-foundation): the Skills-list header's adaptive
+        # trust posture (``SkillTrustService.trust_posture()`` -- Task 3),
+        # cached here since it's read off-thread (may touch the OS
+        # keyring), never on the compose path. ``""`` hides the header --
+        # see ``_refresh_library_skills_trust_posture``.
+        self._library_skills_trust_posture: str = ""
+        # Confirm-gate for the destructive Reset action (wipes the trust
+        # manifest -- every skill drops back to needs-review). Armed by
+        # either the list header's standalone Reset button or the editor's
+        # ``quarantined_manifest_error`` trust panel's own Reset button --
+        # both share this single flag/handler set since only one of the
+        # two views is ever mounted at a time.
+        self._library_skill_trust_confirming_reset: bool = False
         self._library_note_detail: Mapping[str, Any] | None = None
         self._selected_note_id: str = ""
         self._library_note_version: int | None = None
@@ -1787,6 +1800,13 @@ class LibraryScreen(BaseAppScreen):
         self._apply_local_source_snapshot(
             records, counts, total_known, lookup_error, recovery_state, study_counts
         )
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS:
+            # Task 5: this snapshot includes the skills entry the list view
+            # reads (``_build_library_skills_state``) -- re-check the trust
+            # posture alongside it (scoped to when skills are actually
+            # being browsed, so every OTHER content type's refresh doesn't
+            # pay for an off-thread keyring read it has no use for).
+            self._refresh_library_skills_trust_posture()
 
     def _carry_selected_conversation_into_snapshot(
         self,
@@ -3707,6 +3727,14 @@ class LibraryScreen(BaseAppScreen):
                             confirming_delete=self._library_skill_confirming_delete,
                             scroll_to_actions=self._consume_library_skill_scroll_pending(),
                             skill_path=self._library_skill_on_disk_path(),
+                            # Task 5: the editor's own trust panel renders a
+                            # Reset button for ``quarantined_manifest_error``
+                            # (no adaptive header in editor mode, so
+                            # ``trust_posture`` itself is unused here) and
+                            # needs the same confirm-gate the list header
+                            # uses -- both share one screen-level flag/handler
+                            # set since only one view is ever mounted.
+                            confirming_reset=self._library_skill_trust_confirming_reset,
                             id="library-skills-canvas",
                         )
                 elif shell.canvas_kind == "skills":
@@ -3718,6 +3746,11 @@ class LibraryScreen(BaseAppScreen):
                         import_path=self._library_skills_import_path,
                         import_status=self._library_skills_import_status,
                         import_review_name=self._library_skills_import_review_name,
+                        # Task 5: the adaptive trust header + its
+                        # confirm-gated standalone Reset action, computed
+                        # off-thread (see ``_refresh_library_skills_trust_posture``).
+                        trust_posture=self._library_skills_trust_posture,
+                        confirming_reset=self._library_skill_trust_confirming_reset,
                         id="library-skills-canvas",
                     )
                 elif shell.canvas_kind == "search":
@@ -3961,6 +3994,54 @@ class LibraryScreen(BaseAppScreen):
             query=self._library_skills_filter,
             sort=self._library_skills_sort,
         )
+
+    def _refresh_library_skills_trust_posture(self) -> None:
+        """Kick an off-thread read of the Skills trust service's posture.
+
+        Task 5: ``SkillTrustService.trust_posture()`` may touch the OS
+        keyring, so it is NEVER called on the compose/event-loop thread --
+        only from here, via ``asyncio.to_thread`` in
+        ``_load_library_skills_trust_posture`` below. Called on every entry
+        into the skills browse row (``_select_library_rail_row``) and
+        whenever the skills snapshot itself is refreshed
+        (``_refresh_local_source_snapshot``), so a stale cached posture
+        from a previous visit (e.g. locked -> unlocked in another session)
+        never lingers.
+
+        Hidden (``""``) rather than fetched at all when the trust service
+        is absent or doesn't expose ``trust_posture`` (server mode / no
+        local trust service wired) -- the list canvas already renders no
+        header for ``""``.
+        """
+        service = getattr(self.app_instance, "local_skill_trust_service", None)
+        posture_fn = getattr(service, "trust_posture", None)
+        if not callable(posture_fn):
+            self._library_skills_trust_posture = ""
+            return
+        self.run_worker(
+            self._load_library_skills_trust_posture(posture_fn),
+            exclusive=True,
+            group="library_skills_trust_posture",
+            exit_on_error=False,
+        )
+
+    async def _load_library_skills_trust_posture(self, posture_fn) -> None:
+        """Await the off-thread ``trust_posture()`` call and apply the result.
+
+        Args:
+            posture_fn: The trust service's bound ``trust_posture`` method
+                (captured by ``_refresh_library_skills_trust_posture`` so
+                this never re-reads ``local_skill_trust_service`` itself --
+                irrelevant here, but keeps this a pure "run this callable
+                off-thread" step).
+        """
+        try:
+            posture = await asyncio.to_thread(posture_fn)
+        except Exception:
+            posture = ""
+        self._library_skills_trust_posture = posture if isinstance(posture, str) else ""
+        if self.is_mounted and self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS:
+            self.refresh(recompose=True)
 
     async def _refresh_library_media_detail(self, media_id: str) -> None:
         """Fetch and store the full detail for a selected Library media item.
@@ -6492,6 +6573,13 @@ class LibraryScreen(BaseAppScreen):
             # skill-editor field itself, so it needs no preceding
             # ``_reset_library_skill_editor_state()`` call here.
             self._enter_library_skill_create_editor()
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS:
+            # Task 5: refresh the adaptive trust header's posture on every
+            # entry into the skills LIST view (never on Create > New skill,
+            # which lands straight in the editor and has no header to
+            # refresh) -- read off-thread, see
+            # ``_refresh_library_skills_trust_posture``'s docstring for why.
+            self._refresh_library_skills_trust_posture()
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
             and not self._library_collections_loaded
@@ -7748,7 +7836,7 @@ class LibraryScreen(BaseAppScreen):
             pass
         try:
             self.query_one("#library-skill-trust-remediation", Static).update(
-                skill_trust_remediation_copy(
+                skill_trust_panel_remediation_copy(
                     state.trust_status, self._library_skill_on_disk_path()
                 )
             )
@@ -8624,6 +8712,204 @@ class LibraryScreen(BaseAppScreen):
             return result
         return None
 
+    @on(Button.Pressed, "#library-skills-trust-action")
+    def handle_library_skills_trust_action(self, event: Button.Pressed) -> None:
+        """Dispatch the Skills-list header's single adaptive action Button.
+
+        Task 5: the action id (``setup``/``resetup``/``unlock``/``retry``/
+        ``review``) is set by the canvas onto the Button itself
+        (``button.trust_action`` -- see ``skill_trust_header_line`` and
+        ``_compose_list``), computed purely from the current
+        ``trust_posture``/blocked count. ``""`` never renders a button at
+        all, so every branch below is reachable.
+
+        Args:
+            event: Button press event emitted by the header's action Button.
+        """
+        event.stop()
+        action = getattr(event.button, "trust_action", "")
+        if action in ("setup", "resetup"):
+            self._begin_library_skill_trust_setup()
+        elif action == "unlock":
+            self.run_worker(
+                self._unlock_library_skill_trust(),
+                exclusive=True,
+                group="library_skill_trust",
+            )
+        elif action == "retry":
+            self._refresh_library_skills_trust_posture()
+        elif action == "review":
+            self._open_first_blocked_skill()
+
+    def _begin_library_skill_trust_setup(self) -> None:
+        self.run_worker(
+            self._setup_library_skill_trust(),
+            exclusive=True,
+            group="library_skill_trust",
+        )
+
+    async def _setup_library_skill_trust(self) -> None:
+        """Set up trust from the list header's "setup"/"resetup" action.
+
+        Task 5 ambiguity resolution: "Set up" is reset-then-bootstrap ONLY
+        when a stale manifest already exists (``trust_store.has_manifest()``
+        -- the ``needs_resetup``/orphaned-manifest upgrade case). A truly
+        fresh install (no manifest at all, ``needs_setup``) skips the reset
+        entirely -- there is nothing to clear -- and goes straight to
+        ``bootstrap_trust``, matching the editor's own first-run
+        ``_bootstrap_library_skill_trust`` flow. Both the header's "setup"
+        and "resetup" action ids route here (``handle_library_skills_trust_action``
+        above); the manifest check itself is what decides whether a reset
+        actually happens, not the action id.
+        """
+        service = getattr(self.app_instance, "local_skill_trust_service", None)
+        if service is None:
+            return
+        passphrase = await self._request_library_skill_trust_bootstrap_passphrase()
+        if passphrase is None:
+            return
+        if getattr(service, "trust_store", None) and service.trust_store.has_manifest():
+            await self._call_library_skill_trust_service("reset_trust")
+        _, ok = await self._call_library_skill_trust_service(
+            "bootstrap_trust", passphrase
+        )
+        if ok:
+            self._refresh_library_skills_trust_posture()
+            self._refresh_local_source_snapshot()
+
+    @on(Button.Pressed, "#library-skills-trust-reset")
+    def handle_library_skills_trust_reset_request(self, event: Button.Pressed) -> None:
+        """Arm the destructive Reset action's confirm gate (Task 5).
+
+        Shared by BOTH places the standalone Reset button can render -- the
+        list header (postures ``needs_resetup``/``locked``) and the
+        editor's ``quarantined_manifest_error`` trust panel -- since the two
+        share the same button id (only one view is ever mounted at once).
+
+        Args:
+            event: Button press event emitted by the Reset button.
+        """
+        event.stop()
+        self._library_skill_trust_confirming_reset = True
+        if self.is_mounted:
+            self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-skills-trust-reset-cancel")
+    def handle_library_skills_trust_reset_cancel(self, event: Button.Pressed) -> None:
+        """Back out of the Reset confirm row without resetting anything.
+
+        Args:
+            event: Button press event emitted by the confirm row's Cancel.
+        """
+        event.stop()
+        self._library_skill_trust_confirming_reset = False
+        if self.is_mounted:
+            self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-skills-trust-reset-confirm")
+    def handle_library_skills_trust_reset_confirm(self, event: Button.Pressed) -> None:
+        """Run the confirmed destructive Reset (Task 5).
+
+        Args:
+            event: Button press event emitted by the confirm row's Reset.
+        """
+        event.stop()
+        self._library_skill_trust_confirming_reset = False
+        self.run_worker(
+            self._do_library_skill_trust_reset(),
+            exclusive=True,
+            group="library_skill_trust",
+        )
+
+    async def _do_library_skill_trust_reset(self) -> None:
+        """Wipe all local trust state, then refresh whichever view is open.
+
+        Always refreshes the list header's posture (a stale ``locked``/
+        ``needs_resetup`` header must never linger after a successful
+        reset) and the shared local-source snapshot. When the editor's own
+        ``quarantined_manifest_error`` trust panel is what triggered this
+        (rather than the list header), also re-fetches the OPEN skill's own
+        trust status -- mirrors the per-skill re-fetch
+        ``_bootstrap_library_skill_trust`` already does after a bootstrap --
+        so the panel doesn't keep showing "manifest cannot be verified"
+        against a trust store that was just wiped.
+        """
+        await self._call_library_skill_trust_service("reset_trust")
+        self._refresh_library_skills_trust_posture()
+        self._refresh_local_source_snapshot()
+        name = self._selected_skill_name
+        if (
+            self._library_skills_view == "editor"
+            and name
+            and self._library_skill_editor_state is not None
+        ):
+            result, ok = await self._call_library_skill_trust_service(
+                "status_for_skill", name
+            )
+            if (
+                ok
+                and result is not None
+                and name == self._selected_skill_name
+                and self._library_skills_view == "editor"
+                and self._library_skill_editor_state is not None
+            ):
+                self._library_skill_editor_state = dataclasses.replace(
+                    self._library_skill_editor_state,
+                    trust_status=result.trust_status,
+                    trust_blocked=result.trust_blocked,
+                    trust_changed_files=tuple(result.changed_files),
+                )
+            self._library_skill_active_review = None
+        if self.is_mounted:
+            self.refresh(recompose=True)
+
+    def _open_first_blocked_skill(self) -> None:
+        """Open the first trust-blocked skill's editor (header "review" action).
+
+        Sources the target from the current list state's first ``blocked``
+        row -- the exact same population/order the list view renders (see
+        ``_build_library_skills_state``) -- then hands off to
+        ``_open_library_skill_editor_for_review`` for the actual open,
+        which runs the identical steps a real row press
+        (``handle_library_skill_row``) does. A no-op when nothing is
+        blocked (the header never offers "review" in that case anyway).
+        """
+        state = self._build_library_skills_state()
+        blocked_name = next((row.name for row in state.rows if row.blocked), None)
+        if not blocked_name:
+            return
+        self.run_worker(
+            self._open_library_skill_editor_for_review(blocked_name),
+            exclusive=True,
+            group="library_skill_review_open",
+        )
+
+    async def _open_library_skill_editor_for_review(self, skill_name: str) -> None:
+        """Open ``skill_name``'s editor, the same steps a real row press runs.
+
+        Deliberately NOT a refactor of ``handle_library_skill_row`` itself
+        (that handler stays untouched) -- just the same flush-veto, reset,
+        select, switch-to-editor-view, kick-the-off-thread-detail-fetch,
+        recompose sequence, sourced from a name instead of a row Button's
+        ``skill_name`` attribute.
+
+        Args:
+            skill_name: The blocked skill's name to open.
+        """
+        if not await self._flush_library_skill_save():
+            self._notify_skill_dirty_veto()
+            return
+        self._reset_library_skill_editor_state()
+        self._selected_skill_name = skill_name
+        self._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
+        self._library_skills_view = "editor"
+        self.run_worker(
+            self._refresh_library_skill_detail(skill_name),
+            exclusive=True,
+            group="library_skill_detail",
+        )
+        self.refresh(recompose=True)
+
     @on(Button.Pressed, "#library-skill-trust-setup")
     def handle_library_skill_trust_setup(self, event: Button.Pressed) -> None:
         """Bootstrap local skill trust from the editor's first-run setup state.
@@ -8724,16 +9010,31 @@ class LibraryScreen(BaseAppScreen):
         )
 
     async def _unlock_library_skill_trust(self) -> None:
-        if self._library_skills_view != "editor":
-            return
+        """Unlock local skill trust for this session via the passphrase modal.
+
+        Task 5: reused by BOTH the editor's own "Unlock" trust-panel action
+        AND the list header's "unlock" action (posture ``locked``) -- this
+        originally returned immediately unless already in the editor,
+        which made the header's Unlock a silent no-op (browsing the list
+        is exactly where ``locked`` posture is shown). Editor mode still
+        gets the original no-recompose targeted panel patch
+        (``_refresh_library_skill_trust_status``) so an in-progress unsaved
+        edit elsewhere in the editor is never discarded by a full rebuild;
+        list mode instead refreshes the header's posture -- a real
+        recompose, but the list view has no unsaved-edit state to lose.
+        """
         passphrase = await self._request_library_skill_trust_passphrase()
         if passphrase is None:
             return
         _, ok = await self._call_library_skill_trust_service(
             "unlock_with_passphrase", passphrase
         )
-        if ok:
+        if not ok:
+            return
+        if self._library_skills_view == "editor":
             await self._refresh_library_skill_trust_status()
+        else:
+            self._refresh_library_skills_trust_posture()
 
     @on(Button.Pressed, "#library-skill-trust-review")
     def handle_library_skill_trust_review(self, event: Button.Pressed) -> None:

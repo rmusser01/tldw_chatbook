@@ -1880,6 +1880,13 @@ def test_skill_trust_remediation_copy_covers_no_exit_states():
 
 @pytest.mark.asyncio
 async def test_skill_editor_trust_panel_renders_remediation_for_manifest_error():
+    """Task 5: ``quarantined_manifest_error`` now has a real in-panel
+    recovery (Reset), so the remediation line is a short "reset to start
+    over" pointer instead of task-421's "go inspect the files by hand /
+    maybe delete the trust store" guidance -- the Reset button itself
+    drives the actual recovery, reusing the same
+    ``#library-skills-trust-reset`` id the list header's standalone Reset
+    action uses (only one view is ever mounted at a time)."""
     state = _editor_state(
         trust_status="quarantined_manifest_error", trust_blocked=True
     )
@@ -1889,7 +1896,10 @@ async def test_skill_editor_trust_panel_renders_remediation_for_manifest_error()
     async with app.run_test() as pilot:
         remediation = pilot.app.query_one("#library-skill-trust-remediation", Static)
         text = str(remediation.renderable)
-        assert "/tmp/store/skills/demo" in text
+        assert "manifest" in text.lower()
+        assert "reset" in text.lower()
+        reset_button = pilot.app.query_one("#library-skills-trust-reset", Button)
+        assert reset_button is not None
 
 
 # ---------------------------------------------------------------------------
@@ -2304,3 +2314,39 @@ def test_trust_review_preview_within_caps_unchanged():
     assert "body text" in preview
     assert "notes" in preview
     assert "omitted" not in preview
+
+
+# ---------------------------------------------------------------------------
+# Task 5 (skills-foundation): list-header trust action dispatch and the
+# confirm-gated Reset, tested direct-method style against a SimpleNamespace
+# stand-in for ``self`` (mirrors ``test_action_library_skill_save_kicks_save_worker``
+# above).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_trust_action_setup_dispatches_bootstrap():
+    calls = []
+    fake = SimpleNamespace(
+        _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
+        _begin_library_skill_trust_setup=lambda: calls.append("setup"),
+        _unlock_library_skill_trust=lambda: None,
+        run_worker=lambda coro, **k: None,
+    )
+    button = SimpleNamespace(trust_action="setup")
+    LibraryScreen.handle_library_skills_trust_action(
+        fake, SimpleNamespace(stop=lambda: None, button=button)
+    )
+    assert calls == ["setup"]
+
+
+def test_reset_requires_confirmation():
+    fake = SimpleNamespace(
+        _library_skill_trust_confirming_reset=False,
+        refresh=lambda recompose=False: None,
+        is_mounted=True,
+    )
+    LibraryScreen.handle_library_skills_trust_reset_request(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+    assert fake._library_skill_trust_confirming_reset is True
