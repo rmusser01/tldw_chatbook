@@ -26,6 +26,7 @@ from textual.color import Color
 from textual.events import Click, DescendantFocus, Key, MouseUp, Paste, Resize
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
+from textual.widget import Widget
 from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
 
 from ..Navigation.base_app_screen import BaseAppScreen
@@ -185,8 +186,10 @@ from ...Chat.console_image_view import (
     ConsoleImageRenderCache,
     ConsoleImageRowSpec,
     ConsoleImageViewState,
+    fit_image_cell_size,
     next_view_mode,
     resolve_default_mode,
+    resolve_show_character_avatar,
 )
 from ...Chat.console_paste_attach import (
     extract_dropped_path,
@@ -421,6 +424,11 @@ CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS = 2.0
 # bound, same "explicit invalidation is a nice-to-have, the TTL is the
 # correctness backstop" philosophy).
 CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
+# P3c Task 3: the "Character" rail avatar box's fitted cell size (mirrors
+# the transcript inline-image row's `fit_image_cell_size` usage, sized
+# smaller for the rail's narrower column).
+CHARACTER_AVATAR_COLS = 16
+CHARACTER_AVATAR_LINES = 8
 CONSOLE_FOCUS_REGISTRY = WorkbenchFocusRegistry(
     (
         "console-left-rail",
@@ -1934,6 +1942,15 @@ class ChatScreen(BaseAppScreen):
         # P2g-2 Task 4: same double-open guard, for the World Books
         # inspector block's Attach/Detach picker flow.
         self._console_worldbook_dialog_active = False
+        # P3c: cached avatar spec (dict | None) for the active character in
+        # the "Character" rail section, plus its display name and the
+        # scope (conversation/character) it was last computed for. Mirrors
+        # the dictionaries/world-books caches above -- the compose path
+        # reads only this cache, never doing I/O on recompose. T3 fills
+        # `_active_character_avatar`; this task only seeds the empty state.
+        self._active_character_avatar: dict | None = None
+        self._active_character_avatar_name: str | None = None
+        self._last_console_avatar_scope: Any | None = None
         self.ui_state = UIState()
         self._load_sidebar_state()
 
@@ -3874,6 +3891,181 @@ class ChatScreen(BaseAppScreen):
             )
             return str(conversation_id) if conversation_id else None
         return self._current_console_conversation_id()
+
+    def _current_console_rail_character_id(self) -> Optional[int]:
+        """Active native Console session's character id (int), or None.
+
+        Resolved ONLY off the live session (#754 sets it at Start-Chat, on
+        DB-resume, and on screen-state restore); never from legacy
+        ``app.current_chat_*`` reactives. None for a generic session.
+        """
+        native_session = self._active_native_console_session()
+        if native_session is None:
+            return None
+        character_id = getattr(native_session, "character_id", None)
+        try:
+            return int(character_id) if character_id is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _current_console_rail_character_name(self) -> Optional[str]:
+        """Active native Console session's character name, or None."""
+        native_session = self._active_native_console_session()
+        if native_session is None:
+            return None
+        name = getattr(native_session, "character_name", None)
+        return str(name) if name else None
+
+    def _fetch_character_card_for_avatar(self, character_id: int) -> dict | None:
+        """Synchronous character-card fetch for the avatar refresh (off-thread).
+
+        Canonical DB accessor used throughout `chat_screen.py` (e.g. the
+        resume path `_resolve_resumed_character_name`); there is no
+        `self.chachanotes_db`.
+        """
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return None
+        try:
+            return db.get_character_card_by_id(int(character_id))
+        except Exception:
+            logger.opt(exception=True).debug("avatar: character fetch failed")
+            return None
+
+    async def _refresh_active_character_avatar_if_scope_changed(self) -> None:
+        """Refresh the cached character avatar only when the active character changed."""
+        if not resolve_show_character_avatar(
+            getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
+        ):
+            # Feature is config-off: the rail section isn't composed, so
+            # skip the off-thread DB fetch + PIL decode below entirely and
+            # keep the cache empty for when the section is next shown.
+            self._active_character_avatar = None
+            self._active_character_avatar_name = None
+            # Invalidate the scope guard too: otherwise, if the feature is
+            # re-enabled while character_id is unchanged, the equality check
+            # below would early-return and the section would stay stuck in
+            # the empty state (Qodo #782-3). Resetting forces a repopulate on
+            # the next config-on tick.
+            self._last_console_avatar_scope = None
+            return
+        character_id = self._current_console_rail_character_id()
+        scope = (character_id,)
+        if scope == self._last_console_avatar_scope:
+            return
+        self._last_console_avatar_scope = scope
+        name = self._current_console_rail_character_name()
+        self._active_character_avatar_name = name
+        if character_id is None:
+            self._active_character_avatar = None
+            await self._render_character_avatar_into_section()
+            return
+        _, cache = self._ensure_console_image_view()
+        mode = getattr(self, "_console_image_default_mode", "pixels")
+        key = f"character:{character_id}"
+        spec = {"character_id": character_id, "name": name, "mode": mode, "pil": None, "pixels": None}
+        try:
+            card = await asyncio.to_thread(self._fetch_character_card_for_avatar, character_id)
+            image = (card or {}).get("image")
+            if isinstance(image, (bytes, bytearray)) and image:
+                ok = await asyncio.to_thread(cache.prepare, key, bytes(image))
+                if ok:
+                    if mode == "graphics":
+                        spec["pil"] = cache.get_pil(key)
+                    else:
+                        spec["pixels"] = cache.get_pixels(key)
+        except Exception:
+            logger.opt(exception=True).debug("avatar: refresh failed")
+        # Drop a stale render if the active character changed during decode.
+        if (self._current_console_rail_character_id(),) != scope or not self.is_mounted:
+            return
+        self._active_character_avatar = spec
+        await self._render_character_avatar_into_section()
+
+    async def _render_character_avatar_into_section(self) -> None:
+        """Re-mount the avatar widget + name into the (already-composed) section.
+
+        Async because Textual `Widget.mount()` returns an `AwaitMount` that
+        must be awaited so the widget is present before the caller returns.
+        `test_refresh_populates_avatar_cache_and_mounts` asserts the mounted
+        DOM state (not just the cached spec dict) right after the refresh
+        awaits this.
+        """
+        try:
+            holder = self.query_one("#console-character-avatar", Container)
+        except QueryError:
+            return  # section not composed (config off / not mounted)
+        try:
+            await holder.remove_children()
+            await holder.mount(self._build_character_avatar_widget(self._active_character_avatar))
+            try:
+                self.query_one("#console-character-name", Static).update(
+                    self._active_character_avatar_name or "No character in this chat"
+                )
+            except QueryError:
+                pass
+        except Exception:
+            # Must never raise: called from `_refresh_active_character_avatar_
+            # if_scope_changed` at two sites outside that method's own
+            # try/except, which is itself invoked unconditionally on every
+            # 0.2s Console sync tick (`_sync_native_console_chat_ui`) -- some
+            # worker dispatch sites run with `exit_on_error=True`, so an
+            # escaping mount failure (e.g. a session-switch/resume tick
+            # racing a transient layout state) could crash the app.
+            logger.opt(exception=True).debug("avatar: render into section failed")
+
+    def _build_character_avatar_widget(self, spec: dict | None) -> Widget:
+        """Build a fresh avatar widget from the cached spec (data, not a widget).
+
+        `spec` is `{character_id, name, mode, pil, pixels}` (T3 fills it via
+        `_refresh_active_character_avatar_if_scope_changed`). With no spec,
+        or a spec whose image decode failed/is pending, render a compact
+        text placeholder. The cache holds this spec (data), not a live
+        widget -- every (re)mount builds a fresh widget from it.
+
+        This method must NEVER raise: it is reached from
+        `_render_character_avatar_into_section`, which runs outside
+        `_refresh_active_character_avatar_if_scope_changed`'s try/except (and
+        that refresh itself must never raise into the 0.2s Console sync
+        poll). Any image-build failure -- graphics mount OR the rich_pixels
+        fallback -- degrades to the same text placeholder used for the
+        no-image case.
+        """
+        if not spec or (spec.get("pil") is None and spec.get("pixels") is None):
+            hint = "no avatar" if (spec and spec.get("character_id") is not None) else "No character in this chat"
+            return Static(hint, id="console-character-avatar-empty")
+        if spec.get("mode") == "graphics" and spec.get("pil") is not None:
+            try:
+                from textual_image.widget import Image as _GraphicsImage
+                widget = _GraphicsImage(spec["pil"], id="console-character-avatar-image")
+                # Explicit fitted cell size, not just max-width/max-height --
+                # see `console_transcript._image_row_widget`'s identical
+                # guard: textual_image's "auto" sizing resolves its render
+                # region from the parent's settled layout, and mounting a
+                # tick before that settles can ask the renderer to scale
+                # into a transient 0-width/height region, which PIL's
+                # resize() raises on.
+                w, h = fit_image_cell_size(spec["pil"].width, spec["pil"].height,
+                                           CHARACTER_AVATAR_COLS, CHARACTER_AVATAR_LINES)
+                widget.styles.width = w
+                widget.styles.height = h
+                return widget
+            except Exception:
+                logger.opt(exception=True).debug("avatar: graphics mount failed")
+        try:
+            pixels = spec.get("pixels")
+            if pixels is None and spec.get("pil") is not None:
+                scaled = spec["pil"].copy()
+                scaled.thumbnail((CHARACTER_AVATAR_COLS, CHARACTER_AVATAR_LINES * 2))
+                from rich_pixels import Pixels
+                pixels = Pixels.from_image(scaled)
+            widget = Static(pixels if pixels is not None else "", id="console-character-avatar-image")
+            widget.styles.max_width = CHARACTER_AVATAR_COLS
+            widget.styles.max_height = CHARACTER_AVATAR_LINES
+            return widget
+        except Exception:
+            logger.opt(exception=True).debug("avatar: pixels build failed")
+            return Static("no avatar", id="console-character-avatar-empty")
 
     def _console_session_id_for_workspace_conversation(
         self,
@@ -8670,6 +8862,35 @@ class ChatScreen(BaseAppScreen):
                             details_tray.styles.min_width = 0
                             yield details_tray
 
+                        # Section 5: Character (avatar of the active character).
+                        if resolve_show_character_avatar(
+                            getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
+                        ):
+                            yield ConsoleRailSectionHeader(
+                                "Character",
+                                section_id="character",
+                                open=rail_state.character_open,
+                                id="console-rail-section-header-character",
+                            )
+                            character_body = Vertical(
+                                id="console-rail-section-body-character",
+                                classes="console-rail-section-body",
+                            )
+                            character_body.styles.height = "auto"
+                            if not rail_state.character_open:
+                                character_body.styles.display = "none"
+                            with character_body:
+                                avatar_holder = Container(id="console-character-avatar")
+                                with avatar_holder:
+                                    yield self._build_character_avatar_widget(
+                                        self._active_character_avatar
+                                    )
+                                yield Static(
+                                    self._active_character_avatar_name
+                                    or "No character in this chat",
+                                    id="console-character-name",
+                                )
+
                 main_column = Vertical(id="console-main-column")
                 main_column.styles.width = "13fr"
                 main_column.styles.min_width = 56
@@ -10128,6 +10349,13 @@ class ChatScreen(BaseAppScreen):
             # stale frame behind.
             await self._refresh_active_dictionaries_summary_if_scope_changed()
             await self._refresh_active_world_books_summary_if_scope_changed()
+            # P3c Task 4: mirrors the dictionary/world-book scope-guarded
+            # refresh pattern immediately above -- safe to call unconditionally
+            # on every sync tick because the refresh is itself scope-guarded
+            # (no-op when the active character hasn't changed) and never
+            # raises (see `_refresh_active_character_avatar_if_scope_changed`
+            # docstring, T3).
+            await self._refresh_active_character_avatar_if_scope_changed()
             # task-280: hand the control bar a pre-await snapshot (its own
             # pre-existing timing). The rail-VISIBILITY call below must NOT
             # reuse this snapshot: `_sync_console_native_session_tabs` can
