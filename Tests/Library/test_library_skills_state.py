@@ -250,5 +250,9 @@ def test_skill_trust_header_line_maps_postures():
     assert skill_trust_header_line("ready", 3)[1] == "review"
     assert "3 skill" in skill_trust_header_line("ready", 3)[0]
     assert skill_trust_header_line("ready", 0)[1] == ""
+    # error posture (corrupt/tampered manifest) -> still a header, with a
+    # list-level recovery action (reuses "resetup" -- reset-then-bootstrap).
+    assert skill_trust_header_line("error", 0)[1] == "resetup"
+    assert "can't be verified" in skill_trust_header_line("error", 0)[0]
     # disabled/empty posture -> hidden
     assert skill_trust_header_line("", 0) is None

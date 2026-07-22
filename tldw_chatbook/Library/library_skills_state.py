@@ -236,11 +236,14 @@ def skill_trust_header_line(
     Args:
         posture: The trust service's ``trust_posture()`` value -- one of
             ``"needs_setup"``, ``"needs_resetup"``, ``"unavailable"``,
-            ``"locked"``, ``"error"``, ``"ready"`` (Task 3). ``"error"`` and
-            any other unrecognized/empty value hide the header (``None``) --
-            the list canvas already degrades gracefully with no header, and
+            ``"locked"``, ``"error"``, ``"ready"`` (Task 3). Any other
+            unrecognized/empty value hides the header (``None``) -- the
+            list canvas already degrades gracefully with no header, and
             surfacing raw trust-service errors here would be noise the user
-            can't act on from this screen.
+            can't act on from this screen. ``"error"`` (a corrupt/tampered
+            manifest) still gets a header, though: without one, blocked
+            skills would render with no list-level recovery action at all,
+            forcing the user to open a skill just to find the reset path.
         blocked_count: Number of rows in the current list state that are
             currently trust-blocked (``row.blocked``).
 
@@ -258,6 +261,11 @@ def skill_trust_header_line(
         return ("Skill trust is temporarily unavailable — try again.", "retry")
     if posture == "locked":
         return ("Skill trust is locked for this session.", "unlock")
+    if posture == "error":
+        # Reuses the "resetup" action_id -- it already routes to
+        # reset-then-bootstrap, the only recovery that makes sense when the
+        # trust manifest itself can't be read/verified.
+        return ("Skill trust can't be verified — set it up again.", "resetup")
     if posture == "ready":
         if blocked_count > 0:
             noun = "skill needs" if blocked_count == 1 else "skills need"

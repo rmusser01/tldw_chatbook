@@ -192,17 +192,6 @@ class KeyringSkillTrustGenerationMarkerStore:
                 pass
 
 
-def build_default_skill_trust_marker_store(
-    keyring_backend: Any | None = None,
-) -> SkillTrustGenerationMarkerStore:
-    """Return a secure default marker store or a fail-closed unavailable store."""
-
-    try:
-        return KeyringSkillTrustGenerationMarkerStore(keyring_backend=keyring_backend)
-    except Exception as exc:
-        return UnavailableSkillTrustGenerationMarkerStore(str(exc))
-
-
 def build_skill_trust_marker_store_with_fallback(
     *,
     fallback_marker_path: Path,

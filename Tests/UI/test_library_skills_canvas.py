@@ -299,6 +299,18 @@ async def test_skills_list_trust_header_hidden_when_posture_absent():
         assert not pilot.app.query("#library-skills-trust-action")
 
 
+@pytest.mark.asyncio
+async def test_skills_list_trust_header_hidden_when_zero_skills():
+    """Spec's "don't nag" rule: with zero skills installed, the trust
+    header (and its action button) stays hidden even for a posture that
+    would otherwise render one -- there's nothing to review/trust yet."""
+    empty_state = SkillsListState(rows=(), count=0, sort="name")
+    app = _CanvasHost(empty_state, trust_posture="needs_setup")
+    async with app.run_test() as pilot:
+        assert not pilot.app.query("#library-skills-trust-header")
+        assert not pilot.app.query("#library-skills-trust-action")
+
+
 # ---------------------------------------------------------------------------
 # Editor widget-only tests (Task 4): mounts LibrarySkillsListCanvas directly
 # with mode="editor", mirroring test_library_prompts_canvas.py's own

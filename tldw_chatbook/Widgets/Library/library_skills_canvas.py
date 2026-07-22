@@ -580,36 +580,42 @@ class LibrarySkillsListCanvas(VerticalScroll):
         # Task 4: adaptive trust header -- posture-driven copy plus an
         # optional single inline action, computed from THIS state's own
         # blocked-row count (not a screen-supplied total) so it always
-        # matches what's actually rendered below.
-        blocked_count = sum(1 for row in state.rows if getattr(row, "blocked", False))
-        header = skill_trust_header_line(self.trust_posture, blocked_count)
-        if header is not None:
-            copy, action_id = header
-            yield Static(copy, id="library-skills-trust-header", markup=False)
-            if action_id:
-                button = Button(
-                    _TRUST_HEADER_ACTION_LABELS[action_id],
-                    id="library-skills-trust-action",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                button.trust_action = action_id  # read by the screen handler
-                yield button
-            # Task 5: a SEPARATE, always-destructive escape hatch for the
-            # two postures where the header's own action button doesn't
-            # cover "start over from nothing" -- "resetup" already
-            # reset-then-bootstraps behind a NEW passphrase, and "unlock"
-            # assumes you still remember the OLD one. Neither is a way out
-            # if the manifest itself is the problem.
-            if self.trust_posture in _TRUST_POSTURES_WITH_RESET:
-                yield Button(
-                    _RESET_TRUST_BUTTON_LABEL,
-                    id="library-skills-trust-reset",
-                    classes="library-canvas-action library-media-action-danger",
-                    compact=True,
-                )
-                if self.confirming_reset:
-                    yield from self._compose_trust_reset_confirm_row()
+        # matches what's actually rendered below. Spec's "don't nag" rule:
+        # with zero skills installed there is nothing to review/trust yet,
+        # so the header (and its escape-hatch reset button) stays hidden
+        # entirely rather than greeting an empty list with a trust prompt.
+        if state.rows:
+            blocked_count = sum(
+                1 for row in state.rows if getattr(row, "blocked", False)
+            )
+            header = skill_trust_header_line(self.trust_posture, blocked_count)
+            if header is not None:
+                copy, action_id = header
+                yield Static(copy, id="library-skills-trust-header", markup=False)
+                if action_id:
+                    button = Button(
+                        _TRUST_HEADER_ACTION_LABELS[action_id],
+                        id="library-skills-trust-action",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    button.trust_action = action_id  # read by the screen handler
+                    yield button
+                # Task 5: a SEPARATE, always-destructive escape hatch for the
+                # two postures where the header's own action button doesn't
+                # cover "start over from nothing" -- "resetup" already
+                # reset-then-bootstraps behind a NEW passphrase, and "unlock"
+                # assumes you still remember the OLD one. Neither is a way
+                # out if the manifest itself is the problem.
+                if self.trust_posture in _TRUST_POSTURES_WITH_RESET:
+                    yield Button(
+                        _RESET_TRUST_BUTTON_LABEL,
+                        id="library-skills-trust-reset",
+                        classes="library-canvas-action library-media-action-danger",
+                        compact=True,
+                    )
+                    if self.confirming_reset:
+                        yield from self._compose_trust_reset_confirm_row()
         yield Input(
             placeholder="Filter skills… (Enter)",
             id="library-skills-filter",
