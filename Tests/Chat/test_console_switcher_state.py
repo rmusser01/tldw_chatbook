@@ -95,9 +95,10 @@ def test_limit_zero_returns_no_entries():
 
 def test_subtitle_joins_available_parts():
     entry = build_console_switcher_entries([_row()])[0]
-    assert entry.subtitle == "Workspace 1 - workspace-thread - 2m"
+    # TASK-356: the switcher shows the shared friendly vocabulary, not raw status.
+    assert entry.subtitle == "Workspace 1 - saved chat - 2m"
     bare = build_console_switcher_entries(
-        [_row(row_key="x", workspace_label="", status="", updated_label="")]
+        [_row(row_key="x", workspace_label="", status="", updated_label="", updated_sort="")]
     )[0]
     assert bare.subtitle == ""
 
@@ -114,3 +115,41 @@ def test_matcher_tolerates_none_fields_without_raising():
     )
     assert _matches(none_row, []) is True
     assert _matches(none_row, ["anything"]) is False
+
+
+def test_switcher_status_uses_saved_chat_vocabulary_not_in_progress():
+    """TASK-356: the switcher must not label idle saved conversations
+    'in-progress' (raw status) — it must use the same friendly vocabulary
+    the rail shows ('saved chat'), so the two surfaces don't contradict."""
+    entries = build_console_switcher_entries(
+        [_row(status="in-progress", updated_label="")]
+    )
+    subtitle = entries[0].subtitle
+    assert "in-progress" not in subtitle
+    assert "saved chat" in subtitle
+
+
+def test_switcher_status_maps_membership_and_session_states():
+    saved = build_console_switcher_entries(
+        [_row(row_key="a", status="workspace-thread", updated_label="")]
+    )[0].subtitle
+    active = build_console_switcher_entries(
+        [_row(row_key="b", status="active", updated_label="")]
+    )[0].subtitle
+    assert "saved chat" in saved
+    assert "active session" in active
+
+
+def test_switcher_shows_recency_when_updated_label_absent():
+    """TASK-356: the rail carries age labels; the switcher must too. When a
+    row lacks a precomputed updated_label, derive it from updated_sort so
+    recognition works where it matters most."""
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 7, 4, 12, 0, 0, tzinfo=timezone.utc)
+    entries = build_console_switcher_entries(
+        [_row(updated_label="", updated_sort="2026-07-04T11:58:00+00:00")],
+        now=now,
+    )
+    # 2 minutes before `now`.
+    assert "2m" in entries[0].subtitle

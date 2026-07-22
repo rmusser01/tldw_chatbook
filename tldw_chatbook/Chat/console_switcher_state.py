@@ -5,9 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
+from datetime import datetime, timezone
+
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserInputRow,
     ReverseKey,
+    console_conversation_status_detail,
+    format_console_relative_age,
 )
 
 CONSOLE_SWITCHER_RESULT_LIMIT = 20
@@ -53,6 +57,7 @@ def build_console_switcher_entries(
     *,
     query: str = "",
     limit: int = CONSOLE_SWITCHER_RESULT_LIMIT,
+    now: datetime | None = None,
 ) -> tuple[ConsoleSwitcherEntry, ...]:
     """Build deduped, recent-first switcher results for a query.
 
@@ -85,11 +90,20 @@ def build_console_switcher_entries(
             row.row_key,
         )
     )
+    reference_now = now or datetime.now(timezone.utc)
     entries = []
     for row in deduped[: max(0, int(limit))]:
+        # TASK-356: one state vocabulary across surfaces ("saved chat", not
+        # the raw "in-progress"), and always show recency — deriving it from
+        # updated_sort when the row carries no precomputed age label (the
+        # switcher's input rows usually don't, unlike the rail's).
+        status_detail = console_conversation_status_detail(row.status)
+        recency = str(row.updated_label or "").strip() or format_console_relative_age(
+            str(row.updated_sort or ""), now=reference_now
+        )
         subtitle = " - ".join(
             part
-            for part in (row.workspace_label, row.status, row.updated_label)
+            for part in (row.workspace_label, status_detail, recency)
             if str(part or "").strip()
         )
         entries.append(

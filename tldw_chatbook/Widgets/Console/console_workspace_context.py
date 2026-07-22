@@ -17,6 +17,7 @@ from tldw_chatbook.Chat.console_glyphs import (
     GLYPH_EXPANDED,
 )
 from tldw_chatbook.Workspaces.conversation_browser_state import (
+    console_conversation_status_detail,
     ConsoleConversationBrowserGroup,
     ConsoleConversationBrowserRow,
     ConsoleConversationBrowserSection,
@@ -1186,8 +1187,9 @@ class ConsoleWorkspaceContextTray(Vertical):
 
     @staticmethod
     def _conversation_detail_status(status: str) -> str:
-        """Return second-line row metadata for row disambiguation."""
-        normalized = str(status or "").strip().lower()
-        if not normalized:
-            return ""
-        return _STATUS_DETAIL_LABELS.get(normalized, normalized.replace("-", " "))
+        """Return second-line row metadata for row disambiguation.
+
+        TASK-356: delegates to the shared vocabulary so the rail and the
+        Ctrl+K switcher never disagree on the same conversation's state.
+        """
+        return console_conversation_status_detail(status)
