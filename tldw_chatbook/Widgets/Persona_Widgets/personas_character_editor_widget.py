@@ -578,12 +578,31 @@ class PersonasCharacterEditorWidget(Container):
         if 0 <= index < len(self._greetings):
             self._greetings[index] = text
             self._render_greetings_table()
+            # Same race as Add/Move: re-render resets the DataTable cursor and
+            # queues an async RowHighlighted(row=0). Re-select the row that was
+            # actually updated so the edit box keeps showing it (not row 0's
+            # text), and so a follow-up Update commits to the right entry.
+            self._select_greeting_row(index)
             self._mark_dirty()
 
     def _greetings_delete(self, index: int) -> None:
         if 0 <= index < len(self._greetings):
             del self._greetings[index]
             self._render_greetings_table()
+            if self._greetings:
+                # Select the surviving neighbor at the same position (or the
+                # new last row if we deleted the tail) so the async
+                # RowHighlighted(row=0) queued by the re-render above doesn't
+                # silently revert the selection/edit box to row 0.
+                new_index = min(index, len(self._greetings) - 1)
+                self._select_greeting_row(new_index)
+            else:
+                # No rows left means no async RowHighlighted will ever fire to
+                # clobber this, so it's safe to set the empty state directly.
+                self._selected_greeting_index = None
+                self.query_one(
+                    "#personas-char-editor-greeting-edit", TextArea
+                ).text = ""
             self._mark_dirty()
 
     def _greetings_move(self, index: int, offset: int) -> None:
@@ -665,9 +684,10 @@ class PersonasCharacterEditorWidget(Container):
         event.stop()
         if self._selected_greeting_index is None:
             return
+        # _greetings_delete now selects the surviving neighbor (or clears the
+        # edit box if the list is empty) itself, so it must not be
+        # unconditionally overwritten here afterward.
         self._greetings_delete(self._selected_greeting_index)
-        self._selected_greeting_index = None
-        self.query_one("#personas-char-editor-greeting-edit", TextArea).text = ""
 
     @on(Button.Pressed, "#personas-char-editor-greeting-move-up")
     def _greeting_move_up_pressed(self, event: Button.Pressed) -> None:

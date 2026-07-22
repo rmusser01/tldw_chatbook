@@ -142,6 +142,108 @@ async def test_greetings_buttons_and_row_highlighted_selection_via_pilot_click()
         ]
 
 
+async def test_greetings_update_keeps_selection_and_edit_box_in_sync():
+    """Regression: Task 3's cursor-race fix (``_select_greeting_row`` after a
+    mutation's re-render) was applied to Add/Move but NOT to Update. Without
+    it, the async ``RowHighlighted(row=0)`` queued by ``_render_greetings_table``
+    (via ``clear()``/``add_row()``) lands one tick later and silently reverts
+    both ``_selected_greeting_index`` and the scratch edit box to row 0 - so a
+    follow-up Update would commit to the wrong greeting."""
+    app = _Host()
+    async with app.run_test(size=(120, 60)) as pilot:
+        ed = app.query_one(PersonasCharacterEditorWidget)
+        ed.load_character(
+            {"name": "A", "alternate_greetings": ["First", "Second", "Third"]}
+        )
+        await pilot.pause()
+        # The greetings editor lives in the Advanced section, which loads
+        # collapsed (display: none) - open it so pilot.click can hit it.
+        await pilot.click("#personas-char-editor-advanced-toggle")
+        await pilot.pause()
+
+        table = ed.query_one("#personas-char-editor-greetings-table", DataTable)
+        table.focus()
+        await pilot.pause()
+        table.move_cursor(row=1)
+        await pilot.pause()
+        assert ed._selected_greeting_index == 1
+
+        edit_area = ed.query_one("#personas-char-editor-greeting-edit", TextArea)
+        edit_area.text = "Second, edited"
+        await pilot.click("#personas-char-editor-greeting-update")
+        # Let the async RowHighlighted(row=0) queued by the re-render drain -
+        # this is exactly the tick where the pre-fix code reverted to row 0.
+        await pilot.pause()
+
+        assert ed._selected_greeting_index == 1
+        assert edit_area.text == "Second, edited"
+        assert ed.get_character_data()["alternate_greetings"] == [
+            "First",
+            "Second, edited",
+            "Third",
+        ]
+
+
+async def test_greetings_delete_selects_surviving_neighbor():
+    """Regression: same cursor-race gap as Update, but for Delete. Deleting
+    the selected row must leave the surviving neighbor at that position
+    selected (and loaded into the edit box), not silently revert to row 0
+    once the async RowHighlighted(row=0) from the re-render drains."""
+    app = _Host()
+    async with app.run_test(size=(120, 60)) as pilot:
+        ed = app.query_one(PersonasCharacterEditorWidget)
+        ed.load_character(
+            {"name": "A", "alternate_greetings": ["First", "Second", "Third"]}
+        )
+        await pilot.pause()
+        await pilot.click("#personas-char-editor-advanced-toggle")
+        await pilot.pause()
+
+        table = ed.query_one("#personas-char-editor-greetings-table", DataTable)
+        table.focus()
+        await pilot.pause()
+        table.move_cursor(row=1)
+        await pilot.pause()
+        assert ed._selected_greeting_index == 1
+
+        await pilot.click("#personas-char-editor-greeting-delete")
+        await pilot.pause()  # let the async RowHighlighted(row=0) drain
+
+        assert ed.get_character_data()["alternate_greetings"] == ["First", "Third"]
+        # min(1, len-1) == 1: "Third" is now the surviving neighbor at index 1.
+        assert ed._selected_greeting_index == 1
+        edit_area = ed.query_one("#personas-char-editor-greeting-edit", TextArea)
+        assert edit_area.text == "Third"
+
+
+async def test_greetings_delete_last_remaining_clears_selection_and_edit_box():
+    """Deleting the only remaining greeting must land on the documented empty
+    state (no selection, empty edit box) - there is no row left for an async
+    RowHighlighted to fire against, so this must be set directly."""
+    app = _Host()
+    async with app.run_test(size=(120, 60)) as pilot:
+        ed = app.query_one(PersonasCharacterEditorWidget)
+        ed.load_character({"name": "A", "alternate_greetings": ["Only"]})
+        await pilot.pause()
+        await pilot.click("#personas-char-editor-advanced-toggle")
+        await pilot.pause()
+
+        table = ed.query_one("#personas-char-editor-greetings-table", DataTable)
+        table.focus()
+        await pilot.pause()
+        table.move_cursor(row=0)
+        await pilot.pause()
+        assert ed._selected_greeting_index == 0
+
+        await pilot.click("#personas-char-editor-greeting-delete")
+        await pilot.pause()
+
+        assert ed.get_character_data()["alternate_greetings"] == []
+        assert ed._selected_greeting_index is None
+        edit_area = ed.query_one("#personas-char-editor-greeting-edit", TextArea)
+        assert edit_area.text == ""
+
+
 async def test_new_character_clears_greetings():
     app = _Host()
     async with app.run_test() as pilot:
