@@ -487,6 +487,23 @@ def _index_of(dir_nav, target: Path) -> Optional[int]:
     return None
 
 
+def _option_click_offset(dir_nav, index: int) -> tuple[int, int]:
+    """Compute a widget-local ``(x, y)`` offset that lands inside the row
+    rendered for the option at ``index``, for driving a real mouse click via
+    ``pilot.click(dir_nav, offset=...)``.
+
+    ``DirectoryNavigation`` sets ``border: blank`` (invisible, but still
+    reserves a row/column), so a click offset can't be derived from the raw
+    option index alone -- it must be adjusted by the widget's content-region
+    inset (``content_region`` vs. ``region``) and any active scroll offset.
+    """
+    content_local = dir_nav.content_region.offset - dir_nav.region.offset
+    line_number = dir_nav._index_to_line[index]
+    y = content_local.y + line_number - dir_nav.scroll_offset.y
+    x = content_local.x + 2
+    return x, y
+
+
 @pytest.mark.asyncio
 async def test_single_select_on_dir_does_not_navigate(tmp_path):
     """Highlighting/selecting a directory (single-click semantics) must not
@@ -670,6 +687,207 @@ async def test_single_select_on_file_fills_filename(tmp_path):
         filename_input = dialog.query_one("#filename-input", Input)
         assert filename_input.value == "pick_me.txt"
         assert app._result is None, "select-only must not dismiss the dialog"
+
+
+# --- Real-driver regression coverage (task-430) -----------------------------
+#
+# The tests above exercise ``action_open_highlighted()``/``action_select()``/
+# ``on_click(events.Click(...))`` directly. That's valuable for pinning down
+# exact semantics, but it never proves the real UI routes (an actual Enter
+# key press, an actual Go/Select button press with no filename typed, and an
+# actual double-click delivered through Textual's render/hit-test pipeline)
+# are wired to those methods. The tests below drive the dialog the way a
+# user actually would, so a future refactor that silently detaches a
+# binding/handler will be caught here even if the underlying action methods
+# still work in isolation.
+
+
+@pytest.mark.asyncio
+async def test_real_enter_key_descends_highlighted_dir(tmp_path):
+    """A real ``pilot.press("enter")`` -- not a direct
+    ``action_open_highlighted()`` call -- descends into a highlighted
+    directory, exercising ``SearchableDirectoryNavigation``'s Enter
+    binding end-to-end (task-430 AC#2)."""
+    subdir = tmp_path / "subdir"
+    subdir.mkdir()
+
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Real Enter Dir",
+        context="test_real_enter_dir",
+    )
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        dir_nav = dialog.query_one(SearchableDirectoryNavigation)
+        await _wait_for_options(dir_nav, pilot)
+
+        subdir_index = _index_of(dir_nav, subdir)
+        assert subdir_index is not None, "subdir should appear in the directory list"
+
+        dir_nav.highlighted = subdir_index
+        dir_nav.focus()
+        await pilot.pause()
+
+        await pilot.press("enter")
+
+        for _ in range(20):
+            if dir_nav.location == subdir.resolve():
+                break
+            await pilot.pause()
+
+        assert dir_nav.location == subdir.resolve(), (
+            "a real Enter key press must descend into the highlighted directory"
+        )
+
+
+@pytest.mark.asyncio
+async def test_real_enter_key_opens_highlighted_file(tmp_path):
+    """A real ``pilot.press("enter")`` on a highlighted file confirms and
+    returns it, dismissing the dialog end-to-end (task-430 AC#2)."""
+    test_file = tmp_path / "enter_open_me.txt"
+    test_file.write_text("hello")
+
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Real Enter File",
+        context="test_real_enter_file",
+    )
+    app = _DialogHost(dialog)
+    result = []
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        dir_nav = dialog.query_one(SearchableDirectoryNavigation)
+        await _wait_for_options(dir_nav, pilot)
+
+        file_index = _index_of(dir_nav, test_file)
+        assert file_index is not None, "test file should appear in the directory list"
+
+        dir_nav.highlighted = file_index
+        dir_nav.focus()
+        await pilot.pause()
+
+        await pilot.press("enter")
+
+        for _ in range(20):
+            if app._result is not None:
+                break
+            await pilot.pause()
+
+        result.append(app._result)
+
+    assert result[0] == test_file
+
+
+@pytest.mark.asyncio
+async def test_go_button_descends_highlighted_dir_without_filename(tmp_path):
+    """Pressing the Go/Select button (a real ``Button.Pressed`` message, via
+    ``Button.press()``) with no filename typed and a directory highlighted
+    descends into it instead of erroring or dismissing -- exercising
+    ``_confirm_single()``'s highlighted-directory branch through the actual
+    button handler (task-430 AC#2)."""
+    subdir = tmp_path / "subdir"
+    subdir.mkdir()
+
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Go Button Dir",
+        context="test_go_button_dir",
+    )
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        dir_nav = dialog.query_one(SearchableDirectoryNavigation)
+        await _wait_for_options(dir_nav, pilot)
+
+        subdir_index = _index_of(dir_nav, subdir)
+        assert subdir_index is not None, "subdir should appear in the directory list"
+
+        dir_nav.highlighted = subdir_index
+        await pilot.pause()
+
+        filename_input = dialog.query_one("#filename-input", Input)
+        assert filename_input.value == "", "no filename should be typed for this scenario"
+
+        dialog.query_one("#select").press()
+
+        for _ in range(20):
+            if dir_nav.location == subdir.resolve():
+                break
+            await pilot.pause()
+
+        assert dir_nav.location == subdir.resolve(), (
+            "Go/Select with no filename typed must descend into the highlighted directory"
+        )
+        assert app._result is None, "descending must not dismiss the dialog"
+
+
+@pytest.mark.asyncio
+async def test_real_double_click_opens_highlighted_dir(tmp_path):
+    """A double-click delivered through Textual's pilot (``times=2``) opens
+    the highlighted directory, exercising the real
+    ``MouseDown``/``MouseUp``/``Click`` dispatch and the compositor's
+    ``event.style.meta["option"]`` hit-test -- not a hand-built
+    ``events.Click(chain=2)`` object passed straight to ``on_click()``
+    (task-430 AC#2).
+
+    ``pilot.click(..., times=N)`` is Textual's own supported mechanism for
+    emulating an N-times click (see ``Pilot.click``'s docstring: "times: ...
+    2 will double-click"); it drives ``chain=1`` then ``chain=2`` through the
+    full event pipeline, which is why this is a genuine double-click and not
+    an ad-hoc probe. See ``test_double_click_opens_highlighted_dir`` above
+    for a lower-level, single-event-object check of the same
+    ``on_click`` chain-based branching.
+    """
+    subdir = tmp_path / "subdir"
+    subdir.mkdir()
+
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Real Double Click Dir",
+        context="test_real_double_click_dir",
+    )
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        dir_nav = dialog.query_one(SearchableDirectoryNavigation)
+        await _wait_for_options(dir_nav, pilot)
+
+        subdir_index = _index_of(dir_nav, subdir)
+        assert subdir_index is not None, "subdir should appear in the directory list"
+
+        dir_nav.highlighted = subdir_index
+        await pilot.pause()
+
+        offset = _option_click_offset(dir_nav, subdir_index)
+        start_location = dir_nav.location
+
+        # A real single click (chain=1) only highlights/selects -- it must
+        # not navigate.
+        await pilot.click(dir_nav, offset=offset, times=1)
+        await pilot.pause()
+        assert dir_nav.location == start_location, "a single click must not navigate"
+
+        # A real double-click (chain=1 then chain=2, delivered through the
+        # actual render/hit-test pipeline) opens the directory.
+        await pilot.click(dir_nav, offset=offset, times=2)
+
+        for _ in range(20):
+            if dir_nav.location == subdir.resolve():
+                break
+            await pilot.pause()
+
+        assert dir_nav.location == subdir.resolve(), (
+            "a real double-click must descend into the highlighted directory"
+        )
 
 
 @pytest.mark.asyncio
