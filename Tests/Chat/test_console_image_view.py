@@ -257,3 +257,29 @@ def test_fit_image_cell_size_respects_arbitrary_box():
     # The avatar box (24x10) still works through the same helper.
     cw, ch = fit_image_cell_size(1000, 1000, 24, 10)
     assert 1 <= cw <= 24 and 1 <= ch <= 10
+
+
+# --- resolve_show_character_avatar (P3c) -------------------------------------
+
+
+def test_resolve_show_character_avatar_defaults_true():
+    from tldw_chatbook.Chat.console_image_view import resolve_show_character_avatar
+
+    assert resolve_show_character_avatar({}) is True
+    assert resolve_show_character_avatar({"chat": {"images": {}}}) is True
+
+
+def test_resolve_show_character_avatar_explicit_false():
+    from tldw_chatbook.Chat.console_image_view import resolve_show_character_avatar
+
+    assert resolve_show_character_avatar(
+        {"chat": {"images": {"show_character_avatar": False}}}
+    ) is False
+
+
+def test_resolve_show_character_avatar_live_shape():
+    from tldw_chatbook.Chat.console_image_view import resolve_show_character_avatar
+
+    assert resolve_show_character_avatar(
+        {"COMPREHENSIVE_CONFIG_RAW": {"chat": {"images": {"show_character_avatar": False}}}}
+    ) is False

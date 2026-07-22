@@ -2740,6 +2740,7 @@ max_tabs = 10  # Maximum number of chat tabs allowed
 [chat.images]
 enabled = true
 show_attach_button = true  # Show/hide the attach file button in chat
+# show_character_avatar = true  # show the active character's avatar in the Console left rail
 default_render_mode = "auto"  # auto, pixels, regular
 max_size_mb = 10.0
 auto_resize = true

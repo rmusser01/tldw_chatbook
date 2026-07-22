@@ -3875,6 +3875,30 @@ class ChatScreen(BaseAppScreen):
             return str(conversation_id) if conversation_id else None
         return self._current_console_conversation_id()
 
+    def _current_console_rail_character_id(self) -> Optional[int]:
+        """Active native Console session's character id (int), or None.
+
+        Resolved ONLY off the live session (#754 sets it at Start-Chat, on
+        DB-resume, and on screen-state restore); never from legacy
+        ``app.current_chat_*`` reactives. None for a generic session.
+        """
+        native_session = self._active_native_console_session()
+        if native_session is None:
+            return None
+        character_id = getattr(native_session, "character_id", None)
+        try:
+            return int(character_id) if character_id is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _current_console_rail_character_name(self) -> Optional[str]:
+        """Active native Console session's character name, or None."""
+        native_session = self._active_native_console_session()
+        if native_session is None:
+            return None
+        name = getattr(native_session, "character_name", None)
+        return str(name) if name else None
+
     def _console_session_id_for_workspace_conversation(
         self,
         conversation_id: str,
