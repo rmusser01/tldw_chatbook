@@ -1,7 +1,7 @@
 ---
 id: task-481
 title: P3b follow-up — sweep deferred editor-polish minors
-status: To Do
+status: Done
 assignee: []
 labels:
   - tech-debt
@@ -24,5 +24,5 @@ Cleanup of Minor findings deferred from the Roleplay P3b whole-branch review (PR
 - [x] #3 `_profile_save_inflight` try-placement — DONE (cc1c04ad0): `mode`/`persona_id` reads moved inside the try.
 - [x] #4 `personality_traits` clear-to-empty Update test — DONE (cc1c04ad0).
 - [x] #5 twice-save-in-place greeting/version-preservation test — DONE (cc1c04ad0).
-- [ ] #6 (pre-existing, separate concern — the only remaining item) `Widgets/Console/console_transcript.py:_image_row_widget` shares the max-width/height-only `textual_image.Image` sizing that caused a zero-size `ValueError` under a live render in P3b Task 2 — apply the same explicit-size guard there (the avatar path already sidesteps it via `_fit_avatar_cell_size`).
+- [x] #6 `console_transcript.py:_image_row_widget` explicit-size guard — DONE in PR #775 (cf8d69c63): extracted `fit_image_cell_size` pure helper into `console_image_view.py`, set explicit fitted cell dims on the graphics image (pixels Static keeps its safe max-* cap).
 <!-- AC:END -->
