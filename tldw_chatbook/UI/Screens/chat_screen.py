@@ -9631,7 +9631,7 @@ class ChatScreen(BaseAppScreen):
             workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
             settings=settings,
         )
-        session.character_id = int(character_id)
+        session.character_id = character_id
         session.character_name = name
         if greeting:
             try:
@@ -9645,8 +9645,21 @@ class ChatScreen(BaseAppScreen):
                 logger.opt(exception=True).warning(
                     "Start Chat: greeting seed/persist failed; continuing."
                 )
-        await self._sync_native_console_chat_ui()
-        self._focus_console_composer_if_needed(force=True)
+        try:
+            await self._sync_native_console_chat_ui()
+            self._focus_console_composer_if_needed(force=True)
+        except Exception:
+            # The character session (and its greeting) is already durably
+            # created above -- a UI-sync/focus failure here must not
+            # propagate, or the caller would never clear
+            # ``pending_chat_handoff`` and a later re-consume (e.g. a
+            # screen re-mount timer) would build a SECOND durable
+            # character session.
+            logger.opt(exception=True).warning(
+                "Start Chat: post-seed console sync/focus failed; character "
+                "session was already created and the handoff is still "
+                "considered consumed."
+            )
         return True
 
     async def _consume_pending_chat_handoff(self) -> None:

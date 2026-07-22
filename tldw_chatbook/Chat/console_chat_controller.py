@@ -1138,7 +1138,7 @@ class ConsoleChatController:
         if not self._has_user_turn(provider_messages):
             return self._block(
                 session_id,
-                "Nothing to continue before the character's opening line.",
+                "Nothing to continue before the first message.",
             )
         provider_messages, refuse = await self._apply_skill_substitution(
             provider_messages
@@ -1202,7 +1202,7 @@ class ConsoleChatController:
         if not self._has_user_turn(provider_messages):
             return self._block(
                 session_id,
-                "Nothing to regenerate before the character's opening line.",
+                "Nothing to regenerate before the first message.",
             )
         provider_messages, refuse = await self._apply_skill_substitution(
             provider_messages

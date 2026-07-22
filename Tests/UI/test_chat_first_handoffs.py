@@ -413,6 +413,54 @@ async def test_native_start_chat_falls_back_when_card_fetch_fails():
 
 
 @pytest.mark.asyncio
+async def test_native_start_chat_survives_post_seed_sync_failure():
+    """A post-seed UI sync/focus failure must not leave the handoff
+    unconsumed. The character session (and its greeting) is already
+    durably created by the time ``_sync_native_console_chat_ui`` runs, so a
+    raise there must not propagate out of
+    ``_start_character_console_session`` -- otherwise the caller would
+    never clear ``pending_chat_handoff`` and a later re-consume (e.g. a
+    screen re-mount timer) would build a SECOND durable character session
+    (task-427 polish finding 1)."""
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from Tests.UI.test_screen_navigation import _build_test_app
+
+    app = _build_test_app()
+    app.chachanotes_db = _StubCharacterCardDB(
+        {
+            "name": "Elara",
+            "first_message": "Greetings, {{user}}.",
+            "system_prompt": "You are Elara, a forest guide.",
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        screen = host.screen_stack[-1]
+
+        async def _boom():
+            raise RuntimeError("sync boom")
+
+        screen._sync_native_console_chat_ui = _boom
+
+        payload = _character_start_chat_payload(
+            character_id=7, name="Elara", first_message="Greetings, {{user}}."
+        )
+
+        result = await screen._start_character_console_session(payload)
+
+        assert result is True
+        store = screen._ensure_console_chat_store()
+        character_sessions = [
+            s for s in store._sessions.values() if s.character_id == 7
+        ]
+        assert len(character_sessions) == 1
+
+
+@pytest.mark.asyncio
 async def test_resume_restores_character_identity():
     """Resuming a saved character conversation after an app restart must
     restore ``session.character_id`` so the plain-provider gate (task-3)
