@@ -16,7 +16,7 @@ from typing import Any, Dict, List
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Input, Label, Static, TextArea
+from textual.widgets import Button, DataTable, Input, Label, Static, TextArea
 
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from .personas_pane_messages import (
@@ -74,7 +74,12 @@ class PersonasCharacterEditorWidget(Container):
         height: 2;
     }
 
-    PersonasCharacterEditorWidget #personas-char-editor-alt-greetings {
+    PersonasCharacterEditorWidget #personas-char-editor-greetings-table {
+        min-height: 4;
+        max-height: 8;
+    }
+
+    PersonasCharacterEditorWidget #personas-char-editor-greeting-edit {
         height: 3;
     }
 
@@ -141,12 +146,13 @@ class PersonasCharacterEditorWidget(Container):
         # id/version (and any keys the form does not edit, e.g.
         # character_book) survive a load -> save round trip.
         self._character_data: Dict[str, Any] = {}
-        # Greeting fidelity: the loaded greetings list and its joined TextArea
-        # form. An untouched save must return the original list verbatim —
-        # re-splitting the joined text would corrupt any greeting that itself
-        # contains newlines (one multi-paragraph greeting becomes N greetings).
-        self._loaded_greetings: List[str] = []
-        self._loaded_greetings_text: str = ""
+        # Alternate greetings: a real list editor (DataTable + scratch edit
+        # TextArea), not a newline-joined blob. Each greeting is a discrete
+        # str mutated in place via _greetings_add/_update/_delete/_move, so a
+        # greeting containing embedded newlines round-trips byte-identical —
+        # there is no join/split step to corrupt it.
+        self._greetings: List[str] = []
+        self._selected_greeting_index: int | None = None
         # Dirty tracking (UX-E3): ``_loading`` suppresses Changed events that
         # are dispatched while a programmatic population is in progress;
         # ``_loaded_snapshot`` is the authoritative suppressor for the ones
@@ -207,8 +213,37 @@ class PersonasCharacterEditorWidget(Container):
                         id="personas-char-editor-tags", placeholder="tag, another tag"
                     )
                 with Vertical(classes="ds-field-row"):
-                    yield Label("Alternate greetings (one per line)")
-                    yield TextArea(id="personas-char-editor-alt-greetings")
+                    yield Label("Alternate greetings")
+                    yield DataTable(
+                        id="personas-char-editor-greetings-table", cursor_type="row"
+                    )
+                    yield TextArea(id="personas-char-editor-greeting-edit")
+                    with Horizontal(classes="ds-toolbar"):
+                        yield Button(
+                            "Add",
+                            id="personas-char-editor-greeting-add",
+                            classes="console-action-subdued",
+                        )
+                        yield Button(
+                            "Update",
+                            id="personas-char-editor-greeting-update",
+                            classes="console-action-subdued",
+                        )
+                        yield Button(
+                            "Delete",
+                            id="personas-char-editor-greeting-delete",
+                            classes="console-action-subdued",
+                        )
+                        yield Button(
+                            "Move up",
+                            id="personas-char-editor-greeting-move-up",
+                            classes="console-action-subdued",
+                        )
+                        yield Button(
+                            "Move down",
+                            id="personas-char-editor-greeting-move-down",
+                            classes="console-action-subdued",
+                        )
             with Horizontal(id="personas-char-editor-avatar-row"):
                 yield Static("Avatar: none", id="personas-char-editor-avatar-status")
                 yield Button(
@@ -232,6 +267,12 @@ class PersonasCharacterEditorWidget(Container):
                 id="personas-char-editor-cancel",
                 classes="console-action-secondary",
             )
+
+    def on_mount(self) -> None:
+        """Register the alternate-greetings table's single column."""
+        self.query_one(
+            "#personas-char-editor-greetings-table", DataTable
+        ).add_column("Greeting", key="g")
 
     # ===== Field accessors =====
 
@@ -261,20 +302,19 @@ class PersonasCharacterEditorWidget(Container):
         """Re-baseline dirty state to a just-persisted record (save-in-place).
 
         Adopts the saved record as the new base (so the next Save carries the
-        new ``version`` and any DB-normalized keys), rebaselines the greeting
-        fidelity anchors, resets the dirty snapshot from the CURRENT form
-        (which already shows the saved values), and clears validation. Does
-        NOT repopulate the form - the user's saved edits stay on screen.
+        new ``version`` and any DB-normalized keys), rebaselines the greetings
+        list, resets the dirty snapshot from the CURRENT form (which already
+        shows the saved values), and clears validation. Does NOT repopulate
+        the form - the user's saved edits stay on screen.
 
         Args:
             record: The just-persisted character record (carries the
                 incremented optimistic-lock ``version``).
         """
         self._character_data = dict(record or {})
-        self._loaded_greetings = [
+        self._greetings = [
             str(g) for g in (self._character_data.get("alternate_greetings") or [])
         ]
-        self._loaded_greetings_text = "\n".join(self._loaded_greetings)
         self._loaded_snapshot = self._form_snapshot()
         self._dirty_posted = False
         self.query_one("#personas-char-editor-validation", Static).update("")
@@ -303,11 +343,12 @@ class PersonasCharacterEditorWidget(Container):
         self._input("tags").value = ", ".join(
             str(tag) for tag in (record.get("tags") or [])
         )
-        self._loaded_greetings = [
+        self._greetings = [
             str(greeting) for greeting in (record.get("alternate_greetings") or [])
         ]
-        self._loaded_greetings_text = "\n".join(self._loaded_greetings)
-        self._area("alt-greetings").text = self._loaded_greetings_text
+        self._selected_greeting_index = None
+        self.query_one("#personas-char-editor-greeting-edit", TextArea).text = ""
+        self._render_greetings_table()
         self._set_avatar_status_from_record()
         self.query_one("#personas-char-editor-validation", Static).update("")
         self._set_advanced_open(False)
@@ -404,18 +445,10 @@ class PersonasCharacterEditorWidget(Container):
         # Empty/whitespace Version falls back to the new_character default.
         version = self._input("version").value
         data["character_version"] = version if version.strip() else "1.0"
-        # Greeting fidelity rule: if the TextArea text is exactly the joined
-        # form of the loaded list, the user did not edit it — return the
-        # ORIGINAL list verbatim so multi-line greetings survive the round
-        # trip. Only when the text was edited do we re-parse one greeting per
-        # non-blank line.
-        greetings_text = self._area("alt-greetings").text
-        if greetings_text == self._loaded_greetings_text:
-            data["alternate_greetings"] = list(self._loaded_greetings)
-        else:
-            data["alternate_greetings"] = [
-                line.strip() for line in greetings_text.splitlines() if line.strip()
-            ]
+        # Each greeting is a discrete list entry (never blob-joined/split), so
+        # this is always the exact, byte-identical list - including any
+        # embedded newlines within a single greeting.
+        data["alternate_greetings"] = list(self._greetings)
         data["tags"] = [
             tag.strip() for tag in self._input("tags").value.split(",") if tag.strip()
         ]
@@ -476,7 +509,7 @@ class PersonasCharacterEditorWidget(Container):
             self._input("creator").value,
             self._input("version").value,
             self._input("tags").value,
-            self._area("alt-greetings").text,
+            tuple(self._greetings),
         )
 
     def _set_advanced_open(self, open_: bool) -> None:
@@ -502,6 +535,67 @@ class PersonasCharacterEditorWidget(Container):
         self._dirty_posted = True
         self.post_message(EditorContentChanged())
 
+    # ===== Alternate greetings (widget-local list editor) =====
+
+    @staticmethod
+    def _greeting_preview(text: str) -> str:
+        """First-line, truncated preview for the greetings table row."""
+        first = (text or "").splitlines()[0] if text else ""
+        return (first[:60] + "…") if len(first) > 60 or "\n" in (text or "") else first
+
+    def _render_greetings_table(self) -> None:
+        table = self.query_one("#personas-char-editor-greetings-table", DataTable)
+        table.clear()
+        for i, greeting in enumerate(self._greetings):
+            table.add_row(self._greeting_preview(greeting), key=str(i))
+
+    def _load_greeting_into_edit(self, index: int) -> None:
+        if 0 <= index < len(self._greetings):
+            self.query_one(
+                "#personas-char-editor-greeting-edit", TextArea
+            ).text = self._greetings[index]
+
+    def _select_greeting_row(self, index: int) -> None:
+        """Move the table cursor to ``index`` after a mutation's re-render.
+
+        ``_render_greetings_table`` clears and rebuilds the table, which
+        resets DataTable's own cursor to row 0 and posts an async
+        ``RowHighlighted(row=0)`` that would otherwise clobber the intended
+        selection once the message queue drains. Explicitly re-issuing
+        ``move_cursor`` here posts a second, later message that wins.
+        """
+        if 0 <= index < len(self._greetings):
+            self.query_one(
+                "#personas-char-editor-greetings-table", DataTable
+            ).move_cursor(row=index)
+
+    def _greetings_add(self, text: str = "") -> None:
+        self._greetings.append(text)
+        self._render_greetings_table()
+        self._mark_dirty()
+
+    def _greetings_update(self, index: int, text: str) -> None:
+        if 0 <= index < len(self._greetings):
+            self._greetings[index] = text
+            self._render_greetings_table()
+            self._mark_dirty()
+
+    def _greetings_delete(self, index: int) -> None:
+        if 0 <= index < len(self._greetings):
+            del self._greetings[index]
+            self._render_greetings_table()
+            self._mark_dirty()
+
+    def _greetings_move(self, index: int, offset: int) -> None:
+        j = index + offset
+        if 0 <= index < len(self._greetings) and 0 <= j < len(self._greetings):
+            self._greetings[index], self._greetings[j] = (
+                self._greetings[j],
+                self._greetings[index],
+            )
+            self._render_greetings_table()
+            self._mark_dirty()
+
     # ===== Events =====
 
     @on(Input.Changed)
@@ -509,7 +603,13 @@ class PersonasCharacterEditorWidget(Container):
     def _field_changed(self, event: Input.Changed | TextArea.Changed) -> None:
         """Announce the first real user modification of the session.
 
-        All Inputs/TextAreas that bubble here are this editor's own fields.
+        All Inputs/TextAreas that bubble here are this editor's own fields,
+        EXCEPT the alternate-greetings edit TextArea: that one is a scratch
+        field for staging a single greeting's text (populated on row
+        selection, committed via the Add/Update buttons which call
+        ``_mark_dirty`` directly) and must not itself feed dirty detection -
+        merely selecting a row would otherwise spuriously dirty the editor.
+
         Programmatic population also fires Changed; those events either land
         while ``_loading`` is set or (the usual case, since Textual posts them
         asynchronously) after ``load_character`` returned, where the snapshot
@@ -517,11 +617,77 @@ class PersonasCharacterEditorWidget(Container):
         loaded. Paste and undo also fire Changed, so the comparison covers
         them too.
         """
+        if (
+            isinstance(event, TextArea.Changed)
+            and event.text_area.id == "personas-char-editor-greeting-edit"
+        ):
+            return
         if self._loading or self._dirty_posted or self._loaded_snapshot is None:
             return
         if self._form_snapshot() == self._loaded_snapshot:
             return
         self._mark_dirty()
+
+    @on(DataTable.RowSelected, "#personas-char-editor-greetings-table")
+    def _greeting_row_selected(self, event: DataTable.RowSelected) -> None:
+        event.stop()
+        if event.row_key is not None and event.row_key.value is not None:
+            self._selected_greeting_index = int(event.row_key.value)
+            self._load_greeting_into_edit(self._selected_greeting_index)
+
+    @on(DataTable.RowHighlighted, "#personas-char-editor-greetings-table")
+    def _greeting_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        # Arrow-key navigation only fires RowHighlighted (not RowSelected), so
+        # without this the edit TextArea would silently keep stale content
+        # from a prior row while _selected_greeting_index tracks the cursor.
+        event.stop()
+        if event.row_key is not None and event.row_key.value is not None:
+            self._selected_greeting_index = int(event.row_key.value)
+            self._load_greeting_into_edit(self._selected_greeting_index)
+
+    @on(Button.Pressed, "#personas-char-editor-greeting-add")
+    def _greeting_add_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        text = self.query_one("#personas-char-editor-greeting-edit", TextArea).text
+        self._greetings_add(text)
+        self._select_greeting_row(len(self._greetings) - 1)
+
+    @on(Button.Pressed, "#personas-char-editor-greeting-update")
+    def _greeting_update_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._selected_greeting_index is None:
+            return
+        text = self.query_one("#personas-char-editor-greeting-edit", TextArea).text
+        self._greetings_update(self._selected_greeting_index, text)
+
+    @on(Button.Pressed, "#personas-char-editor-greeting-delete")
+    def _greeting_delete_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._selected_greeting_index is None:
+            return
+        self._greetings_delete(self._selected_greeting_index)
+        self._selected_greeting_index = None
+        self.query_one("#personas-char-editor-greeting-edit", TextArea).text = ""
+
+    @on(Button.Pressed, "#personas-char-editor-greeting-move-up")
+    def _greeting_move_up_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._selected_greeting_index is None:
+            return
+        target = self._selected_greeting_index - 1
+        if 0 <= target < len(self._greetings):
+            self._greetings_move(self._selected_greeting_index, -1)
+            self._select_greeting_row(target)
+
+    @on(Button.Pressed, "#personas-char-editor-greeting-move-down")
+    def _greeting_move_down_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._selected_greeting_index is None:
+            return
+        target = self._selected_greeting_index + 1
+        if 0 <= target < len(self._greetings):
+            self._greetings_move(self._selected_greeting_index, 1)
+            self._select_greeting_row(target)
 
     @on(Button.Pressed, "#personas-char-editor-advanced-toggle")
     def _toggle_advanced(self, event: Button.Pressed) -> None:
