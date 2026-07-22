@@ -136,6 +136,18 @@ Verified RED->GREEN in `Tests/UI/test_console_workspace_context_rail.py`:
 press flags the row loading before the awaited resume runs and clears it once the
 resume settles). Full rail + scope-row + handoffs suites green.
 
-PR map: (c) shipped via PR #745; (a) cold-send optimistic echo via PR #777;
-(b) rail loading feedback via PR #779 — all three ACs met.
+Code-review follow-up (findings 1+2 folded into PR #779, RED→GREEN): (1) the
+optimistic echo now marks the row send-blocked on EVERY non-accepted exit after
+the append, not just the not-ready/probe-raise ones — a skill-substitution
+refusal and any raise from dictionary/world-info/prefill application are wrapped
+so the echoed row can't leak into the next send's context; (2) the image-budget
+RESERVATION loop now honors `skip_failed`, so a send-blocked echo (which keeps
+its attachment data but is dropped from the payload) no longer reserves image
+slots a real message would lose. Finding 3 (blocked echo persists a durable
+`failed` row whose status is lost on reload → re-leak + orphan block row) filed
+as task-485 (needs a design call).
+
+PR map: (c) shipped via PR #745; (a) cold-send optimistic echo via PR #777
+(+ findings 1+2 hardening in #779); (b) rail loading feedback via PR #779 —
+all three ACs met.
 <!-- SECTION:NOTES:END -->
