@@ -459,6 +459,10 @@ class ConsoleInspectorState:
     dictionary_actions: tuple[ConsoleInspectorAction, ...] = ()
     world_book_rows: tuple[ConsoleDisplayRow, ...] = ()
     world_book_actions: tuple[ConsoleInspectorAction, ...] = ()
+    #: TASK-347: whether a generation is actively running (thinking or
+    #: streaming) — the status-summary/Live-work surfaces read this so they
+    #: stop claiming "Ready" mid-run.
+    run_active: bool = False
 
     @classmethod
     def from_values(
@@ -481,6 +485,7 @@ class ConsoleInspectorState:
         mcp_not_connected_count: int = 0,
         can_save_chatbook: bool = False,
         scope_item_count: int | None = None,
+        run_active: bool = False,
     ) -> "ConsoleInspectorState":
         provider_status = "ready" if provider_ready else "blocked"
         normalized_tool_count = coerce_non_negative_int(tool_count)
@@ -501,7 +506,14 @@ class ConsoleInspectorState:
             run_recipe = f"{run_recipe} / scope {scope_item_count} items"
         rows = [
             ConsoleDisplayRow("Run recipe", run_recipe),
-            ConsoleDisplayRow("Live work", _clean(live_work_title, "No active work")),
+            ConsoleDisplayRow(
+                "Live work",
+                # TASK-347: a running generation shows "Generating…"; else
+                # the pending Library-RAG launch title, else no active work.
+                "Generating…"
+                if run_active
+                else _clean(live_work_title, "No active work"),
+            ),
             ConsoleDisplayRow(
                 "Provider",
                 provider_status,
@@ -568,6 +580,7 @@ class ConsoleInspectorState:
             actions=tuple(actions),
             has_pending_approval=normalized_approval_count > 0,
             can_save_chatbook=can_save_chatbook,
+            run_active=run_active,
         )
 
     def to_plain_text(self) -> str:

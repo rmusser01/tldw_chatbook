@@ -1,10 +1,16 @@
 ---
 id: TASK-347
-title: Reflect active generation in Console status surfaces instead of Ready - No active work
-status: To Do
-assignee: []
+title: >-
+  Reflect active generation in Console status surfaces instead of Ready - No
+  active work
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
-labels: [console, ux]
+updated_date: '2026-07-22 00:36'
+labels:
+  - console
+  - ux
 dependencies: []
 priority: medium
 ---
@@ -23,5 +29,34 @@ During an active run (both the silent thinking phase and while tokens were visib
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Status surfaces should agree with reality: the chip and Inspector 'Run/Live work' section should switch to a running state (e.g. 'Generating... 12s') for the duration of the run, and return to Ready on completion/stop
+- [x] #1 Status surfaces should agree with reality: the chip and Inspector 'Run/Live work' section should switch to a running state (e.g. 'Generating... 12s') for the duration of the run, and return to Ready on completion/stop
 <!-- AC:END -->
+
+## Implementation Notes
+
+The header status chip and the Inspector status/live-work rows were
+readiness surfaces by construction — they only knew Blocked/Ready and drew
+'Live work' from Library-RAG launch context, never chat runs — so both read
+'Ready'/'No active work' while a generation streamed.
+
+Fix threads run-active from the controller into both surfaces:
+`build_console_workbench_state(run_active=...)` sets the header status to
+`running` (the shared WorkbenchStatus already had it; a run only runs past
+the blocker gate, so running > blocked > ready);
+`ConsoleInspectorState.from_values(run_active=...)` makes the status summary
+read 'Status: Generating…' and the Live work row 'Generating…' during a run
+(a mid-run block/approval still takes precedence). The screen's
+`_console_run_active()` (run_state.status in CONSOLE_ACTIVE_RUN_STATUSES)
+feeds both via `_build_console_workbench_state` / `_build_console_inspector_state`.
+run_active is constant tick-to-tick during a run, so no new sync thrash
+(the states change once at run start and once at end).
+
+Verified: 5 builder unit tests (header running/blocked-precedence, inspector
+generating/ready/blocked-precedence) + an end-to-end pilot test driving a
+real held-open run through the sync path (header→running, inspector→
+Generating…, both return to ready on completion). A textual-serve visual
+capture was not possible this session (the llama-server on :9099 was down);
+the end-to-end pilot test exercises the same wiring the capture would.
+Files: `Widgets/Console/console_workbench_state.py`,
+`Chat/console_display_state.py`, `Widgets/Console/console_run_inspector.py`,
+`UI/Screens/chat_screen.py`.
