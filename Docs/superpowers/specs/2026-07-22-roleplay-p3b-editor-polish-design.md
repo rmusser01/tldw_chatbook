@@ -10,7 +10,7 @@
 
 ## Goal
 
-Polish the character and persona editors so authoring is smoother and less error-prone: show the character's avatar as an actual thumbnail (not a text label), edit alternate greetings as a real ordered list (not a fragile newline blob), validate inline and per-field as you type, keep you in the editor after saving (with dirty-tracking correctly re-armed), and surface the persona fields the schema already stores. Also lays the avatar-render groundwork that P3c (persistent chat avatar) reuses.
+Polish the character and persona editors so authoring is smoother and less error-prone: show the character's avatar as an actual thumbnail (not a text label), edit alternate greetings as a real ordered list (not a fragile newline blob), validate inline and per-field as you type, keep you in the editor after saving (with dirty-tracking correctly re-armed), and round out the persona editor (an Enabled toggle + mode selector + a new personality-traits field). Also lays the avatar-render groundwork that P3c (persistent chat avatar) reuses.
 
 ## Non-goals
 
@@ -25,7 +25,7 @@ Polish the character and persona editors so authoring is smoother and less error
 - Alternate greetings are edited as an add/update/delete/reorderable list; multi-line greetings survive round-trips (the current newline-corruption hazard is gone).
 - Both editors validate live and per-field (the offending field is marked, plus the existing footer summary), before Save — not only at Save.
 - After a successful Save the editor stays open, the unsaved badge/title clear, and a subsequent edit re-flags dirty (re-arm works).
-- The persona editor exposes `personality_traits` and `enabled` (already stored by the schema/service), grouped sensibly.
+- The persona editor exposes an **Enabled** toggle (`is_active`), a **mode** selector, and a new **personality-traits** field — all persisting through save.
 
 ---
 
@@ -41,7 +41,7 @@ Polish the character and persona editors so authoring is smoother and less error
 **Persona editor** — `tldw_chatbook/Widgets/Persona_Widgets/persona_profile_editor_widget.py` (`PersonaProfileEditorWidget(Container)`, id `ccp-persona-editor-view`):
 - compose (~:61–78): a **flat 3-field form** — name/description/system-prompt — plus the footer `Static#personas-editor-validation` and Save/Cancel toolbar. **No** `personality_traits`/`enabled` fields, no Advanced split. `_persona_id`/`_version` tracked internally (~:51) for optimistic locking.
 - Same dirty machinery (own copy, ~:57–153); `validate()` (~:155) returns `("name: required",)` when blank; `_save_pressed` (~:171) validates then posts `PersonaProfileSaveRequested(self.collect())`; `collect()` (~:111) returns name/description/system_prompt (+ id/version). `PersonaProfileEditCancelled()` on cancel.
-- **Schema gap:** `PersonaProfileCreate` (`tldw_chatbook/tldw_api/character_persona_schemas.py:53`) supports `personality_traits` + `enabled` — the editor doesn't expose them.
+- **What the schema actually has (verified):** `PersonaProfileCreate`/`PersonaProfileUpdate` (`tldw_chatbook/tldw_api/character_persona_schemas.py:556/570`) carry `name`, `description`, `system_prompt`, **`is_active: bool`** (the real "enabled" analog), `mode` (`PersonaMode`, e.g. `session_scoped`), `character_card_id`, etc. — but **NO `personality_traits` and no boolean `enabled`** (those `list[str]` fields live in unrelated *archetype* classes, `ArchetypePersonaDefaults`/`ArchetypeMCPConfig` ~:50–62). The editor exposes only name/description/system_prompt, and **the save handler `_handle_profile_save_requested` (personas_screen.py ~:4877–4897) currently drops every field except name/description/mode/system_prompt** when building the DTO. So surfacing `is_active`/`mode` requires plumbing them through `collect()` → the save DTO, and `personality_traits` is **net-new** (add to the DTO + service view + file store + editor).
 
 **Both editors** post the same `EditorContentChanged` (`personas_pane_messages.py:75`); the dirty/validation state machines are **duplicated per-widget, not shared**.
 
@@ -64,7 +64,7 @@ Polish the character and persona editors so authoring is smoother and less error
 1. **Sequence:** P3b editor → P3c chat avatar → P3d reactions (deferred to its own program).
 2. **Avatars are characters-only** (personas gain no image).
 3. **Save-in-place:** after Save the editor **stays open** (clears unsaved state, re-arms dirty) rather than flipping to the card.
-4. **Surface persona `personality_traits` + `enabled`** (already schema/service-supported).
+4. **Persona fields:** surface `is_active` (as an **Enabled** toggle) + a `mode` selector (both exist in the DTO but are dropped by the save handler → plumb through), **and add a net-new `personality_traits` field** (freeform text, matching the character `personality` field) to the persona DTO + service view + file store + editor. (User chose option B — net-new traits, not just surfacing.)
 5. All five items: avatar thumbnail preview, alt-greetings list editor, live per-field validation, dirty re-arm + save-in-place, field grouping.
 
 ---
@@ -96,14 +96,19 @@ Keep the footer `Static` summary; add **live, per-field** validation:
 ### D. Dirty re-arm + save-in-place (both editors + screen finishers)
 
 - Add `mark_saved(saved_record)` to **both** editor widgets: update the internal version/id from `saved_record` (character: version on `_character_data`; persona: `_version`/`_persona_id`), re-baseline dirty (`_loaded_snapshot = _form_snapshot()`, `_dirty_posted = False`, and character also refreshes the greetings baseline), and clear the footer validation. This re-arms **without** re-rendering the form (the form already shows the saved state) and carries the new optimistic-lock version for the next save.
-- **Save-in-place** in the finishers: `_after_character_save` / `_after_profile_save` stop flipping to the card (`_show_center(...card...)` removed from the save path). Instead they keep `_edit_mode` in its edit state, keep the editor center visible, clear `has_unsaved_changes`/`inspector.set_unsaved(False)`/`_set_active_row_unsaved(False)`, obtain the freshly-persisted record (by id) and call `editor.mark_saved(record)`, and notify "Saved". (The read-only card is still reached by selecting the entity in the list, which exits edit mode via the existing guard — unchanged.)
+- **Save-in-place** in the finishers: `_after_character_save` / `_after_profile_save` stop flipping to the card (`_show_center(...card...)` removed from the save path). Instead they keep `_edit_mode` in its edit state, keep the editor center visible, clear `has_unsaved_changes`/`inspector.set_unsaved(False)`/`_set_active_row_unsaved(False)`, obtain the freshly-persisted record and call `editor.mark_saved(record)`, and notify "Saved". (The read-only card is still reached by selecting the entity in the list, which exits edit mode via the existing guard — unchanged.)
+  - **Version-source (verified):** Character — `_after_character_save` already calls `character_handler.load_character(saved_id)` (~:4837); call it (or `fetch_character_by_id(saved_id)`) *before* reading the record so the version is the persisted one — `_full_character_record(saved_id)` can be stale until that load runs. Persona — `_handle_profile_save_requested` already receives the returned saved profile (`result`→`saved` dict) with the incremented version and passes it to `_after_profile_save(saved)`, so `mark_saved(saved)` has the version directly. If the character record can't be re-read, fall back to today's flip-to-card + notify (never leave the editor holding a stale version).
 - **Create → edit transition:** after saving a *new* entity (create), the persisted record gets an id (character) / id+version (persona). `mark_saved(record)` sets that id and the finisher transitions `_edit_mode` from `create` to `edit`, so the editor is now editing the just-created entity in place (subsequent saves are updates with the correct `expected_version`). The library list is refreshed and the new row is marked active/selected, without leaving the editor.
 - The `UnsavedChangesDialog` guard is unaffected: after `mark_saved`, `has_unsaved_changes` is False so navigating away is clean; a fresh edit re-posts `EditorContentChanged` (because `_dirty_posted` was reset) and re-arms the guard.
 
 ### E. Field grouping / disclosure (both editors)
 
 - **Character:** re-tune the primary-vs-Advanced split (keep name/first-message/description/personality/system-prompt primary; the greetings list editor lives in Advanced). Minor reordering only — no field removals.
-- **Persona:** add `personality_traits` (a `TextArea` or the same greetings-style list if traits are a list — confirm the schema shape at plan time; `PersonaProfileCreate.personality_traits`) and `enabled` (a `Switch`/checkbox) to `persona_profile_editor_widget.py`, wired through `collect()`/`load_persona`/`_form_snapshot`/`validate`. Group them under the existing form (optionally an Advanced split if the field count warrants). `PersonaProfileCreate`/`PersonaProfileUpdate` and the scope-service round-trip already carry these fields — this is UI surfacing, not schema work.
+- **Persona:** add three fields to `persona_profile_editor_widget.py`, wired through `collect()`/`load_persona`/`_form_snapshot`/`validate`:
+  1. **Enabled** — a `Switch` bound to `is_active` (exists in the DTO; default `True`).
+  2. **Mode** — a `Select` bound to `mode` (the `PersonaMode` literals; default `session_scoped`).
+  3. **Personality traits** — a **net-new** freeform `TextArea` (`personality_traits: str`, matching the character editor's `personality` field). This is genuinely new persona data: add `personality_traits` to `PersonaProfileCreate`/`PersonaProfileUpdate`, to `LocalCharacterPersonaService` create/update + `_persona_profile_view`, and to the file-backed JSON store (older profiles default to `""` on load — no SQLite migration; personas are JSON). *(Note the codebase's `ArchetypePersonaDefaults.personality_traits` is a `list[str]`; the persona-profile field here is a freeform string for character-parity — keep the names distinct in intent.)*
+  - **Save-handler plumbing (required):** `_handle_profile_save_requested` (~:4877–4897) must include `is_active`, `mode`, and `personality_traits` when building `PersonaProfileCreate`/`Update` (today it drops all but name/description/mode/system_prompt), or the new fields won't persist. Group the three under the form (an Advanced split only if the field count warrants).
 
 ### Error handling / edge cases
 
@@ -112,12 +117,12 @@ Keep the footer `Static` summary; add **live, per-field** validation:
 - **Greetings:** empty list → empty table + empty-state hint; a greeting that is only whitespace → validation warning (or dropped on save per the current strip behavior — keep the strip); multi-line greeting preview shows the first line + "…"; deleting the last row clears the edit area.
 - **Save-in-place version drift:** `mark_saved` must set the new version or the *next* save raises a `ConflictError`; the finisher fetches the persisted record to get it. If the fetch fails, fall back to today's flip-to-card (so we never leave the editor with a stale version) and notify.
 - **Validation debounce vs save:** a Save while a debounced validation is pending still runs the synchronous `validate()` at Save (authoritative), so the debounce can't let an invalid save through.
-- **Persona `enabled`/`personality_traits` absent on older profiles:** default `enabled=True`, `personality_traits=""`/`[]` on load (coerce safely).
+- **`is_active`/`mode`/`personality_traits` absent on older persona profiles:** default `is_active=True`, `mode="session_scoped"`, `personality_traits=""` on load (coerce safely — the JSON store simply lacks the keys for pre-existing profiles).
 
 ### Testing strategy
 
 - **Character editor widget tests:** avatar thumbnail mounts for image bytes (graphics + pixels modes) and shows text fallback for none/decode-fail; Remove clears image + marks dirty; greetings Add/Update/Delete/Move-up/Move-down mutate `_greetings` and re-render; **multi-line greeting round-trips byte-identical** (the fidelity guarantee); `get_character_data` returns the list; `mark_saved` re-arms (`_dirty_posted` False, snapshot rebaselined, version updated) and a subsequent change re-posts `EditorContentChanged`; per-field validation marks the name row invalid on blank + oversized avatar + whitespace greeting, and clears live.
-- **Persona editor widget tests:** `personality_traits` + `enabled` load/collect/round-trip; dirty + `mark_saved` re-arm; validation marks blank name; `enabled` toggle marks dirty.
+- **Persona editor widget tests:** `is_active`/`mode`/`personality_traits` load/collect/round-trip; dirty + `mark_saved` re-arm; validation marks blank name; the Enabled toggle marks dirty. Plus a **service/store test** that the net-new `personality_traits` persists through `create_persona_profile`/`update_persona_profile` and reloads (file-backed round-trip).
 - **Screen integration tests (real screen + real DB):** save-in-place keeps the editor open + clears the row/title unsaved state + re-arms so a second edit re-flags dirty (drives the re-arm fix end-to-end); a validation error blocks save and surfaces inline; avatar upload → thumbnail renders; persona save-in-place with the new fields persists + re-arms.
 
 ---
@@ -128,7 +133,7 @@ Keep the footer `Static` summary; add **live, per-field** validation:
 2. **Avatar thumbnail preview** — screen render worker (reuse `ConsoleImageRenderCache`/`resolve_default_mode`), editor `set_avatar_thumbnail`, grow the row, Remove button, fallbacks + session-token guard. Widget + screen tests.
 3. **Alt-greetings list editor** — replace the TextArea with the DataTable+edit+buttons list editor, `_greetings` state, fidelity-preserving load/save. Widget tests (incl. multi-line round-trip).
 4. **Live per-field validation** — `validate()` rules + debounced runner + `.is-invalid` per-field marking + footer surface, both editors; Save-blocks-on-error. Widget tests.
-5. **Persona fields + field grouping** — surface `personality_traits` + `enabled` in the persona editor (collect/load/snapshot/validate); re-tune character Advanced grouping. Widget + persona save-in-place integration test.
+5. **Persona fields + field grouping** — Enabled (`is_active`) + mode selectors and net-new `personality_traits` (freeform text): add to the persona DTO (`PersonaProfileCreate`/`Update`), `LocalCharacterPersonaService` create/update + `_persona_profile_view`, the JSON store, the editor (collect/load/snapshot/validate), **and the save handler `_handle_profile_save_requested` DTO build** (which currently drops these); re-tune the character Advanced grouping. Widget + service/store round-trip + persona save-in-place integration test. *(Larger than the other tasks — spans schema DTO + service + store + editor + handler; may split into 5a persona-data and 5b field-grouping if it gets unwieldy.)*
 
 Five focused tasks → one PR.
 
@@ -136,7 +141,7 @@ Five focused tasks → one PR.
 
 ## Global constraints
 
-- **NO schema migration** (ChaChaNotes stays v22); no new DB tables/columns. Persona fields already exist in the schema/service.
+- **NO ChaChaNotes (SQLite) schema migration** (stays v22); no new DB tables/columns. The net-new persona `personality_traits` lives in the **Pydantic DTO + file-backed JSON store**, not the SQLite DB — adding it is a new JSON key (older profiles default it), NOT a DB migration.
 - **Reuse the render primitive verbatim** — `ConsoleImageRenderCache` + `resolve_default_mode` from `Chat/console_image_view.py`; do not build a new decoder. Avatar decode runs **off-thread** (`asyncio.to_thread`), driven from the screen (which has `app.config`).
 - **Preserve the alt-greetings no-corruption guarantee** — multi-line greetings must round-trip byte-identical; the list model replaces the newline-blob + fidelity-diff, it must not regress it.
 - **Save-in-place must carry the new optimistic-lock version** — the next save after a save-in-place must not raise `ConflictError`; fall back to flip-to-card + notify if the persisted record can't be re-read.
