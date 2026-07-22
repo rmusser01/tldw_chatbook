@@ -196,3 +196,55 @@ def test_create_custom_profile_is_id_consistent(tmp_path):
     created = m.create_custom_profile("My Custom! Profile", base_profile="balanced")
     assert m.get_profile(created.id) is created
     assert (tmp_path / "profiles" / f"{created.id}.json").exists()
+
+
+def test_save_profile_rejects_id_collision_with_readonly_builtin(tmp_path):
+    # Review finding (Critical): a builtin's id is _slugify(display_name), so
+    # a brand-new non-read-only ProfileConfig named "High Accuracy" collides
+    # with the builtin id "high_accuracy". save_profile only checked
+    # `profile.read_only` on the INCOMING object, so it would silently
+    # overwrite (and persist) the builtin, making it deletable/mutable.
+    m = _mgr(tmp_path)
+    from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
+    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+    builtin = m.get_profile("high_accuracy")
+    assert builtin.read_only is True
+
+    colliding = ProfileConfig(
+        name="High Accuracy", description="d", profile_type="custom",
+        rag_config=RAGConfig(),
+    )
+    assert colliding.id == "high_accuracy"
+    assert colliding.read_only is False
+
+    with pytest.raises(ValueError):
+        m.save_profile(colliding)
+
+    # The builtin must be untouched: same object, still read-only.
+    assert m.get_profile("high_accuracy") is builtin
+    assert m.get_profile("high_accuracy").read_only is True
+    assert not (tmp_path / "profiles" / "high_accuracy.json").exists()
+
+
+def test_create_custom_profile_uniquifies_id_matching_builtin_name(tmp_path):
+    # Review finding (Critical), friendly-path companion: creating a custom
+    # profile whose display name matches a builtin's must not raise and must
+    # not collide with the builtin id -- it should get a uniquified id.
+    m = _mgr(tmp_path)
+    created = m.create_custom_profile("High Accuracy", base_profile="balanced")
+    assert created.id != "high_accuracy"
+    assert m.get_profile(created.id) is created
+
+    builtin = m.get_profile("high_accuracy")
+    assert builtin.read_only is True
+    assert builtin.id == "high_accuracy"
+
+
+def test_clone_tags_are_independent_of_source(tmp_path):
+    # Review finding (Important): ProfileConfig.to_dict() did `"tags": self.tags`
+    # (no copy), so a clone's tags list was the SAME list object as the
+    # source's. Mutating the clone's tags corrupted the source builtin.
+    m = _mgr(tmp_path)
+    clone = m.clone_profile("high_accuracy", "My Accuracy")
+    clone.tags.append("X")
+    assert "X" not in m.get_profile("high_accuracy").tags

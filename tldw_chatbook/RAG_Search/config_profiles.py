@@ -127,7 +127,7 @@ class ProfileConfig:
             else None,
             "created_at": self.created_at,
             "version": self.version,
-            "tags": self.tags,
+            "tags": list(self.tags),
             "expected_latency_ms": self.expected_latency_ms,
             "expected_accuracy": self.expected_accuracy,
         }
@@ -553,9 +553,14 @@ class ConfigProfileManager:
         return candidate
 
     def save_profile(self, profile: "ProfileConfig") -> "ProfileConfig":
-        """Persist a user profile (refuses read-only builtins)."""
+        """Persist a user profile (refuses read-only builtins, incoming or existing)."""
         if profile.read_only:
             raise ValueError(f"Profile '{profile.id}' is read-only")
+        existing = self._profiles.get(profile.id)
+        if existing is not None and existing is not profile and existing.read_only:
+            raise ValueError(
+                f"Profile id '{profile.id}' collides with read-only builtin '{profile.id}'"
+            )
         self._profiles[profile.id] = profile
         self._save_one(profile)
         return profile
@@ -636,6 +641,11 @@ class ConfigProfileManager:
             elif hasattr(custom_config.rag_config, key):
                 setattr(custom_config.rag_config, key, value)
             # Add more override logic as needed
+
+        # Uniquify the id up front so a user-chosen name that happens to match
+        # a builtin's display name (e.g. "High Accuracy" -> "high_accuracy")
+        # doesn't collide with the read-only builtin's id.
+        custom_config.id = self._unique_id(_slugify(name))
 
         # Save the custom profile (keyed by profile.id, same as its filename,
         # so it's reachable by the same key before and after a restart)
