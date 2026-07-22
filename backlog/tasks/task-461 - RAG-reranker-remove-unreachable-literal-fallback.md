@@ -1,7 +1,7 @@
 ---
 id: TASK-461
 title: 'RAG reranker: remove unreachable literal fallback in _call_llm_impl'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-21 20:07'
 labels:
@@ -18,7 +18,11 @@ In `tldw_chatbook/RAG_Search/reranker.py` (~line 168), the `... or "You are a se
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The unreachable `or "You are a search result relevance evaluator."` fallback is removed from reranker.py
-- [ ] #2 Existing reranker tests (Tests/RAG/test_reranker_internal_prompts.py and reranker suites) remain green
-- [ ] #3 No behavior change: rerankers still resolve their system prompt from the registry / caller config
+- [x] #1 The unreachable `or "You are a search result relevance evaluator."` fallback is removed from reranker.py
+- [x] #2 Existing reranker tests (Tests/RAG/test_reranker_internal_prompts.py and reranker suites) remain green
+- [x] #3 No behavior change: rerankers still resolve their system prompt from the registry / caller config
 <!-- AC:END -->
+
+## Implementation Notes
+
+Removed the unreachable `or "You are a search result relevance evaluator."` literal in reranker.py (_call_llm_impl); the enclosing if guarantees a system prompt. No behavior change; reranker tests green.

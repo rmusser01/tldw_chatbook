@@ -1,7 +1,7 @@
 ---
 id: TASK-460
 title: 'Internal prompts: transport-boundary tests for websearch sites 2-4'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-21 20:06'
 labels:
@@ -18,8 +18,12 @@ The P1 websearch migration added a live transport-boundary integration test only
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A transport-boundary test proves a config override reaches the LLM payload for result_relevance_eval
-- [ ] #2 Same for result_summarization
-- [ ] #3 Same for answer_synthesis
-- [ ] #4 Each test fakes only the transport (chat_api_call); pipeline code runs real
+- [x] #1 A transport-boundary test proves a config override reaches the LLM payload for result_relevance_eval
+- [x] #2 Same for result_summarization
+- [x] #3 Same for answer_synthesis
+- [x] #4 Each test fakes only the transport (chat_api_call); pipeline code runs real
 <!-- AC:END -->
+
+## Implementation Notes
+
+Transport-boundary tests added for result_relevance_eval, result_summarization, answer_synthesis — each proves a config override reaches the LLM payload; fakes only at chat_api_call / analyze / scrape_article.

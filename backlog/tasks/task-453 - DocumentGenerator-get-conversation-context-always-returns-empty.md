@@ -1,7 +1,7 @@
 ---
 id: TASK-453
 title: 'DocumentGenerator.get_conversation_context always returns empty (missing DB method)'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-21 20:20'
 labels:
@@ -18,8 +18,12 @@ dependencies: []
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 get_conversation_context returns the real messages for a conversation that has them (not empty)
-- [ ] #2 The correct existing DB accessor is used (no reliance on the nonexistent get_messages_by_conversation_id)
-- [ ] #3 A test covers timeline/study-guide/briefing generation with a NON-empty context reaching the LLM payload
-- [ ] #4 The empty/no-conversation case still degrades gracefully (no crash)
+- [x] #1 get_conversation_context returns the real messages for a conversation that has them (not empty)
+- [x] #2 The correct existing DB accessor is used (no reliance on the nonexistent get_messages_by_conversation_id)
+- [x] #3 A test covers timeline/study-guide/briefing generation with a NON-empty context reaching the LLM payload
+- [x] #4 The empty/no-conversation case still degrades gracefully (no crash)
 <!-- AC:END -->
+
+## Implementation Notes
+
+get_conversation_context now calls the real get_messages_for_conversation (was the nonexistent get_messages_by_conversation_id) and normalizes each row's `sender` to the `role` key format_context_for_llm reads (a second latent bug). Missing conversation → empty context, no crash. Two new tests: real-context-in-payload + graceful-empty.
