@@ -81,7 +81,6 @@ DEFAULT_RAG_SEARCH_CONFIG = {
     "vector_top_k": 10,
     "web_vector_top_k": 10,
     "llm_context_document_limit": 10,
-    "chat_context_limit": 10,
     # New comprehensive RAG settings
     "retriever": {
         "fts_top_k": 10,
@@ -3032,7 +3031,6 @@ fts_top_k = 10
 vector_top_k = 10
 web_vector_top_k = 10
 llm_context_document_limit = 10
-chat_context_limit = 10
 
 
 # --- Model Capabilities Configuration ---

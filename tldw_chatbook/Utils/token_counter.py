@@ -11,13 +11,18 @@ from loguru import logger
 #
 # Local Imports - Import with error handling to avoid circular imports
 try:
-    from .custom_tokenizers import count_tokens_with_custom, count_messages_with_custom
+    from .custom_tokenizers import (
+        count_tokens_with_custom,
+        count_messages_with_custom,
+        custom_tokenizers_available,
+    )
 
     CUSTOM_TOKENIZERS_AVAILABLE = True
 except ImportError:
     CUSTOM_TOKENIZERS_AVAILABLE = False
     count_tokens_with_custom = None
     count_messages_with_custom = None
+    custom_tokenizers_available = None
 #
 ########################################################################################################################
 #
@@ -80,6 +85,82 @@ TOKENS_PER_CHAR_ESTIMATES = {
     "default": 0.25,  # Default fallback
 }
 
+# Conservative chars-based estimate constants (used when no tokenizer is available).
+CJK_TOKENS_PER_CHAR = 1.0   # each CJK code point is >= ~1 token
+ESTIMATE_HEADROOM = 1.2     # documented headroom so estimates lean high (safe)
+
+_CJK_RANGES = (
+    (0x3000, 0x303F),  # CJK Symbols and Punctuation (。、「」etc.)
+    (0x3040, 0x30FF),  # Hiragana + Katakana
+    (0x3400, 0x4DBF),  # CJK Unified Ext-A
+    (0x4E00, 0x9FFF),  # CJK Unified Ideographs
+    (0xAC00, 0xD7AF),  # Hangul syllables
+    (0xF900, 0xFAFF),  # CJK Compatibility Ideographs
+    (0xFF00, 0xFFEF),  # Fullwidth / halfwidth (CJK punctuation)
+)
+
+
+def _is_cjk(ch: str) -> bool:
+    cp = ord(ch)
+    return any(lo <= cp <= hi for lo, hi in _CJK_RANGES)
+
+
+def _norm_provider(provider: str) -> str:
+    """Normalize a provider name for case-insensitive dict lookups.
+
+    Args:
+        provider: Provider name in any casing (e.g. ``"OpenAI"``, ``"google"``).
+
+    Returns:
+        The lower-cased, stripped provider name (``""`` for ``None``/blank).
+    """
+    return str(provider or "").strip().lower()
+
+
+def _chars_estimate(text: str, provider: str) -> int:
+    """Conservative chars-based token floor; weights CJK higher, applies headroom.
+
+    Non-empty text always estimates to at least 1 token — ``int()`` truncation
+    would otherwise round very short strings (e.g. "hi") down to 0, which would
+    under-count and defeat the conservative-floor guarantee.
+    """
+    if not text:
+        return 0
+    cjk = sum(1 for ch in text if _is_cjk(ch))
+    other = len(text) - cjk
+    base_ratio = TOKENS_PER_CHAR_ESTIMATES.get(
+        _norm_provider(provider) or "default", TOKENS_PER_CHAR_ESTIMATES["default"]
+    )
+    return max(1, int((other * base_ratio + cjk * CJK_TOKENS_PER_CHAR) * ESTIMATE_HEADROOM))
+
+
+def estimate_tokens(text: str, model: str = "gpt-3.5-turbo", provider: str = "") -> int:
+    """Estimate the token count of a text string with one consistent strategy.
+
+    Tiers: a custom tokenizer (only when one is actually installed), else
+    tiktoken (when available), else a conservative chars-based floor. Never uses
+    a whitespace word count.
+
+    Args:
+        text: The text to estimate.
+        model: Model name (selects the tiktoken encoding / custom tokenizer).
+        provider: Provider name (case-insensitive); selects the chars-path ratio
+            and the custom tokenizer's provider patterns.
+
+    Returns:
+        Estimated token count (0 for empty text).
+    """
+    if not text:
+        return 0
+    if CUSTOM_TOKENIZERS_AVAILABLE and custom_tokenizers_available():
+        custom = count_tokens_with_custom(text, model, _norm_provider(provider))
+        if custom is not None:
+            return custom
+    if TIKTOKEN_AVAILABLE:
+        return count_tokens_tiktoken(text, model)
+    return _chars_estimate(text, provider)
+
+
 # Token limits per model (approximate)
 MODEL_TOKEN_LIMITS = {
     # OpenAI
@@ -87,20 +168,33 @@ MODEL_TOKEN_LIMITS = {
     "gpt-4-32k": 32768,
     "gpt-4-turbo": 128000,
     "gpt-4-turbo-preview": 128000,
-    "gpt-3.5-turbo": 4096,
+    "gpt-4o": 128000,
+    "gpt-4o-mini": 128000,
+    "gpt-4.1": 1047576,
+    "gpt-3.5-turbo": 16385,
     "gpt-3.5-turbo-16k": 16384,
+    "o1": 200000,
+    "o1-mini": 128000,
+    "o3": 200000,
+    "o3-mini": 200000,
+    "o4-mini": 200000,
     # Anthropic
     "claude-3-opus-20240229": 200000,
     "claude-3-sonnet-20240229": 200000,
     "claude-3-haiku-20240307": 200000,
+    "claude-3-5-sonnet-20240620": 200000,
+    "claude-3-5-sonnet-20241022": 200000,
     "claude-2.1": 200000,
     "claude-2": 100000,
     "claude-instant-1.2": 100000,
     # Google
+    "gemini-1.5-pro": 2097152,
+    "gemini-1.5-flash": 1048576,
+    "gemini-2.0-flash": 1048576,
     "gemini-pro": 30720,
     "gemini-pro-vision": 12288,
     # Others
-    "mistral-large": 32000,
+    "mistral-large": 128000,
     "mistral-medium": 32000,
     "mistral-small": 32000,
     "mixtral-8x7b": 32000,
@@ -145,66 +239,34 @@ def count_tokens_tiktoken(text: str, model: str = "gpt-3.5-turbo") -> int:
 
 
 def count_tokens_messages(
-    messages: List[Dict[str, Any]], model: str = "gpt-3.5-turbo"
+    messages: List[Dict[str, Any]], model: str = "gpt-3.5-turbo", provider: str = ""
 ) -> int:
-    """
-    Count tokens for a list of messages in OpenAI format.
-
-    Args:
-        messages: List of message dicts with 'role' and 'content' keys
-        model: The model name for accurate token counting
-
-    Returns:
-        Total token count including message formatting overhead
-    """
+    """Count tokens for OpenAI-format messages (framing overhead + estimate_tokens)."""
     if not messages:
         return 0
 
-    # Different models have different message formatting overhead
     if model.startswith("gpt-3.5") or model.startswith("gpt-4"):
-        # Each message has overhead: <|start|>role<|end|>content<|end|>
         tokens_per_message = 3
-        tokens_per_name = 1  # If name is present
-        base_tokens = 3  # Every reply is primed with <|start|>assistant<|message|>
+        tokens_per_name = 1
+        base_tokens = 3
     else:
-        # Conservative estimate for other models
         tokens_per_message = 2
         tokens_per_name = 1
         base_tokens = 2
 
     total_tokens = base_tokens
-
     for message in messages:
         total_tokens += tokens_per_message
-
-        # Count tokens in role
         role = message.get("role", "")
         if role:
-            total_tokens += (
-                count_tokens_tiktoken(role, model)
-                if TIKTOKEN_AVAILABLE
-                else len(role.split())
-            )
-
-        # Count tokens in content
+            total_tokens += estimate_tokens(role, model, provider)
         content = message.get("content", "")
         if content:
-            total_tokens += (
-                count_tokens_tiktoken(content, model)
-                if TIKTOKEN_AVAILABLE
-                else len(content.split())
-            )
-
-        # Count tokens in name if present
+            total_tokens += estimate_tokens(content, model, provider)
         name = message.get("name", "")
         if name:
             total_tokens += tokens_per_name
-            total_tokens += (
-                count_tokens_tiktoken(name, model)
-                if TIKTOKEN_AVAILABLE
-                else len(name.split())
-            )
-
+            total_tokens += estimate_tokens(name, model, provider)
     return total_tokens
 
 
@@ -213,95 +275,80 @@ def count_tokens_chat_history(
     model: str = "gpt-3.5-turbo",
     provider: str = "openai",
 ) -> int:
-    """
-    Count tokens in chat history format (list of tuples or message dicts).
-
-    Args:
-        history: Chat history in various formats
-        model: The model name for accurate counting
-        provider: The LLM provider name
-
-    Returns:
-        Total estimated token count
-    """
+    """Count tokens in chat-history format (tuples or message dicts) via the one estimator."""
     if not history:
         return 0
 
-    # Convert history to message format
-    messages = []
-
+    messages: List[Dict[str, Any]] = []
     for item in history:
         if isinstance(item, tuple) and len(item) == 2:
-            # (user_msg, bot_msg) format
             user_msg, bot_msg = item
             if user_msg:
                 messages.append({"role": "user", "content": user_msg})
             if bot_msg:
                 messages.append({"role": "assistant", "content": bot_msg})
         elif isinstance(item, dict) and "role" in item and "content" in item:
-            # Already in message format
             messages.append(item)
         else:
             logger.warning(f"Unknown history format: {type(item)}")
 
-    # Try custom tokenizers first
-    if CUSTOM_TOKENIZERS_AVAILABLE and count_messages_with_custom:
-        custom_count = count_messages_with_custom(messages, model, provider)
-        if custom_count is not None:
-            logger.debug(
-                f"Using custom tokenizer for {model} ({provider}): {custom_count} tokens"
-            )
-            return custom_count
-
-    # Use provider-specific counting if available
-    if provider == "openai" and TIKTOKEN_AVAILABLE:
-        return count_tokens_messages(messages, model)
-    else:
-        # Fallback to character-based estimation
-        total_chars = 0
-        for msg in messages:
-            content = msg.get("content", "")
-            total_chars += len(content)
-
-        # Add some overhead for message formatting
-        total_chars += len(messages) * 10  # Rough estimate for role and formatting
-
-        # Use provider-specific ratio
-        ratio = TOKENS_PER_CHAR_ESTIMATES.get(
-            provider, TOKENS_PER_CHAR_ESTIMATES["default"]
-        )
-        return int(total_chars * ratio)
+    return count_tokens_messages(messages, model, provider)
 
 
 def get_model_token_limit(model: str, provider: str = "openai") -> int:
     """
-    Get the token limit for a specific model.
+    Get the input context-window token limit for a specific model.
 
-    Args:
-        model: The model name
-        provider: The LLM provider
-
-    Returns:
-        Maximum token limit for the model
+    Resolves in priority order: the per-model capability `context_window`
+    (config-overridable), an exact table entry, the longest matching table
+    prefix, then a conservative provider default. Fallbacks lean conservative
+    on purpose: under-estimating the window degrades gracefully (more trimming),
+    while over-estimating is the only way to overflow the model on dispatch.
     """
-    # Check specific model limits
+    provider_key = _norm_provider(provider)
+
+    # OpenRouter model IDs are "upstream_provider/model" (e.g. "openai/gpt-4o-mini");
+    # resolve against the upstream provider/model so they don't fall through to the
+    # generic default. Split once and re-dispatch -- the re-dispatch provider is the
+    # upstream (never "openrouter"), so this cannot recurse indefinitely.
+    if provider_key == "openrouter" and "/" in model:
+        upstream_provider, upstream_model = model.split("/", 1)
+        return get_model_token_limit(upstream_model, upstream_provider)
+
+    # 1. Per-model capability context window (authoritative, config-overridable).
+    try:
+        from tldw_chatbook.model_capabilities import get_context_window
+
+        window = get_context_window(provider, model)
+        if window is not None:
+            return window
+    except Exception as e:  # never let capability resolution break token limits
+        logger.debug(f"context_window lookup failed for {provider}/{model}: {e}")
+
+    # 2. Exact table match.
     if model in MODEL_TOKEN_LIMITS:
         return MODEL_TOKEN_LIMITS[model]
 
-    # Check by model prefix
+    # 3. Longest matching table prefix (so "gpt-4" can't shadow "gpt-4-turbo").
+    best_limit = None
+    best_len = -1
     for model_prefix, limit in MODEL_TOKEN_LIMITS.items():
-        if model.startswith(model_prefix):
-            return limit
+        if model_prefix == "default":
+            continue
+        if model.startswith(model_prefix) and len(model_prefix) > best_len:
+            best_limit = limit
+            best_len = len(model_prefix)
+    if best_limit is not None:
+        return best_limit
 
-    # Provider-specific defaults
+    # 4. Conservative provider default.
     provider_defaults = {
-        "anthropic": 100000,  # Conservative for Claude
-        "google": 30720,  # Gemini default
-        "openai": 4096,  # GPT-3.5 default
-        "mistral": 32000,  # Mistral default
+        "anthropic": 200000,  # every modern Claude is >= 200k; safe floor
+        "google": 30720,
+        "openai": 4096,
+        "mistral": 32000,
     }
-
-    return provider_defaults.get(provider, MODEL_TOKEN_LIMITS["default"])
+    return provider_defaults.get(provider_key, MODEL_TOKEN_LIMITS["default"])
 
 
 def estimate_remaining_tokens(
@@ -329,12 +376,7 @@ def estimate_remaining_tokens(
 
     # Add system prompt if present
     if system_prompt:
-        if provider == "openai" and TIKTOKEN_AVAILABLE:
-            current_tokens += count_tokens_tiktoken(system_prompt, model)
-        else:
-            current_tokens += int(
-                len(system_prompt) * TOKENS_PER_CHAR_ESTIMATES.get(provider, 0.25)
-            )
+        current_tokens += estimate_tokens(system_prompt, model, provider)
 
     # Get model limit
     total_limit = get_model_token_limit(model, provider)

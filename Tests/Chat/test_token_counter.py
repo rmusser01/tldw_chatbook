@@ -13,6 +13,7 @@ from tldw_chatbook.Utils.token_counter import (
     format_token_display,
     TIKTOKEN_AVAILABLE,
 )
+from tldw_chatbook.Utils.token_counter import estimate_tokens, count_tokens_messages
 #
 ########################################################################################################################
 #
@@ -67,10 +68,47 @@ class TestTokenCounter:
         used, limit, remaining = estimate_remaining_tokens(
             history, model="gpt-3.5-turbo", max_tokens_response=1000
         )
-
         assert used > 0
-        assert limit == 4096  # GPT-3.5 default
-        assert remaining < limit - 1000  # Less than limit minus response reservation
+        assert limit == 16385  # gpt-3.5-turbo refreshed input window
+        assert remaining < limit - 1000
+
+    def test_get_model_token_limit_current_models(self):
+        assert get_model_token_limit("gpt-4o", "openai") == 128000
+        assert get_model_token_limit("claude-3-5-sonnet-20241022", "anthropic") == 200000
+        assert get_model_token_limit("gemini-1.5-pro", "google") == 2097152
+        assert get_model_token_limit("mistral-large", "mistral") == 128000
+
+    def test_get_model_token_limit_prefers_capabilities_over_table(self, monkeypatch):
+        # Capabilities must be consulted before the table: patch get_context_window
+        # to a sentinel and confirm even a model WITH a table entry returns it.
+        import tldw_chatbook.model_capabilities as mc
+        monkeypatch.setattr(mc, "get_context_window", lambda provider, model: 999999)
+        assert get_model_token_limit("gpt-4", "openai") == 999999  # table would say 8192
+
+    def test_get_model_token_limit_longest_prefix_wins(self):
+        # No capability pattern matches "gpt-4-32k-custom"; both "gpt-4" (8192) and
+        # "gpt-4-32k" (32768) are table prefixes, so the LONGEST must win.
+        assert get_model_token_limit("gpt-4-32k-custom", "openai") == 32768
+
+    def test_get_model_token_limit_anthropic_default_bumped(self):
+        # Unknown modern Claude falls back to the 200k floor, not the stale 100k.
+        assert get_model_token_limit("claude-99-future", "anthropic") == 200000
+
+    def test_get_model_token_limit_openrouter_resolves_upstream(self):
+        # OpenRouter IDs are "upstream_provider/model"; resolve the upstream window
+        # instead of the generic 4096 default. (Qodo review #5.)
+        assert get_model_token_limit("openai/gpt-4o-mini", "openrouter") == 128000
+        assert get_model_token_limit("openai/gpt-4o-mini", "OpenRouter") == 128000
+        assert get_model_token_limit("anthropic/claude-3.7-sonnet", "openrouter") == 200000
+        assert get_model_token_limit("google/gemini-2.0-flash-001", "openrouter") == 1048576
+
+    def test_get_model_token_limit_provider_casing_insensitive(self):
+        # TitleCase provider must resolve the same conservative default as lowercase.
+        # (Qodo review #6 — provider_defaults lookup was case-sensitive.)
+        assert get_model_token_limit("unknown-model", "Anthropic") == \
+            get_model_token_limit("unknown-model", "anthropic") == 200000
+        assert get_model_token_limit("unknown-model", "OpenAI") == \
+            get_model_token_limit("unknown-model", "openai") == 4096
 
     def test_format_token_display_green(self):
         """Test token display formatting - green indicator"""
@@ -155,6 +193,60 @@ class TestTokenCounter:
 
         result = count_tokens_chat_history(history)
         assert result > 0  # Should handle mixed formats gracefully
+
+
+class TestEstimator:
+    @pytest.fixture(autouse=True)
+    def _force_chars_path(self, monkeypatch):
+        # These tests assert the chars-floor behavior; force that path so they
+        # are deterministic regardless of whether tiktoken / a custom tokenizer
+        # happens to be installed in the running environment.
+        import tldw_chatbook.Utils.token_counter as tc
+        monkeypatch.setattr(tc, "TIKTOKEN_AVAILABLE", False)
+        monkeypatch.setattr(tc, "custom_tokenizers_available", lambda: False)
+
+    def test_empty_text_is_zero(self):
+        assert estimate_tokens("", "gpt-4o", "openai") == 0
+
+    def test_short_nonempty_text_floors_at_one(self):
+        # int() truncation must not round a short non-empty string down to 0.
+        assert estimate_tokens("hi", "gpt-4o", "openai") >= 1
+        assert estimate_tokens("a", "gpt-4o", "openai") >= 1
+
+    def test_cjk_floor_at_least_one_token_per_char(self):
+        # CJK code points are >= ~1 token each; a conservative floor never under-counts.
+        cjk = "你好世界" * 10  # 40 CJK chars
+        assert estimate_tokens(cjk, "gemini-1.5-pro", "google") >= len(cjk)
+
+    def test_cjk_punctuation_floor(self):
+        # CJK Symbols & Punctuation (U+3000-303F) must be weighted as CJK, not ASCII,
+        # so punctuation-heavy CJK text still meets the conservative floor.
+        punct = "、。" * 20  # 40 CJK-punctuation chars
+        assert estimate_tokens(punct, "gemini-1.5-pro", "google") >= len(punct)
+
+    def test_code_sample_exceeds_word_count(self):
+        code = "def f(x):\n    return [i*i for i in range(x) if i % 2 == 0]\n" * 3
+        assert estimate_tokens(code, "claude-3-5-sonnet-20241022", "anthropic") > len(code.split())
+
+    def test_ascii_100_chars_in_band(self):
+        # Keeps the pinned test_character_estimation_fallback assumptions valid.
+        assert 25 < estimate_tokens("A" * 100, "unknown", "unknown") < 50
+
+    def test_messages_and_chat_history_agree_for_one_message(self):
+        msg = [{"role": "user", "content": "hello world foo bar"}]
+        assert count_tokens_chat_history(msg, model="claude-3-5-sonnet-20241022",
+                                         provider="anthropic") == \
+            count_tokens_messages(msg, "claude-3-5-sonnet-20241022", "anthropic")
+
+    def test_chars_estimate_provider_casing_insensitive(self):
+        # The chars-path ratio lookup must be case-insensitive: "Google" (0.3)
+        # must not silently fall back to the default ratio. (Qodo review #6.)
+        text = "some plain english text " * 4
+        assert estimate_tokens(text, "gemini-1.5-pro", "Google") == \
+            estimate_tokens(text, "gemini-1.5-pro", "google")
+        # And Google's higher ratio genuinely differs from the default bucket.
+        assert estimate_tokens(text, "gemini-1.5-pro", "Google") > \
+            estimate_tokens(text, "m", "openai")
 
 
 #

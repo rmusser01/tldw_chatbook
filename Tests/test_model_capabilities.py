@@ -11,6 +11,7 @@ from unittest.mock import patch
 from tldw_chatbook.model_capabilities import (
     ModelCapabilities,
     get_model_capabilities,
+    get_context_window,
     is_vision_capable,
     reload_capabilities,
 )
@@ -514,6 +515,50 @@ class TestEdgeCases:
 
         # Should be sorted
         assert vision_models == sorted(vision_models)
+
+
+#
+#######################################################################################################################
+#
+# Context Window Tests
+#
+
+
+def test_get_context_window_direct_mapping():
+    caps = ModelCapabilities({})  # uses DEFAULT_MODEL_* (no config file)
+    assert caps.get_context_window("OpenAI", "gpt-4o") == 128000
+    assert caps.get_context_window("Anthropic", "claude-3-opus-20240229") == 200000
+    assert caps.get_context_window("Google", "gemini-1.5-pro") == 2097152
+
+
+def test_get_context_window_via_family_pattern():
+    caps = ModelCapabilities({})
+    # A novel dated variant not in direct mappings resolves via the anchored pattern.
+    assert caps.get_context_window("OpenAI", "gpt-4o-2099-12-31") == 128000
+    assert caps.get_context_window("Anthropic", "claude-3-5-haiku-20991231") == 200000
+
+
+def test_get_context_window_unknown_is_none():
+    caps = ModelCapabilities({})
+    assert caps.get_context_window("OpenAI", "totally-unknown-model") is None
+    # Generic gpt-4 variant must NOT match a pattern (so the table's gpt-4 wins later).
+    assert caps.get_context_window("OpenAI", "gpt-4-some-variant") is None
+    # Bare gpt-4 / gpt-4-32k must match no pattern (so the table's gpt-4->8192 wins later).
+    assert caps.get_context_window("OpenAI", "gpt-4") is None
+    assert caps.get_context_window("OpenAI", "gpt-4-32k") is None
+
+
+def test_provider_lookup_is_case_insensitive():
+    caps = ModelCapabilities({})
+    # Use a PATTERN-only model (NOT in DEFAULT_MODEL_CAPABILITIES direct maps) so the
+    # provider-keyed pattern branch is actually exercised — direct mappings ignore provider.
+    assert caps.is_vision_capable("openai", "gpt-4o-2099-12-31") is True
+    assert caps.is_vision_capable("OpenAI", "gpt-4o-2099-12-31") is True
+    assert (
+        caps.get_context_window("openai", "gpt-4o-2099-12-31")
+        == caps.get_context_window("OpenAI", "gpt-4o-2099-12-31")
+        == 128000
+    )
 
 
 #
