@@ -61,6 +61,27 @@ def test_console_control_state_counter_activity_flags():
     )
 
 
+def test_console_control_state_tools_chip_includes_mcp_tools():
+    """TASK-350: the header Tools chip must count the tools that can actually run
+    — built-in AND MCP — not just built-in. It read 'Tools: 0 ready' while the
+    inspector showed 'MCP: 10 tools ready'."""
+    state = ConsoleControlState.from_values(tool_count=0, mcp_tool_count=10)
+    assert state.tools_label == "Tools: 10 ready"
+    assert state.tools_active is True
+
+
+def test_console_control_state_tools_chip_sums_builtin_and_mcp():
+    state = ConsoleControlState.from_values(tool_count=2, mcp_tool_count=10)
+    assert state.tools_label == "Tools: 12 ready"
+
+
+def test_console_control_state_tools_chip_without_mcp_seam_counts_builtin_only():
+    # No MCP seam wired (mcp_tool_count default None) — chip is unchanged.
+    state = ConsoleControlState.from_values(tool_count=3)
+    assert state.tools_label == "Tools: 3 ready"
+    assert state.tools_active is True
+
+
 def test_console_staged_context_state_preserves_live_work_payload_provenance():
     launch = ConsoleLiveWorkLaunch.from_values(
         source="Library Search/RAG",

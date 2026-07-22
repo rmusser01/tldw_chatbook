@@ -557,6 +557,42 @@ def test_format_agent_step_marker_matches_each_live_marker_shape():
     assert format_agent_step_marker(STEP_MODEL, summary="The answer is 42.") is None
 
 
+def test_long_tool_result_marker_is_collapsed_with_truncation_affordance():
+    """TASK-350: a spawn_subagent whose result IS the full answer must not be
+    dumped verbatim into the TOOL marker — it duplicated the assistant bubble
+    word-for-word. Collapse it to a preview and mark the truncation plus how much
+    is hidden, so the marker reads as provenance, not a second copy."""
+    answer = "### Understanding SQLite WAL. " + "word " * 300  # long answer
+    marker = format_agent_step_marker(
+        STEP_TOOL_RESULT, tool_name="spawn_subagent", result=answer
+    )
+    assert marker.startswith("\u2699 spawn_subagent \u2192 ### Understanding SQLite")
+    assert "\u2026" in marker  # ellipsis marks the cut
+    assert "chars)" in marker  # explicit "how much more" affordance
+    assert len(marker) < len(answer) // 2  # collapsed, not a full duplicate
+
+
+def test_short_tool_result_marker_is_unchanged():
+    # Short results stay verbatim — no ellipsis, no affordance.
+    marker = format_agent_step_marker(
+        STEP_TOOL_RESULT, tool_name="calculator", result="42"
+    )
+    assert marker == "\u2699 calculator \u2192 42"
+    assert "\u2026" not in marker
+
+
+def test_step_truncation_cuts_on_word_boundary_with_ellipsis():
+    from tldw_chatbook.Chat.console_agent_bridge import _truncate_step_text
+
+    text = "alpha beta gamma delta epsilon zeta eta theta iota kappa"
+    out = _truncate_step_text(text, limit=24)
+    assert "\u2026" in out and "(+" in out and "chars)" in out
+    preview = out.split("\u2026", 1)[0].strip()
+    # every token shown is a whole word from the source — never a mid-word clip
+    assert preview
+    assert all(tok in text.split() for tok in preview.split())
+
+
 def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(
     tmp_path,
 ):

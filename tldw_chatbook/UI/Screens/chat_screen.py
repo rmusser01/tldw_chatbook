@@ -3326,6 +3326,7 @@ class ChatScreen(BaseAppScreen):
             rag_enabled=_source_mentions_rag(source),
             staged_source_count=1 if pending_launch else 0,
             tool_count=self._console_tool_count(),
+            mcp_tool_count=self._console_mcp_tool_count(),
             approval_count=self._console_pending_approval_count(),
         )
 
