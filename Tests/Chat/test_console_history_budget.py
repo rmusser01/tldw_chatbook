@@ -128,5 +128,44 @@ def test_multimodal_content_counted_without_error_and_images_cost():
     assert withimg >= base + 1024
 
 
+def test_non_string_text_part_does_not_crash_and_is_skipped():
+    # A malformed/legacy multimodal part whose `text` is not a string must not
+    # crash the counter (which sits on the send path); it is skipped, not
+    # stringified. The sibling string part is still counted.
+    msgs = [
+        {"role": "user", "content": [
+            {"type": "text", "text": "hello world"},
+            {"type": "text", "text": 123},          # non-string -> skipped
+            {"type": "text", "text": None},         # falsy -> skipped
+        ]}
+    ]
+    # Does not raise, and counts only the valid "hello world" text (2 words +
+    # count_tokens_messages overhead), never the non-string values.
+    assert count_console_messages_tokens(msgs, "gpt-4") >= 2
+
+
+def test_long_history_drops_exact_turns_via_binary_search():
+    # 50 middle turns behind a short current turn; only a few can be kept.
+    # Verifies the binary-search trim drops the correct oldest-first count and
+    # preserves the system prefix and current turn.
+    msgs = [_msg("system", "sys")]                  # 1 word
+    for i in range(50):
+        msgs.append(_msg("user", f"q{i} a b c d"))   # 5 words each
+        msgs.append(_msg("assistant", f"r{i} a b c d"))  # 5 words each
+    msgs.append(_msg("user", "current now"))         # current turn, 2 words
+    # budget = 600 - 0 - 512 = 88. Keep must fit 88 tokens.
+    # system(1) + current(2) = 3; each kept turn = 10. floor((88-3)/10) = 8
+    # turns kept -> 42 turns dropped -> 84 messages dropped.
+    result = bound_messages_to_window(
+        msgs, model="m", provider="p", response_reservation=0,
+        window=600, count_fn=_wordcount,
+    )
+    assert result.messages[0]["content"] == "sys"
+    assert result.messages[-1]["content"] == "current now"
+    assert result.dropped_count == 84
+    # Kept payload is within budget.
+    assert _wordcount(result.messages, "m") <= 88
+
+
 def test_default_response_reservation_value():
     assert DEFAULT_RESPONSE_RESERVATION == 1024

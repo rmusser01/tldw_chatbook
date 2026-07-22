@@ -67,7 +67,12 @@ def count_console_messages_tokens(
                 if isinstance(part, dict) and part.get("type") != "text"
             )
             flattened.append(
-                {**message, "content": " ".join(t for t in texts if t)}
+                {
+                    **message,
+                    "content": " ".join(
+                        t for t in texts if isinstance(t, str) and t
+                    ),
+                }
             )
         else:
             flattened.append(message)
@@ -152,18 +157,29 @@ def bound_messages_to_window(
     current_turn = rest[last_user:]
     kept_turns = _group_turns(rest[:last_user])
 
-    def assemble() -> list[dict[str, Any]]:
+    def assemble(drop: int) -> list[dict[str, Any]]:
         return (
             system_prefix
-            + [m for turn in kept_turns for m in turn]
+            + [m for turn in kept_turns[drop:] for m in turn]
             + current_turn
         )
 
-    dropped = 0
-    assembled = assemble()
-    while kept_turns and counter(assembled, model) > budget:
-        removed = kept_turns.pop(0)
-        dropped += len(removed)
-        assembled = assemble()
+    # Drop oldest whole turns until the payload fits. The token count is
+    # monotonically non-increasing as more turns drop (each turn contributes
+    # >= 0 tokens), so binary-search the minimal number of oldest turns to
+    # drop rather than re-counting the whole payload once per dropped turn
+    # (O(n^2) on the long histories this trimmer exists for). The chosen drop
+    # count -- and thus the returned messages -- is identical to dropping one
+    # turn at a time.
+    lo, hi = 0, len(kept_turns)
+    best = hi  # if nothing fits, drop every middle turn
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if counter(assemble(mid), model) <= budget:
+            best = mid
+            hi = mid - 1
+        else:
+            lo = mid + 1
 
-    return BoundResult(assembled, dropped)
+    dropped = sum(len(turn) for turn in kept_turns[:best])
+    return BoundResult(assemble(best), dropped)
