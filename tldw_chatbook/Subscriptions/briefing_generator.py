@@ -25,6 +25,7 @@ import markdown
 # Local Imports
 from ..DB.Subscriptions_DB import SubscriptionsDB
 from ..Chat.Chat_Functions import chat_api_call
+from ..Internal_Prompts import render_internal_prompt
 from ..Notes.Notes_Library import NotesInteropService
 from ..Metrics.metrics_logger import log_histogram, log_counter
 from .content_processor import ContentSummarizer
@@ -309,17 +310,9 @@ class BriefingGenerator:
         if custom_prompt:
             prompt = custom_prompt.replace("{content}", content_summary)
         else:
-            prompt = f"""Analyze the following content from various subscriptions and generate a comprehensive briefing:
-
-{content_summary}
-
-Please provide:
-1. Executive Summary (2-3 paragraphs highlighting the most important developments)
-2. Key Insights (bullet points of significant findings or patterns)
-3. Trending Topics (identify common themes across sources)
-4. Recommended Actions (actionable items based on the content)
-
-Format each section clearly with appropriate headers."""
+            prompt = render_internal_prompt(
+                "subscriptions.briefing", content_summary=content_summary
+            )
 
         # Call LLM
         messages = [

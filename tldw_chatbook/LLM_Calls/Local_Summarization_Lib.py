@@ -30,30 +30,12 @@ from urllib3 import Retry
 # Import Local Libraries
 from tldw_chatbook.Utils.Utils import extract_text_from_segments, logging
 from tldw_chatbook.config import load_settings
+from tldw_chatbook.Internal_Prompts import get_internal_prompt
 
 #
 #######################################################################################################################
 # Function Definitions
 #
-
-summarizer_prompt = """
-                    <s>You are a bulleted notes specialist. ```When creating comprehensive bulleted notes, you should follow these guidelines: Use multiple headings based on the referenced topics, not categories like quotes or terms. Headings should be surrounded by bold formatting and not be listed as bullet points themselves. Leave no space between headings and their corresponding list items underneath. Important terms within the content should be emphasized by setting them in bold font. Any text that ends with a colon should also be bolded. Before submitting your response, review the instructions, and make any corrections necessary to adhered to the specified format. Do not reference these instructions within the notes.``` \nBased on the content between backticks create comprehensive bulleted notes.
-                        **Bulleted Note Creation Guidelines**
-
-                        **Headings**:
-                        - Based on referenced topics, not categories like quotes or terms
-                        - Surrounded by **bold** formatting
-                        - Not listed as bullet points
-                        - No space between headings and list items underneath
-
-                        **Emphasis**:
-                        - **Important terms** set in bold font
-                        - **Text ending in a colon**: also bolded
-
-                        **Review**:
-                        - Ensure adherence to specified format
-                        - Do not reference these instructions in your response.</s> {{ .Prompt }}
-                    """
 
 
 def summarize_with_local_llm(
@@ -223,7 +205,7 @@ def summarize_with_llama(
         logging.debug(f"Llama Summarize: System Prompt being sent is {system_message}")
 
         if custom_prompt is None:
-            llama_prompt = f"{summarizer_prompt}\n\n{text}"
+            llama_prompt = f"{get_internal_prompt('summarization.local_summarizer_template')}\n\n{text}"
         else:
             llama_prompt = f"{custom_prompt}\n\n{text}"
 
@@ -401,7 +383,7 @@ def summarize_with_kobold(
             "content-type": "application/json",
         }
         if custom_prompt_input is None:
-            kobold_prompt = f"{summarizer_prompt}\n\n\n\n{text}"
+            kobold_prompt = f"{get_internal_prompt('summarization.local_summarizer_template')}\n\n\n\n{text}"
         else:
             kobold_prompt = f"{custom_prompt_input}\n\n\n\n{text}"
 
@@ -860,7 +842,7 @@ def summarize_with_tabbyapi(
             system_message = "You are a helpful AI assistant."
 
         if custom_prompt_input is None:
-            custom_prompt_input = f"{summarizer_prompt}\n\n\n\n{text}"
+            custom_prompt_input = f"{get_internal_prompt('summarization.local_summarizer_template')}\n\n\n\n{text}"
         else:
             custom_prompt_input = f"{custom_prompt_input}\n\n\n\n{text}"
 
@@ -1593,7 +1575,7 @@ def summarize_with_custom_openai(
         logging.debug(f"Custom OpenAI API: Custom prompt: {custom_prompt_arg}")
 
         if input_data is None:
-            input_data = f"{summarizer_prompt}\n\n\n\n{text}"
+            input_data = f"{get_internal_prompt('summarization.local_summarizer_template')}\n\n\n\n{text}"
         else:
             input_data = f"{input_data}\n\n\n\n{text}"
 
@@ -1843,7 +1825,7 @@ def summarize_with_custom_openai_2(
         logging.debug(f"Custom OpenAI API-2: Custom prompt: {custom_prompt_arg}")
 
         if input_data is None:
-            input_data = f"{summarizer_prompt}\n\n\n\n{text}"
+            input_data = f"{get_internal_prompt('summarization.local_summarizer_template')}\n\n\n\n{text}"
         else:
             input_data = f"{input_data}\n\n\n\n{text}"
 

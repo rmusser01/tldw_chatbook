@@ -18,6 +18,7 @@ from loguru import logger
 # Local Imports
 from .token_manager import TokenCounter
 from ..Chat.Chat_Functions import chat_api_call
+from ..Internal_Prompts import get_internal_prompt
 from ..Metrics.metrics_logger import log_histogram, log_counter
 #
 ########################################################################################################################
@@ -452,14 +453,7 @@ class RecursiveSummarizer:
 
     def _get_system_prompt(self) -> str:
         """Get system prompt for summarization."""
-        return """You are an expert content summarizer. Your task is to create clear, accurate summaries that preserve the key information while significantly reducing length. 
-
-Key principles:
-1. Maintain factual accuracy
-2. Preserve the most important information
-3. Use clear, concise language
-4. Maintain logical flow
-5. Respect the requested token limit"""
+        return get_internal_prompt("subscriptions.recursive_summarizer_system")
 
     def _merge_summaries(self, chunks: List[SummarizedChunk]) -> str:
         """Merge chunk summaries into coherent text."""

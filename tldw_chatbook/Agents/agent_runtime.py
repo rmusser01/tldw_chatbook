@@ -180,16 +180,19 @@ def render_tool_protocol(schemas: list[ToolSchema]) -> str:
             )
         )
     tool_list = "\n".join(blocks)
-    return (
-        "You can call tools. Available tools:\n"
-        f"{tool_list}\n\n"
-        "To call a tool, your reply MUST START with the fence as its first "
-        "content — no prose before it:\n"
-        f'{FENCE_OPEN}\n{{"name": "<tool name>", "arguments": {{...}}}}\n'
-        f"{_FENCE_CLOSE}\n"
-        "One tool call per reply. After you receive the tool result, either "
-        "call another tool the same way or answer the user directly. If no "
-        "tool is needed, just answer directly."
+
+    # Import inside the function on purpose: agent_runtime is a pure module
+    # today (no Textual, app, DB, or I/O imports per the module docstring)
+    # and P1's import-hygiene philosophy keeps prompt plumbing out of module
+    # import paths that don't need it. A module-level import would also
+    # pass the hygiene test; this is the more conservative choice.
+    from tldw_chatbook.Internal_Prompts import render_internal_prompt
+
+    return render_internal_prompt(
+        "agents.tool_protocol",
+        tool_list=tool_list,
+        fence_open=FENCE_OPEN,
+        fence_close=_FENCE_CLOSE,
     )
 
 

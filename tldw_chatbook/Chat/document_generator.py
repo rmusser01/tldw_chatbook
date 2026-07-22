@@ -47,6 +47,7 @@ from ..LLM_Calls.LLM_API_Calls_Local import (
     chat_with_mlx_lm,
 )
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
+from ..Internal_Prompts import get_internal_prompt
 from .Chat_Deps import ChatAPIError
 
 # Configure logger
@@ -216,9 +217,9 @@ class DocumentGenerator:
         context = self.format_context_for_llm(messages, specific_message)
 
         # Build prompt
-        system_prompt = "You are an expert at creating clear, chronological timelines from conversations and content."
+        system_prompt = get_internal_prompt("document_generation.timeline_system")
         user_prompt = (
-            f"{self.timeline_config['prompt']}\n\nConversation Context:\n{context}"
+            f"{get_internal_prompt('document_generation.timeline_user')}\n\nConversation Context:\n{context}"
         )
 
         # Call LLM
@@ -314,9 +315,9 @@ class DocumentGenerator:
         context = self.format_context_for_llm(messages, specific_message)
 
         # Build prompt
-        system_prompt = "You are an educational expert specializing in creating comprehensive study guides."
+        system_prompt = get_internal_prompt("document_generation.study_guide_system")
         user_prompt = (
-            f"{self.study_guide_config['prompt']}\n\nConversation Context:\n{context}"
+            f"{get_internal_prompt('document_generation.study_guide_user')}\n\nConversation Context:\n{context}"
         )
 
         # Call LLM
@@ -412,9 +413,9 @@ class DocumentGenerator:
         context = self.format_context_for_llm(messages, specific_message)
 
         # Build prompt
-        system_prompt = "You are an expert at creating executive briefing documents with actionable insights."
+        system_prompt = get_internal_prompt("document_generation.briefing_system")
         user_prompt = (
-            f"{self.briefing_config['prompt']}\n\nConversation Context:\n{context}"
+            f"{get_internal_prompt('document_generation.briefing_user')}\n\nConversation Context:\n{context}"
         )
 
         # Call LLM

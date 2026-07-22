@@ -98,6 +98,7 @@ from .chunking_templates import (  # noqa: E402
     ChunkingTemplate,
 )
 from ..Metrics.metrics_logger import log_counter, log_histogram  # noqa: E402
+from tldw_chatbook.Internal_Prompts import get_internal_prompt  # noqa: E402
 
 
 #
@@ -265,10 +266,8 @@ _default_chunk_options_from_config = {
     "summarize_verbose": _get_bool_setting(
         "chunking_config", "summarize_verbose", False
     ),
-    "summarize_system_prompt": get_cli_setting(
-        "chunking_config",
-        "summarize_system_prompt",
-        "Rewrite this text in summarized form.",
+    "summarize_system_prompt": get_internal_prompt(
+        "summarization.rolling_summarize_system"
     ),
     "summarize_additional_instructions": get_cli_setting(
         "chunking_config", "summarize_additional_instructions", None
@@ -664,6 +663,20 @@ class Chunker:
                     "Missing 'llm_call_function' for 'rolling_summarize' method."
                 )
 
+            # `_get_option`'s fallback arg is evaluated eagerly by Python
+            # regardless of whether self.options already has a value, so
+            # resolve the registry default lazily here instead of passing
+            # get_internal_prompt(...) directly as the (near-always-unused)
+            # default_override -- avoids a config lookup on every rolling-
+            # summarize call in the common case where summarize_system_
+            # prompt is already populated (see
+            # test_rolling_summarize_skips_resolver_when_caller_option_set).
+            system_prompt_content = self.options.get("summarize_system_prompt")
+            if system_prompt_content is None:
+                system_prompt_content = get_internal_prompt(
+                    "summarization.rolling_summarize_system"
+                )
+
             summary = self._rolling_summarize(
                 text_to_summarize=text,
                 llm_summarize_step_func=llm_call_function,  # Pass the generic call function
@@ -677,9 +690,7 @@ class Chunker:
                     "summarize_recursively", False
                 ),
                 verbose=self._get_option("summarize_verbose", False),
-                system_prompt_content=self._get_option(
-                    "summarize_system_prompt", "Rewrite this text in summarized form."
-                ),
+                system_prompt_content=system_prompt_content,
                 additional_instructions=self._get_option(
                     "summarize_additional_instructions", None
                 ),
