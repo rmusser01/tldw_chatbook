@@ -196,8 +196,22 @@ class TestTokenCounter:
 
 
 class TestEstimator:
+    @pytest.fixture(autouse=True)
+    def _force_chars_path(self, monkeypatch):
+        # These tests assert the chars-floor behavior; force that path so they
+        # are deterministic regardless of whether tiktoken / a custom tokenizer
+        # happens to be installed in the running environment.
+        import tldw_chatbook.Utils.token_counter as tc
+        monkeypatch.setattr(tc, "TIKTOKEN_AVAILABLE", False)
+        monkeypatch.setattr(tc, "custom_tokenizers_available", lambda: False)
+
     def test_empty_text_is_zero(self):
         assert estimate_tokens("", "gpt-4o", "openai") == 0
+
+    def test_short_nonempty_text_floors_at_one(self):
+        # int() truncation must not round a short non-empty string down to 0.
+        assert estimate_tokens("hi", "gpt-4o", "openai") >= 1
+        assert estimate_tokens("a", "gpt-4o", "openai") >= 1
 
     def test_cjk_floor_at_least_one_token_per_char(self):
         # CJK code points are >= ~1 token each; a conservative floor never under-counts.

@@ -117,13 +117,20 @@ def _norm_provider(provider: str) -> str:
 
 
 def _chars_estimate(text: str, provider: str) -> int:
-    """Conservative chars-based token floor; weights CJK higher, applies headroom."""
+    """Conservative chars-based token floor; weights CJK higher, applies headroom.
+
+    Non-empty text always estimates to at least 1 token — ``int()`` truncation
+    would otherwise round very short strings (e.g. "hi") down to 0, which would
+    under-count and defeat the conservative-floor guarantee.
+    """
+    if not text:
+        return 0
     cjk = sum(1 for ch in text if _is_cjk(ch))
     other = len(text) - cjk
     base_ratio = TOKENS_PER_CHAR_ESTIMATES.get(
         _norm_provider(provider) or "default", TOKENS_PER_CHAR_ESTIMATES["default"]
     )
-    return int((other * base_ratio + cjk * CJK_TOKENS_PER_CHAR) * ESTIMATE_HEADROOM)
+    return max(1, int((other * base_ratio + cjk * CJK_TOKENS_PER_CHAR) * ESTIMATE_HEADROOM))
 
 
 def estimate_tokens(text: str, model: str = "gpt-3.5-turbo", provider: str = "") -> int:
