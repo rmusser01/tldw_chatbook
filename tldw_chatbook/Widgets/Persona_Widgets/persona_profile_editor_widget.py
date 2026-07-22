@@ -7,6 +7,7 @@ from typing import Any, Dict
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.timer import Timer
 from textual.widgets import Button, Input, Label, Static, TextArea
 
 from .personas_pane_messages import (
@@ -43,7 +44,21 @@ class PersonaProfileEditorWidget(Container):
         border: none;
         margin-right: 1;
     }
+
+    /* Live per-field validation (Roleplay P3b Task 4): a literal color, not
+       a $ds-* token - DEFAULT_CSS must resolve in bare-App test harnesses
+       that never load the app stylesheet. */
+    PersonaProfileEditorWidget .is-invalid {
+        border: round red;
+    }
     """
+
+    #: CSS class toggled on an offending error-level field's enclosing row
+    #: by ``_run_validation``.
+    _FIELD_ERROR_CLASS = "is-invalid"
+    #: Delay before a field-change-triggered validation pass runs, matching
+    #: PersonasCharacterEditorWidget's debounce.
+    _VALIDATION_DEBOUNCE_SECONDS = 0.2
 
     def __init__(self, **kwargs) -> None:
         kwargs.setdefault("id", "ccp-persona-editor-view")
@@ -57,6 +72,9 @@ class PersonaProfileEditorWidget(Container):
         self._loading: bool = False
         self._loaded_snapshot: tuple | None = None
         self._dirty_posted: bool = False
+        # Live validation (Roleplay P3b Task 4): see
+        # PersonasCharacterEditorWidget._validation_timer for the mechanism.
+        self._validation_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("Persona Editor", classes="destination-section")
@@ -164,6 +182,7 @@ class PersonaProfileEditorWidget(Container):
         See PersonasCharacterEditorWidget._field_changed for the suppression
         mechanism (loading flag + loaded-snapshot comparison).
         """
+        self._schedule_validation()
         if self._loading or self._dirty_posted or self._loaded_snapshot is None:
             return
         if self._form_snapshot() == self._loaded_snapshot:
@@ -171,12 +190,47 @@ class PersonaProfileEditorWidget(Container):
         self._dirty_posted = True
         self.post_message(EditorContentChanged())
 
-    def validate(self) -> tuple[str, ...]:
-        """Return a tuple of validation error strings, empty if valid."""
-        errors: list[str] = []
+    def validate(self) -> list[tuple[str, str, str]]:
+        """Live per-field checks: name required.
+
+        Returns:
+            ``(field_id, message, level)`` tuples, ``level`` in
+            ``{"error", "warning"}``.
+        """
+        findings: list[tuple[str, str, str]] = []
         if not self.query_one("#personas-editor-name", Input).value.strip():
-            errors.append("name: required")
-        return tuple(errors)
+            findings.append(("personas-editor-name", "required", "error"))
+        return findings
+
+    def _validated_field_ids(self) -> set[str]:
+        """Field ids ``validate()`` can flag at ``error`` level."""
+        return {"personas-editor-name"}
+
+    def _run_validation(self) -> list[tuple[str, str, str]]:
+        """Compute findings, mark/un-mark offending rows, render the footer.
+
+        Runs debounced on field change (``_schedule_validation``, wired into
+        ``_field_changed``) and authoritatively at Save (``_save_pressed``),
+        which blocks when any finding is ``level == "error"``.
+
+        Returns:
+            The findings just computed and rendered.
+        """
+        findings = self.validate()
+        invalid_ids = {fid for fid, _msg, level in findings if level == "error"}
+        for fid in self._validated_field_ids():
+            row = self.query_one(f"#{fid}").parent
+            row.set_class(fid in invalid_ids, self._FIELD_ERROR_CLASS)
+        self.show_validation(tuple(f"{fid}: {msg}" for fid, msg, _level in findings))
+        return findings
+
+    def _schedule_validation(self) -> None:
+        """Debounce ``_run_validation`` so a burst of typing validates once."""
+        if self._validation_timer is not None:
+            self._validation_timer.stop()
+        self._validation_timer = self.set_timer(
+            self._VALIDATION_DEBOUNCE_SECONDS, self._run_validation
+        )
 
     def show_validation(self, errors: tuple[str, ...]) -> None:
         """Render validation errors in the editor footer (the single
@@ -190,9 +244,7 @@ class PersonaProfileEditorWidget(Container):
     @on(Button.Pressed, "#personas-editor-save")
     def _save_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        errors = self.validate()
-        self.show_validation(errors)
-        if errors:
+        if any(level == "error" for _fid, _msg, level in self._run_validation()):
             return
         self.post_message(PersonaProfileSaveRequested(self.collect()))
 

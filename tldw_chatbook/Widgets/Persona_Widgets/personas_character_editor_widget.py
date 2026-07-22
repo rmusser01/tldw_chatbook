@@ -16,6 +16,7 @@ from typing import Any, Dict, List
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.timer import Timer
 from textual.widgets import Button, DataTable, Input, Label, Static, TextArea
 
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
@@ -137,7 +138,22 @@ class PersonasCharacterEditorWidget(Container):
         border: none;
         margin-right: 1;
     }
+
+    /* Live per-field validation (Roleplay P3b Task 4): a literal color, not
+       a $ds-* token - DEFAULT_CSS must resolve in bare-App test harnesses
+       that never load the app stylesheet. */
+    PersonasCharacterEditorWidget .is-invalid {
+        border: round red;
+    }
     """
+
+    #: CSS class toggled on an offending error-level field's enclosing row
+    #: by ``_run_validation``.
+    _FIELD_ERROR_CLASS = "is-invalid"
+    #: Delay before a field-change-triggered validation pass runs, matching
+    #: the library search debounce (``PERSONAS_SEARCH_DEBOUNCE_SECONDS`` in
+    #: personas_screen.py).
+    _VALIDATION_DEBOUNCE_SECONDS = 0.2
 
     def __init__(self, **kwargs: Any) -> None:
         kwargs.setdefault("id", "ccp-character-editor-view")
@@ -163,6 +179,10 @@ class PersonasCharacterEditorWidget(Container):
         self._loading: bool = False
         self._loaded_snapshot: tuple | None = None
         self._dirty_posted: bool = False
+        # Live validation (Roleplay P3b Task 4): the pending debounce timer
+        # scheduled by _field_changed, cancelled and re-armed on every real
+        # field change so only the last edit in a typing burst validates.
+        self._validation_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("Character Editor", classes="destination-section")
@@ -406,6 +426,81 @@ class PersonasCharacterEditorWidget(Container):
 
         holder.mount(renderable if isinstance(renderable, _W) else _S(renderable))
 
+    def validate(self) -> list[tuple[str, str, str]]:
+        """Live per-field checks: name required, oversized avatar, blank greetings.
+
+        Returns:
+            ``(field_id, message, level)`` tuples, ``level`` in
+            ``{"error", "warning"}``. Errors block Save (see
+            ``_save_pressed``); warnings are informational only and never
+            mark a row invalid.
+        """
+        findings: list[tuple[str, str, str]] = []
+        if not self._input("name").value.strip():
+            findings.append(("personas-char-editor-name", "required", "error"))
+        avatar_bytes = self.current_avatar_bytes()
+        if avatar_bytes is not None:
+            # Local import: this widget module is itself imported by
+            # personas_screen at module-load time, so a top-level import of
+            # its constants back here would deadlock as a circular import.
+            from ...UI.Screens.personas_screen import (
+                PERSONAS_AVATAR_MAX_BYTES,
+                PERSONAS_AVATAR_MAX_SIZE_COPY,
+            )
+
+            if len(avatar_bytes) > PERSONAS_AVATAR_MAX_BYTES:
+                findings.append(
+                    (
+                        "personas-char-editor-avatar-status",
+                        f"image exceeds {PERSONAS_AVATAR_MAX_SIZE_COPY}",
+                        "error",
+                    )
+                )
+        for index, greeting in enumerate(self._greetings, start=1):
+            if not greeting.strip():
+                findings.append(
+                    (
+                        "personas-char-editor-greetings-table",
+                        f"greeting {index} is blank",
+                        "warning",
+                    )
+                )
+        return findings
+
+    def _validated_field_ids(self) -> set[str]:
+        """Field ids ``validate()`` can flag at ``error`` level.
+
+        Only these are reconciled (marked/un-marked) by ``_run_validation``;
+        greetings are warning-only and never toggle ``.is-invalid``.
+        """
+        return {"personas-char-editor-name", "personas-char-editor-avatar-status"}
+
+    def _run_validation(self) -> list[tuple[str, str, str]]:
+        """Compute findings, mark/un-mark offending rows, render the footer.
+
+        Runs debounced on field change (``_schedule_validation``, wired into
+        ``_field_changed``) and authoritatively at Save (``_save_pressed``),
+        which blocks when any finding is ``level == "error"``.
+
+        Returns:
+            The findings just computed and rendered.
+        """
+        findings = self.validate()
+        invalid_ids = {fid for fid, _msg, level in findings if level == "error"}
+        for fid in self._validated_field_ids():
+            row = self.query_one(f"#{fid}").parent
+            row.set_class(fid in invalid_ids, self._FIELD_ERROR_CLASS)
+        self.show_validation(tuple(f"{fid}: {msg}" for fid, msg, _level in findings))
+        return findings
+
+    def _schedule_validation(self) -> None:
+        """Debounce ``_run_validation`` so a burst of typing validates once."""
+        if self._validation_timer is not None:
+            self._validation_timer.stop()
+        self._validation_timer = self.set_timer(
+            self._VALIDATION_DEBOUNCE_SECONDS, self._run_validation
+        )
+
     def show_validation(self, errors: tuple[str, ...]) -> None:
         """Render screen-side validation errors in the editor footer.
 
@@ -641,6 +736,7 @@ class PersonasCharacterEditorWidget(Container):
             and event.text_area.id == "personas-char-editor-greeting-edit"
         ):
             return
+        self._schedule_validation()
         if self._loading or self._dirty_posted or self._loaded_snapshot is None:
             return
         if self._form_snapshot() == self._loaded_snapshot:
@@ -729,11 +825,8 @@ class PersonasCharacterEditorWidget(Container):
     @on(Button.Pressed, "#personas-char-editor-save")
     def _save_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        validation = self.query_one("#personas-char-editor-validation", Static)
-        if not self._input("name").value.strip():
-            validation.update("Validation errors:\nname: required")
+        if any(level == "error" for _fid, _msg, level in self._run_validation()):
             return
-        validation.update("")
         self.post_message(CharacterSaveRequested(self.get_character_data()))
 
     @on(Button.Pressed, "#personas-char-editor-cancel")
