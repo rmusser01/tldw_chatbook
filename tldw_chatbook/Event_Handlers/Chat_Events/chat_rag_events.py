@@ -639,10 +639,22 @@ async def resolve_scope_for_session(
     ``getattr`` so callers/tests that pass a session double without this
     attribute degrade to "no workspace scope" rather than raising -- task-13
     Phase 3 of the rag-scope-narrowing program). The workspace's stored
-    scope is read via ``app.workspace_registry_service.get_workspace_scope``,
-    guarded end to end: a missing service, a missing/empty ``workspace_id``,
-    or a storage read failure all degrade to ``ws_scope=None`` (unscoped at
-    that level) rather than raising or widening enforcement.
+    scope is read via ``app.workspace_registry_service.get_workspace_scope``.
+    A missing service or a missing/empty ``workspace_id`` degrades to
+    ``ws_scope=None`` (no workspace scope to bound with -- the conversation
+    scope alone still applies normally). A storage READ FAILURE is handled
+    differently (PR#757 review, comment 5): it does NOT degrade to
+    ``ws_scope=None``, because that would silently drop the workspace bound
+    and widen a hard-filter feature on error. Instead this function returns
+    early with an EMPTY ``EffectiveScope`` (``cause="workspace-scope-
+    unavailable"``), regardless of whether the conversation itself has a
+    scope, since conv-scope-alone is always wider than the (conv ∩
+    workspace) intersection that can no longer be computed.
+
+    Both cases end retrieval; only the empty-scope short-circuit's cause is
+    used to give the user an honest, distinguishable notice. This mirrors
+    the caller-side EMPTY handling ``get_rag_context_for_chat`` already has
+    for a configured-but-nothing-left scope.
 
     Both DB reads apply the same in-memory-connection guard (PR #747
     review, extended here to the workspace registry's own DB): in-memory
@@ -709,11 +721,41 @@ async def resolve_scope_for_session(
                 ws_scope = await asyncio.to_thread(
                     registry_service.get_workspace_scope, workspace_id
                 )
-        except Exception as e:
-            logger.warning(
-                f"workspace rag_scope read failed for {workspace_id}: {e}"
+        except Exception:
+            # PR#757 review (comment 5): a workspace-scope READ FAILURE is
+            # NOT the same thing as "no workspace scope set". Forcing
+            # ws_scope=None here (the old behavior) silently drops the
+            # workspace bound and lets resolution fall through to
+            # conv-scope-alone -- or fully UNSCOPED when the conversation
+            # also has no scope of its own -- widening a hard-filter
+            # feature precisely when its own read fails. Fail CLOSED
+            # instead: the (conv ∩ workspace) intersection can't be
+            # computed without the workspace scope, and conv-scope-alone
+            # is always WIDER than that intersection, so an EMPTY
+            # effective scope is returned unconditionally here (in both
+            # the conversation-scoped and conversation-unscoped
+            # sub-cases) -- this short-circuits retrieval via the same
+            # EMPTY pathway ``get_rag_context_for_chat`` already uses for
+            # a configured-but-nothing-left scope, with an honest,
+            # distinct cause instead of a generic one.
+            #
+            # This deliberately does NOT touch the conversation-scope
+            # read a few lines above, which keeps its pre-existing
+            # fail-open-to-None pattern -- see the backlog follow-up task
+            # filed against this comment for reconsidering that
+            # separately.
+            logger.opt(exception=True).warning(
+                f"workspace rag_scope read failed for {workspace_id}"
             )
-            ws_scope = None
+            return ScopeResolution(
+                conv_scope,
+                None,
+                EffectiveScope(
+                    state="empty",
+                    allowlist={},
+                    cause="workspace-scope-unavailable",
+                ),
+            )
 
     if conv_scope is None and ws_scope is None:
         # No DB-backed existence check needed for the both-unset case --

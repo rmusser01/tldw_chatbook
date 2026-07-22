@@ -156,9 +156,14 @@ class EffectiveScope:
         allowlist: Mapping of source_type to the frozenset of surviving ids.
             Contains only non-empty entries; ``{}`` unless ``state ==
             "scoped"``.
-        cause: Explanation for an ``"empty"`` state (``"no-workspace-overlap"``
-            or ``"deleted-items"``); ``None`` for ``"unscoped"`` and
-            ``"scoped"``.
+        cause: Explanation for an ``"empty"`` state (``"no-workspace-overlap"``,
+            ``"deleted-items"``, or ``"workspace-scope-unavailable"`` -- the
+            latter produced not by this function but by
+            ``chat_rag_events.resolve_scope_for_session`` when the
+            workspace-scope registry read itself raises, so a hard-filter
+            feature fails closed to EMPTY rather than silently widening to
+            conversation-scope-alone or fully unscoped); ``None`` for
+            ``"unscoped"`` and ``"scoped"``.
     """
     state: Literal["unscoped", "scoped", "empty"]
     allowlist: dict[str, frozenset[str]]

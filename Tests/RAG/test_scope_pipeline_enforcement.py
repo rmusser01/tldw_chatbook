@@ -1089,6 +1089,138 @@ class TestWorkspaceScopeIntersectionE2E:
         ), app.notifications
 
 
+class _RaisingWorkspaceRegistry:
+    """Workspace registry double whose scope read always raises -- proves
+    the PR#757 (comment 5) fail-closed path, distinct from a registry that
+    cleanly returns ``None`` for "no workspace scope set"."""
+
+    db = SimpleNamespace(is_memory_db=True)
+
+    def get_workspace_scope(self, workspace_id):
+        raise RuntimeError("workspace registry read failed")
+
+
+class TestWorkspaceScopeReadFailureFailsClosed:
+    """PR#757 review (comment 5): a workspace-scope registry READ FAILURE
+    is not "no workspace scope set" -- ``resolve_scope_for_session`` must
+    not silently drop the workspace bound and let resolution widen to
+    conversation-scope-alone (or fully unscoped). It fails CLOSED to an
+    EMPTY effective scope (cause ``"workspace-scope-unavailable"``) in
+    BOTH sub-cases -- the conversation itself scoped or not -- since
+    conversation-scope-alone is always wider than the (conv ∩ workspace)
+    intersection that can no longer be computed once the workspace side is
+    unreadable."""
+
+    @pytest.mark.asyncio
+    async def test_no_conversation_scope_still_fails_closed_not_unscoped(
+        self, media_db, cha_db, monkeypatch
+    ):
+        """Old behavior: ws_scope forced to None + conv has no scope of its
+        own -> fully UNSCOPED, searching everything. New behavior: EMPTY,
+        nothing searched, honest notice."""
+        _seed_media(media_db, n=2)
+        conv_id = cha_db.add_conversation({"title": "No scope, broken workspace"})
+
+        session = SimpleNamespace(
+            persisted_conversation_id=conv_id, workspace_id="ws-broken"
+        )
+        monkeypatch.setattr(cre, "_active_console_session", lambda app: session)
+
+        for fn_name in (
+            "perform_plain_rag_search",
+            "perform_full_rag_pipeline",
+            "perform_hybrid_rag_search",
+            "perform_search_with_pipeline",
+        ):
+            def _refuse(*args, __name=fn_name, **kwargs):
+                raise AssertionError(f"{__name} must not be called on EMPTY scope")
+
+            monkeypatch.setattr(cre, fn_name, _refuse)
+
+        app = _ChatMockApp(
+            search_mode="plain", media_db=media_db, chachanotes_db=cha_db
+        )
+        app.workspace_registry_service = _RaisingWorkspaceRegistry()
+
+        context = await cre.get_rag_context_for_chat(app, "zanzibarite")
+
+        assert context is None
+        assert any(
+            "retrieval scope is empty" in message.lower()
+            and "workspace-scope-unavailable" in message.lower()
+            for message, _severity in app.notifications
+        ), app.notifications
+
+    @pytest.mark.asyncio
+    async def test_conversation_scope_present_still_fails_closed_not_narrowed(
+        self, media_db, cha_db, monkeypatch
+    ):
+        """Old behavior: ws_scope forced to None + conv HAS its own scope
+        -> narrows to conv-scope-alone (wider than the true, uncomputable
+        intersection). New behavior: EMPTY, nothing searched -- the
+        conservative choice documented in ``resolve_scope_for_session``."""
+        media_ids = _seed_media(media_db, n=2)
+        conv_id = cha_db.add_conversation({"title": "Scoped conv, broken workspace"})
+        write_conversation_scope(
+            cha_db,
+            conv_id,
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),), updated_at="t1"
+            ),
+        )
+
+        session = SimpleNamespace(
+            persisted_conversation_id=conv_id, workspace_id="ws-broken"
+        )
+        monkeypatch.setattr(cre, "_active_console_session", lambda app: session)
+
+        for fn_name in (
+            "perform_plain_rag_search",
+            "perform_full_rag_pipeline",
+            "perform_hybrid_rag_search",
+            "perform_search_with_pipeline",
+        ):
+            def _refuse(*args, __name=fn_name, **kwargs):
+                raise AssertionError(f"{__name} must not be called on EMPTY scope")
+
+            monkeypatch.setattr(cre, fn_name, _refuse)
+
+        app = _ChatMockApp(
+            search_mode="plain", media_db=media_db, chachanotes_db=cha_db
+        )
+        app.workspace_registry_service = _RaisingWorkspaceRegistry()
+
+        context = await cre.get_rag_context_for_chat(app, "zanzibarite")
+
+        assert context is None
+        assert any(
+            "retrieval scope is empty" in message.lower()
+            and "workspace-scope-unavailable" in message.lower()
+            for message, _severity in app.notifications
+        ), app.notifications
+
+    @pytest.mark.asyncio
+    async def test_resolve_scope_for_session_reports_distinct_cause(
+        self, cha_db
+    ):
+        """Unit-level check directly against ``resolve_scope_for_session``:
+        the returned ``ScopeResolution`` carries ``ws_scope=None`` (the read
+        never produced a usable value -- distinct from "cleanly unset") and
+        ``effective`` is EMPTY with the dedicated cause, not a generic one."""
+        conv_id = cha_db.add_conversation({"title": "Direct resolution check"})
+        session = SimpleNamespace(
+            persisted_conversation_id=conv_id, workspace_id="ws-broken"
+        )
+        app = _App(chachanotes_db=cha_db)
+        app.workspace_registry_service = _RaisingWorkspaceRegistry()
+
+        resolution = await cre.resolve_scope_for_session(app, session)
+
+        assert resolution.ws_scope is None
+        assert resolution.effective.state == "empty"
+        assert resolution.effective.cause == "workspace-scope-unavailable"
+
+
 class TestWorkspaceScopeMemoryDbGuard:
     """Task-13 (PR #747 discipline, extended to the workspace registry's
     own DB): the workspace-scope read must apply the identical

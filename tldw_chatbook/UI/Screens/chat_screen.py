@@ -1573,7 +1573,12 @@ class ChatScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#console-workspace-rag-scope-open")
     def on_console_workspace_rag_scope_open(self, event: Button.Pressed) -> None:
-        """Open the workspace-level RAG retrieval-scope picker (task-13)."""
+        """Open the workspace-level RAG retrieval-scope picker (task-13).
+
+        Args:
+            event: The button-press event from the workspace row's
+                "Scope" button (``#console-workspace-rag-scope-open``).
+        """
         event.stop()
         self.run_worker(
             self._open_console_workspace_scope_picker(),
@@ -3457,6 +3462,40 @@ class ChatScreen(BaseAppScreen):
         if self.is_mounted:
             self._sync_console_retrieval_scope_row()
             self._sync_console_control_bar()
+
+    async def _warm_console_effective_scope_cache_if_stale(self) -> None:
+        """Warm the effective-scope cache for an already-active persisted session.
+
+        Covers a gap the picker-save/resume/first-persist-flush warmers
+        (``_resolve_console_effective_scope_state``'s three call sites)
+        never reach: ``restore_state`` (screen restore on app start, or
+        switching back to the Console screen) can reactivate a native
+        session whose ``persisted_conversation_id`` is already set BEFORE
+        this screen ever mounts, so ``_console_effective_scope_cache`` has
+        no entry for it yet. Left alone, ``_build_console_retrieval_scope_
+        state`` falls through to its cache-miss branch for a persisted
+        session and renders "Everything" for a conversation that is
+        actually scoped, until the user happens to resume/switch/save.
+
+        Called at the start of every ``_sync_native_console_chat_ui`` tick
+        (the initial-mount sync path included), but the cache-key presence
+        check below makes it a no-op once the session has been warmed --
+        the same one-time guard every other warmer relies on -- so this
+        adds no repeated DB work.
+        """
+        session = self._active_native_console_session()
+        if session is None or session.persisted_conversation_id is None:
+            return
+        cache_key = session.persisted_conversation_id
+        if cache_key in self._console_effective_scope_cache:
+            return
+        try:
+            await self._refresh_console_effective_scope_and_sync(session)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to warm retrieval scope cache for conversation {}",
+                cache_key,
+            )
 
     @staticmethod
     async def _read_console_retrieval_scope(db: Any, conversation_id: str) -> Optional[RagScope]:
@@ -9832,6 +9871,12 @@ class ChatScreen(BaseAppScreen):
         try:
             self._sync_console_chat_core_state()
             self._sync_console_session_draft()
+            # PR#757 review (comment 4): warm the effective-scope cache for
+            # an already-active persisted session before anything below
+            # reads it -- see `_warm_console_effective_scope_cache_if_stale`
+            # docstring for why the picker/resume/flush warmers alone leave
+            # a restore_state-reactivated session uncovered.
+            await self._warm_console_effective_scope_cache_if_stale()
             # Fix-wave (Critical, Task 4 review): this is the trigger for the
             # "what's in play" chat-dictionary summary now -- it replaces the
             # removed app-level `watch_current_chat_conversation_id`/

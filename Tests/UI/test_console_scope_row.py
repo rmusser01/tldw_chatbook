@@ -16,6 +16,7 @@ import pytest
 from textual.widgets import Button, Static
 
 from Tests.UI.test_console_native_chat_flow import (
+    RestoredConsoleHarness,
     StaticConversationTreeService,
     _static_plain_text,
 )
@@ -716,6 +717,101 @@ async def test_resume_console_workspace_conversation_refreshes_row_and_chip():
             assert (
                 _static_plain_text(row.query_one(f"#{LABEL_ID}", Static))
                 == "Scope: 2 items"
+            )
+            chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
+            assert chip.display is True
+            assert _static_plain_text(chip) == "Scope: 2"
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_initial_mount_of_restored_persisted_scoped_session_warms_row_and_chip():
+    """PR#757 review (comment 4): a persisted, scoped conversation that is
+    already the active session when the Console screen first mounts (the
+    real ``restore_state`` path -- app restart, or switching back to the
+    Console screen) must show its scoped state immediately, not "Scope:
+    everything" until the user happens to resume/switch/save again.
+
+    ``_console_effective_scope_cache`` starts empty on every fresh
+    ``ChatScreen`` instance -- it is never itself serialized/restored, only
+    ``persisted_conversation_id`` is (see ``_serialize_native_console_
+    state``). This reproduces that exactly: resume a scoped conversation in
+    a FIRST screen instance (which warms THAT instance's cache via
+    ``_resume_console_workspace_conversation``'s own explicit warm), save
+    state, then mount a SECOND, fresh screen instance from the saved state
+    (``RestoredConsoleHarness``, the same recipe ``test_console_chat_
+    lifecycle_state_survives_screen_recreation_return`` uses in ``Tests/UI/
+    test_console_native_chat_flow.py``). The second instance's cache starts
+    empty again, with no resume/switch/save call in between -- only the
+    initial-mount warm (``ChatScreen._warm_console_effective_scope_cache_
+    if_stale``, called from ``_sync_native_console_chat_ui``) can be
+    responsible for the row/chip showing the scoped state.
+    """
+    db = CharactersRAGDB(":memory:", "test-client")
+    try:
+        note_id = db.add_note(title="N1", content="body")
+        app = _build_test_app()
+        app.chachanotes_db = db
+        app.media_db = _AlwaysExistsMediaDB()
+        conversation_id = db.add_conversation({"title": "Restart-scoped chat"})
+        assert conversation_id
+        scope = RagScope(
+            items=(ScopeItem("media", "m1"), ScopeItem("note", note_id)),
+            updated_at="2026-01-01T00:00:00Z",
+        )
+        write_conversation_scope(db, conversation_id, scope)
+        app.chat_conversation_scope_service = StaticConversationTreeService(
+            {
+                conversation_id: {
+                    "conversation": {
+                        "id": conversation_id,
+                        "title": "Restart-scoped chat",
+                        "workspace_id": None,
+                    },
+                    "root_threads": [],
+                }
+            }
+        )
+
+        host = ConsoleHarness(app)
+        saved_state: dict | None = None
+        async with host.run_test(size=(240, 64)) as pilot:
+            console = host.screen_stack[-1]
+            resumed = await console._resume_console_workspace_conversation(
+                conversation_id
+            )
+            assert resumed is True
+            await pilot.pause()
+            saved_state = console.save_state()
+
+        assert saved_state is not None
+
+        restored_host = RestoredConsoleHarness(app, saved_state)
+        async with restored_host.run_test(size=(240, 64)) as pilot:
+            console = restored_host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-native-composer")
+
+            session = console._active_native_console_session()
+            assert session is not None
+            assert session.persisted_conversation_id == conversation_id
+
+            await _open_inspector_and_get_row(console, pilot)
+            row = console.query_one(f"#{ROW_ID}")
+
+            deadline = time.monotonic() + 3.0
+            label_text = _static_plain_text(row.query_one(f"#{LABEL_ID}", Static))
+            while label_text != "Scope: 2 items" and time.monotonic() < deadline:
+                await pilot.pause(0.05)
+                label_text = _static_plain_text(
+                    row.query_one(f"#{LABEL_ID}", Static)
+                )
+
+            assert label_text == "Scope: 2 items", (
+                "expected the retrieval-scope row to reflect the already-"
+                "active persisted conversation's scope on initial mount, "
+                "with no resume/switch/save in this screen instance -- "
+                f"got {label_text!r}"
             )
             chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
             assert chip.display is True
