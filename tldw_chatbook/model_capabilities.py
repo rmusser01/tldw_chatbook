@@ -26,23 +26,25 @@ logger = logging.getLogger(__name__)
 # Users can override or extend these in their config.toml file.
 DEFAULT_MODEL_PATTERNS = {
     "OpenAI": [
-        {"pattern": r"^gpt-4.*vision", "vision": True},
+        {"pattern": r"^gpt-4.*vision", "vision": True, "context_window": 128000},
         {
             "pattern": r"^gpt-4[o0](?:-mini)?",
             "vision": True,
+            "context_window": 128000,
         },  # gpt-4o, gpt-40, gpt-4o-mini
-        {"pattern": r"^gpt-4.*turbo", "vision": True},
-        {"pattern": r"^gpt-4\.1", "vision": True},  # gpt-4.1 series
+        {"pattern": r"^gpt-4.*turbo", "vision": True, "context_window": 128000},
+        {"pattern": r"^gpt-4\.1", "vision": True, "context_window": 1047576},  # gpt-4.1 series
         {
             "pattern": r"^o[34](?:-mini)?",
             "vision": True,
+            "context_window": 200000,
         },  # o3, o4, o3-mini, o4-mini series
         {"pattern": r"^dall-e", "vision": True, "image_generation": True},
     ],
     "Anthropic": [
-        {"pattern": r"^claude-3", "vision": True},  # All Claude 3 models have vision
-        {"pattern": r"^claude.*opus-4", "vision": True},  # Claude Opus 4 series
-        {"pattern": r"^claude.*sonnet-4", "vision": True},  # Claude Sonnet 4 series
+        {"pattern": r"^claude-3", "vision": True, "context_window": 200000},  # All Claude 3 models have vision
+        {"pattern": r"^claude.*opus-4", "vision": True, "context_window": 200000},  # Claude Opus 4 series
+        {"pattern": r"^claude.*sonnet-4", "vision": True, "context_window": 200000},  # Claude Sonnet 4 series
     ],
     "Google": [
         {"pattern": r"gemini.*vision", "vision": True},
@@ -84,28 +86,28 @@ DEFAULT_MODEL_PATTERNS = {
 # Known models with direct capabilities (for common models)
 DEFAULT_MODEL_CAPABILITIES = {
     # OpenAI
-    "gpt-4-vision-preview": {"vision": True, "max_images": 1},
-    "gpt-4-turbo": {"vision": True, "max_images": 10},
-    "gpt-4-turbo-2024-04-09": {"vision": True, "max_images": 10},
-    "gpt-4o": {"vision": True, "max_images": 10},
-    "gpt-4o-mini": {"vision": True, "max_images": 10},
-    "gpt-4.1-2025-04-14": {"vision": True, "max_images": 10},
-    "o4-mini-2025-04-16": {"vision": True, "max_images": 10},
-    "o3-2025-04-16": {"vision": True, "max_images": 10},
-    "o3-mini-2025-01-31": {"vision": True, "max_images": 10},
-    "gpt-4.1-mini-2025-04-14": {"vision": True, "max_images": 10},
-    "gpt-4.1-nano-2025-04-14": {"vision": True, "max_images": 10},
+    "gpt-4-vision-preview": {"vision": True, "max_images": 1, "context_window": 128000},
+    "gpt-4-turbo": {"vision": True, "max_images": 10, "context_window": 128000},
+    "gpt-4-turbo-2024-04-09": {"vision": True, "max_images": 10, "context_window": 128000},
+    "gpt-4o": {"vision": True, "max_images": 10, "context_window": 128000},
+    "gpt-4o-mini": {"vision": True, "max_images": 10, "context_window": 128000},
+    "gpt-4.1-2025-04-14": {"vision": True, "max_images": 10, "context_window": 1047576},
+    "o4-mini-2025-04-16": {"vision": True, "max_images": 10, "context_window": 200000},
+    "o3-2025-04-16": {"vision": True, "max_images": 10, "context_window": 200000},
+    "o3-mini-2025-01-31": {"vision": True, "max_images": 10, "context_window": 200000},
+    "gpt-4.1-mini-2025-04-14": {"vision": True, "max_images": 10, "context_window": 1047576},
+    "gpt-4.1-nano-2025-04-14": {"vision": True, "max_images": 10, "context_window": 1047576},
     # Anthropic
-    "claude-3-opus-20240229": {"vision": True, "max_images": 5},
-    "claude-3-sonnet-20240229": {"vision": True, "max_images": 5},
-    "claude-3-haiku-20240307": {"vision": True, "max_images": 5},
-    "claude-3-5-sonnet-20240620": {"vision": True, "max_images": 5},
-    "claude-3-5-sonnet-20241022": {"vision": True, "max_images": 5},
+    "claude-3-opus-20240229": {"vision": True, "max_images": 5, "context_window": 200000},
+    "claude-3-sonnet-20240229": {"vision": True, "max_images": 5, "context_window": 200000},
+    "claude-3-haiku-20240307": {"vision": True, "max_images": 5, "context_window": 200000},
+    "claude-3-5-sonnet-20240620": {"vision": True, "max_images": 5, "context_window": 200000},
+    "claude-3-5-sonnet-20241022": {"vision": True, "max_images": 5, "context_window": 200000},
     # Google
-    "gemini-pro-vision": {"vision": True, "max_images": 1},
-    "gemini-1.5-pro": {"vision": True, "max_images": 10},
-    "gemini-1.5-flash": {"vision": True, "max_images": 10},
-    "gemini-2.0-flash": {"vision": True, "max_images": 10},
+    "gemini-pro-vision": {"vision": True, "max_images": 1, "context_window": 12288},
+    "gemini-1.5-pro": {"vision": True, "max_images": 10, "context_window": 2097152},
+    "gemini-1.5-flash": {"vision": True, "max_images": 10, "context_window": 1048576},
+    "gemini-2.0-flash": {"vision": True, "max_images": 10, "context_window": 1048576},
     # Moonshot
     "moonshot-v1-8k-vision-preview": {"vision": True, "max_images": 1},
     "moonshot-v1-32k-vision-preview": {"vision": True, "max_images": 1},
@@ -164,6 +166,11 @@ class ModelCapabilities:
 
         # Compile patterns for efficiency
         self._compiled_patterns = self._compile_patterns()
+        # Case-insensitive provider index: callers pass mixed/lowercase provider
+        # names ("openai") while pattern keys are title-case ("OpenAI").
+        self._provider_key_by_lower = {
+            provider.lower(): provider for provider in self._compiled_patterns
+        }
 
         # Cache for resolved capabilities
         self._capability_cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
@@ -215,6 +222,10 @@ class ModelCapabilities:
         capabilities = self.get_model_capabilities(provider, model)
         return capabilities.get("vision", False)
 
+    def get_context_window(self, provider: str, model: str) -> Optional[int]:
+        """Return the model's input context window, or None if unknown."""
+        return self.get_model_capabilities(provider, model).get("context_window")
+
     def get_model_capabilities(self, provider: str, model: str) -> Dict[str, Any]:
         """
         Get all capabilities for a model.
@@ -239,15 +250,17 @@ class ModelCapabilities:
             capabilities = self.direct_mappings[model].copy()
             logger.debug(f"Found direct mapping for {model}: {capabilities}")
 
-        # 2. Check provider-specific patterns
-        elif provider in self._compiled_patterns:
-            for pattern, pattern_capabilities in self._compiled_patterns[provider]:
-                if pattern.match(model):
-                    capabilities = pattern_capabilities.copy()
-                    logger.debug(
-                        f"Pattern matched for {provider}/{model}: {capabilities}"
-                    )
-                    break
+        # 2. Check provider-specific patterns (case-insensitive provider match)
+        else:
+            provider_key = self._provider_key_by_lower.get((provider or "").lower())
+            if provider_key is not None:
+                for pattern, pattern_capabilities in self._compiled_patterns[provider_key]:
+                    if pattern.match(model):
+                        capabilities = pattern_capabilities.copy()
+                        logger.debug(
+                            f"Pattern matched for {provider}/{model}: {capabilities}"
+                        )
+                        break
 
         # 3. If no match found, use defaults
         if not capabilities:
@@ -338,6 +351,11 @@ def is_vision_capable(provider: str, model: str) -> bool:
         True if the model supports vision input
     """
     return get_model_capabilities().is_vision_capable(provider, model)
+
+
+def get_context_window(provider: str, model: str) -> Optional[int]:
+    """Convenience function to resolve a model's input context window."""
+    return get_model_capabilities().get_context_window(provider, model)
 
 
 def reload_capabilities():
