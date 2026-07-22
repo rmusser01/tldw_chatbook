@@ -371,6 +371,46 @@ async def test_probe_exception_after_optimistic_echo_marks_row_blocked():
 
 
 @pytest.mark.asyncio
+async def test_blocked_send_persists_no_durable_record():
+    """TASK-485: a send blocked before it reaches the provider must leave NO
+    durable record (no conversation, no message), so it cannot re-enter the next
+    send's context after a resume/restart and leaves no orphan row. The in-memory
+    echo is still shown (feedback) and failed (in-session context exclusion)."""
+    from Tests.Chat.test_console_chat_store import FakePersistence
+
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    controller = ConsoleChatController(store=store, provider_gateway=BlockedGateway())
+
+    result = await controller.submit_draft("hello")
+
+    assert result.accepted is False
+    messages = store.messages_for_session(store.active_session_id)
+    assert messages[0].role.value == "user"
+    assert messages[0].status == "failed"
+    assert persistence.created_conversations == []
+    assert persistence.created_messages == []
+
+
+@pytest.mark.asyncio
+async def test_accepted_send_persists_the_deferred_user_echo():
+    """TASK-485: once a send is accepted the deferred USER echo is flushed to the
+    durable conversation, so a reload shows the user's prompt (not just the
+    assistant reply) — the successful path must not regress to a missing echo."""
+    from Tests.Chat.test_console_chat_store import FakePersistence
+
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+
+    await controller.submit_draft("hello")
+
+    senders = [m["sender"] for m in persistence.created_messages]
+    assert "user" in senders
+    assert len(persistence.created_conversations) == 1
+
+
+@pytest.mark.asyncio
 async def test_skill_refuse_after_optimistic_echo_marks_row_blocked():
     """TASK-457(a) (code-review finding 1): a skill-substitution refusal after
     the optimistic echo is a block outcome like the not-ready / probe-raise
