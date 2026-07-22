@@ -74,3 +74,19 @@ def test_symlink_skipped_not_followed(tmp_path):
     snap = scan_skill_directory("demo", d)
     assert "link.md" not in {f.relative_path for f in snap.fingerprints}
     assert "link.md" in snap.unsupported_paths
+
+
+def test_symlinked_directory_is_unsupported_not_dropped(tmp_path):
+    # A symlinked *directory* must ALWAYS surface in unsupported_paths (the
+    # trust gates rely on it): it must never silently vanish from both
+    # fingerprints and unsupported_paths.
+    d = tmp_path / "demo"
+    _write(d / "SKILL.md", b"body")
+    outside = tmp_path / "outside"
+    _write(outside / "secret.md", b"secret")
+    os.symlink(outside, d / "linked_dir")
+    snap = scan_skill_directory("demo", d)
+    assert "linked_dir" in snap.unsupported_paths
+    fps = {f.relative_path for f in snap.fingerprints}
+    assert "linked_dir" not in fps
+    assert "linked_dir/secret.md" not in fps  # walk must not descend the symlink

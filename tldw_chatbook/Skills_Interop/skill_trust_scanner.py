@@ -55,7 +55,21 @@ def scan_skill_directory(skill_name: str, skill_dir: Path) -> SkillDirectorySnap
     collected: list[tuple[str, Path]] = []
     for root, dirs, files in os.walk(skill_dir, followlinks=False):
         # Prune junk directories in-place so os.walk does not descend them.
-        dirs[:] = sorted(d for d in dirs if d not in SUPPORTING_JUNK_DIRS)
+        # Symlinked directories must NOT be followed, but must still surface as
+        # unsupported (never silently vanish): route them through ``collected``
+        # so the shared ``path.is_symlink()`` check records them, and drop them
+        # from ``dirs`` so the walk never descends into them.
+        kept_dirs: list[str] = []
+        for name in dirs:
+            if name in SUPPORTING_JUNK_DIRS:
+                continue
+            dir_abs = Path(root) / name
+            if dir_abs.is_symlink():
+                rel = PurePosixPath(dir_abs.relative_to(skill_dir).as_posix())
+                collected.append((str(rel), dir_abs))
+                continue
+            kept_dirs.append(name)
+        dirs[:] = kept_dirs
         for name in files:
             if _is_junk(name):
                 continue
@@ -78,6 +92,10 @@ def scan_skill_directory(skill_name: str, skill_dir: Path) -> SkillDirectorySnap
                 unsupported_paths.append(relative_path)
                 continue
             raw = path.read_bytes()
+            # Read the exec bit inside the same guarded region so a concurrent
+            # deletion between read_bytes() and stat() routes to unsupported_paths
+            # rather than raising (honors the never-raise contract).
+            executable = bool(path.stat().st_mode & stat.S_IXUSR)
         except OSError:
             unsupported_paths.append(relative_path)
             continue
@@ -97,7 +115,6 @@ def scan_skill_directory(skill_name: str, skill_dir: Path) -> SkillDirectorySnap
         else:
             file_type = "supporting_text"
 
-        executable = bool(path.stat().st_mode & stat.S_IXUSR)
         fingerprints.append(
             SkillFileFingerprint(
                 relative_path=relative_path,
