@@ -93,7 +93,13 @@ def _message_body(message: ConsoleChatMessage) -> str:
         # has no content; show a visible generating state instead of an empty
         # row (local models can take 30-90s to first token).
         return CONSOLE_GENERATING_PLACEHOLDER
-    if message.status in {"streaming", "stopped", "failed"}:
+    if (
+        message.role is not ConsoleMessageRole.USER
+        and message.status in {"streaming", "stopped", "failed"}
+    ):
+        # streaming/stopped/failed are assistant-response states; a USER row only
+        # carries "failed" via the TASK-457(a) send-blocked echo, where the
+        # SYSTEM block-row already explains it — so keep the user's text clean.
         return f"{content} [{message.status}]".strip()
     return content
 
