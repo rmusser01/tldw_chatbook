@@ -1,10 +1,16 @@
 ---
 id: TASK-353
-title: Fix transcript spreading messages to pane extremes with a dead gap between them
+title: >-
+  Fix transcript spreading messages to pane extremes with a dead gap between
+  them
 status: To Do
-assignee: []
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
-labels: [console, ux]
+updated_date: '2026-07-22 05:34'
+labels:
+  - console
+  - ux
 dependencies: []
 priority: medium
 ---
@@ -25,3 +31,32 @@ After the first send, the user message renders at the very top of the transcript
 <!-- AC:BEGIN -->
 - [ ] #1 Messages should stack contiguously (top-anchored or bottom-anchored), so the conversation reads as a chronological flow
 <!-- AC:END -->
+
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+DIAGNOSIS (pilot-measured, not yet fixed): the giant gap is the inline-image
+row's height, not scroll/anchoring. `_image_row_widget`
+(console_transcript.py ~970) sets `max_width=80, max_height=40` on the row
+widget. PIXELS mode (rich_pixels Static, styles.height=auto) is correctly
+CONTENT-SIZED — an 80x8 image → 4 rows, 16x16 → 8 rows, no void. GRAPHICS mode
+(textual_image `Image`, styles.height=None) FILLS to max_height=40 for EVERY
+aspect ratio (wide/square/tall all measured region.height=40); it renders the
+image at correct aspect INSIDE the 40-row box and letterboxes the rest → the
+~36-40 row void. `height="auto"` does NOT help (textual_image still fills 40).
+Default render mode is "auto" (config.py:2743), which resolves to graphics when
+the terminal claims support (xterm.js does), so the void is the default
+experience with images.
+
+FIX OPTIONS (need served-app + real-image verification): (a) compute the
+aspect-correct display height for the graphics widget (H/W × display_cols ×
+cell-aspect, capped 40) and set styles.height explicitly so the box matches the
+image (risk: cell-aspect is terminal-dependent — textual_image is meant to own
+this, so probe its API for a natural-size/sizing option first); (b) constrain
+graphics like pixels; (c) if graphics letterboxing can't be tamed cleanly,
+consider defaulting the served/limited path to pixels (content-sized, no void) —
+a product decision. Pixels mode already correct, so the target is graphics-mode
+height. Repro needs the textual-serve harness with a real image (graphics
+protocol) — pilots fall back to synthetic sizing.
+<!-- SECTION:PLAN:END -->
