@@ -5564,19 +5564,37 @@ class ChatScreen(BaseAppScreen):
             # breaks grouped-browser click targeting, see
             # test_console_workspace_context_tray_sync_state_always_recomposes).
             # That unconditional recompose ALSO self-heals a real DOM/state
-            # desync (a full-screen recompose sets the fresh tray's `.state`
-            # but its rows can be torn down/superseded before they settle, so
-            # `.state` says X while the DOM shows nothing -- the next tick's
-            # recompose repaints it). So an equality guard here is unsafe in
-            # general. It IS safe during an ACTIVE RUN: the 0.2s transcript
-            # tick fires ~5x/second with unchanged workspace state and no
-            # concurrent search/resume, and recomposing the browser that
+            # desync: a full-screen recompose constructs a fresh tray whose
+            # `.state` is set but whose rows can be superseded before they
+            # settle, so `.state` says X while the DOM shows nothing -- the
+            # next tick's recompose repaints it. So an equality guard is
+            # unsafe in general. It IS safe on the ~5x/second run tick: the
+            # workspace state is unchanged and recomposing the browser that
             # often tore it visibly down mid-run (the list vanished / showed
-            # a half-composed frame and displaced clicks). Skip only that
-            # case; every non-run sync keeps the original always-recompose.
-            run_tick_active = self._console_transcript_sync_timer is not None
-            if state_changed or not run_tick_active:
+            # a half-composed frame and displaced clicks).
+            #
+            # Two guards keep the self-heal intact (PR #745 review):
+            #  - gate on the SEMANTIC run-active status, not the transcript
+            #    timer (which is still non-None on the final post-run poll,
+            #    Qodo #2);
+            #  - force at least ONE push per tray instance via a per-widget
+            #    marker, so a fresh tray from ANY mid-run full-screen
+            #    recompose still gets its healing recompose even under the
+            #    skip; only unchanged ticks on an already-synced instance are
+            #    skipped, where the DOM is known-consistent (Qodo #3). A
+            #    concurrent in-run search changes the state, so it recomposes
+            #    via `state_changed` regardless.
+            controller = self._console_chat_controller
+            run_active = (
+                controller is not None
+                and controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
+            )
+            already_synced = getattr(
+                workspace_context, "_console_workspace_context_synced", False
+            )
+            if state_changed or not run_active or not already_synced:
                 workspace_context.sync_state(state)
+                workspace_context._console_workspace_context_synced = True
                 try:
                     details_tray = self.query_one(
                         "#console-workspace-details", ConsoleWorkspaceDetailsTray
