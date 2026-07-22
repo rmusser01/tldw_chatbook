@@ -1,5 +1,5 @@
 ---
-id: TASK-450
+id: TASK-461
 title: 'RAG reranker: remove unreachable literal fallback in _call_llm_impl'
 status: To Do
 assignee: []
