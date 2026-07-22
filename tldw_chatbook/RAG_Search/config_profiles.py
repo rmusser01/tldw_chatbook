@@ -28,6 +28,10 @@ def _slugify(name: str) -> str:
     return slug or "profile"
 
 
+# Filenames under profiles_dir that are never treated as user-profile files.
+_RESERVED_PROFILE_FILES = {"custom_profiles.json", "custom_profiles.json.migrated"}
+
+
 # Profile types
 ProfileType = Literal[
     "fast_search",  # Optimized for speed
@@ -488,25 +492,50 @@ class ConfigProfileManager:
 
         logger.info(f"Loaded {len(self._profiles)} built-in profiles")
 
+    def _profile_path(self, profile_id: str) -> Path:
+        """Path to a user profile's own JSON file."""
+        return self.profiles_dir / f"{profile_id}.json"
+
+    def _save_one(self, profile: "ProfileConfig") -> None:
+        """Write a single user profile to its own file (never builtins)."""
+        if profile.read_only:
+            return
+        with open(self._profile_path(profile.id), "w") as f:
+            json.dump(profile.to_dict(), f, indent=2, default=str)
+
     def _load_custom_profiles(self):
-        """Load user-defined profiles from disk."""
-        custom_profiles_file = self.profiles_dir / "custom_profiles.json"
-
-        if custom_profiles_file.exists():
+        """Load user profiles from per-file JSON; migrate a legacy blob once."""
+        self._migrate_legacy_blob()
+        for path in self.profiles_dir.glob("*.json"):
+            if path.name in _RESERVED_PROFILE_FILES:
+                continue
             try:
-                with open(custom_profiles_file, "r") as f:
-                    custom_data = json.load(f)
-
-                for profile_data in custom_data.get("profiles", []):
-                    profile = ProfileConfig.from_dict(profile_data)
-                    self._profiles[profile.name.lower().replace(" ", "_")] = profile
-
-                logger.info(
-                    f"Loaded {len(custom_data.get('profiles', []))} custom profiles"
-                )
-
+                with open(path, "r") as f:
+                    profile = ProfileConfig.from_dict(json.load(f))
+                profile.read_only = False
+                self._profiles[profile.id] = profile
             except Exception as e:
-                logger.error(f"Failed to load custom profiles: {e}")
+                logger.error(f"Failed to load profile {path.name}: {e}")
+
+    def _migrate_legacy_blob(self):
+        """One-time split of the old custom_profiles.json blob into per-file."""
+        blob = self.profiles_dir / "custom_profiles.json"
+        if not blob.exists():
+            return
+        try:
+            with open(blob, "r") as f:
+                data = json.load(f)
+            for pdata in data.get("profiles", []):
+                profile = ProfileConfig.from_dict(pdata)
+                profile.read_only = False
+                target = self._profile_path(profile.id)
+                if not target.exists():  # never clobber an existing per-file profile
+                    with open(target, "w") as out:
+                        json.dump(profile.to_dict(), out, indent=2, default=str)
+            blob.rename(self.profiles_dir / "custom_profiles.json.migrated")
+            logger.info("Migrated legacy custom_profiles.json to per-file profiles")
+        except Exception as e:
+            logger.error(f"Legacy profile blob migration failed: {e}")
 
     def get_profile(self, name: str) -> Optional[ProfileConfig]:
         """Get a configuration profile by name."""
@@ -560,31 +589,11 @@ class ConfigProfileManager:
         # Save the custom profile
         profile_key = name.lower().replace(" ", "_")
         self._profiles[profile_key] = custom_config
-        self._save_custom_profiles()
+        self._save_one(custom_config)
 
         logger.info(f"Created custom profile: {name}")
 
         return custom_config
-
-    def _save_custom_profiles(self):
-        """Save custom profiles to disk."""
-        custom_profiles = {
-            name: profile
-            for name, profile in self._profiles.items()
-            if profile.profile_type == "custom"
-        }
-
-        custom_profiles_file = self.profiles_dir / "custom_profiles.json"
-
-        with open(custom_profiles_file, "w") as f:
-            json.dump(
-                {
-                    "profiles": [p.to_dict() for p in custom_profiles.values()],
-                    "saved_at": datetime.now().isoformat(),
-                },
-                f,
-                indent=2,
-            )
 
     def start_experiment(self, config: ExperimentConfig):
         """Start an A/B testing experiment."""
