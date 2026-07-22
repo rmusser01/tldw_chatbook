@@ -566,8 +566,10 @@ class ConfigProfileManager:
 
                 desired_id = _slugify(path.stem)
                 canonical_path = self._profile_path(desired_id)
-                if desired_id in self._profiles or (
-                    canonical_path != path and canonical_path.exists()
+                if (
+                    desired_id in self._profiles
+                    or (canonical_path != path and canonical_path.exists())
+                    or canonical_path.name in _RESERVED_PROFILE_FILES
                 ):
                     # Collides with a builtin, an already-loaded profile, OR
                     # the canonical file for this id belongs to a DIFFERENT,
@@ -579,7 +581,11 @@ class ConfigProfileManager:
                     # `desired_id in self._profiles` would let the self-heal
                     # below silently overwrite that other file before it's
                     # ever loaded. Reassign to a unique id, checking disk
-                    # too.
+                    # too. Also reassign if the canonical filename is
+                    # reserved (e.g. "custom_profiles.json") -- that name is
+                    # reserved for the legacy blob, and a profile file
+                    # canonicalized onto it would be mistaken for (and
+                    # destroyed as) a legacy blob on the next boot.
                     old_id = desired_id
                     desired_id = self._unique_id_reserving_disk(desired_id)
                     canonical_path = self._profile_path(desired_id)
@@ -622,6 +628,21 @@ class ConfigProfileManager:
         it. The blob is renamed to ``.migrated`` unconditionally once it has
         been successfully read, so it is never reprocessed on a later boot
         even if every entry in it failed to migrate.
+
+        Guard: a file at this reserved path is only ever treated as a real
+        legacy blob if it actually HAS the blob shape (a dict with a
+        ``"profiles"`` key). A single-profile file can end up at this exact
+        path -- e.g. a profile whose display name slugifies to
+        "custom_profiles" (``create_custom_profile("Custom Profiles")``), or
+        a hand-placed/copied file -- and such a file has no ``"profiles"``
+        key. Without this check, nothing would migrate (there's no
+        "profiles" list to iterate) but the file would still get
+        unconditionally renamed to ``.migrated`` below, which is itself a
+        reserved filename that is never loaded as a profile either --
+        silently and permanently losing that profile. If the shape doesn't
+        match, do nothing at all: leave the file exactly as-is (no rename,
+        no write) rather than risk destroying data that isn't actually a
+        legacy blob.
         """
         blob = self.profiles_dir / "custom_profiles.json"
         if not blob.exists():
@@ -631,6 +652,14 @@ class ConfigProfileManager:
                 data = json.load(f)
         except Exception as e:
             logger.error(f"Legacy profile blob migration failed to read {blob}: {e}")
+            return
+
+        if not isinstance(data, dict) or "profiles" not in data:
+            logger.warning(
+                f"{blob} does not have the legacy blob shape "
+                f"(dict with a 'profiles' key); leaving it untouched "
+                f"instead of migrating/renaming it."
+            )
             return
 
         for pdata in data.get("profiles", []):
@@ -669,17 +698,31 @@ class ConfigProfileManager:
         return list(self._profiles.keys())
 
     def _unique_id(self, base_slug: str) -> str:
+        # Also reject a candidate whose canonical file would be a reserved
+        # name (e.g. "custom_profiles", whose file is the legacy-blob
+        # filename) -- a profile canonicalized onto that name would be
+        # mistaken for the legacy blob (and destroyed) by
+        # _migrate_legacy_blob on the next boot. A normal, non-colliding
+        # slug is returned unchanged, same as before.
         candidate, n = base_slug, 2
-        while candidate in self._profiles:
+        while (
+            candidate in self._profiles
+            or f"{candidate}.json" in _RESERVED_PROFILE_FILES
+        ):
             candidate = f"{base_slug}_{n}"
             n += 1
         return candidate
 
     def _unique_id_reserving_disk(self, base_slug: str) -> str:
         """Like _unique_id but also avoids ids whose file already exists on disk
-        (the in-memory dict is only partially populated during load)."""
+        (the in-memory dict is only partially populated during load), and ids
+        whose canonical file would be a reserved name (see _unique_id)."""
         candidate, n = base_slug, 2
-        while candidate in self._profiles or self._profile_path(candidate).exists():
+        while (
+            candidate in self._profiles
+            or self._profile_path(candidate).exists()
+            or f"{candidate}.json" in _RESERVED_PROFILE_FILES
+        ):
             candidate = f"{base_slug}_{n}"
             n += 1
         return candidate
