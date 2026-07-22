@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from loguru import logger
 
+from tldw_chatbook.Chat.rag_scope import RagScope, parse_scope, serialize_scope
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 
 from .models import (
@@ -508,6 +509,113 @@ class LocalWorkspaceRegistryService:
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return tuple(_runtime_binding_from_row(row) for row in rows)
+
+    def get_workspace_scope(self, workspace_id: str) -> RagScope | None:
+        """Return a workspace's stored RAG retrieval scope, guarded.
+
+        Reads the ``workspace_rag_scopes`` table -- co-located with the
+        workspace registry (this database), not ``ChaChaNotes_DB``, since a
+        workspace has no row there to hang metadata off of (design spec
+        section 2). Guarded end to end, mirroring
+        ``Chat.rag_scope.read_conversation_scope``: a missing row, malformed
+        payload JSON, a non-dict payload, or a malformed/forward-versioned
+        scope payload (``parse_scope``'s own guards) all read as unscoped
+        (``None``) rather than raising. A stored zero-item scope also reads
+        as ``None`` -- same "no distinct scoped-with-nothing state" contract
+        as the conversation level.
+
+        Args:
+            workspace_id: Workspace identifier.
+
+        Returns:
+            The stored ``RagScope``, or ``None`` when unscoped, missing,
+            malformed, or empty.
+
+        Raises:
+            WorkspaceRegistryServiceError: If the underlying read fails.
+        """
+
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        try:
+            with self.db.connection() as conn:
+                row = conn.execute(
+                    """
+                    SELECT payload
+                    FROM workspace_rag_scopes
+                    WHERE workspace_id = ?
+                    """,
+                    (safe_workspace_id,),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        if row is None:
+            return None
+        try:
+            raw = json.loads(row["payload"])
+        except (TypeError, ValueError):
+            logger.warning(
+                "workspace rag_scope payload malformed for {}; treating as unscoped",
+                safe_workspace_id,
+            )
+            return None
+        scope = parse_scope(raw)
+        if scope is not None and not scope.items:
+            return None
+        return scope
+
+    def set_workspace_scope(self, workspace_id: str, scope: RagScope | None) -> None:
+        """Persist or clear a workspace's RAG retrieval scope.
+
+        ``scope=None`` deletes the stored row entirely. A zero-item scope
+        also normalizes to a delete, mirroring
+        ``Chat.rag_scope.write_conversation_scope``'s "save with zero
+        selected clears the scope" contract (design spec section 4) -- there
+        is no "scoped with nothing selected" state.
+
+        Deleting a scope for a workspace id that has none (or that does not
+        exist) is a harmless no-op. Setting a non-empty scope for a
+        workspace id that does not exist in ``workspace_records`` raises
+        ``WorkspaceNotFound`` (enforced by the table's foreign key, mirroring
+        ``link_membership``'s existence check).
+
+        Args:
+            workspace_id: Workspace identifier.
+            scope: The scope to persist, or ``None``/empty to clear it.
+
+        Raises:
+            WorkspaceNotFound: If ``scope`` is non-empty and ``workspace_id``
+                does not reference an existing workspace.
+            WorkspaceRegistryServiceError: If the underlying write fails.
+        """
+
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        if scope is not None and not scope.items:
+            scope = None
+        try:
+            with self.db.transaction() as conn:
+                if scope is None:
+                    conn.execute(
+                        "DELETE FROM workspace_rag_scopes WHERE workspace_id = ?",
+                        (safe_workspace_id,),
+                    )
+                else:
+                    payload = json.dumps(serialize_scope(scope))
+                    conn.execute(
+                        """
+                        INSERT INTO workspace_rag_scopes (
+                            workspace_id, payload, updated_at
+                        )
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(workspace_id) DO UPDATE SET
+                            payload = excluded.payload,
+                            updated_at = excluded.updated_at
+                        """,
+                        (safe_workspace_id, payload, scope.updated_at),
+                    )
+        except sqlite3.IntegrityError as exc:
+            raise WorkspaceNotFound(safe_workspace_id) from exc
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
 
     def _delete_default_runtime_bindings(self) -> None:
         """Remove stale runtime bindings from the safe built-in Default workspace."""

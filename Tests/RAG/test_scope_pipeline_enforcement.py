@@ -45,11 +45,13 @@ from tldw_chatbook.Chat.rag_scope import (
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events as cre
 from tldw_chatbook.RAG_Search import pipeline_builder_simple as pbs
 from tldw_chatbook.RAG_Search import pipeline_functions_simple as pfs
 from tldw_chatbook.RAG_Search.pipeline_functions_simple import SCOPE_DIAGNOSTICS_KEY
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 
 # Reuses the proven real-``TldwCli``-with-heavy-init-patched recipe already
 # shared across the Console UI test suites (e.g.
@@ -925,6 +927,610 @@ class TestChatEntryPointScopedE2E:
         assert "Doc 0" in context
         for i in range(2):
             assert f"Note {i}" in context
+
+
+class TestWorkspaceScopeIntersectionE2E:
+    """Task-13 (Phase 3): ``resolve_effective_scope_for_chat`` now reads the
+    active session's LINKED WORKSPACE scope (previously always passed as
+    ``None`` -- see the removed "Phase 3" comment) via ``app.workspace_
+    registry_service.get_workspace_scope`` and intersects it with the
+    conversation scope end to end -- exactly the spec's "hunt X"/"sales
+    reports" workflow: a workspace's in-scope set bounds retrieval for
+    every conversation inside it."""
+
+    @pytest.mark.asyncio
+    async def test_conversation_and_workspace_scopes_intersect_end_to_end(
+        self, media_db, cha_db, tmp_path, monkeypatch
+    ):
+        media_ids = _seed_media(media_db, n=4)  # Doc 0=A, Doc 1=B, Doc 2=C, Doc 3=D
+        conv_id = cha_db.add_conversation({"title": "Sales reports"})
+        conv_scope = RagScope(
+            items=(
+                ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),  # A
+                ScopeItem(SOURCE_TYPE_MEDIA, media_ids[1]),  # B
+                ScopeItem(SOURCE_TYPE_MEDIA, media_ids[2]),  # C
+            ),
+            updated_at="t1",
+        )
+        write_conversation_scope(cha_db, conv_id, conv_scope)
+
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="task13-test")
+        )
+        registry.create_workspace(workspace_id="ws-sales", name="Sales reports")
+        ws_scope = RagScope(
+            items=(
+                ScopeItem(SOURCE_TYPE_MEDIA, media_ids[1]),  # B
+                ScopeItem(SOURCE_TYPE_MEDIA, media_ids[2]),  # C
+                ScopeItem(SOURCE_TYPE_MEDIA, media_ids[3]),  # D
+            ),
+            updated_at="t2",
+        )
+        registry.set_workspace_scope("ws-sales", ws_scope)
+
+        session = SimpleNamespace(
+            persisted_conversation_id=conv_id, workspace_id="ws-sales"
+        )
+        monkeypatch.setattr(cre, "_active_console_session", lambda app: session)
+
+        app = _App(media_db=media_db, chachanotes_db=cha_db)
+        app.workspace_registry_service = registry
+
+        # Resolution is checked directly against the allowlist (rather than
+        # through a full `get_rag_context_for_chat` pipeline run and
+        # scanning the generated context text): `search_media_db` doesn't
+        # project the `content` column, so `deduplicate_results` collapses
+        # multiple same-score media rows regardless of scope (a pre-
+        # existing, scope-unrelated pipeline quirk documented elsewhere in
+        # this file, e.g. `TestChatEntryPointScopedE2E.
+        # test_unpersisted_session_with_no_holder_is_unscoped`'s n=1
+        # workaround) -- `resolve_effective_scope_for_chat` IS the entry
+        # point `get_rag_context_for_chat` calls, so this is genuinely
+        # end-to-end for the scope-resolution layer task-13 changed.
+        effective = await cre.resolve_effective_scope_for_chat(app)
+
+        assert effective.state == "scoped"
+        # Intersection {A, B, C} ∩ {B, C, D} = {B, C}.
+        assert effective.allowlist == {
+            SOURCE_TYPE_MEDIA: frozenset({media_ids[1], media_ids[2]})
+        }
+        assert effective.cause is None
+
+    @pytest.mark.asyncio
+    async def test_workspace_only_scope_narrows_an_unscoped_conversation(
+        self, media_db, cha_db, tmp_path, monkeypatch
+    ):
+        """A conversation with no scope of its own, inside a scoped
+        workspace, still has retrieval bounded by the workspace alone
+        (single-level resolution -- spec section 2)."""
+        media_ids = _seed_media(media_db, n=2)
+        conv_id = cha_db.add_conversation({"title": "Unscoped conversation"})
+
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="task13-test")
+        )
+        registry.create_workspace(workspace_id="ws-hunt", name="hunt X")
+        registry.set_workspace_scope(
+            "ws-hunt",
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),), updated_at="t1"
+            ),
+        )
+
+        session = SimpleNamespace(
+            persisted_conversation_id=conv_id, workspace_id="ws-hunt"
+        )
+        monkeypatch.setattr(cre, "_active_console_session", lambda app: session)
+
+        app = _ChatMockApp(
+            search_mode="plain", media_db=media_db, chachanotes_db=cha_db
+        )
+        app.workspace_registry_service = registry
+
+        context = await cre.get_rag_context_for_chat(app, "zanzibarite")
+
+        assert context is not None
+        assert "Doc 0" in context
+        assert "Doc 1" not in context, context
+
+    @pytest.mark.asyncio
+    async def test_no_workspace_overlap_short_circuits_empty_with_honest_notify(
+        self, media_db, cha_db, tmp_path, monkeypatch
+    ):
+        media_ids = _seed_media(media_db, n=2)
+        conv_id = cha_db.add_conversation({"title": "Disjoint"})
+        write_conversation_scope(
+            cha_db,
+            conv_id,
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),), updated_at="t1"
+            ),
+        )
+
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="task13-test")
+        )
+        registry.create_workspace(workspace_id="ws-other", name="Other project")
+        registry.set_workspace_scope(
+            "ws-other",
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[1]),), updated_at="t2"
+            ),
+        )
+
+        session = SimpleNamespace(
+            persisted_conversation_id=conv_id, workspace_id="ws-other"
+        )
+        monkeypatch.setattr(cre, "_active_console_session", lambda app: session)
+
+        for fn_name in (
+            "perform_plain_rag_search",
+            "perform_full_rag_pipeline",
+            "perform_hybrid_rag_search",
+            "perform_search_with_pipeline",
+        ):
+            def _refuse(*args, __name=fn_name, **kwargs):
+                raise AssertionError(f"{__name} must not be called on EMPTY scope")
+
+            monkeypatch.setattr(cre, fn_name, _refuse)
+
+        app = _ChatMockApp(
+            search_mode="plain", media_db=media_db, chachanotes_db=cha_db
+        )
+        app.workspace_registry_service = registry
+
+        context = await cre.get_rag_context_for_chat(app, "zanzibarite")
+
+        assert context is None
+        assert any(
+            "retrieval scope is empty" in message.lower()
+            and "no-workspace-overlap" in message.lower()
+            for message, _severity in app.notifications
+        ), app.notifications
+
+
+class _RaisingWorkspaceRegistry:
+    """Workspace registry double whose scope read always raises -- proves
+    the PR#757 (comment 5) fail-closed path, distinct from a registry that
+    cleanly returns ``None`` for "no workspace scope set"."""
+
+    db = SimpleNamespace(is_memory_db=True)
+
+    def get_workspace_scope(self, workspace_id):
+        raise RuntimeError("workspace registry read failed")
+
+
+class TestWorkspaceScopeReadFailureFailsClosed:
+    """PR#757 review (comment 5): a workspace-scope registry READ FAILURE
+    is not "no workspace scope set" -- ``resolve_scope_for_session`` must
+    not silently drop the workspace bound and let resolution widen to
+    conversation-scope-alone (or fully unscoped). It fails CLOSED to an
+    EMPTY effective scope (cause ``"workspace-scope-unavailable"``) in
+    BOTH sub-cases -- the conversation itself scoped or not -- since
+    conversation-scope-alone is always wider than the (conv ∩ workspace)
+    intersection that can no longer be computed once the workspace side is
+    unreadable."""
+
+    @pytest.mark.asyncio
+    async def test_no_conversation_scope_still_fails_closed_not_unscoped(
+        self, media_db, cha_db, monkeypatch
+    ):
+        """Old behavior: ws_scope forced to None + conv has no scope of its
+        own -> fully UNSCOPED, searching everything. New behavior: EMPTY,
+        nothing searched, honest notice."""
+        _seed_media(media_db, n=2)
+        conv_id = cha_db.add_conversation({"title": "No scope, broken workspace"})
+
+        session = SimpleNamespace(
+            persisted_conversation_id=conv_id, workspace_id="ws-broken"
+        )
+        monkeypatch.setattr(cre, "_active_console_session", lambda app: session)
+
+        for fn_name in (
+            "perform_plain_rag_search",
+            "perform_full_rag_pipeline",
+            "perform_hybrid_rag_search",
+            "perform_search_with_pipeline",
+        ):
+            def _refuse(*args, __name=fn_name, **kwargs):
+                raise AssertionError(f"{__name} must not be called on EMPTY scope")
+
+            monkeypatch.setattr(cre, fn_name, _refuse)
+
+        app = _ChatMockApp(
+            search_mode="plain", media_db=media_db, chachanotes_db=cha_db
+        )
+        app.workspace_registry_service = _RaisingWorkspaceRegistry()
+
+        context = await cre.get_rag_context_for_chat(app, "zanzibarite")
+
+        assert context is None
+        assert any(
+            "retrieval scope is empty" in message.lower()
+            and "workspace-scope-unavailable" in message.lower()
+            for message, _severity in app.notifications
+        ), app.notifications
+
+    @pytest.mark.asyncio
+    async def test_conversation_scope_present_still_fails_closed_not_narrowed(
+        self, media_db, cha_db, monkeypatch
+    ):
+        """Old behavior: ws_scope forced to None + conv HAS its own scope
+        -> narrows to conv-scope-alone (wider than the true, uncomputable
+        intersection). New behavior: EMPTY, nothing searched -- the
+        conservative choice documented in ``resolve_scope_for_session``."""
+        media_ids = _seed_media(media_db, n=2)
+        conv_id = cha_db.add_conversation({"title": "Scoped conv, broken workspace"})
+        write_conversation_scope(
+            cha_db,
+            conv_id,
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),), updated_at="t1"
+            ),
+        )
+
+        session = SimpleNamespace(
+            persisted_conversation_id=conv_id, workspace_id="ws-broken"
+        )
+        monkeypatch.setattr(cre, "_active_console_session", lambda app: session)
+
+        for fn_name in (
+            "perform_plain_rag_search",
+            "perform_full_rag_pipeline",
+            "perform_hybrid_rag_search",
+            "perform_search_with_pipeline",
+        ):
+            def _refuse(*args, __name=fn_name, **kwargs):
+                raise AssertionError(f"{__name} must not be called on EMPTY scope")
+
+            monkeypatch.setattr(cre, fn_name, _refuse)
+
+        app = _ChatMockApp(
+            search_mode="plain", media_db=media_db, chachanotes_db=cha_db
+        )
+        app.workspace_registry_service = _RaisingWorkspaceRegistry()
+
+        context = await cre.get_rag_context_for_chat(app, "zanzibarite")
+
+        assert context is None
+        assert any(
+            "retrieval scope is empty" in message.lower()
+            and "workspace-scope-unavailable" in message.lower()
+            for message, _severity in app.notifications
+        ), app.notifications
+
+    @pytest.mark.asyncio
+    async def test_resolve_scope_for_session_reports_distinct_cause(
+        self, cha_db
+    ):
+        """Unit-level check directly against ``resolve_scope_for_session``:
+        the returned ``ScopeResolution`` carries ``ws_scope=None`` (the read
+        never produced a usable value -- distinct from "cleanly unset") and
+        ``effective`` is EMPTY with the dedicated cause, not a generic one."""
+        conv_id = cha_db.add_conversation({"title": "Direct resolution check"})
+        session = SimpleNamespace(
+            persisted_conversation_id=conv_id, workspace_id="ws-broken"
+        )
+        app = _App(chachanotes_db=cha_db)
+        app.workspace_registry_service = _RaisingWorkspaceRegistry()
+
+        resolution = await cre.resolve_scope_for_session(app, session)
+
+        assert resolution.ws_scope is None
+        assert resolution.effective.state == "empty"
+        assert resolution.effective.cause == "workspace-scope-unavailable"
+
+
+class TestWorkspaceScopeMemoryDbGuard:
+    """Task-13 (PR #747 discipline, extended to the workspace registry's
+    own DB): the workspace-scope read must apply the identical
+    ``is_memory_db`` guard the conversation-scope read already does -- a
+    memory-backed registry is read inline, a file-backed one is offloaded
+    via ``asyncio.to_thread``.
+
+    Verified via a fake registry double (not a genuine ``WorkspaceDB(
+    ":memory:")``): unlike ``CharactersRAGDB``'s thread-local *cached*
+    connection, ``WorkspaceDB`` opens a brand-new connection on every
+    ``.connection()``/``.transaction()`` call and caches nothing, so a real
+    ``:memory:``-backed instance cannot survive past its own ``__init__``
+    (each call opens an independent, empty in-memory database) -- exactly
+    why ``WorkspaceDB`` is never constructed with ``:memory:`` anywhere in
+    this codebase. This proves the guard's own branch selection instead.
+    """
+
+    @pytest.mark.asyncio
+    async def test_memory_backed_registry_reads_inline(
+        self, media_db, monkeypatch
+    ):
+        """Checks the WORKSPACE-scope read's own thread, not a blanket
+        ``asyncio.to_thread`` spy: the overall ``resolve_effective_scope``
+        call is offloaded independently based on ``chachanotes_db``/
+        ``media_db``'s memory status (unrelated to the registry), so a
+        blanket spy would see calls from that separate decision too."""
+        import threading
+
+        media_ids = _seed_media(media_db, n=1)
+        ws_scope = RagScope(
+            items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),), updated_at="t1"
+        )
+        main_thread = threading.current_thread()
+
+        class _FakeRegistry:
+            db = SimpleNamespace(is_memory_db=True)
+
+            def __init__(self):
+                self.call_thread = None
+
+            def get_workspace_scope(self, workspace_id):
+                self.call_thread = threading.current_thread()
+                return ws_scope
+
+        session = SimpleNamespace(persisted_conversation_id=None, workspace_id="ws-1")
+        monkeypatch.setattr(cre, "_active_console_session", lambda app: session)
+
+        registry = _FakeRegistry()
+        app = _App(media_db=media_db)
+        app.workspace_registry_service = registry
+
+        effective = await cre.resolve_effective_scope_for_chat(app)
+
+        assert effective.state == "scoped"
+        assert effective.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
+        assert registry.call_thread is main_thread, (
+            "a memory-backed registry's scope read must run inline, "
+            "never offloaded to a worker thread"
+        )
+
+    @pytest.mark.asyncio
+    async def test_file_backed_registry_still_offloaded(
+        self, media_db, monkeypatch
+    ):
+        import threading
+
+        media_ids = _seed_media(media_db, n=1)
+        ws_scope = RagScope(
+            items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),), updated_at="t1"
+        )
+        main_thread = threading.current_thread()
+
+        class _FakeRegistry:
+            db = SimpleNamespace(is_memory_db=False)
+
+            def __init__(self):
+                self.call_thread = None
+
+            def get_workspace_scope(self, workspace_id):
+                self.call_thread = threading.current_thread()
+                return ws_scope
+
+        session = SimpleNamespace(persisted_conversation_id=None, workspace_id="ws-1")
+        monkeypatch.setattr(cre, "_active_console_session", lambda app: session)
+
+        registry = _FakeRegistry()
+        app = _App(media_db=media_db)
+        app.workspace_registry_service = registry
+
+        effective = await cre.resolve_effective_scope_for_chat(app)
+
+        assert effective.state == "scoped"
+        assert registry.call_thread is not None
+        assert registry.call_thread is not main_thread, (
+            "a file-backed registry's scope read must still be offloaded "
+            "via asyncio.to_thread"
+        )
+
+
+class TestScopeCacheWiring:
+    """Task-13: ``resolve_effective_scope_for_chat`` now consults a per-app
+    ``ScopeCache`` (``chat_rag_events._scope_cache_for``) keyed on the
+    ``(conversation_id, workspace_id, conv_stamp, ws_stamp)`` 4-tuple
+    before re-resolving -- repeat resolution against an unchanged scope
+    skips the (conv ∩ ws) intersection and the per-item dangling-drop
+    existence check entirely; a stamp change on either level invalidates
+    correctly (design spec section 2)."""
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_skips_recompute(self, media_db, cha_db, monkeypatch):
+        media_ids = _seed_media(media_db, n=1)
+        conv_id = cha_db.add_conversation({"title": "Cached"})
+        write_conversation_scope(
+            cha_db,
+            conv_id,
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),), updated_at="t1"
+            ),
+        )
+
+        session = SimpleNamespace(persisted_conversation_id=conv_id)
+        monkeypatch.setattr(cre, "_active_console_session", lambda app: session)
+
+        app = _App(media_db=media_db, chachanotes_db=cha_db)
+
+        calls: list[int] = []
+        real_resolve = cre.resolve_effective_scope
+
+        def _spy_resolve(*args, **kwargs):
+            calls.append(1)
+            return real_resolve(*args, **kwargs)
+
+        monkeypatch.setattr(cre, "resolve_effective_scope", _spy_resolve)
+
+        first = await cre.resolve_effective_scope_for_chat(app)
+        second = await cre.resolve_effective_scope_for_chat(app)
+
+        assert first == second
+        assert first.state == "scoped"
+        assert len(calls) == 1, "the second call must be served from ScopeCache"
+
+    @pytest.mark.asyncio
+    async def test_cache_miss_on_conversation_scope_stamp_change(
+        self, media_db, cha_db, monkeypatch
+    ):
+        media_ids = _seed_media(media_db, n=2)
+        conv_id = cha_db.add_conversation({"title": "Restamped"})
+        write_conversation_scope(
+            cha_db,
+            conv_id,
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),), updated_at="t1"
+            ),
+        )
+
+        session = SimpleNamespace(persisted_conversation_id=conv_id)
+        monkeypatch.setattr(cre, "_active_console_session", lambda app: session)
+
+        app = _App(media_db=media_db, chachanotes_db=cha_db)
+
+        calls: list[int] = []
+        real_resolve = cre.resolve_effective_scope
+
+        def _spy_resolve(*args, **kwargs):
+            calls.append(1)
+            return real_resolve(*args, **kwargs)
+
+        monkeypatch.setattr(cre, "resolve_effective_scope", _spy_resolve)
+
+        first = await cre.resolve_effective_scope_for_chat(app)
+        assert first.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
+
+        # A genuine scope edit: new stamp, different item.
+        write_conversation_scope(
+            cha_db,
+            conv_id,
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[1]),), updated_at="t2"
+            ),
+        )
+
+        second = await cre.resolve_effective_scope_for_chat(app)
+
+        assert second.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[1]})}
+        assert len(calls) == 2, "a stamp change must invalidate the cached entry"
+
+    @pytest.mark.asyncio
+    async def test_cache_miss_on_workspace_scope_stamp_change(
+        self, media_db, monkeypatch
+    ):
+        """Task-13 review finding 1: the symmetric workspace-side companion
+        to ``test_cache_miss_on_conversation_scope_stamp_change`` -- editing
+        the LINKED WORKSPACE's scope (a new ``ws_scope.updated_at`` stamp)
+        must miss the cache and re-resolve, exactly like a conversation-side
+        edit does. Driven through ``resolve_effective_scope_for_chat`` (the
+        real enforcement entry point) with a fake ``workspace_registry_
+        service`` double (the same style already used by
+        ``TestResolveEffectiveScopeMemoryDbGuard``/the memory-backed-
+        registry tests above), rather than a real ``WorkspaceDB``, so the
+        test can freely swap the returned scope between calls."""
+        media_ids = _seed_media(media_db, n=2)
+        session = SimpleNamespace(persisted_conversation_id=None, workspace_id="ws-1")
+        monkeypatch.setattr(cre, "_active_console_session", lambda app: session)
+
+        class _FakeRegistry:
+            db = SimpleNamespace(is_memory_db=True)
+
+            def __init__(self, scope):
+                self.scope = scope
+
+            def get_workspace_scope(self, workspace_id):
+                return self.scope
+
+        registry = _FakeRegistry(
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),), updated_at="t1"
+            )
+        )
+        app = _App(media_db=media_db)
+        app.workspace_registry_service = registry
+
+        calls: list[int] = []
+        real_resolve = cre.resolve_effective_scope
+
+        def _spy_resolve(*args, **kwargs):
+            calls.append(1)
+            return real_resolve(*args, **kwargs)
+
+        monkeypatch.setattr(cre, "resolve_effective_scope", _spy_resolve)
+
+        first = await cre.resolve_effective_scope_for_chat(app)
+        assert first.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
+
+        # A genuine workspace scope edit: new stamp, different item.
+        registry.scope = RagScope(
+            items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[1]),), updated_at="t2"
+        )
+
+        second = await cre.resolve_effective_scope_for_chat(app)
+
+        assert second.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[1]})}
+        assert len(calls) == 2, (
+            "a workspace scope stamp change must invalidate the cached entry"
+        )
+
+    @pytest.mark.asyncio
+    async def test_cache_miss_on_conversation_relinked_to_different_workspace(
+        self, media_db, monkeypatch
+    ):
+        """Task-13 review finding 1: the cache key is the full
+        ``(conversation_id/session_id, workspace_id, conv_stamp, ws_stamp)``
+        4-tuple, so re-linking the SAME session to a DIFFERENT workspace --
+        even when both workspaces' scopes happen to share the identical
+        ``updated_at`` stamp -- must still miss the cache and re-resolve
+        (the ``workspace_id`` component alone must be enough to
+        invalidate)."""
+        media_ids = _seed_media(media_db, n=2)
+        session = SimpleNamespace(persisted_conversation_id=None, workspace_id="ws-a")
+        monkeypatch.setattr(cre, "_active_console_session", lambda app: session)
+
+        same_stamp = "t1"
+
+        class _MultiWorkspaceRegistry:
+            db = SimpleNamespace(is_memory_db=True)
+
+            def __init__(self, scopes_by_workspace):
+                self.scopes_by_workspace = scopes_by_workspace
+
+            def get_workspace_scope(self, workspace_id):
+                return self.scopes_by_workspace[workspace_id]
+
+        registry = _MultiWorkspaceRegistry(
+            {
+                "ws-a": RagScope(
+                    items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),),
+                    updated_at=same_stamp,
+                ),
+                "ws-b": RagScope(
+                    items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[1]),),
+                    updated_at=same_stamp,
+                ),
+            }
+        )
+        app = _App(media_db=media_db)
+        app.workspace_registry_service = registry
+
+        calls: list[int] = []
+        real_resolve = cre.resolve_effective_scope
+
+        def _spy_resolve(*args, **kwargs):
+            calls.append(1)
+            return real_resolve(*args, **kwargs)
+
+        monkeypatch.setattr(cre, "resolve_effective_scope", _spy_resolve)
+
+        first = await cre.resolve_effective_scope_for_chat(app)
+        assert first.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
+
+        # Re-link the session to a DIFFERENT workspace; its scope carries
+        # the SAME stamp as the previous workspace's, isolating the
+        # assertion to the `workspace_id` component of the cache key.
+        session.workspace_id = "ws-b"
+
+        second = await cre.resolve_effective_scope_for_chat(app)
+
+        assert second.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[1]})}
+        assert len(calls) == 2, (
+            "a workspace_id change (even with an identical stamp) must "
+            "invalidate the cached entry"
+        )
 
 
 class TestChatEntryPointEmptyScopeShortCircuit:

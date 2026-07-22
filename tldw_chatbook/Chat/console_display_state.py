@@ -8,7 +8,7 @@ from typing import Any, Mapping, Optional
 
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
-from tldw_chatbook.Chat.rag_scope import RagScope
+from tldw_chatbook.Chat.rag_scope import EffectiveScope, RagScope
 
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID = "console-inspector-review-approval"
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_LABEL = "Review approval"
@@ -409,19 +409,28 @@ class ConsoleRetrievalScopeState:
 
     ``is_empty``/``cause`` mirror ``EffectiveScope``'s ``"empty"`` state
     (rag_scope.py) -- the configured scope(s) leave nothing to retrieve
-    from (either every item in an active scope has since been deleted, or,
-    once Phase 3 of the rag-scope-narrowing program lands workspace-level
-    scoping, a conversation/workspace intersection with no overlap). Not
-    reachable from ``ChatScreen._build_console_retrieval_scope_state``
-    today: that builder is zero-DB by contract, and detecting either cause
-    needs a DB existence check. ``empty()`` exists so the chip's renderer
-    can be exercised ahead of that wiring.
+    from (either every item in an active scope has since been deleted, or
+    a conversation/workspace intersection with no overlap).
+
+    ``conv_item_count``/``ws_item_count`` (task-13, Phase 3) carry the
+    individual conversation-level and workspace-level scope counts
+    alongside ``item_count`` (which is always the EFFECTIVE,
+    post-intersection count) -- used only for the header chip's
+    intersection-breakdown tooltip ("conversation A ∩ workspace B → N").
+    ``None`` means that level has no active scope. Built via
+    ``from_effective`` whenever a workspace scope might be in play;
+    ``from_scope`` (the conversation-only shortcut still used before the
+    off-loop effective resolution lands in the cache) sets
+    ``conv_item_count`` to the same value as ``item_count`` and leaves
+    ``ws_item_count`` unset.
     """
 
     is_scoped: bool
     item_count: int = 0
     is_empty: bool = False
     cause: Optional[str] = None
+    conv_item_count: Optional[int] = None
+    ws_item_count: Optional[int] = None
 
     @classmethod
     def unscoped(cls) -> "ConsoleRetrievalScopeState":
@@ -433,7 +442,11 @@ class ConsoleRetrievalScopeState:
         """Build the row's display state from a resolved scope, or ``None``."""
         if scope is None or not scope.items:
             return cls.unscoped()
-        return cls(is_scoped=True, item_count=len(scope.items))
+        return cls(
+            is_scoped=True,
+            item_count=len(scope.items),
+            conv_item_count=len(scope.items),
+        )
 
     @classmethod
     def empty(cls, cause: Optional[str] = None) -> "ConsoleRetrievalScopeState":
@@ -445,6 +458,51 @@ class ConsoleRetrievalScopeState:
                 ``EffectiveScope.cause``); surfaced in the chip's tooltip.
         """
         return cls(is_scoped=False, item_count=0, is_empty=True, cause=cause)
+
+    @classmethod
+    def from_effective(
+        cls,
+        effective: "EffectiveScope",
+        *,
+        conv_item_count: Optional[int] = None,
+        ws_item_count: Optional[int] = None,
+    ) -> "ConsoleRetrievalScopeState":
+        """Build the row/chip display state from a resolved ``EffectiveScope``.
+
+        Task-13: the Inspector row and header chip render the EFFECTIVE
+        (post-intersection) state once a workspace scope is in play, not
+        just the conversation's own scope -- this is the seam that carries
+        that resolution into the display layer, mirroring
+        ``rag_scope.resolve_effective_scope``'s three states exactly.
+
+        Args:
+            effective: The resolved effective scope (conversation
+                intersected with the linked workspace's scope, if any).
+            conv_item_count: The conversation-level scope's own item count,
+                or ``None`` when the conversation has no scope. Carried
+                through only for the chip's breakdown tooltip.
+            ws_item_count: The linked workspace's scope item count, or
+                ``None`` when unset/unlinked. Carried through only for the
+                chip's breakdown tooltip.
+        """
+        if effective.state == "unscoped":
+            return cls.unscoped()
+        if effective.state == "empty":
+            return cls(
+                is_scoped=False,
+                item_count=0,
+                is_empty=True,
+                cause=effective.cause,
+                conv_item_count=conv_item_count,
+                ws_item_count=ws_item_count,
+            )
+        total = sum(len(ids) for ids in effective.allowlist.values())
+        return cls(
+            is_scoped=True,
+            item_count=total,
+            conv_item_count=conv_item_count,
+            ws_item_count=ws_item_count,
+        )
 
 
 @dataclass(frozen=True)
