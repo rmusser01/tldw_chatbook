@@ -10,6 +10,9 @@ Textual pilot and verify that:
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Input
@@ -508,3 +511,53 @@ async def test_open_must_exist_rejects_missing_file(tmp_path):
         result.append(app._result)
 
     assert result[0] is None
+
+
+def test_file_list_highlight_is_visible():
+    """The file list's selected-row highlight must not blend into $surface.
+
+    ``tldw_cli_modular.tcss`` carries a generic
+    ``OptionList > .option-list--option-highlighted`` rule that paints the
+    highlighted row with ``$surface`` (close to the dialog background). That
+    app-level rule wins over ``SearchableDirectoryNavigation``'s own
+    ``EnhancedFileDialog SearchableDirectoryNavigation > .option-list--...``
+    DEFAULT_CSS via Textual's origin-priority cascade, so the cursor row is
+    effectively invisible in the running app (task-430 AC#1). Fix: an
+    id-scoped override for ``#file-list-pane`` using the sanctioned
+    ``$ds-focus-bg``/``$ds-focus-fg`` non-obscuring focus tokens.
+
+    This asserts against the CSS *source* rather than a rendered component
+    style. ``_DialogHost`` above is a bare ``App`` with no ``CSS_PATH`` set,
+    so ``tldw_cli_modular.tcss`` (where both the offending generic rule and
+    the fix live) is never loaded in-test; a pilot-based
+    ``get_component_styles`` probe against it only resolves
+    ``SearchableDirectoryNavigation``'s own DEFAULT_CSS ($primary 30%/50%),
+    never the bundle rule this fix targets, so it can't exercise the bug or
+    the fix. The source assertion is the only way to pin this down in this
+    harness.
+    """
+    bundle_path = (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
+    )
+    text = bundle_path.read_text(encoding="utf-8")
+
+    match = re.search(
+        r"#file-list-pane\s+\.option-list--option-highlighted\s*\{([^}]*)\}",
+        text,
+    )
+    assert match is not None, (
+        "Expected an id-scoped '#file-list-pane .option-list--option-highlighted' "
+        "rule in tldw_cli_modular.tcss that beats the generic "
+        "'OptionList > .option-list--option-highlighted' rule for the file picker's "
+        "list pane."
+    )
+
+    block = match.group(1)
+    assert "$ds-focus-bg" in block, "Highlighted row must use the focus-bg token"
+    assert "$ds-focus-fg" in block, "Highlighted row must use the focus-fg token"
+    assert "$surface" not in block, (
+        "Highlighted row must not fall back to the near-invisible $surface color"
+    )

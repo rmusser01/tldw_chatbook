@@ -82,6 +82,17 @@ NATIVE_CHOICE_HOVER_MARKERS = (
     ".tree--highlight-line",
 )
 
+# task-430 AC#1: the generic OptionList/Tree/SelectionList "selected" contract
+# (assert_native_row_selected_state_contract, background: $surface) is close
+# to invisible against the file picker dialog's own background. This
+# id-scoped selector deliberately opts out of the neutral native-row contract
+# in favor of the higher-contrast $ds-focus-bg/$ds-focus-fg readable-selected
+# contract (assert_readable_selected_state_contract) -- see
+# test_file_picker_list_highlight_uses_high_contrast_override_contract below.
+NATIVE_CHOICE_HIGH_CONTRAST_OVERRIDES = (
+    "#file-list-pane .option-list--option-highlighted",
+)
+
 
 def css_blocks(text: str, selector: str) -> list[str]:
     """Return CSS rule bodies whose selector lists contain selector."""
@@ -302,6 +313,7 @@ def assert_all_native_choice_selectors_follow_contracts(text: str) -> None:
         selector
         for selector in css_selectors(text)
         if any(marker in selector for marker in NATIVE_CHOICE_SELECTED_MARKERS)
+        and selector not in NATIVE_CHOICE_HIGH_CONTRAST_OVERRIDES
     ]
     assert selected_selectors
     for selector in selected_selectors:
@@ -1496,6 +1508,30 @@ def test_bundled_native_choice_and_tree_states_match_source_contracts():
         assert_native_row_hover_state_contract(css_block(text, selector))
 
     assert_all_native_choice_selectors_follow_contracts(text)
+
+
+def test_file_picker_list_highlight_uses_high_contrast_override_contract():
+    """task-430 AC#1: the file picker's list pane opts out of the neutral
+    native-row $surface contract in favor of the readable-selected
+    $ds-focus-bg/$ds-focus-fg contract.
+
+    The generic ``OptionList > .option-list--option-highlighted`` rule paints
+    ``$surface``, which is near-invisible against the file picker dialog's
+    own background. ``#file-list-pane .option-list--option-highlighted``
+    beats that rule (same App-CSS origin tier, higher specificity) with the
+    sanctioned non-obscuring focus tokens instead. It is intentionally
+    excluded from ``NATIVE_CHOICE_SELECTED_MARKERS`` scans (see
+    ``NATIVE_CHOICE_HIGH_CONTRAST_OVERRIDES``) because it targets the same
+    native pseudo-class but deliberately does not follow the neutral
+    native-row contract.
+    """
+    for _, text in (
+        ("components/_lists.tcss", LISTS.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+    ):
+        for selector in NATIVE_CHOICE_HIGH_CONTRAST_OVERRIDES:
+            block = css_block(text, selector)
+            assert_readable_selected_state_contract(block)
 
 
 def test_media_selected_and_active_states_follow_shared_contracts():
