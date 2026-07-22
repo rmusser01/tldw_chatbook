@@ -1143,20 +1143,31 @@ class LocalSkillsService:
         return self._response_for_record(self._load_index()[skill_name])
 
     async def export_skill(self, skill_name: str) -> Any:
+        import stat
+
+        from ..tldw_api.skills_schemas import _normalize_skill_name
+
         self._enforce("skills.export.launch.local")
-        skill = await self.get_skill(skill_name)
+        normalized = _normalize_skill_name(skill_name)
+        skill_dir = self._skill_dir(normalized)
         archive_buffer = io.BytesIO()
         with zipfile.ZipFile(
             archive_buffer, "w", compression=zipfile.ZIP_DEFLATED
         ) as archive:
-            archive.writestr(_SKILL_FILENAME, skill["content"])
-            for filename, content in sorted(
-                (skill.get("supporting_files") or {}).items()
+            body = skill_dir / _SKILL_FILENAME
+            archive.writestr(_SKILL_FILENAME, body.read_bytes())
+            for relative_path, path in sorted(
+                self._iter_bundle_files(skill_dir), key=lambda x: x[0]
             ):
-                archive.writestr(filename, content)
+                if path.is_symlink() or not path.is_file():
+                    continue
+                info = zipfile.ZipInfo(relative_path)
+                mode = path.stat().st_mode
+                info.external_attr = (mode & 0xFFFF) << 16
+                archive.writestr(info, path.read_bytes())
         return {
             "content": archive_buffer.getvalue(),
-            "filename": f"{skill['name']}.zip",
+            "filename": f"{normalized}.zip",
             "content_type": "application/zip",
         }
 
