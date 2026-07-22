@@ -11,6 +11,8 @@ of Tests/Internal_Prompts/conftest.py under --import-mode=importlib when
 both test directories are collected in the same session (ValueError: Plugin
 already registered under a different name)."""
 
+import pytest
+
 
 def test_sub_question_prompt_override_reaches_transport(scratch_config, monkeypatch):
     from tldw_chatbook.Web_Scraping import WebSearch_APIs
@@ -54,8 +56,6 @@ def test_default_used_when_no_override(scratch_config, monkeypatch):
 
 
 # --- sites 2-4: one transport-boundary test each (task 460) ------------------
-
-import pytest
 
 
 def test_answer_synthesis_override_reaches_transport(scratch_config, monkeypatch):

@@ -108,8 +108,13 @@ def test_generation_includes_real_conversation_context(scratch_config):
     # Real message content reaches the payload (not an empty context)...
     assert "We leave for Tokyo on March 3rd." in user_message
     assert "Noted -- Tokyo, departing March 3rd." in user_message
-    # ...and 'sender' was normalized to a role label (not "UNKNOWN").
+    # ...the normalized 'role' column drives the label (not "UNKNOWN")...
     assert "USER:" in user_message
+    assert "ASSISTANT:" in user_message
+    # ...and the context is chronological (DESC fetch reversed back to ASC).
+    assert user_message.index("Tokyo on March 3rd") < user_message.index(
+        "Noted -- Tokyo"
+    )
     assert not user_message.endswith("\n\nConversation Context:\n")
 
 
