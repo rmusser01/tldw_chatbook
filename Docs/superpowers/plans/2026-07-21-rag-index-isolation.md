@@ -515,8 +515,9 @@ def test_adopt_is_idempotent(chroma_persist_dir):
 def test_no_legacy_is_noop(chroma_persist_dir):
     cfg = _cfg(chroma_persist_dir)
     maybe_adopt_legacy_collection(cfg)  # nothing to adopt
-    adopt_legacy_collection(chroma_persist_dir, "default",
-                            fingerprinted_collection_name(cfg), {}) is False
+    assert adopt_legacy_collection(
+        chroma_persist_dir, "default", fingerprinted_collection_name(cfg), {}
+    ) is False
 
 
 def test_memory_type_is_noop():
