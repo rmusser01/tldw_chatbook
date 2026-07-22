@@ -81,19 +81,37 @@ resolve in priority order:
    candidates and pick the longest matching prefix so specific entries win).
 4. Provider default, else `MODEL_TOKEN_LIMITS["default"]`.
 
-Refreshed `MODEL_TOKEN_LIMITS` (current published **input** windows; concrete
-values, verify at implementation): gpt-4o/gpt-4o-mini 128000, gpt-4-turbo
-128000, gpt-4.1* 1047576, gpt-4 8192, gpt-3.5-turbo 16385, o1 200000, o1-mini
-128000, o3/o3-mini/o4-mini 200000; claude-3-opus/haiku/sonnet 200000,
-claude-3-5-* 200000, claude-3-7-* 200000, claude-opus-4-*/sonnet-4-* 200000,
-claude-2.1 200000, claude-2 100000; gemini-1.5-pro 2097152, gemini-1.5-flash
-1048576, gemini-2.* 1048576, gemini-pro 30720; mistral-large 128000,
-mistral-small/medium 32000, mixtral-8x7b 32000; `"default"` 8192. Provider
-defaults lean to the provider's common current window but stay a conservative
-floor (anthropic 200000, google 1048576, openai 128000, mistral 32000).
-**Safety note:** for the 322 budget, under-estimating the window is safe (it
-trims more, never 400s); over-estimating an unknown model is the only risk, so
-truly-unknown models keep the conservative `"default"`.
+Refreshed `MODEL_TOKEN_LIMITS` (current published **input** windows; verify at
+implementation). **ADD** current models: gpt-4o/gpt-4o-mini 128000, gpt-4.1*
+1047576, o1 200000, o1-mini 128000, o3/o3-mini/o4-mini 200000, claude-3-5-*
+200000, claude-3-7-* 200000, claude-opus-4-*/sonnet-4-* 200000, gemini-1.5-pro
+2097152, gemini-1.5-flash 1048576, gemini-2.* 1048576, mistral-large 128000.
+**PRESERVE exactly** (pinned by existing tests): gpt-4 8192, gpt-4-32k 32768,
+gpt-4-turbo 128000, claude-3-opus-20240229 200000, claude-2 100000,
+`"default"` **4096**. **The one value correction:** gpt-3.5-turbo 4096 → 16385
+(current real window; requires updating one existing test assertion, below).
+Table keys stay **full-length** (e.g. `claude-3-opus-20240229`, not a bare
+`claude-3-opus`) so the longest-prefix fallback can't shadow a shorter key.
+
+**Provider defaults — keep conservative; one bump.** Bump `anthropic`
+100000 → 200000 only (task-named, and the safe floor since every modern Claude
+is ≥ 200k). Keep `openai` 4096, `google` 30720, `mistral` 32000, and
+`"default"` 4096. **Safety principle:** for the 322 budget, under-estimating the
+window is safe (it trims more, never 400s); over-estimating an unknown model is
+the only way to cause a provider 400, so fallback/unknown defaults stay
+conservative and accuracy comes from the per-model capability patterns and
+full table entries — never from raising the fallbacks.
+
+**Capability-pattern anchoring & agreement.** Because `get_model_token_limit`
+consults capabilities **before** the table, `context_window` patterns must be
+specific/anchored (e.g. `^gpt-4o`, `^gpt-4\.1`, `^o[134]`, `^claude-3-5`,
+`^claude.*sonnet-4`, `gemini-1\.5`, `gemini-2\.`) so they do not match generic
+synthetic variants (`gpt-4-some-variant` must still fall through to the table's
+`gpt-4` → 8192, and bare `gpt-4`/`gpt-4-32k` must match no pattern). Where a
+pattern *can* also match a preserved-value model, its `context_window` must
+**agree** with the table (e.g. the `claude-3` pattern's `context_window` =
+200000 = table `claude-3-opus-20240229`), so capabilities-first never returns a
+number the pinned tests don't expect.
 
 ### Unit B — One consistent estimator, no `.split()` (321 AC#1/#2/#3)
 
@@ -192,6 +210,30 @@ counts. Both directions lean higher (safer for budgets).
   when no custom-limit widget value is set; a custom value still overrides.
 - **Removal (325 AC#2):** a test asserts `chat_context_limit` is absent from the
   loaded default config and the generated sample TOML.
+
+**Existing tests (`Tests/Chat/test_token_counter.py`) — update / keep green.**
+This suite pins the exact values above; the design deliberately keeps almost all
+of it passing:
+- **Update (intended):** `test_estimate_remaining_tokens` asserts
+  `limit == 4096` for `gpt-3.5-turbo`; change to `16385` (the refreshed window).
+- **Kept green by the value choices above:**
+  `test_get_model_token_limit_known_model` (gpt-4 8192 / gpt-4-32k 32768 /
+  gpt-4-turbo 128000 / claude-3-opus-20240229 200000 preserved);
+  `test_get_model_token_limit_unknown_model` (`"default"` stays 4096);
+  `test_get_model_token_limit_by_prefix` (full-length claude keys + anchored
+  patterns keep `claude-3-opus-custom` → openai default 4096, and
+  `gpt-4-some-variant` → `gpt-4` 8192).
+- **Chars-constant constraint:** `test_character_estimation_fallback` asserts a
+  100-ASCII-char message estimates in `(25, 50)`. With `base_ratio 0.25 ×
+  HEADROOM 1.2 = 0.30` plus message overhead this lands ~35 — the constants
+  must keep a 100-char ASCII string in that band (i.e. `base_ratio × headroom`
+  well under 0.5).
+- `test_tiktoken_counting` is `skipif(not TIKTOKEN_AVAILABLE)` → skipped in the
+  venv; the estimator tests target the chars path deterministically.
+- `Tests/Chat/test_footer_token_dirty_gate.py` asserts caching behavior
+  (re-tokenize counts, `cached == direct`) and relative sums, not exact token
+  values or the gauge denominator, so it survives; confirm its `tokenizer_spy`
+  fixture still patches the kept `count_tokens_chat_history` boundary.
 
 ## Out of scope
 
