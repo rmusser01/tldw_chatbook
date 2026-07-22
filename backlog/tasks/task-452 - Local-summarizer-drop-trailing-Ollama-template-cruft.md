@@ -1,7 +1,7 @@
 ---
 id: TASK-452
 title: 'Local summarizer: drop trailing </s> {{ .Prompt }} Ollama cruft (behavior change)'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-21 20:09'
 labels:
@@ -18,7 +18,11 @@ The `summarization.local_summarizer_template` registry default (moved verbatim f
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The `<s>`/`</s>` sentinels and trailing `{{ .Prompt }}` are removed from the local summarizer default
-- [ ] #2 The Task-3 pin test asserting `{{ .Prompt }}` presence is updated to reflect the cleaned text
-- [ ] #3 A note/PR body records this is a deliberate behavior change with before/after prompt bytes
+- [x] #1 The `<s>`/`</s>` sentinels and trailing `{{ .Prompt }}` are removed from the local summarizer default
+- [x] #2 The Task-3 pin test asserting `{{ .Prompt }}` presence is updated to reflect the cleaned text
+- [x] #3 A note/PR body records this is a deliberate behavior change with before/after prompt bytes
 <!-- AC:END -->
+
+## Implementation Notes
+
+Removed the `<s>`/`</s>` sentinels and trailing `{{ .Prompt }}` from summarization.local_summarizer_template (behavior change; before/after in commit 40b2ef20f). Pin test flipped to assert the cruft is gone; migration tests confirm call sites still resolve it.

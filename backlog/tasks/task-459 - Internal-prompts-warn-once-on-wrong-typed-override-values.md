@@ -1,7 +1,7 @@
 ---
 id: TASK-459
 title: 'Internal prompts: warn once on wrong-typed override values'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-21 20:05'
 labels:
@@ -18,7 +18,11 @@ In `tldw_chatbook/Internal_Prompts/resolver.py`, `_extract_text` silently return
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A present override value of a non-str/non-table type logs exactly one warning per prompt id and still falls back to the shipped default (never raises)
-- [ ] #2 A correctly-typed override (str or {text,...} table) and a genuinely-absent override both produce NO new warning
-- [ ] #3 A unit test in Tests/Internal_Prompts/ covers the wrong-typed-value warn-once path
+- [x] #1 A present override value of a non-str/non-table type logs exactly one warning per prompt id and still falls back to the shipped default (never raises)
+- [x] #2 A correctly-typed override (str or {text,...} table) and a genuinely-absent override both produce NO new warning
+- [x] #3 A unit test in Tests/Internal_Prompts/ covers the wrong-typed-value warn-once path
 <!-- AC:END -->
+
+## Implementation Notes
+
+resolver.get_internal_prompt warns once (`:type` key) when an override is present but neither str nor dict (e.g. hand-edited int/array); never raises, falls back to default. 3 new resolver tests.

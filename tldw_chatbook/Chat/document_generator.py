@@ -138,13 +138,33 @@ class DocumentGenerator:
             List of message dictionaries
         """
         try:
-            messages = self.db.get_messages_by_conversation_id(
-                conversation_id, limit=limit
+            # DESC so LIMIT keeps the most RECENT `limit` messages (the method
+            # promises "recent messages"); ASC would keep the oldest.
+            messages = self.db.get_messages_for_conversation(
+                conversation_id,
+                limit=limit,
+                order_by_timestamp="DESC",
+                include_image_data=False,
             )
-            return [msg.to_dict() for msg in messages]
         except Exception as e:
             logger.error(f"Failed to get conversation context: {e}")
             return []
+        # Restore chronological order for display (DESC gave newest-first).
+        messages.reverse()
+        # Normalize to the {role, content, timestamp} shape
+        # format_context_for_llm() reads. Prefer the DB's normalized 'role'
+        # column (derived from 'sender' at insert) over the raw 'sender', which
+        # may be a character/display name. (format_context_for_llm looked up a
+        # non-existent 'role' before, which — with the wrong DB method name —
+        # made generated documents silently contextless.)
+        return [
+            {
+                "role": msg.get("role") or msg.get("sender", "unknown"),
+                "content": msg.get("content", ""),
+                "timestamp": msg.get("timestamp", ""),
+            }
+            for msg in messages
+        ]
 
     def format_context_for_llm(
         self, messages: List[Dict[str, Any]], specific_message: Optional[str] = None

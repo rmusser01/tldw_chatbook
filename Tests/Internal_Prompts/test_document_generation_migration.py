@@ -72,6 +72,65 @@ def _system_and_user(captured_kwargs: dict) -> tuple:
     return system_message, user_message
 
 
+# --- task 453: real conversation context reaches the prompt ----------------
+
+
+def test_generation_includes_real_conversation_context(scratch_config):
+    # Regression for the get_messages_by_conversation_id (nonexistent method)
+    # bug that made every generated document silently contextless.
+    scratch_config("")
+    generator = _make_generator()
+    conv_id = generator.db.add_conversation(
+        {"title": "Trip planning", "client_id": "test-client"}
+    )
+    generator.db.add_message(
+        {
+            "conversation_id": conv_id,
+            "sender": "user",
+            "content": "We leave for Tokyo on March 3rd.",
+        }
+    )
+    generator.db.add_message(
+        {
+            "conversation_id": conv_id,
+            "sender": "assistant",
+            "content": "Noted -- Tokyo, departing March 3rd.",
+        }
+    )
+
+    captured = _capture_messages(generator)
+    generator.generate_timeline(
+        conversation_id=conv_id, provider="openai", model="gpt-4", api_key="k"
+    )
+
+    assert captured, "provider dispatch fake was never invoked"
+    _system, user_message = _system_and_user(captured[0])
+    # Real message content reaches the payload (not an empty context)...
+    assert "We leave for Tokyo on March 3rd." in user_message
+    assert "Noted -- Tokyo, departing March 3rd." in user_message
+    # ...the normalized 'role' column drives the label (not "UNKNOWN")...
+    assert "USER:" in user_message
+    assert "ASSISTANT:" in user_message
+    # ...and the context is chronological (DESC fetch reversed back to ASC).
+    assert user_message.index("Tokyo on March 3rd") < user_message.index(
+        "Noted -- Tokyo"
+    )
+    assert not user_message.endswith("\n\nConversation Context:\n")
+
+
+def test_generation_empty_context_degrades_gracefully(scratch_config):
+    # A missing conversation must not crash — context is simply empty.
+    scratch_config("")
+    generator = _make_generator()
+    captured = _capture_messages(generator)
+    generator.generate_timeline(
+        conversation_id="does-not-exist", provider="openai", model="gpt-4", api_key="k"
+    )
+    assert captured
+    _system, user_message = _system_and_user(captured[0])
+    assert user_message.endswith("\n\nConversation Context:\n")
+
+
 # --- (a) no override: shipped TOML user text + hardcoded system text ------
 
 

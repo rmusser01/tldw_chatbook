@@ -1,7 +1,7 @@
 ---
 id: TASK-462
 title: 'Internal prompts: dead-key hygiene after full migration'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-21 20:08'
 labels:
@@ -18,8 +18,12 @@ Once the registry migration is fully landed (P1+P2, and P3 Settings UI), remove 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `prompts_strings` loader removed if grep confirms zero consumers
-- [ ] #2 `CONFIG_PROMPT_SITUATE_CHUNK_CONTEXT` removed (no call site exists)
-- [ ] #3 `[Prompts]` keys still referenced by any spec's legacy_config_path are preserved; only genuinely-dead scaffolding is deleted
-- [ ] #4 App imports and the internal-prompts suite stay green
+- [x] #1 `prompts_strings` loader removed if grep confirms zero consumers
+- [x] #2 `CONFIG_PROMPT_SITUATE_CHUNK_CONTEXT` removed (no call site exists)
+- [x] #3 `[Prompts]` keys still referenced by any spec's legacy_config_path are preserved; only genuinely-dead scaffolding is deleted
+- [x] #4 App imports and the internal-prompts suite stay green
 <!-- AC:END -->
+
+## Implementation Notes
+
+Removed the unconsumed `prompts_strings` loader and never-read CONFIG_PROMPT_SITUATE_CHUNK_CONTEXT constant. [Prompts]/[prompts.document_generation.*]/[chunking_config] keys preserved (registry legacy tier reads them directly). Legacy-tier resolver tests green.

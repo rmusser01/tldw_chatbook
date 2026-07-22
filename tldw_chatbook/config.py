@@ -1773,17 +1773,11 @@ def load_settings(force_reload: bool = False) -> Dict:
                 search_engines_section, "yandex_search_api_key", ""
             ),
         },
-        "prompts_strings": {  # Specific prompt strings from 'Prompts' TOML table
-            "sub_question_generation_prompt": _get_typed_value(
-                get_toml_section("Prompts"), "sub_question_generation_prompt", ""
-            ),
-            "search_result_relevance_eval_prompt": _get_typed_value(
-                get_toml_section("Prompts"), "search_result_relevance_eval_prompt", ""
-            ),
-            "analyze_search_results_prompt": _get_typed_value(
-                get_toml_section("Prompts"), "analyze_search_results_prompt", ""
-            ),
-        },
+        # NOTE: the former "prompts_strings" loader was removed once the
+        # Internal_Prompts registry took over these web-search prompts. Its
+        # only consumer was the unused CONFIG_PROMPT_SITUATE_CHUNK_CONTEXT
+        # constant. The [Prompts] TOML keys themselves remain — the registry
+        # reads them as its legacy-override tier (via legacy_config_path).
         "web_scraper_settings": {
             "web_scraper_api_key": _get_typed_value(
                 web_scraper_section, "web_scraper_api_key", ""
@@ -4781,12 +4775,6 @@ APP_CONFIG = settings.get(
 )  # Fallback if not in settings for some reason
 DATABASE_CONFIG = settings.get("APP_DATABASE_CONFIG", DEFAULT_DATABASE_CONFIG)
 RAG_SEARCH_CONFIG = settings.get("APP_RAG_SEARCH_CONFIG", DEFAULT_RAG_SEARCH_CONFIG)
-
-# --- Default Prompts ---
-CONFIG_PROMPT_SITUATE_CHUNK_CONTEXT = settings.get("prompts_strings", {}).get(
-    "situate_chunk_context_prompt",
-    "You are an AI assistant. Please follow the instructions provided in the input text carefully and accurately.",
-)
 
 # --- Load CLI Config and Initialize Databases on module import ---
 # The `settings` global variable is now the result of the unified load_settings()
