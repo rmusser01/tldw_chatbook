@@ -123,6 +123,35 @@ def compose_agent_system_prompt(session_prompt: str) -> str:
     return f"{session_prompt}\n\n{operating}"
 
 
+_STEP_MARKER_RESULT_LIMIT = 160
+_STEP_SUMMARY_LIMIT = 200
+
+
+def _truncate_step_text(text: str, *, limit: int) -> str:
+    """Collapse long step text to a preview with an explicit truncation affordance.
+
+    TASK-350: a tool result that IS the full answer must not be dumped verbatim
+    into a transcript marker (it duplicated the assistant bubble word-for-word),
+    and a truncated summary must never be a silent mid-word clip ("the traditional
+    rollba"). Cuts on a word boundary when one sits reasonably close to ``limit``,
+    then appends an ellipsis and a ``(+N chars)`` hint so the reader can see it was
+    collapsed and by how much. Deterministic, so the shared live/resume marker
+    formatter stays byte-identical.
+    """
+    text = str(text if text is not None else "")
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rstrip()
+    # Cut on any whitespace boundary (space/newline/tab/CR), not just a literal
+    # space — markdown and structured tool output split on newlines/tabs, so a
+    # space-only search would still clip those mid-token (Qodo #3).
+    boundary = max(cut.rfind(ws) for ws in (" ", "\n", "\t", "\r"))
+    if boundary >= limit // 2:
+        cut = cut[:boundary].rstrip()
+    hidden = len(text) - len(cut)
+    return f"{cut}… (+{hidden} chars)"
+
+
 def format_agent_step_marker(
     kind: str,
     *,
@@ -152,7 +181,13 @@ def format_agent_step_marker(
     if kind == STEP_SPAWN:
         return f"⤷ spawned sub-agent: {summary}"
     if kind == STEP_TOOL_RESULT and tool_name not in _QUIET_STEP_TOOLS:
-        return f"⚙ {tool_name} → {result}"
+        # Collapse the result to a preview: a spawn_subagent result IS the full
+        # answer, and dumping it verbatim duplicated the assistant bubble (task-350).
+        preview = _truncate_step_text(
+            str(result if result is not None else ""),
+            limit=_STEP_MARKER_RESULT_LIMIT,
+        )
+        return f"⚙ {tool_name} → {preview}"
     if kind == STEP_ERROR:
         return f"⚠ {summary}"
     return None
@@ -1159,7 +1194,9 @@ class ConsoleAgentBridge:
         # TOOL marker path (_append_marker) is also raw, since its consumers
         # never parse the text as markup either.
         raw = step.summary or step.result or step.tool_name or step.kind
-        return str(raw)[:200]
+        # task-350: mark truncation with an ellipsis + affordance instead of a
+        # silent mid-word clip for the run inspector's live-step lines.
+        return _truncate_step_text(str(raw), limit=_STEP_SUMMARY_LIMIT)
 
     def _previous_primary_run_id(self, conversation_id: str) -> str | None:
         for record in self._db.list_runs(conversation_id, include_superseded=False):

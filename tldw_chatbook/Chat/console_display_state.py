@@ -308,22 +308,46 @@ class ConsoleControlState:
         rag_enabled: bool = False,
         staged_source_count: int = 0,
         tool_count: int = 0,
+        mcp_tool_count: int | None = None,
         approval_count: int = 0,
     ) -> "ConsoleControlState":
+        """Build the Console control-bar chip state from raw run values.
+
+        Args:
+            provider: Active provider name, or falsy for "not selected".
+            model: Active model name, or falsy for "not selected".
+            persona: Persona/assistant label; falsy falls back to "General".
+            rag_enabled: Whether RAG is on for this send.
+            staged_source_count: Number of staged context sources.
+            tool_count: Built-in tools that can run.
+            mcp_tool_count: MCP catalog size that can run, or ``None`` when no MCP
+                seam is wired (chip then reflects built-in tools only).
+            approval_count: Pending MCP approvals.
+
+        Returns:
+            A ``ConsoleControlState`` whose ``tools_label`` counts the tools that
+            can actually run (built-in + MCP) and whose ``*_active`` flags drive
+            chip emphasis.
+        """
         persona_text = _clean(persona, "")
         persona_label = (
             f"Persona: {persona_text}" if persona_text else "Assistant: General"
         )
+        # TASK-350: the chip must reflect the tools that can ACTUALLY run — built-in
+        # AND MCP. Counting only built-in read "Tools: 0 ready" while the inspector
+        # showed "MCP: 10 tools ready". `mcp_tool_count is None` means no MCP seam
+        # wired, so the chip falls back to built-in only.
+        effective_tool_count = tool_count + (mcp_tool_count or 0)
         return cls(
             provider_label=f"Provider: {_clean(provider, 'not selected')}",
             model_label=f"Model: {_clean(model, 'not selected')}",
             persona_label=persona_label,
             rag_label=f"RAG: {'on' if rag_enabled else 'off'}",
             sources_label=f"Sources: {staged_source_count} staged",
-            tools_label=f"Tools: {tool_count} ready",
+            tools_label=f"Tools: {effective_tool_count} ready",
             approvals_label=f"Approvals: {approval_count} pending",
             sources_active=staged_source_count > 0,
-            tools_active=tool_count > 0,
+            tools_active=effective_tool_count > 0,
             approvals_active=approval_count > 0,
         )
 
