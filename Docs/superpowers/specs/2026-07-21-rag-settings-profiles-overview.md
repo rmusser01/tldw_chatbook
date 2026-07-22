@@ -41,6 +41,10 @@ The program decomposes into three sub-projects built in dependency order. Each g
 2. **Embed-config == query-config for the active profile.** For any active profile, the config used to embed at ingestion equals the config used to query at search time. This is the guard against divergent-model index misses / dimension-mismatch crashes, mirroring the RAG-scope backend-parity contract test.
 3. **No silent index blanking.** Shipping SP1 must never leave an existing user's index unreadable without a surfaced, actionable "empty / needs backfill" state.
 
+## 4a. Relationship to RAG scope (orthogonal, don't tangle)
+
+The recently-shipped RAG-scope program (conversation/workspace hard retrieval filters) and this program are **orthogonal** and must not be conflated in implementation or review: **scope decides *which items* to search** (a per-conversation/per-workspace allowlist filtered inside a collection), while a **profile decides *how* to search and embed** (the engine config that selects the collection). A profile switch changes the collection (SP1 fingerprint); a scope change filters within whatever collection the active profile resolves to. They compose cleanly — scope's `source_id` allowlist is stamped identically regardless of which fingerprinted collection holds the vectors — so no coordination is needed beyond keeping the two config surfaces separate.
+
 ## 5. Out of scope (follow-up candidates)
 
 - Full multi-index management UI (list/delete every on-disk fingerprinted collection with sizes) — SP3 ships only the active profile's index status + backfill; the `list_collections`/`delete_collection` seams exist (`vector_store.py:632/765`) for a later follow-up.
