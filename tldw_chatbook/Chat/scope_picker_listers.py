@@ -10,7 +10,7 @@ wired to the app-level seams the rest of Console already uses:
   ``Library.library_local_rag_search_service`` uses for scoped keyword
   search).
 - Notes: ``app.notes_scope_service.search_notes`` for text queries,
-  ``app.chachanotes_db.list_notes``/``get_keywords_for_note`` for the
+  ``app.chachanotes_db.list_notes``/``get_keywords_for_notes_batch`` for the
   untextfiltered/tag-filtered paths (see ``_NotesSourceLister`` for why).
 - Tags: a union of both DBs' Keywords vocabularies -- ``MediaDatabase.
   get_keyword_usage_stats()`` (media) and a capped scan over
@@ -140,9 +140,9 @@ class _MediaSourceLister:
         """Batch-fetch keyword tags for a set of media ids, off-loop.
 
         Single query via ``fetch_keywords_for_media_batch`` (task-9 review
-        finding 3) -- mirrors ``_NotesSourceLister._tags_for``'s per-item
-        seam, but batched since the media DB exposes a batch query and the
-        notes DB does not. Degrades to an empty mapping (no matches) on any
+        finding 3) -- mirrors ``_NotesSourceLister._tags_for_batch``'s
+        equivalent batched seam over ``get_keywords_for_notes_batch`` (PR
+        #747 review). Degrades to an empty mapping (no matches) on any
         missing seam or query failure -- callers already only reach here
         under an active tag filter, so a broken lookup must never widen to
         "everything matches".
@@ -363,24 +363,45 @@ class _NotesSourceLister:
             return []
         return [dict(row) for row in rows or ()]
 
-    async def _tags_for(self, note_id: str) -> tuple[str, ...]:
+    async def _tags_for_batch(
+        self, note_ids: tuple[str, ...]
+    ) -> dict[str, tuple[str, ...]]:
+        """Batch-fetch keyword tags for a set of notes, off-loop.
+
+        Single query via ``get_keywords_for_notes_batch`` (PR #747 review)
+        -- mirrors ``_MediaSourceLister._keywords_for_media``'s batched
+        seam; the notes DB previously exposed only a per-note
+        ``get_keywords_for_note``, which ``_matching`` called once per
+        candidate (an N+1 of up to ``_NOTES_FETCH_CAP`` serialized threaded
+        DB calls per refresh). Degrades to an empty mapping (no matches) on
+        any missing seam or query failure -- callers only reach here under
+        an active tag filter, so a broken lookup must never widen to
+        "everything matches".
+        """
         db = self._db()
-        if db is None:
-            return ()
+        if db is None or not note_ids:
+            return {}
         try:
-            rows = await asyncio.to_thread(db.get_keywords_for_note, str(note_id))
+            keywords_by_id = await asyncio.to_thread(
+                db.get_keywords_for_notes_batch, list(note_ids)
+            )
         except Exception:
-            return ()
-        return tuple(
-            str(row.get("keyword") or "").strip()
-            for row in rows or ()
-            if str(row.get("keyword") or "").strip()
-        )
+            return {}
+        return {
+            str(note_id): tuple(keywords)
+            for note_id, keywords in keywords_by_id.items()
+        }
 
     async def _matching(
         self, *, text: str, tags: tuple[str, ...]
     ) -> list[ScopeListItem]:
         candidates = await self._candidate_rows(text=text)
+        tags_by_id: dict[str, tuple[str, ...]] = {}
+        if tags:
+            note_ids = tuple(
+                str(row["id"]) for row in candidates if row.get("id") is not None
+            )
+            tags_by_id = await self._tags_for_batch(note_ids)
         items: list[ScopeListItem] = []
         for row in candidates:
             note_id = row.get("id")
@@ -388,7 +409,7 @@ class _NotesSourceLister:
                 continue
             item_tags: tuple[str, ...] = ()
             if tags:
-                item_tags = await self._tags_for(str(note_id))
+                item_tags = tags_by_id.get(str(note_id), ())
                 if not (set(tags) & set(item_tags)):
                     continue
             items.append(

@@ -46,6 +46,18 @@ class _VariantStreamBase:
 class ConsoleChatPersistence(Protocol):
     """Persistence surface used by Console without importing DB dependencies."""
 
+    #: Raw DB handle backing this persistence adapter, or ``None`` when the
+    #: adapter has none (e.g. a test fake, or a future persistence shape
+    #: with no single underlying database). ``persist_session_if_needed``
+    #: reaches through this seam -- rather than an undeclared ``getattr``
+    #: probe -- to flush a session-held RAG retrieval scope
+    #: (``SessionScopeHolder``) at first persistence (PR #747 review: a
+    #: conforming adapter that structurally satisfied this Protocol without
+    #: declaring ``.db`` made the flush silently no-op, losing the user's
+    #: pre-persistence scope selection with no diagnostic). Declaring it
+    #: here makes the seam an explicit, checkable part of the contract.
+    db: Any | None
+
     def create_conversation(self, **kwargs) -> str:
         """Create a persisted conversation and return its ID."""
 
@@ -1008,17 +1020,20 @@ class ConsoleChatStore:
         # no-ops when nothing was held, so this is safe to call
         # unconditionally. Requires the underlying ``CharactersRAGDB`` --
         # ``self.persistence`` is the ``ChatPersistenceService`` wrapper, so
-        # the raw DB is reached via its ``db`` attribute (mirrors other
-        # optional-seam probes in this method); persistence adapters
-        # without one (e.g. test fakes) simply skip the flush, matching
-        # every other durable write in this method degrading gracefully
-        # when the seam it needs is absent.
+        # the raw DB is reached via its ``db`` attribute, now a declared
+        # (not merely probed) member of ``ConsoleChatPersistence`` (PR #747
+        # review); persistence adapters without one (e.g. test fakes) still
+        # simply skip the flush, matching every other durable write in this
+        # method degrading gracefully when the seam it needs is absent --
+        # but that skip must be OBSERVABLE (see the ``else`` branch below)
+        # rather than a silent loss of the user's scope selection.
         persistence_db = getattr(self.persistence, "db", None)
+        # Captured BEFORE the flush -- `flush_to` empties the holder on
+        # success, so this is the only chance to learn what was actually
+        # held (task-9 review finding 1; PR #747 review).
+        held_scope = session.rag_scope_holder.scope
         if persistence_db is not None:
-            # Captured BEFORE the flush -- `flush_to` empties the holder on
-            # success, so this is the only chance to learn what was
-            # actually written through (task-9 review finding 1).
-            flushed_scope = session.rag_scope_holder.scope
+            flushed_scope = held_scope
             try:
                 session.rag_scope_holder.flush_to(
                     persistence_db, session.persisted_conversation_id
@@ -1042,6 +1057,22 @@ class ConsoleChatStore:
                             "on_scope_flushed callback raised after a "
                             "successful RAG retrieval scope flush."
                         )
+        elif held_scope is not None:
+            # A scope WAS held but the persistence adapter exposes no raw
+            # `db` seam to flush it through -- the holder is left untouched
+            # (not emptied) so a later flush attempt could still succeed,
+            # but the loss must not be silent: warn, naming the
+            # conversation, so it is observable.
+            logger.bind(
+                session_id=session_id,
+                conversation_id=session.persisted_conversation_id,
+            ).warning(
+                "Skipped RAG retrieval scope flush for conversation {} on "
+                "first persist: persistence adapter exposes no `db` seam. "
+                "The scope remains held in-memory only and was not "
+                "written to durable storage.",
+                session.persisted_conversation_id,
+            )
         return session.persisted_conversation_id
 
     def set_session_system_prompt(

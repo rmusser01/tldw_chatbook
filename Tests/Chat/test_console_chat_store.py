@@ -1915,7 +1915,17 @@ def test_persist_session_if_needed_skips_scope_flush_without_db_seam():
     """A persistence adapter with no `.db` attribute (e.g. the test-only
     `FakePersistence` used throughout this module) must not raise even when
     a scope is held -- the flush is skipped, matching every other durable
-    write in this method degrading gracefully when its seam is absent."""
+    write in this method degrading gracefully when its seam is absent.
+
+    PR #747 review: the loss must also be OBSERVABLE (a warning naming the
+    conversation), not merely non-fatal -- silently skipping is exactly how
+    a user's pre-persistence scope selection disappears without a trace.
+    caplog does not intercept loguru (this project's logger); attach a
+    temporary loguru sink instead (mirrors
+    ``Tests/Chat/test_attachment_policy.py``'s pattern).
+    """
+    from loguru import logger as loguru_logger
+
     persistence = FakePersistence()
     store = ConsoleChatStore(persistence=persistence)
     session = store.create_session(title="Chat 1")
@@ -1923,9 +1933,37 @@ def test_persist_session_if_needed_skips_scope_flush_without_db_seam():
         RagScope(items=(ScopeItem("media", "m1"),), updated_at="2026-01-01T00:00:00Z")
     )
 
-    conversation_id = store.persist_session_if_needed(session.id)
+    messages: list[str] = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        conversation_id = store.persist_session_if_needed(session.id)
+    finally:
+        loguru_logger.remove(sink_id)
 
     assert conversation_id == "conv-1"
     # The flush was skipped (no seam to write through), so the holder still
     # carries the scope -- nothing was silently lost, it just never landed.
     assert session.rag_scope_holder.scope is not None
+    assert any(
+        "conv-1" in message and "scope" in message.lower() for message in messages
+    ), messages
+
+
+def test_persist_session_if_needed_no_warning_when_nothing_held_and_no_db_seam():
+    """The observability warning is only about LOSS -- a session with no
+    scope held must not spuriously warn just because the persistence
+    adapter lacks a `.db` seam (nothing was going to be flushed anyway)."""
+    from loguru import logger as loguru_logger
+
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Chat 1")
+
+    messages: list[str] = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        store.persist_session_if_needed(session.id)
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert not any("scope" in message.lower() for message in messages), messages

@@ -22,6 +22,7 @@ mirroring ``Tests/RAG_Search/test_pipeline_notes_search.py`` and
 ``Tests/RAG/test_semantic_honest_states.py``'s fixture patterns.
 """
 
+import asyncio
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
@@ -1032,6 +1033,93 @@ class TestExistingIdsSyncDanglingDrop:
         assert effective.state == "scoped"
         assert effective.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
         assert effective.cause is None
+
+
+class TestResolveEffectiveScopeMemoryDbGuard:
+    """PR #747 review (qodo): in-memory SQLite connections are thread-local
+    (``CharactersRAGDB.get_connection`` opens a brand-new ``:memory:``
+    connection -- with no migrated schema -- per thread). Offloading
+    ``read_conversation_scope``/``resolve_effective_scope`` to
+    ``asyncio.to_thread`` therefore makes a worker thread see a blank
+    connection: the scope read raises "no such table", is swallowed by
+    ``read_conversation_scope``'s own try/except, and reads back as
+    unscoped even though the conversation genuinely has a scope set. This
+    mirrors the guard ``Library.library_local_rag_search_service.
+    _LocalRagSearchService._search_conversations`` already applies
+    (``getattr(db, "is_memory_db", False)`` -> run inline on the calling
+    thread instead of ``asyncio.to_thread``); ``resolve_effective_scope_
+    for_chat`` must apply the same guard to its own DB reads.
+    """
+
+    @pytest.mark.asyncio
+    async def test_memory_db_scoped_conversation_resolves_scoped_not_unscoped(
+        self, monkeypatch
+    ):
+        cha_db = CharactersRAGDB(":memory:", client_id="task-memdb-scope-test")
+        try:
+            conv_id = cha_db.add_conversation({"title": "Memory scoped"})
+            note_id = cha_db.add_note(title="N1", content="body")
+            scope = RagScope(
+                items=(ScopeItem(SOURCE_TYPE_NOTE, note_id),),
+                updated_at="t1",
+            )
+            write_conversation_scope(cha_db, conv_id, scope)
+
+            session = SimpleNamespace(persisted_conversation_id=conv_id)
+            monkeypatch.setattr(cre, "_active_console_session", lambda app: session)
+
+            app = _App(chachanotes_db=cha_db)
+
+            effective = await cre.resolve_effective_scope_for_chat(app)
+
+            # Pre-fix, a worker thread's blank `:memory:` connection makes
+            # this read back as `state == "unscoped"` instead -- the exact
+            # regression this test guards against.
+            assert effective.state == "scoped"
+            assert effective.allowlist == {SOURCE_TYPE_NOTE: frozenset({note_id})}
+            assert effective.cause is None
+        finally:
+            cha_db.close_connection()
+
+    @pytest.mark.asyncio
+    async def test_file_backed_db_scope_read_still_offloaded_to_thread(
+        self, monkeypatch, tmp_path
+    ):
+        """Zero-drift companion: a real (file-backed) DB must keep taking
+        the ``asyncio.to_thread`` path -- the memory-db guard must not widen
+        to always-inline and quietly remove the off-loop discipline for the
+        common (non-memory) deployment."""
+        cha_db = CharactersRAGDB(tmp_path / "cha.db", client_id="task-memdb-scope-test")
+        try:
+            conv_id = cha_db.add_conversation({"title": "File-backed scoped"})
+            note_id = cha_db.add_note(title="N1", content="body")
+            scope = RagScope(
+                items=(ScopeItem(SOURCE_TYPE_NOTE, note_id),),
+                updated_at="t1",
+            )
+            write_conversation_scope(cha_db, conv_id, scope)
+
+            session = SimpleNamespace(persisted_conversation_id=conv_id)
+            monkeypatch.setattr(cre, "_active_console_session", lambda app: session)
+
+            calls: list[bool] = []
+            real_to_thread = asyncio.to_thread
+
+            async def _spy_to_thread(func, *args, **kwargs):
+                calls.append(True)
+                return await real_to_thread(func, *args, **kwargs)
+
+            monkeypatch.setattr(cre.asyncio, "to_thread", _spy_to_thread)
+
+            app = _App(chachanotes_db=cha_db)
+
+            effective = await cre.resolve_effective_scope_for_chat(app)
+
+            assert effective.state == "scoped"
+            assert effective.allowlist == {SOURCE_TYPE_NOTE: frozenset({note_id})}
+            assert calls, "file-backed DB reads must still be offloaded via asyncio.to_thread"
+        finally:
+            cha_db.close_connection()
 
 
 class TestChatEntryPointUnscopedZeroDrift:

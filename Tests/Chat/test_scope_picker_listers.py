@@ -261,6 +261,87 @@ async def test_notes_lister_tag_filter_restricts_to_tagged_notes(lister_stack):
 
 
 @pytest.mark.asyncio
+async def test_notes_lister_tag_filter_issues_one_batched_keyword_lookup(
+    lister_stack, monkeypatch
+):
+    """PR #747 review: ``_NotesSourceLister._matching`` previously called
+    ``get_keywords_for_note`` once PER CANDIDATE inside the tag-filter loop
+    -- up to ``_NOTES_FETCH_CAP`` (500) serialized threaded DB calls per
+    refresh. Mirrors the media lister's prior batch fix
+    (``fetch_keywords_for_media_batch``): tag lookups for the whole
+    candidate window must land in exactly ONE DB call
+    (``get_keywords_for_notes_batch``), and multi-tag OR + tag+text AND
+    matching semantics must stay unchanged."""
+    app, chachanotes_db, _media_db, notes_interop = lister_stack
+    sales = notes_interop.add_note(
+        user_id=_NOTES_USER, title="Sales note", content="body"
+    )
+    q3 = notes_interop.add_note(user_id=_NOTES_USER, title="Q3 note", content="body")
+    both = notes_interop.add_note(
+        user_id=_NOTES_USER, title="Sales Q3 note", content="body"
+    )
+    neither = notes_interop.add_note(
+        user_id=_NOTES_USER, title="Unrelated note", content="body"
+    )
+    sales_kw = chachanotes_db.add_keyword("sales")
+    q3_kw = chachanotes_db.add_keyword("q3")
+    chachanotes_db.link_note_to_keyword(sales, sales_kw)
+    chachanotes_db.link_note_to_keyword(q3, q3_kw)
+    chachanotes_db.link_note_to_keyword(both, sales_kw)
+    chachanotes_db.link_note_to_keyword(both, q3_kw)
+
+    batch_calls: list[list[str]] = []
+    real_batch = chachanotes_db.get_keywords_for_notes_batch
+
+    def _spy_batch(note_ids):
+        batch_calls.append(list(note_ids))
+        return real_batch(note_ids)
+
+    monkeypatch.setattr(chachanotes_db, "get_keywords_for_notes_batch", _spy_batch)
+
+    per_note_calls: list[str] = []
+    real_single = chachanotes_db.get_keywords_for_note
+
+    def _spy_single(note_id):
+        per_note_calls.append(note_id)
+        return real_single(note_id)
+
+    monkeypatch.setattr(chachanotes_db, "get_keywords_for_note", _spy_single)
+
+    lister = build_notes_source_lister(app, user_id=_NOTES_USER)
+
+    # Multi-tag OR: any note carrying at least one of the selected tags.
+    ids = await lister.list_ids(text="", tags=("sales", "q3"))
+
+    assert set(ids) == {sales, q3, both}
+    assert neither not in ids
+    assert len(batch_calls) == 1, batch_calls
+    assert per_note_calls == [], per_note_calls
+
+
+@pytest.mark.asyncio
+async def test_notes_lister_tag_filter_still_ands_against_text_query(
+    lister_stack,
+):
+    """Tag+text semantics unchanged by batching: only notes matching the
+    text query AND at least one selected tag are returned."""
+    app, chachanotes_db, _media_db, notes_interop = lister_stack
+    matching = notes_interop.add_note(
+        user_id=_NOTES_USER, title="Roadmap sales note", content="roadmap sales body"
+    )
+    notes_interop.add_note(
+        user_id=_NOTES_USER, title="Unrelated q3 note", content="unrelated q3 body"
+    )
+    sales_kw = chachanotes_db.add_keyword("sales")
+    chachanotes_db.link_note_to_keyword(matching, sales_kw)
+    lister = build_notes_source_lister(app, user_id=_NOTES_USER)
+
+    ids = await lister.list_ids(text="roadmap", tags=("sales", "q3"))
+
+    assert ids == (matching,)
+
+
+@pytest.mark.asyncio
 async def test_notes_lister_missing_seam_degrades_to_empty():
     app = SimpleNamespace(chachanotes_db=None)
     lister = build_notes_source_lister(app, user_id=_NOTES_USER)

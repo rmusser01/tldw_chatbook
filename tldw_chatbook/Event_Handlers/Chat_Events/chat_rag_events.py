@@ -594,12 +594,28 @@ async def resolve_effective_scope_for_chat(app: "TldwCli") -> EffectiveScope:
         else None
     )
 
-    conv_scope: Optional[RagScope] = None
+    # In-memory SQLite connections are thread-local (`CharactersRAGDB.
+    # get_connection` opens a brand-new, unmigrated `:memory:` connection
+    # per thread) -- offloading the reads below to `asyncio.to_thread`
+    # would hit a blank connection and silently read a genuinely scoped
+    # conversation back as unscoped (PR #747 review). Mirrors the guard
+    # `Library.library_local_rag_search_service._search_conversations`
+    # already applies: run the DB work inline on the calling thread instead
+    # of a worker thread whenever either DB is memory-backed.
     db = getattr(app, "chachanotes_db", None)
+    media_db = getattr(app, "media_db", None)
+    is_memory_db = bool(getattr(db, "is_memory_db", False)) or bool(
+        getattr(media_db, "is_memory_db", False)
+    )
+
+    conv_scope: Optional[RagScope] = None
     if conversation_id and db is not None:
-        conv_scope = await asyncio.to_thread(
-            read_conversation_scope, db, conversation_id
-        )
+        if is_memory_db:
+            conv_scope = read_conversation_scope(db, conversation_id)
+        else:
+            conv_scope = await asyncio.to_thread(
+                read_conversation_scope, db, conversation_id
+            )
     elif session is not None:
         holder = getattr(session, "rag_scope_holder", None)
         if isinstance(holder, SessionScopeHolder):
@@ -617,6 +633,8 @@ async def resolve_effective_scope_for_chat(app: "TldwCli") -> EffectiveScope:
     def _existing_ids(source_type: str, ids: "frozenset[str]") -> "frozenset[str]":
         return _existing_ids_sync(app, source_type, ids)
 
+    if is_memory_db:
+        return resolve_effective_scope(conv_scope, ws_scope, _existing_ids)
     return await asyncio.to_thread(
         resolve_effective_scope, conv_scope, ws_scope, _existing_ids
     )
