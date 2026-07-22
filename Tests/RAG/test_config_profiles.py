@@ -722,3 +722,73 @@ def test_load_uses_filename_stem_as_authoritative_id(tmp_path):
     m2 = _mgr(tmp_path)
     assert m2.get_profile("a") is None
     assert m2.get_profile("b") is None
+
+
+def test_stray_file_named_custom_profiles_json_is_not_destroyed_as_legacy_blob(tmp_path):
+    # Review finding (PR #780 residual): a profile whose display name
+    # slugifies to "custom_profiles" (create_custom_profile("Custom
+    # Profiles"), or a hand-placed custom-profiles.json file) can end up
+    # with a canonical file custom_profiles.json -- which is ALSO the
+    # reserved legacy-blob filename. On the next manager construction,
+    # _migrate_legacy_blob used to treat that per-profile file as a legacy
+    # blob: it has no "profiles" key so nothing is migrated, but the code
+    # still unconditionally os.replace'd it to
+    # custom_profiles.json.migrated -- itself a reserved name that is
+    # NEVER loaded as a profile either -- silently and permanently losing
+    # the profile. _migrate_legacy_blob must validate the blob SHAPE (a
+    # dict with a "profiles" key) before doing anything, and must leave a
+    # non-blob-shaped file completely untouched (no rename, no write).
+    #
+    # Because "custom_profiles.json" is (by design, see the reserved-name
+    # guard below) never loaded back into the manager as a per-file
+    # profile, "survives" here is verified at the filesystem level: the
+    # file must still exist, under its original name, with its original
+    # content intact -- not silently renamed away into an unreachable
+    # ".migrated" file.
+    pdir = tmp_path / "profiles"
+    pdir.mkdir(parents=True)
+    from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
+    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig, EmbeddingConfig
+
+    stray = ProfileConfig(
+        id="custom_profiles", name="Custom Profiles", description="hand placed",
+        profile_type="custom", read_only=False,
+        rag_config=RAGConfig(embedding=EmbeddingConfig(model="stray-single-profile-marker")),
+    )
+    blob_path = pdir / "custom_profiles.json"
+    migrated_path = pdir / "custom_profiles.json.migrated"
+    blob_path.write_text(_json.dumps(stray.to_dict(), default=str))
+
+    def assert_survives():
+        assert blob_path.exists(), "custom_profiles.json must not be renamed/removed"
+        assert not migrated_path.exists(), "must not be treated as a legacy blob"
+        on_disk = json.loads(blob_path.read_text())
+        assert on_disk["rag_config"]["embedding"]["model"] == "stray-single-profile-marker"
+
+    _mgr(tmp_path)  # boot 1
+    assert_survives()
+
+    _mgr(tmp_path)  # boot 2 -- pre-fix, this is where the file was already gone
+    assert_survives()
+
+
+def test_create_custom_profile_never_canonicalizes_onto_reserved_blob_filename(tmp_path):
+    # Companion fix: creating a profile whose display name slugifies to
+    # "custom_profiles" must never be allowed to land on
+    # custom_profiles.json -- that's the reserved legacy-blob filename, and
+    # a profile written there would be destroyed as a false-positive legacy
+    # blob on the very next manager construction (see the stray-file test
+    # above). The id (and therefore the filename) must be reassigned away
+    # from the reserved name, exactly like any other id collision.
+    m = _mgr(tmp_path)
+    created = m.create_custom_profile("Custom Profiles", base_profile="balanced")
+
+    assert created.id != "custom_profiles"
+    assert not (tmp_path / "profiles" / "custom_profiles.json").exists()
+    assert (tmp_path / "profiles" / f"{created.id}.json").exists()
+
+    # Survives a fresh-manager reload, reachable under the same (reassigned) id.
+    m2 = _mgr(tmp_path)
+    reloaded = m2.get_profile(created.id)
+    assert reloaded is not None
+    assert reloaded.name == "Custom Profiles"
