@@ -550,7 +550,13 @@ class ConfigProfileManager:
         loses data.
         """
         self._migrate_legacy_blob()
-        for path in self.profiles_dir.glob("*.json"):
+        # Materialize + sort the glob into a fixed list up front: the loop
+        # below self-heals by writing/unlinking files under this same
+        # directory, so iterating a live directory scan while mutating it is
+        # unsafe (order becomes filesystem- and implementation-dependent).
+        # A deterministic order alone doesn't prevent a clobber -- see the
+        # disk-occupancy check below -- but it makes behavior reproducible.
+        for path in sorted(self.profiles_dir.glob("*.json")):
             if path.name in _RESERVED_PROFILE_FILES:
                 continue
             try:
@@ -559,14 +565,24 @@ class ConfigProfileManager:
                 profile.read_only = False
 
                 desired_id = _slugify(path.stem)
-                if desired_id in self._profiles:
-                    # Collides with a builtin or an already-loaded profile
-                    # (e.g. a hand-placed <builtin_id>.json, or two files
-                    # whose stems slugify to the same id). Never let it win:
-                    # reassign to a unique id, checking disk too, since the
-                    # in-memory dict is only partially populated mid-glob.
+                canonical_path = self._profile_path(desired_id)
+                if desired_id in self._profiles or (
+                    canonical_path != path and canonical_path.exists()
+                ):
+                    # Collides with a builtin, an already-loaded profile, OR
+                    # the canonical file for this id belongs to a DIFFERENT,
+                    # not-yet-loaded profile still on disk (e.g. two stems --
+                    # "foo-bar" and "foo_bar" -- that both slugify to
+                    # "foo_bar"). That last case is invisible to a
+                    # memory-only check: since the in-memory dict is only
+                    # partially populated mid-glob, checking just
+                    # `desired_id in self._profiles` would let the self-heal
+                    # below silently overwrite that other file before it's
+                    # ever loaded. Reassign to a unique id, checking disk
+                    # too.
                     old_id = desired_id
                     desired_id = self._unique_id_reserving_disk(desired_id)
+                    canonical_path = self._profile_path(desired_id)
                     logger.warning(
                         f"Profile file {path.name} collided with id "
                         f"'{old_id}'; reassigned to id '{desired_id}'"
@@ -575,7 +591,6 @@ class ConfigProfileManager:
                 profile.id = desired_id
                 self._profiles[desired_id] = profile
 
-                canonical_path = self._profile_path(desired_id)
                 if canonical_path != path:
                     # Self-heal: write under the canonical name FIRST, then
                     # remove the stale/incorrectly-named file.
