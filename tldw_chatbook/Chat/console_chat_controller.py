@@ -2064,10 +2064,21 @@ class ConsoleChatController:
         prefill: str | None = None,
         prefill_from_one_shot: bool = False,
     ) -> ConsoleSubmitResult:
+        owner_id = self.store.session_id_for_message(assistant_message_id)
+        owner = next(
+            (s for s in self.store.sessions() if s.id == owner_id), None
+        )
+        # task-427: a character session always takes the plain-provider
+        # path, even with the global agent runtime enabled and a bridge
+        # present. Keyed on the message's OWNING session (looked up here,
+        # not the controller's active session) so a session switch racing
+        # this send can't flip which branch a still-in-flight message uses.
+        force_plain = owner is not None and owner.character_id is not None
         if (
             self._agent_runtime_enabled
             and self._agent_bridge is not None
             and not prefill
+            and not force_plain
         ):
             return await self._run_agent_reply(
                 resolution=resolution,

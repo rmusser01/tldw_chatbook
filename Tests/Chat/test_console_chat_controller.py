@@ -2597,6 +2597,65 @@ async def test_prefilled_send_bypasses_agent_loop():
     assert gateway.messages_seen[-1] == {"role": "assistant", "content": "PRE"}
 
 
+class _SpyAgentBridge:
+    """Records calls and refuses to be used -- for asserting the agent
+    bridge is never invoked on a character session's send (task-427)."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def run_reply(self, **kwargs):
+        self.calls += 1
+        raise AssertionError("agent bridge should not be called for a character session")
+
+
+@pytest.mark.asyncio
+async def test_character_session_forces_plain_provider():
+    """task-427: a session with character_id set always takes the plain
+    provider branch, even with the global agent runtime enabled and a
+    bridge present."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, agent_runtime_enabled=True
+    )
+    bridge = _SpyAgentBridge()
+    controller._agent_bridge = bridge
+    session = _arm_session(store)
+    session.character_id = 7
+
+    result = await controller.submit_draft("Hi")
+
+    assert bridge.calls == 0
+    assert result.accepted
+    assert gateway.messages_seen is not None  # plain provider path ran
+
+
+@pytest.mark.asyncio
+async def test_normal_session_still_uses_agent_when_enabled():
+    """Control for test_character_session_forces_plain_provider: a session
+    with no character_id keeps using the agent bridge as before."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=gateway, agent_runtime_enabled=True
+    )
+    bridge_calls = []
+
+    def run_reply(**kwargs):
+        bridge_calls.append(kwargs)
+        return RunOutcome(status=RUN_DONE, steps=[], final_text="agent says")
+
+    controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
+    session = _arm_session(store)
+    assert session.character_id is None
+
+    await controller.submit_draft("Hi")
+
+    assert len(bridge_calls) == 1
+    assert gateway.messages_seen is None  # agent path handled it, not the gateway
+
+
 @pytest.mark.asyncio
 async def test_build_context_snapshot_includes_armed_one_shot_prefill():
     """task-401: an armed prefill must appear in the preview exactly as the
