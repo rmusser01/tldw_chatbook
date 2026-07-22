@@ -478,19 +478,18 @@ async def test_import_row_rejects_oversized_content_without_partial_state(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_import_row_skips_nested_reference_subfolder_without_failing_import(
+async def test_import_row_imports_nested_reference_subfolder(
     tmp_path,
 ):
     """A skill directory with a NESTED reference subfolder (the real
     ``using-superpowers`` skill's own ``references/`` layout -- not
     copied into the fixtures dir to keep it small, reproduced here
-    structurally) must still import successfully, but the nested file is
-    NOT carried through as a supporting file: ``local_skills_service``'s
-    supporting-file name pattern has no path-separator support, so
-    recursing into subdirectories would either be silently flattened
-    (name collisions) or rejected outright. Skipping nested paths keeps
-    this import path's own limitation explicit and non-crashing rather
-    than surprising.
+    structurally) must import successfully AND carry the nested file
+    through as a supporting file, keyed by its nested relative path.
+    ``local_skills_service``'s bundle-file walk recurses into
+    subdirectories (junk pruned, symlinks skipped, caps enforced) so the
+    real skill's ``references/`` layout round-trips faithfully instead
+    of being silently dropped.
     """
     local_service, service = _real_skills_scope_service_with_trust(tmp_path)
     app = _build_test_app()
@@ -523,5 +522,5 @@ async def test_import_row_skips_nested_reference_subfolder_without_failing_impor
     record = await local_service.get_skill("nested-refs-skill")
     assert record["trust_blocked"] is True
     supporting_files = record.get("supporting_files") or {}
-    assert "references/note.md" not in supporting_files
-    assert "note.md" not in supporting_files
+    assert "references/note.md" in supporting_files
+    assert supporting_files["references/note.md"] == "A nested reference file."
