@@ -37,6 +37,7 @@ from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_skills_state import (
     SkillEditorState,
+    SkillEditorSupportingFile,
     SkillsListState,
     save_marks_needs_review,
     skill_name_shadows_builtin,
@@ -422,11 +423,25 @@ def next_skill_context(context: str) -> str:
     return "fork" if context == "inline" else "inline"
 
 
-def skill_supporting_files_text(supporting_files: tuple[tuple[str, int], ...]) -> str:
-    """Render the read-only supporting-files list as plain text."""
+def skill_supporting_files_text(
+    supporting_files: tuple[SkillEditorSupportingFile, ...],
+) -> str:
+    """Render the read-only supporting-files list as plain text.
+
+    Nested paths (e.g. ``"references/api.md"``) render as-is. Binary rows
+    (``is_text is False``) get a ``(binary)`` marker -- the list is already
+    read-only, so this is purely informational: binaries were never
+    editable as text in the first place.
+    """
     if not supporting_files:
         return "No supporting files."
-    return "\n".join(f"{name} ({size} bytes)" for name, size in supporting_files)
+    lines = []
+    for file in supporting_files:
+        if file.is_text:
+            lines.append(f"{file.name} ({file.size} bytes)")
+        else:
+            lines.append(f"{file.name} — {file.size} bytes (binary)")
+    return "\n".join(lines)
 
 
 class LibrarySkillsListCanvas(VerticalScroll):

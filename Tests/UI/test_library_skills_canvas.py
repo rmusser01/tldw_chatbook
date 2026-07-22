@@ -33,6 +33,7 @@ from tldw_chatbook.Library.library_shell_state import (
 )
 from tldw_chatbook.Library.library_skills_state import (
     SkillEditorState,
+    SkillEditorSupportingFile,
     SkillListRow,
     SkillsListState,
 )
@@ -329,7 +330,9 @@ def _editor_state(
     context: str = "inline",
     model: str | None = None,
     body: str = "Review the diff.",
-    supporting_files: tuple[tuple[str, int], ...] = (("checklist.md", 42),),
+    supporting_files: tuple[SkillEditorSupportingFile, ...] = (
+        SkillEditorSupportingFile(name="checklist.md", size=42),
+    ),
     version: int | None = 3,
     trust_status: str = "trusted",
     trust_blocked: bool = False,
