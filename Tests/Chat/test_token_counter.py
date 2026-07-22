@@ -218,6 +218,12 @@ class TestEstimator:
         cjk = "你好世界" * 10  # 40 CJK chars
         assert estimate_tokens(cjk, "gemini-1.5-pro", "google") >= len(cjk)
 
+    def test_cjk_punctuation_floor(self):
+        # CJK Symbols & Punctuation (U+3000-303F) must be weighted as CJK, not ASCII,
+        # so punctuation-heavy CJK text still meets the conservative floor.
+        punct = "、。" * 20  # 40 CJK-punctuation chars
+        assert estimate_tokens(punct, "gemini-1.5-pro", "google") >= len(punct)
+
     def test_code_sample_exceeds_word_count(self):
         code = "def f(x):\n    return [i*i for i in range(x) if i % 2 == 0]\n" * 3
         assert estimate_tokens(code, "claude-3-5-sonnet-20241022", "anthropic") > len(code.split())

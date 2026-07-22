@@ -90,6 +90,7 @@ CJK_TOKENS_PER_CHAR = 1.0   # each CJK code point is >= ~1 token
 ESTIMATE_HEADROOM = 1.2     # documented headroom so estimates lean high (safe)
 
 _CJK_RANGES = (
+    (0x3000, 0x303F),  # CJK Symbols and Punctuation (。、「」etc.)
     (0x3040, 0x30FF),  # Hiragana + Katakana
     (0x3400, 0x4DBF),  # CJK Unified Ext-A
     (0x4E00, 0x9FFF),  # CJK Unified Ideographs
