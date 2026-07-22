@@ -91,8 +91,15 @@ def adopt_legacy_collection(
         logger.info(f"Adopted legacy collection '{legacy_name}' -> '{target_name}'")
         return True
     except Exception as e:
-        # Lost race / Chroma error: the other actor did (or is doing) the rename.
-        logger.debug(f"Legacy collection adoption no-op: {e}")
+        # Expected benign cause: a lost race, where a concurrent adopter
+        # already did (or is doing) the rename between our existence check
+        # and `col.modify()`. Anything else here is a genuine bug (e.g. a
+        # Chroma client/Settings collision) that would otherwise be nearly
+        # invisible -- `maybe_adopt_legacy_collection` discards this return
+        # value and `rag_factory` wraps the whole call in its own broad
+        # `except Exception: logger.debug(...)` -- so log at warning here,
+        # not debug.
+        logger.warning(f"Legacy collection adoption no-op (assumed lost race): {e}")
         return False
 
 
@@ -106,6 +113,12 @@ def maybe_adopt_legacy_collection(config: RAGConfig) -> None:
     """
     if not _is_persistent_chroma(config):
         return
+    # Race-safety here (see adopt_legacy_collection's docstring) assumes the
+    # race is between two concurrent first-runs of the SAME active config
+    # (same fingerprint). Two DIFFERENTLY-fingerprinted configs that still
+    # both carry literal collection_name=="default" racing to adopt is out
+    # of scope: last writer's target simply wins the rename and no data is
+    # destroyed, but the loser's config won't see its own adoption this run.
     target = fingerprinted_collection_name(config)
     provenance = collection_provenance(config, source="legacy-adopted", verified=False)
     adopt_legacy_collection(
