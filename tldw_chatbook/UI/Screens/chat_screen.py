@@ -234,7 +234,7 @@ from ...Utils.console_background_effects import (
     normalize_console_background_effects,
 )
 from ...Utils.input_validation import sanitize_string, validate_text_input
-from ...Utils.token_counter import count_tokens_tiktoken
+from ...Utils.token_counter import estimate_tokens
 from ...UI.Workbench import (
     CommandStrip,
     DestinationHeader,
@@ -1401,10 +1401,7 @@ class ChatScreen(BaseAppScreen):
         text = payload.get("draft", "")
         if not text:
             return None
-        try:
-            return count_tokens_tiktoken(text)
-        except Exception:
-            return int(len(text.split()) * 1.3)
+        return estimate_tokens(text, "", "")
 
     async def action_jump_console_tab(self, number: int) -> None:
         """Jump directly to the Nth native Console session tab (Alt+1..9).
