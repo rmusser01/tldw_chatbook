@@ -98,6 +98,33 @@ def format_console_relative_age(value: str, *, now: datetime) -> str:
     return f"{days // 365}y"
 
 
+def console_persisted_row_updated_sort(item: Mapping[str, object]) -> str:
+    """Return the recency timestamp for a persisted conversation browser row.
+
+    The rail orders conversations recency-first and derives their age labels
+    from this value, so it must reflect last *activity*. TASK-355: the persisted
+    payload comes from ``normalize_conversation_row``, which exposes
+    ``last_modified``/``created_at`` but NO ``updated_at`` key — so reading only
+    ``updated_at`` silently degraded every persisted row to its creation time
+    (a just-used conversation looked stale and sorted wrong). ``last_modified``
+    (bumped to now on every conversation write) is the recency field; it is
+    preferred over ``created_at`` while an explicit ``updated_at`` still wins for
+    any caller that does provide one.
+
+    Args:
+        item: Normalized conversation row mapping.
+
+    Returns:
+        The best available recency timestamp as a string, or ``""`` when none is
+        present. ``None`` values in any field are skipped, never stringified.
+    """
+    for key in ("updated_at", "last_modified", "created_at", "last_updated"):
+        value = item.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
 @dataclass(frozen=True)
 class ConsoleConversationBrowserInputRow:
     """Input row used to build the grouped Console conversation browser.

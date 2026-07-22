@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserInputRow,
     build_console_conversation_browser_state,
+    console_persisted_row_updated_sort,
     format_console_relative_age,
 )
 from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
@@ -653,3 +654,62 @@ def test_rows_sorted_recent_first_regression():
     workspaces = next(s for s in state.sections if s.section_id == "workspaces")
     titles = [row.title for row in workspaces.groups[0].rows]
     assert titles == ["New", "Old"]
+
+
+def test_persisted_updated_sort_prefers_last_modified_over_created_at():
+    """TASK-355: normalize_conversation_row exposes last_modified/created_at but
+    NO updated_at key, so the rail's recency ordering + age labels must derive
+    from last_modified. Falling through to created_at orders the rail by
+    creation time, so a just-used conversation looks stale and sorts wrong."""
+    row = {
+        "last_modified": "2026-07-21T13:19:00+00:00",
+        "created_at": "2026-07-21T13:04:00+00:00",
+    }
+    assert console_persisted_row_updated_sort(row) == "2026-07-21T13:19:00+00:00"
+
+
+def test_persisted_updated_sort_fallback_chain():
+    # explicit updated_at still wins when present (back-compat).
+    assert (
+        console_persisted_row_updated_sort(
+            {"updated_at": "U", "last_modified": "M", "created_at": "C"}
+        )
+        == "U"
+    )
+    # last_modified beats created_at (the recency fix).
+    assert (
+        console_persisted_row_updated_sort({"last_modified": "M", "created_at": "C"})
+        == "M"
+    )
+    # created_at / last_updated remain the fallbacks when no recency field.
+    assert console_persisted_row_updated_sort({"created_at": "C"}) == "C"
+    assert console_persisted_row_updated_sort({"last_updated": "L"}) == "L"
+    # empty and None-bearing rows never raise and collapse to "".
+    assert console_persisted_row_updated_sort({}) == ""
+    assert (
+        console_persisted_row_updated_sort({"last_modified": None, "created_at": "C"})
+        == "C"
+    )
+
+
+def test_normalized_conversation_row_recency_flows_through_helper():
+    """Integration for TASK-355: persisted rail rows are built from
+    normalize_conversation_row's output, which emits last_modified but NO
+    updated_at — so the helper must source recency from last_modified end-to-end,
+    reproducing the exact data shape the rail sees."""
+    from tldw_chatbook.Chat.chat_conversation_service import normalize_conversation_row
+
+    normalized = normalize_conversation_row(
+        {
+            "id": "conv-1",
+            "title": "Long conversation about embeddings",
+            "last_modified": "2026-07-21T13:19:00+00:00",
+            "created_at": "2026-07-21T13:04:00+00:00",
+        }
+    )
+    # The root cause: the normalized payload carries no updated_at key.
+    assert "updated_at" not in normalized
+    # The fix: recency is sourced from last_modified, not creation time.
+    assert (
+        console_persisted_row_updated_sort(normalized) == "2026-07-21T13:19:00+00:00"
+    )
