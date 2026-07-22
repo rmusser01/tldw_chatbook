@@ -26,8 +26,8 @@ from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 def _base_config():
     return {
         "api_settings": {
-            "llama_cpp": {"api_url": "http://localhost:8080/completion", "api_key": "saved-key"},
-            "openai": {"api_key": "other-saved"},
+            "llama_cpp": {"api_url": "http://localhost:8080/completion", "api_key": "fake-saved-key-not-real"},
+            "openai": {"api_key": "fake-other-key-not-real"},
         }
     }
 
@@ -45,8 +45,8 @@ def test_overlay_endpoint_only_deep_copies_and_preserves_others():
     # draft endpoint overlaid
     assert merged["api_settings"]["llama_cpp"]["api_url"] == "http://localhost:9099"
     # saved key + other provider preserved
-    assert merged["api_settings"]["llama_cpp"]["api_key"] == "saved-key"
-    assert merged["api_settings"]["openai"]["api_key"] == "other-saved"
+    assert merged["api_settings"]["llama_cpp"]["api_key"] == "fake-saved-key-not-real"
+    assert merged["api_settings"]["openai"]["api_key"] == "fake-other-key-not-real"
     # input not mutated
     assert base["api_settings"]["llama_cpp"]["api_url"] == "http://localhost:8080/completion"
 
@@ -58,10 +58,10 @@ def test_overlay_api_key_and_env_var():
         endpoint_key="api_url",
         draft_endpoint=None,
         draft_env_var="MY_LLAMA_KEY",
-        draft_api_key="draft-secret",
+        draft_api_key="fake-draft-key-not-real",
     )
     section = merged["api_settings"]["llama_cpp"]
-    assert section["api_key"] == "draft-secret"
+    assert section["api_key"] == "fake-draft-key-not-real"
     assert section["api_key_env_var"] == "MY_LLAMA_KEY"
 
 
@@ -122,7 +122,7 @@ def test_findings_show_draft_endpoint_tagged():
 
 
 def test_findings_relabel_draft_api_key_source_and_hide_value():
-    app_config = {"api_settings": {"openai": {"api_key": "draft-secret"}}}
+    app_config = {"api_settings": {"openai": {"api_key": "fake-draft-key-not-real"}}}
     screen = _bare_settings_screen(app_config)
     readiness = get_provider_readiness("OpenAI", app_config, environ={})
     detail, summary, passed = screen._build_provider_readiness_findings(
@@ -130,19 +130,55 @@ def test_findings_relabel_draft_api_key_source_and_hide_value():
         draft_endpoint="", dirty={"api_key"},
     )
     assert "api_key_source=draft api_key (unsaved)" in detail
-    assert "draft-secret" not in detail and "draft-secret" not in summary
+    assert "fake-draft-key-not-real" not in detail and "fake-draft-key-not-real" not in summary
 
 
-def test_findings_tag_draft_env_var():
-    app_config = {"api_settings": {"openai": {"api_key_env_var": "MY_KEY"}}}
+def test_findings_tag_draft_env_var_and_never_leak_value():
+    # A custom-named credential env var whose NAME does not match the secret
+    # pattern -- its raw value must still never be printed (task-483 folded in),
+    # only presence via the ``<redacted>`` marker, plus the draft tag.
+    app_config = {"api_settings": {"openai": {"api_key_env_var": "MY_CUSTOM_CRED"}}}
     screen = _bare_settings_screen(app_config)
-    with patch.dict(os.environ, {"MY_KEY": "envval"}, clear=False):
+    with patch.dict(os.environ, {"MY_CUSTOM_CRED": "env-secret-XYZ"}, clear=False):
         readiness = get_provider_readiness("OpenAI", app_config)
-        detail, _summary, _passed = screen._build_provider_readiness_findings(
+        detail, summary, _passed = screen._build_provider_readiness_findings(
             "OpenAI", "gpt-4o", readiness,
             draft_endpoint="", dirty={"credential_env_var"},
         )
     assert "(draft env var)" in detail
+    assert "MY_CUSTOM_CRED=<redacted>" in detail
+    assert "env-secret-XYZ" not in detail and "env-secret-XYZ" not in summary
+
+
+def test_mask_url_userinfo_masks_password_in_endpoint():
+    from tldw_chatbook.UI.Screens.settings_screen import _mask_url_userinfo
+
+    assert _mask_url_userinfo("http://user:s3cret@host:8080/v1") == "http://user:***@host:8080/v1"
+    assert _mask_url_userinfo("http://:s3cret@host/v1") == "http://***@host/v1"
+    # password-less / non-URL inputs are unchanged
+    assert _mask_url_userinfo("http://localhost:9099") == "http://localhost:9099"
+    assert _mask_url_userinfo("") == ""
+    # username-only userinfo (no password) is left as-is
+    assert _mask_url_userinfo("http://user@host/v1") == "http://user@host/v1"
+    # malformed/out-of-range port must not raise (uses .port property otherwise)
+    assert _mask_url_userinfo("http://u:p@host:99999/v1") == "http://u:***@host:99999/v1"
+    assert _mask_url_userinfo("http://u:p@host:notaport/v1") == "http://u:***@host:notaport/v1"
+    # IPv6 host keeps its brackets while the password is masked
+    assert (
+        _mask_url_userinfo("http://u:p@[::1]:8080/v1") == "http://u:***@[::1]:8080/v1"
+    )
+
+
+def test_findings_mask_endpoint_userinfo_password():
+    app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080"}}}
+    screen = _bare_settings_screen(app_config)
+    readiness = get_provider_readiness("llama.cpp", app_config, environ={})
+    detail, summary, _passed = screen._build_provider_readiness_findings(
+        "llama.cpp", "llama-3", readiness,
+        draft_endpoint="http://user:hunter2@host:9099/v1", dirty={"endpoint"},
+    )
+    assert "http://user:***@host:9099/v1 (draft)" in detail
+    assert "hunter2" not in detail and "hunter2" not in summary
 
 
 def test_findings_no_draft_has_no_tags():

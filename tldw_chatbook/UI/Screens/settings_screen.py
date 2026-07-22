@@ -894,6 +894,42 @@ class SettingsURLInput(Input):
         return strip.apply_style(self.rich_style)
 
 
+def _mask_url_userinfo(url: object) -> str:
+    """Mask a password embedded in a URL's userinfo before display.
+
+    ``redact_secret_text`` is assignment-name based and misses credentials in
+    ``scheme://user:pass@host`` form, so mask them positionally here. Non-URL
+    or password-less input is returned unchanged.
+
+    Args:
+        url: A candidate endpoint string.
+
+    Returns:
+        The URL with any userinfo password replaced by ``***``.
+    """
+    from urllib.parse import urlsplit, urlunsplit
+
+    text = str(url or "")
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return text
+    # Reconstruct from the raw netloc substring rather than the lazy
+    # ``.hostname``/``.port`` properties: ``.port`` raises ValueError on a
+    # malformed/out-of-range port (crashing the Test on a typo'd endpoint), and
+    # ``.hostname`` strips IPv6 brackets. Keep host:port verbatim; only the
+    # userinfo password is masked. (Never fall back to returning ``text`` with
+    # the password intact -- redact_secret_text can't catch ``user:pass@host``.)
+    netloc = parts.netloc
+    userinfo, at, hostport = netloc.rpartition("@")
+    if not at or ":" not in userinfo:
+        # No userinfo, or a username with no password -> nothing to mask.
+        return text
+    user = userinfo.partition(":")[0]
+    masked = f"{user}:***@{hostport}" if user else f"***@{hostport}"
+    return urlunsplit((parts.scheme, masked, parts.path, parts.query, parts.fragment))
+
+
 def overlay_provider_draft_config(
     app_config,
     *,
@@ -5650,15 +5686,26 @@ class SettingsScreen(BaseAppScreen):
             else:
                 findings.append(f"api_key_source={readiness.api_key_source}")
         if readiness.env_var:
-            raw_value = os.environ.get(readiness.env_var)
+            # Report presence only, never the raw value. ``redact_secret_text``
+            # is name-pattern based (it redacts only ``*_API_KEY``/``TOKEN``/...),
+            # so a custom-named credential env var (e.g. ``MY_LLAMA_CRED``) would
+            # otherwise print its secret verbatim into this screenshot-able UI.
+            # Emitting the established ``<redacted>`` marker for any set value
+            # keeps the standard-name output identical while closing that gap
+            # (folds in task-483).
+            env_present = bool(os.environ.get(readiness.env_var))
             env_tag = " (draft env var)" if "credential_env_var" in dirty else ""
             findings.append(
-                f"{readiness.env_var}={raw_value if raw_value else 'missing'}{env_tag}"
+                f"{readiness.env_var}={'<redacted>' if env_present else 'missing'}{env_tag}"
             )
         elif not readiness.requires_api_key:
             findings.append("api_key=not required")
 
-        endpoint_summary = self._provider_endpoint_summary(provider, endpoint=draft_endpoint)
+        # Mask any password embedded in the endpoint's userinfo before display
+        # (name-pattern redaction misses ``scheme://user:pass@host``).
+        endpoint_summary = self._provider_endpoint_summary(
+            provider, endpoint=_mask_url_userinfo(draft_endpoint)
+        )
         if "endpoint" in dirty:
             endpoint_summary = f"{endpoint_summary} (draft)"
         findings.append(endpoint_summary)
