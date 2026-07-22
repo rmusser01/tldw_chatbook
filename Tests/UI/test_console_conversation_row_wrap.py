@@ -42,7 +42,9 @@ def test_unchanged_width_is_a_noop_after_first_measure() -> None:
 
 
 def test_multi_cell_resize_relabels_after_first_measure() -> None:
+    # Both boundary directions at exactly the threshold, plus larger jumps.
     assert _relabel_decision(25, current=23, measured_before=True) is True
+    assert _relabel_decision(21, current=23, measured_before=True) is True
     assert _relabel_decision(40, current=23, measured_before=True) is True
     assert _relabel_decision(10, current=23, measured_before=True) is True
 

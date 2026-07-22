@@ -55,6 +55,10 @@ _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT = 1
 _TITLE_WRAP_MAX_LINES = 2
 _MIN_TITLE_WRAP_BUDGET = 10
 _ROW_ELLIPSIS = "…"
+# Shared fallback for a conversation with no usable title. Used by both the
+# wrap helper and ``ConsoleWorkspaceContextTray._conversation_title`` so the
+# two normalizations cannot drift.
+_UNTITLED_CONVERSATION = "Untitled conversation"
 
 
 def _cut_prefix_cells(text: str, budget: int) -> str:
@@ -99,8 +103,8 @@ def wrap_console_conversation_title(title: str, budget: int) -> tuple[str, ...]:
     longer than one line hard-break at the budget. When two lines are still
     insufficient the second line is ellipsized. The budget is clamped to
     ``_MIN_TITLE_WRAP_BUDGET`` to avoid degenerate wraps on absurdly narrow
-    rails. Blank titles normalize to "Untitled conversation" (keep in sync
-    with ``ConsoleWorkspaceContextTray._conversation_title``).
+    rails. Blank titles normalize to ``_UNTITLED_CONVERSATION`` (the shared
+    fallback ``ConsoleWorkspaceContextTray._conversation_title`` also uses).
 
     Args:
         title: Raw (unescaped) conversation title to wrap.
@@ -113,7 +117,7 @@ def wrap_console_conversation_title(title: str, budget: int) -> tuple[str, ...]:
         still overflows two lines.
     """
     budget = max(_MIN_TITLE_WRAP_BUDGET, int(budget))
-    remaining = str(title).strip() or "Untitled conversation"
+    remaining = str(title).strip() or _UNTITLED_CONVERSATION
     lines: list[str] = []
     while remaining:
         if len(lines) == _TITLE_WRAP_MAX_LINES - 1:
@@ -453,9 +457,15 @@ class ConsoleWorkspaceContextTray(Vertical):
         if region is None or region.width <= 0:
             return False
         measured = int(region.width)
-        if not self._should_relabel_at_width(measured):
-            return False
+        should_relabel = self._should_relabel_at_width(measured)
+        # Latch on the first *real* measurement regardless of whether it
+        # relabels: when the measured width coincides with the fallback the
+        # decision is a no-op, but the tray has still been measured, so a
+        # later one-cell change must be treated as a scrollbar flap (hysteresis
+        # branch), not as another first measurement.
         self._row_width_measured = True
+        if not should_relabel:
+            return False
         self._row_content_width = measured
         scroll_parent = self._nearest_scroll_parent()
         parent_scroll_y = getattr(scroll_parent, "scroll_y", None)
@@ -1150,7 +1160,7 @@ class ConsoleWorkspaceContextTray(Vertical):
     @staticmethod
     def _conversation_title(title: str) -> str:
         """Return a readable conversation label."""
-        return str(title).strip() or "Untitled conversation"
+        return str(title).strip() or _UNTITLED_CONVERSATION
 
     def _browser_title_budget(self) -> int:
         """Cells available to grouped-browser row text."""
