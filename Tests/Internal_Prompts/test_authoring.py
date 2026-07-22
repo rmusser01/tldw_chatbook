@@ -78,7 +78,7 @@ def test_reset_deletes_customized_legacy_key(scratch_config):
     assert get_internal_prompt(pid) == CATALOG[pid].default
 
 
-def test_reset_leaves_uncustomized_shipped_legacy_key(scratch_config, monkeypatch):
+def test_reset_leaves_uncustomized_shipped_legacy_key(scratch_config):
     # A doc-gen user prompt whose legacy [prompts.document_generation.*].prompt
     # equals the shipped default must NOT have that key deleted on reset.
     from tldw_chatbook import config as config_mod
