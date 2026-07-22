@@ -503,6 +503,126 @@ def test_load_does_not_clobber_unrelated_profile_on_disk_during_self_heal(tmp_pa
     assert on_disk["rag_config"]["embedding"]["model"] == "legit-other-marker-model"
 
 
+def _force_glob_order(monkeypatch, first_name):
+    # Same technique as the Addendum-2 collider test above: Path.glob order
+    # is filesystem-dependent, so force a deterministic order by sorting the
+    # real results with `first_name` pinned first.
+    from pathlib import Path
+
+    real_glob = Path.glob
+
+    def ordered_glob(self, pattern):
+        results = list(real_glob(self, pattern))
+        results.sort(key=lambda p: (p.name != first_name, p.name))
+        return iter(results)
+
+    monkeypatch.setattr(Path, "glob", ordered_glob)
+
+
+def test_load_does_not_clobber_sibling_file_that_slugifies_to_same_id(tmp_path, monkeypatch):
+    # Regression test (SP2a review, second clobber hole): the self-heal in
+    # _load_custom_profiles fires _save_one whenever canonical_path != path,
+    # but the OLD code only reassigns/uniquifies the id inside the
+    # `if desired_id in self._profiles:` branch -- a MEMORY-only check. If
+    # the canonical file for `desired_id` belongs to a DIFFERENT,
+    # not-yet-loaded profile (two distinct filenames that slugify to the
+    # same id, e.g. "foo-bar.json" and "foo_bar.json" both -> "foo_bar"),
+    # that on-disk collision is invisible to the check, and the self-heal
+    # overwrites the other file's content before it's ever loaded --
+    # silently and permanently destroying it.
+    #
+    # This test forces the vulnerable glob order (the non-canonical stem
+    # "foo-bar.json" visited BEFORE the canonical "foo_bar.json") so the
+    # failure is deterministic under the old code.
+    from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
+    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig, EmbeddingConfig
+
+    pdir = tmp_path / "profiles"
+    pdir.mkdir(parents=True)
+
+    profile_a = ProfileConfig(
+        id="foo-bar", name="Profile A", description="dash-named",
+        profile_type="custom", read_only=False,
+        rag_config=RAGConfig(embedding=EmbeddingConfig(model="profile-a-marker-model")),
+    )
+    (pdir / "foo-bar.json").write_text(_json.dumps(profile_a.to_dict(), default=str))
+
+    profile_b = ProfileConfig(
+        id="foo_bar", name="Profile B", description="underscore-named",
+        profile_type="custom", read_only=False,
+        rag_config=RAGConfig(embedding=EmbeddingConfig(model="profile-b-marker-model")),
+    )
+    (pdir / "foo_bar.json").write_text(_json.dumps(profile_b.to_dict(), default=str))
+
+    _force_glob_order(monkeypatch, "foo-bar.json")
+
+    m = _mgr(tmp_path)
+
+    loaded = list(m._profiles.values())
+    a_matches = [p for p in loaded if p.rag_config.embedding.model == "profile-a-marker-model"]
+    b_matches = [p for p in loaded if p.rag_config.embedding.model == "profile-b-marker-model"]
+
+    # Both distinctive profiles must survive, each exactly once, under
+    # different ids.
+    assert len(a_matches) == 1, "Profile A missing or duplicated after self-heal"
+    assert len(b_matches) == 1, "Profile B missing or duplicated after self-heal (clobbered)"
+    assert a_matches[0].id != b_matches[0].id
+
+    # Neither on-disk file was overwritten with the other's content.
+    on_disk_names = {p.name for p in pdir.glob("*.json")}
+    disk_models = {
+        json.loads(p.read_text())["rag_config"]["embedding"]["model"]
+        for p in pdir.glob("*.json")
+    }
+    assert "profile-a-marker-model" in disk_models
+    assert "profile-b-marker-model" in disk_models
+    assert len(on_disk_names) == 2
+
+
+def test_load_does_not_clobber_sibling_file_reverse_glob_order(tmp_path, monkeypatch):
+    # Same two colliding-slug files as above, but with the glob order
+    # reversed (canonical "foo_bar.json" visited first). The fix must hold
+    # regardless of which file the filesystem happens to yield first.
+    from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
+    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig, EmbeddingConfig
+
+    pdir = tmp_path / "profiles"
+    pdir.mkdir(parents=True)
+
+    profile_a = ProfileConfig(
+        id="foo-bar", name="Profile A", description="dash-named",
+        profile_type="custom", read_only=False,
+        rag_config=RAGConfig(embedding=EmbeddingConfig(model="profile-a-marker-model")),
+    )
+    (pdir / "foo-bar.json").write_text(_json.dumps(profile_a.to_dict(), default=str))
+
+    profile_b = ProfileConfig(
+        id="foo_bar", name="Profile B", description="underscore-named",
+        profile_type="custom", read_only=False,
+        rag_config=RAGConfig(embedding=EmbeddingConfig(model="profile-b-marker-model")),
+    )
+    (pdir / "foo_bar.json").write_text(_json.dumps(profile_b.to_dict(), default=str))
+
+    _force_glob_order(monkeypatch, "foo_bar.json")
+
+    m = _mgr(tmp_path)
+
+    loaded = list(m._profiles.values())
+    a_matches = [p for p in loaded if p.rag_config.embedding.model == "profile-a-marker-model"]
+    b_matches = [p for p in loaded if p.rag_config.embedding.model == "profile-b-marker-model"]
+
+    assert len(a_matches) == 1, "Profile A missing or duplicated after self-heal"
+    assert len(b_matches) == 1, "Profile B missing or duplicated after self-heal (clobbered)"
+    assert a_matches[0].id != b_matches[0].id
+
+    disk_models = {
+        json.loads(p.read_text())["rag_config"]["embedding"]["model"]
+        for p in pdir.glob("*.json")
+    }
+    assert "profile-a-marker-model" in disk_models
+    assert "profile-b-marker-model" in disk_models
+
+
 def test_save_profile_allows_user_over_user_same_id(tmp_path):
     # Only READ-ONLY collisions are rejected; two distinct user profiles that
     # happen to share an id may overwrite one another via save_profile.
