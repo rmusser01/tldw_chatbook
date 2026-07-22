@@ -3382,9 +3382,10 @@ class ChatScreen(BaseAppScreen):
         return state.item_count if state.is_scoped else None
 
     def _sync_console_retrieval_scope_row(self) -> None:
-        """Refresh the mounted retrieval-scope row AND header chip.
+        """Refresh the mounted retrieval-scope row AND status-strip chip.
 
-        Task-10: the header's ``#console-scope-chip`` renders from the
+        Task-10: the status-pills strip's ``#console-scope-chip`` (above the
+        composer) renders from the
         exact same ``ConsoleRetrievalScopeState`` snapshot as the
         Inspector row -- computed once here and pushed into both, never a
         second state source or a second cache. This keeps the chip's

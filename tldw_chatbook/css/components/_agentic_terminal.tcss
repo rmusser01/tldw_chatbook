@@ -1925,6 +1925,12 @@ ConsoleSystemPromptModal {
 }
 
 #console-workbench-header.console-header-inline .workbench-header-subtitle {
+    /* Keep the subtitle visible in compact density too: the shared
+       `.density-compact .workbench-header-subtitle { display: none }` hid it to
+       save a row in the old stacked header, but the inline header is one row at
+       any density, so hiding it only wastes the horizontal space. This id+class
+       rule (1,2,0) beats that density rule (0,2,0). */
+    display: block;
     width: 1fr;
     height: 1;
     min-height: 1;

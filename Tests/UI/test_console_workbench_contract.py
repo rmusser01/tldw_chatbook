@@ -1496,3 +1496,43 @@ async def test_console_header_inline_subtitle_ellipsizes_when_narrow():
             assert status.region.x + status.region.width == cols - 1, label
     # The subtitle genuinely shrinks as the terminal narrows.
     assert widths["narrow"] < widths["wide"]
+
+
+@pytest.mark.asyncio
+async def test_console_header_inline_subtitle_visible_in_compact_density():
+    """The inline header stays one row at any density AND keeps the subtitle:
+    the shared `.density-compact .workbench-header-subtitle { display: none }`
+    hid it to save a row in the old stacked header, but the inline header is a
+    single row regardless, so the id+class rule restores the subtitle to use
+    the horizontal space."""
+    from textual.app import App, ComposeResult
+    from textual.containers import Vertical
+    from tldw_chatbook.UI.Workbench.workbench_widgets import DestinationHeader
+    from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchHeaderState
+
+    class _CompactHeaderApp(App[None]):
+        CSS_PATH = str(_BUNDLED_STYLESHEET)
+
+        def compose(self) -> ComposeResult:
+            # The density class is applied to an ancestor (#console-shell); mirror
+            # that so `.density-compact .workbench-header-subtitle` would match.
+            with Vertical(classes="density-compact"):
+                yield DestinationHeader(
+                    WorkbenchHeaderState(
+                        title="Console",
+                        subtitle="— Chat, source handoffs, live runs, and control actions.",
+                        status="ready",
+                    ),
+                    id="console-workbench-header",
+                    classes="workbench-header console-header-inline",
+                )
+
+    app = _CompactHeaderApp()
+    async with app.run_test(size=(120, 10)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        header = app.query_one("#console-workbench-header")
+        subtitle = app.query_one("#workbench-header-subtitle")
+        assert header.region.height == 1
+        assert subtitle.display is True
+        assert subtitle.region.width > 0
