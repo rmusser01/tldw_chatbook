@@ -254,8 +254,11 @@ def skill_trust_review_preview(active_review: Mapping[str, Any] | None) -> str:
             review is active).
 
     Returns:
-        Labelled per-file content blocks, ``(deleted)`` markers for
-        changed files with no on-disk content, each file capped at
+        Labelled per-file content blocks. A changed file absent from
+        ``current_files`` (text) is disambiguated using
+        ``current_fingerprints``: a present binary renders
+        ``(binary file — N bytes, sha256 ...)`` while a genuinely
+        missing file renders ``(deleted)``. Each text file is capped at
         ``_TRUST_REVIEW_PREVIEW_FILE_CHAR_CAP`` chars; empty string while
         no review is active. Rendering is bounded to
         ``_TRUST_REVIEW_PREVIEW_MAX_FILES`` files and
@@ -270,6 +273,11 @@ def skill_trust_review_preview(active_review: Mapping[str, Any] | None) -> str:
         return ""
     raw_files = active_review.get("current_files")
     current_files = dict(raw_files) if isinstance(raw_files, Mapping) else {}
+    fingerprints = {
+        str(fp.get("relative_path")): fp
+        for fp in (active_review.get("current_fingerprints") or [])
+        if isinstance(fp, Mapping)
+    }
     blocks: list[str] = []
     total_chars = 0
     rendered = 0
@@ -283,7 +291,15 @@ def skill_trust_review_preview(active_review: Mapping[str, Any] | None) -> str:
             break
         content = current_files.get(file_name)
         if content is None:
-            block = f"── {file_name} ──\n(deleted — no longer on disk)"
+            fp = fingerprints.get(file_name)
+            if fp is not None:
+                block = (
+                    f"── {file_name} ──\n"
+                    f"(binary file — {fp.get('byte_length', 0)} bytes, "
+                    f"sha256 {str(fp.get('sha256', ''))[:12]}…)"
+                )
+            else:
+                block = f"── {file_name} ──\n(deleted — no longer on disk)"
         else:
             text = str(content)
             if len(text) > _TRUST_REVIEW_PREVIEW_FILE_CHAR_CAP:
