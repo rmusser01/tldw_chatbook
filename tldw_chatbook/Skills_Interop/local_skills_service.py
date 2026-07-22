@@ -1022,7 +1022,9 @@ class LocalSkillsService:
                 dest = skill_dir / PurePosixPath(relative_path)
                 self._write_bytes_atomic(dest, abs_path.read_bytes())
                 if abs_path.stat().st_mode & stat.S_IXUSR:
-                    os.chmod(dest, dest.stat().st_mode | 0o755)
+                    # Trust only the owner-exec fingerprint; adding 0o755 would
+                    # widen a non-world-readable source to world-r/x.
+                    os.chmod(dest, dest.stat().st_mode | 0o100)
             record = self._metadata_from_content(
                 name=skill_name,
                 content=content,
@@ -1086,6 +1088,8 @@ class LocalSkillsService:
                 if _stat.S_ISLNK(mode):
                     continue                       # symlink member: skip-not-fail
                 parts = PurePosixPath(member.filename).parts
+                if not parts:
+                    continue                       # empty/all-slash member name: skip-not-fail
                 if any(p in SUPPORTING_JUNK_DIRS for p in parts) or _is_junk(parts[-1]):
                     continue                       # junk pruned
                 member_name = self._validate_archive_member(member.filename)  # raises on zip-slip
@@ -1137,7 +1141,9 @@ class LocalSkillsService:
             # Every dest was contained-checked during collection; write only now.
             self._write_bytes_atomic(dest, data)
             if executable:
-                _os.chmod(dest, dest.stat().st_mode | 0o755)
+                # Trust only the owner-exec fingerprint; adding 0o755 would
+                # widen a non-world-readable source to world-r/x.
+                _os.chmod(dest, dest.stat().st_mode | 0o100)
         # Re-derive trust state now that the full bundle is on disk.
         self._trust_after_approved_mutation(skill_name, trust_approved=trust_approved)
         return self._response_for_record(self._load_index()[skill_name])

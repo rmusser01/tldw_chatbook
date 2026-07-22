@@ -92,6 +92,40 @@ def test_symlinked_directory_is_unsupported_not_dropped(tmp_path):
     assert "linked_dir/secret.md" not in fps  # walk must not descend the symlink
 
 
+def test_bak_and_orig_text_files_are_supported_not_pruned(tmp_path):
+    # Backward-compat guarantee: a pre-feature skill that shipped a TEXT
+    # supporting file named notes.bak / patch.orig was previously SUPPORTED
+    # and trusted (those names pass SEGMENT_PATTERN). Pruning them as junk
+    # would silently flip such a skill to needs-review, so .bak/.orig must
+    # NOT be treated as junk suffixes.
+    d = tmp_path / "demo"
+    _write(d / "SKILL.md", b"body")
+    _write(d / "notes.bak", b"backup notes")
+    _write(d / "patch.orig", b"original patch")
+    snap = scan_skill_directory("demo", d)
+    fps = {f.relative_path: f for f in snap.fingerprints}
+    assert fps["notes.bak"].file_type == "supporting_text"
+    assert fps["patch.orig"].file_type == "supporting_text"
+    assert snap.text_files["notes.bak"] == "backup notes"
+    assert snap.text_files["patch.orig"] == "original patch"
+    assert "notes.bak" not in snap.unsupported_paths
+    assert "patch.orig" not in snap.unsupported_paths
+
+
+def test_genuine_junk_suffixes_and_pycache_dir_still_pruned(tmp_path):
+    # Sibling to the .bak/.orig carve-out: confirm suffixes that were already
+    # untrustable pre-feature (binary/build artifacts, pattern-failing names)
+    # remain pruned.
+    d = tmp_path / "demo"
+    _write(d / "SKILL.md", b"body")
+    _write(d / "x.tmp", b"junk")
+    _write(d / "__pycache__" / "m.pyc", b"\x00pyc")
+    snap = scan_skill_directory("demo", d)
+    fps = {f.relative_path for f in snap.fingerprints}
+    assert fps == {"SKILL.md"}
+    assert snap.unsupported_paths == ()
+
+
 def test_symlinked_junk_named_directory_still_unsupported(tmp_path):
     # A symlink is suspicious regardless of its name: even when its basename
     # matches a junk dir name (node_modules), it must surface in

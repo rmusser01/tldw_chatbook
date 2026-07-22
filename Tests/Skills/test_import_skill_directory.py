@@ -27,6 +27,29 @@ async def test_import_skill_directory_faithful(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_import_skill_directory_narrows_exec_bit_widening_to_owner_only(tmp_path):
+    """The exec-bit-preservation chmod must only trust/add owner-exec
+    (S_IXUSR), never widen group/other permissions. A freshly written dest
+    file always starts with zero exec bits (Python's default open() mode is
+    0o666, which carries no x bits at all), so any group/other exec bit
+    present after import came from an over-broad ``| 0o755`` widening, not
+    from the source."""
+    src = tmp_path / "src" / "demo"
+    src.mkdir(parents=True)
+    (src / "SKILL.md").write_text("---\nname: demo\n---\nbody\n", encoding="utf-8")
+    (src / "run.sh").write_bytes(b"#!/bin/sh\necho hi\n")
+    os.chmod(src / "run.sh", 0o700)  # owner-only exec; narrowly permissioned source
+
+    svc = LocalSkillsService(store_dir=tmp_path / "store")
+    await svc.import_skill_directory(src, name="demo")
+    d = svc._skill_dir("demo")
+    dest_mode = (d / "run.sh").stat().st_mode
+    assert dest_mode & stat.S_IXUSR        # owner-exec preserved
+    assert not dest_mode & stat.S_IXGRP    # group-exec NOT widened
+    assert not dest_mode & stat.S_IXOTH    # other-exec NOT widened
+
+
+@pytest.mark.asyncio
 async def test_import_skill_directory_skips_symlink(tmp_path):
     """A symlink in the source (pointing out of the tree) is skipped, not
     copied or followed -- the import still succeeds and the link's name is

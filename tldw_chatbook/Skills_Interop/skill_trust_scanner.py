@@ -12,7 +12,7 @@ from .skill_trust_models import SkillDirectorySnapshot, SkillFileFingerprint
 _SKILL_FILENAME = "SKILL.md"
 SUPPORTING_JUNK_DIRS = frozenset({".git", ".github", ".hg", ".svn", "node_modules", "__pycache__"})
 SUPPORTING_JUNK_FILES = frozenset({".DS_Store", "Thumbs.db"})
-SUPPORTING_JUNK_SUFFIXES = (".pyc", ".pyo", "~", ".bak", ".orig", ".tmp", ".swp", ".part")
+SUPPORTING_JUNK_SUFFIXES = (".pyc", ".pyo", "~", ".tmp", ".swp", ".part")
 
 
 def _is_junk(name: str) -> bool:

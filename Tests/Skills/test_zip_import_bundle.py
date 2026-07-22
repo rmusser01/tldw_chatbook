@@ -29,6 +29,27 @@ async def test_zip_import_nested_binary_exec(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_zip_import_narrows_exec_bit_widening_to_owner_only(tmp_path):
+    """Same owner-exec-only trust contract as the directory-import path: the
+    zip import's exec-bit-preservation chmod must not widen group/other
+    permissions beyond what the freshly written dest file already has (zero
+    exec bits, since Python's default open() mode carries none)."""
+    svc = LocalSkillsService(store_dir=tmp_path)
+    data = _zip([
+        ("SKILL.md", b"---\nname: narrowexec\n---\nbody\n", 0),
+        ("scripts/run.sh", b"#!/bin/sh\n", 0o700),  # owner-only exec in the archive
+    ])
+    await svc.import_skill_file(
+        data, filename="narrowexec.zip", content_type="application/zip"
+    )
+    d = svc._skill_dir("narrowexec")
+    dest_mode = d.joinpath("scripts", "run.sh").stat().st_mode
+    assert dest_mode & stat.S_IXUSR        # owner-exec preserved
+    assert not dest_mode & stat.S_IXGRP    # group-exec NOT widened
+    assert not dest_mode & stat.S_IXOTH    # other-exec NOT widened
+
+
+@pytest.mark.asyncio
 async def test_zip_slip_rejected(tmp_path):
     svc = LocalSkillsService(store_dir=tmp_path)
     data = _zip([("SKILL.md", b"body", 0), ("../evil.md", b"x", 0)])
@@ -163,6 +184,25 @@ async def test_zip_import_rejects_too_many_members_leaving_no_skill_dir(tmp_path
     with pytest.raises(ValueError, match="too_many_files"):
         await svc.import_skill_file(data, filename="many.zip", content_type="application/zip")
     assert not svc._skill_dir("many").exists()
+
+
+@pytest.mark.asyncio
+async def test_zip_import_skips_empty_named_member(tmp_path):
+    """A crafted non-directory member with a zero-length name must not raise a
+    raw IndexError -- it's skipped (junk/invalid), matching the symlink/junk
+    skip-not-fail contract used for other unroutable members. The rest of the
+    archive still imports cleanly."""
+    svc = LocalSkillsService(store_dir=tmp_path)
+    data = _zip([
+        ("SKILL.md", b"---\nname: emptymember\n---\nbody\n", 0),
+        ("", b"mystery", 0),
+        ("real.txt", b"hi", 0),
+    ])
+    await svc.import_skill_file(
+        data, filename="emptymember.zip", content_type="application/zip"
+    )
+    d = svc._skill_dir("emptymember")
+    assert (d / "real.txt").read_bytes() == b"hi"
 
 
 @pytest.mark.asyncio
