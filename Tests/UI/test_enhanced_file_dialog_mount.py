@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Optional
 
 import pytest
+from textual import events
 from textual.app import App, ComposeResult
 from textual.widgets import Input
 
@@ -466,6 +468,208 @@ async def test_directory_change_updates_breadcrumbs_and_bookmark_button(tmp_path
         # The bookmark button tooltip should reflect the new path (even if not bookmarked).
         add_bookmark = dialog.query_one("#add-bookmark")
         assert add_bookmark.tooltip is not None
+
+
+async def _wait_for_options(dir_nav, pilot, attempts: int = 20) -> None:
+    """Poll the threaded directory-navigation loader until it populates."""
+    for _ in range(attempts):
+        if dir_nav.option_count > 0:
+            break
+        await pilot.pause()
+
+
+def _index_of(dir_nav, target: Path) -> Optional[int]:
+    """Find the option-list index whose entry location matches ``target``."""
+    for index in range(dir_nav.option_count):
+        option = dir_nav.get_option_at_index(index)
+        if option.location == target:
+            return index
+    return None
+
+
+@pytest.mark.asyncio
+async def test_single_select_on_dir_does_not_navigate(tmp_path):
+    """Highlighting/selecting a directory (single-click semantics) must not
+    auto-navigate into it (task-430 AC#2: select is select-only; opening a
+    directory is a separate action)."""
+    subdir = tmp_path / "subdir"
+    subdir.mkdir()
+
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Single Select Dir",
+        context="test_single_select_dir",
+    )
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        dir_nav = dialog.query_one(SearchableDirectoryNavigation)
+        await _wait_for_options(dir_nav, pilot)
+
+        subdir_index = _index_of(dir_nav, subdir)
+        assert subdir_index is not None, "subdir should appear in the directory list"
+
+        start_location = dir_nav.location
+        dir_nav.highlighted = subdir_index
+        dir_nav.action_select()
+        await pilot.pause()
+
+        assert dir_nav.location == start_location, "select must not descend into the directory"
+        assert dir_nav.highlighted == subdir_index, "the directory should still be highlighted"
+
+
+@pytest.mark.asyncio
+async def test_open_highlighted_descends_dir(tmp_path):
+    """``action_open_highlighted`` (Enter / double-click / Go) descends into
+    a highlighted directory."""
+    subdir = tmp_path / "subdir"
+    subdir.mkdir()
+
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Open Highlighted Dir",
+        context="test_open_highlighted_dir",
+    )
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        dir_nav = dialog.query_one(SearchableDirectoryNavigation)
+        await _wait_for_options(dir_nav, pilot)
+
+        subdir_index = _index_of(dir_nav, subdir)
+        assert subdir_index is not None, "subdir should appear in the directory list"
+
+        dir_nav.highlighted = subdir_index
+        dir_nav.action_open_highlighted()
+        await pilot.pause()
+
+        for _ in range(20):
+            if dir_nav.location == subdir.resolve():
+                break
+            await pilot.pause()
+
+        assert dir_nav.location == subdir.resolve(), "open must descend into the directory"
+
+
+@pytest.mark.asyncio
+async def test_double_click_opens_highlighted_dir(tmp_path):
+    """A double-click (``Click`` event with ``chain >= 2``) opens the
+    highlighted directory, exercising ``SearchableDirectoryNavigation.on_click``
+    directly (task-430 AC#2)."""
+    subdir = tmp_path / "subdir"
+    subdir.mkdir()
+
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Double Click Dir",
+        context="test_double_click_dir",
+    )
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        dir_nav = dialog.query_one(SearchableDirectoryNavigation)
+        await _wait_for_options(dir_nav, pilot)
+
+        subdir_index = _index_of(dir_nav, subdir)
+        assert subdir_index is not None, "subdir should appear in the directory list"
+
+        # A single click (chain=1) only highlights/selects -- must not navigate.
+        dir_nav.highlighted = subdir_index
+        dir_nav.on_click(
+            events.Click(
+                dir_nav, 0, 0, 0, 0, button=1, shift=False, meta=False, ctrl=False, chain=1
+            )
+        )
+        await pilot.pause()
+        assert dir_nav.location == tmp_path.resolve(), "single click must not navigate"
+
+        # The second click of the chain (chain=2) opens the directory.
+        dir_nav.on_click(
+            events.Click(
+                dir_nav, 0, 0, 0, 0, button=1, shift=False, meta=False, ctrl=False, chain=2
+            )
+        )
+        await pilot.pause()
+
+        for _ in range(20):
+            if dir_nav.location == subdir.resolve():
+                break
+            await pilot.pause()
+
+        assert dir_nav.location == subdir.resolve(), "double-click must descend into the directory"
+
+
+@pytest.mark.asyncio
+async def test_open_highlighted_returns_file(tmp_path):
+    """``action_open_highlighted`` (Enter / double-click / Go) on a
+    highlighted file confirms and returns it, dismissing the dialog."""
+    test_file = tmp_path / "open_me.txt"
+    test_file.write_text("hello")
+
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Open Highlighted File",
+        context="test_open_highlighted_file",
+    )
+    app = _DialogHost(dialog)
+    result = []
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        dir_nav = dialog.query_one(SearchableDirectoryNavigation)
+        await _wait_for_options(dir_nav, pilot)
+
+        file_index = _index_of(dir_nav, test_file)
+        assert file_index is not None, "test file should appear in the directory list"
+
+        dir_nav.highlighted = file_index
+        dir_nav.action_open_highlighted()
+        await pilot.pause()
+
+        result.append(app._result)
+
+    assert result[0] == test_file
+
+
+@pytest.mark.asyncio
+async def test_single_select_on_file_fills_filename(tmp_path):
+    """Single-select (``action_select``) on a highlighted file fills the
+    filename input but does not confirm/dismiss the dialog -- confirming
+    still requires Enter/double-click/Go (``action_open_highlighted``) or
+    the Select button."""
+    test_file = tmp_path / "pick_me.txt"
+    test_file.write_text("hello")
+
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Single Select File",
+        context="test_single_select_file",
+    )
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        dir_nav = dialog.query_one(SearchableDirectoryNavigation)
+        await _wait_for_options(dir_nav, pilot)
+
+        file_index = _index_of(dir_nav, test_file)
+        assert file_index is not None, "test file should appear in the directory list"
+
+        dir_nav.highlighted = file_index
+        dir_nav.action_select()
+        await pilot.pause()
+
+        filename_input = dialog.query_one("#filename-input", Input)
+        assert filename_input.value == "pick_me.txt"
+        assert app._result is None, "select-only must not dismiss the dialog"
 
 
 @pytest.mark.asyncio
