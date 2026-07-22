@@ -68,10 +68,12 @@ class TagFilterPicker(ModalScreen[str | None]):
             self._row_tags.append(tag)
             if tag == self._current:
                 current_index = index
-        # A filter change must require an explicit re-select: don't let a
-        # previously-highlighted index silently carry over onto a rebuilt,
-        # differently-ordered row set - except on the initial populate,
-        # where we highlight the currently-active tag (or "All").
+        # Highlight the currently-active tag (or "All" if none) whenever it
+        # appears in the row set being shown - this runs on every populate,
+        # including each search keystroke, not just the initial mount. If
+        # the active tag has been filtered out, current_index stays None and
+        # nothing is pre-highlighted, so a filter change never silently
+        # carries over a stale index onto a rebuilt, differently-ordered set.
         listing.index = current_index
 
     @on(Input.Changed, "#tag-filter-search")
