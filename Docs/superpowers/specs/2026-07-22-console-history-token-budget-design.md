@@ -51,8 +51,19 @@ def bound_messages_to_window(
     provider: str,
     response_reservation: int,
     per_image_tokens: int = 1024,
+    window: int | None = None,           # override; None -> token_counter lookup
+    count_fn: Callable[[list[dict], str], int] | None = None,  # injectable counter
 ) -> BoundResult: ...
 ```
+
+**`count_fn` is injectable (Finding — tiktoken absence).** tiktoken is not
+installed in the dev/test venv, so the real counter falls back to word-split
+estimation (the estimate task-321 will replace). `bound_messages_to_window`
+defaults `count_fn` to `count_console_messages_tokens`, but accepts an
+override so unit tests pass a **deterministic** counter (e.g. one token per
+word, or a fixed count per message) and verify the trim *logic* — drop-oldest,
+system/current-turn preservation, boundary — independent of whether tiktoken
+is present. Tests never assert exact real-tokenizer numbers.
 
 **Token counting adapter (Finding 1 — required).** `count_tokens_messages`
 in `token_counter.py` assumes `content` is a string and crashes on the
@@ -72,8 +83,19 @@ fixed reply-priming base that `count_tokens_messages` adds, so its numbers
 line up with the existing counter for text-only conversations.
 
 **Trimming (`bound_messages_to_window`).**
-- `window = get_model_token_limit(model, provider)`;
-  `budget = window − response_reservation − max(512, window // 50)`.
+- `window = window if window is not None else get_model_token_limit(model,
+  provider)`; `budget = window − response_reservation − max(512, window // 50)`.
+  **Unknown-model caveat (Finding):** `get_model_token_limit` returns a
+  conservative `4096` for models it doesn't recognize (after prefix + provider
+  defaults), which would *over-trim* local/custom models that actually have a
+  large window (common with llama.cpp under a custom model name). The optional
+  `window` override exists precisely so a configured context limit can take
+  precedence — this is the seam task-325 (wire the dead `chat_context_limit`
+  key) feeds later; until then, the controller passes `window=None` and the
+  conservative default applies. Documented as a known limitation, not a
+  blocker: over-trimming degrades gracefully (shorter history) and never
+  400s, and task-320 refreshing the table plus task-325 wiring the override
+  both improve it transparently.
 - **Always keep**: (a) the leading system message(s) — the contiguous
   `role == "system"` prefix; (b) the **current turn** — everything from the
   last `role == "user"` message to the end (Finding 4: keyed off the last
@@ -130,24 +152,38 @@ This module imports only `token_counter` — the seam 320/321 sharpen.
 so the note renders in the transcript but is never resent (and never itself
 counts toward a future budget). Shown once per trimming send.
 
-**Placement (Finding 3).** The assistant placeholder is appended *before*
-`_stream_assistant_response`, so a plain append lands the note *below* the
-streaming reply. To render it above the current turn's reply (the approved
-look), the note is inserted *before* the assistant placeholder row rather than
-appended — via the store's existing insert/ordering seam if one exists;
-otherwise the implementation falls back to appending it with the exchange and
-the plan records that as the shipped behavior. The trim/count correctness does
-not depend on this.
+**Placement (Finding — store is append-only).** `ConsoleChatStore.append_message`
+is append-only (the `position` field it carries is for image attachment slots,
+not message ordering — there is no insert-at-position). Since the trim runs at
+the single choke point *after* the assistant placeholder was appended by the
+send site, the trim note renders **with the current exchange** — immediately
+after the streaming reply row for that turn. This is the shipped behavior.
+Rendering the note strictly *above* the reply would require a new store
+insert-before capability (or trimming+noting at all four send sites before the
+placeholder is created); both are heavier than the value and are left as a
+possible follow-up. The trim/count correctness does not depend on placement.
+
+**Frequency.** The note is appended on every send that actually drops history.
+In a long, continuously-trimming conversation that means one note per turn.
+This is honest (each send did trim) and low-cost (a dim display-only row), and
+is kept as-is; collapsing repeats or a single per-session marker is a possible
+later refinement if it proves noisy.
 
 ## Testing (AC#5)
 
-- **Unit (`console_history_budget`)**: text-only fits-under-budget (no drop);
-  exactly-at-boundary; over-budget drops oldest whole turns; system prefix
-  always preserved; current turn (last user + trailing assistant) always
-  preserved; leading-assistant edge unit; degenerate system+turn-over-budget
-  (kept, dropped_count for the middle only); multimodal `content` list counted
-  without error and image cost included; a resume/regenerate shape ending on
-  an assistant message preserves the live turn.
+- **Unit (`console_history_budget`)** — the trim-logic tests inject a
+  deterministic `count_fn` (e.g. one token per whitespace word, fixed cost per
+  image part) so they are exact and tiktoken-independent: text-only
+  fits-under-budget (no drop); exactly-at-boundary; over-budget drops oldest
+  whole turns; system prefix always preserved; current turn (last user +
+  trailing assistant) always preserved; leading-assistant edge unit;
+  degenerate system+turn-over-budget (kept, dropped_count for the middle
+  only); `window` override takes precedence over the lookup; a resume/
+  regenerate shape ending on an assistant message preserves the live turn.
+- **Counting-adapter unit** (real `count_console_messages_tokens`, no injected
+  `count_fn`): a multimodal `content` list is counted without error and
+  includes the per-image cost; a string-content message matches the existing
+  `count_tokens_messages` for the same text (parity, so 320/321 flow through).
 - **Controller**: a send whose history exceeds budget dispatches the trimmed
   list AND appends exactly one SYSTEM trim note; a send that fits dispatches
   the full list and appends no note; the note is filtered from the next send's
