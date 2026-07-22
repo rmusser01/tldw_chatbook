@@ -36,6 +36,49 @@ _RENDER_MODES: tuple[ConsoleImageViewMode, ...] = ("pixels", "graphics", "hidden
 _LEGACY_TO_MODE = {"pixels": "pixels", "regular": "graphics"}
 
 
+def fit_image_cell_size(
+    pixel_width: int, pixel_height: int, box_cols: int, box_lines: int
+) -> tuple[int, int]:
+    """Fit a PIL image's pixel size into a cell box, preserving aspect ratio.
+
+    A ``textual_image.widget.Image`` sized with only ``max-width``/``max-height``
+    resolves its render region from the parent container's *settled* layout;
+    mounting at runtime (vs. compose time) can paint one tick before that
+    settles, asking the renderer to scale into a transient 0-width/height region
+    -- which PIL's ``resize()`` raises ``ValueError`` on. Setting BOTH cell
+    dimensions to explicit ints sidesteps that race (a fixed size resolves
+    without waiting on parent layout). Terminal cells are ~2x taller than wide
+    in pixels, so the image aspect is converted to "cell units" (halving the
+    height) before fitting.
+
+    Args:
+        pixel_width: Source image width in pixels.
+        pixel_height: Source image height in pixels.
+        box_cols: Target box width in character columns.
+        box_lines: Target box height in character lines.
+
+    Returns:
+        ``(width_cells, height_cells)``, each an int clamped to
+        ``[1, box_cols]`` / ``[1, box_lines]``. Degenerate input returns the
+        full box.
+    """
+    if pixel_width <= 0 or pixel_height <= 0:
+        return box_cols, box_lines
+    cell_aspect = pixel_width / (pixel_height / 2)
+    box_aspect = box_cols / box_lines
+    if cell_aspect >= box_aspect:
+        # Relatively wider than the box -> fit to width.
+        w_cells = box_cols
+        h_cells = max(1, round(box_cols / cell_aspect))
+    else:
+        # Relatively taller than the box -> fit to height.
+        h_cells = box_lines
+        w_cells = max(1, round(box_lines * cell_aspect))
+    w_cells = max(1, min(box_cols, w_cells))
+    h_cells = max(1, min(box_lines, h_cells))
+    return w_cells, h_cells
+
+
 def next_view_mode(current: ConsoleImageViewMode) -> ConsoleImageViewMode:
     """Return the next mode in the pixels -> graphics -> hidden cycle.
 
