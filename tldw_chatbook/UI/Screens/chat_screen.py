@@ -8227,7 +8227,7 @@ class ChatScreen(BaseAppScreen):
             yield DestinationHeader(
                 workbench_state.header,
                 id="console-workbench-header",
-                classes="workbench-header",
+                classes="workbench-header console-header-inline",
             )
             yield self._hidden_console_workbench_widget(
                 ModeStrip(

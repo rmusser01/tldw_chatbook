@@ -1911,6 +1911,34 @@ ConsoleSystemPromptModal {
     margin: 0;
 }
 
+#console-workbench-header.console-header-inline {
+    layout: horizontal;
+    height: 1;
+    min-height: 1;
+    border: none;
+}
+
+#console-workbench-header.console-header-inline .workbench-header-title {
+    width: auto;
+    height: 1;
+    min-height: 1;
+}
+
+#console-workbench-header.console-header-inline .workbench-header-subtitle {
+    width: 1fr;
+    height: 1;
+    min-height: 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    margin: 0 1;
+}
+
+#console-workbench-header.console-header-inline .workbench-header-status {
+    width: auto;
+    height: 1;
+    min-height: 1;
+}
+
 #console-workbench-mode-strip,
 #console-workbench-command-strip {
     display: none;

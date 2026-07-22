@@ -125,7 +125,7 @@ def build_console_workbench_state(
         density=workbench_density,
         header=WorkbenchHeaderState(
             title="Console",
-            subtitle="Chat, source handoffs, live runs, and control actions.",
+            subtitle="— Chat, source handoffs, live runs, and control actions.",
             # TASK-347: a live generation must not read "Ready". A run only
             # runs once past the blocker gate, so running takes precedence.
             status="running" if run_active else ("blocked" if blocker else "ready"),
