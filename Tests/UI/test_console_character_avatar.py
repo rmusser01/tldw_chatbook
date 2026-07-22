@@ -390,3 +390,34 @@ async def test_refresh_skips_db_fetch_when_config_off(console_screen_with_db_ava
 
     assert calls == []  # config-off short-circuits before any DB fetch
     assert screen._active_character_avatar is None
+
+
+@pytest.mark.asyncio
+async def test_refresh_repopulates_after_config_toggle_off_then_on(console_screen_with_db):
+    """Qodo #782-3 regression: the config-off branch clears the cache AND must
+    invalidate the scope guard, otherwise re-enabling the feature without
+    changing the active character hits the scope-equality early-return and the
+    Character section sticks in the empty state forever.
+    """
+    app, screen, db = console_screen_with_db
+    from PIL import Image as PILImage
+    from io import BytesIO
+    buf = BytesIO(); PILImage.new("RGB", (32, 32), (10, 180, 60)).save(buf, format="PNG")
+    char_id = db.add_character_card({"name": "Ada", "image": buf.getvalue()})
+    _set_active_console_character(screen, char_id, "Ada")
+
+    # (1) feature on (default): populates + records scope (char_id,)
+    await screen._refresh_active_character_avatar_if_scope_changed()
+    assert screen._active_character_avatar is not None
+
+    # (2) toggle off: clears the cache AND invalidates the scope guard
+    app.app_config["chat"] = {"images": {"show_character_avatar": False}}
+    await screen._refresh_active_character_avatar_if_scope_changed()
+    assert screen._active_character_avatar is None
+    assert screen._last_console_avatar_scope is None  # guard invalidated
+
+    # (3) toggle back on, SAME character: must repopulate (was stuck empty pre-fix)
+    app.app_config["chat"] = {"images": {"show_character_avatar": True}}
+    await screen._refresh_active_character_avatar_if_scope_changed()
+    assert screen._active_character_avatar is not None
+    assert screen._active_character_avatar.get("character_id") == char_id

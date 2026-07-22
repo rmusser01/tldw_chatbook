@@ -3942,6 +3942,12 @@ class ChatScreen(BaseAppScreen):
             # keep the cache empty for when the section is next shown.
             self._active_character_avatar = None
             self._active_character_avatar_name = None
+            # Invalidate the scope guard too: otherwise, if the feature is
+            # re-enabled while character_id is unchanged, the equality check
+            # below would early-return and the section would stay stuck in
+            # the empty state (Qodo #782-3). Resetting forces a repopulate on
+            # the next config-on tick.
+            self._last_console_avatar_scope = None
             return
         character_id = self._current_console_rail_character_id()
         scope = (character_id,)
