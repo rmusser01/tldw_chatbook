@@ -124,3 +124,49 @@ def maybe_adopt_legacy_collection(config: RAGConfig) -> None:
     adopt_legacy_collection(
         config.vector_store.persist_directory, _LEGACY_BASE, target, provenance
     )
+
+
+def list_indexes(persist_directory) -> list[dict]:
+    """List on-disk collections with provenance + document count."""
+    out: list[dict] = []
+    try:
+        client = _client(persist_directory)
+        for col in client.list_collections():
+            meta = dict(col.metadata or {})
+            out.append({
+                "name": col.name,
+                "fp": meta.get("fp"),
+                "provenance": meta,
+                "count": col.count(),
+            })
+    except Exception as e:
+        logger.error(f"list_indexes failed: {e}")
+    return out
+
+
+def delete_index(persist_directory, name: str) -> bool:
+    """Delete the collection ``name``. False when absent or on error."""
+    try:
+        client = _client(persist_directory)
+        if name not in {c.name for c in client.list_collections()}:
+            return False
+        client.delete_collection(name)
+        logger.info(f"Deleted index collection '{name}'")
+        return True
+    except Exception as e:
+        logger.error(f"delete_index failed: {e}")
+        return False
+
+
+def index_status(config: RAGConfig) -> dict:
+    """Resolved-collection state for ``config``: absent | empty | built."""
+    if not (str(config.vector_store.type) == "chroma"
+            and config.vector_store.persist_directory is not None):
+        return {"state": "absent", "count": 0, "provenance": {}}
+    target = fingerprinted_collection_name(config)
+    for entry in list_indexes(config.vector_store.persist_directory):
+        if entry["name"] == target:
+            state = "built" if entry["count"] > 0 else "empty"
+            return {"state": state, "count": entry["count"],
+                    "provenance": entry["provenance"]}
+    return {"state": "absent", "count": 0, "provenance": {}}

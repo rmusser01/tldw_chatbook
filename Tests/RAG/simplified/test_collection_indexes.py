@@ -172,3 +172,36 @@ def test_adopt_preserves_legacy_distance_metric(chroma_persist_dir):
     # Provenance is still layered on top for everything else.
     assert adopted.metadata.get("source") == "legacy-adopted"
     assert adopted.metadata.get("distance_metric") == "cosine"
+
+
+@pytest.mark.requires_chromadb
+def test_list_and_delete_indexes(chroma_persist_dir):
+    from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
+    from tldw_chatbook.RAG_Search.simplified.collection_indexes import (
+        list_indexes, delete_index, index_status,
+    )
+    a = _cfg(chroma_persist_dir)
+    b = _cfg(chroma_persist_dir); b.chunking.chunk_size = 512  # different fp
+    RAGService(a).vector_store.collection            # force-create collection a
+    RAGService(b).vector_store.collection            # force-create collection b
+
+    idx = list_indexes(chroma_persist_dir)
+    names = {i["name"] for i in idx}
+    assert fingerprinted_collection_name(a) in names
+    assert fingerprinted_collection_name(b) in names
+    assert all("provenance" in i and "count" in i for i in idx)
+
+    assert delete_index(chroma_persist_dir, fingerprinted_collection_name(b)) is True
+    names_after = {i["name"] for i in list_indexes(chroma_persist_dir)}
+    assert fingerprinted_collection_name(b) not in names_after
+    assert delete_index(chroma_persist_dir, "does-not-exist") is False
+
+
+@pytest.mark.requires_chromadb
+def test_index_status_absent_then_built(chroma_persist_dir):
+    from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
+    from tldw_chatbook.RAG_Search.simplified.collection_indexes import index_status
+    cfg = _cfg(chroma_persist_dir)
+    assert index_status(cfg)["state"] == "absent"
+    RAGService(cfg).vector_store.collection           # create, still empty
+    assert index_status(cfg)["state"] == "empty"
