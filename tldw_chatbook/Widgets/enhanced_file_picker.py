@@ -974,6 +974,15 @@ class EnhancedFileDialog(BaseFileDialog):
     BINDINGS = [
         Binding("ctrl+b", "toggle_bookmarks", "Show bookmarks"),
         Binding("question_mark", "toggle_hints", "Toggle shortcuts"),
+        # Overrides FileSystemPickerScreen's default Escape -> dismiss(None)
+        # binding (base_dialog.py) so Escape closes the topmost open overlay
+        # first (path bar / search / recent / bookmarks) and only dismisses
+        # the picker once none are open (task-430 AC#4). Textual's binding
+        # merge walks the MRO base-to-derived and lets the most-derived
+        # class's binding for a given key win, so this fully replaces the
+        # base binding -- no handler suppression needed (unlike message
+        # dispatch, see ``_SUPPRESSED_BASE_HANDLERS`` below).
+        Binding("escape", "smart_dismiss", "Close", show=False),
         *[Binding(str(n), f"jump_bookmark('{n}')", f"Bookmark {n}", show=False) for n in range(1, 10)],
     ]
 
@@ -989,6 +998,7 @@ class EnhancedFileDialog(BaseFileDialog):
         BaseFileDialog._confirm_file,
         FileSystemPickerScreen._on_clear_search,
         FileSystemPickerScreen._on_directory_changed,
+        FileSystemPickerScreen._on_path_input_submit,
     }
 
     def _get_dispatch_methods(self, method_name: str, message: Message):
@@ -1296,6 +1306,95 @@ class EnhancedFileDialog(BaseFileDialog):
                 self.query_one(SearchableDirectoryNavigation).focus()
         except Exception as e:
             self.notify(f"Error toggling path input: {e}", severity="error", timeout=2)
+
+    @on(Button.Pressed, "#go-to-path")
+    @on(Input.Submitted, "#path-input")
+    def _on_path_input_submit(self, event=None) -> None:
+        """Handle Ctrl+L path-bar submission (task-430 AC#3).
+
+        The vendored ``FileSystemPickerScreen._on_path_input_submit``
+        (``base_dialog.py``, suppressed via ``_SUPPRESSED_BASE_HANDLERS``
+        above -- Textual dispatches ``@on``-decorated handlers from every
+        class in the MRO, so overriding this method alone would not stop
+        the base implementation from also firing) always navigates to a
+        typed path's *parent* directory, silently dropping the filename for
+        files. This override keeps that "cd" behavior for directories but,
+        for an existing file, confirms and returns it instead.
+        """
+        try:
+            path_input = self.query_one("#path-input", Input)
+            path_str = path_input.value.strip()
+
+            if not path_str:
+                return
+
+            if path_str.startswith("~"):
+                path = Path(path_str).expanduser()
+            else:
+                path = Path(path_str)
+
+            if not path.is_absolute():
+                path = self.query_one(SearchableDirectoryNavigation).location / path
+
+            path = path.resolve()
+
+            if not path.exists():
+                self.notify(f"Path does not exist: {path}", severity="error", timeout=3)
+                return
+
+            if path.is_dir():
+                # Directory: keep the vendored "cd" behavior.
+                self.query_one(SearchableDirectoryNavigation).location = path
+                self.action_focus_path_input()  # close the bar; refocuses the nav
+                return
+
+            # Existing file: confirm/return it (task-430 AC#3) instead of
+            # cd'ing to its parent and dropping the filename.
+            self.action_focus_path_input()  # close the bar first
+
+            if self.multi_select:
+                self._toggle_path_selection(path)
+                return
+
+            try:
+                file_name = self.query_one("#filename-input", Input)
+            except Exception:
+                return
+            file_name.value = str(path)
+            self._confirm_single()
+
+        except Exception as e:
+            self.notify(f"Error navigating to path: {e}", severity="error", timeout=3)
+
+    def action_smart_dismiss(self) -> None:
+        """Close the topmost open overlay; dismiss the picker only when none
+        are open (task-430 AC#4).
+
+        Priority: path bar -> search -> recent -> bookmarks -> dismiss. Each
+        branch reuses the overlay's real close path rather than duplicating
+        its logic.
+        """
+        try:
+            path_open = self.query_one("#path-input-container").styles.display != "none"
+        except Exception:
+            path_open = False
+        if path_open:
+            self.action_focus_path_input()
+            return
+
+        if self.search_active:
+            self._close_search_overlay()
+            return
+
+        if self.show_recent:
+            self.show_recent = False
+            return
+
+        if self.show_bookmarks:
+            self.show_bookmarks = False
+            return
+
+        self.dismiss(None)
 
     def _select_file(self, event: DirectoryNavigation.Selected) -> None:
         """No-op override of ``BaseFileDialog._select_file``.
@@ -1828,6 +1927,15 @@ class EnhancedFileDialog(BaseFileDialog):
     def _on_clear_search_enhanced(self, event: Button.Pressed) -> None:
         """Clear the search input and reset the directory filter."""
         event.stop()
+        self._close_search_overlay()
+
+    def _close_search_overlay(self) -> None:
+        """Clear and close the search overlay.
+
+        Shared by the Clear-search button (``_on_clear_search_enhanced``)
+        and ``action_smart_dismiss`` (task-430 AC#4) so Esc closes search
+        the same way the button does.
+        """
         try:
             search_input = self.query_one("#search-input", Input)
             search_input.value = ""

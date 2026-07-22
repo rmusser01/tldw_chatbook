@@ -935,6 +935,74 @@ async def test_open_must_exist_rejects_missing_file(tmp_path):
     assert result[0] is None
 
 
+@pytest.mark.asyncio
+async def test_path_bar_opens_a_file(tmp_path):
+    """Submitting the full path to an *existing file* in the Ctrl+L path bar
+    confirms and returns that file, instead of silently navigating to its
+    parent directory and dropping the filename (task-430 AC#3)."""
+    test_file = tmp_path / "typed_path.txt"
+    test_file.write_text("hello")
+
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Path Bar Opens File",
+        context="test_path_bar_opens_file",
+    )
+    app = _DialogHost(dialog)
+    result = []
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        dialog.action_focus_path_input()
+        await pilot.pause()
+
+        path_input = dialog.query_one("#path-input", Input)
+        path_input.value = str(test_file)
+        await pilot.pause()
+
+        # A real Button.Pressed message, driven through the actual Go button.
+        dialog.query_one("#go-to-path").press()
+        await pilot.pause()
+
+        result.append(app._result)
+
+    assert result[0] == test_file
+
+
+@pytest.mark.asyncio
+async def test_escape_closes_recent_overlay_first(tmp_path):
+    """Esc closes the topmost open overlay (Recent) before dismissing the
+    picker; a second Esc then dismisses the picker (task-430 AC#4)."""
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Escape Layered Overlay",
+        context="test_escape_layered_overlay",
+    )
+    app = _DialogHost(dialog)
+    result = []
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        dialog.action_toggle_recent()
+        await pilot.pause()
+        assert dialog.show_recent is True
+
+        # A real key press, not a direct action call.
+        await pilot.press("escape")
+        await pilot.pause()
+        assert dialog.show_recent is False, "first Esc must close the Recent overlay"
+        assert dialog.is_current, "first Esc must not dismiss the picker"
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        result.append(app._result)
+
+    assert result[0] is None, "second Esc must dismiss the picker"
+
+
 def test_file_list_highlight_is_visible():
     """The file list's selected-row highlight must not blend into $surface.
 
