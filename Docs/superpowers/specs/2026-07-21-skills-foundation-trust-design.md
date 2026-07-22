@@ -72,8 +72,12 @@ Plus a minor finding:
 - **Keyring fix approach:** profile-scope the keyring key **and** add an in-UI reset,
   rather than dropping the keyring for a plain file (which would forfeit tamper-resistant
   rollback protection).
-- **Migration:** one-time re-setup. Old global keyring entries are never read again; no
-  migration code. Prior trust users re-run "Set up skill trust" once.
+- **Migration:** one-time re-setup — we do **not** preserve/migrate the existing trusted
+  baseline (no copying the old marker forward). Old global keyring entries are never read
+  again; prior trust users re-run "Set up skill trust" once. We *do* add logic to
+  **detect and cleanly present** the resulting orphaned-manifest state so that re-setup
+  is one click rather than a confusing locked/error detour (see Component 1/2). "No
+  migration" refers to trust *data*, not "no code."
 - **Trust surfacing:** a persistent, adaptive trust status line at the top of the Skills
   **list** (not only in the per-skill editor).
 
@@ -94,13 +98,28 @@ absolute skills store directory, so no two profiles can read each other's entrie
 - Any pre-existing global keyring entry (e.g. the orphaned marker currently poisoning
   fresh profiles on the developer's machine) becomes **inert** once profiles read only
   the scoped account — no manual keychain deletion is required to unblock it.
-- **Both** the marker store and the key-cache store are scoped. Scoping only the marker
-  would let a stale cached key mismatch a fresh marker.
-- Consequence for existing users: a legit prior manifest file remains, but the marker
-  under the new scoped key is absent → the trust service must treat "manifest present,
-  scoped marker absent/unreadable" as a **recoverable first-run**, not a dead-end (see
-  Component 2's recovery contract). This is the same class of state as the pre-existing
-  pollution, and is resolved the same way.
+- **Both** the marker store and the key-cache store are scoped. This is also a
+  **security fix, not only correctness**: the derived-key cache is currently under a
+  fixed global keyring account, so one profile's derived trust key material is readable
+  by another profile/user on the same machine. Scoping closes that cross-profile leak.
+- Consequence for existing users — verified against the code, and it is **not** a clean
+  first-run by default. After scoping, an existing trust user hits `keys is None →
+  locked` at startup (their cached keys live under the old global account; the new
+  scoped cache is empty). Entering their **correct** passphrase unlocks, but
+  `load_manifest` then finds the scoped marker absent and raises *"manifest generation
+  marker mismatch"* → `manifest_error`. So the naive path is a confusing
+  `locked → unlock-with-correct-passphrase → manifest_error → reset` detour.
+  **Requirement:** the status logic must recognize **"manifest present AND scoped
+  marker cleanly absent (`load_marker()` returns `None`, not a raise)"** as a dedicated
+  *orphaned-manifest / needs-re-setup* state, presented directly (not `locked`, not
+  `manifest_error`), whose single "Set up skill trust" action performs
+  **reset-then-bootstrap**. This makes the approved "one-time re-setup" genuinely one
+  click.
+- **Safety invariant:** never auto-destroy trust data on marker absence. A marker that
+  *fails to load* (`SkillTrustMarkerUnavailable`, e.g. a transiently-locked keychain)
+  must **not** be treated as orphaned — that would nuke a valid baseline. Only a clean
+  `None` (account genuinely absent) qualifies as orphaned; a load failure shows a
+  transient "trust unavailable — retry" state with no destructive action offered.
 
 **Interfaces touched:** `skill_trust_store.py` (marker store + key-cache store account
 derivation), `app.py` (passes the store_dir-derived scope when constructing the stores;
@@ -112,6 +131,19 @@ it already builds them with the store dir in hand).
 marker, and cached key material, returning the profile to `trust_uninitialized`
 (first-run). Best-effort and non-crashing if the keyring is unavailable/locked (clears
 what it can; reports partial failure via return value, never raises to the UI).
+
+**New store primitives required.** The marker store and key cache today expose only
+`load`/`save`, and the manifest has no public delete — so `reset_trust` must add
+`delete`/`clear` operations to: the generation-marker store, the key-cache store (each
+with **both** its keyring and file-fallback backends), and a public manifest delete on
+the trust store. These are small, mechanical additions but must be enumerated in the
+plan (multiple backends per store).
+
+**"Set up skill trust" composes reset-then-bootstrap when a stale manifest exists.**
+Rather than teach `bootstrap_trust` to overwrite an existing manifest, the recovery
+action resets first (when an orphaned/stale manifest is present) and then bootstraps —
+bootstrap always operates on a clean slate. On a genuinely fresh profile (no manifest)
+"Set up" is a plain bootstrap.
 
 **Recovery contract — no dead-end state.** After this spec:
 
@@ -146,8 +178,10 @@ blocked skills:
 |---|---|---|
 | Trust service unavailable (allow-untrusted mode) | *(hidden — no trust concept)* | — |
 | Zero skills installed | *(hidden — nothing to nag about)* | — |
-| `uninitialized` (incl. migration/`manifest_error`) | "Skill trust isn't set up — set it up to review and use skills." | **Set up skill trust** (+ **Reset** when a stale manifest is present) |
-| `locked` | "Skill trust is locked for this session." | **Unlock**, and **Reset** as a secondary "forgot your passphrase?" recovery |
+| `uninitialized`, no manifest (true first-run) | "Skill trust isn't set up — set it up to review and use skills." | **Set up skill trust** |
+| Orphaned manifest (manifest present, scoped marker cleanly `None`) — e.g. post-upgrade or pre-existing keyring pollution | "Skill trust needs to be set up again after an update." | **Set up skill trust** (reset-then-bootstrap) |
+| Marker load *fails* (`SkillTrustMarkerUnavailable`, transient) | "Skill trust is temporarily unavailable — try again." | **Retry** (no destructive action) |
+| `locked` (keys not loaded, manifest + marker valid) | "Skill trust is locked for this session." | **Unlock**, and **Reset** as a secondary "forgot your passphrase?" recovery |
 | Any skills blocked / needing review | "N skill(s) need review before use." | **Review** (opens the first blocked skill's trust panel) |
 | All clean | "Skill trust: ready." (quiet, low-emphasis) | — |
 
@@ -207,12 +241,21 @@ TDD:
 - **Trust isolation:** two profiles (distinct store_dirs) with the same fake keyring
   backend do not read each other's markers; a marker written under one scope is invisible
   to the other. Key-cache scoped likewise.
-- **Recovery:** a profile with a marker but no manifest (the poisoned state) →
-  `reset_trust()` → `uninitialized`; then bootstrap → trusted. Bootstrap over a stale
-  manifest succeeds. `reset_trust` is idempotent and non-crashing when the keyring is
-  unavailable.
-- **No dead-end:** `manifest_error` and "manifest present, scoped marker absent" both
-  expose a working Reset/Set-up action (unit on the panel state + a harness test).
+- **Recovery:** a profile with a marker but no manifest (the poisoned/fresh state) →
+  `reset_trust()` → `uninitialized`; then bootstrap → trusted. `reset_trust` clears
+  marker + key-cache + manifest across **both** keyring and file backends, is
+  idempotent, and is non-crashing when the keyring is unavailable (reports partial
+  clear).
+- **Orphaned-manifest migration (the important one):** a profile with a valid manifest
+  file but scoped marker returning `None` is presented as *needs-re-setup* (not `locked`,
+  not `manifest_error`); its single "Set up skill trust" runs reset-then-bootstrap →
+  trusted. Assert the confusing `locked → unlock → manifest_error` detour does **not**
+  occur.
+- **Safety — no auto-destroy:** when `load_marker()` *raises* `SkillTrustMarkerUnavailable`
+  (transient), the state is "temporarily unavailable / retry" and no destructive reset
+  is offered or performed; a valid manifest is left intact.
+- **No dead-end:** `manifest_error` and the orphaned-manifest state both expose a working
+  Reset/Set-up action (unit on the panel state + a harness test).
 - **Header states:** each row of the Component-3 table renders the right copy/action;
   hidden when trust-unavailable or zero skills; quiet when ready; no nag.
 - **Reset confirmation:** destructive reset requires confirm; confirm resets, cancel
@@ -222,9 +265,14 @@ TDD:
 
 ## Risks & mitigations
 
-- **Upgrade churn:** existing trusted skills show "needs review" once after the scope
-  change (accepted — one-time re-setup). Mitigated by the discoverable header + working
-  recovery so the re-setup is a one-click bootstrap, not a dead-end.
+- **Upgrade churn:** after the scope change, an existing trust user is shown the
+  orphaned-manifest "set up again" state and, once they re-setup, their skills return to
+  "needs review" once (accepted — one-time re-setup). Mitigated by the discoverable
+  header + the dedicated orphaned-manifest state so re-setup is one click, not the
+  confusing locked/unlock/error detour the naive code path would produce.
+- **Reset primitives touch multiple backends:** the marker store and key cache each have
+  a keyring and a file variant; the plan must add and test `delete`/`clear` for all of
+  them, plus a public manifest delete. Low individual risk, easy to miss one.
 - **Destructive reset:** guarded by confirmation and explicit "skills are not deleted"
   copy.
 - **Keyring variance across OSes:** the scope is applied to the account string
