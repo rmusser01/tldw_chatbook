@@ -383,6 +383,12 @@ class PersonasCharacterEditorWidget(Container):
         self._render_greetings_table()
         self._set_avatar_status_from_record()
         self.query_one("#personas-char-editor-validation", Static).update("")
+        # Clear any stale per-field invalid marks left by a prior session: if
+        # the reopened record's values are byte-identical to what's already
+        # displayed, no Changed event fires and _run_validation never runs to
+        # self-heal a previously-marked row (Roleplay P3b review fix).
+        for fid in self._validated_field_ids():
+            self.query_one(f"#{fid}").parent.remove_class(self._FIELD_ERROR_CLASS)
         self._set_advanced_open(False)
 
     def new_character(self) -> None:

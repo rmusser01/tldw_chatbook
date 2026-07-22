@@ -203,6 +203,33 @@ async def test_blank_new_form_does_not_mark_name_invalid_before_interaction():
         assert "personas-char-editor-name: required" in str(validation.renderable)
 
 
+async def test_reopen_clears_stale_invalid_mark_from_prior_session():
+    """Review fix (Roleplay P3b): a stale ``.is-invalid`` mark left by a
+    prior editing session must not survive reopening the editor onto a new
+    record. The row must clear SYNCHRONOUSLY inside ``load_character`` ->
+    ``_populate_form`` - not rely on the async ``Input.Changed`` event that
+    setting a new value posts (which only arms a fresh debounce timer and
+    would not fire before this assertion, and would not fire at all if the
+    reopened record's value happened to match what was already displayed)."""
+    app = _Host()
+    async with app.run_test() as pilot:
+        ed = app.query_one(PersonasCharacterEditorWidget)
+        ed.load_character({"name": "A"})
+        await pilot.pause()
+
+        ed.query_one("#personas-char-editor-name", Input).value = ""
+        await _settle(pilot)
+        row = ed.query_one("#personas-char-editor-name").parent
+        assert row.has_class("is-invalid")
+
+        ed.load_character({"name": "B"})
+        # Only a bare pause (message-loop churn), never the full debounce
+        # settle - proves the clear is not coming from the async self-heal
+        # path.
+        await pilot.pause()
+        assert not row.has_class("is-invalid")
+
+
 async def test_greeting_add_blank_warns_immediately_without_save():
     """Fix A (review wave): _greetings_add validates directly (no debounce,
     no Save needed) - the warning appears in the footer right after the Add

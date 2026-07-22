@@ -104,6 +104,33 @@ async def test_validated_field_ids_covers_name():
         assert "personas-editor-name" in ed._validated_field_ids()
 
 
+async def test_reopen_clears_stale_invalid_mark_from_prior_session():
+    """Review fix (Roleplay P3b): a stale ``.is-invalid`` mark left by a
+    prior editing session must not survive reopening the editor onto a new
+    persona. The row must clear SYNCHRONOUSLY inside ``load_persona`` - not
+    rely on the async ``Input.Changed`` event that setting a new value posts
+    (which only arms a fresh debounce timer and would not fire before this
+    assertion, and would not fire at all if the reopened record's value
+    happened to match what was already displayed)."""
+    app = _Host()
+    async with app.run_test() as pilot:
+        ed = app.query_one(PersonaProfileEditorWidget)
+        ed.load_persona({"name": "A"})
+        await pilot.pause()
+
+        ed.query_one("#personas-editor-name", Input).value = ""
+        await _settle(pilot)
+        row = ed.query_one("#personas-editor-name").parent
+        assert row.has_class("is-invalid")
+
+        ed.load_persona({"name": "B"})
+        # Only a bare pause (message-loop churn), never the full debounce
+        # settle - proves the clear is not coming from the async self-heal
+        # path.
+        await pilot.pause()
+        assert not row.has_class("is-invalid")
+
+
 async def test_blank_new_form_does_not_mark_name_invalid_before_interaction():
     """Fix B (review wave): a freshly-opened blank form must not display
     validation errors before the user has touched anything, even after the

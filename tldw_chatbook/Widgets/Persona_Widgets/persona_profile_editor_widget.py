@@ -153,6 +153,13 @@ class PersonaProfileEditorWidget(Container):
                 data.get("is_active", True)
             )
             self.query_one("#personas-editor-validation", Static).update("")
+            # Clear any stale per-field invalid marks left by a prior session:
+            # if the reopened record's values are byte-identical to what's
+            # already displayed, no Changed event fires and _run_validation
+            # never runs to self-heal a previously-marked row (Roleplay P3b
+            # review fix).
+            for fid in self._validated_field_ids():
+                self.query_one(f"#{fid}").parent.remove_class(self._FIELD_ERROR_CLASS)
         finally:
             self._loading = False
         self._loaded_snapshot = self._form_snapshot()
