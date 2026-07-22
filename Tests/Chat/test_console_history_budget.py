@@ -8,10 +8,6 @@ from tldw_chatbook.Chat.console_history_budget import (
 )
 
 
-def _words(*texts: str) -> int:
-    return sum(len(t.split()) for t in texts)
-
-
 # A deterministic counter: 1 token per whitespace word in every string text
 # part, plus 10 tokens per image part. tiktoken-independent.
 def _wordcount(messages, model):  # noqa: ARG001
