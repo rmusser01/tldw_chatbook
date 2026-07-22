@@ -736,7 +736,16 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
         """Open the highlighted entry: descend a directory, or return a file."""
         if self.highlighted is None:
             return
-        option = self.get_option_at_index(self.highlighted)
+        try:
+            option = self.get_option_at_index(self.highlighted)
+        except Exception:
+            # ``highlighted`` can be stale (non-None but out of range) while the
+            # option list repopulates asynchronously; Textual's OptionList then
+            # raises ``OptionDoesNotExist`` (an ``OptionListError``, NOT an
+            # ``IndexError``/``LookupError``). A mistimed Enter / double-click
+            # must be a no-op, not crash the picker -- match the broad guard the
+            # same lookup uses in ``_repopulate_display``.
+            return
         if not isinstance(option, DirectoryEntry):
             return
         if is_dir(option.location):
@@ -745,7 +754,12 @@ class SearchableDirectoryNavigation(DirectoryNavigation):
             self.post_message(self.OpenFile(self, option.location))
 
     def on_click(self, event: events.Click) -> None:
-        """Double-click opens the highlighted entry (mouse roughly equals Enter)."""
+        """Open the highlighted entry on a double-click (mouse roughly equals Enter).
+
+        Args:
+            event: The click event; ``event.chain`` distinguishes a single click
+                (1) from a double click (>= 2).
+        """
         if getattr(event, "chain", 1) >= 2:
             self.action_open_highlighted()
 
@@ -1365,6 +1379,21 @@ class EnhancedFileDialog(BaseFileDialog):
             path_str = path_input.value.strip()
 
             if not path_str:
+                return
+
+            # This is a *local* file picker: the user navigates their own
+            # filesystem, so ``~/`` (home), ``../`` (parent), and filenames
+            # containing shell metacharacters (``;``, ``|``, ``$(`` ...) are all
+            # legitimate here -- ``validate_path_simple`` would reject every one
+            # of them and break navigation. The one input that is never a valid
+            # path is a NUL byte, so reject that explicitly (before any ``Path``
+            # call, which would otherwise raise a bare ValueError).
+            if "\x00" in path_str:
+                self.notify(
+                    "Path cannot contain null characters.",
+                    severity="error",
+                    timeout=3,
+                )
                 return
 
             if path_str.startswith("~"):

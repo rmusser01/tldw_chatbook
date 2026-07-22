@@ -517,6 +517,20 @@ async def _wait_for_options(dir_nav, pilot, attempts: int = 20) -> None:
         await pilot.pause()
 
 
+async def _wait_for_result(app, pilot, attempts: int = 20) -> None:
+    """Poll until the dialog's dismiss callback records a result.
+
+    A dismissing action (Enter / Go / path-bar submit) posts a message whose
+    handler confirms and dismisses asynchronously; the callback that sets
+    ``app._result`` can lag a single ``pilot.pause()``, so poll rather than
+    read after one pause (avoids an intermittent ``None`` capture on slow runs).
+    """
+    for _ in range(attempts):
+        if app._result is not None:
+            break
+        await pilot.pause()
+
+
 def _index_of(dir_nav, target: Path) -> Optional[int]:
     """Find the option-list index whose entry location matches ``target``."""
     for index in range(dir_nav.option_count):
@@ -687,11 +701,48 @@ async def test_open_highlighted_returns_file(tmp_path):
 
         dir_nav.highlighted = file_index
         dir_nav.action_open_highlighted()
-        await pilot.pause()
+        await _wait_for_result(app, pilot)
 
         result.append(app._result)
 
     assert result[0] == test_file
+
+
+@pytest.mark.asyncio
+async def test_open_highlighted_tolerates_stale_index(tmp_path):
+    """``action_open_highlighted`` must not crash when ``highlighted`` is a
+    non-``None`` but out-of-range index (as it can be mid-repopulation): the
+    guarded lookup makes a mistimed Enter/double-click a no-op (task-430 PR
+    review)."""
+    dialog = EnhancedFileOpen(
+        location=str(tmp_path),
+        title="Test Stale Highlight",
+        context="test_stale_highlight",
+    )
+    app = _DialogHost(dialog)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        dir_nav = dialog.query_one(SearchableDirectoryNavigation)
+        await _wait_for_options(dir_nav, pilot)
+
+        # Simulate a stale highlight: the index is non-None, but the lookup
+        # raises the way Textual's OptionList actually does mid-repopulation --
+        # ``OptionDoesNotExist`` (an OptionListError, NOT an IndexError).
+        from textual.widgets.option_list import OptionDoesNotExist
+
+        def _raise_index(_index):
+            raise OptionDoesNotExist("stale index during repopulation")
+
+        dir_nav.get_option_at_index = _raise_index
+        dir_nav.highlighted = 0
+
+        # Must not raise.
+        dir_nav.action_open_highlighted()
+        await pilot.pause()
+
+        assert app._result is None, "a stale-index open must be a no-op"
 
 
 @pytest.mark.asyncio
@@ -1047,7 +1098,7 @@ async def test_path_bar_opens_a_file(tmp_path):
 
         # A real Button.Pressed message, driven through the actual Go button.
         dialog.query_one("#go-to-path").press()
-        await pilot.pause()
+        await _wait_for_result(app, pilot)
 
         result.append(app._result)
 
