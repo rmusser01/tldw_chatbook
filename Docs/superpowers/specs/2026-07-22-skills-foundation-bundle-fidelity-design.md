@@ -180,8 +180,13 @@ dead-ends (capture succeeds, approve raises). Two coordinated changes:
 **(a) Junk ignore-list** applied during the walk on both import *and* scan (so junk
 is neither stored nor scanned): directories `.git`, `.github`, `.hg`, `.svn`,
 `node_modules`, `__pycache__`; files `.DS_Store`, `Thumbs.db`; suffixes `.pyc`,
-`.pyo`, `~`, `.bak`, `.orig`, plus the existing `.tmp`/`.swp`/`.part`. Ignored
-entries are skipped entirely — **never** recorded in `unsupported_paths`.
+`.pyo`, `~`, `.tmp`, `.swp`, `.part`. Ignored entries are skipped entirely —
+**never** recorded in `unsupported_paths`. (`.bak`/`.orig` were dropped from this
+list during implementation: unlike every other suffix here — binaries or
+pattern-failing names that were already untrustable pre-feature — a *text* file
+named e.g. `notes.bak` was previously a supported, trusted supporting file, so
+pruning it would flip a pre-existing skill to needs-review and violate the
+backward-compat guarantee. They are now kept as ordinary supporting files.)
 
 **(b) Tolerate-and-surface** instead of hard-raise. `bootstrap_trust` and
 `trust_current_skill` establish trust over the **supported (fingerprinted)** files
