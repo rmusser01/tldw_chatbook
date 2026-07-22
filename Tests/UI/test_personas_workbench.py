@@ -87,6 +87,8 @@ def stub_scope_service(mock_app_instance):
 
 @pytest.fixture
 def stub_characters(monkeypatch):
+    from Tests.UI.test_personas_dictionaries import patch_character_paging
+
     monkeypatch.setattr(
         character_handler_module,
         "fetch_all_characters",
@@ -99,6 +101,9 @@ def stub_characters(monkeypatch):
             dict(c) for c in CHARACTERS if str(c["id"]) == str(character_id)
         ),
     )
+    # Task 4: the library pages from the DB seam now; mirror fetch_all_characters
+    # (read live so tests that swap it mid-run for create/delete stay consistent).
+    patch_character_paging(monkeypatch)
 
 
 class PersonasTestApp(App):
@@ -1180,7 +1185,9 @@ class TestSearch:
             rows = screen.query(".personas-library-row")
             assert [_row_text(r) for r in rows] == ["Detective Sam"]
             count = str(screen.query_one("#personas-library-count", Static).renderable)
-            assert "1 of 2 characters" in count
+            # Task 4: the library pages from the DB seam, so a search reports the
+            # match count as the page total (no separate "of <library>" copy).
+            assert "1 characters" in count
 
     async def test_clearing_search_restores_all_rows(
         self, mock_app_instance, stub_characters
@@ -1236,7 +1243,8 @@ class TestSearch:
             rows = screen.query(".personas-library-row")
             assert [_row_text(r) for r in rows] == ["Navigator"]
             count = str(screen.query_one("#personas-library-count", Static).renderable)
-            assert "1 of 2 persona profiles" in count
+            # Task 4: personas paginate in-memory; the count is the match total.
+            assert "1 persona profiles" in count
 
     async def test_mode_switch_clears_search(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -1265,91 +1273,15 @@ class TestSearch:
             # Search input is cleared
             assert screen.query_one("#personas-library-search").value == ""
 
-    async def test_fts_path_used_for_large_libraries(
-        self, mock_app_instance, stub_characters, monkeypatch
-    ):
-        fts_calls: list[str] = []
-
-        def fake_fts(search_term: str, limit: int = 50):
-            fts_calls.append(search_term)
-            return [{"id": 1, "name": "Detective Sam"}]
-
-        monkeypatch.setattr(character_handler_module, "search_characters_fts", fake_fts)
-
-        app = PersonasTestApp(mock_app_instance)
-        async with app.run_test() as pilot:
-            screen = await _mounted(pilot)
-            await pilot.pause()
-            # Lower the threshold so the 2-character stub library triggers FTS
-            screen.LIBRARY_FTS_THRESHOLD = 2
-            search_input = screen.query_one("#personas-library-search")
-            search_input.value = "sam"
-            await self._wait_for_search_render(pilot)
-            assert fts_calls == ["sam"]
-            rows = screen.query(".personas-library-row")
-            assert [_row_text(r) for r in rows] == ["Detective Sam"]
-
-    async def test_fts_search_count_uses_unbounded_full_library_copy(
-        self,
-        mock_app_instance: Any,
-        stub_characters: Any,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """FTS search copy must not use the truncated loaded-page denominator.
-
-        Args:
-            mock_app_instance: Mounted test app fixture.
-            stub_characters: Character-list fixture for the Personas library.
-            monkeypatch: Pytest monkeypatch fixture used to force the FTS path.
-
-        Returns:
-            None.
-        """
-
-        def fake_fts(search_term: str, limit: int = 50) -> list[dict[str, Any]]:
-            return [{"id": 1, "name": "Detective Sam"}]
-
-        monkeypatch.setattr(character_handler_module, "search_characters_fts", fake_fts)
-
-        app = PersonasTestApp(mock_app_instance)
-        async with app.run_test() as pilot:
-            screen = await _mounted(pilot)
-            await pilot.pause()
-            screen.LIBRARY_FTS_THRESHOLD = 2
-            screen.query_one("#personas-library-search").value = "sam"
-            await self._wait_for_search_render(pilot)
-
-            count = str(screen.query_one("#personas-library-count", Static).renderable)
-            assert count == "Showing 1 character match from full library"
-
-    async def test_fts_search_runs_off_the_event_loop(
-        self, mock_app_instance, stub_characters, monkeypatch
-    ):
-        """The FTS query must not run synchronously on the UI loop."""
-        import asyncio
-
-        loop_seen: list[bool] = []
-
-        def fake_fts(search_term: str, limit: int = 50):
-            try:
-                asyncio.get_running_loop()
-                loop_seen.append(True)
-            except RuntimeError:
-                loop_seen.append(False)
-            return [{"id": 1, "name": "Detective Sam"}]
-
-        monkeypatch.setattr(character_handler_module, "search_characters_fts", fake_fts)
-
-        app = PersonasTestApp(mock_app_instance)
-        async with app.run_test() as pilot:
-            screen = await _mounted(pilot)
-            await pilot.pause()
-            screen.LIBRARY_FTS_THRESHOLD = 2
-            screen.query_one("#personas-library-search").value = "sam"
-            await self._wait_for_search_render(pilot)
-            assert loop_seen == [False]
-            rows = screen.query(".personas-library-row")
-            assert [_row_text(r) for r in rows] == ["Detective Sam"]
+    # NOTE (P3a Task 4): the old in-memory-vs-FTS hybrid search (gated on
+    # LIBRARY_FTS_THRESHOLD, using ccp_character_handler.search_characters_fts and
+    # the "Showing N ... from full library" copy) was replaced by a single paged
+    # DB search (get_character_page_for_ui / count_character_page). The former
+    # tests test_fts_path_used_for_large_libraries,
+    # test_fts_search_count_uses_unbounded_full_library_copy, and
+    # test_fts_search_runs_off_the_event_loop covered that removed path; the
+    # off-thread guarantee for the new path is covered in
+    # Tests/UI/test_personas_library_scale.py.
 
     async def test_concurrent_renders_do_not_duplicate_rows(
         self, mock_app_instance, stub_characters

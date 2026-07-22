@@ -45,7 +45,7 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_character_world_books import
 )
 from tldw_chatbook.Widgets.Persona_Widgets.world_book_picker import WorldBookPicker
 
-from Tests.UI.test_personas_dictionaries import PersonasTestApp
+from Tests.UI.test_personas_dictionaries import PersonasTestApp, patch_character_paging
 
 pytestmark = pytest.mark.asyncio
 
@@ -97,6 +97,8 @@ def stub_characters_for_worldbooks(monkeypatch, seeded_character_with_worldbook)
             dict(record) if str(character_id) == str(char_id) else None
         ),
     )
+    # Task 4: the library pages from the DB seam; mirror fetch_all_characters.
+    patch_character_paging(monkeypatch)
 
 
 async def _mounted(pilot):
@@ -167,6 +169,7 @@ class TestCharacterWorldBooksScreenWiring:
                 dict(record) if str(character_id) == str(char_id) else None
             ),
         )
+        patch_character_paging(monkeypatch)
         mock_app_instance.chachanotes_db = worldbooks_db
         mock_app_instance.chat_dictionary_scope_service = None
 
@@ -223,6 +226,7 @@ def stub_character_for_standalone_worldbook(
             dict(record) if str(character_id) == str(char_id) else None
         ),
     )
+    patch_character_paging(monkeypatch)
 
 
 class TestCharacterWorldBookAttachDetach:

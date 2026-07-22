@@ -27,6 +27,7 @@ from Tests.UI.test_personas_dictionaries import (
     FakeDictScopeService,
     PersonasTestApp,
     make_dict_record,
+    patch_character_paging,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -142,6 +143,8 @@ def stub_characters(monkeypatch):
             dict(c) for c in CHARACTERS if str(c["id"]) == str(character_id)
         ),
     )
+    # Task 4: the library pages from the DB seam; feed it the same stub rows.
+    patch_character_paging(monkeypatch)
 
 
 async def _mounted(pilot):

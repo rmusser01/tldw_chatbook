@@ -19,10 +19,14 @@ from textual.timer import Timer
 from textual.widgets import Button, Input, ListView, Static, TabbedContent, TextArea
 
 from ...Character_Chat.Character_Chat_Lib import (
+    count_character_page,
     export_character_card_to_json,
     export_character_card_to_png,
+    get_character_page_for_ui,
+    list_character_tags,
     validate_character_book,
 )
+from ...Character_Chat.persona_list_paging import page_persona_profiles
 from ...Character_Chat.world_book_import import normalize_world_book_import
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from ...Chat.chat_handoff_models import ChatHandoffPayload
@@ -68,8 +72,12 @@ from ...Widgets.Persona_Widgets.personas_library_pane import (
 from ...Widgets.Persona_Widgets.personas_messages import (
     PersonaActionRequested,
     PersonaEntitySelected,
+    PersonaPageChanged,
     PersonaSearchChanged,
+    PersonaSortCycleRequested,
+    PersonaTagFilterRequested,
 )
+from ...Widgets.Persona_Widgets.tag_filter_picker import TagFilterPicker
 from ...Widgets.Persona_Widgets.personas_pane_messages import (
     CharacterEditorCancelled,
     CharacterImageUploadRequested,
@@ -176,6 +184,17 @@ _MODE_PLACEHOLDER_BODY: dict[str, str] = {
 }
 _PLACEHOLDER_FALLBACK = "This mode is coming soon."
 PERSONAS_SEARCH_DEBOUNCE_SECONDS = 0.2
+#: Rows per library page. ``page_offset`` is always kept a multiple of this so
+#: the pane's "start-end of N" label math stays exact.
+PERSONAS_LIBRARY_PAGE_SIZE = 50
+#: Display labels for the library sort keys (shared by the character sort cycle
+#: and the persona render path).
+_LIBRARY_SORT_LABELS: dict[str, str] = {
+    "relevance": "Relevance",
+    "name_asc": "Name",
+    "modified_desc": "Recent edit",
+    "created_desc": "Recent add",
+}
 PERSONAS_AVATAR_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
 PERSONAS_AVATAR_IMAGE_SUFFIX_COPY = "PNG, JPG, JPEG, WEBP, or GIF"
 PERSONAS_AVATAR_MAX_BYTES = 5 * 1024 * 1024
@@ -472,7 +491,15 @@ class PersonasScreen(BaseAppScreen):
         self._delete_dialog_active: bool = False
         self._character_editor_generation: int = 0
         self._profile_save_inflight: bool = False
+        # ``_characters`` now holds only the CURRENT page of the library, not
+        # the whole (capped) list; ``_character_total`` is the full-library
+        # count for the active (search, tag) filter, cached under
+        # ``_count_cache_key`` so page-nav/sort reuse it and only a filter
+        # change recomputes it.
         self._characters: list[dict] = []
+        self._character_total: int = 0
+        self._count_cache_key: tuple | None = None
+        self._character_tags: list[str] = []
         self._profiles: list[dict] = []
         self._dictionaries_cache: list[dict] = []
         self._selected_dictionary_version: int | None = None
@@ -717,8 +744,16 @@ class PersonasScreen(BaseAppScreen):
     async def refresh_character_library_list(
         self, characters: list[dict] | None
     ) -> None:
-        """Destination-native hook called by ``CCPCharacterHandler``."""
+        """Destination-native hook called by ``CCPCharacterHandler``.
+
+        This fires after character mutations (import/create/save/delete), so the
+        cached count may be stale; invalidate it before re-rendering the page so
+        ``_reload_character_page`` recomputes the total. ``_characters`` is set
+        here from the handler's list for compatibility, but the paged reload
+        below immediately replaces it with the current page only.
+        """
         self._characters = [dict(record) for record in (characters or [])]
+        self._count_cache_key = None
         self._update_status_row()
         if self.state.active_mode != "characters":
             return
@@ -732,16 +767,28 @@ class PersonasScreen(BaseAppScreen):
 
     @staticmethod
     def _build_library_rows(records: list[dict], kind: str) -> tuple[LibraryRow, ...]:
-        """Map id/name records onto library rows, skipping id-less records."""
-        return tuple(
-            LibraryRow(
-                item_id=str(record.get("id")),
-                kind=kind,
-                name=str(record.get("name") or "Unnamed"),
+        """Map id/name records onto library rows, skipping id-less records.
+
+        Character rows carry a ``YYYY-MM-DD`` last-modified meta line; personas
+        (id/name summaries) render without one.
+        """
+        rows: list[LibraryRow] = []
+        for record in records:
+            if record.get("id") is None:
+                continue
+            meta = None
+            if kind == "character":
+                last_modified = str(record.get("last_modified") or "")
+                meta = last_modified[:10] if last_modified else None
+            rows.append(
+                LibraryRow(
+                    item_id=str(record.get("id")),
+                    kind=kind,
+                    name=str(record.get("name") or "Unnamed"),
+                    meta=meta,
+                )
             )
-            for record in records
-            if record.get("id") is not None
-        )
+        return tuple(rows)
 
     def _library_render_snapshot_is_current(
         self,
@@ -766,65 +813,134 @@ class PersonasScreen(BaseAppScreen):
         expected_query: str | None = None,
         expected_mode: str | None = None,
     ) -> None:
-        if not self._library_render_snapshot_is_current(
-            expected_query=expected_query,
-            expected_mode=expected_mode,
-        ):
-            return
+        """Render the character library page.
 
-        query = (
-            expected_query if expected_query is not None else self.state.search_query
-        )
-        total = len(self._characters)
-        filtered_total_unbounded = False
-        if query:
-            if total >= self.LIBRARY_FTS_THRESHOLD:
-                # Large library: use FTS so the full DB corpus is searched
-                # even when the loaded list is a page-size truncation. The
-                # query runs in a thread so the DB call never blocks the UI
-                # loop (the render lock below is only taken afterwards, so
-                # the await cannot deadlock it).
-                matched = await asyncio.to_thread(
-                    ccp_character_handler.search_characters_fts, query
-                )
-                filtered_total_unbounded = True
-            else:
-                # Small library: filter in-memory, case-insensitively on name.
-                q_lower = query.lower()
-                matched = [
-                    r
-                    for r in self._characters
-                    if q_lower in str(r.get("name") or "").lower()
-                ]
-            filtered = True
-        else:
-            matched = self._characters
-            filtered = False
+        Thin wrapper over :meth:`_reload_character_page` (which owns the paged
+        DB query, count cache, and its own post-await freshness re-check). The
+        snapshot args only gate a late debounced call before any DB work; they
+        are why the existing callers (refresh, mode-apply, debounced search)
+        need no changes.
+        """
         if not self._library_render_snapshot_is_current(
             expected_query=expected_query,
             expected_mode=expected_mode,
         ):
             return
-        async with self._render_lock:
-            if not self._library_render_snapshot_is_current(
-                expected_query=expected_query,
-                expected_mode=expected_mode,
-            ):
-                return
-            rows = self._build_library_rows(matched, "character")
+        await self._reload_character_page()
+
+    def _character_sort_cycle(self) -> list[tuple[str, str]]:
+        """Ordered ``(key, label)`` sort options for the character library.
+
+        A "Relevance" option is prepended (and becomes the natural default) only
+        while a search is active, since relevance is search-scored.
+        """
+        base = [
+            ("name_asc", _LIBRARY_SORT_LABELS["name_asc"]),
+            ("modified_desc", _LIBRARY_SORT_LABELS["modified_desc"]),
+            ("created_desc", _LIBRARY_SORT_LABELS["created_desc"]),
+        ]
+        if self.state.search_query:
+            return [("relevance", _LIBRARY_SORT_LABELS["relevance"]), *base]
+        return base
+
+    def _fts_match_query(self) -> str | None:
+        """Wrap the raw search term as a quoted FTS5 prefix query, or None."""
+        term = (self.state.search_query or "").strip()
+        if not term:
+            return None
+        escaped = term.replace('"', '""')
+        return f'"{escaped}"*'
+
+    async def _reload_character_page(self, *, reset_offset: bool = False) -> None:
+        """Load and render one page of characters from the local DB.
+
+        The DB count/list run off-thread; the count is cached under
+        ``(search, tag)`` so page-nav and sort reuse it. After the awaits, a
+        freshness guard re-checks ``(mode, search, sort, tag, offset)`` so a
+        superseded reload never writes stale rows into the pane.
+        """
+        if reset_offset:
+            self.state.page_offset = 0
+        mode = self.state.active_mode
+        query = self.state.search_query
+        sort_key = self.state.sort_key
+        tag = self.state.tag_filter
+        offset = self.state.page_offset
+        search = self._fts_match_query()
+        db = self._character_db()
+        if db is None:
+            return
+        cache_key = (search, tag)
+        try:
+            if self._count_cache_key != cache_key:
+                self._character_total = await asyncio.to_thread(
+                    count_character_page, db, search_term=search, tag=tag
+                )
+                self._count_cache_key = cache_key
+            # Clamp a now-out-of-range offset back onto the last page.
+            if offset > 0 and offset >= self._character_total:
+                offset = max(
+                    0,
+                    ((self._character_total - 1) // PERSONAS_LIBRARY_PAGE_SIZE)
+                    * PERSONAS_LIBRARY_PAGE_SIZE,
+                )
+                self.state.page_offset = offset
+            records = await asyncio.to_thread(
+                get_character_page_for_ui,
+                db,
+                limit=PERSONAS_LIBRARY_PAGE_SIZE,
+                offset=offset,
+                order_by=sort_key,
+                search_term=search,
+                tag=tag,
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning("Character page load failed.")
+            self._notify(f"Could not load characters: {exc}", "error")
+            return
+        # Freshness guard: a filter/page/mode change during the off-thread reads
+        # supersedes this render. (is_mounted is deliberately NOT checked: it is
+        # still False while the initial on-mount refresh runs; teardown is
+        # tolerated instead by catching the pane QueryError below.)
+        if (
+            self.state.active_mode != mode
+            or self.state.search_query != query
+            or self.state.sort_key != sort_key
+            or self.state.tag_filter != tag
+            or self.state.page_offset != offset
+        ):
+            return
+        self._characters = records
+        self._update_status_row()
+        rows = self._build_library_rows(records, "character")
+        try:
             library = self.query_one(PersonasLibraryPane)
+        except QueryError:
+            # Screen torn down mid-reload; nothing to render.
+            return
+        sort_labels = dict(self._character_sort_cycle())
+        async with self._render_lock:
             await library.update_rows(
                 rows,
-                total=total,
+                total=self._character_total,
                 noun="characters",
-                filtered=filtered,
-                filtered_total_unbounded=filtered_total_unbounded,
+                page_offset=offset,
+                page_size=PERSONAS_LIBRARY_PAGE_SIZE,
             )
+            library.set_sort_label(f"Sort: {sort_labels.get(sort_key, 'Name')}")
+            library.set_tag_label(f"Tag: {tag}" if tag else "Tag: All")
             if (
                 self.state.selected_entity_kind == "character"
                 and self.state.selected_entity_id
             ):
                 library.mark_active_row("character", self.state.selected_entity_id)
+
+    async def _reload_active_library(self) -> None:
+        """Re-render whichever paginated library (characters/personas) is active."""
+        if self.state.active_mode == "characters":
+            await self._reload_character_page()
+        elif self.state.active_mode == "personas":
+            await self._render_profile_rows()
 
     def _character_record(self, item_id: str | None) -> dict | None:
         if item_id is None:
@@ -894,33 +1010,47 @@ class PersonasScreen(BaseAppScreen):
         ):
             return
 
-        query = (
-            expected_query if expected_query is not None else self.state.search_query
+        # Personas load <=100 rows into ``_profiles`` already, so filter, sort,
+        # and page them in-memory (no FTS, no tags). "relevance" is characters-
+        # only; fall back to name_asc for the persona list.
+        sort_key = (
+            self.state.sort_key if self.state.sort_key != "relevance" else "name_asc"
         )
-        total = len(self._profiles)
-        if query:
-            q_lower = query.lower()
-            matched = [
-                r for r in self._profiles if q_lower in str(r.get("name") or "").lower()
-            ]
-            filtered = True
-        else:
-            matched = self._profiles
-            filtered = False
+        offset = self.state.page_offset
+        page_rows, total = page_persona_profiles(
+            self._profiles,
+            search_term=self.state.search_query,
+            sort_key=sort_key,
+            offset=offset,
+            page_size=PERSONAS_LIBRARY_PAGE_SIZE,
+        )
+        # A narrowing filter can strand the offset past the filtered set; fall
+        # back to the last valid page so the list is never blank.
+        if not page_rows and total and offset >= total:
+            offset = (
+                (total - 1) // PERSONAS_LIBRARY_PAGE_SIZE
+            ) * PERSONAS_LIBRARY_PAGE_SIZE
+            self.state.page_offset = offset
+            page_rows, total = page_persona_profiles(
+                self._profiles,
+                search_term=self.state.search_query,
+                sort_key=sort_key,
+                offset=offset,
+                page_size=PERSONAS_LIBRARY_PAGE_SIZE,
+            )
         async with self._render_lock:
             if not self._library_render_snapshot_is_current(
                 expected_query=expected_query,
                 expected_mode=expected_mode,
             ):
                 return
-            rows = self._build_library_rows(matched, "persona_profile")
+            rows = self._build_library_rows(page_rows, "persona_profile")
             library = self.query_one(PersonasLibraryPane)
             recovery_state = self._profile_lookup_recovery_state
             await library.update_rows(
                 rows,
                 total=total,
                 noun="persona profiles",
-                filtered=filtered,
                 recovery_copy=(
                     recovery_state.visible_copy if recovery_state is not None else None
                 ),
@@ -929,7 +1059,13 @@ class PersonasScreen(BaseAppScreen):
                     if recovery_state is not None
                     else "personas-library-recovery"
                 ),
+                page_offset=offset,
+                page_size=PERSONAS_LIBRARY_PAGE_SIZE,
             )
+            if recovery_state is None:
+                library.set_sort_label(
+                    f"Sort: {_LIBRARY_SORT_LABELS.get(sort_key, 'Name')}"
+                )
             if (
                 self.state.selected_entity_kind == "persona_profile"
                 and self.state.selected_entity_id
@@ -942,7 +1078,25 @@ class PersonasScreen(BaseAppScreen):
     def _handle_search_changed(self, message: PersonaSearchChanged) -> None:
         message.stop()
         # Search does not change selection or center pane — no unsaved guard needed.
+        previous_query = self.state.search_query
         self.state.search_query = message.query.strip()
+        now_searching = bool(self.state.search_query)
+        was_searching = bool(previous_query)
+        if (
+            now_searching
+            and not was_searching
+            and self.state.active_mode == "characters"
+        ):
+            # First keystroke of a new character search: relevance ranking is the
+            # natural default (it only exists while a search is active).
+            self.state.sort_key = "relevance"
+        elif not now_searching and self.state.sort_key == "relevance":
+            # Search cleared: relevance is search-only, fall back to name.
+            self.state.sort_key = "name_asc"
+        # A changed search restarts paging and (for characters) invalidates the
+        # count cache so the new (search, tag) pair is recounted.
+        self.state.page_offset = 0
+        self._count_cache_key = None
         self._cancel_search_debounce()
         query = self.state.search_query
         mode = self.state.active_mode
@@ -950,6 +1104,78 @@ class PersonasScreen(BaseAppScreen):
             PERSONAS_SEARCH_DEBOUNCE_SECONDS,
             lambda: self._start_debounced_search_render(query=query, mode=mode),
         )
+
+    @on(PersonaSortCycleRequested)
+    async def _handle_sort_cycle(self, message: PersonaSortCycleRequested) -> None:
+        """Advance the library sort (characters + personas)."""
+        message.stop()
+        if self.state.active_mode not in ("characters", "personas"):
+            return
+        await self._cycle_sort()
+
+    async def _cycle_sort(self) -> None:
+        """Move ``sort_key`` to the next option and reload from page 0."""
+        cycle = [key for key, _ in self._character_sort_cycle()]
+        current = self.state.sort_key if self.state.sort_key in cycle else cycle[0]
+        self.state.sort_key = cycle[(cycle.index(current) + 1) % len(cycle)]
+        self.state.page_offset = 0
+        await self._reload_active_library()
+
+    @on(PersonaTagFilterRequested)
+    async def _handle_tag_filter(self, message: PersonaTagFilterRequested) -> None:
+        """Open the tag-filter picker (characters only)."""
+        message.stop()
+        if self.state.active_mode != "characters" or self._io_dialog_active:
+            return
+        self._io_dialog_active = True
+        self.run_worker(
+            self._tag_filter_worker(), group="personas-io", exit_on_error=False
+        )
+
+    async def _tag_filter_worker(self) -> None:
+        """List tags off-thread, prompt for one, and apply the pick."""
+        try:
+            db = self._character_db()
+            if db is None:
+                return
+            tags = await asyncio.to_thread(list_character_tags, db)
+            picked = await self.app.push_screen_wait(
+                TagFilterPicker(tags, self.state.tag_filter)
+            )
+            if picked is TagFilterPicker.CANCEL:
+                # Escape: leave the current filter untouched.
+                return
+            await self._apply_tag_filter(picked)  # None clears the filter
+        except Exception as exc:
+            logger.opt(exception=True).warning("Tag filter failed.")
+            self._notify(f"Tag filter failed: {exc}", "error")
+        finally:
+            self._io_dialog_active = False
+
+    async def _apply_tag_filter(self, tag: str | None) -> None:
+        """Set the characters tag filter, reset paging, and recount."""
+        self.state.tag_filter = tag
+        self.state.page_offset = 0
+        self._count_cache_key = None  # (search, tag) changed → recount
+        await self._reload_character_page()
+
+    @on(PersonaPageChanged)
+    async def _handle_page_changed(self, message: PersonaPageChanged) -> None:
+        message.stop()
+        await self._on_page_changed_delta(message.delta)
+
+    async def _on_page_changed_delta(self, delta: int) -> None:
+        """Move the page window by ``delta`` pages, clamped to the total."""
+        new_offset = self.state.page_offset + delta * PERSONAS_LIBRARY_PAGE_SIZE
+        total = (
+            self._character_total
+            if self.state.active_mode == "characters"
+            else len(self._profiles)
+        )
+        if new_offset < 0 or new_offset >= max(1, total):
+            return
+        self.state.page_offset = new_offset
+        await self._reload_active_library()
 
     def _cancel_search_debounce(self) -> None:
         """Cancel a pending search render when newer state supersedes it."""
@@ -1215,10 +1441,14 @@ class PersonasScreen(BaseAppScreen):
 
     async def _apply_mode(self, mode: str) -> None:
         self._cancel_search_debounce()
+        # switch_mode resets sort_key/tag_filter/page_offset for a fresh window.
         self.state.switch_mode(mode)
         # switch_mode does not reset search_query; clear it explicitly and
         # reset the Input widget so the library starts unfiltered in the new mode.
         self.state.search_query = ""
+        # The (search, tag) pair changed, so the character count must be
+        # recomputed the next time the characters page loads.
+        self._count_cache_key = None
         try:
             self.query_one("#personas-library-search", Input).value = ""
         except Exception:
@@ -1326,7 +1556,9 @@ class PersonasScreen(BaseAppScreen):
     def _status_row_text(self) -> str:
         mode = self.state.active_mode
         if mode == "characters":
-            return f"Characters: {len(self._characters)} | Source: Local | Attachments: Console"
+            # ``_characters`` is now one page; the full-library count lives in
+            # ``_character_total``.
+            return f"Characters: {self._character_total} | Source: Local | Attachments: Console"
         if mode == "personas":
             return f"Personas: {len(self._profiles)} | Source: Local | Attachments: Console"
         return f"Mode: {MODE_LABELS.get(mode, mode)} | Source: Local | Attachments: Console"
@@ -3761,9 +3993,20 @@ class PersonasScreen(BaseAppScreen):
 
     async def _import_character_from_path(self, path: str) -> None:
         """Import a character card file, then refresh, select, and reveal it."""
-        # On a name conflict the importer returns the EXISTING character's id;
-        # snapshot the pre-import ids so the notification can say so.
-        pre_import_ids = {str(c.get("id")) for c in self._characters}
+        # On a name conflict the importer returns the EXISTING character's id
+        # WITHOUT adding a row; on a new import it creates one. ``_characters``
+        # now holds only one page, so decide "existed vs imported" from the
+        # whole-library count (unfiltered) taken before/after, not a page-cache
+        # id membership check.
+        db = self._character_db()
+        pre_import_count = None
+        if db is not None:
+            try:
+                pre_import_count = await asyncio.to_thread(count_character_page, db)
+            except Exception:
+                logger.opt(exception=True).debug(
+                    "Pre-import character count failed; message will assume new."
+                )
         try:
             # Sync DB call; see the section comment for the threading choice.
             imported_id = await asyncio.to_thread(
@@ -3782,9 +4025,21 @@ class PersonasScreen(BaseAppScreen):
             )
             return
         imported_id = str(imported_id)
-        # Clear any active search (state + Input, as _apply_mode does) so the
-        # imported character is visible in the refreshed list.
+        post_import_count = None
+        if db is not None:
+            try:
+                post_import_count = await asyncio.to_thread(count_character_page, db)
+            except Exception:
+                logger.opt(exception=True).debug("Post-import character count failed.")
+        existed_before = (
+            pre_import_count is not None
+            and post_import_count is not None
+            and post_import_count == pre_import_count
+        )
+        # Clear any active search (state + Input, as _apply_mode does) and reset
+        # paging so the imported character shows on page 0 of the refreshed list.
         self.state.search_query = ""
+        self.state.page_offset = 0
         try:
             self.query_one("#personas-library-search", Input).value = ""
         except Exception:
@@ -3794,13 +4049,22 @@ class PersonasScreen(BaseAppScreen):
             # The user left Characters mode while the import ran; the list is
             # refreshed but selection/center pane belong to the new mode.
             return
-        record = self._character_record(imported_id)
-        name = str((record or {}).get("name") or "Imported character")
+        # Resolve the display name by id (the page cache may not hold this row).
+        loaded = None
+        try:
+            loaded = await asyncio.to_thread(
+                ccp_character_handler.fetch_character_by_id, imported_id
+            )
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Could not resolve imported character name by id."
+            )
+        name = str((loaded or {}).get("name") or "Imported character")
         await self._select_character(imported_id, name)
         # The selection changed outside _run_guarded; refresh the footer hints
         # (attach is now available) and the header state.
         self._sync_title_and_console_actions()
-        if imported_id in pre_import_ids:
+        if existed_before:
             self._notify("Character already existed; selected it.", "information")
         else:
             self._notify("Character imported.", "information")
@@ -4562,8 +4826,11 @@ class PersonasScreen(BaseAppScreen):
         self._edit_mode = "view"
         self._set_active_row_unsaved(False)
         await self.character_handler.refresh_character_list()
-        record = self._character_record(saved_id)
-        name = str((record or {}).get("name") or submitted_name or "Saved character")
+        # ``saved_id`` was just persisted, so it is authoritative; resolve the
+        # name by id (handler-loaded card) or the submitted name rather than
+        # scanning the now-page-only cache, and always load the saved card.
+        loaded = self._full_character_record(saved_id)
+        name = str((loaded or {}).get("name") or submitted_name or "Saved character")
         self.state.select_entity(
             entity_kind="character", entity_id=saved_id, entity_name=name
         )
@@ -4574,8 +4841,7 @@ class PersonasScreen(BaseAppScreen):
         inspector.show_validation(())
         self._sync_inspector_console_actions()
         self.query_one(PersonasLibraryPane).mark_active_row("character", saved_id)
-        if record is not None:
-            await self.character_handler.load_character(saved_id)
+        await self.character_handler.load_character(saved_id)
         self._show_center("#ccp-character-card-view")
         self._sync_title_and_console_actions()
         self.call_after_refresh(self._focus_library_list)
