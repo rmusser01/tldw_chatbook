@@ -1369,10 +1369,11 @@ class ChatScreen(BaseAppScreen):
     async def _activate_native_console_session(self, session_id: str) -> None:
         """Activate a native Console session through the shared activation sequence.
 
-        Set the active workspace, switch the native session, await the UI
-        sync, then force composer focus. Shared by the session-tab click
-        handler, the Ctrl+K switcher callback, and Alt+1..9 tab-jump so all
-        three entry points follow one activation path.
+        Set the active workspace, switch the native session, refresh the
+        retrieval-scope display, await the UI sync, then force composer
+        focus. Shared by the session-tab click handler, the Ctrl+K switcher
+        callback, and Alt+1..9 tab-jump so all three entry points follow
+        one activation path.
 
         Args:
             session_id: Native Console session id to activate.
@@ -1389,6 +1390,26 @@ class ChatScreen(BaseAppScreen):
             # Ctrl+K, and Alt+1..9) rather than rely solely on the rail
             # render path's own defensive re-check on the next sync.
             self._console_agent_drilldown_run_id = None
+            # Task-13 review finding 2: this path activates an ALREADY-
+            # resumed native session (unlike `_resume_console_workspace_
+            # conversation`, which warms the cache itself), so `_console_
+            # effective_scope_cache` may hold a stale entry -- e.g. a
+            # workspace-scope edit made via `_apply_console_workspace_
+            # scope_save` while a DIFFERENT session's tab was active only
+            # refreshes that other (active) session's row/chip. Without
+            # this call the row/chip would keep rendering the stale
+            # snapshot indefinitely: recompose reads the cache, never the
+            # DB (`_build_console_retrieval_scope_state`'s own contract).
+            new_session = self._active_native_console_session()
+            if new_session is not None:
+                try:
+                    await self._refresh_console_effective_scope_and_sync(new_session)
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Failed to refresh retrieval scope display on session "
+                        "activation: {}",
+                        session_id,
+                    )
             await self._sync_native_console_chat_ui()
         self._focus_console_composer_if_needed(force=True)
 

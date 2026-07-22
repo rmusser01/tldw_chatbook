@@ -1173,3 +1173,79 @@ async def test_no_workspace_overlap_renders_empty_state_on_row_and_chip():
             assert "no-workspace-overlap" in str(chip.tooltip)
     finally:
         db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_switch_between_resumed_sessions_refreshes_stale_workspace_scope():
+    """Task-13 review finding 2: ``_apply_console_workspace_scope_save``
+    only refreshes the ACTIVE session's row/chip (its own docstring says
+    so -- "only the currently active session's row/chip are mounted to
+    refresh"). Switching to a DIFFERENT, already-resumed native session in
+    the same workspace via ``_activate_native_console_session`` (the
+    shared tab-click / Ctrl+K / Alt+1..9 activation path) must not keep
+    serving that session's stale ``_console_effective_scope_cache`` entry
+    -- it must reflect the workspace's CURRENT scope, even though the
+    workspace scope changed while that session's own tab was inactive.
+
+    Unlike ``_resume_console_workspace_conversation`` (which warms this
+    cache itself, per ``test_resume_console_workspace_conversation_
+    refreshes_row_and_chip`` above), ``_activate_native_console_session``
+    previously never touched it at all -- a real display-staleness gap,
+    not a made-up scenario.
+    """
+    app = _build_test_app()
+    app.media_db = _AlwaysExistsMediaDB()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(240, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_inspector_and_get_row(console, pilot)
+        registry = app.workspace_registry_service
+        active = registry.get_active_workspace()
+        store = console._ensure_console_chat_store()
+
+        first_session = console._active_native_console_session()
+        assert first_session is not None
+        second_session = store.create_session(title="Second")
+        assert second_session.workspace_id == first_session.workspace_id
+
+        # An earlier resolve (resume, a prior scope-picker save, or an
+        # earlier activation) cached `first_session`'s effective scope
+        # against the workspace's OLD scope.
+        registry.set_workspace_scope(
+            active.workspace_id,
+            RagScope(
+                items=(ScopeItem("media", "m-old"),),
+                updated_at="2026-01-01T00:00:00Z",
+            ),
+        )
+        await console._resolve_console_effective_scope_state(first_session)
+        stale = console._console_effective_scope_cache[first_session.id]
+        assert stale.item_count == 1
+
+        # The workspace scope is edited while `second_session` (not
+        # `first_session`) is active -- `_apply_console_workspace_scope_
+        # save` only refreshes the ACTIVE session, so this write alone
+        # leaves `first_session`'s cache entry stale.
+        registry.set_workspace_scope(
+            active.workspace_id,
+            RagScope(
+                items=(
+                    ScopeItem("media", "m-new-1"),
+                    ScopeItem("media", "m-new-2"),
+                ),
+                updated_at="2026-01-02T00:00:00Z",
+            ),
+        )
+
+        await console._activate_native_console_session(first_session.id)
+        await pilot.pause()
+
+        assert console._active_native_console_session().id == first_session.id
+        row = console.query_one(f"#{ROW_ID}")
+        assert (
+            _static_plain_text(row.query_one(f"#{LABEL_ID}", Static))
+            == "Scope: 2 items"
+        ), "switching back to an already-resumed session must not keep the stale cached scope"
+        chip = console.query_one(f"#{SCOPE_CHIP_ID}", ConsoleScopeChip)
+        assert chip.display is True
+        assert _static_plain_text(chip) == "Scope: 2"

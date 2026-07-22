@@ -1275,6 +1275,131 @@ class TestScopeCacheWiring:
         assert second.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[1]})}
         assert len(calls) == 2, "a stamp change must invalidate the cached entry"
 
+    @pytest.mark.asyncio
+    async def test_cache_miss_on_workspace_scope_stamp_change(
+        self, media_db, monkeypatch
+    ):
+        """Task-13 review finding 1: the symmetric workspace-side companion
+        to ``test_cache_miss_on_conversation_scope_stamp_change`` -- editing
+        the LINKED WORKSPACE's scope (a new ``ws_scope.updated_at`` stamp)
+        must miss the cache and re-resolve, exactly like a conversation-side
+        edit does. Driven through ``resolve_effective_scope_for_chat`` (the
+        real enforcement entry point) with a fake ``workspace_registry_
+        service`` double (the same style already used by
+        ``TestResolveEffectiveScopeMemoryDbGuard``/the memory-backed-
+        registry tests above), rather than a real ``WorkspaceDB``, so the
+        test can freely swap the returned scope between calls."""
+        media_ids = _seed_media(media_db, n=2)
+        session = SimpleNamespace(persisted_conversation_id=None, workspace_id="ws-1")
+        monkeypatch.setattr(cre, "_active_console_session", lambda app: session)
+
+        class _FakeRegistry:
+            db = SimpleNamespace(is_memory_db=True)
+
+            def __init__(self, scope):
+                self.scope = scope
+
+            def get_workspace_scope(self, workspace_id):
+                return self.scope
+
+        registry = _FakeRegistry(
+            RagScope(
+                items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),), updated_at="t1"
+            )
+        )
+        app = _App(media_db=media_db)
+        app.workspace_registry_service = registry
+
+        calls: list[int] = []
+        real_resolve = cre.resolve_effective_scope
+
+        def _spy_resolve(*args, **kwargs):
+            calls.append(1)
+            return real_resolve(*args, **kwargs)
+
+        monkeypatch.setattr(cre, "resolve_effective_scope", _spy_resolve)
+
+        first = await cre.resolve_effective_scope_for_chat(app)
+        assert first.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
+
+        # A genuine workspace scope edit: new stamp, different item.
+        registry.scope = RagScope(
+            items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[1]),), updated_at="t2"
+        )
+
+        second = await cre.resolve_effective_scope_for_chat(app)
+
+        assert second.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[1]})}
+        assert len(calls) == 2, (
+            "a workspace scope stamp change must invalidate the cached entry"
+        )
+
+    @pytest.mark.asyncio
+    async def test_cache_miss_on_conversation_relinked_to_different_workspace(
+        self, media_db, monkeypatch
+    ):
+        """Task-13 review finding 1: the cache key is the full
+        ``(conversation_id/session_id, workspace_id, conv_stamp, ws_stamp)``
+        4-tuple, so re-linking the SAME session to a DIFFERENT workspace --
+        even when both workspaces' scopes happen to share the identical
+        ``updated_at`` stamp -- must still miss the cache and re-resolve
+        (the ``workspace_id`` component alone must be enough to
+        invalidate)."""
+        media_ids = _seed_media(media_db, n=2)
+        session = SimpleNamespace(persisted_conversation_id=None, workspace_id="ws-a")
+        monkeypatch.setattr(cre, "_active_console_session", lambda app: session)
+
+        same_stamp = "t1"
+
+        class _MultiWorkspaceRegistry:
+            db = SimpleNamespace(is_memory_db=True)
+
+            def __init__(self, scopes_by_workspace):
+                self.scopes_by_workspace = scopes_by_workspace
+
+            def get_workspace_scope(self, workspace_id):
+                return self.scopes_by_workspace[workspace_id]
+
+        registry = _MultiWorkspaceRegistry(
+            {
+                "ws-a": RagScope(
+                    items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[0]),),
+                    updated_at=same_stamp,
+                ),
+                "ws-b": RagScope(
+                    items=(ScopeItem(SOURCE_TYPE_MEDIA, media_ids[1]),),
+                    updated_at=same_stamp,
+                ),
+            }
+        )
+        app = _App(media_db=media_db)
+        app.workspace_registry_service = registry
+
+        calls: list[int] = []
+        real_resolve = cre.resolve_effective_scope
+
+        def _spy_resolve(*args, **kwargs):
+            calls.append(1)
+            return real_resolve(*args, **kwargs)
+
+        monkeypatch.setattr(cre, "resolve_effective_scope", _spy_resolve)
+
+        first = await cre.resolve_effective_scope_for_chat(app)
+        assert first.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[0]})}
+
+        # Re-link the session to a DIFFERENT workspace; its scope carries
+        # the SAME stamp as the previous workspace's, isolating the
+        # assertion to the `workspace_id` component of the cache key.
+        session.workspace_id = "ws-b"
+
+        second = await cre.resolve_effective_scope_for_chat(app)
+
+        assert second.allowlist == {SOURCE_TYPE_MEDIA: frozenset({media_ids[1]})}
+        assert len(calls) == 2, (
+            "a workspace_id change (even with an identical stamp) must "
+            "invalidate the cached entry"
+        )
+
 
 class TestChatEntryPointEmptyScopeShortCircuit:
     """An EMPTY effective scope (all scoped ids since deleted) short-circuits
