@@ -28,11 +28,13 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget impo
 
 from Tests.UI.test_personas_dictionaries import PersonasTestApp, patch_character_paging
 
-# Not applied via module-level pytestmark: Tests/UI/pytest.ini sets
-# asyncio_mode = auto, which auto-detects `async def` tests without the
-# explicit marker, and this module also has plain sync unit tests (the
-# _fit_avatar_cell_size coverage below) that pytest-asyncio warns about if
-# the marker is applied to them.
+# The async tests below carry an explicit per-function `@pytest.mark.asyncio`
+# decorator rather than a module-level `pytestmark`: this module also has
+# plain sync unit tests (the `_fit_avatar_cell_size` coverage) that
+# pytest-asyncio warns about under a module-level marker, and the explicit
+# per-test decorator keeps the async tests collectable even when the run's
+# rootdir isn't Tests/UI (so Tests/UI/pytest.ini's `asyncio_mode = auto`
+# doesn't apply) — e.g. a run mixing Tests/UI and Tests/Character_Chat.
 
 
 # ===================================================================
@@ -53,6 +55,7 @@ class _Host(App):
         self.removed += 1
 
 
+@pytest.mark.asyncio
 async def test_thumbnail_mounts_and_text_fallback():
     app = _Host()
     async with app.run_test() as pilot:
@@ -70,6 +73,7 @@ async def test_thumbnail_mounts_and_text_fallback():
         assert len(ed.query("#personas-char-editor-avatar-thumb > *")) == 1
 
 
+@pytest.mark.asyncio
 async def test_current_avatar_bytes_and_remove():
     app = _Host()
     async with app.run_test() as pilot:
@@ -86,6 +90,7 @@ async def test_current_avatar_bytes_and_remove():
         assert app.removed == 1
 
 
+@pytest.mark.asyncio
 async def test_current_avatar_bytes_none_without_image():
     app = _Host()
     async with app.run_test() as pilot:
@@ -269,6 +274,7 @@ async def _open_editor_for(pilot, screen, char_id):
 
 
 class TestCharacterEditorAvatarThumbnailScreen:
+    @pytest.mark.asyncio
     async def test_editor_with_image_renders_thumbnail(
         self,
         mock_app_instance,
@@ -324,6 +330,7 @@ class TestCharacterEditorAvatarThumbnailScreen:
 
 
 class TestCharacterEditorAvatarThumbnailFit:
+    @pytest.mark.asyncio
     async def test_wide_avatar_pixels_thumbnail_fits_box_not_clipped(
         self,
         monkeypatch,
@@ -379,6 +386,7 @@ class TestCharacterEditorAvatarThumbnailFit:
         thumb_aspect = thumb.width / thumb.height
         assert thumb_aspect == pytest.approx(source_aspect, rel=0.15)
 
+    @pytest.mark.asyncio
     async def test_tiny_avatar_still_produces_pixels_thumbnail(
         self,
         monkeypatch,
