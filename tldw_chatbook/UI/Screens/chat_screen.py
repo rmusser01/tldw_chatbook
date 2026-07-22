@@ -3783,7 +3783,7 @@ class ChatScreen(BaseAppScreen):
     async def _console_scope_chip_activated(
         self, event: ConsoleScopeChip.OpenRequested
     ) -> None:
-        """Open the scope picker from the header chip (task-10).
+        """Open the scope picker from the status-pills strip chip (task-10).
 
         Same handler seam as the Inspector row's Edit/Narrow… button
         (``_console_retrieval_scope_open_pressed`` above) -- just a second

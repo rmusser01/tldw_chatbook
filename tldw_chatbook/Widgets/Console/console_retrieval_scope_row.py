@@ -78,7 +78,7 @@ class ConsoleRetrievalScopeRow(Horizontal):
         # ``is_scoped`` -- an EMPTY snapshot has ``is_scoped=False`` (see
         # ``ConsoleRetrievalScopeState.empty()``), so an ``is_scoped``-only
         # branch here would silently render it as the plain "everything"
-        # default, diverging from the header chip's ``_scope_chip_render``
+        # default, diverging from the status-pills chip's ``_scope_chip_render``
         # (which checks ``is_empty`` explicitly). Row and chip render the
         # exact same state snapshot and must agree.
         if self.state.is_empty:
@@ -105,7 +105,7 @@ class ConsoleRetrievalScopeRow(Horizontal):
         if self.state.is_empty:
             # Cause folded into the label's tooltip, same wording and same
             # ``SCOPE_EMPTY_NOTICE_TEMPLATE`` the chip's tooltip uses
-            # (``ConsoleControlBar._scope_chip_render``) -- reuses the
+            # (``ConsoleStatusChips._scope_chip_render``) -- reuses the
             # row's existing label widget rather than a second Static,
             # since the row's own frame is pinned to a single text line
             # (``#console-retrieval-scope-row`` is ``max-height: 1``).

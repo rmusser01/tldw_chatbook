@@ -1,4 +1,5 @@
-"""Console status-pill strip (provider/model/persona/RAG/source/tool/approval).
+"""Console status-pill strip (provider/model/persona/RAG/source/tool/approval)
+plus the retrieval-scope chip.
 
 Extracted from ConsoleControlBar so the pills can render in their own strip
 directly above the composer. The widget owns the chip classes, the chip
@@ -89,7 +90,8 @@ class ConsoleScopeChip(ConsoleChip):
 
 
 class ConsoleStatusChips(Horizontal):
-    """Full-width strip of the seven Console readiness pills.
+    """Full-width strip of the eight Console readiness pills (provider/model/
+    persona/RAG/source/tool/approval plus the retrieval-scope chip).
 
     Exposes ``sync_state`` so ``ChatScreen`` can refresh the pill labels and
     counter emphasis after provider/model/source/tool/approval state changes.
