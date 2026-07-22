@@ -936,6 +936,27 @@ def test_mark_message_send_blocked_fails_a_user_row_for_context_exclusion():
     assert stored.status == "failed"
 
 
+def test_mark_message_send_blocked_rejects_non_user_rows():
+    """TASK-457(a) (Qodo #777 review): the send-block path is for a never-
+    streamed USER echo only. It must reject assistant/system rows so a mistaken
+    caller cannot flip them to failed and bypass the assistant terminal-state
+    guards (mark_message_failed's job)."""
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    with pytest.raises(ValueError):
+        store.mark_message_send_blocked(assistant.id)
+
+    system = store.append_message(
+        session.id, role=ConsoleMessageRole.SYSTEM, content="note"
+    )
+    with pytest.raises(ValueError):
+        store.mark_message_send_blocked(system.id)
+
+
 def test_store_persists_chat_when_sync_enqueue_fails():
     persistence = FakePersistence()
     store = ConsoleChatStore(

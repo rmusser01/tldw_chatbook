@@ -428,9 +428,18 @@ class ConsoleChatController:
         self._set_run_state(
             ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
         )
-        resolution = await self.provider_gateway.resolve_for_send(
-            self._provider_selection()
-        )
+        try:
+            resolution = await self.provider_gateway.resolve_for_send(
+                self._provider_selection()
+            )
+        except BaseException:
+            # A readiness probe that raises or is cancelled AFTER the optimistic
+            # USER echo must still fail that row — otherwise a never-sent USER
+            # message leaks into the NEXT send's provider context (`skip_failed`
+            # only drops "failed" rows). Fail it, then re-raise so the caller
+            # still sees the probe failure.
+            self.store.mark_message_send_blocked(echoed_user.id)
+            raise
         if not getattr(resolution, "ready", False):
             visible_copy = self._blocked_visible_copy(
                 getattr(resolution, "visible_copy", "")

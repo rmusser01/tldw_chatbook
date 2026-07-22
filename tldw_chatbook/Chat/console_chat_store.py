@@ -886,12 +886,29 @@ class ConsoleChatStore:
         never-streamed rows (a USER echo rejected before any provider send).
 
         Args:
-            message_id: Id of the never-streamed row to fail.
+            message_id: Id of the never-streamed USER echo row to fail.
 
         Returns:
             A snapshot of the failed message.
+
+        Raises:
+            ValueError: If the row is not a USER echo, or is mid-stream. The
+                optimistic echo is always a USER row; rejecting other roles /
+                stream states stops a mistaken caller from flipping an
+                assistant/system or in-flight row to ``"failed"`` and bypassing
+                the assistant terminal-state guards (``mark_message_failed``).
         """
         message = self._message_or_raise(message_id)
+        if message.role is not ConsoleMessageRole.USER:
+            raise ValueError(
+                "mark_message_send_blocked only fails a never-streamed USER echo "
+                "row; assistant stream terminals use mark_message_failed."
+            )
+        if message.status in {"pending", "streaming"}:
+            raise ValueError(
+                "mark_message_send_blocked expects a never-streamed row, "
+                "not one that is mid-stream."
+            )
         message.status = "failed"
         self._persist_existing_message(message)
         return self._snapshot(message)

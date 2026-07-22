@@ -43,6 +43,11 @@ class BlockedGateway:
         )()
 
 
+class RaisingProbeGateway:
+    async def resolve_for_send(self, selection):
+        raise RuntimeError("probe boom")
+
+
 class StreamingGateway:
     async def resolve_for_send(self, selection):
         return type(
@@ -343,6 +348,26 @@ async def test_not_ready_provider_still_echoes_the_user_message():
     # context, and the draft is preserved for a re-attempt.
     assert messages[0].status == "failed"
     assert result.should_clear_draft is False
+
+
+@pytest.mark.asyncio
+async def test_probe_exception_after_optimistic_echo_marks_row_blocked():
+    """TASK-457(a) (Qodo #777 review): if the readiness probe raises (or is
+    cancelled) after the optimistic USER echo, the echoed row must still be
+    failed so a never-sent message cannot leak into the next send's provider
+    context (skip_failed only drops failed rows). The error still propagates."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=RaisingProbeGateway()
+    )
+
+    with pytest.raises(RuntimeError):
+        await controller.submit_draft("hello")
+
+    messages = store.messages_for_session(store.active_session_id)
+    assert [message.role.value for message in messages] == ["user"]
+    assert messages[0].content == "hello"
+    assert messages[0].status == "failed"
 
 
 @pytest.mark.asyncio

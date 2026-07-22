@@ -106,4 +106,14 @@ existing `..._exclude_visible_recovery...` proves context exclusion; message-bod
 + message-action tests for the clean rendering; 274 Chat-suite + full native-flow
 (188) green. Value note: resolve is 24ms warm, so this mainly helps a genuinely
 cold provider startup. (b) rail loading feedback remains.
+
+Hardened per Qodo #777 review: (1) the readiness probe is now wrapped so a
+probe that RAISES or is cancelled after the optimistic echo also marks the row
+send-blocked (then re-raises) — otherwise a never-sent USER row would leak into
+the next send's context; (2) `mark_message_send_blocked` now rejects non-USER
+and mid-stream rows (USER echo only), so a mistaken caller cannot flip an
+assistant/system row to `"failed"` and bypass the assistant terminal guards.
+Both covered by new RED→GREEN tests (`..._rejects_non_user_rows`,
+`test_probe_exception_after_optimistic_echo_marks_row_blocked`); 276 Chat-suite
+green.
 <!-- SECTION:NOTES:END -->
