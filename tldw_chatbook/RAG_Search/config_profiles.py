@@ -525,7 +525,7 @@ class ConfigProfileManager:
                     # builtin id. Never let it win: reassign to a unique id
                     # and self-heal the on-disk file so this can't recur.
                     old_id = profile.id
-                    profile.id = self._unique_id(profile.id)
+                    profile.id = self._unique_id_reserving_disk(profile.id)
                     self._save_one(profile)
                     if path.exists():
                         path.unlink()
@@ -552,7 +552,7 @@ class ConfigProfileManager:
                 if existing is not None and existing.read_only:
                     # Never let a migrated user profile shadow a read-only
                     # builtin id -- write it to a uniquified file instead.
-                    profile.id = self._unique_id(profile.id)
+                    profile.id = self._unique_id_reserving_disk(profile.id)
                 target = self._profile_path(profile.id)
                 if not target.exists():  # never clobber an existing per-file profile
                     with open(target, "w") as out:
@@ -573,6 +573,15 @@ class ConfigProfileManager:
     def _unique_id(self, base_slug: str) -> str:
         candidate, n = base_slug, 2
         while candidate in self._profiles:
+            candidate = f"{base_slug}_{n}"
+            n += 1
+        return candidate
+
+    def _unique_id_reserving_disk(self, base_slug: str) -> str:
+        """Like _unique_id but also avoids ids whose file already exists on disk
+        (the in-memory dict is only partially populated during load)."""
+        candidate, n = base_slug, 2
+        while candidate in self._profiles or self._profile_path(candidate).exists():
             candidate = f"{base_slug}_{n}"
             n += 1
         return candidate
