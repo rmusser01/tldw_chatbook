@@ -41,8 +41,16 @@ def create_rag_service(
         if not profile:
             # Ultimate fallback - create minimal config
             logger.warning("No profiles available, creating minimal configuration")
+            fallback_config = config or RAGConfig()
+            # Adopt a pre-fingerprint 'default' collection on this path too, so
+            # the (unreachable-in-practice) no-profiles fallback still preserves
+            # an existing index instead of opening an empty fingerprinted one.
+            try:
+                maybe_adopt_legacy_collection(fallback_config)
+            except Exception as e:  # never block service creation on migration
+                logger.debug(f"Legacy collection adoption skipped: {e}")
             return EnhancedRAGServiceV2(
-                config=config or RAGConfig(),
+                config=fallback_config,
                 enable_parent_retrieval=False,
                 enable_reranking=False,
                 enable_parallel_processing=False,

@@ -296,8 +296,10 @@ class ChromaVectorStore:
             self._collection = self.client.get_or_create_collection(
                 name=self.collection_name,
                 metadata={
-                    "hnsw:space": metric_map.get(self.distance_metric, "cosine"),
                     **self.collection_metadata,
+                    # hnsw:space is index-determining — keep it LAST so a stray
+                    # collection_metadata key can never override the real metric.
+                    "hnsw:space": metric_map.get(self.distance_metric, "cosine"),
                 },
             )
             logger.info(f"Using collection: {self.collection_name}")
