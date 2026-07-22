@@ -16,11 +16,13 @@ from typing import Any, Dict, List
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Input, Label, Static, TextArea
+from textual.timer import Timer
+from textual.widgets import Button, DataTable, Input, Label, Static, TextArea
 
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from .personas_pane_messages import (
     CharacterEditorCancelled,
+    CharacterImageRemoveRequested,
     CharacterImageUploadRequested,
     CharacterSaveRequested,
     EditorContentChanged,
@@ -73,7 +75,12 @@ class PersonasCharacterEditorWidget(Container):
         height: 2;
     }
 
-    PersonasCharacterEditorWidget #personas-char-editor-alt-greetings {
+    PersonasCharacterEditorWidget #personas-char-editor-greetings-table {
+        min-height: 4;
+        max-height: 8;
+    }
+
+    PersonasCharacterEditorWidget #personas-char-editor-greeting-edit {
         height: 3;
     }
 
@@ -87,7 +94,7 @@ class PersonasCharacterEditorWidget(Container):
     }
 
     PersonasCharacterEditorWidget #personas-char-editor-avatar-row {
-        height: 1;
+        height: auto;
         min-height: 1;
         padding: 0 1;
     }
@@ -97,13 +104,24 @@ class PersonasCharacterEditorWidget(Container):
         margin-right: 2;
     }
 
-    PersonasCharacterEditorWidget #personas-char-editor-avatar-upload {
+    PersonasCharacterEditorWidget #personas-char-editor-avatar-upload,
+    PersonasCharacterEditorWidget #personas-char-editor-avatar-remove {
         width: auto;
         min-width: 0;
         height: 1;
         min-height: 1;
         padding: 0 1;
         border: none;
+    }
+
+    /* A compact editor thumbnail box - smaller than the 80x40 chat
+       transcript image box, since this is a single always-visible avatar
+       preview rather than a scrolling message history. */
+    PersonasCharacterEditorWidget #personas-char-editor-avatar-thumb {
+        height: 10;
+        max-width: 24;
+        max-height: 10;
+        padding: 0 1;
     }
 
     PersonasCharacterEditorWidget .ds-toolbar {
@@ -120,7 +138,22 @@ class PersonasCharacterEditorWidget(Container):
         border: none;
         margin-right: 1;
     }
+
+    /* Live per-field validation (Roleplay P3b Task 4): a literal color, not
+       a $ds-* token - DEFAULT_CSS must resolve in bare-App test harnesses
+       that never load the app stylesheet. */
+    PersonasCharacterEditorWidget .is-invalid {
+        border: round red;
+    }
     """
+
+    #: CSS class toggled on an offending error-level field's enclosing row
+    #: by ``_run_validation``.
+    _FIELD_ERROR_CLASS = "is-invalid"
+    #: Delay before a field-change-triggered validation pass runs, matching
+    #: the library search debounce (``PERSONAS_SEARCH_DEBOUNCE_SECONDS`` in
+    #: personas_screen.py).
+    _VALIDATION_DEBOUNCE_SECONDS = 0.2
 
     def __init__(self, **kwargs: Any) -> None:
         kwargs.setdefault("id", "ccp-character-editor-view")
@@ -129,12 +162,13 @@ class PersonasCharacterEditorWidget(Container):
         # id/version (and any keys the form does not edit, e.g.
         # character_book) survive a load -> save round trip.
         self._character_data: Dict[str, Any] = {}
-        # Greeting fidelity: the loaded greetings list and its joined TextArea
-        # form. An untouched save must return the original list verbatim —
-        # re-splitting the joined text would corrupt any greeting that itself
-        # contains newlines (one multi-paragraph greeting becomes N greetings).
-        self._loaded_greetings: List[str] = []
-        self._loaded_greetings_text: str = ""
+        # Alternate greetings: a real list editor (DataTable + scratch edit
+        # TextArea), not a newline-joined blob. Each greeting is a discrete
+        # str mutated in place via _greetings_add/_update/_delete/_move, so a
+        # greeting containing embedded newlines round-trips byte-identical —
+        # there is no join/split step to corrupt it.
+        self._greetings: List[str] = []
+        self._selected_greeting_index: int | None = None
         # Dirty tracking (UX-E3): ``_loading`` suppresses Changed events that
         # are dispatched while a programmatic population is in progress;
         # ``_loaded_snapshot`` is the authoritative suppressor for the ones
@@ -145,6 +179,15 @@ class PersonasCharacterEditorWidget(Container):
         self._loading: bool = False
         self._loaded_snapshot: tuple | None = None
         self._dirty_posted: bool = False
+        # Live validation (Roleplay P3b Task 4): the pending debounce timer
+        # scheduled by _field_changed, cancelled and re-armed on every real
+        # field change so only the last edit in a typing burst validates.
+        self._validation_timer: Timer | None = None
+        # Fix-wave gate: a freshly-opened form (load_character/new_character)
+        # must not display validation errors before the user has actually
+        # interacted with it. Set True on a genuine field edit, an avatar
+        # action, a greeting mutation, or a Save click; reset on every load.
+        self._user_touched: bool = False
 
     def compose(self) -> ComposeResult:
         yield Static("Character Editor", classes="destination-section")
@@ -172,6 +215,12 @@ class PersonasCharacterEditorWidget(Container):
                 classes="console-action-subdued",
             )
             with Vertical(id="personas-char-editor-advanced"):
+                # Long-form content fields first (grouped with the alternate-
+                # greetings list editor, itself content), then the short
+                # single-line bookkeeping inputs (Creator/Version/Tags) as a
+                # trailing cluster - keeps similar-weight widgets together
+                # rather than sandwiching the DataTable+toolbar list editor
+                # between unrelated one-line Inputs (Roleplay P3b Task 5).
                 with Vertical(classes="ds-field-row"):
                     yield Label("Scenario")
                     yield TextArea(id="personas-char-editor-scenario")
@@ -181,6 +230,38 @@ class PersonasCharacterEditorWidget(Container):
                 with Vertical(classes="ds-field-row"):
                     yield Label("Creator notes")
                     yield TextArea(id="personas-char-editor-creator-notes")
+                with Vertical(classes="ds-field-row"):
+                    yield Label("Alternate greetings")
+                    yield DataTable(
+                        id="personas-char-editor-greetings-table", cursor_type="row"
+                    )
+                    yield TextArea(id="personas-char-editor-greeting-edit")
+                    with Horizontal(classes="ds-toolbar"):
+                        yield Button(
+                            "Add",
+                            id="personas-char-editor-greeting-add",
+                            classes="console-action-subdued",
+                        )
+                        yield Button(
+                            "Update",
+                            id="personas-char-editor-greeting-update",
+                            classes="console-action-subdued",
+                        )
+                        yield Button(
+                            "Delete",
+                            id="personas-char-editor-greeting-delete",
+                            classes="console-action-subdued",
+                        )
+                        yield Button(
+                            "Move up",
+                            id="personas-char-editor-greeting-move-up",
+                            classes="console-action-subdued",
+                        )
+                        yield Button(
+                            "Move down",
+                            id="personas-char-editor-greeting-move-down",
+                            classes="console-action-subdued",
+                        )
                 with Vertical(classes="ds-field-row"):
                     yield Label("Creator")
                     yield Input(
@@ -194,9 +275,6 @@ class PersonasCharacterEditorWidget(Container):
                     yield Input(
                         id="personas-char-editor-tags", placeholder="tag, another tag"
                     )
-                with Vertical(classes="ds-field-row"):
-                    yield Label("Alternate greetings (one per line)")
-                    yield TextArea(id="personas-char-editor-alt-greetings")
             with Horizontal(id="personas-char-editor-avatar-row"):
                 yield Static("Avatar: none", id="personas-char-editor-avatar-status")
                 yield Button(
@@ -204,6 +282,12 @@ class PersonasCharacterEditorWidget(Container):
                     id="personas-char-editor-avatar-upload",
                     classes="console-action-subdued",
                 )
+                yield Button(
+                    "Remove",
+                    id="personas-char-editor-avatar-remove",
+                    classes="console-action-subdued",
+                )
+            yield Container(id="personas-char-editor-avatar-thumb")
         yield Static("", id="personas-char-editor-validation")
         with Horizontal(classes="ds-toolbar"):
             yield Button(
@@ -214,6 +298,12 @@ class PersonasCharacterEditorWidget(Container):
                 id="personas-char-editor-cancel",
                 classes="console-action-secondary",
             )
+
+    def on_mount(self) -> None:
+        """Register the alternate-greetings table's single column."""
+        self.query_one(
+            "#personas-char-editor-greetings-table", DataTable
+        ).add_column("Greeting", key="g")
 
     # ===== Field accessors =====
 
@@ -238,6 +328,28 @@ class PersonasCharacterEditorWidget(Container):
         # the just-populated form) and ignores events that match it.
         self._loaded_snapshot = self._form_snapshot()
         self._dirty_posted = False
+        self._user_touched = False
+
+    def mark_saved(self, record: Dict[str, Any]) -> None:
+        """Re-baseline dirty state to a just-persisted record (save-in-place).
+
+        Adopts the saved record as the new base (so the next Save carries the
+        new ``version`` and any DB-normalized keys), rebaselines the greetings
+        list, resets the dirty snapshot from the CURRENT form (which already
+        shows the saved values), and clears validation. Does NOT repopulate
+        the form - the user's saved edits stay on screen.
+
+        Args:
+            record: The just-persisted character record (carries the
+                incremented optimistic-lock ``version``).
+        """
+        self._character_data = dict(record or {})
+        self._greetings = [
+            str(g) for g in (self._character_data.get("alternate_greetings") or [])
+        ]
+        self._loaded_snapshot = self._form_snapshot()
+        self._dirty_posted = False
+        self.query_one("#personas-char-editor-validation", Static).update("")
 
     def _populate_form(self, data: Dict[str, Any]) -> None:
         self._character_data = dict(data or {})
@@ -263,13 +375,20 @@ class PersonasCharacterEditorWidget(Container):
         self._input("tags").value = ", ".join(
             str(tag) for tag in (record.get("tags") or [])
         )
-        self._loaded_greetings = [
+        self._greetings = [
             str(greeting) for greeting in (record.get("alternate_greetings") or [])
         ]
-        self._loaded_greetings_text = "\n".join(self._loaded_greetings)
-        self._area("alt-greetings").text = self._loaded_greetings_text
+        self._selected_greeting_index = None
+        self.query_one("#personas-char-editor-greeting-edit", TextArea).text = ""
+        self._render_greetings_table()
         self._set_avatar_status_from_record()
         self.query_one("#personas-char-editor-validation", Static).update("")
+        # Clear any stale per-field invalid marks left by a prior session: if
+        # the reopened record's values are byte-identical to what's already
+        # displayed, no Changed event fires and _run_validation never runs to
+        # self-heal a previously-marked row (Roleplay P3b review fix).
+        for fid in self._validated_field_ids():
+            self.query_one(f"#{fid}").parent.remove_class(self._FIELD_ERROR_CLASS)
         self._set_advanced_open(False)
 
     def new_character(self) -> None:
@@ -290,6 +409,133 @@ class PersonasCharacterEditorWidget(Container):
         self._character_data["image"] = image_data
         self._set_avatar_status_from_record()
         self._mark_dirty()
+        # A discrete user action (upload flow) - validate immediately, no
+        # debounce needed, so an oversized avatar's error appears at once.
+        self._user_touched = True
+        self._run_validation()
+
+    def current_avatar_bytes(self) -> bytes | None:
+        """Return the loaded record's embedded avatar bytes, if any.
+
+        Returns:
+            The ``image`` key's bytes, or ``None`` when absent or not a
+            bytes-like value (e.g. the legacy ``avatar`` URL/path string,
+            which this editor does not decode as an image).
+        """
+        data = self._character_data.get("image")
+        return data if isinstance(data, (bytes, bytearray)) else None
+
+    def set_avatar_thumbnail(self, renderable: object | None) -> None:
+        """Mount a prepared avatar renderable, or clear to the text status.
+
+        The screen owns decoding (off-thread, via ``ConsoleImageRenderCache``)
+        and passes the finished renderable here; this method only mounts it -
+        a rich renderable (e.g. ``rich_pixels.Pixels``) mounts inside a
+        ``Static``, while a Textual widget (e.g. a ``textual_image`` graphics
+        ``Image``) mounts directly.
+
+        Args:
+            renderable: The prepared renderable to display, or ``None`` to
+                clear the thumbnail (leaving the text status as the sole
+                avatar indicator).
+        """
+        holder = self.query_one("#personas-char-editor-avatar-thumb", Container)
+        holder.remove_children()
+        if renderable is None:
+            return
+        from textual.widget import Widget as _W
+        from textual.widgets import Static as _S
+
+        holder.mount(renderable if isinstance(renderable, _W) else _S(renderable))
+
+    def validate(self) -> list[tuple[str, str, str]]:
+        """Live per-field checks: name required, oversized avatar, blank greetings.
+
+        Returns:
+            ``(field_id, message, level)`` tuples, ``level`` in
+            ``{"error", "warning"}``. Errors block Save (see
+            ``_save_pressed``); warnings are informational only and never
+            mark a row invalid.
+        """
+        findings: list[tuple[str, str, str]] = []
+        if not self._input("name").value.strip():
+            findings.append(("personas-char-editor-name", "required", "error"))
+        avatar_bytes = self.current_avatar_bytes()
+        if avatar_bytes is not None:
+            # Local import: this widget module is itself imported by
+            # personas_screen at module-load time, so a top-level import of
+            # its constants back here would deadlock as a circular import.
+            from ...UI.Screens.personas_screen import (
+                PERSONAS_AVATAR_MAX_BYTES,
+                PERSONAS_AVATAR_MAX_SIZE_COPY,
+            )
+
+            if len(avatar_bytes) > PERSONAS_AVATAR_MAX_BYTES:
+                findings.append(
+                    (
+                        "personas-char-editor-avatar-status",
+                        f"image exceeds {PERSONAS_AVATAR_MAX_SIZE_COPY}",
+                        "error",
+                    )
+                )
+        for index, greeting in enumerate(self._greetings, start=1):
+            if not greeting.strip():
+                findings.append(
+                    (
+                        "personas-char-editor-greetings-table",
+                        f"greeting {index} is blank",
+                        "warning",
+                    )
+                )
+        return findings
+
+    def _validated_field_ids(self) -> set[str]:
+        """Field ids ``validate()`` can flag at ``error`` level.
+
+        Only these are reconciled (marked/un-marked) by ``_run_validation``;
+        greetings are warning-only and never toggle ``.is-invalid``.
+        """
+        return {"personas-char-editor-name", "personas-char-editor-avatar-status"}
+
+    def _run_validation(self) -> list[tuple[str, str, str]]:
+        """Compute findings, mark/un-mark offending rows, render the footer.
+
+        Runs debounced on field change (``_schedule_validation``, wired into
+        ``_field_changed``) and directly off discrete actions (avatar
+        upload/remove, greeting mutations) and authoritatively at Save
+        (``_save_pressed``), which blocks when any finding is
+        ``level == "error"``.
+
+        Display is gated on ``_user_touched``: a freshly-opened form
+        (``load_character``/``new_character``) must not show errors before
+        the user has actually interacted with it, so while untouched no row
+        is marked invalid and the footer stays clear.
+
+        Returns:
+            The findings actually rendered - empty when gated by
+            ``_user_touched`` (not the raw ``validate()`` output, since
+            nothing was displayed in that case).
+        """
+        if not self._user_touched:
+            for fid in self._validated_field_ids():
+                self.query_one(f"#{fid}").parent.remove_class(self._FIELD_ERROR_CLASS)
+            self.show_validation(())
+            return []
+        findings = self.validate()
+        invalid_ids = {fid for fid, _msg, level in findings if level == "error"}
+        for fid in self._validated_field_ids():
+            row = self.query_one(f"#{fid}").parent
+            row.set_class(fid in invalid_ids, self._FIELD_ERROR_CLASS)
+        self.show_validation(tuple(f"{fid}: {msg}" for fid, msg, _level in findings))
+        return findings
+
+    def _schedule_validation(self) -> None:
+        """Debounce ``_run_validation`` so a burst of typing validates once."""
+        if self._validation_timer is not None:
+            self._validation_timer.stop()
+        self._validation_timer = self.set_timer(
+            self._VALIDATION_DEBOUNCE_SECONDS, self._run_validation
+        )
 
     def show_validation(self, errors: tuple[str, ...]) -> None:
         """Render screen-side validation errors in the editor footer.
@@ -330,18 +576,10 @@ class PersonasCharacterEditorWidget(Container):
         # Empty/whitespace Version falls back to the new_character default.
         version = self._input("version").value
         data["character_version"] = version if version.strip() else "1.0"
-        # Greeting fidelity rule: if the TextArea text is exactly the joined
-        # form of the loaded list, the user did not edit it — return the
-        # ORIGINAL list verbatim so multi-line greetings survive the round
-        # trip. Only when the text was edited do we re-parse one greeting per
-        # non-blank line.
-        greetings_text = self._area("alt-greetings").text
-        if greetings_text == self._loaded_greetings_text:
-            data["alternate_greetings"] = list(self._loaded_greetings)
-        else:
-            data["alternate_greetings"] = [
-                line.strip() for line in greetings_text.splitlines() if line.strip()
-            ]
+        # Each greeting is a discrete list entry (never blob-joined/split), so
+        # this is always the exact, byte-identical list - including any
+        # embedded newlines within a single greeting.
+        data["alternate_greetings"] = list(self._greetings)
         data["tags"] = [
             tag.strip() for tag in self._input("tags").value.split(",") if tag.strip()
         ]
@@ -402,7 +640,7 @@ class PersonasCharacterEditorWidget(Container):
             self._input("creator").value,
             self._input("version").value,
             self._input("tags").value,
-            self._area("alt-greetings").text,
+            tuple(self._greetings),
         )
 
     def _set_advanced_open(self, open_: bool) -> None:
@@ -428,6 +666,96 @@ class PersonasCharacterEditorWidget(Container):
         self._dirty_posted = True
         self.post_message(EditorContentChanged())
 
+    # ===== Alternate greetings (widget-local list editor) =====
+
+    @staticmethod
+    def _greeting_preview(text: str) -> str:
+        """First-line, truncated preview for the greetings table row."""
+        first = (text or "").splitlines()[0] if text else ""
+        return (first[:60] + "…") if len(first) > 60 or "\n" in (text or "") else first
+
+    def _render_greetings_table(self) -> None:
+        table = self.query_one("#personas-char-editor-greetings-table", DataTable)
+        table.clear()
+        for i, greeting in enumerate(self._greetings):
+            table.add_row(self._greeting_preview(greeting), key=str(i))
+
+    def _load_greeting_into_edit(self, index: int) -> None:
+        if 0 <= index < len(self._greetings):
+            self.query_one(
+                "#personas-char-editor-greeting-edit", TextArea
+            ).text = self._greetings[index]
+
+    def _select_greeting_row(self, index: int) -> None:
+        """Move the table cursor to ``index`` after a mutation's re-render.
+
+        ``_render_greetings_table`` clears and rebuilds the table, which
+        resets DataTable's own cursor to row 0 and posts an async
+        ``RowHighlighted(row=0)`` that would otherwise clobber the intended
+        selection once the message queue drains. Explicitly re-issuing
+        ``move_cursor`` here posts a second, later message that wins.
+        """
+        if 0 <= index < len(self._greetings):
+            self.query_one(
+                "#personas-char-editor-greetings-table", DataTable
+            ).move_cursor(row=index)
+
+    def _greetings_add(self, text: str = "") -> None:
+        self._greetings.append(text)
+        self._render_greetings_table()
+        self._mark_dirty()
+        # A discrete user action (Add button) - validate immediately, no
+        # debounce, so a blank-greeting warning appears at once.
+        self._user_touched = True
+        self._run_validation()
+
+    def _greetings_update(self, index: int, text: str) -> None:
+        if 0 <= index < len(self._greetings):
+            self._greetings[index] = text
+            self._render_greetings_table()
+            # Same race as Add/Move: re-render resets the DataTable cursor and
+            # queues an async RowHighlighted(row=0). Re-select the row that was
+            # actually updated so the edit box keeps showing it (not row 0's
+            # text), and so a follow-up Update commits to the right entry.
+            self._select_greeting_row(index)
+            self._mark_dirty()
+            self._user_touched = True
+            self._run_validation()
+
+    def _greetings_delete(self, index: int) -> None:
+        if 0 <= index < len(self._greetings):
+            del self._greetings[index]
+            self._render_greetings_table()
+            if self._greetings:
+                # Select the surviving neighbor at the same position (or the
+                # new last row if we deleted the tail) so the async
+                # RowHighlighted(row=0) queued by the re-render above doesn't
+                # silently revert the selection/edit box to row 0.
+                new_index = min(index, len(self._greetings) - 1)
+                self._select_greeting_row(new_index)
+            else:
+                # No rows left means no async RowHighlighted will ever fire to
+                # clobber this, so it's safe to set the empty state directly.
+                self._selected_greeting_index = None
+                self.query_one(
+                    "#personas-char-editor-greeting-edit", TextArea
+                ).text = ""
+            self._mark_dirty()
+            self._user_touched = True
+            self._run_validation()
+
+    def _greetings_move(self, index: int, offset: int) -> None:
+        j = index + offset
+        if 0 <= index < len(self._greetings) and 0 <= j < len(self._greetings):
+            self._greetings[index], self._greetings[j] = (
+                self._greetings[j],
+                self._greetings[index],
+            )
+            self._render_greetings_table()
+            self._mark_dirty()
+            self._user_touched = True
+            self._run_validation()
+
     # ===== Events =====
 
     @on(Input.Changed)
@@ -435,7 +763,13 @@ class PersonasCharacterEditorWidget(Container):
     def _field_changed(self, event: Input.Changed | TextArea.Changed) -> None:
         """Announce the first real user modification of the session.
 
-        All Inputs/TextAreas that bubble here are this editor's own fields.
+        All Inputs/TextAreas that bubble here are this editor's own fields,
+        EXCEPT the alternate-greetings edit TextArea: that one is a scratch
+        field for staging a single greeting's text (populated on row
+        selection, committed via the Add/Update buttons which call
+        ``_mark_dirty`` directly) and must not itself feed dirty detection -
+        merely selecting a row would otherwise spuriously dirty the editor.
+
         Programmatic population also fires Changed; those events either land
         while ``_loading`` is set or (the usual case, since Textual posts them
         asynchronously) after ``load_character`` returned, where the snapshot
@@ -443,11 +777,89 @@ class PersonasCharacterEditorWidget(Container):
         loaded. Paste and undo also fire Changed, so the comparison covers
         them too.
         """
+        if (
+            isinstance(event, TextArea.Changed)
+            and event.text_area.id == "personas-char-editor-greeting-edit"
+        ):
+            return
+        # Same condition _mark_dirty ultimately gates on (minus _dirty_posted,
+        # which only suppresses the once-per-session announcement, not the
+        # touched flag): a genuine edit, not the programmatic-population
+        # Changed events load_character/new_character trigger.
+        if (
+            not self._loading
+            and self._loaded_snapshot is not None
+            and self._form_snapshot() != self._loaded_snapshot
+        ):
+            self._user_touched = True
+        self._schedule_validation()
         if self._loading or self._dirty_posted or self._loaded_snapshot is None:
             return
         if self._form_snapshot() == self._loaded_snapshot:
             return
         self._mark_dirty()
+
+    @on(DataTable.RowSelected, "#personas-char-editor-greetings-table")
+    def _greeting_row_selected(self, event: DataTable.RowSelected) -> None:
+        event.stop()
+        if event.row_key is not None and event.row_key.value is not None:
+            self._selected_greeting_index = int(event.row_key.value)
+            self._load_greeting_into_edit(self._selected_greeting_index)
+
+    @on(DataTable.RowHighlighted, "#personas-char-editor-greetings-table")
+    def _greeting_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        # Arrow-key navigation only fires RowHighlighted (not RowSelected), so
+        # without this the edit TextArea would silently keep stale content
+        # from a prior row while _selected_greeting_index tracks the cursor.
+        event.stop()
+        if event.row_key is not None and event.row_key.value is not None:
+            self._selected_greeting_index = int(event.row_key.value)
+            self._load_greeting_into_edit(self._selected_greeting_index)
+
+    @on(Button.Pressed, "#personas-char-editor-greeting-add")
+    def _greeting_add_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        text = self.query_one("#personas-char-editor-greeting-edit", TextArea).text
+        self._greetings_add(text)
+        self._select_greeting_row(len(self._greetings) - 1)
+
+    @on(Button.Pressed, "#personas-char-editor-greeting-update")
+    def _greeting_update_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._selected_greeting_index is None:
+            return
+        text = self.query_one("#personas-char-editor-greeting-edit", TextArea).text
+        self._greetings_update(self._selected_greeting_index, text)
+
+    @on(Button.Pressed, "#personas-char-editor-greeting-delete")
+    def _greeting_delete_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._selected_greeting_index is None:
+            return
+        # _greetings_delete now selects the surviving neighbor (or clears the
+        # edit box if the list is empty) itself, so it must not be
+        # unconditionally overwritten here afterward.
+        self._greetings_delete(self._selected_greeting_index)
+
+    @on(Button.Pressed, "#personas-char-editor-greeting-move-up")
+    def _greeting_move_up_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._selected_greeting_index is None:
+            return
+        target = self._selected_greeting_index - 1
+        if 0 <= target < len(self._greetings):
+            self._greetings_move(self._selected_greeting_index, -1)
+            self._select_greeting_row(target)
+
+    @on(Button.Pressed, "#personas-char-editor-greeting-move-down")
+    def _greeting_move_down_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._selected_greeting_index is None:
+            return
+        target = self._selected_greeting_index + 1
+        if 0 <= target < len(self._greetings):
+            self._greetings_move(self._selected_greeting_index, 1)
+            self._select_greeting_row(target)
 
     @on(Button.Pressed, "#personas-char-editor-advanced-toggle")
     def _toggle_advanced(self, event: Button.Pressed) -> None:
@@ -461,14 +873,20 @@ class PersonasCharacterEditorWidget(Container):
         event.stop()
         self.post_message(CharacterImageUploadRequested())
 
+    @on(Button.Pressed, "#personas-char-editor-avatar-remove")
+    def _remove_avatar_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(CharacterImageRemoveRequested())
+
     @on(Button.Pressed, "#personas-char-editor-save")
     def _save_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        validation = self.query_one("#personas-char-editor-validation", Static)
-        if not self._input("name").value.strip():
-            validation.update("Validation errors:\nname: required")
+        # Save is itself a user action: authoritatively validate even an
+        # untouched blank form (clicking Save with nothing else edited must
+        # still block + mark the offending field).
+        self._user_touched = True
+        if any(level == "error" for _fid, _msg, level in self._run_validation()):
             return
-        validation.update("")
         self.post_message(CharacterSaveRequested(self.get_character_data()))
 
     @on(Button.Pressed, "#personas-char-editor-cancel")

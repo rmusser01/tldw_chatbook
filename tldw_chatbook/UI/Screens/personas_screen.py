@@ -80,6 +80,7 @@ from ...Widgets.Persona_Widgets.personas_messages import (
 from ...Widgets.Persona_Widgets.tag_filter_picker import TagFilterPicker
 from ...Widgets.Persona_Widgets.personas_pane_messages import (
     CharacterEditorCancelled,
+    CharacterImageRemoveRequested,
     CharacterImageUploadRequested,
     CharacterSaveRequested,
     ConversationRowSelected,
@@ -201,6 +202,12 @@ PERSONAS_AVATAR_MAX_BYTES = 5 * 1024 * 1024
 PERSONAS_AVATAR_MAX_SIZE_COPY = "5 MB"
 PERSONAS_DICTIONARY_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 PERSONAS_WORLDBOOK_IMPORT_MAX_BYTES = 10 * 1024 * 1024
+
+# Character editor avatar thumbnail box, in character cells. Must stay in
+# sync with #personas-char-editor-avatar-thumb's CSS max-width/max-height in
+# personas_character_editor_widget.py - change one, change both.
+AVATAR_THUMB_COLS = 24
+AVATAR_THUMB_LINES = 10
 
 # 80-column terminals need a tighter three-pane split than the default
 # 2:4:2 workbench minimums. Keep this screen-owned so a later rail-collapse
@@ -485,6 +492,10 @@ class PersonasScreen(BaseAppScreen):
         self._delete_dialog_active: bool = False
         self._character_editor_generation: int = 0
         self._profile_save_inflight: bool = False
+        # Mirrors _profile_save_inflight for the character editor: guards
+        # against a re-entrant Save (double-click/Ctrl+S) while an earlier
+        # save for this session is still persisting.
+        self._character_save_inflight: bool = False
         # ``_characters`` now holds only the CURRENT page of the library, not
         # the whole (capped) list; ``_character_total`` is the full-library
         # count for the active (search, tag) filter, cached under
@@ -3443,9 +3454,16 @@ class PersonasScreen(BaseAppScreen):
         self._character_editor_generation += 1
         self._edit_mode = "create"
         self.state.clear_selection()
+        # A new session starts unclaimed - re-arms the save-in-place dedup
+        # guard (see _handle_save_requested) even if the previous session
+        # ended on a successful save.
+        self._character_save_inflight = False
         # Change-based dirty tracking: the session starts clean; the editor
         # posts EditorContentChanged on the first real modification.
         self.query_one(PersonasCharacterEditorWidget).new_character()
+        # A new character never has an avatar, but a stale thumbnail from
+        # the previous editor session must not linger under the new one.
+        await self._render_character_editor_avatar()
         self._show_center("#ccp-character-editor-view")
         inspector = self.query_one(PersonasInspectorPane)
         # Create mode: the previous selection's identity (and conversation
@@ -3460,6 +3478,10 @@ class PersonasScreen(BaseAppScreen):
     async def _begin_create_profile(self) -> None:
         self._edit_mode = "create"
         self.state.clear_selection()
+        # A new session starts unclaimed - re-arms the save-in-place dedup
+        # guard (see _handle_profile_save_requested) even if the previous
+        # session ended on a successful save.
+        self._profile_save_inflight = False
         # Change-based dirty tracking: the session starts clean (see
         # _begin_create_character).
         self.query_one(PersonaProfileEditorWidget).new_persona()
@@ -3715,6 +3737,8 @@ class PersonasScreen(BaseAppScreen):
             return
         record = await self._fetch_profile_record(str(message.persona_id))
         self._edit_mode = "edit"
+        # A new session starts unclaimed (see _begin_create_profile).
+        self._profile_save_inflight = False
         # Change-based dirty tracking: the session starts clean; the editor
         # posts EditorContentChanged on the first real modification.
         self.query_one(PersonaProfileEditorWidget).load_persona(record)
@@ -3737,9 +3761,18 @@ class PersonasScreen(BaseAppScreen):
             return
         self._character_editor_generation += 1
         self._edit_mode = "edit"
+        # A new session starts unclaimed (see _begin_create_character).
+        self._character_save_inflight = False
         # Change-based dirty tracking: the session starts clean; the editor
         # posts EditorContentChanged on the first real modification.
         self.query_one(PersonasCharacterEditorWidget).load_character(record)
+        # Sync handler: dispatch the (async, off-thread-decoding) thumbnail
+        # render as a worker rather than awaiting it inline.
+        self.run_worker(
+            self._render_character_editor_avatar(),
+            group="personas-avatar-render",
+            exit_on_error=False,
+        )
         self._show_center("#ccp-character-editor-view")
         inspector = self.query_one(PersonasInspectorPane)
         inspector.set_unsaved(False)
@@ -3760,6 +3793,10 @@ class PersonasScreen(BaseAppScreen):
             # A stray Changed outside an editing session (e.g. racing a
             # save/cancel finisher) must not resurrect the dirty flag.
             return
+        # A genuinely new edit re-arms the save-in-place dedup guard (see
+        # _handle_profile_save_requested) - harmless no-op for a character
+        # edit, which does not use this flag.
+        self._profile_save_inflight = False
         if self.state.has_unsaved_changes:
             return
         self.state.has_unsaved_changes = True
@@ -3877,6 +3914,185 @@ class PersonasScreen(BaseAppScreen):
             self._notify(f"Avatar upload failed: {exc}", "error")
             return
         self._notify("Avatar staged. Save the character to persist it.", "information")
+        await self._render_character_editor_avatar()
+
+    async def _render_character_editor_avatar(self) -> None:
+        """Decode and mount the character editor's avatar thumbnail off-thread.
+
+        Also re-syncs the editor's text status Static (``_set_avatar_status_
+        from_record``), since the Remove path clears ``image`` directly
+        without going through ``set_avatar_image``. A session-token guard
+        drops a late render if a different editor session (a new
+        create/edit, a save-in-place, or a cancel) started while the decode
+        was in flight.
+        """
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except QueryError:
+            return
+        editor._set_avatar_status_from_record()
+        data = editor.current_avatar_bytes()
+        if not data:
+            editor.set_avatar_thumbnail(None)
+            return
+        token = self._character_editor_generation
+        from ...Chat.console_image_view import (
+            ConsoleImageRenderCache,
+            resolve_default_mode,
+        )
+
+        if getattr(self, "_avatar_render_cache", None) is None:
+            self._avatar_render_cache = ConsoleImageRenderCache()
+        cache = self._avatar_render_cache
+        # Accessor confirmed against chat_screen.py's own
+        # resolve_default_mode call site and this file's existing
+        # app_config reads (e.g. _provider_readiness_app_config): screen
+        # instances always carry a real app_instance (set in
+        # BaseAppScreen.__init__), so a plain getattr default is enough.
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        mode = resolve_default_mode(app_config)
+        # Per-session cache key: avoids one character's decode racing
+        # another's under the same slot if a second editor session opens
+        # before the first's off-thread decode finishes (the fixed-key
+        # alternative would let a slower A-session overwrite a faster
+        # B-session's cache entry after B's own token check already passed).
+        cache_key = f"char-editor-avatar-{token}"
+        try:
+            ok = await asyncio.to_thread(cache.prepare, cache_key, bytes(data))
+        except Exception:
+            logger.opt(exception=True).debug("Character avatar decode failed.")
+            ok = False
+        if token != self._character_editor_generation or not self.is_mounted:
+            return  # a different editor session started while decoding
+        renderable = None
+        if ok:
+            if mode == "graphics":
+                try:
+                    from textual_image.widget import Image as _GraphicsImage
+
+                    pil = cache.get_pil(cache_key)
+                    if pil is not None:
+                        renderable = _GraphicsImage(pil)
+                        # Fixed cell size (matches the thumb box CSS), not
+                        # just max-width/max-height: textual_image's "auto"
+                        # sizing resolves its render region from the parent
+                        # container's settled layout, and mounting a widget
+                        # at runtime (vs. compose-time) can paint one tick
+                        # before that settles, asking the renderer to scale
+                        # to a transient 0-width/height region - which PIL's
+                        # resize() raises on. A fixed size is resolvable
+                        # without waiting on parent layout, so it sidesteps
+                        # the race outright. Both dims must stay explicit
+                        # ints (not "auto") to avoid reintroducing that
+                        # crash, so the fit below is computed in cells
+                        # rather than left to the renderer.
+                        w_cells, h_cells = self._fit_avatar_cell_size(
+                            pil.width, pil.height
+                        )
+                        renderable.styles.width = w_cells
+                        renderable.styles.height = h_cells
+                except Exception:
+                    renderable = self._build_avatar_pixels(cache, cache_key)
+            else:
+                renderable = self._build_avatar_pixels(cache, cache_key)
+        editor.set_avatar_thumbnail(renderable)
+
+    @staticmethod
+    def _fit_avatar_cell_size(pixel_width: int, pixel_height: int) -> tuple[int, int]:
+        """Fit a PIL image's pixel size into the avatar thumb box, in cells.
+
+        Terminal cells are roughly twice as tall (in pixels) as they are
+        wide, so the image's aspect ratio is first converted from pixels to
+        "cell units" (halving the height) before fitting it into the
+        ``AVATAR_THUMB_COLS`` x ``AVATAR_THUMB_LINES`` box. Both returned
+        dimensions are explicit ints >= 1 - leaving either as "auto" is what
+        reintroduced the 0-size ``ValueError`` this rendering path already
+        works around (see the caller's comment).
+
+        Args:
+            pixel_width: Source image width in pixels.
+            pixel_height: Source image height in pixels.
+
+        Returns:
+            ``(width_cells, height_cells)``, each clamped to
+            ``[1, AVATAR_THUMB_COLS]`` / ``[1, AVATAR_THUMB_LINES]``.
+        """
+        if pixel_width <= 0 or pixel_height <= 0:
+            return AVATAR_THUMB_COLS, AVATAR_THUMB_LINES
+        # Aspect ratio expressed in cell units (width-cells : height-cells).
+        cell_aspect = pixel_width / (pixel_height / 2)
+        box_aspect = AVATAR_THUMB_COLS / AVATAR_THUMB_LINES
+        if cell_aspect >= box_aspect:
+            # Image is relatively wider than the box - fit to width.
+            w_cells = AVATAR_THUMB_COLS
+            h_cells = max(1, round(AVATAR_THUMB_COLS / cell_aspect))
+        else:
+            # Image is relatively taller than the box - fit to height.
+            h_cells = AVATAR_THUMB_LINES
+            w_cells = max(1, round(AVATAR_THUMB_LINES * cell_aspect))
+        w_cells = max(1, min(AVATAR_THUMB_COLS, w_cells))
+        h_cells = max(1, min(AVATAR_THUMB_LINES, h_cells))
+        return w_cells, h_cells
+
+    @staticmethod
+    def _build_avatar_pixels(cache: "ConsoleImageRenderCache", cache_key: str):
+        """Build a ``rich_pixels.Pixels`` sized to the avatar thumb box.
+
+        ``cache.get_pixels`` thumbnails to the 80x40 chat-transcript box,
+        which is far larger than the character editor's compact avatar
+        preview; reusing it produces an oversized Pixels grid that Rich does
+        not reflow, so the small thumb container just crops it to a
+        top-left sliver. This instead pulls the cached full-size PIL image
+        and thumbnails a private copy to the avatar box (in half-block
+        "pixel" units: one character column is ~1px wide, one character
+        line is ~2px tall).
+
+        Args:
+            cache: The render cache holding the decoded avatar image.
+            cache_key: The per-session cache key ``prepare`` was called with.
+
+        Returns:
+            A ``Pixels`` renderable fitted to the avatar box, or ``None``
+            when the image is not (or no longer) cached.
+        """
+        import rich_pixels
+
+        pil = cache.get_pil(cache_key)
+        if pil is None:
+            return None
+        thumb = pil.copy()
+        thumb.thumbnail((AVATAR_THUMB_COLS, AVATAR_THUMB_LINES * 2))
+        return rich_pixels.Pixels.from_image(thumb)
+
+    @on(CharacterImageRemoveRequested)
+    def _handle_character_image_remove(
+        self, message: CharacterImageRemoveRequested
+    ) -> None:
+        message.stop()
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except QueryError:
+            return
+        editor._character_data.pop("image", None)
+        editor._mark_dirty()
+        # A discrete user action (Remove button) - validate immediately, no
+        # debounce, so an avatar-oversize error clears at once on removal.
+        editor._user_touched = True
+        editor._run_validation()
+        # Bump the generation BEFORE dispatching this render (rather than
+        # relying on the render below to be the last word): an earlier
+        # in-flight render from before Remove was clicked shares this
+        # session's token and would otherwise complete afterwards and
+        # re-mount the just-removed image, visually undoing Remove. Bumping
+        # first makes that stale render's token mismatch (dropped), while
+        # this dispatch below captures the NEW token and correctly clears
+        # the thumbnail (image is now None).
+        self._character_editor_generation += 1
+        self.run_worker(
+            self._render_character_editor_avatar(),
+            group="personas-avatar-render",
+            exit_on_error=False,
+        )
 
     # ===== Import / export =====
     #
@@ -4760,6 +4976,14 @@ class PersonasScreen(BaseAppScreen):
     @on(CharacterSaveRequested)
     def _handle_save_requested(self, message: CharacterSaveRequested) -> None:
         message.stop()
+        if self._character_save_inflight:
+            # A save for this session is already persisting (re-entrant
+            # Save click / Ctrl+S); ignore the duplicate rather than firing
+            # a second redundant persist (mirrors _profile_save_inflight).
+            logger.debug(
+                "Character save already in flight; ignoring duplicate request."
+            )
+            return
         data = dict(message.character_data or {})
         errors = self._validate_character(data)
         # The editor footer is the single in-editor validation surface: the
@@ -4771,6 +4995,7 @@ class PersonasScreen(BaseAppScreen):
             # editing state instead of duplicating the error detail.
             self.query_one(PersonasInspectorPane).show_validation_editing()
             return
+        self._character_save_inflight = True
         # Snapshot UI-thread state here; the background persistence call must
         # not read mutable screen state.
         self._save_character_worker(
@@ -4798,6 +5023,9 @@ class PersonasScreen(BaseAppScreen):
         except Exception as exc:
             logger.opt(exception=True).error(f"Error saving character: {exc}")
             self._notify(f"Save failed: {exc}", "error")
+            # Allow an immediate retry - _after_character_save (the success
+            # path) resets this same flag itself.
+            self._character_save_inflight = False
             return
         await self._after_character_save(saved_id, str(data.get("name") or ""))
 
@@ -4807,7 +5035,11 @@ class PersonasScreen(BaseAppScreen):
         if not self.is_mounted or self.state.active_mode != "characters":
             # The save completed after the user left the screen or switched
             # modes; refresh the cached list but leave the selection,
-            # inspector, and center pane alone.
+            # inspector, and center pane alone. The persist itself finished,
+            # so release the guard here too - a later new session
+            # (_begin_create_character / _handle_edit_requested) would also
+            # re-arm it, but there is no reason to leave it latched.
+            self._character_save_inflight = False
             try:
                 await self.character_handler.refresh_character_list()
             except Exception:
@@ -4816,14 +5048,39 @@ class PersonasScreen(BaseAppScreen):
                 )
             return
         self._character_editor_generation += 1
-        self._edit_mode = "view"
         self._set_active_row_unsaved(False)
         await self.character_handler.refresh_character_list()
+        # Re-read the just-persisted record (authoritative version - carries
+        # the incremented optimistic-lock version) directly off the UI
+        # thread. character_handler.load_character() below only SCHEDULES a
+        # background worker and cannot be awaited for completion (see
+        # _select_character's note on the same pattern), so a direct
+        # to_thread fetch is required here to reliably decide whether the
+        # editor can stay open before the rest of this method proceeds.
+        try:
+            saved_record = await asyncio.to_thread(
+                ccp_character_handler.fetch_character_by_id, saved_id
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Could not re-read saved character {saved_id!r}; falling back "
+                "to the card view."
+            )
+            saved_record = None
+        if saved_record:
+            # Keep the handler's cache in sync so other _full_character_record
+            # readers (Edit-again, world-book/dictionary refreshes) see the
+            # fresh record too, ahead of load_character's own async refresh.
+            self.character_handler.current_character_id = saved_id
+            self.character_handler.current_character_data = dict(saved_record)
+        else:
+            saved_record = None
         # ``saved_id`` was just persisted, so it is authoritative; resolve the
-        # name by id (handler-loaded card) or the submitted name rather than
-        # scanning the now-page-only cache, and always load the saved card.
-        loaded = self._full_character_record(saved_id)
-        name = str((loaded or {}).get("name") or submitted_name or "Saved character")
+        # name by the re-read record or the submitted name rather than
+        # scanning the now-page-only cache.
+        name = str(
+            (saved_record or {}).get("name") or submitted_name or "Saved character"
+        )
         self.state.select_entity(
             entity_kind="character", entity_id=saved_id, entity_name=name
         )
@@ -4835,9 +5092,25 @@ class PersonasScreen(BaseAppScreen):
         self._sync_inspector_console_actions()
         self.query_one(PersonasLibraryPane).mark_active_row("character", saved_id)
         await self.character_handler.load_character(saved_id)
-        self._show_center("#ccp-character-card-view")
+        editor = self.query_one(PersonasCharacterEditorWidget)
+        if saved_record is None:
+            # Could not re-read -> fall back to today's flip-to-card so we
+            # never leave the editor holding a stale version.
+            self._edit_mode = "view"
+            self._show_center("#ccp-character-card-view")
+            self.call_after_refresh(self._focus_library_list)
+        else:
+            self._edit_mode = "edit"  # create -> edit stays in the editor
+            editor.mark_saved(saved_record)
+            self._show_center("#ccp-character-editor-view")
+            # This method already bumped _character_editor_generation above,
+            # which invalidates (drops) any render still in flight from
+            # before the save - so re-render now with the new token or the
+            # thumbnail can be left blank/stale until the next unrelated
+            # avatar action.
+            await self._render_character_editor_avatar()
+        self._character_save_inflight = False
         self._sync_title_and_console_actions()
-        self.call_after_refresh(self._focus_library_list)
         self._notify("Character saved.", severity="information")
 
     @on(PersonaProfileSaveRequested)
@@ -4852,12 +5125,21 @@ class PersonasScreen(BaseAppScreen):
         """
         message.stop()
         if self._profile_save_inflight:
-            logger.debug("Persona save already in flight; ignoring duplicate request.")
+            # Save-in-place keeps ``_edit_mode`` at "edit" after a successful
+            # save (it no longer flips back to "view"), so this flag is now
+            # the sole guard against a stale duplicate: it is claimed here
+            # and, on success, stays claimed until a genuinely NEW edit
+            # (_handle_editor_content_changed) or a new session
+            # (_begin_create_profile / edit-load) re-arms it. A failed save
+            # clears it immediately below so the user can retry at once.
+            logger.debug(
+                "Persona save already in flight or already fulfilled for this "
+                "baseline; ignoring duplicate request."
+            )
             return
         if self._edit_mode not in ("create", "edit"):
-            # Message dispatch is serial, so a double-posted Save arrives after
-            # the first save already finished and returned to view mode; a save
-            # without an open edit session is a stale duplicate.
+            # A save without an open edit session (e.g. arriving after the
+            # user cancelled or left the screen) is stale.
             logger.debug("Persona save without an open edit session; ignoring.")
             return
         data = dict(message.data or {})
@@ -4869,46 +5151,62 @@ class PersonasScreen(BaseAppScreen):
             self._notify("Save failed: persona profiles are unavailable.", "error")
             return
         self._profile_save_inflight = True
+        # mode/persona_id are read INSIDE the try (rather than before it) so
+        # a raise from either (e.g. current_mode()) is caught below, which
+        # resets the inflight flag; reading them ahead of the try would let
+        # such a raise propagate uncaught, latching the flag True forever
+        # and silently no-opping every future save via the guard above.
+        # Placeholder defaults keep both names bound for the except block's
+        # log line even if the raise happens before either assignment runs.
+        mode: str | None = None
+        persona_id: str = ""
         try:
             mode = self.persona_handler.current_mode()
             persona_id = str(data.get("id") or "")
-            try:
-                if self._edit_mode == "create" or not persona_id:
-                    request = PersonaProfileCreate(
-                        id=data.get("id") or None,
-                        name=str(data.get("name") or ""),
-                        description=data.get("description"),
-                        mode=data.get("mode") or "session_scoped",
-                        system_prompt=data.get("system_prompt"),
-                    )
-                    result = await service.create_persona_profile(request, mode=mode)
-                else:
-                    request = PersonaProfileUpdate(
-                        name=str(data.get("name") or ""),
-                        description=data.get("description"),
-                        mode=data.get("mode"),
-                        system_prompt=data.get("system_prompt"),
-                    )
-                    result = await service.update_persona_profile(
-                        persona_id,
-                        request,
-                        expected_version=data.get("version"),
-                        mode=mode,
-                    )
-            except Exception as exc:
-                logger.opt(exception=True).error(f"Error saving persona profile: {exc}")
-                self._notify(f"Save failed: {exc}", "error")
-                return
-            if hasattr(result, "model_dump"):
-                result = result.model_dump(mode="json")
-            if not isinstance(result, dict):
-                # Tolerate backends that return ids/None: keep the submitted data.
-                result = dict(data)
-            saved = dict(result)
-            saved.setdefault("id", persona_id)
-            await self._after_profile_save(saved)
-        finally:
+            if self._edit_mode == "create" or not persona_id:
+                request = PersonaProfileCreate(
+                    id=data.get("id") or None,
+                    name=str(data.get("name") or ""),
+                    description=data.get("description"),
+                    mode=data.get("mode") or "session_scoped",
+                    system_prompt=data.get("system_prompt"),
+                    is_active=bool(data.get("is_active", True)),
+                    personality_traits=str(data.get("personality_traits") or ""),
+                )
+                result = await service.create_persona_profile(request, mode=mode)
+            else:
+                request = PersonaProfileUpdate(
+                    name=str(data.get("name") or ""),
+                    description=data.get("description"),
+                    mode=data.get("mode"),
+                    system_prompt=data.get("system_prompt"),
+                    is_active=data.get("is_active"),
+                    personality_traits=data.get("personality_traits"),
+                )
+                result = await service.update_persona_profile(
+                    persona_id,
+                    request,
+                    expected_version=data.get("version"),
+                    mode=mode,
+                )
+        except Exception as exc:
+            logger.opt(exception=True).error(
+                f"Error saving persona profile: persona_id={persona_id!r}, "
+                f"mode={mode!r}, expected_version={data.get('version')!r}: {exc}"
+            )
+            self._notify(f"Save failed: {exc}", "error")
+            # Allow an immediate retry - only a real DB round trip (or a
+            # fresh edit) may claim this flag again.
             self._profile_save_inflight = False
+            return
+        if hasattr(result, "model_dump"):
+            result = result.model_dump(mode="json")
+        if not isinstance(result, dict):
+            # Tolerate backends that return ids/None: keep the submitted data.
+            result = dict(data)
+        saved = dict(result)
+        saved.setdefault("id", persona_id)
+        await self._after_profile_save(saved)
 
     async def _after_profile_save(self, saved: dict) -> None:
         # Refresh the cached profile list tolerantly even when the user has
@@ -4930,7 +5228,7 @@ class PersonasScreen(BaseAppScreen):
         if not self.is_mounted or self.state.active_mode != "personas":
             # Leave the selection, inspector, and center pane alone.
             return
-        self._edit_mode = "view"
+        self._edit_mode = "edit"  # create -> edit stays in the editor
         self.state.has_unsaved_changes = False
         self._set_active_row_unsaved(False)
         saved_id = str(saved.get("id") or "")
@@ -4944,10 +5242,15 @@ class PersonasScreen(BaseAppScreen):
         inspector.show_validation(())
         self._sync_inspector_console_actions()
         await self._render_profile_rows()
-        self.query_one(PersonaProfileCardWidget).show_persona(saved)
-        self._show_center("#ccp-persona-card-view")
+        # Save-in-place: the returned ``saved`` dict already carries the
+        # incremented optimistic-lock version, so the editor (which stays
+        # open) re-baselines dirty tracking straight from it - no re-read
+        # needed (unlike the character finisher, which reads a stale handler
+        # cache and must go back to the DB).
+        editor = self.query_one(PersonaProfileEditorWidget)
+        editor.mark_saved(saved)
+        self._show_center("#ccp-persona-editor-view")
         self._sync_title_and_console_actions()
-        self.call_after_refresh(self._focus_library_list)
         self._notify("Persona saved.", "information")
 
     # ===== Cancel =====

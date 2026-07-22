@@ -2,22 +2,30 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, get_args
 
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Input, Label, Static, TextArea
+from textual.timer import Timer
+from textual.widgets import Button, Input, Label, Select, Static, Switch, TextArea
 
+from ...tldw_api.character_persona_schemas import PersonaMode
 from .personas_pane_messages import (
     EditorContentChanged,
     PersonaProfileEditCancelled,
     PersonaProfileSaveRequested,
 )
 
+#: The `PersonaMode` literal's values, for the editor's mode `Select` options.
+PERSONA_MODES: tuple[str, ...] = get_args(PersonaMode)
+#: Default mode for a persona with none set, matching `PersonaProfileCreate`.
+_DEFAULT_MODE = "session_scoped"
+
 
 class PersonaProfileEditorWidget(Container):
-    """ds-field-row form: name, description, system prompt."""
+    """ds-field-row form: name, description, system prompt, personality
+    traits, mode, and enabled toggle."""
 
     DEFAULT_CSS = """
     PersonaProfileEditorWidget {
@@ -43,7 +51,21 @@ class PersonaProfileEditorWidget(Container):
         border: none;
         margin-right: 1;
     }
+
+    /* Live per-field validation (Roleplay P3b Task 4): a literal color, not
+       a $ds-* token - DEFAULT_CSS must resolve in bare-App test harnesses
+       that never load the app stylesheet. */
+    PersonaProfileEditorWidget .is-invalid {
+        border: round red;
+    }
     """
+
+    #: CSS class toggled on an offending error-level field's enclosing row
+    #: by ``_run_validation``.
+    _FIELD_ERROR_CLASS = "is-invalid"
+    #: Delay before a field-change-triggered validation pass runs, matching
+    #: PersonasCharacterEditorWidget's debounce.
+    _VALIDATION_DEBOUNCE_SECONDS = 0.2
 
     def __init__(self, **kwargs) -> None:
         kwargs.setdefault("id", "ccp-persona-editor-view")
@@ -57,6 +79,14 @@ class PersonaProfileEditorWidget(Container):
         self._loading: bool = False
         self._loaded_snapshot: tuple | None = None
         self._dirty_posted: bool = False
+        # Live validation (Roleplay P3b Task 4): see
+        # PersonasCharacterEditorWidget._validation_timer for the mechanism.
+        self._validation_timer: Timer | None = None
+        # Fix-wave gate: a freshly-opened form (load_persona/new_persona)
+        # must not display validation errors before the user has actually
+        # interacted with it. Set True on a genuine field edit or a Save
+        # click; reset on every load.
+        self._user_touched: bool = False
 
     def compose(self) -> ComposeResult:
         yield Static("Persona Editor", classes="destination-section")
@@ -70,6 +100,20 @@ class PersonaProfileEditorWidget(Container):
             with Vertical(classes="ds-field-row"):
                 yield Label("System prompt")
                 yield TextArea(id="personas-editor-system-prompt")
+            with Vertical(classes="ds-field-row"):
+                yield Label("Personality traits")
+                yield TextArea(id="personas-editor-personality-traits")
+            with Vertical(classes="ds-field-row"):
+                yield Label("Mode")
+                yield Select(
+                    [(m, m) for m in PERSONA_MODES],
+                    id="personas-editor-mode",
+                    allow_blank=False,
+                    value=_DEFAULT_MODE,
+                )
+            with Horizontal(classes="ds-field-row"):
+                yield Label("Enabled")
+                yield Switch(id="personas-editor-enabled", value=True)
         # Validation stays outside the scroll body so it is always visible
         # next to Save (anchored-footer principle, same as the character editor).
         yield Static("", id="personas-editor-validation")
@@ -98,15 +142,52 @@ class PersonaProfileEditorWidget(Container):
             self.query_one("#personas-editor-system-prompt", TextArea).text = str(
                 data.get("system_prompt", "")
             )
+            self.query_one(
+                "#personas-editor-personality-traits", TextArea
+            ).text = str(data.get("personality_traits", "") or "")
+            mode = data.get("mode") or _DEFAULT_MODE
+            self.query_one("#personas-editor-mode", Select).value = (
+                mode if mode in PERSONA_MODES else _DEFAULT_MODE
+            )
+            self.query_one("#personas-editor-enabled", Switch).value = bool(
+                data.get("is_active", True)
+            )
             self.query_one("#personas-editor-validation", Static).update("")
+            # Clear any stale per-field invalid marks left by a prior session:
+            # if the reopened record's values are byte-identical to what's
+            # already displayed, no Changed event fires and _run_validation
+            # never runs to self-heal a previously-marked row (Roleplay P3b
+            # review fix).
+            for fid in self._validated_field_ids():
+                self.query_one(f"#{fid}").parent.remove_class(self._FIELD_ERROR_CLASS)
         finally:
             self._loading = False
         self._loaded_snapshot = self._form_snapshot()
         self._dirty_posted = False
+        self._user_touched = False
 
     def new_persona(self) -> None:
         """Clear the form for a new (unsaved) persona."""
         self.load_persona({})
+
+    def mark_saved(self, record: Dict[str, Any]) -> None:
+        """Re-baseline dirty state to a just-persisted persona (save-in-place).
+
+        Adopts the saved ``id``/``version`` as the new base (so the next Save
+        carries the incremented optimistic-lock version) and resets the dirty
+        snapshot from the CURRENT form (which already shows the saved
+        values). Does NOT repopulate the form - the user's saved edits stay
+        on screen.
+
+        Args:
+            record: The just-persisted persona record (carries the
+                incremented optimistic-lock ``version``).
+        """
+        self._persona_id = str(record.get("id", "")) or self._persona_id
+        self._version = record.get("version", self._version)
+        self._loaded_snapshot = self._form_snapshot()
+        self._dirty_posted = False
+        self.query_one("#personas-editor-validation", Static).update("")
 
     def collect(self) -> Dict[str, Any]:
         """Return the current form values as a dict.
@@ -122,6 +203,11 @@ class PersonaProfileEditorWidget(Container):
             "system_prompt": self.query_one(
                 "#personas-editor-system-prompt", TextArea
             ).text,
+            "personality_traits": self.query_one(
+                "#personas-editor-personality-traits", TextArea
+            ).text,
+            "mode": self.query_one("#personas-editor-mode", Select).value,
+            "is_active": self.query_one("#personas-editor-enabled", Switch).value,
         }
         if self._persona_id is not None:
             data["id"] = self._persona_id
@@ -135,16 +221,39 @@ class PersonaProfileEditorWidget(Container):
             self.query_one("#personas-editor-name", Input).value,
             self.query_one("#personas-editor-description", TextArea).text,
             self.query_one("#personas-editor-system-prompt", TextArea).text,
+            self.query_one("#personas-editor-personality-traits", TextArea).text,
+            self.query_one("#personas-editor-mode", Select).value,
+            self.query_one("#personas-editor-enabled", Switch).value,
         )
 
     @on(Input.Changed)
     @on(TextArea.Changed)
-    def _field_changed(self, event: Input.Changed | TextArea.Changed) -> None:
+    @on(Select.Changed)
+    @on(Switch.Changed)
+    def _field_changed(
+        self,
+        event: Input.Changed | TextArea.Changed | Select.Changed | Switch.Changed,
+    ) -> None:
         """Announce the first real user modification of the session.
 
         See PersonasCharacterEditorWidget._field_changed for the suppression
-        mechanism (loading flag + loaded-snapshot comparison).
+        mechanism (loading flag + loaded-snapshot comparison). ``Select`` and
+        ``Switch`` (the mode/enabled fields) route through the same handler
+        as ``Input``/``TextArea`` so a mode change or an Enabled toggle
+        participates in dirty tracking identically to a text edit.
         """
+        # Same condition the dirty-post below ultimately gates on (minus
+        # _dirty_posted, which only suppresses the once-per-session
+        # announcement, not the touched flag): a genuine edit, not the
+        # programmatic-population Changed events load_persona/new_persona
+        # trigger.
+        if (
+            not self._loading
+            and self._loaded_snapshot is not None
+            and self._form_snapshot() != self._loaded_snapshot
+        ):
+            self._user_touched = True
+        self._schedule_validation()
         if self._loading or self._dirty_posted or self._loaded_snapshot is None:
             return
         if self._form_snapshot() == self._loaded_snapshot:
@@ -152,12 +261,59 @@ class PersonaProfileEditorWidget(Container):
         self._dirty_posted = True
         self.post_message(EditorContentChanged())
 
-    def validate(self) -> tuple[str, ...]:
-        """Return a tuple of validation error strings, empty if valid."""
-        errors: list[str] = []
+    def validate(self) -> list[tuple[str, str, str]]:
+        """Live per-field checks: name required.
+
+        Returns:
+            ``(field_id, message, level)`` tuples, ``level`` in
+            ``{"error", "warning"}``.
+        """
+        findings: list[tuple[str, str, str]] = []
         if not self.query_one("#personas-editor-name", Input).value.strip():
-            errors.append("name: required")
-        return tuple(errors)
+            findings.append(("personas-editor-name", "required", "error"))
+        return findings
+
+    def _validated_field_ids(self) -> set[str]:
+        """Field ids ``validate()`` can flag at ``error`` level."""
+        return {"personas-editor-name"}
+
+    def _run_validation(self) -> list[tuple[str, str, str]]:
+        """Compute findings, mark/un-mark offending rows, render the footer.
+
+        Runs debounced on field change (``_schedule_validation``, wired into
+        ``_field_changed``) and authoritatively at Save (``_save_pressed``),
+        which blocks when any finding is ``level == "error"``.
+
+        Display is gated on ``_user_touched``: a freshly-opened form
+        (``load_persona``/``new_persona``) must not show errors before the
+        user has actually interacted with it, so while untouched no row is
+        marked invalid and the footer stays clear.
+
+        Returns:
+            The findings actually rendered - empty when gated by
+            ``_user_touched`` (not the raw ``validate()`` output, since
+            nothing was displayed in that case).
+        """
+        if not self._user_touched:
+            for fid in self._validated_field_ids():
+                self.query_one(f"#{fid}").parent.remove_class(self._FIELD_ERROR_CLASS)
+            self.show_validation(())
+            return []
+        findings = self.validate()
+        invalid_ids = {fid for fid, _msg, level in findings if level == "error"}
+        for fid in self._validated_field_ids():
+            row = self.query_one(f"#{fid}").parent
+            row.set_class(fid in invalid_ids, self._FIELD_ERROR_CLASS)
+        self.show_validation(tuple(f"{fid}: {msg}" for fid, msg, _level in findings))
+        return findings
+
+    def _schedule_validation(self) -> None:
+        """Debounce ``_run_validation`` so a burst of typing validates once."""
+        if self._validation_timer is not None:
+            self._validation_timer.stop()
+        self._validation_timer = self.set_timer(
+            self._VALIDATION_DEBOUNCE_SECONDS, self._run_validation
+        )
 
     def show_validation(self, errors: tuple[str, ...]) -> None:
         """Render validation errors in the editor footer (the single
@@ -171,9 +327,11 @@ class PersonaProfileEditorWidget(Container):
     @on(Button.Pressed, "#personas-editor-save")
     def _save_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        errors = self.validate()
-        self.show_validation(errors)
-        if errors:
+        # Save is itself a user action: authoritatively validate even an
+        # untouched blank form (clicking Save with nothing else edited must
+        # still block + mark the offending field).
+        self._user_touched = True
+        if any(level == "error" for _fid, _msg, level in self._run_validation()):
             return
         self.post_message(PersonaProfileSaveRequested(self.collect()))
 

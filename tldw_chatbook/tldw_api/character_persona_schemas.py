@@ -562,6 +562,9 @@ class PersonaProfileCreate(BaseModel):
     mode: PersonaMode = "session_scoped"
     system_prompt: str | None = None
     is_active: bool = True
+    # Freeform trait description, matching the character-side `personality`
+    # field (NOT the structured archetype `personality_traits: list[str]`).
+    personality_traits: str = ""
     use_persona_state_context_default: bool = True
     voice_defaults: PersonaVoiceDefaults = Field(default_factory=PersonaVoiceDefaults)
     setup: PersonaSetupState = Field(default_factory=PersonaSetupState)
@@ -574,6 +577,7 @@ class PersonaProfileUpdate(BaseModel):
     mode: PersonaMode | None = None
     system_prompt: str | None = None
     is_active: bool | None = None
+    personality_traits: str | None = None
     use_persona_state_context_default: bool | None = None
     voice_defaults: PersonaVoiceDefaults | None = None
     setup: PersonaSetupState | None = None
