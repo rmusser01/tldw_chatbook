@@ -94,6 +94,22 @@ class TestTokenCounter:
         # Unknown modern Claude falls back to the 200k floor, not the stale 100k.
         assert get_model_token_limit("claude-99-future", "anthropic") == 200000
 
+    def test_get_model_token_limit_openrouter_resolves_upstream(self):
+        # OpenRouter IDs are "upstream_provider/model"; resolve the upstream window
+        # instead of the generic 4096 default. (Qodo review #5.)
+        assert get_model_token_limit("openai/gpt-4o-mini", "openrouter") == 128000
+        assert get_model_token_limit("openai/gpt-4o-mini", "OpenRouter") == 128000
+        assert get_model_token_limit("anthropic/claude-3.7-sonnet", "openrouter") == 200000
+        assert get_model_token_limit("google/gemini-2.0-flash-001", "openrouter") == 1048576
+
+    def test_get_model_token_limit_provider_casing_insensitive(self):
+        # TitleCase provider must resolve the same conservative default as lowercase.
+        # (Qodo review #6 — provider_defaults lookup was case-sensitive.)
+        assert get_model_token_limit("unknown-model", "Anthropic") == \
+            get_model_token_limit("unknown-model", "anthropic") == 200000
+        assert get_model_token_limit("unknown-model", "OpenAI") == \
+            get_model_token_limit("unknown-model", "openai") == 4096
+
     def test_format_token_display_green(self):
         """Test token display formatting - green indicator"""
         result = format_token_display(100, 1000)
@@ -201,6 +217,16 @@ class TestEstimator:
         assert count_tokens_chat_history(msg, model="claude-3-5-sonnet-20241022",
                                          provider="anthropic") == \
             count_tokens_messages(msg, "claude-3-5-sonnet-20241022", "anthropic")
+
+    def test_chars_estimate_provider_casing_insensitive(self):
+        # The chars-path ratio lookup must be case-insensitive: "Google" (0.3)
+        # must not silently fall back to the default ratio. (Qodo review #6.)
+        text = "some plain english text " * 4
+        assert estimate_tokens(text, "gemini-1.5-pro", "Google") == \
+            estimate_tokens(text, "gemini-1.5-pro", "google")
+        # And Google's higher ratio genuinely differs from the default bucket.
+        assert estimate_tokens(text, "gemini-1.5-pro", "Google") > \
+            estimate_tokens(text, "m", "openai")
 
 
 #

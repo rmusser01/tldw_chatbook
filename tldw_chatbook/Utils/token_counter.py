@@ -104,26 +104,48 @@ def _is_cjk(ch: str) -> bool:
     return any(lo <= cp <= hi for lo, hi in _CJK_RANGES)
 
 
+def _norm_provider(provider: str) -> str:
+    """Normalize a provider name for case-insensitive dict lookups.
+
+    Args:
+        provider: Provider name in any casing (e.g. ``"OpenAI"``, ``"google"``).
+
+    Returns:
+        The lower-cased, stripped provider name (``""`` for ``None``/blank).
+    """
+    return str(provider or "").strip().lower()
+
+
 def _chars_estimate(text: str, provider: str) -> int:
     """Conservative chars-based token floor; weights CJK higher, applies headroom."""
     cjk = sum(1 for ch in text if _is_cjk(ch))
     other = len(text) - cjk
     base_ratio = TOKENS_PER_CHAR_ESTIMATES.get(
-        provider or "default", TOKENS_PER_CHAR_ESTIMATES["default"]
+        _norm_provider(provider) or "default", TOKENS_PER_CHAR_ESTIMATES["default"]
     )
     return int((other * base_ratio + cjk * CJK_TOKENS_PER_CHAR) * ESTIMATE_HEADROOM)
 
 
 def estimate_tokens(text: str, model: str = "gpt-3.5-turbo", provider: str = "") -> int:
-    """Single text token estimator: custom tokenizer (gated) -> tiktoken -> chars floor.
+    """Estimate the token count of a text string with one consistent strategy.
 
-    Never uses whitespace word counts. `provider` only selects the chars-path
-    ratio; CJK weighting and the tiktoken/custom tiers are provider-independent.
+    Tiers: a custom tokenizer (only when one is actually installed), else
+    tiktoken (when available), else a conservative chars-based floor. Never uses
+    a whitespace word count.
+
+    Args:
+        text: The text to estimate.
+        model: Model name (selects the tiktoken encoding / custom tokenizer).
+        provider: Provider name (case-insensitive); selects the chars-path ratio
+            and the custom tokenizer's provider patterns.
+
+    Returns:
+        Estimated token count (0 for empty text).
     """
     if not text:
         return 0
     if CUSTOM_TOKENIZERS_AVAILABLE and custom_tokenizers_available():
-        custom = count_tokens_with_custom(text, model, provider)
+        custom = count_tokens_with_custom(text, model, _norm_provider(provider))
         if custom is not None:
             return custom
     if TIKTOKEN_AVAILABLE:
@@ -275,6 +297,16 @@ def get_model_token_limit(model: str, provider: str = "openai") -> int:
     on purpose: under-estimating the window degrades gracefully (more trimming),
     while over-estimating is the only way to overflow the model on dispatch.
     """
+    provider_key = _norm_provider(provider)
+
+    # OpenRouter model IDs are "upstream_provider/model" (e.g. "openai/gpt-4o-mini");
+    # resolve against the upstream provider/model so they don't fall through to the
+    # generic default. Split once and re-dispatch -- the re-dispatch provider is the
+    # upstream (never "openrouter"), so this cannot recurse indefinitely.
+    if provider_key == "openrouter" and "/" in model:
+        upstream_provider, upstream_model = model.split("/", 1)
+        return get_model_token_limit(upstream_model, upstream_provider)
+
     # 1. Per-model capability context window (authoritative, config-overridable).
     try:
         from tldw_chatbook.model_capabilities import get_context_window
@@ -308,7 +340,7 @@ def get_model_token_limit(model: str, provider: str = "openai") -> int:
         "openai": 4096,
         "mistral": 32000,
     }
-    return provider_defaults.get(provider, MODEL_TOKEN_LIMITS["default"])
+    return provider_defaults.get(provider_key, MODEL_TOKEN_LIMITS["default"])
 
 
 def estimate_remaining_tokens(

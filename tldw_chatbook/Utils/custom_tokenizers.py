@@ -426,7 +426,14 @@ def get_tokenizer_manager() -> CustomTokenizerManager:
 
 
 def custom_tokenizers_available() -> bool:
-    """True only when a custom tokenizer could actually resolve (mappings loaded)."""
+    """Report whether a custom tokenizer could actually resolve a model.
+
+    Cheap gate for the token estimator: avoids invoking the metrics-logging
+    count path when no tokenizer mappings are installed.
+
+    Returns:
+        ``True`` only when tokenizer mappings are loaded, else ``False``.
+    """
     return get_tokenizer_manager().has_tokenizers()
 
 

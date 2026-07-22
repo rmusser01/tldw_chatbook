@@ -223,7 +223,15 @@ class ModelCapabilities:
         return capabilities.get("vision", False)
 
     def get_context_window(self, provider: str, model: str) -> Optional[int]:
-        """Return the model's input context window, or None if unknown."""
+        """Return the model's input context window.
+
+        Args:
+            provider: The provider name (case-insensitive).
+            model: The model identifier.
+
+        Returns:
+            The input context window in tokens, or ``None`` if unknown.
+        """
         return self.get_model_capabilities(provider, model).get("context_window")
 
     def get_model_capabilities(self, provider: str, model: str) -> Dict[str, Any]:
@@ -354,7 +362,15 @@ def is_vision_capable(provider: str, model: str) -> bool:
 
 
 def get_context_window(provider: str, model: str) -> Optional[int]:
-    """Convenience function to resolve a model's input context window."""
+    """Resolve a model's input context window from the global capabilities.
+
+    Args:
+        provider: The provider name (case-insensitive).
+        model: The model identifier.
+
+    Returns:
+        The input context window in tokens, or ``None`` if unknown.
+    """
     return get_model_capabilities().get_context_window(provider, model)
 
 
