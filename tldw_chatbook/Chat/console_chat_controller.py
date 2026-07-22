@@ -1135,6 +1135,11 @@ class ConsoleChatController:
             session_id, message_id
         )
         self._ensure_user_continuation_instruction(provider_messages)
+        if not self._has_user_turn(provider_messages):
+            return self._block(
+                session_id,
+                "Nothing to continue before the character's opening line.",
+            )
         provider_messages, refuse = await self._apply_skill_substitution(
             provider_messages
         )
@@ -1194,6 +1199,11 @@ class ConsoleChatController:
             before_message_id=message_id,
         )
         self._ensure_user_continuation_instruction(provider_messages)
+        if not self._has_user_turn(provider_messages):
+            return self._block(
+                session_id,
+                "Nothing to regenerate before the character's opening line.",
+            )
         provider_messages, refuse = await self._apply_skill_substitution(
             provider_messages
         )
@@ -1607,6 +1617,12 @@ class ConsoleChatController:
                     "content": CONSOLE_CONTINUE_INSTRUCTION,
                 }
             )
+
+    @staticmethod
+    def _has_user_turn(provider_messages: list[dict[str, Any]]) -> bool:
+        return any(
+            m.get("role") == ConsoleMessageRole.USER.value for m in provider_messages
+        )
 
     def _pinned_prefill_for_session(self, session_id: str) -> str | None:
         """Return the session's pinned response prefill, if any."""
@@ -2675,6 +2691,7 @@ class ConsoleChatController:
             budget -= take
 
         payloads: list[dict[str, Any]] = []
+        seen_user = False
         for message in session_messages:
             if message.role not in {
                 ConsoleMessageRole.USER,
@@ -2683,6 +2700,13 @@ class ConsoleChatController:
                 continue
             if skip_failed and message.status == "failed":
                 continue
+            # A seeded character greeting is a display-only assistant turn:
+            # keep it out of the provider payload so strict providers (Anthropic,
+            # Gemini) never see an assistant-first message array (task-427).
+            if not seen_user and message.role is ConsoleMessageRole.ASSISTANT:
+                continue
+            if message.role is ConsoleMessageRole.USER:
+                seen_user = True
             text = (
                 message.variants.current.content
                 if use_variant_content and message.variants is not None

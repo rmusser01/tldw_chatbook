@@ -1017,6 +1017,11 @@ async def test_continue_from_message_streams_new_assistant_turn_after_selected_m
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     session = store.ensure_session()
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Hi",
+    )
     source = store.append_message(
         session.id,
         role=ConsoleMessageRole.ASSISTANT,
@@ -1087,6 +1092,11 @@ async def test_regenerate_message_streams_new_selected_variant():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     session = store.ensure_session()
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Hi",
+    )
     source = store.append_message(
         session.id,
         role=ConsoleMessageRole.ASSISTANT,
@@ -1136,6 +1146,75 @@ async def test_regenerate_continuation_message_ends_provider_payload_with_user_i
         {"role": "assistant", "content": "Seed"},
         {"role": "user", "content": "Continue and extend the selected message."},
     ]
+
+
+@pytest.mark.asyncio
+async def test_leading_greeting_excluded_from_provider_payload():
+    """A seeded character greeting (persisted ASSISTANT message before any
+    user turn) must never reach the provider payload -- strict providers
+    (Anthropic, Gemini) reject an assistant-first message array (task-427)."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    session = store.create_session(title="Chat with Elara")
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Greetings, traveler.",
+        persist=False,
+    )
+
+    result = await controller.submit_draft("Hi")
+
+    assert result.accepted is True
+    sent = gateway.messages_seen
+    roles = [m["role"] for m in sent]
+    # No leading assistant: the first role sent is the user's turn.
+    assert roles[0] == "user"
+    # The greeting text is not in the outbound payload at all.
+    assert all("Greetings, traveler." not in (m.get("content") or "") for m in sent)
+
+
+@pytest.mark.asyncio
+async def test_regenerate_on_leading_greeting_is_blocked():
+    """Regenerating the seeded greeting before any user turn exists must be
+    blocked rather than sending a payload with no user message."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    session = store.create_session(title="Chat with Elara")
+    greeting = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Greetings.",
+        persist=False,
+    )
+
+    result = await controller.regenerate_message(greeting.id)
+
+    assert result.accepted is False
+    assert gateway.messages_seen is None
+
+
+@pytest.mark.asyncio
+async def test_continue_from_leading_greeting_is_blocked():
+    """Continuing from the seeded greeting before any user turn exists must
+    be blocked rather than sending a payload with no user message."""
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    session = store.create_session(title="Chat with Elara")
+    greeting = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Greetings.",
+        persist=False,
+    )
+
+    result = await controller.continue_from_message(greeting.id)
+
+    assert result.accepted is False
+    assert gateway.messages_seen is None
 
 
 class _AutoTitleReadyGateway:
