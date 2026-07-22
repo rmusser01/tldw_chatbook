@@ -318,7 +318,6 @@ class ConfigProfileManager:
         accurate_rag.embedding.batch_size = 16
         accurate_rag.chunking.chunk_size = 512
         accurate_rag.chunking.chunk_overlap = 128
-        accurate_rag.chunking.method = "hierarchical"
         accurate_rag.search.default_top_k = 20
         accurate_rag.search.include_citations = True
         accurate_rag.search.score_threshold = 0.7
