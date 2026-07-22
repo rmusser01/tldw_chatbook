@@ -16,6 +16,7 @@ a full pilot-driven screen.
 
 import pytest
 import pytest_asyncio
+from textual.widgets import Static
 
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -108,6 +109,38 @@ def test_build_character_avatar_widget_spec_without_image():
     widget = screen._build_character_avatar_widget(
         {"character_id": 7, "name": "Ada", "pil": None, "pixels": None}
     )
+    assert str(widget.renderable) == "no avatar"
+
+
+def test_build_character_avatar_widget_pixels_failure_falls_back_to_text(monkeypatch):
+    """FIX A: `_build_character_avatar_widget` must NEVER raise, even when the
+    ``rich_pixels`` build fails. It is reached from
+    ``_render_character_avatar_into_section``, which runs outside
+    ``_refresh_active_character_avatar_if_scope_changed``'s try/except -- and
+    that refresh itself must never raise into the 0.2s Console sync poll. A
+    decode/build failure here must degrade to the same text placeholder as
+    the no-image case, not propagate.
+    """
+    from PIL import Image as PILImage
+    import rich_pixels
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(rich_pixels.Pixels, "from_image", staticmethod(_boom))
+
+    screen = _bare_console_screen(ConsoleChatStore())
+    spec = {
+        "character_id": 7,
+        "name": "Ada",
+        "mode": "pixels",  # skip the graphics branch, hit the pixels fallback
+        "pil": PILImage.new("RGB", (32, 32), (200, 10, 10)),
+        "pixels": None,
+    }
+
+    widget = screen._build_character_avatar_widget(spec)  # must not raise
+
+    assert isinstance(widget, Static)
     assert str(widget.renderable) == "no avatar"
 
 
@@ -228,6 +261,12 @@ async def test_refresh_populates_avatar_cache_and_mounts(console_screen_with_db)
     assert screen._active_character_avatar.get("character_id") == char_id
     assert screen._active_character_avatar.get("pil") is not None or \
            screen._active_character_avatar.get("pixels") is not None
+
+    # FIX B: prove the widget actually landed in the DOM (not just the
+    # cached spec dict) right after the refresh awaits the mount.
+    holder = screen.query_one("#console-character-avatar")
+    mounted_ids = {child.id for child in holder.children}
+    assert "console-character-avatar-image" in mounted_ids
 
     # unchanged scope -> no re-fetch (spy the DB fetch)
     calls = []

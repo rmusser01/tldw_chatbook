@@ -3971,8 +3971,10 @@ class ChatScreen(BaseAppScreen):
         """Re-mount the avatar widget + name into the (already-composed) section.
 
         Async because Textual `Widget.mount()` returns an `AwaitMount` that
-        must be awaited so the widget is present before the caller returns
-        (the integration test asserts the mounted state right after the tick).
+        must be awaited so the widget is present before the caller returns.
+        `test_refresh_populates_avatar_cache_and_mounts` asserts the mounted
+        DOM state (not just the cached spec dict) right after the refresh
+        awaits this.
         """
         try:
             holder = self.query_one("#console-character-avatar", Container)
@@ -3995,6 +3997,14 @@ class ChatScreen(BaseAppScreen):
         or a spec whose image decode failed/is pending, render a compact
         text placeholder. The cache holds this spec (data), not a live
         widget -- every (re)mount builds a fresh widget from it.
+
+        This method must NEVER raise: it is reached from
+        `_render_character_avatar_into_section`, which runs outside
+        `_refresh_active_character_avatar_if_scope_changed`'s try/except (and
+        that refresh itself must never raise into the 0.2s Console sync
+        poll). Any image-build failure -- graphics mount OR the rich_pixels
+        fallback -- degrades to the same text placeholder used for the
+        no-image case.
         """
         from textual.widgets import Static as _S
         if not spec or (spec.get("pil") is None and spec.get("pixels") is None):
@@ -4018,16 +4028,20 @@ class ChatScreen(BaseAppScreen):
                 return widget
             except Exception:
                 logger.opt(exception=True).debug("avatar: graphics mount failed")
-        pixels = spec.get("pixels")
-        if pixels is None and spec.get("pil") is not None:
-            scaled = spec["pil"].copy()
-            scaled.thumbnail((CHARACTER_AVATAR_COLS, CHARACTER_AVATAR_LINES * 2))
-            from rich_pixels import Pixels
-            pixels = Pixels.from_image(scaled)
-        widget = Static(pixels if pixels is not None else "", id="console-character-avatar-image")
-        widget.styles.max_width = CHARACTER_AVATAR_COLS
-        widget.styles.max_height = CHARACTER_AVATAR_LINES
-        return widget
+        try:
+            pixels = spec.get("pixels")
+            if pixels is None and spec.get("pil") is not None:
+                scaled = spec["pil"].copy()
+                scaled.thumbnail((CHARACTER_AVATAR_COLS, CHARACTER_AVATAR_LINES * 2))
+                from rich_pixels import Pixels
+                pixels = Pixels.from_image(scaled)
+            widget = Static(pixels if pixels is not None else "", id="console-character-avatar-image")
+            widget.styles.max_width = CHARACTER_AVATAR_COLS
+            widget.styles.max_height = CHARACTER_AVATAR_LINES
+            return widget
+        except Exception:
+            logger.opt(exception=True).debug("avatar: pixels build failed")
+            return _S("no avatar", id="console-character-avatar-empty")
 
     def _console_session_id_for_workspace_conversation(
         self,
