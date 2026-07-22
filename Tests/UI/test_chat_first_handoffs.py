@@ -1137,9 +1137,12 @@ def _personas_preview_handoff_payload(
 
 @pytest.mark.asyncio
 async def test_open_in_console_creates_fresh_session_not_reusing_active():
-    """A Personas "Open in Console" handoff, with another Console conversation
-    already active, must land in a NEW focused conversation titled from the
-    handoff (not the prefill) rather than reusing the active tab (task-428)."""
+    """Open in Console lands in a new focused conversation, not the active tab.
+
+    A Personas "Open in Console" handoff, with another Console conversation
+    already active, must create a NEW focused conversation titled from the
+    handoff (not the prefill) rather than reusing the active tab (task-428).
+    """
     from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
         ConsoleHarness,
     )
@@ -1180,11 +1183,11 @@ async def test_open_in_console_creates_fresh_session_not_reusing_active():
 
 @pytest.mark.asyncio
 async def test_open_in_console_does_not_pollute_prior_session_draft():
-    """Seeding the fresh session's draft must not bleed the prefill into the
-    previously-active conversation via the draft-swap sync (task-428/TASK-339).
+    """Seeding the fresh session's draft must not pollute the prior session.
 
-    The prior session starts with an empty draft; after the handoff it must
-    still be empty -- never carry the staged "Continue ..." prompt.
+    Guards the draft-swap sync (task-428/TASK-339): the prior session starts
+    with an empty draft, and after the handoff it must still be empty -- never
+    carry the staged "Continue ..." prompt.
     """
     from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
         ConsoleHarness,
@@ -1212,9 +1215,46 @@ async def test_open_in_console_does_not_pollute_prior_session_draft():
 
 
 @pytest.mark.asyncio
+async def test_open_in_console_snapshots_composer_before_activating_new_session():
+    """The fresh-session switch must snapshot the composer first (task-428).
+
+    ``create_session`` activates the new session; per TASK-339 the composer
+    must be snapshotted before that switch so settle-window keystrokes carry
+    into the new session instead of being saved to the old one. Drive the
+    staging method directly and inspect before the deferred sync worker runs.
+    """
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from Tests.UI.test_screen_navigation import _build_test_app
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        screen = host.screen_stack[-1]
+        store = screen._ensure_console_chat_store()
+        active = store.ensure_session()
+        # Clear any snapshot left by mount so the assertion proves THIS handoff
+        # captured one.
+        screen._console_draft_switch_snapshot = None
+
+        # Direct call (not via _consume_pending_chat_handoff) so we can inspect
+        # state before the run_worker-scheduled sync pass executes.
+        screen._stage_handoff_as_console_live_work(_personas_preview_handoff_payload())
+
+        assert store.active_session_id != active.id
+        assert screen._console_draft_switch_snapshot is not None
+
+
+@pytest.mark.asyncio
 async def test_non_personas_handoff_still_reuses_active_session():
-    """Scope guard: the fresh-session behavior is Personas-only. A non-Personas
-    "Use in Console" handoff must keep reusing the active session (task-428)."""
+    """Non-Personas handoffs keep reusing the active session (scope guard).
+
+    The fresh-session behavior is Personas-only, so a non-Personas "Use in
+    Console" handoff must keep reusing the active session (task-428).
+    """
     from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
         ConsoleHarness,
     )
