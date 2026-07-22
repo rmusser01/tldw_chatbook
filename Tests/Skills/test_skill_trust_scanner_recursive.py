@@ -90,3 +90,27 @@ def test_symlinked_directory_is_unsupported_not_dropped(tmp_path):
     fps = {f.relative_path for f in snap.fingerprints}
     assert "linked_dir" not in fps
     assert "linked_dir/secret.md" not in fps  # walk must not descend the symlink
+
+
+def test_symlinked_junk_named_directory_still_unsupported(tmp_path):
+    # A symlink is suspicious regardless of its name: even when its basename
+    # matches a junk dir name (node_modules), it must surface in
+    # unsupported_paths, NOT be silently pruned as junk. Meanwhile a REAL
+    # junk dir stays pruned-and-never-recorded (the reorder must not start
+    # recording real junk).
+    d = tmp_path / "demo"
+    _write(d / "SKILL.md", b"body")
+    external = tmp_path / "external"
+    _write(external / "secret.md", b"secret")
+    os.symlink(external, d / "node_modules")
+    _write(d / "__pycache__" / "x.pyc", b"\x00pyc")  # real junk dir + junk file
+    snap = scan_skill_directory("demo", d)
+    fps = {f.relative_path for f in snap.fingerprints}
+    assert "node_modules" in snap.unsupported_paths       # symlink surfaced
+    assert "node_modules" not in fps
+    assert "node_modules/secret.md" not in fps            # walk did not descend
+    # Real junk dir/file: pruned entirely, never recorded anywhere.
+    assert "__pycache__" not in snap.unsupported_paths
+    assert "__pycache__/x.pyc" not in snap.unsupported_paths
+    assert "__pycache__/x.pyc" not in fps
+    assert fps == {"SKILL.md"}

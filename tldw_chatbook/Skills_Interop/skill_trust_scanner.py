@@ -61,12 +61,17 @@ def scan_skill_directory(skill_name: str, skill_dir: Path) -> SkillDirectorySnap
         # from ``dirs`` so the walk never descends into them.
         kept_dirs: list[str] = []
         for name in dirs:
-            if name in SUPPORTING_JUNK_DIRS:
-                continue
             dir_abs = Path(root) / name
+            # A symlink is suspicious regardless of its name: check is_symlink()
+            # BEFORE the junk-name filter so a symlink named like a junk dir
+            # (e.g. node_modules, .git) still surfaces in unsupported_paths
+            # instead of being silently pruned. Junk-name pruning applies only
+            # to REAL directories.
             if dir_abs.is_symlink():
                 rel = PurePosixPath(dir_abs.relative_to(skill_dir).as_posix())
                 collected.append((str(rel), dir_abs))
+                continue
+            if name in SUPPORTING_JUNK_DIRS:
                 continue
             kept_dirs.append(name)
         dirs[:] = kept_dirs
