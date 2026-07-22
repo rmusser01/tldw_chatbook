@@ -4311,6 +4311,34 @@ class ChatScreen(BaseAppScreen):
             return ""
         return str(card.get("name") or "").strip()
 
+    def _set_console_conversation_row_loading(
+        self, conversation_id: str, loading: bool
+    ) -> None:
+        """Toggle a loading indicator on the matching workspace rail row.
+
+        task-457(b): clicking a not-yet-open persisted conversation awaits
+        ``_resume_console_workspace_conversation`` inline, so a slow or failing
+        open otherwise reads as a dead click. Flagging the pressed row
+        ``loading`` gives immediate feedback until the resume completes (the
+        post-resume rail recompose rebuilds the row without the flag) or errors
+        (the caller clears it in a ``finally``). Matches on the row's
+        ``conversation_id`` attribute and no-ops when the row is no longer
+        mounted, e.g. a recompose already replaced it.
+
+        Args:
+            conversation_id: The row's ``conversation_id`` attribute to match;
+                a blank value is a no-op.
+            loading: ``True`` to show the row's loading spinner, ``False`` to
+                clear it.
+        """
+        target = str(conversation_id or "").strip()
+        if not target:
+            return
+        for row in self.query(".console-workspace-conversation-row"):
+            if str(getattr(row, "conversation_id", "") or "").strip() == target:
+                row.loading = loading
+                return
+
     async def _resume_console_workspace_conversation(
         self,
         conversation_id: str,
@@ -14622,15 +14650,28 @@ class ChatScreen(BaseAppScreen):
                         severity="warning",
                     )
                     return
-                resumed = await self._resume_console_workspace_conversation(
-                    row_conversation_id,
-                    target_scope_type=(
-                        browser_row.scope_type if browser_row is not None else None
-                    ),
-                    target_workspace_id=(
-                        browser_row.workspace_id if browser_row is not None else None
-                    ),
-                )
+                # task-457(b): the resume is awaited inline and can be slow or
+                # fail; flag the pressed row loading for the duration so it does
+                # not read as a dead click, and always clear it afterwards (a
+                # successful resume also recomposes the rail, which drops the
+                # flag; the finally covers the not-resumable/error return).
+                self._set_console_conversation_row_loading(row_conversation_id, True)
+                try:
+                    resumed = await self._resume_console_workspace_conversation(
+                        row_conversation_id,
+                        target_scope_type=(
+                            browser_row.scope_type if browser_row is not None else None
+                        ),
+                        target_workspace_id=(
+                            browser_row.workspace_id
+                            if browser_row is not None
+                            else None
+                        ),
+                    )
+                finally:
+                    self._set_console_conversation_row_loading(
+                        row_conversation_id, False
+                    )
                 if resumed:
                     await self._refresh_console_conversation_browser_after_selection()
                     return
