@@ -79,12 +79,12 @@ tldw_chatbook/Image_Generation/
 
 | Server file | Action in port |
 |---|---|
-| `exceptions.py`, `prompt_refinement.py`, `capabilities.py`, `adapters/base.py`, `request_validation.py` | **verbatim** (swap `loguru` → app logger only) |
+| `exceptions.py`, `prompt_refinement.py`, `capabilities.py`, `adapters/base.py`, `request_validation.py` | **verbatim** — `loguru` is already this app's logging library (CLAUDE.md key deps), so **no logger swap is needed** |
 | `image_format_utils.py` | port; re-home only `fetch_image_bytes` onto local `http_client` |
-| `adapter_registry.py`, `listing.py` | port; repoint module paths / logger |
+| `adapter_registry.py`, `listing.py` | port; repoint only the `DEFAULT_ADAPTERS` module strings (loguru kept as-is) |
 | `config.py` | **re-home** (see §4); keep flat field names identical |
 | `adapters/{sd_cpp,swarmui,openrouter,novita,together,modelstudio}.py` | port; only change the `fetch_json`/`create_client` import source |
-| `reference_images.py` | **drop** (media-DB/object-store coupled; only ModelStudio uses it) |
+| `reference_images.py` | **drop** — verified safe: `capabilities.py` defines `ResolvedReferenceImage` itself (no import of `reference_images`), and modelstudio guards every reference path on `request.reference_image is not None`, so `reference_image=None` degrades to a no-op |
 
 ### 3.3 Core contracts (unchanged from server)
 
@@ -164,12 +164,13 @@ allowed_extra_params = []
 ### 4.2 Loader responsibilities
 
 A new loader in `Image_Generation/config.py` that:
-1. Reads the nested `[image_generation.*]` TOML via the app's config system.
+1. Reads each nested subsection via the app's **canonical nested accessor** — `get_cli_setting("image_generation", "<subsection>", {})` returns the subsection dict, or read the raw `load_settings().get("image_generation", {}).get("<subsection>", {})`. (Note: the dotted form `get_cli_setting("image_generation.swarmui", ...)` also works — the earlier "dotted lookup is flat/broken" concern was **stale**; `get_cli_setting` was fixed on 2026-07-16 (`b983f2548`) to walk nested TOML tables. No workaround needed.)
 2. **Flattens** nested keys to the server's flat field names (`[image_generation.swarmui].base_url` → `swarmui_base_url`, `[image_generation.openrouter].default_model` → `openrouter_image_default_model`, etc.) so the ported adapters/`request_validation`/`listing` read unchanged.
 3. Applies the server's `DEFAULT_*` constants as fallbacks (documented defaults above).
 4. Retains the `_coerce_*` / `_parse_list` helpers (TOML is typed, but env-var overrides arrive as strings).
-5. Resolves secret fields via §4.3.
+5. **Resolves each secret via §4.3 and writes the result into the config object's `*_api_key` / token field.** This is load-bearing: `listing.py:51-81`'s `is_configured` reads `getattr(cfg, "<backend>_api_key")` *first* (then env), and the adapters read the same field — so populating it from the full precedence (incl. keyring) makes a keyring-only backend correctly report as configured *and* usable, with no change to `listing.py` or the adapters.
 6. Caches like the server (`get_image_generation_config(reload=False)` + reset hook).
+7. **The `[image_generation]` default block (§4.1) must be added to the app's default config template** (`config.py`) so the section materializes for users to edit — the old `[media_creation]` section never existed, which is why the orphaned SwarmUI stack silently fell back to hard-coded defaults. Don't repeat that.
 
 This loader and its precedence are the highest-value test target.
 
@@ -182,7 +183,7 @@ OpenRouter and Together are **both LLM providers and image backends** in this ap
 3. Keyring (image-backend-scoped account name, distinct from LLM-provider accounts).
 4. *Optional* fallback to the shared provider key via `get_api_key()` — only if explicitly opted in, so it never surprises.
 
-Secrets are **never logged** (matches `[API]` handling per CLAUDE.md security rules).
+Secrets are **never logged** (matches `[API]` handling per CLAUDE.md security rules). Because the loader stores resolved secrets on the in-memory config object (§4.2 step 5), that object must never be logged/serialized wholesale — dump non-secret fields only if debugging.
 
 ---
 
@@ -204,6 +205,8 @@ Each adapter's own per-backend URL checks are preserved (SwarmUI same-origin res
 The ported adapters are **fully synchronous and blocking** (sync httpx; `subprocess.run` for sd.cpp; `time.sleep` polling for Novita/ModelStudio). The app therefore **never calls `generate()` on the asyncio/UI loop**. A thin wrapper runs generation on a Textual **thread worker** (`@work(thread=True)` / `run_worker(..., thread=True)`), consistent with the app's known "sync-under-async blocks the UI loop" rule. The demo panel (and later the chat card) both go through this wrapper.
 
 **Cancellation caveat (finding B6):** a blocking `subprocess.run` / `time.sleep` will not cancel promptly, so in-flight generation cannot be cleanly aborted in Phase 1. Mitigations: sane default `timeout_seconds` per backend (as configured), and a clear "generating…" state. A proper cancel/timeout story is deferred to the chat-card phase.
+
+**Request construction:** `ImageGenRequest.format` is a *required* field (no dataclass default). The wrapper that builds the request supplies a default output `format` of `"png"` (overridable). Note `inline_max_bytes` (default 4 MB) caps `validate_and_convert_image_output`; a large PNG can exceed it, so the wrapper surfaces that error clearly and `webp`/`jpg` remain available as smaller-output formats.
 
 ---
 
@@ -228,7 +231,7 @@ The demo panel is the manual proof surface; it does not persist anything.
 - **`request_validation` bounds suite**: prompt length, width/height/pixels, steps, cfg_scale positivity/finiteness, extra_params allowlist (incl. ModelStudio `mode` exemption and `cli_args` list rule).
 - **Registry tests**: `resolve_backend` enabled/disabled/default logic, lazy import, singleton caching, unknown backend.
 - **`prompt_refinement` table tests**: off/basic/auto modes, no-double-append, max-length guard.
-- **Config-loader tests (priority)**: nested TOML → flat field mapping, `DEFAULT_*` fallbacks, `_coerce_*` on string env overrides, and the §4.3 key precedence (env > config > keyring > optional shared).
+- **Config-loader tests (priority)**: nested TOML → flat field mapping, `DEFAULT_*` fallbacks, `_coerce_*` on string env overrides, the §4.3 key precedence (env > config > keyring > optional shared), and that a **keyring-only** secret populated by the loader makes `listing.is_configured` report that backend configured (§4.2 step 5).
 - **Opt-in live integration tests**: one per backend, skipped unless creds/servers/binary are present.
 - Cold-start guard: assert importing `tldw_chatbook.Image_Generation` does not import adapters or Pillow (finding B8).
 
