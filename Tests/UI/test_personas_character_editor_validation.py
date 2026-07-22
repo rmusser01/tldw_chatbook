@@ -89,21 +89,33 @@ async def test_validate_returns_error_tuple_for_blank_name():
 
 
 async def test_oversized_avatar_marks_field_and_blocks_save():
+    """Fix A (review wave): set_avatar_image must trigger validation itself,
+    directly and synchronously - not rely on a leftover debounce timer from
+    the preceding load_character call. Proven by fully settling the
+    load-triggered debounce FIRST (so no timer is left pending), then
+    asserting the row is marked invalid after a single pilot.pause() with NO
+    further debounce wait following set_avatar_image."""
     app = _Host()
     async with app.run_test() as pilot:
         ed = app.query_one(PersonasCharacterEditorWidget)
         ed.load_character({"name": "A"})
         await pilot.pause()
+        await _settle(pilot)  # drain any load-triggered debounce fully
+
+        row = ed.query_one("#personas-char-editor-avatar-status").parent
+        assert not row.has_class("is-invalid")
 
         ed.set_avatar_image(b"x" * (PERSONAS_AVATAR_MAX_BYTES + 1))
-        await _settle(pilot)
+        # No settle here: set_avatar_image is a discrete user action that
+        # validates directly (no debounce) - a single pause lets the
+        # class-toggle + footer render land.
+        await pilot.pause()
 
         findings = ed.validate()
         assert any(
             fid == "personas-char-editor-avatar-status" and level == "error"
             for fid, _msg, level in findings
         )
-        row = ed.query_one("#personas-char-editor-avatar-status").parent
         assert row.has_class("is-invalid")
 
         await pilot.click("#personas-char-editor-save")
@@ -162,3 +174,57 @@ async def test_validated_field_ids_covers_name_and_avatar():
         ids = ed._validated_field_ids()
         assert "personas-char-editor-name" in ids
         assert "personas-char-editor-avatar-status" in ids
+
+
+async def test_blank_new_form_does_not_mark_name_invalid_before_interaction():
+    """Fix B (review wave): a freshly-opened blank form must not display
+    validation errors before the user has touched anything, even after the
+    debounce interval elapses (the async Changed events fired by
+    new_character's programmatic population must not surface an error)."""
+    app = _Host()
+    async with app.run_test() as pilot:
+        ed = app.query_one(PersonasCharacterEditorWidget)
+        ed.new_character()
+        await pilot.pause()
+        await _settle(pilot)  # let any load-triggered debounce fire
+
+        row = ed.query_one("#personas-char-editor-name").parent
+        assert not row.has_class("is-invalid")
+        validation = ed.query_one("#personas-char-editor-validation", Static)
+        assert str(validation.renderable) == ""
+
+        # Now a genuine interaction: type then clear -> touched, now invalid.
+        name_input = ed.query_one("#personas-char-editor-name", Input)
+        name_input.value = "X"
+        await pilot.pause()
+        name_input.value = ""
+        await _settle(pilot)
+        assert row.has_class("is-invalid")
+        assert "personas-char-editor-name: required" in str(validation.renderable)
+
+
+async def test_greeting_add_blank_warns_immediately_without_save():
+    """Fix A (review wave): _greetings_add validates directly (no debounce,
+    no Save needed) - the warning appears in the footer right after the Add
+    action, proving the mutator triggers validation itself."""
+    app = _Host()
+    async with app.run_test() as pilot:
+        ed = app.query_one(PersonasCharacterEditorWidget)
+        ed.load_character({"name": "A"})
+        await pilot.pause()
+        await _settle(pilot)  # drain any load-triggered debounce fully
+
+        ed._greetings_add("   ")
+        # No debounce wait: the mutator must validate synchronously.
+        await pilot.pause()
+
+        validation = ed.query_one("#personas-char-editor-validation", Static)
+        assert "greeting 1 is blank" in str(validation.renderable)
+
+        findings = ed.validate()
+        assert not any(level == "error" for _fid, _msg, level in findings)
+
+        # Warning never blocks Save.
+        await pilot.click("#personas-char-editor-save")
+        await pilot.pause()
+        assert len(app.saves) == 1

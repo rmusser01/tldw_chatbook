@@ -75,6 +75,11 @@ class PersonaProfileEditorWidget(Container):
         # Live validation (Roleplay P3b Task 4): see
         # PersonasCharacterEditorWidget._validation_timer for the mechanism.
         self._validation_timer: Timer | None = None
+        # Fix-wave gate: a freshly-opened form (load_persona/new_persona)
+        # must not display validation errors before the user has actually
+        # interacted with it. Set True on a genuine field edit or a Save
+        # click; reset on every load.
+        self._user_touched: bool = False
 
     def compose(self) -> ComposeResult:
         yield Static("Persona Editor", classes="destination-section")
@@ -121,6 +126,7 @@ class PersonaProfileEditorWidget(Container):
             self._loading = False
         self._loaded_snapshot = self._form_snapshot()
         self._dirty_posted = False
+        self._user_touched = False
 
     def new_persona(self) -> None:
         """Clear the form for a new (unsaved) persona."""
@@ -182,6 +188,17 @@ class PersonaProfileEditorWidget(Container):
         See PersonasCharacterEditorWidget._field_changed for the suppression
         mechanism (loading flag + loaded-snapshot comparison).
         """
+        # Same condition the dirty-post below ultimately gates on (minus
+        # _dirty_posted, which only suppresses the once-per-session
+        # announcement, not the touched flag): a genuine edit, not the
+        # programmatic-population Changed events load_persona/new_persona
+        # trigger.
+        if (
+            not self._loading
+            and self._loaded_snapshot is not None
+            and self._form_snapshot() != self._loaded_snapshot
+        ):
+            self._user_touched = True
         self._schedule_validation()
         if self._loading or self._dirty_posted or self._loaded_snapshot is None:
             return
@@ -213,9 +230,21 @@ class PersonaProfileEditorWidget(Container):
         ``_field_changed``) and authoritatively at Save (``_save_pressed``),
         which blocks when any finding is ``level == "error"``.
 
+        Display is gated on ``_user_touched``: a freshly-opened form
+        (``load_persona``/``new_persona``) must not show errors before the
+        user has actually interacted with it, so while untouched no row is
+        marked invalid and the footer stays clear.
+
         Returns:
-            The findings just computed and rendered.
+            The findings actually rendered - empty when gated by
+            ``_user_touched`` (not the raw ``validate()`` output, since
+            nothing was displayed in that case).
         """
+        if not self._user_touched:
+            for fid in self._validated_field_ids():
+                self.query_one(f"#{fid}").parent.remove_class(self._FIELD_ERROR_CLASS)
+            self.show_validation(())
+            return []
         findings = self.validate()
         invalid_ids = {fid for fid, _msg, level in findings if level == "error"}
         for fid in self._validated_field_ids():
@@ -244,6 +273,10 @@ class PersonaProfileEditorWidget(Container):
     @on(Button.Pressed, "#personas-editor-save")
     def _save_pressed(self, event: Button.Pressed) -> None:
         event.stop()
+        # Save is itself a user action: authoritatively validate even an
+        # untouched blank form (clicking Save with nothing else edited must
+        # still block + mark the offending field).
+        self._user_touched = True
         if any(level == "error" for _fid, _msg, level in self._run_validation()):
             return
         self.post_message(PersonaProfileSaveRequested(self.collect()))

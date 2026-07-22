@@ -183,6 +183,11 @@ class PersonasCharacterEditorWidget(Container):
         # scheduled by _field_changed, cancelled and re-armed on every real
         # field change so only the last edit in a typing burst validates.
         self._validation_timer: Timer | None = None
+        # Fix-wave gate: a freshly-opened form (load_character/new_character)
+        # must not display validation errors before the user has actually
+        # interacted with it. Set True on a genuine field edit, an avatar
+        # action, a greeting mutation, or a Save click; reset on every load.
+        self._user_touched: bool = False
 
     def compose(self) -> ComposeResult:
         yield Static("Character Editor", classes="destination-section")
@@ -317,6 +322,7 @@ class PersonasCharacterEditorWidget(Container):
         # the just-populated form) and ignores events that match it.
         self._loaded_snapshot = self._form_snapshot()
         self._dirty_posted = False
+        self._user_touched = False
 
     def mark_saved(self, record: Dict[str, Any]) -> None:
         """Re-baseline dirty state to a just-persisted record (save-in-place).
@@ -391,6 +397,10 @@ class PersonasCharacterEditorWidget(Container):
         self._character_data["image"] = image_data
         self._set_avatar_status_from_record()
         self._mark_dirty()
+        # A discrete user action (upload flow) - validate immediately, no
+        # debounce needed, so an oversized avatar's error appears at once.
+        self._user_touched = True
+        self._run_validation()
 
     def current_avatar_bytes(self) -> bytes | None:
         """Return the loaded record's embedded avatar bytes, if any.
@@ -479,12 +489,26 @@ class PersonasCharacterEditorWidget(Container):
         """Compute findings, mark/un-mark offending rows, render the footer.
 
         Runs debounced on field change (``_schedule_validation``, wired into
-        ``_field_changed``) and authoritatively at Save (``_save_pressed``),
-        which blocks when any finding is ``level == "error"``.
+        ``_field_changed``) and directly off discrete actions (avatar
+        upload/remove, greeting mutations) and authoritatively at Save
+        (``_save_pressed``), which blocks when any finding is
+        ``level == "error"``.
+
+        Display is gated on ``_user_touched``: a freshly-opened form
+        (``load_character``/``new_character``) must not show errors before
+        the user has actually interacted with it, so while untouched no row
+        is marked invalid and the footer stays clear.
 
         Returns:
-            The findings just computed and rendered.
+            The findings actually rendered - empty when gated by
+            ``_user_touched`` (not the raw ``validate()`` output, since
+            nothing was displayed in that case).
         """
+        if not self._user_touched:
+            for fid in self._validated_field_ids():
+                self.query_one(f"#{fid}").parent.remove_class(self._FIELD_ERROR_CLASS)
+            self.show_validation(())
+            return []
         findings = self.validate()
         invalid_ids = {fid for fid, _msg, level in findings if level == "error"}
         for fid in self._validated_field_ids():
@@ -668,6 +692,10 @@ class PersonasCharacterEditorWidget(Container):
         self._greetings.append(text)
         self._render_greetings_table()
         self._mark_dirty()
+        # A discrete user action (Add button) - validate immediately, no
+        # debounce, so a blank-greeting warning appears at once.
+        self._user_touched = True
+        self._run_validation()
 
     def _greetings_update(self, index: int, text: str) -> None:
         if 0 <= index < len(self._greetings):
@@ -679,6 +707,8 @@ class PersonasCharacterEditorWidget(Container):
             # text), and so a follow-up Update commits to the right entry.
             self._select_greeting_row(index)
             self._mark_dirty()
+            self._user_touched = True
+            self._run_validation()
 
     def _greetings_delete(self, index: int) -> None:
         if 0 <= index < len(self._greetings):
@@ -699,6 +729,8 @@ class PersonasCharacterEditorWidget(Container):
                     "#personas-char-editor-greeting-edit", TextArea
                 ).text = ""
             self._mark_dirty()
+            self._user_touched = True
+            self._run_validation()
 
     def _greetings_move(self, index: int, offset: int) -> None:
         j = index + offset
@@ -709,6 +741,8 @@ class PersonasCharacterEditorWidget(Container):
             )
             self._render_greetings_table()
             self._mark_dirty()
+            self._user_touched = True
+            self._run_validation()
 
     # ===== Events =====
 
@@ -736,6 +770,16 @@ class PersonasCharacterEditorWidget(Container):
             and event.text_area.id == "personas-char-editor-greeting-edit"
         ):
             return
+        # Same condition _mark_dirty ultimately gates on (minus _dirty_posted,
+        # which only suppresses the once-per-session announcement, not the
+        # touched flag): a genuine edit, not the programmatic-population
+        # Changed events load_character/new_character trigger.
+        if (
+            not self._loading
+            and self._loaded_snapshot is not None
+            and self._form_snapshot() != self._loaded_snapshot
+        ):
+            self._user_touched = True
         self._schedule_validation()
         if self._loading or self._dirty_posted or self._loaded_snapshot is None:
             return
@@ -825,6 +869,10 @@ class PersonasCharacterEditorWidget(Container):
     @on(Button.Pressed, "#personas-char-editor-save")
     def _save_pressed(self, event: Button.Pressed) -> None:
         event.stop()
+        # Save is itself a user action: authoritatively validate even an
+        # untouched blank form (clicking Save with nothing else edited must
+        # still block + mark the offending field).
+        self._user_touched = True
         if any(level == "error" for _fid, _msg, level in self._run_validation()):
             return
         self.post_message(CharacterSaveRequested(self.get_character_data()))

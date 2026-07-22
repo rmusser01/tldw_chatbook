@@ -4065,6 +4065,10 @@ class PersonasScreen(BaseAppScreen):
             return
         editor._character_data.pop("image", None)
         editor._mark_dirty()
+        # A discrete user action (Remove button) - validate immediately, no
+        # debounce, so an avatar-oversize error clears at once on removal.
+        editor._user_touched = True
+        editor._run_validation()
         self.run_worker(
             self._render_character_editor_avatar(),
             group="personas-avatar-render",

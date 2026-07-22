@@ -102,3 +102,30 @@ async def test_validated_field_ids_covers_name():
     async with app.run_test() as pilot:
         ed = app.query_one(PersonaProfileEditorWidget)
         assert "personas-editor-name" in ed._validated_field_ids()
+
+
+async def test_blank_new_form_does_not_mark_name_invalid_before_interaction():
+    """Fix B (review wave): a freshly-opened blank form must not display
+    validation errors before the user has touched anything, even after the
+    debounce interval elapses (the async Changed events fired by
+    new_persona's programmatic population must not surface an error)."""
+    app = _Host()
+    async with app.run_test() as pilot:
+        ed = app.query_one(PersonaProfileEditorWidget)
+        ed.new_persona()
+        await pilot.pause()
+        await _settle(pilot)  # let any load-triggered debounce fire
+
+        row = ed.query_one("#personas-editor-name").parent
+        assert not row.has_class("is-invalid")
+        validation = ed.query_one("#personas-editor-validation", Static)
+        assert str(validation.renderable) == ""
+
+        # Now a genuine interaction: type then clear -> touched, now invalid.
+        name_input = ed.query_one("#personas-editor-name", Input)
+        name_input.value = "X"
+        await pilot.pause()
+        name_input.value = ""
+        await _settle(pilot)
+        assert row.has_class("is-invalid")
+        assert "personas-editor-name: required" in str(validation.renderable)
