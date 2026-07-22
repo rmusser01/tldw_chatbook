@@ -314,6 +314,7 @@ from ...Workspaces import (
     DEFAULT_WORKSPACE_ID,
     WorkspaceRecord,
     build_console_conversation_browser_state,
+    console_persisted_row_updated_sort,
 )
 from ...Widgets.compact_model_bar import CompactModelBar
 from ...Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
@@ -4775,12 +4776,10 @@ class ChatScreen(BaseAppScreen):
                             and current_conversation == conversation_id
                         ),
                         source_kind="persisted",
-                        updated_sort=str(
-                            item.get("updated_at")
-                            or item.get("created_at")
-                            or item.get("last_updated")
-                            or ""
-                        ),
+                        # TASK-355: recency-first ordering / age labels must come
+                        # from last_modified (normalize_conversation_row exposes
+                        # no updated_at) or the rail degrades to creation order.
+                        updated_sort=console_persisted_row_updated_sort(item),
                     )
                     rows.append(
                         self._apply_console_browser_star_state(row, starred_ids)
@@ -4974,12 +4973,10 @@ class ChatScreen(BaseAppScreen):
                             and current_conversation == conversation_id
                         ),
                         source_kind="persisted",
-                        updated_sort=str(
-                            item.get("updated_at")
-                            or item.get("created_at")
-                            or item.get("last_updated")
-                            or ""
-                        ),
+                        # TASK-355: recency-first ordering / age labels must come
+                        # from last_modified (normalize_conversation_row exposes
+                        # no updated_at) or the rail degrades to creation order.
+                        updated_sort=console_persisted_row_updated_sort(item),
                     )
                     rows.append(
                         self._apply_console_browser_star_state(row, starred_ids)
