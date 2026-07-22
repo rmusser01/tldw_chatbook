@@ -691,10 +691,12 @@ def _capped_hidden_count(
     """Return the rows hidden by the per-group cap in the current render.
 
     TASK-354: excludes collapsed sections — their rows are hidden by an explicit
-    user collapse that already shows its own header count, not by silent
-    capping. A non-collapsed section's ``hidden_count`` is pure cap overflow
-    (``_visible_rows`` reports 0 for collapsed groups), so summing it across
-    expanded sections yields exactly the silently-dropped total.
+    user collapse (reversible by expanding the section, which the toggle in the
+    section header invites), not by the silent cap, so they are not "silently"
+    lost and must not inflate the disclosure. A non-collapsed section's
+    ``hidden_count`` is pure cap overflow (``_visible_rows`` reports 0 for
+    collapsed groups), so summing it across expanded sections yields exactly the
+    silently-dropped total.
     """
     return sum(
         section.hidden_count for section in sections if not section.collapsed
