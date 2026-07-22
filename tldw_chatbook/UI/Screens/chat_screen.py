@@ -601,6 +601,23 @@ class ChatScreen(BaseAppScreen):
     input text, and UI preferences when navigating away and returning.
     """
 
+    # TASK-352: Textual docks notification toasts bottom-right by default —
+    # directly over the Console composer's Send/Attach/Save cluster and the
+    # staged-chip strip — and toasts intercept clicks, so a click aimed at those
+    # controls during a ~5s toast dismisses the toast instead of pressing the
+    # button. Dock the Console screen's toast rack to the TOP-right so feedback
+    # never obscures, or swallows clicks aimed at, the composer's controls.
+    # Kept in DEFAULT_CSS (not the bundle) so it applies in both the real app
+    # and test harnesses, which load widget DEFAULT_CSS but not the built bundle.
+    DEFAULT_CSS = """
+    ChatScreen ToastRack {
+        dock: top;
+        align: right top;
+        margin-top: 1;
+        margin-bottom: 0;
+    }
+    """
+
     BINDINGS = [
         # Textual's Screen base class binds tab/shift+tab to the "app."-namespaced
         # focus_next/focus_previous actions, which always dispatch to App.action_focus_next

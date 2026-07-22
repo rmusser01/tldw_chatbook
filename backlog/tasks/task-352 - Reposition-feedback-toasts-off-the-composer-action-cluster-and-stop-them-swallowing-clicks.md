@@ -1,10 +1,16 @@
 ---
 id: TASK-352
-title: Reposition feedback toasts off the composer action cluster and stop them swallowing clicks
-status: To Do
-assignee: []
+title: >-
+  Reposition feedback toasts off the composer action cluster and stop them
+  swallowing clicks
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
-labels: [console, ux]
+updated_date: '2026-07-22 04:18'
+labels:
+  - console
+  - ux
 dependencies: []
 priority: medium
 ---
@@ -27,5 +33,40 @@ Also observed independently in J6 keyboard-only/small-terminal as `j6-boot-toast
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Feedback must not obscure the primary controls it reports on. Place toasts above the composer or in the status bar, keep them short-lived, and never let them intercept clicks aimed at controls beneath
+- [x] #1 Feedback must not obscure the primary controls it reports on. Place toasts above the composer or in the status bar, keep them short-lived, and never let them intercept clicks aimed at controls beneath
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Root cause: Textual docks notification toasts bottom-right by default
+(`ToastRack { dock: bottom; align: right bottom }`) — directly over the Console
+composer's Send/Attach/Save cluster and the staged-chip strip — and toasts
+intercept clicks (click-to-dismiss), so a click aimed at those controls during a
+~5s toast dismisses the toast instead of pressing the button. The app had no
+toast override.
+
+Fix: a one-rule `ChatScreen.DEFAULT_CSS` docks the Console screen's toast rack to
+the TOP-right (`dock: top; align: right top`). A top-docked rack can never
+overlap the bottom composer cluster, so feedback no longer obscures — nor
+swallows clicks aimed at — the composer controls; the only thing beneath a
+top-right toast is the header status chips (read-only). Kept in `DEFAULT_CSS`
+rather than the CSS bundle so it applies in BOTH the real app (which loads the
+bundle + widget DEFAULT_CSS) and test harnesses (which load DEFAULT_CSS but not
+the built bundle) — this is what makes it regression-testable. Scoped to
+`ChatScreen` (2-type selector beats Textual's 1-type `ToastRack` default);
+additive to `BaseAppScreen.DEFAULT_CSS` via the MRO (44 layout tests confirm
+BaseAppScreen styling intact). Toast duration left at Textual's short default —
+with the occlusion removed, the ~5s lifetime is no longer harmful; changing the
+global notify timeout across ~95 sites is out of scope.
+
+Verified: RED→GREEN regression test `test_console_toast_rack_docks_top_not_over_
+composer` (mounts a ToastRack under the Console screen and asserts the CSS docks
+it top — the headless notification system doesn't render toasts, so the style is
+asserted directly). Served-app capture confirms the composer region is clean at
+boot (previously the boot "Model catalog" toast sat over it); the boot
+catalog-refresh toast can't be re-triggered live because the capture harness
+aborts outbound https, but the top-dock mechanism is deterministic and proven by
+the test. Files: `tldw_chatbook/UI/Screens/chat_screen.py`,
+`Tests/UI/test_console_toast_placement.py`.
+<!-- SECTION:NOTES:END -->
