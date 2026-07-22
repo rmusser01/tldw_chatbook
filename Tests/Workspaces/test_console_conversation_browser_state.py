@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from tldw_chatbook.Workspaces.conversation_browser_state import (
+    CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
     ConsoleConversationBrowserInputRow,
     build_console_conversation_browser_state,
     console_persisted_row_updated_sort,
@@ -713,3 +714,49 @@ def test_normalized_conversation_row_recency_flows_through_helper():
     assert (
         console_persisted_row_updated_sort(normalized) == "2026-07-21T13:19:00+00:00"
     )
+
+
+def _chat_rows(n):
+    return tuple(
+        _row(
+            f"c{i}",
+            f"Chat {i}",
+            scope_type="global",
+            workspace_id=None,
+            workspace_label="Chats",
+        )
+        for i in range(n)
+    )
+
+
+def test_no_query_view_discloses_conversations_hidden_by_the_cap():
+    """TASK-354: the rail silently caps each group at
+    CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT; with no search active the
+    overflow was dropped with zero disclosure, so the oldest conversations
+    looked deleted. The no-query view must announce the hidden rows and how to
+    reach them."""
+    rows = _chat_rows(CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3)
+    state = build_console_conversation_browser_state(
+        rows=rows, active_workspace_id="ws-a"
+    )
+    assert "3 more" in state.status_copy
+    assert "Ctrl+K" in state.status_copy
+
+
+def test_no_query_view_has_no_disclosure_when_nothing_is_capped():
+    state = build_console_conversation_browser_state(
+        rows=_chat_rows(3), active_workspace_id="ws-a"
+    )
+    assert state.status_copy == ""
+
+
+def test_cap_disclosure_excludes_user_collapsed_sections():
+    """A collapsed section shows its own count in the header — its rows are not
+    'silently' hidden, so they must not inflate the cap disclosure."""
+    rows = _chat_rows(CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 5)
+    state = build_console_conversation_browser_state(
+        rows=rows,
+        active_workspace_id="ws-a",
+        group_collapse_preferences={"section:chats": True},
+    )
+    assert state.status_copy == ""

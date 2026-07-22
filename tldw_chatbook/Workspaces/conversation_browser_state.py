@@ -420,6 +420,7 @@ def build_console_conversation_browser_state(
         query_active=query_active,
         total_count=effective_total_count,
         displayed_count=_displayed_row_count(sections),
+        capped_hidden_count=_capped_hidden_count(sections),
     )
 
     return ConsoleConversationBrowserState(
@@ -684,20 +685,45 @@ def _selected_summary(rows: tuple[ConsoleConversationBrowserInputRow, ...]) -> s
     return selected.title or selected.workspace_label
 
 
+def _capped_hidden_count(
+    sections: tuple[ConsoleConversationBrowserSection, ...],
+) -> int:
+    """Return the rows hidden by the per-group cap in the current render.
+
+    TASK-354: excludes collapsed sections — their rows are hidden by an explicit
+    user collapse (reversible by expanding the section, which the toggle in the
+    section header invites), not by the silent cap, so they are not "silently"
+    lost and must not inflate the disclosure. A non-collapsed section's
+    ``hidden_count`` is pure cap overflow (``_visible_rows`` reports 0 for
+    collapsed groups), so summing it across expanded sections yields exactly the
+    silently-dropped total.
+    """
+    return sum(
+        section.hidden_count for section in sections if not section.collapsed
+    )
+
+
 def _build_status_copy(
     *,
     query_active: bool,
     total_count: int,
     displayed_count: int,
+    capped_hidden_count: int = 0,
 ) -> str:
-    if not query_active:
-        return ""
-    match_label = "match" if total_count == 1 else "matches"
-    status = f"{total_count} {match_label}"
-    shown_count = min(total_count, displayed_count)
-    if total_count > shown_count:
-        status = f"{status}. Showing {shown_count} of {total_count}"
-    return status
+    if query_active:
+        match_label = "match" if total_count == 1 else "matches"
+        status = f"{total_count} {match_label}"
+        shown_count = min(total_count, displayed_count)
+        if total_count > shown_count:
+            status = f"{status}. Showing {shown_count} of {total_count}"
+        return status
+    # TASK-354: with no search active the per-group cap can silently drop the
+    # oldest conversations, so they read as deleted. Disclose the count and point
+    # at the search that reaches them (Ctrl+K fuzzy-finds capped rows).
+    if capped_hidden_count > 0:
+        row_label = "conversation" if capped_hidden_count == 1 else "conversations"
+        return f"{capped_hidden_count} more {row_label} — search with Ctrl+K"
+    return ""
 
 
 def _displayed_row_count(

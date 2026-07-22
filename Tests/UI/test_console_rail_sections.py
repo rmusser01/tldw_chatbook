@@ -36,6 +36,11 @@ from tldw_chatbook.Widgets.Console.console_workspace_context import (
 from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
 )
+from tldw_chatbook.Workspaces.conversation_browser_state import (
+    CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
+    ConsoleConversationBrowserInputRow,
+    build_console_conversation_browser_state,
+)
 from tldw_chatbook.Workspaces.display_state import ConsoleWorkspaceContextState
 
 
@@ -509,11 +514,6 @@ from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (  # no
     ConsoleSessionSwitcherModal,
     ConsoleSwitcherChoice,
 )
-from tldw_chatbook.Workspaces.conversation_browser_state import (  # noqa: E402
-    ConsoleConversationBrowserInputRow,
-)
-
-
 def _switcher_rows() -> tuple[ConsoleConversationBrowserInputRow, ...]:
     def row(key, title, native=None, **kw):
         return ConsoleConversationBrowserInputRow(
@@ -873,3 +873,46 @@ async def test_switcher_result_shows_saved_chat_vocabulary_not_in_progress():
         label = str(result.label)
         assert "saved chat" in label
         assert "in-progress" not in label
+
+
+def _overflow_conversation_browser():
+    rows = tuple(
+        ConsoleConversationBrowserInputRow(
+            row_key=f"c{i}",
+            conversation_id=f"c{i}",
+            native_session_id=None,
+            title=f"Chat {i}",
+            scope_type="global",
+            workspace_id=None,
+            workspace_label="Chats",
+            status="workspace-thread",
+            updated_label="1d",
+        )
+        for i in range(CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3)
+    )
+    return build_console_conversation_browser_state(rows=rows, active_workspace_id="ws-a")
+
+
+class _OverflowTrayApp(App):
+    def compose(self):
+        import dataclasses
+
+        state = dataclasses.replace(
+            _workspace_state(), conversation_browser=_overflow_conversation_browser()
+        )
+        yield ConsoleWorkspaceContextTray(state, id="overflow-tray")
+
+
+@pytest.mark.asyncio
+async def test_rail_discloses_conversations_hidden_by_the_cap_in_no_query_view():
+    """TASK-354: with more conversations than the per-group cap and no search
+    active, the rail must render an explicit overflow disclosure pointing at
+    Ctrl+K, instead of silently dropping the oldest with no affordance."""
+    app = _OverflowTrayApp()
+    async with app.run_test(size=(70, 40)):
+        status = app.query_one(
+            "#console-workspace-conversation-search-status", Static
+        )
+        text = str(getattr(status.renderable, "plain", status.renderable))
+        assert "3 more" in text
+        assert "Ctrl+K" in text
