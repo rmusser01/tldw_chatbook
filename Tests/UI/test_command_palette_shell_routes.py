@@ -159,3 +159,14 @@ def test_palette_offers_library_skills_deeplink_command():
     # The route must pass through unaliased so the legacy deep-link map
     # (and not a generic Library navigation) handles it.
     assert TabNavigationProvider.route_for_tab("skills") == "skills"
+
+
+def test_library_and_skills_palette_entries_are_distinguishable():
+    from tldw_chatbook.app import TabNavigationProvider
+
+    subroutes = TabNavigationProvider.LIBRARY_SUBROUTE_COMMANDS
+    skills = next(item for item in subroutes if item[0] == "skills")
+    # The skills deep-link command text must be distinct from the generic
+    # "Library" destination command so a first-time user can tell them apart.
+    assert "Skills" in skills[1]
+    assert skills[1] != "Library"
