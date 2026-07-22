@@ -26,6 +26,7 @@ from textual.color import Color
 from textual.events import Click, DescendantFocus, Key, MouseUp, Paste, Resize
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
+from textual.widget import Widget
 from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
 
 from ..Navigation.base_app_screen import BaseAppScreen
@@ -187,6 +188,7 @@ from ...Chat.console_image_view import (
     ConsoleImageViewState,
     next_view_mode,
     resolve_default_mode,
+    resolve_show_character_avatar,
 )
 from ...Chat.console_paste_attach import (
     extract_dropped_path,
@@ -1934,6 +1936,15 @@ class ChatScreen(BaseAppScreen):
         # P2g-2 Task 4: same double-open guard, for the World Books
         # inspector block's Attach/Detach picker flow.
         self._console_worldbook_dialog_active = False
+        # P3c: cached avatar spec (dict | None) for the active character in
+        # the "Character" rail section, plus its display name and the
+        # scope (conversation/character) it was last computed for. Mirrors
+        # the dictionaries/world-books caches above -- the compose path
+        # reads only this cache, never doing I/O on recompose. T3 fills
+        # `_active_character_avatar`; this task only seeds the empty state.
+        self._active_character_avatar: dict | None = None
+        self._active_character_avatar_name: str | None = None
+        self._last_console_avatar_scope: Any | None = None
         self.ui_state = UIState()
         self._load_sidebar_state()
 
@@ -3898,6 +3909,20 @@ class ChatScreen(BaseAppScreen):
             return None
         name = getattr(native_session, "character_name", None)
         return str(name) if name else None
+
+    def _build_character_avatar_widget(self, spec: dict | None) -> Widget:
+        """Build a fresh avatar widget from the cached spec (data, not a widget).
+
+        T3 fills `spec` with {character_id, name, mode, pil, pixels}. With no
+        spec / no image, render a compact text placeholder.
+        """
+        from textual.widgets import Static as _S
+        if not spec or (spec.get("pil") is None and spec.get("pixels") is None):
+            hint = "no avatar" if spec else "No character in this chat"
+            return _S(hint, id="console-character-avatar-empty")
+        # T3 extends: graphics -> textual_image Image(pil) with fit dims;
+        # pixels -> Static(Pixels). Placeholder until then:
+        return _S("", id="console-character-avatar-empty")
 
     def _console_session_id_for_workspace_conversation(
         self,
@@ -8693,6 +8718,35 @@ class ChatScreen(BaseAppScreen):
                             details_tray.styles.width = "100%"
                             details_tray.styles.min_width = 0
                             yield details_tray
+
+                        # Section 5: Character (avatar of the active character).
+                        if resolve_show_character_avatar(
+                            getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
+                        ):
+                            yield ConsoleRailSectionHeader(
+                                "Character",
+                                section_id="character",
+                                open=rail_state.character_open,
+                                id="console-rail-section-header-character",
+                            )
+                            character_body = Vertical(
+                                id="console-rail-section-body-character",
+                                classes="console-rail-section-body",
+                            )
+                            character_body.styles.height = "auto"
+                            if not rail_state.character_open:
+                                character_body.styles.display = "none"
+                            with character_body:
+                                avatar_holder = Container(id="console-character-avatar")
+                                with avatar_holder:
+                                    yield self._build_character_avatar_widget(
+                                        self._active_character_avatar
+                                    )
+                                yield Static(
+                                    self._active_character_avatar_name
+                                    or "No character in this chat",
+                                    id="console-character-name",
+                                )
 
                 main_column = Vertical(id="console-main-column")
                 main_column.styles.width = "13fr"

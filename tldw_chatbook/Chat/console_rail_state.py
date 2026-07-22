@@ -13,7 +13,7 @@ CONSOLE_RAIL_LEFT_DEFAULT_OPEN = True
 CONSOLE_RAIL_RIGHT_DEFAULT_OPEN = False
 # Task-400: the "context" (staged sources) section moved from the left rail
 # into the Inspector rail, so it is no longer a collapsible left-rail section.
-CONSOLE_RAIL_SECTION_IDS = ("session", "model", "details", "agent")
+CONSOLE_RAIL_SECTION_IDS = ("session", "model", "details", "agent", "character")
 CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS = 150
 CONSOLE_RAIL_CONTEXT_LABEL = f"Context {GLYPH_COLLAPSED}"
 CONSOLE_RAIL_INSPECTOR_LABEL = f"{GLYPH_COLLAPSE_LEFT} Inspector"
@@ -74,6 +74,7 @@ class ConsoleRailPreferences:
     model_open: bool = True
     details_open: bool = False
     agent_open: bool = False
+    character_open: bool = True
 
 
 @dataclass(frozen=True)
@@ -104,6 +105,7 @@ class ConsoleRailState:
     model_open: bool = True
     details_open: bool = False
     agent_open: bool = False
+    character_open: bool = True
 
 
 def _sanitize_key_part(value: Any) -> str:
@@ -245,6 +247,7 @@ def coerce_console_rail_preferences(raw: Any) -> ConsoleRailPreferences:
         model_open=_coerce_bool(raw.get("model_open"), defaults.model_open),
         details_open=_coerce_bool(raw.get("details_open"), defaults.details_open),
         agent_open=_coerce_bool(raw.get("agent_open"), defaults.agent_open),
+        character_open=_coerce_bool(raw.get("character_open"), defaults.character_open),
     )
 
 
@@ -257,8 +260,9 @@ def serialize_console_rail_preferences(
         preferences: Rail preferences to serialize.
 
     Returns:
-        Persistence dict with the left/right rail flags and the four
-        left-rail section flags (task-400 dropped ``context_open``).
+        Persistence dict with the left/right rail flags and the five
+        left-rail section flags (task-400 dropped ``context_open``; P3c
+        added ``character_open``).
     """
     return {
         "left_open": bool(preferences.left_open),
@@ -267,6 +271,7 @@ def serialize_console_rail_preferences(
         "model_open": bool(preferences.model_open),
         "details_open": bool(preferences.details_open),
         "agent_open": bool(preferences.agent_open),
+        "character_open": bool(preferences.character_open),
     }
 
 
@@ -520,4 +525,5 @@ def build_console_rail_state(
         model_open=preferences.model_open,
         details_open=preferences.details_open,
         agent_open=preferences.agent_open,
+        character_open=preferences.character_open,
     )
