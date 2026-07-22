@@ -67,3 +67,11 @@ def test_validate_profile_reads_real_fields(tmp_path):
     bad.rag_config.chunking.chunk_overlap = bad.rag_config.chunking.chunk_size + 1
     warnings = m.validate_profile(bad)
     assert any("overlap" in w.lower() for w in warnings)
+
+
+def test_high_accuracy_has_no_stray_method_attr(tmp_path):
+    m = _mgr(tmp_path)
+    chunking = m.get_profile("high_accuracy").rag_config.chunking
+    # '.method' is a typo of the real field 'chunking_method' -> must not exist as a stray attr
+    assert "method" not in vars(chunking)
+    assert chunking.chunking_method in {"words", "sentences", "paragraphs"}
