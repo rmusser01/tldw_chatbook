@@ -32,6 +32,11 @@ from ..Metrics.metrics_logger import log_histogram, log_counter
 #
 ########################################################################################################################
 
+# Max characters of item content included in an analysis prompt. Podcasts use
+# a tighter budget because transcripts run long while the analysis is lighter.
+ANALYSIS_CONTENT_LIMIT = 5000
+PODCAST_ANALYSIS_CONTENT_LIMIT = 3000
+
 
 class ContentProcessor:
     """Process subscription content for ingestion."""
@@ -332,7 +337,7 @@ class ContentProcessor:
                     # Use custom prompt
                     prompt = options["analysis_prompt"]
                     # Replace variables
-                    prompt = prompt.replace("{content}", content[:5000])
+                    prompt = prompt.replace("{content}", content[:ANALYSIS_CONTENT_LIMIT])
                     prompt = prompt.replace("{title}", item.get("title", ""))
                     prompt = prompt.replace("{source}", subscription["name"])
                     prompt = prompt.replace("{url}", item.get("url", ""))
@@ -346,7 +351,7 @@ class ContentProcessor:
             title = item.get("title", "Untitled")
             url = item.get("url", "N/A")
             published = item.get("published_date", "Unknown")
-            content = content[:5000]
+            content = content[:ANALYSIS_CONTENT_LIMIT]
             return render_internal_prompt(
                 "subscriptions.feed_analysis",
                 name=name,
@@ -359,7 +364,7 @@ class ContentProcessor:
         elif subscription["type"] == "url_change":
             url = item.get("url", subscription["source"])
             change_percentage = f"{item.get('change_percentage', 0) * 100:.1f}"
-            content = content[:5000]
+            content = content[:ANALYSIS_CONTENT_LIMIT]
             return render_internal_prompt(
                 "subscriptions.url_change_analysis",
                 url=url,
@@ -371,7 +376,7 @@ class ContentProcessor:
             name = subscription["name"]
             title = item.get("title", "Untitled")
             published = item.get("published_date", "Unknown")
-            content = content[:3000]
+            content = content[:PODCAST_ANALYSIS_CONTENT_LIMIT]
             return render_internal_prompt(
                 "subscriptions.podcast_analysis",
                 name=name,
@@ -384,7 +389,7 @@ class ContentProcessor:
             # Generic prompt
             name = subscription["name"]
             title = item.get("title", "Untitled")
-            content = content[:5000]
+            content = content[:ANALYSIS_CONTENT_LIMIT]
             return render_internal_prompt(
                 "subscriptions.generic_analysis",
                 name=name,
