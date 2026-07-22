@@ -239,6 +239,23 @@ async def console_screen_with_db(avatar_db):
         yield app, screen, avatar_db
 
 
+@pytest_asyncio.fixture
+async def console_screen_with_db_avatar_off(avatar_db):
+    """Mounted Console screen wired to a real DB, with the avatar rail
+    section config-off (``chat.images.show_character_avatar = False``).
+    """
+    app = _build_test_app()
+    app.chachanotes_db = avatar_db
+    app.app_config["chat"] = {"images": {"show_character_avatar": False}}
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        screen = host.screen_stack[-1]
+        await _wait_for_selector(
+            screen, pilot, "#console-rail-section-header-details"
+        )
+        yield app, screen, avatar_db
+
+
 def _set_active_console_character(screen, character_id, character_name) -> None:
     """Bind the active native Console session to a character (or clear it)."""
     session = screen._active_native_console_session()
@@ -294,6 +311,33 @@ async def test_refresh_never_raises_on_bad_image(console_screen_with_db):
     assert screen._active_character_avatar_name == "Bad"
 
 
+@pytest.mark.asyncio
+async def test_refresh_never_raises_when_mount_fails(console_screen_with_db, monkeypatch):
+    """Whole-branch review, FIX 1: `_render_character_avatar_into_section`'s
+    ``holder.mount(...)`` runs outside `_refresh_active_character_avatar_if_
+    scope_changed`'s own try/except, at two call sites, and that refresh runs
+    unconditionally on every 0.2s Console sync tick -- some worker dispatch
+    sites run with ``exit_on_error=True``, so an escaping mount failure (e.g.
+    a transient layout race on a session-switch/resume tick) could crash the
+    app. The refresh must never raise even when the mount itself blows up.
+    """
+    app, screen, db = console_screen_with_db
+    from PIL import Image as PILImage
+    from io import BytesIO
+    buf = BytesIO(); PILImage.new("RGB", (32, 32), (200, 10, 10)).save(buf, format="PNG")
+    char_id = db.add_character_card({"name": "Ada", "image": buf.getvalue()})
+    _set_active_console_character(screen, char_id, "Ada")
+
+    holder = screen.query_one("#console-character-avatar")
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(holder, "mount", _boom)
+
+    await screen._refresh_active_character_avatar_if_scope_changed()  # must not raise
+
+
 # --- P3c Task 4: wire the refresh into the Console sync tick -----------------
 #
 # Unlike `test_refresh_populates_avatar_cache_and_mounts` above (which calls
@@ -318,3 +362,31 @@ async def test_sync_tick_refreshes_avatar(console_screen_with_db):
     assert screen._active_character_avatar_name == "Ada"
     name = screen.query_one("#console-character-name")
     assert "Ada" in str(name.renderable)
+
+
+# --- Whole-branch review fixes (P3c) -----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_refresh_skips_db_fetch_when_config_off(console_screen_with_db_avatar_off):
+    """Whole-branch review, FIX 2: per the spec's Error-handling section,
+    `_refresh_active_character_avatar_if_scope_changed` must early-return
+    when `resolve_show_character_avatar(...)` is False -- the rail section
+    isn't even composed in that case, so the off-thread DB fetch + PIL
+    decode must not run at all.
+    """
+    app, screen, db = console_screen_with_db_avatar_off
+    from PIL import Image as PILImage
+    from io import BytesIO
+    buf = BytesIO(); PILImage.new("RGB", (32, 32), (200, 10, 10)).save(buf, format="PNG")
+    char_id = db.add_character_card({"name": "Ada", "image": buf.getvalue()})
+    _set_active_console_character(screen, char_id, "Ada")
+
+    calls = []
+    orig = screen._fetch_character_card_for_avatar
+    screen._fetch_character_card_for_avatar = lambda cid: (calls.append(cid), orig(cid))[1]
+
+    await screen._refresh_active_character_avatar_if_scope_changed()
+
+    assert calls == []  # config-off short-circuits before any DB fetch
+    assert screen._active_character_avatar is None

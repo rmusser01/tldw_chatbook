@@ -3934,6 +3934,15 @@ class ChatScreen(BaseAppScreen):
 
     async def _refresh_active_character_avatar_if_scope_changed(self) -> None:
         """Refresh the cached character avatar only when the active character changed."""
+        if not resolve_show_character_avatar(
+            getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
+        ):
+            # Feature is config-off: the rail section isn't composed, so
+            # skip the off-thread DB fetch + PIL decode below entirely and
+            # keep the cache empty for when the section is next shown.
+            self._active_character_avatar = None
+            self._active_character_avatar_name = None
+            return
         character_id = self._current_console_rail_character_id()
         scope = (character_id,)
         if scope == self._last_console_avatar_scope:
@@ -3980,14 +3989,24 @@ class ChatScreen(BaseAppScreen):
             holder = self.query_one("#console-character-avatar", Container)
         except QueryError:
             return  # section not composed (config off / not mounted)
-        await holder.remove_children()
-        await holder.mount(self._build_character_avatar_widget(self._active_character_avatar))
         try:
-            self.query_one("#console-character-name", Static).update(
-                self._active_character_avatar_name or "No character in this chat"
-            )
-        except QueryError:
-            pass
+            await holder.remove_children()
+            await holder.mount(self._build_character_avatar_widget(self._active_character_avatar))
+            try:
+                self.query_one("#console-character-name", Static).update(
+                    self._active_character_avatar_name or "No character in this chat"
+                )
+            except QueryError:
+                pass
+        except Exception:
+            # Must never raise: called from `_refresh_active_character_avatar_
+            # if_scope_changed` at two sites outside that method's own
+            # try/except, which is itself invoked unconditionally on every
+            # 0.2s Console sync tick (`_sync_native_console_chat_ui`) -- some
+            # worker dispatch sites run with `exit_on_error=True`, so an
+            # escaping mount failure (e.g. a session-switch/resume tick
+            # racing a transient layout state) could crash the app.
+            logger.opt(exception=True).debug("avatar: render into section failed")
 
     def _build_character_avatar_widget(self, spec: dict | None) -> Widget:
         """Build a fresh avatar widget from the cached spec (data, not a widget).
@@ -4006,10 +4025,9 @@ class ChatScreen(BaseAppScreen):
         fallback -- degrades to the same text placeholder used for the
         no-image case.
         """
-        from textual.widgets import Static as _S
         if not spec or (spec.get("pil") is None and spec.get("pixels") is None):
             hint = "no avatar" if (spec and spec.get("character_id") is not None) else "No character in this chat"
-            return _S(hint, id="console-character-avatar-empty")
+            return Static(hint, id="console-character-avatar-empty")
         if spec.get("mode") == "graphics" and spec.get("pil") is not None:
             try:
                 from textual_image.widget import Image as _GraphicsImage
@@ -4041,7 +4059,7 @@ class ChatScreen(BaseAppScreen):
             return widget
         except Exception:
             logger.opt(exception=True).debug("avatar: pixels build failed")
-            return _S("no avatar", id="console-character-avatar-empty")
+            return Static("no avatar", id="console-character-avatar-empty")
 
     def _console_session_id_for_workspace_conversation(
         self,
