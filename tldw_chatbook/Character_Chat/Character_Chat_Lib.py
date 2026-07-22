@@ -594,9 +594,9 @@ def fetch_character_names(
 ) -> List[Dict[str, Any]]:
     """Compatibility wrapper used by older CCP handlers.
 
-    The default ``limit`` must stay in sync with
-    ``PersonasScreen.LIBRARY_FTS_THRESHOLD`` (UI/Screens/personas_screen.py),
-    which switches library search to FTS when the loaded list may be truncated.
+    The default ``limit`` caps the loaded character list; callers that need
+    the full library (e.g. paged/search-backed listings) should pass an
+    explicit ``limit``.
     """
     target_db = db or _get_default_chachanotes_db()
     if target_db is None:

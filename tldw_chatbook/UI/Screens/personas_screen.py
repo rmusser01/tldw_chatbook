@@ -225,12 +225,6 @@ _CENTER_VIEW_IDS: tuple[str, ...] = (
 class PersonasScreen(BaseAppScreen):
     """Characters, personas, dictionaries, and behavior profiles."""
 
-    #: Page size above which the loaded list may be truncated and FTS is used
-    #: instead of filtering the in-memory list. Must stay in sync with the
-    #: ``fetch_character_names(limit=1000)`` default in
-    #: ``Character_Chat/Character_Chat_Lib.py``, which caps the loaded list.
-    LIBRARY_FTS_THRESHOLD: int = 1000
-
     # Escape/Ctrl+S deliberately do NOT use priority=True: on Textual 8.2.7
     # neither Input nor TextArea (with the default tab_behavior="focus")
     # consumes those keys, so they bubble from the editor fields to this
@@ -501,6 +495,7 @@ class PersonasScreen(BaseAppScreen):
         self._count_cache_key: tuple | None = None
         self._character_tags: list[str] = []
         self._profiles: list[dict] = []
+        self._profile_total: int = 0
         self._dictionaries_cache: list[dict] = []
         self._selected_dictionary_version: int | None = None
         self._lore_books_cache: list[dict] = []
@@ -872,16 +867,17 @@ class PersonasScreen(BaseAppScreen):
             return
         cache_key = (search, tag)
         try:
-            if self._count_cache_key != cache_key:
-                self._character_total = await asyncio.to_thread(
+            if self._count_cache_key == cache_key:
+                total = self._character_total
+            else:
+                total = await asyncio.to_thread(
                     count_character_page, db, search_term=search, tag=tag
                 )
-                self._count_cache_key = cache_key
             # Clamp a now-out-of-range offset back onto the last page.
-            if offset > 0 and offset >= self._character_total:
+            if offset > 0 and offset >= total:
                 offset = max(
                     0,
-                    ((self._character_total - 1) // PERSONAS_LIBRARY_PAGE_SIZE)
+                    ((total - 1) // PERSONAS_LIBRARY_PAGE_SIZE)
                     * PERSONAS_LIBRARY_PAGE_SIZE,
                 )
                 self.state.page_offset = offset
@@ -910,6 +906,10 @@ class PersonasScreen(BaseAppScreen):
             or self.state.page_offset != offset
         ):
             return
+        # Commit shared count state only after the guard passes, so a
+        # superseded reload cannot clobber the winner's cached count.
+        self._character_total = total
+        self._count_cache_key = cache_key
         self._characters = records
         self._update_status_row()
         rows = self._build_library_rows(records, "character")
@@ -922,7 +922,7 @@ class PersonasScreen(BaseAppScreen):
         async with self._render_lock:
             await library.update_rows(
                 rows,
-                total=self._character_total,
+                total=total,
                 noun="characters",
                 page_offset=offset,
                 page_size=PERSONAS_LIBRARY_PAGE_SIZE,
@@ -941,14 +941,6 @@ class PersonasScreen(BaseAppScreen):
             await self._reload_character_page()
         elif self.state.active_mode == "personas":
             await self._render_profile_rows()
-
-    def _character_record(self, item_id: str | None) -> dict | None:
-        if item_id is None:
-            return None
-        for record in self._characters:
-            if str(record.get("id")) == str(item_id):
-                return record
-        return None
 
     def _profile_list_recovery_state(self, exc: Exception) -> DestinationRecoveryState:
         """Build recovery copy when persona profile listing is unavailable."""
@@ -1044,6 +1036,7 @@ class PersonasScreen(BaseAppScreen):
                 expected_mode=expected_mode,
             ):
                 return
+            self._profile_total = total
             rows = self._build_library_rows(page_rows, "persona_profile")
             library = self.query_one(PersonasLibraryPane)
             recovery_state = self._profile_lookup_recovery_state
@@ -1170,7 +1163,7 @@ class PersonasScreen(BaseAppScreen):
         total = (
             self._character_total
             if self.state.active_mode == "characters"
-            else len(self._profiles)
+            else self._profile_total
         )
         if new_offset < 0 or new_offset >= max(1, total):
             return
