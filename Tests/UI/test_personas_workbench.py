@@ -2,6 +2,7 @@
 """Mounted tests for the destination-native Personas workbench."""
 
 import inspect
+import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, Mock
@@ -1546,7 +1547,8 @@ class TestImportExport:
     async def test_import_existing_character_notifies_already_existed(
         self, mock_app_instance, stub_characters, monkeypatch, tmp_path
     ):
-        """A name-conflict import returns an existing id; the copy must say so."""
+        """A name-conflict import returns an existing id; the copy must say so
+        honestly (task-429: re-import does not update the existing character)."""
         monkeypatch.setattr(
             character_handler_module, "import_character_card", lambda file_path: 1
         )
@@ -1559,11 +1561,146 @@ class TestImportExport:
             await pilot.pause()
             assert screen.state.selected_entity_id == "1"
             assert any(
-                "already existed" in message and severity == "information"
+                "already existed" in message
+                and "does not update an existing character" in message
+                and severity == "information"
                 for message, severity in notifications
             )
             assert not any(
                 "Character imported." in message for message, _ in notifications
+            )
+
+    async def test_imported_lorebook_note_names_book(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        """The helper turns a saved character's world-book extension into
+        readable copy naming the book and its entry count (task-429)."""
+        monkeypatch.setattr(
+            character_handler_module,
+            "fetch_character_by_id",
+            lambda character_id: {
+                "extensions": {
+                    "character_world_books": [
+                        {"name": "Second Chance Lore", "entries": [{}, {}]}
+                    ]
+                }
+            },
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            note = await screen._imported_lorebook_note("7")
+            assert "Second Chance Lore" in note
+            assert "2 entries" in note
+
+    async def test_imported_lorebook_note_coerces_json_string_extensions(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        """Extensions saved/returned as a JSON string must still be readable."""
+        monkeypatch.setattr(
+            character_handler_module,
+            "fetch_character_by_id",
+            lambda character_id: {
+                "extensions": json.dumps(
+                    {"character_world_books": [{"name": "Old Lore"}]}
+                )
+            },
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            note = await screen._imported_lorebook_note("9")
+            assert "Old Lore" in note
+            assert "0 entries" in note
+
+    async def test_imported_lorebook_note_empty_without_a_book(
+        self, mock_app_instance, stub_characters
+    ):
+        """No world-book extension on the saved character yields no note."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            # stub_characters' fetch_character_by_id returns bare CHARACTERS
+            # records with no `extensions` key at all.
+            note = await screen._imported_lorebook_note("1")
+            assert note == ""
+
+    async def test_imported_lorebook_note_swallows_fetch_errors(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        """A DB error while re-fetching the character must never raise; the
+        toast should simply omit the lorebook note (guard-every-read)."""
+
+        def boom(character_id):
+            raise RuntimeError("db offline")
+
+        monkeypatch.setattr(character_handler_module, "fetch_character_by_id", boom)
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            note = await screen._imported_lorebook_note("1")
+            assert note == ""
+
+    async def test_import_success_names_lorebook_in_toast(
+        self, mock_app_instance, stub_characters, monkeypatch, tmp_path
+    ):
+        """A freshly imported card carrying an embedded book gets named in
+        the success toast, end to end (task-429)."""
+        imported_paths: list[str] = []
+
+        def fake_import(file_path):
+            imported_paths.append(file_path)
+            return 3
+
+        monkeypatch.setattr(
+            character_handler_module, "import_character_card", fake_import
+        )
+
+        def fetch_all_with_imported():
+            characters = [dict(c) for c in CHARACTERS]
+            if imported_paths:
+                characters.append({"id": 3, "name": "Imported Hero", "version": 1})
+            return characters
+
+        monkeypatch.setattr(
+            character_handler_module, "fetch_all_characters", fetch_all_with_imported
+        )
+
+        def fetch_with_book(character_id):
+            record = next(
+                (
+                    dict(c)
+                    for c in fetch_all_with_imported()
+                    if str(c["id"]) == str(character_id)
+                ),
+                None,
+            )
+            if record and str(character_id) == "3":
+                record["extensions"] = {
+                    "character_world_books": [
+                        {"name": "Second Chance Lore", "entries": [{}, {}]}
+                    ]
+                }
+            return record
+
+        monkeypatch.setattr(
+            character_handler_module, "fetch_character_by_id", fetch_with_book
+        )
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await screen._import_character_from_path(str(tmp_path / "card.json"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert any(
+                message.startswith("Character imported.")
+                and "Second Chance Lore" in message
+                and "2 entries" in message
+                and severity == "information"
+                for message, severity in notifications
             )
 
     async def test_import_failure_shows_recovery_copy(

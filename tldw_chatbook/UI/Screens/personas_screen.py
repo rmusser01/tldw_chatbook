@@ -3801,9 +3801,40 @@ class PersonasScreen(BaseAppScreen):
         # (attach is now available) and the header state.
         self._sync_title_and_console_actions()
         if imported_id in pre_import_ids:
-            self._notify("Character already existed; selected it.", "information")
+            self._notify(
+                "Character already existed; selected it. "
+                "Re-importing does not update an existing character.",
+                "information",
+            )
         else:
-            self._notify("Character imported.", "information")
+            lore_note = await self._imported_lorebook_note(imported_id)
+            self._notify(f"Character imported.{lore_note}", "information")
+
+    async def _imported_lorebook_note(self, character_id: str) -> str:
+        """Return a " Lorebook 'X' attached (N entries)." suffix, or "" when
+        the just-imported character has no embedded world book (task-429)."""
+        try:
+            record = await asyncio.to_thread(
+                ccp_character_handler.fetch_character_by_id, character_id
+            )
+        except Exception:
+            return ""
+        ext = (record or {}).get("extensions")
+        if isinstance(ext, str):
+            try:
+                ext = json.loads(ext)
+            except (ValueError, TypeError):
+                ext = {}
+        if not isinstance(ext, dict):
+            return ""
+        books = ext.get("character_world_books")
+        if not isinstance(books, list) or not books:
+            return ""
+        first = books[0] if isinstance(books[0], dict) else {}
+        name = str(first.get("name") or "lorebook")
+        entries = first.get("entries")
+        n = len(entries) if isinstance(entries, list) else 0
+        return f" Lorebook '{name}' attached ({n} entries)."
 
     async def _open_lore_import_dialog(self) -> None:
         """Continuation for the guarded lore-import action."""
