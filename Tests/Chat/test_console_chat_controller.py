@@ -2657,6 +2657,53 @@ async def test_normal_session_still_uses_agent_when_enabled():
 
 
 @pytest.mark.asyncio
+async def test_stream_assistant_response_owner_lookup_survives_closed_session():
+    """task-427 review fix: the force_plain owner-lookup added at the top of
+    ``_stream_assistant_response`` calls ``store.session_id_for_message``,
+    which raises ``KeyError`` for an unknown message id. ``retry_message`` /
+    ``continue_from_message`` / ``regenerate_message`` resolve the message id
+    and then ``await`` several times (resolve_for_send / skill substitution /
+    chat dictionaries / world info) before reaching this method -- a
+    ``close_session`` racing one of those awaits purges
+    ``_message_session_index`` for that message, so the id is unknown by the
+    time the gate runs. This must be treated exactly like every other
+    "session vanished mid-flight" race in this method: swallowed and turned
+    into the session-closed result, not an uncaught KeyError."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = _arm_session(store)
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+
+    # Simulate the session closing while a caller (e.g. retry_message) was
+    # still awaiting earlier stages of the pipeline: this purges
+    # `_message_session_index` for `assistant.id` before the gate runs.
+    controller.close_session(session.id)
+
+    resolution = type(
+        "Resolution",
+        (),
+        {
+            "ready": True,
+            "provider": "llama_cpp",
+            "model": "test-model",
+            "base_url": "http://127.0.0.1:9099",
+            "visible_copy": "",
+        },
+    )()
+
+    result = await controller._stream_assistant_response(
+        resolution=resolution,
+        provider_messages=[],
+        assistant_message_id=assistant.id,
+    )
+
+    assert result.accepted is True
+    assert result.visible_copy == "Session closed."
+
+
+@pytest.mark.asyncio
 async def test_build_context_snapshot_includes_armed_one_shot_prefill():
     """task-401: an armed prefill must appear in the preview exactly as the
     send would apply it -- trailing assistant turn + explicit indicator --

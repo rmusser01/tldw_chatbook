@@ -2064,7 +2064,10 @@ class ConsoleChatController:
         prefill: str | None = None,
         prefill_from_one_shot: bool = False,
     ) -> ConsoleSubmitResult:
-        owner_id = self.store.session_id_for_message(assistant_message_id)
+        try:
+            owner_id = self.store.session_id_for_message(assistant_message_id)
+        except KeyError:
+            return self._session_closed_result()
         owner = next(
             (s for s in self.store.sessions() if s.id == owner_id), None
         )
