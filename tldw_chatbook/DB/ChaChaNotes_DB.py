@@ -4129,6 +4129,16 @@ UPDATE db_schema_version
 
     _CHARACTER_CARD_JSON_FIELDS = ["alternate_greetings", "tags", "extensions"]
 
+    # P3a: whitelist of UI sort keys → exact ORDER BY clauses. The ONLY dynamic
+    # SQL fragment; search_term/tag are always bound parameters. "relevance"
+    # is valid only in the search (FTS) branch.
+    _CHARACTER_SORT_CLAUSES = {
+        "name_asc": "ORDER BY name COLLATE NOCASE ASC",
+        "modified_desc": "ORDER BY last_modified DESC, name COLLATE NOCASE ASC",
+        "created_desc": "ORDER BY created_at DESC, name COLLATE NOCASE ASC",
+        "relevance": "ORDER BY rank",
+    }
+
     # --- Character Card Methods ---
     @staticmethod
     def _ensure_json_string_from_mixed(
@@ -4524,6 +4534,105 @@ UPDATE db_schema_version
 
             logger.error(f"Database error listing character cards: {e}")
             raise
+
+    # P3a: json-valid guard so json_each never sees NULL / non-JSON tags.
+    _TAGS_JSON_EACH = "json_each(CASE WHEN json_valid({t}.tags) THEN {t}.tags ELSE '[]' END)"
+
+    def _resolve_sort_clause(self, order_by: str, *, searching: bool) -> str:
+        clause = self._CHARACTER_SORT_CLAUSES.get(order_by)
+        if clause is None or (order_by == "relevance" and not searching):
+            clause = self._CHARACTER_SORT_CLAUSES["name_asc"]
+        return clause
+
+    def list_character_cards_page(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        order_by: str = "name_asc",
+        search_term: str | None = None,
+        tag: str | None = None,
+    ) -> List[Dict[str, Any]]:
+        """Paged, sortable, tag- and search-filterable character list.
+
+        Args:
+            limit: Page size.
+            offset: Rows to skip.
+            order_by: A key of ``_CHARACTER_SORT_CLAUSES``; unknown keys (and
+                "relevance" without a search term) fall back to "name_asc".
+            search_term: FTS5 MATCH query (already prefix-wrapped by the caller,
+                e.g. ``'"dragon"*'``) or None for a browse query.
+            tag: Exact tag membership filter, or None.
+
+        Returns:
+            Deserialized character-card dicts for the page. Never raises on
+            NULL/invalid tags (json_each is json-valid-guarded).
+        """
+        searching = bool(search_term)
+        sort_clause = self._resolve_sort_clause(order_by, searching=searching)
+        params: list[Any] = []
+        where = ["cc.deleted = 0"] if searching else ["deleted = 0"]
+        alias = "cc" if searching else "character_cards"
+        if searching:
+            head = (
+                "SELECT cc.* FROM character_cards_fts fts "
+                "JOIN character_cards cc ON fts.rowid = cc.id"
+            )
+            where.insert(0, "fts.character_cards_fts MATCH ?")
+            params.append(search_term)
+        else:
+            head = "SELECT * FROM character_cards"
+        if tag is not None:
+            where.append(
+                f"EXISTS (SELECT 1 FROM {self._TAGS_JSON_EACH.format(t=alias)} WHERE value = ?)"
+            )
+            params.append(tag)
+        query = f"{head} WHERE {' AND '.join(where)} {sort_clause} LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        cursor = self.execute_query(query, tuple(params))
+        return [
+            self._deserialize_row_fields(row, self._CHARACTER_CARD_JSON_FIELDS)
+            for row in cursor.fetchall()
+            if row
+        ]
+
+    def count_character_cards(
+        self, *, search_term: str | None = None, tag: str | None = None
+    ) -> int:
+        """Count non-deleted character cards matching the same search+tag filter."""
+        searching = bool(search_term)
+        params: list[Any] = []
+        alias = "cc" if searching else "character_cards"
+        where = ["cc.deleted = 0"] if searching else ["deleted = 0"]
+        if searching:
+            head = (
+                "SELECT COUNT(*) FROM character_cards_fts fts "
+                "JOIN character_cards cc ON fts.rowid = cc.id"
+            )
+            where.insert(0, "fts.character_cards_fts MATCH ?")
+            params.append(search_term)
+        else:
+            head = "SELECT COUNT(*) FROM character_cards"
+        if tag is not None:
+            where.append(
+                f"EXISTS (SELECT 1 FROM {self._TAGS_JSON_EACH.format(t=alias)} WHERE value = ?)"
+            )
+            params.append(tag)
+        query = f"{head} WHERE {' AND '.join(where)}"
+        cursor = self.execute_query(query, tuple(params))
+        row = cursor.fetchone()
+        return int(row[0]) if row else 0
+
+    def list_distinct_character_tags(self) -> List[str]:
+        """Distinct tag values across non-deleted cards, case-insensitively sorted."""
+        query = (
+            "SELECT DISTINCT je.value "
+            "FROM character_cards cc, "
+            + self._TAGS_JSON_EACH.format(t="cc")
+            + " je WHERE cc.deleted = 0 ORDER BY je.value COLLATE NOCASE"
+        )
+        cursor = self.execute_query(query, ())
+        return [str(r[0]) for r in cursor.fetchall() if r and r[0] is not None]
 
     def update_character_card(
         self, character_id: int, card_data: Dict[str, Any], expected_version: int

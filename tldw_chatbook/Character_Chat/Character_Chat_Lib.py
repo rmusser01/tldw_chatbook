@@ -525,6 +525,57 @@ def get_character_list_for_ui(
         return []
 
 
+def get_character_page_for_ui(
+    db: CharactersRAGDB,
+    *,
+    limit: int,
+    offset: int,
+    order_by: str = "name_asc",
+    search_term: Optional[str] = None,
+    tag: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """UI-shaped page of characters: id/name/last_modified/created_at/tags."""
+    try:
+        rows = db.list_character_cards_page(
+            limit=limit, offset=offset, order_by=order_by,
+            search_term=search_term, tag=tag,
+        )
+    except Exception as exc:
+        logger.opt(exception=True).error(f"Character page fetch failed: {exc}")
+        return []
+    return [
+        {
+            "id": c.get("id"),
+            "name": c.get("name"),
+            "last_modified": c.get("last_modified"),
+            "created_at": c.get("created_at"),
+            "tags": c.get("tags") if isinstance(c.get("tags"), list) else [],
+        }
+        for c in rows
+        if c.get("id") is not None
+    ]
+
+
+def count_character_page(
+    db: CharactersRAGDB, *, search_term: Optional[str] = None, tag: Optional[str] = None
+) -> int:
+    """Count of characters matching the same search+tag filter as `get_character_page_for_ui`."""
+    try:
+        return db.count_character_cards(search_term=search_term, tag=tag)
+    except Exception as exc:
+        logger.opt(exception=True).error(f"Character count failed: {exc}")
+        return 0
+
+
+def list_character_tags(db: CharactersRAGDB) -> List[str]:
+    """Distinct tag values across non-deleted characters, for UI tag-filter pickers."""
+    try:
+        return db.list_distinct_character_tags()
+    except Exception as exc:
+        logger.opt(exception=True).error(f"Character tag list failed: {exc}")
+        return []
+
+
 def _get_default_chachanotes_db() -> Optional[CharactersRAGDB]:
     """Return the app's default character DB when legacy callers omit one."""
     try:
@@ -543,9 +594,9 @@ def fetch_character_names(
 ) -> List[Dict[str, Any]]:
     """Compatibility wrapper used by older CCP handlers.
 
-    The default ``limit`` must stay in sync with
-    ``PersonasScreen.LIBRARY_FTS_THRESHOLD`` (UI/Screens/personas_screen.py),
-    which switches library search to FTS when the loaded list may be truncated.
+    The default ``limit`` caps the loaded character list; callers that need
+    the full library (e.g. paged/search-backed listings) should pass an
+    explicit ``limit``.
     """
     target_db = db or _get_default_chachanotes_db()
     if target_db is None:
