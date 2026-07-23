@@ -40,6 +40,47 @@ class FailingBeforeAnyChunkGateway(StreamingGateway):
         yield ""  # pragma: no cover - unreachable, keeps this an async generator
 
 
+class _RegeneratePersistence:
+    """Records create_message calls; hands back predictable ``msg-N`` ids.
+
+    Mirrors ``_RecordingPersistence`` in
+    ``test_console_chat_store_sibling.py::test_eager_persisted_sibling_emits_onpath_sync_sequence``.
+    """
+
+    def __init__(self):
+        self.created_messages = []
+
+    def create_conversation(self, **kwargs):
+        return "conv-1"
+
+    def create_message(
+        self,
+        *,
+        conversation_id,
+        sender,
+        content,
+        image_data,
+        image_mime_type,
+        message_id=None,
+        parent_message_id=None,
+        feedback=None,
+    ):
+        pid = f"msg-{len(self.created_messages) + 1}"
+        self.created_messages.append(
+            {
+                "id": pid,
+                "conversation_id": conversation_id,
+                "sender": sender,
+                "content": content,
+                "parent_message_id": parent_message_id,
+            }
+        )
+        return pid
+
+    def update_message_content(self, **kwargs):
+        return True
+
+
 @pytest.mark.asyncio
 async def test_regenerate_creates_sibling_and_streams_into_new_active_leaf():
     store = ConsoleChatStore()
@@ -164,3 +205,51 @@ async def test_regenerate_on_leading_greeting_still_blocks_without_mutating_tree
     siblings, _index, count = store.siblings_at(greeting.id)
     assert count == 1
     assert store.get_message(greeting.id).content == "Greetings."
+
+
+@pytest.mark.asyncio
+async def test_regenerate_persists_new_sibling_when_store_has_persistence():
+    """Critical regression: the regenerated sibling must be durably persisted.
+
+    ``create_sibling`` defaults ``persist=False``. Before this fix,
+    ``regenerate_message`` called it with no ``persist`` kwarg at all, so the
+    freshly forked node was never registered in
+    ``_pending_persistence_message_ids``. When the stream completed,
+    ``mark_message_complete`` -> ``_persist_existing_message`` saw
+    ``persisted_message_id is None`` and deferred to
+    ``_persist_pending_message_if_ready``, which no-opped because the node's
+    id was never marked pending -- so on a persistence-backed session (the
+    normal production configuration, since ``chat_screen.py`` always wires
+    real persistence when ``chachanotes_db`` exists), the regenerated reply
+    was silently never written to the DB and vanished on resume.
+    """
+    persistence = _RegeneratePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.create_session(title="t")
+    store.active_session_id = session.id
+    store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="Hi", persist=True
+    )
+    a1 = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="seed", persist=True
+    )
+    persistence.created_messages.clear()
+
+    result = await controller.regenerate_message(a1.id)
+
+    assert result.accepted is True
+    new_leaf_id = store.active_leaf(session.id)
+    assert new_leaf_id != a1.id
+    new_message = store.get_message(new_leaf_id)
+    assert new_message.content == "hello"
+    assert new_message.status == "complete"
+
+    # The sibling must be durably persisted -- not left with a None id that
+    # would make it silently vanish from the DB.
+    assert new_message.persisted_message_id is not None
+    assert any(
+        entry["id"] == new_message.persisted_message_id
+        and entry["content"] == "hello"
+        for entry in persistence.created_messages
+    )

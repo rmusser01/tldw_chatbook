@@ -1280,7 +1280,10 @@ class ConsoleChatController:
         )
         prefill = self._pinned_prefill_for_session(session_id)
         new_message = self.store.create_sibling(
-            message_id, role=ConsoleMessageRole.ASSISTANT, content=""
+            message_id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="",
+            persist=self.store.persistence is not None,
         )
         return await self._stream_assistant_response(
             resolution=resolution,
