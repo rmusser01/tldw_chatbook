@@ -1125,9 +1125,50 @@ class ConfigProfileManager:
 # Convenience functions
 
 
+# Cached singleton for the DEFAULT profiles directory only. Every no-arg
+# caller (query hot path via active_config.resolve_active_rag_config(), plus
+# enhanced_rag_service_v2 / pipeline_loader / rag_factory) shares this one
+# instance instead of re-instantiating ConfigProfileManager (mkdir + building
+# ~13 builtin profiles + globbing/reading every profile JSON from disk) on
+# every call. Profile CRUD mutates ConfigProfileManager._profiles in place, so
+# sharing one instance keeps writes visible to every default-dir caller.
+# An explicit profiles_dir always bypasses the cache and gets a fresh
+# instance -- tests rely on that for per-test isolation.
+_GLOBAL_PROFILE_MANAGER: Optional["ConfigProfileManager"] = None
+
+
 def get_profile_manager(profiles_dir: Optional[Path] = None) -> ConfigProfileManager:
-    """Get or create the global profile manager."""
-    return ConfigProfileManager(profiles_dir)
+    """Get or create the global profile manager.
+
+    Args:
+        profiles_dir: Explicit profiles directory. When provided, always
+            returns a FRESH ``ConfigProfileManager`` over that directory
+            (never cached) -- this is the seam tests use for isolation. When
+            omitted, returns the process-wide cached singleton over the
+            default directory (``get_user_data_dir() / "rag_profiles"``),
+            creating it on first use.
+
+    Returns:
+        A ``ConfigProfileManager`` instance.
+    """
+    global _GLOBAL_PROFILE_MANAGER
+    if profiles_dir is not None:
+        return ConfigProfileManager(profiles_dir)
+    if _GLOBAL_PROFILE_MANAGER is None:
+        _GLOBAL_PROFILE_MANAGER = ConfigProfileManager()
+    return _GLOBAL_PROFILE_MANAGER
+
+
+def reset_profile_manager_cache() -> None:
+    """Drop the cached default-dir profile manager singleton.
+
+    Primarily for test isolation: tests that rely on a fresh default-dir
+    ``ConfigProfileManager`` per test (e.g. via monkeypatched ``HOME``/
+    ``XDG_*`` env vars) must call this in setup/teardown, since the cached
+    singleton otherwise outlives any single test's env patching.
+    """
+    global _GLOBAL_PROFILE_MANAGER
+    _GLOBAL_PROFILE_MANAGER = None
 
 
 def quick_profile(use_case: ProfileType) -> ProfileConfig:

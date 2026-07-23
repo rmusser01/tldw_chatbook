@@ -123,6 +123,13 @@ _shared_service: Optional[Any] = None
 _shared_service_lock = threading.Lock()
 
 _first_run_import_attempted = False
+# Dedicated lock guarding ONLY the _first_run_import_attempted check-and-set,
+# so concurrent first callers can't both pass the flag check and both run
+# ensure_imported_profile(). Deliberately NOT _shared_service_lock: this
+# check-and-set runs BEFORE that lock is acquired (see
+# _maybe_run_first_run_import's docstring for the self-deadlock this avoids),
+# and reusing the same non-reentrant lock here would reintroduce it.
+_first_run_lock = threading.Lock()
 
 
 def _running_under_pytest() -> bool:
@@ -139,6 +146,16 @@ def _maybe_run_first_run_import() -> None:
     ``reset_shared_rag_service`` — which re-acquires this same non-reentrant
     lock. Calling this helper from inside the lock would self-deadlock.
 
+    The ``_first_run_import_attempted`` check-and-set is itself guarded by a
+    SEPARATE, dedicated ``_first_run_lock`` (not ``_shared_service_lock`` —
+    see above for why reusing that one would self-deadlock). Without it, two
+    threads racing this function concurrently could both observe the flag as
+    False and both proceed to call ``ensure_imported_profile()``. The actual
+    import call happens OUTSIDE the lock (it's a slower, exception-safe
+    operation and does not itself need mutual exclusion beyond the flag),
+    but flipping the flag must be atomic so only one thread ever proceeds
+    past the check.
+
     Skipped under pytest (``PYTEST_CURRENT_TEST``, the codebase-standard test
     marker also used by ``Metrics/metrics_logger.py`` and
     ``Utils/optional_deps.py``): ``ConfigProfileManager``'s default
@@ -153,9 +170,10 @@ def _maybe_run_first_run_import() -> None:
     the real function call it directly (see ``Tests/RAG/test_first_run_import.py``).
     """
     global _first_run_import_attempted
-    if _first_run_import_attempted:
-        return
-    _first_run_import_attempted = True
+    with _first_run_lock:
+        if _first_run_import_attempted:
+            return
+        _first_run_import_attempted = True
     if _running_under_pytest():
         return
     try:
