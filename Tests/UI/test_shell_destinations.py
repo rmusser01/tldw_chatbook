@@ -1,5 +1,6 @@
 from tldw_chatbook.UI.Navigation.shell_destinations import (
     SHELL_DESTINATION_ORDER,
+    get_shell_destination,
     resolve_shell_route,
 )
 from Tests.UI.test_screen_navigation import _build_test_app
@@ -11,7 +12,7 @@ def test_master_shell_destination_order_matches_spec():
         "Console",
         "Library",
         "Artifacts",
-        "Personas",
+        "RP&CD",
         "Watchlists",
         "Schedules",
         "Workflows",
@@ -21,6 +22,34 @@ def test_master_shell_destination_order_matches_spec():
         "Logs",
         "Settings",
     ]
+
+
+def test_personas_destination_renamed_to_rpcd_with_roleplay_alias():
+    """task-435: the nav destination is "RP&CD" / "Roleplay & Chat
+    Dictionaries" -- "Personas" is reserved for the in-screen user-identity
+    mode (``MODE_LABELS["personas"]``), which this test does not touch."""
+    dest = get_shell_destination("personas")
+    assert dest.label == "RP&CD"
+    assert dest.full_label == "Roleplay & Chat Dictionaries"
+    assert dest.accessible_label == "Roleplay & Chat Dictionaries"
+    assert "roleplay" in dest.legacy_routes
+    for route in (
+        "personas",
+        "ccp",
+        "conversations_characters_prompts",
+        "characters",
+        "roleplay",
+    ):
+        assert resolve_shell_route(route).destination_id == "personas"
+
+
+def test_tab_display_labels_use_rpcd_for_personas_and_ccp_tabs():
+    """task-435: both tab ids that seat the Personas screen show the
+    renamed destination label in the top-level tab chrome."""
+    from tldw_chatbook.Constants import TAB_CCP, TAB_PERSONAS, get_tab_display_label
+
+    assert get_tab_display_label(TAB_CCP) == "RP&CD"
+    assert get_tab_display_label(TAB_PERSONAS) == "RP&CD"
 
 
 def test_legacy_routes_resolve_to_master_destinations():
@@ -40,6 +69,7 @@ def test_legacy_routes_resolve_to_master_destinations():
         "ccp": ("personas", "personas"),
         "conversation": ("library", "conversation"),
         "conversations_characters_prompts": ("personas", "personas"),
+        "roleplay": ("personas", "personas"),
         "subscriptions": ("watchlists_collections", "subscriptions"),
         "tools_settings": ("mcp", "tools_settings"),
         "settings": ("settings", "settings"),
@@ -61,7 +91,7 @@ def test_legacy_routes_resolve_to_master_destinations():
 
 
 def test_ccp_legacy_routes_resolve_to_personas_destination():
-    for legacy in ("ccp", "characters", "conversations_characters_prompts"):
+    for legacy in ("ccp", "characters", "conversations_characters_prompts", "roleplay"):
         resolved = resolve_shell_route(legacy)
         assert resolved.destination_id == "personas"
         assert resolved.canonical_route == "personas"

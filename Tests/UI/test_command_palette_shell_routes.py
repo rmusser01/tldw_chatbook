@@ -88,12 +88,15 @@ def test_legacy_routes_are_searchable_alias_terms_on_their_destination():
     } <= alias_terms["library"]
     # Upstream retirements adopted on rebase: prompts and skills fold into Library.
     assert {"prompts", "skills"} <= alias_terms["library"]
-    assert {"ccp", "conversations_characters_prompts", "characters"} <= alias_terms[
-        "personas"
-    ]
-    assert (
-        "Personas" in alias_terms["personas"]
-    )  # TAB_CCP display label, deduped to one command
+    assert {
+        "ccp",
+        "conversations_characters_prompts",
+        "characters",
+        "roleplay",
+    } <= alias_terms["personas"]
+    assert "RP&CD" in alias_terms["personas"]  # TAB_CCP display label, deduped to one command
+    assert "Roleplay & Chat Dictionaries" in alias_terms["personas"]
+    assert "personas" in alias_terms["personas"]  # still searchable via id/primary_route
     assert {"subscriptions", "subscription", "Subscriptions"} <= alias_terms[
         "watchlists_collections"
     ]
