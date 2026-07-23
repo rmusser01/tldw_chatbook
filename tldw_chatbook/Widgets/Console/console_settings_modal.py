@@ -183,6 +183,18 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         overflow-x: hidden;
     }}
 
+    /* TASK-363: the validation summary was near-body-text salience ($ds-status
+       -error 10% bg / primary text), so "Save did nothing" read as no feedback
+       in a taller-than-viewport modal. Make it unmistakably an error: bold
+       error-coloured text, a stronger fill, and a heavy error rule down its
+       edge. (Scoped here so it overrides the shared bundle rule.) */
+    ConsoleSettingsModal .console-settings-error {{
+        background: $error 25%;
+        color: $text-error;
+        text-style: bold;
+        border-left: thick $error;
+    }}
+
     ConsoleSettingsModal .console-settings-modal-section {{
         height: auto;
     }}
@@ -705,7 +717,12 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             *validate_console_session_settings(draft, app_config=self._app_config),
         ]
         if errors:
-            self.query_one("#console-settings-error", Static).update("\n".join(errors))
+            # TASK-363: surface the error prominently AND bring it on-screen — in
+            # a taller-than-viewport modal the summary can sit well above the fold
+            # (the review's "Save did nothing" confusion), so scroll it into view.
+            error_banner = self.query_one("#console-settings-error", Static)
+            error_banner.update("\n".join(errors))
+            error_banner.scroll_visible()
             return None
         return draft
 
@@ -779,6 +796,25 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             if choice_input_id == input_id:
                 return placeholder
         return ""
+
+    @on(Input.Changed)
+    @on(Select.Changed)
+    def _invalidate_validation_summary_on_edit(self, event) -> None:
+        """Clear a stale validation summary once the user edits any field.
+
+        TASK-363: the summary was only refreshed on the next Save, so it lingered
+        after the offending field was fixed ("Save did nothing" then a stale
+        error). Any edit means the shown errors may no longer apply, so clear
+        them; the next Save re-validates. Runs alongside the field-specific
+        handlers below (it does not stop the event).
+        """
+        self._clear_validation_error_summary()
+
+    def _clear_validation_error_summary(self) -> None:
+        try:
+            self.query_one("#console-settings-error", Static).update("")
+        except (QueryError, NoMatches):
+            pass
 
     @on(Select.Changed, "#console-settings-provider")
     def _provider_changed(self, event: Select.Changed) -> None:
