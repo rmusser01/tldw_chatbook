@@ -163,8 +163,9 @@ def get_shared_rag_service(profile_name: Optional[str] = None) -> Optional[Any]:
                 # module-top import here would risk a circular import.
                 from .simplified.active_config import resolve_active_rag_config
 
-                if profile_name is None:
-                    profile = _configured_profile()
+                active = _configured_profile()
+                if profile_name is None or profile_name == active:
+                    profile = active
                     _shared_service = create_rag_service(
                         profile_name=profile, config=resolve_active_rag_config()
                     )
