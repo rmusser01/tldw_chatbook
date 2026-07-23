@@ -16,8 +16,8 @@ from typing import Optional, Union
 from loguru import logger
 
 from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
-from .config import RAGConfig
-from ..config_profiles import get_profile_manager, ProfileConfig
+from .config import RAGConfig, _normalized_type_setting
+from ..config_profiles import get_profile_manager, ProfileConfig, _slugify
 from ..ingestion_indexing import reset_shared_rag_service
 
 DEFAULT_PROFILE = "hybrid_basic"
@@ -52,6 +52,13 @@ def _apply_env_overrides(config: RAGConfig,
     e.model = override_embedding_model or os.getenv("RAG_EMBEDDING_MODEL") or e.model
     dev = os.getenv("RAG_DEVICE") or e.device
     if dev == "auto":
+        # Optional_deps only exposes a cheap find_spec-based installed-probe
+        # (embeddings_rag_deps_installed / _embeddings_rag_available), not an
+        # accessor for the imported torch module itself -- we still need the
+        # real module to call torch.cuda.is_available()/torch.backends.mps,
+        # so there's no helper to route through here. The try/except mirrors
+        # the same pattern used in embeddings_wrapper.py's device auto-detect
+        # and is already exception-safe (falls back to "cpu").
         try:
             import torch
             e.device = ("cuda" if torch.cuda.is_available()
@@ -69,7 +76,16 @@ def _apply_env_overrides(config: RAGConfig,
     persist = override_persist_dir or os.getenv("RAG_PERSIST_DIR")
     if persist:
         config.vector_store.persist_directory = Path(persist)
-    # vector_store.type: RAG_VECTOR_STORE env is honored by VectorStoreConfig.__post_init__
+    # vector_store.type: resolve_active_rag_config() deep-copies an already-
+    # constructed profile's RAGConfig (copy.deepcopy does NOT re-run
+    # VectorStoreConfig.__post_init__), so RAG_VECTOR_STORE must be applied
+    # explicitly here -- __post_init__ only ever ran once, at profile-save
+    # time, and cannot see env vars set afterward. Normalized the same way
+    # default_vector_store_type() does (stripped/lowercased; "auto" means
+    # "no override").
+    env_vector_store = _normalized_type_setting(os.getenv("RAG_VECTOR_STORE"))
+    if env_vector_store:
+        config.vector_store.type = env_vector_store
 
     # Chunking overrides
     chunk_size = os.getenv("RAG_CHUNK_SIZE")
@@ -93,7 +109,27 @@ def _apply_env_overrides(config: RAGConfig,
 
 def resolve_active_rag_config(override_embedding_model: Optional[str] = None,
                               override_persist_dir: Optional[Union[str, Path]] = None) -> RAGConfig:
-    """The active profile's rag_config (deep copy) + env overlay — the single source."""
+    """Resolve the single source-of-truth RAG config: active profile + env overlay.
+
+    Reads the active-profile pointer, deep-copies that profile's stored
+    ``rag_config`` (falling back to the ``hybrid_basic`` builtin, then a bare
+    ``RAGConfig()``, if the pointer names a profile that no longer exists),
+    and applies the env/explicit-arg override layer on top. Both the search
+    path (``RAGConfig.from_settings``) and the ingestion path
+    (``get_shared_rag_service``) route through this function so they never
+    resolve divergent configs for the same active profile.
+
+    Args:
+        override_embedding_model: Explicit embedding model, taking priority
+            over both the profile's stored value and ``RAG_EMBEDDING_MODEL``.
+        override_persist_dir: Explicit vector-store persist directory, taking
+            priority over both the profile's stored value and
+            ``RAG_PERSIST_DIR``.
+
+    Returns:
+        A fresh ``RAGConfig`` (safe to mutate -- never the profile's own
+        stored object) with all applicable env overrides applied.
+    """
     active = _active_profile_id()
     mgr = _manager()
     profile = mgr.get_profile(active) or mgr.get_profile(DEFAULT_PROFILE)
@@ -118,8 +154,34 @@ def set_active_profile(profile_id: str) -> None:
     resolves. section="rag", key="service.profile" would land at the WRONG path
     ([rag]["service.profile"], a literal dotted key) and silently break the
     active-profile pointer.
+
+    Args:
+        profile_id: The profile id to activate. Must be a non-empty string
+            that is already a safe filesystem slug (i.e. equal to
+            ``_slugify(profile_id)`` -- the same constraint
+            ``ConfigProfileManager`` enforces on stored profile ids).
+
+    Returns:
+        None.
+
+    Raises:
+        ValueError: If ``profile_id`` is not a non-empty string matching a
+            safe slug (e.g. empty, ``None``, or containing path-traversal /
+            non-slug characters like ``"../x"``).
     """
-    save_setting_to_cli_config("rag.service", "profile", profile_id)
+    if not isinstance(profile_id, str) or not profile_id or profile_id != _slugify(profile_id):
+        raise ValueError(
+            f"set_active_profile: invalid profile_id {profile_id!r}; must be a "
+            "non-empty, already-slugified string (see config_profiles._slugify)"
+        )
+    wrote = save_setting_to_cli_config("rag.service", "profile", profile_id)
+    if not wrote:
+        logger.warning(
+            f"set_active_profile: failed to write active-profile pointer for "
+            f"{profile_id!r}; leaving the current pointer and shared service "
+            "untouched (nothing to reset since the pointer didn't change)"
+        )
+        return
     reset_shared_rag_service()
 
 
@@ -138,6 +200,12 @@ def ensure_imported_profile() -> Optional[str]:
     Exception-safe: any failure here must never block RAG service creation, so
     every error is caught and logged, returning None (as if already imported /
     nothing to do) rather than propagating.
+
+    Returns:
+        The new profile's id (``"imported_settings"``) on the run that
+        creates and activates it; ``None`` when it already existed (no-op,
+        after healing the active pointer if needed) or when import failed
+        (logged, swallowed).
     """
     try:
         mgr = _manager()

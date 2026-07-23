@@ -3,7 +3,9 @@ import json as _json
 
 import pytest
 
-from tldw_chatbook.RAG_Search.config_profiles import ConfigProfileManager, ProfileConfig
+from tldw_chatbook.RAG_Search.config_profiles import (
+    ConfigProfileManager, ProfileConfig, get_profile_manager, reset_profile_manager_cache,
+)
 from tldw_chatbook.RAG_Search.simplified.config import (
     RAGConfig, EmbeddingConfig, ChunkingConfig, VectorStoreConfig,
 )
@@ -792,3 +794,61 @@ def test_create_custom_profile_never_canonicalizes_onto_reserved_blob_filename(t
     reloaded = m2.get_profile(created.id)
     assert reloaded is not None
     assert reloaded.name == "Custom Profiles"
+
+
+# --- Finding #5: default-dir get_profile_manager() is a cached singleton ---
+
+
+@pytest.fixture(autouse=True)
+def _isolated_default_profile_manager(tmp_path, monkeypatch):
+    """Isolate every no-arg get_profile_manager() call in this file to a temp
+    dir instead of the real ~/.local/share/tldw_cli/.../rag_profiles/.
+
+    get_user_data_dir() falls back to BASE_DATA_DIR_CLI, a module-level
+    Path.home() constant baked in at import time -- it is NOT covered by
+    HOME/XDG_* env monkeypatches (see ingestion_indexing's
+    _maybe_run_first_run_import docstring for the same hazard). So instead
+    of an env var, patch config_profiles.get_user_data_dir directly, and
+    reset the cache around the test so no manager (real-dir or temp-dir)
+    leaks across tests.
+    """
+    import tldw_chatbook.RAG_Search.config_profiles as cp
+    reset_profile_manager_cache()
+    monkeypatch.setattr(cp, "get_user_data_dir", lambda: tmp_path / "default_user_data")
+    yield
+    reset_profile_manager_cache()
+
+
+def test_get_profile_manager_no_arg_returns_same_cached_instance():
+    first = get_profile_manager()
+    second = get_profile_manager()
+    assert first is second
+
+
+def test_get_profile_manager_explicit_dir_bypasses_cache(tmp_path):
+    default_call = get_profile_manager()
+    explicit_call = get_profile_manager(profiles_dir=tmp_path / "explicit")
+    assert explicit_call is not default_call
+    # A second explicit-dir call is also always fresh (never cached).
+    explicit_call_2 = get_profile_manager(profiles_dir=tmp_path / "explicit")
+    assert explicit_call_2 is not explicit_call
+
+
+def test_reset_profile_manager_cache_forces_a_new_instance():
+    first = get_profile_manager()
+    reset_profile_manager_cache()
+    second = get_profile_manager()
+    assert first is not second
+
+
+def test_cached_default_manager_sees_mutations_from_other_default_dir_callers():
+    """Because CRUD mutates ConfigProfileManager._profiles in place and all
+    default-dir callers now share one instance, a profile saved through one
+    no-arg get_profile_manager() call must be visible to another."""
+    mgr_a = get_profile_manager()
+    p = ProfileConfig(name="Shared", description="d", profile_type="custom",
+                      rag_config=RAGConfig(vector_store=VectorStoreConfig(type="memory")))
+    mgr_a.save_profile(p)
+
+    mgr_b = get_profile_manager()
+    assert mgr_b.get_profile(p.id) is not None

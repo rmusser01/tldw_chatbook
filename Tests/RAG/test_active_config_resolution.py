@@ -122,6 +122,73 @@ def test_set_active_profile_writes_pointer_and_resets_service(active, monkeypatc
     assert reset["called"] is True
 
 
+@pytest.mark.parametrize(
+    "stored_type,env_value,expected_type",
+    [
+        ("chroma", "memory", "memory"),
+        ("memory", "chroma", "chroma"),
+    ],
+)
+def test_env_vector_store_override_wins_over_profile(
+    active, monkeypatch, stored_type, env_value, expected_type
+):
+    """RAG_VECTOR_STORE must be applied by _apply_env_overrides itself.
+
+    resolve_active_rag_config() deep-copies an already-constructed profile's
+    RAGConfig -- copy.deepcopy does NOT re-run VectorStoreConfig.__post_init__
+    -- so a claim that __post_init__ "honors" the env var here is false; the
+    env layer must apply it explicitly, in both directions (memory<->chroma).
+    """
+    from tldw_chatbook.RAG_Search.simplified.active_config import resolve_active_rag_config
+    mgr, state = active
+    p = ProfileConfig(name="VS", description="d", profile_type="custom",
+                      rag_config=RAGConfig(vector_store=VectorStoreConfig(type=stored_type)))
+    mgr.save_profile(p); state["active"] = p.id
+    monkeypatch.setenv("RAG_VECTOR_STORE", env_value)
+    assert resolve_active_rag_config().vector_store.type == expected_type
+
+
+def test_no_env_vector_store_leaves_profile_type_untouched(active, monkeypatch):
+    from tldw_chatbook.RAG_Search.simplified.active_config import resolve_active_rag_config
+    mgr, state = active
+    p = ProfileConfig(name="VS2", description="d", profile_type="custom",
+                      rag_config=RAGConfig(vector_store=VectorStoreConfig(type="chroma")))
+    mgr.save_profile(p); state["active"] = p.id
+    monkeypatch.delenv("RAG_VECTOR_STORE", raising=False)
+    assert resolve_active_rag_config().vector_store.type == "chroma"
+
+
+def test_set_active_profile_rejects_bad_pointer_write(monkeypatch):
+    """Finding #6: a failed pointer write must not silently reset the shared
+    service -- there's no point rebuilding it when the pointer didn't move."""
+    from tldw_chatbook.RAG_Search.simplified.active_config import set_active_profile
+    import tldw_chatbook.RAG_Search.simplified.active_config as ac
+    monkeypatch.setattr(ac, "save_setting_to_cli_config",
+                        lambda section, key, value: False, raising=False)
+    reset = {"called": False}
+    monkeypatch.setattr(ac, "reset_shared_rag_service",
+                        lambda: reset.update(called=True), raising=False)
+    set_active_profile("some_profile")
+    assert reset["called"] is False
+
+
+@pytest.mark.parametrize("bad_id", ["", None, "../x", "not a slug!", "Has Spaces"])
+def test_set_active_profile_rejects_invalid_profile_id(bad_id, monkeypatch):
+    """Finding #3: profile_id must be validated before any write/reset."""
+    from tldw_chatbook.RAG_Search.simplified.active_config import set_active_profile
+    import tldw_chatbook.RAG_Search.simplified.active_config as ac
+    writes = []
+    resets = []
+    monkeypatch.setattr(ac, "save_setting_to_cli_config",
+                        lambda *a, **k: writes.append(a) or True, raising=False)
+    monkeypatch.setattr(ac, "reset_shared_rag_service",
+                        lambda: resets.append(1), raising=False)
+    with pytest.raises(ValueError):
+        set_active_profile(bad_id)
+    assert writes == []
+    assert resets == []
+
+
 def test_set_active_profile_round_trip_write_matches_read(monkeypatch, tmp_path):
     """Real (non-mock) proof: the pointer set_active_profile() writes is exactly
     what the resolver's read path (_active_profile_id() ->
