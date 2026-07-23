@@ -213,7 +213,7 @@ def build_mcp_review_hook(
 
 
 def _split_skill_command_word(text: str) -> tuple[str, str]:
-    """Split a ``/word rest`` string into its leading token and the remainder.
+    """Split a ``$word rest`` string into its leading token and the remainder.
 
     Mirrors ``console_command_grammar._split_leading_token``'s single-
     whitespace-character split rule. That helper is module-private (by
@@ -221,7 +221,9 @@ def _split_skill_command_word(text: str) -> tuple[str, str]:
     so this is a deliberate small duplicate rather than an import, the same
     precedent ``chat_screen.ChatScreen._split_console_skill_name_args``
     already follows. ``text`` is assumed to already start with
-    `COMMAND_PREFIX`.
+    `MENTION_SIGIL` (the `$`-mention leading form, not `COMMAND_PREFIX`'s
+    `/` -- its sole caller is `_apply_skill_substitution`'s leading-form
+    branch).
     """
     for index, character in enumerate(text):
         if character.isspace():
@@ -1512,6 +1514,19 @@ class ConsoleChatController:
         *,
         synthetic_turn_added: bool = True,
     ) -> list[dict[str, Any]]:
+        """Flag a draft that LOOKS like an unresolved leading `$name` skill mention.
+
+        Cheap textual heuristic only (a leading `MENTION_SIGIL`) -- this
+        preview path deliberately never calls `_apply_skill_substitution`
+        (see the caller's comment), so it has no candidate snapshot to
+        actually resolve the word against. Re-sigiled for the `$`-mention
+        migration (Task 5): a leading ``/`` is now a registered slash
+        command (``/skills``, ``/prompt``, ...), not a skill invocation, so
+        it must NOT be annotated here. Embedded ``$name`` mentions
+        elsewhere in the draft are intentionally not flagged -- this only
+        covers the leading form, mirroring `_apply_skill_substitution`'s
+        own "leading form tried first" precedence.
+        """
         result = copy.deepcopy(messages)
         if not synthetic_turn_added or not result or result[-1].get("role") != "user":
             return result
@@ -1522,7 +1537,7 @@ class ConsoleChatController:
             "actual substitution happens at send time.]"
         )
 
-        if isinstance(content, str) and content.lstrip().startswith("/"):
+        if isinstance(content, str) and content.lstrip().startswith(MENTION_SIGIL):
             result[-1]["content"] = f"{content}\n\n{annotation}"
             return result
 
@@ -1536,7 +1551,7 @@ class ConsoleChatController:
                     and isinstance(part, dict)
                     and part.get("type") == "text"
                     and isinstance(text, str)
-                    and text.lstrip().startswith("/")
+                    and text.lstrip().startswith(MENTION_SIGIL)
                 ):
                     new_parts.append({**part, "text": f"{text}\n\n{annotation}"})
                     annotated = True

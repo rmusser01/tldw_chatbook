@@ -1,8 +1,14 @@
 """Console skill picker modal.
 
-Lets the user search trusted, user-invocable skills and pick one to run via
-the Console `/skill-name` surface (ambiguous-prefix and zero-match-with-args
-cases in Task 9's dispatch open this picker prefilled with the typed word).
+Lets the user search trusted, user-invocable skills and pick one to run.
+Historically reached via the Console `/skill-name` surface (ambiguous-prefix
+and zero-match-with-args cases in Task 9's dispatch, ``ChatScreen.
+_console_command_run_skill``, opened this picker prefilled with the typed
+word). That dispatch has had no live caller since skill invocation moved to
+the `$name` mention form (hard removal, Task 4 of the `$`-mention
+migration) but is intentionally kept in place, so this widget currently has
+no live caller either -- see `_console_command_run_skill`'s own docstring
+for the rationale.
 The caller (Task 9) supplies an already-adapted ``skill_search`` closure over
 the scope service's ``get_context`` seam -- ``get_context`` has no
 server-side filter, so Task 9's closure is expected to filter the returned
@@ -99,9 +105,10 @@ class ConsoleSkillPickerModal(ModalScreen[Optional[Mapping[str, object]]]):
 
         Args:
             initial_query: Prefilled filter text (e.g. the ambiguous or
-                unmatched ``/skill-name`` word Task 9's dispatch opened this
-                picker with), searched immediately on mount without waiting
-                for the debounce.
+                unmatched skill-name word Task 9's now-dead-caller dispatch
+                would open this picker with -- see this module's docstring),
+                searched immediately on mount without waiting for the
+                debounce.
             skill_search: Async callable bound to the scope-service seam
                 (Task 9) by the caller; receives the settled filter text and
                 returns a bounded (<=25) list of trusted, user-invocable

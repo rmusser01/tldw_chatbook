@@ -2085,9 +2085,9 @@ async def test_build_context_snapshot_does_not_execute_skills():
 
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="Hello")
 
-    snapshot = await controller.build_context_snapshot(draft="/search tools")
+    snapshot = await controller.build_context_snapshot(draft="$search tools")
     final_content = snapshot.next_send_payload["messages"][-1]["content"]
-    assert "/search tools" in final_content
+    assert "$search tools" in final_content
     assert "Skill command not resolved in preview" in final_content
 
 
@@ -2413,7 +2413,7 @@ def test_annotate_skill_commands_multimodal_text_part():
         {
             "role": "user",
             "content": [
-                {"type": "text", "text": "/search tools"},
+                {"type": "text", "text": "$search tools"},
                 {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
             ],
         }
@@ -2423,28 +2423,40 @@ def test_annotate_skill_commands_multimodal_text_part():
 
     text_part = annotated[0]["content"][0]
     assert text_part["type"] == "text"
-    assert text_part["text"].startswith("/search tools")
+    assert text_part["text"].startswith("$search tools")
     assert "Skill command not resolved in preview" in text_part["text"]
     assert annotated[0]["content"][1] == messages[0]["content"][1]
 
 
 def test_annotate_skill_commands_ignores_leading_whitespace():
-    messages = [{"role": "user", "content": "  /search tools"}]
+    messages = [{"role": "user", "content": "  $search tools"}]
 
     annotated = ConsoleChatController._annotate_skill_commands(messages)
 
-    assert annotated[0]["content"].startswith("  /search tools")
+    assert annotated[0]["content"].startswith("  $search tools")
     assert "Skill command not resolved in preview" in annotated[0]["content"]
 
 
 def test_annotate_skill_commands_synthetic_turn_added_false_returns_unchanged():
-    messages = [{"role": "user", "content": "/search tools"}]
+    messages = [{"role": "user", "content": "$search tools"}]
 
     annotated = ConsoleChatController._annotate_skill_commands(
         messages, synthetic_turn_added=False
     )
 
     assert annotated == messages
+    assert "Skill command not resolved in preview" not in annotated[0]["content"]
+
+
+def test_annotate_skill_commands_slash_command_is_not_annotated():
+    """A `/`-prefixed draft is a registered slash command post-migration, not a
+    skill invocation (Task 5 of the `$`-mention migration) -- it must not be
+    flagged as an unresolved skill command in the preview."""
+    messages = [{"role": "user", "content": "/skills search"}]
+
+    annotated = ConsoleChatController._annotate_skill_commands(messages)
+
+    assert annotated[0]["content"] == "/skills search"
     assert "Skill command not resolved in preview" not in annotated[0]["content"]
 
 

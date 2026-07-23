@@ -58,7 +58,14 @@ SKILLS_EMPTY_LIST_ROW = "No skills yet — create them in Library ▸ Skills."
 
 @dataclass(frozen=True)
 class SkillCommandCandidate:
-    """One skill eligible for bare ``/skill-name`` resolution.
+    """One skill eligible for bare-word resolution via `resolve_skill_command`.
+
+    ``resolve_skill_command`` is sigil-agnostic -- its live caller is
+    `ConsoleChatController._apply_skill_substitution`'s leading `$skill-
+    name` mention form; `ChatScreen._console_command_run_skill` (formerly
+    reached via a bare ``/skill-name`` composer fallback, hard-removed in
+    Task 4 of the `$`-mention migration) still calls it too but has no live
+    caller of its own -- see that method's docstring.
 
     Args:
         name: Canonical skill name (already scoped to whatever population
@@ -187,10 +194,18 @@ class SkillResolution:
 def resolve_skill_command(
     word: str, args: str, candidates: tuple[SkillCommandCandidate, ...]
 ) -> SkillResolution:
-    """Resolve a bare ``/word`` Console token against a skill candidate snapshot.
+    """Resolve a bare skill-name word against a skill candidate snapshot.
+
+    Sigil-agnostic: the live caller (`ConsoleChatController.
+    _apply_skill_substitution`'s leading `$skill-name` mention form)
+    strips a `$`; the dead-but-retained `ChatScreen._console_command_
+    run_skill` (formerly reached via a bare ``/skill-name`` composer
+    fallback) strips a `/`. Either way ``word`` arrives with its leading
+    sigil already gone.
 
     Args:
-        word: The command word typed after the leading ``/`` (no slash).
+        word: The command word, with its leading sigil already stripped
+            by the caller.
         args: The remaining draft text after ``word``. Unused by the
             resolution rules themselves (callers pre-cap it via
             `cap_skill_args` before it reaches a dispatch layer) but kept in
@@ -200,9 +215,10 @@ def resolve_skill_command(
 
     Returns:
         `SkillResolution` with ``kind`` set as follows: an empty or
-        whitespace-only ``word`` (e.g. a bare ``/`` or ``/ `` draft, which
-        `console_command_grammar` splits into an empty command word) never
-        matches anything and is always `"none"` -- without this guard every
+        whitespace-only ``word`` (e.g. a bare ``$``/``$ `` mention, or a
+        bare ``/``/``/ `` draft which `console_command_grammar` splits into
+        an empty command word) never matches anything and is always
+        `"none"` -- without this guard every
         candidate name trivially ``.startswith("")``, so an empty word
         would otherwise "match" every candidate (resolving to a lone
         candidate, or reporting `"ambiguous"` for two or more) even though
