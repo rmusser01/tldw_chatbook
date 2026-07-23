@@ -42,8 +42,8 @@ and pass the trusted, non-attacker-writable namespace check.
 - There are no production `aiosqlite.connect` owners.
 - `Client_Media_DB_v2.check_database_integrity()` is the one existing
   read-only URI owner. The three browser-cookie clones are read-only consumers
-  and will be tightened to the same supported URI mode rather than retaining
-  writable pathname connections in a shared temporary directory.
+  and will be moved into per-clone `0700` temporary directories before using
+  the same supported URI mode.
 - A local behavioral probe under `umask(000)` reproduced `0644` main, WAL,
   SHM, and rollback-journal files with raw SQLite creation. Exclusively
   pre-creating the main database as `0600` made all three SQLite-created
@@ -62,15 +62,20 @@ and pass the trusted, non-attacker-writable namespace check.
   unauthorized users cannot replace the database or pre-create SQLite
   sidecars. A shared sticky parent is insufficient for writable connections,
   even when the main file already exists.
-- A read-only URI may use an existing current-user-owned file in a shared
-  sticky parent because SQLite cannot create a journal or sidecar in that
-  mode.
+- No SQLite file is opened directly inside a shared-sticky parent, including
+  with a read-only URI: SQLite may create or write `-shm` during `mode=ro`.
+  The seam always verifies the selected SQLite parent with
+  `allow_shared_sticky=False`.
 - New database parents are never created by the connection seam. Callers may
   create or harden only an explicitly application-owned default data or backup
   directory.
 - Pre-create a missing writable database exclusively as `0600`; harden an
   eligible existing database and existing `-wal`, `-shm`, and `-journal`
   sidecars before calling SQLite.
+- On Windows, successful file-backed preparation emits at most one
+  `SQLitePrivacyUnverifiedWarning` per literal owner ID per process. Exact
+  `:memory:` emits no privacy warning. This bounded warning is the observable
+  `unverified_platform` contract until native ACL verification exists.
 - Do not pre-create missing sidecars. The trusted writable parent and private
   main-file mode are the creation boundary; real WAL, SHM, and rollback journal
   modes must be verified under a permissive process umask.
@@ -261,6 +266,8 @@ without changing it, so no new ADR is needed.
 
   - first creation is `0600` under `umask(000)`;
   - an existing `0644` database is `0600` when the raw connect stub runs;
+  - an owner-owned `0400` database is pinned `O_RDONLY`, hardened to `0600`,
+    reopened `O_RDWR`, and identity-revalidated before raw connect;
   - missing, symlinked, non-regular, multiply-linked, and wrong-owner targets
     fail before the raw connect stub;
   - writable targets in shared sticky or non-sticky writable parents fail
@@ -273,9 +280,10 @@ without changing it, so no new ADR is needed.
 - [ ] **Step 4: Add red sidecar preflight tests**
 
   Parameterize `-wal`, `-shm`, and `-journal`: eligible `0644` sidecars are
-  hardened before raw connect; symlink, hardlink, non-regular, wrong-owner, or
-  replacement/postcondition-failure sidecars block raw connect. Missing
-  sidecars are not pre-created.
+  hardened before raw connect; owner-owned `0400` sidecars follow the same
+  read-pin, harden, writable-reopen, and identity-revalidation order; symlink,
+  hardlink, non-regular, wrong-owner, or replacement/postcondition-failure
+  sidecars block raw connect. Missing sidecars are not pre-created.
 
 - [ ] **Step 5: Add red real SQLite mode tests**
 
@@ -291,15 +299,19 @@ without changing it, so no new ADR is needed.
 - [ ] **Step 6: Add red read-only URI tests**
 
   Verify read-only access works for filenames containing spaces, `?`, `#`, and
-  Unicode; writes fail with SQLite read-only errors; an existing owned file in
-  a shared sticky parent is allowed; a missing target and unsafe existing
-  target fail closed; the caller cannot append URI query parameters.
+  Unicode; writes fail with SQLite read-only errors; a missing target, an
+  unsafe existing target, and every target directly inside a shared-sticky
+  parent fail closed; the caller cannot append URI query parameters. This
+  stricter namespace rule is required because SQLite may create or write a
+  missing `-shm` file during a `mode=ro` WAL open.
 
   Add pure URI-builder fixtures for Windows drive-letter and UNC paths,
   including spaces, `?`, `#`, and Unicode. On Windows CI, run the functional
-  read-only and `:memory:` cases and assert the posture remains
-  `unverified_platform`; on non-Windows CI, test the deterministic URI builder
-  without pretending the POSIX host opened a Windows path.
+  read-only and `:memory:` cases: file-backed preparation reports
+  `unverified_platform` through a warning deduplicated to one emission per
+  literal owner ID per process, while exact memory remains filesystem-free and
+  warning-free. On non-Windows CI, test the deterministic URI builder without
+  pretending the POSIX host opened a Windows path.
 
 - [ ] **Step 7: Run the focused red suite**
 
@@ -323,7 +335,11 @@ without changing it, so no new ADR is needed.
   Infer the target kind, enforce the owner policy, validate the writable parent,
   exclusively create or harden the main file, preflight existing sidecars, and
   only then call the module-private raw SQLite function. Build read-only URIs
-  internally from a lexical path with correct percent encoding.
+  internally from a lexical path with correct percent encoding. Existing
+  owner-only but read-only (`0400`) artifacts must be pinned with `O_RDONLY`,
+  hardened, then reopened writable with identity revalidation where the caller
+  needs write access. Do not open SQLite databases directly in shared-sticky
+  parents.
 
 - [ ] **Step 10: Run the focused suite and refactor**
 
@@ -567,8 +583,10 @@ without changing it, so no new ADR is needed.
   Assert Media integrity, Settings integrity/schema reads, and Chrome/Firefox/
   Edge cookie clones request the registered read-only contract. Use real
   read-only SQLite files where practical and stubs only for OS/browser
-  decryption dependencies. Confirm cookie temporary files remain `0600` and
-  cannot be written through their connections.
+  decryption dependencies. Confirm cookie clones live inside a verified `0700`
+  temporary directory, their database files remain `0600`, and they cannot be
+  written through their connections. Do not place a SQLite file directly in
+  the system shared-sticky temporary directory.
 
 - [ ] **Step 3: Add red Settings vacuum tests**
 
@@ -581,7 +599,7 @@ without changing it, so no new ADR is needed.
   Consolidate repeated `SQLiteStorage` opens behind one private instance
   helper. Remove arbitrary parent creation. Keep persistent `:memory:`
   connection reuse exactly as before. Change cookie copies to internally built
-  read-only URI connections.
+  read-only URI connections inside per-clone private temporary directories.
 
   In the checked inventory, change P16-P19 from `current` to `migrated` in the
   same commit. Keep P20-P22 `current` until the backup slice removes those
