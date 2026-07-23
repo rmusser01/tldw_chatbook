@@ -2753,6 +2753,7 @@ class _FakePreviewGateway:
         gate=None,
         mid_gate=None,
         error=None,
+        resolve_error=None,
         error_after_first=False,
         stream_failures=0,
     ):
@@ -2760,6 +2761,7 @@ class _FakePreviewGateway:
         self.gate = gate
         self.mid_gate = mid_gate
         self.error = error
+        self.resolve_error = resolve_error
         self.error_after_first = error_after_first
         self.stream_failures = stream_failures
         self.requests: list[list[dict]] = []
@@ -2772,6 +2774,8 @@ class _FakePreviewGateway:
         )
 
         self.selections.append(selection)
+        if self.resolve_error is not None:
+            raise self.resolve_error
         return ConsoleProviderResolution(
             provider="openai", base_url="", model="test-model", ready=True
         )
@@ -2794,6 +2798,46 @@ class _FakePreviewGateway:
 
     async def aclose(self):
         self.closed = True
+
+
+class ReadinessMapPreviewGateway(_FakePreviewGateway):
+    """Fake gateway whose readiness depends on the selection's provider.
+
+    Providers in ``ready_providers`` resolve ready; anything else resolves
+    blocked with Console-style visible copy, so tests can drive the
+    character-defaults -> chat_defaults fallback (task-425).
+    """
+
+    def __init__(self, ready_providers, resolve_error_providers=None, **kwargs):
+        super().__init__(**kwargs)
+        self.ready_providers = {p.lower() for p in ready_providers}
+        self.resolve_error_providers = {
+            p.lower() for p in (resolve_error_providers or set())
+        }
+
+    async def resolve_for_send(self, selection):
+        from tldw_chatbook.Chat.console_provider_gateway import (
+            ConsoleProviderResolution,
+        )
+
+        self.selections.append(selection)
+        provider = (selection.provider or "").lower()
+        if provider in self.resolve_error_providers:
+            raise RuntimeError(f"{provider} resolution exploded")
+        if provider in self.ready_providers:
+            return ConsoleProviderResolution(
+                provider=provider,
+                base_url="",
+                model=selection.explicit_model or "test-model",
+                ready=True,
+            )
+        return ConsoleProviderResolution(
+            provider=provider,
+            base_url="",
+            model=selection.explicit_model or "",
+            ready=False,
+            visible_copy=f"{provider or 'provider'} is not ready: Missing API key.",
+        )
 
 
 class TestPreviewIntegration:
@@ -3218,6 +3262,241 @@ class TestPreviewIntegration:
         assert extra["resolved_provider"] == "openai"
         assert extra["resolved_model"] == "test-model"
         assert isinstance(extra["generation"], int)
+
+    async def test_resolution_failure_logs_safe_preview_context(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Resolution exceptions retain the standard structured preview context."""
+        from loguru import logger as loguru_logger
+
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+
+        records: list[dict[str, Any]] = []
+        sink_id = loguru_logger.add(
+            lambda message: records.append(message.record), level="ERROR"
+        )
+        mock_app_instance.app_config = {
+            "character_defaults": {
+                "provider": "anthropic",
+                "model": "claude-3-haiku",
+            },
+            "chat_defaults": {
+                "provider": "llama_cpp",
+                "model": "local.gguf",
+                "streaming": False,
+            },
+        }
+        fake = ReadinessMapPreviewGateway(
+            ready_providers=set(),
+            resolve_error_providers={"llama_cpp"},
+        )
+        app = PersonasTestApp(mock_app_instance)
+        try:
+            async with app.run_test(size=(160, 50)) as pilot:
+                screen = await self._select_first_character(pilot)
+                screen.preview.ensure_gateway = lambda: fake
+                screen.post_message(PreviewReplyRequested("Hi"))
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+        finally:
+            loguru_logger.remove(sink_id)
+
+        failure = next(
+            record
+            for record in records
+            if record["message"] == "Preview provider resolution failed."
+        )
+        assert failure["exception"] is not None
+        extra = failure["extra"]
+        assert extra["operation"] == "personas_preview_reply"
+        assert extra["provider"] == "llama_cpp"
+        assert extra["model"] == "local.gguf"
+        assert extra["selection_kind"] == "character"
+        assert extra["selection_id"] == "1"
+        assert extra["streaming"] is False
+        assert extra["attempt"] == "resolve"
+        assert isinstance(extra["generation"], int)
+
+    async def test_unready_character_provider_falls_back_to_chat_defaults(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """The preview falls back to a ready chat_defaults provider (task-425).
+
+        First-run configs carry the shipped ``[character_defaults]`` template
+        (Anthropic) verbatim, so the fallback keys on readiness, not on the
+        section's presence.
+        """
+        from textual.widgets import Static as _Static
+
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {
+                "provider": "llama_cpp",
+                "model": "local.gguf",
+                "streaming": False,
+                "temperature": 0.42,
+                "top_p": 0.77,
+                "max_tokens": 321,
+            },
+            "api_settings": {
+                "llama_cpp": {
+                    "api_url": "http://127.0.0.1:8181/v1/chat/completions"
+                }
+            },
+        }
+        fake = ReadinessMapPreviewGateway(ready_providers={"llama_cpp"})
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen.preview.ensure_gateway = lambda: fake
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            pane = screen.query_one(PersonasPreviewPane)
+            assert "character: Hello, world." in pane.transcript_text()
+            assert [s.provider for s in fake.selections] == ["anthropic", "llama_cpp"]
+            fallback = fake.selections[-1]
+            assert fallback.explicit_model == "local.gguf"
+            assert fallback.base_url == "http://127.0.0.1:8181"
+            assert fallback.streaming is False
+            assert fallback.temperature == 0.42
+            assert fallback.top_p == 0.77
+            assert fallback.max_tokens == 321
+            status = str(
+                screen.query_one("#personas-preview-status", _Static).renderable
+            )
+            assert "via Console default" in status
+            assert "llama_cpp" in status
+
+    async def test_ready_character_provider_wins_over_chat_defaults(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """A usable character_defaults provider is used without fallback."""
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        mock_app_instance.app_config = {
+            "character_defaults": {
+                "provider": "anthropic",
+                "model": "claude-3-haiku",
+                "streaming": False,
+                "temperature": 0.81,
+                "top_p": 0.88,
+                "max_tokens": 2048,
+            },
+            "chat_defaults": {
+                "provider": "llama_cpp",
+                "model": "local.gguf",
+                "streaming": True,
+                "temperature": 0.2,
+            },
+        }
+        fake = ReadinessMapPreviewGateway(ready_providers={"anthropic", "llama_cpp"})
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen.preview.ensure_gateway = lambda: fake
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            pane = screen.query_one(PersonasPreviewPane)
+            assert "character: Hello, world." in pane.transcript_text()
+            assert [s.provider for s in fake.selections] == ["anthropic"]
+            character_selection = fake.selections[0]
+            assert character_selection.streaming is False
+            assert character_selection.temperature == 0.81
+            assert character_selection.top_p == 0.88
+            assert character_selection.max_tokens == 2048
+
+    async def test_both_providers_unready_names_settings_remedy(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """When neither provider is ready the status points at Settings."""
+        from textual.widgets import Static as _Static
+
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "llama_cpp", "model": "local.gguf"},
+        }
+        fake = ReadinessMapPreviewGateway(ready_providers=set())
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen.preview.ensure_gateway = lambda: fake
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            status = str(
+                screen.query_one("#personas-preview-status", _Static).renderable
+            )
+            assert "Settings" in status
+            assert "Traceback" not in status
+            # Both providers were attempted before giving up.
+            assert [s.provider for s in fake.selections] == ["anthropic", "llama_cpp"]
+            # The surfaced blocker is the chat_defaults provider the user
+            # actually configured, not the shipped character default.
+            assert "llama_cpp" in status
+            assert "anthropic" not in status
+
+    async def test_fallback_provider_survives_non_streaming_retry(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """A streaming failure re-resolves the fallback provider, not the
+        character default (task-425)."""
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "llama_cpp", "model": "local.gguf"},
+        }
+        # First stream_chat raises -> non-streaming retry re-resolves.
+        fake = ReadinessMapPreviewGateway(
+            ready_providers={"llama_cpp"}, stream_failures=1
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen.preview.ensure_gateway = lambda: fake
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            pane = screen.query_one(PersonasPreviewPane)
+            assert "character: Hello, world." in pane.transcript_text()
+            # anthropic (unready) -> llama_cpp (ready, streaming) ->
+            # llama_cpp (non-streaming retry re-resolve).
+            assert [s.provider for s in fake.selections] == [
+                "anthropic",
+                "llama_cpp",
+                "llama_cpp",
+            ]
+            assert fake.selections[-1].streaming is False
 
     async def test_draft_aware_system_prompt_uses_editor_data(
         self, mock_app_instance, stub_characters, stub_conversations

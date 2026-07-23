@@ -324,14 +324,15 @@ def test_write_via_rag_service_is_visible_to_search_and_admin(tmp_path, monkeypa
         ingestion_indexing.set_shared_rag_service(rag_service)
         try:
             admin = LocalRAGAdminService(None)
+            collection_name = rag_service.vector_store.collection_name
             names = [record["name"] for record in admin.list_collections()]
-            assert cfg.vector_store.collection_name in names
+            assert collection_name in names
 
-            detail = admin.get_collection_detail(cfg.vector_store.collection_name)
+            detail = admin.get_collection_detail(collection_name)
             assert detail["count"] > 0
 
             exported = admin.export_collection(
-                cfg.vector_store.collection_name, include_embeddings=False
+                collection_name, include_embeddings=False
             )
             assert any(
                 "zanzibar" in (item["document"] or "") for item in exported["items"]

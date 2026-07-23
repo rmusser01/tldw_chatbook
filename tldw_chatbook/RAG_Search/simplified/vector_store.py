@@ -795,14 +795,19 @@ class ChromaVectorStore:
 
     def close(self) -> None:
         """Close the ChromaDB client and clean up resources."""
-        if self._client is not None:
-            try:
-                # ChromaDB doesn't have an explicit close method, but we can reset our references
-                self._collection = None
-                self._client = None
-                logger.info("ChromaVectorStore closed")
-            except Exception as e:
-                logger.error(f"Error closing ChromaVectorStore: {e}")
+        client = self._client
+        self._collection = None
+        self._client = None
+        if client is None:
+            return
+
+        try:
+            close = getattr(client, "close", None)
+            if callable(close):
+                close()
+            logger.info("ChromaVectorStore closed")
+        except Exception as e:
+            logger.error(f"Error closing ChromaVectorStore: {e}")
 
 
 class InMemoryVectorStore:

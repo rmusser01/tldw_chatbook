@@ -8,7 +8,7 @@ through the same Console gateway boundary without writing to local storage.
 from __future__ import annotations
 
 import dataclasses
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Mapping
 
 from loguru import logger
 from textual.css.query import QueryError
@@ -16,6 +16,7 @@ from textual.css.query import QueryError
 from ...Character_Chat.Character_Chat_Lib import replace_placeholders
 from ...Chat.console_chat_models import ConsoleProviderSelection
 from ...Chat.console_provider_gateway import ConsoleProviderGateway
+from ...Chat.console_session_settings import build_default_console_session_settings
 from ...Widgets.Persona_Widgets.personas_character_editor_widget import (
     PersonasCharacterEditorWidget,
 )
@@ -263,17 +264,140 @@ class PersonasPreviewController:
             )
         return context
 
+    @staticmethod
+    def _selection_from_defaults(
+        config: Mapping[str, Any], defaults_key: str
+    ) -> ConsoleProviderSelection:
+        """Build a provider selection from one configured defaults section.
+
+        Args:
+            config: Current application configuration snapshot.
+            defaults_key: Defaults section to resolve through Console settings.
+
+        Returns:
+            Provider selection carrying effective endpoint and generation fields.
+        """
+        raw_defaults = config.get(defaults_key, {})
+        defaults = raw_defaults if isinstance(raw_defaults, Mapping) else {}
+        provider = str(defaults.get("provider") or "")
+        explicit_model = str(defaults.get("model") or "") or None
+
+        settings_config: Mapping[str, Any] = config
+        if defaults_key != "chat_defaults":
+            # The Console builder owns endpoint, transport, and generation
+            # precedence (ADR-006). Present character defaults through that
+            # established input slot so the preview honors character-specific
+            # sampling without duplicating config parsing.
+            section_config = dict(config)
+            section_config["chat_defaults"] = defaults
+            settings_config = section_config
+        settings = build_default_console_session_settings(
+            settings_config,
+            provider=provider,
+            model=explicit_model,
+        )
+        return ConsoleProviderSelection(
+            provider=provider,
+            base_url=settings.base_url,
+            explicit_model=explicit_model,
+            configured_model=None if explicit_model else settings.model,
+            temperature=settings.temperature,
+            top_p=settings.top_p,
+            min_p=settings.min_p,
+            top_k=settings.top_k,
+            max_tokens=settings.max_tokens,
+            seed=settings.seed,
+            presence_penalty=settings.presence_penalty,
+            frequency_penalty=settings.frequency_penalty,
+            reasoning_effort=settings.reasoning_effort,
+            reasoning_summary=settings.reasoning_summary,
+            verbosity=settings.verbosity,
+            thinking_effort=settings.thinking_effort,
+            thinking_budget_tokens=settings.thinking_budget_tokens,
+            streaming=settings.streaming,
+        )
+
+    async def _resolve_selection_with_fallback(
+        self,
+        gateway: ConsoleProviderGateway,
+        *,
+        selection_key: tuple[str | None, Any],
+        generation: int,
+    ) -> tuple[ConsoleProviderSelection, Any, str | None]:
+        """Resolve ``character_defaults``, falling back to ``chat_defaults``.
+
+        First-run configs carry the shipped ``[character_defaults]`` template
+        (Anthropic) verbatim, so an unready character provider usually means
+        the section was never a user choice — the user's working Console
+        provider is the honest default (task-425). A usable character
+        provider always wins.
+
+        Args:
+            gateway: Console provider gateway used for readiness resolution.
+            selection_key: Selected entity identity for safe log context.
+            generation: Preview generation used to reject stale replies.
+
+        Returns:
+            ``(selection, resolution, fallback_provider)`` where
+            ``fallback_provider`` is the chat-defaults provider name when the
+            fallback was used, else ``None``. ``resolution`` may be unready;
+            the caller surfaces its copy.
+        """
+        raw_config = getattr(self.screen.app_instance, "app_config", {}) or {}
+        config = raw_config if isinstance(raw_config, Mapping) else {}
+        selection = self._selection_from_defaults(config, "character_defaults")
+        try:
+            resolution = await gateway.resolve_for_send(selection)
+        except Exception:
+            logger.bind(
+                **self._reply_log_context(
+                    selection=selection,
+                    selection_key=selection_key,
+                    generation=generation,
+                    attempt="resolve",
+                )
+            ).opt(exception=True).error("Preview provider resolution failed.")
+            raise
+        if resolution.ready:
+            return selection, resolution, None
+
+        fallback = self._selection_from_defaults(config, "chat_defaults")
+        chat_provider = fallback.provider
+        same_target = (
+            chat_provider.lower() == (selection.provider or "").lower()
+            and self._selection_model(fallback) == self._selection_model(selection)
+        )
+        if chat_provider and not same_target:
+            try:
+                fallback_resolution = await gateway.resolve_for_send(fallback)
+            except Exception:
+                logger.bind(
+                    **self._reply_log_context(
+                        selection=fallback,
+                        selection_key=selection_key,
+                        generation=generation,
+                        attempt="resolve",
+                    )
+                ).opt(exception=True).error("Preview provider resolution failed.")
+                raise
+            if fallback_resolution.ready:
+                logger.bind(
+                    character_provider=selection.provider,
+                    fallback_provider=chat_provider,
+                ).info(
+                    "Character provider not ready; preview using chat_defaults."
+                )
+                return fallback, fallback_resolution, chat_provider
+            # Both providers are unready. Surface the chat_defaults blocker: it
+            # is the provider the guided-flow user actually configured, so its
+            # copy is more actionable than the shipped character default's.
+            return fallback, fallback_resolution, None
+        return selection, resolution, None
+
     async def _run_reply(self) -> None:
         """Resolve the configured provider and stream one preview reply."""
         screen = self.screen
         pane = screen.query_one(PersonasPreviewPane)
-        config = getattr(screen.app_instance, "app_config", {}) or {}
-        defaults = config.get("character_defaults", {}) or {}
-        provider = str(defaults.get("provider") or "")
-        model = str(defaults.get("model") or "")
-        selection = ConsoleProviderSelection(
-            provider=provider, explicit_model=model or None
-        )
         gateway = self.ensure_gateway()
         selection_key = (
             screen.state.selected_entity_kind,
@@ -290,16 +414,16 @@ class PersonasPreviewController:
             )
 
         try:
-            resolution = await gateway.resolve_for_send(selection)
+            (
+                selection,
+                resolution,
+                fallback_provider,
+            ) = await self._resolve_selection_with_fallback(
+                gateway,
+                selection_key=selection_key,
+                generation=generation,
+            )
         except Exception:
-            logger.bind(
-                **self._reply_log_context(
-                    selection=selection,
-                    selection_key=selection_key,
-                    generation=generation,
-                    attempt="resolve",
-                )
-            ).opt(exception=True).error("Preview provider resolution failed.")
             if not _stale():
                 self._pop_orphaned_user_turn()
                 pane.set_status("Provider error - try again or configure in Settings")
@@ -307,12 +431,15 @@ class PersonasPreviewController:
         if not resolution.ready:
             if not _stale():
                 self._pop_orphaned_user_turn()
+                copy = resolution.visible_copy or "Provider unavailable."
                 pane.set_status(
-                    resolution.visible_copy
-                    or "Provider unavailable - configure in Settings"
+                    f"{copy} Configure a provider in Settings: Providers & Models."
                 )
             return
-        pane.set_status("Running")
+        if fallback_provider:
+            pane.set_status(f"Running via Console default: {fallback_provider}")
+        else:
+            pane.set_status("Running")
         await pane.discard_partial_reply()
         history: list[dict[str, str]] = []
         for entry in self.history:
@@ -394,6 +521,9 @@ class PersonasPreviewController:
         if reply:
             self.history.append({"role": "assistant", "content": reply})
             pane.finalize_reply()
-            pane.set_status("Ready")
+            if fallback_provider:
+                pane.set_status(f"Ready - via Console default: {fallback_provider}")
+            else:
+                pane.set_status("Ready")
         else:
             pane.set_status("No reply received")
