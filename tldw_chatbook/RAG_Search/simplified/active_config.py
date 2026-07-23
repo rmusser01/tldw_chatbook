@@ -17,10 +17,11 @@ from loguru import logger
 
 from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
 from .config import RAGConfig
-from ..config_profiles import get_profile_manager
+from ..config_profiles import get_profile_manager, ProfileConfig
 from ..ingestion_indexing import reset_shared_rag_service
 
 DEFAULT_PROFILE = "hybrid_basic"
+_IMPORTED_ID = "imported_settings"
 
 
 def _manager():
@@ -119,3 +120,31 @@ def set_active_profile(profile_id: str) -> None:
     """
     save_setting_to_cli_config("rag.service", "profile", profile_id)
     reset_shared_rag_service()
+
+
+def ensure_imported_profile() -> Optional[str]:
+    """On first run, capture the currently-resolved RAG config into a writable
+    'Imported settings' profile and set it active. Idempotent (returns None if it
+    already exists). The captured config's SP1 fingerprint matches what SP1 adopts
+    the legacy collection under, so the user keeps their index on upgrade.
+
+    Exception-safe: any failure here must never block RAG service creation, so
+    every error is caught and logged, returning None (as if already imported /
+    nothing to do) rather than propagating.
+    """
+    try:
+        mgr = _manager()
+        if mgr.get_profile(_IMPORTED_ID) is not None:
+            return None
+        # Snapshot the resolved config (active pointer may name a builtin default today).
+        snapshot = resolve_active_rag_config()
+        profile = ProfileConfig(name="Imported settings",
+                                description="Captured from your existing RAG configuration on first run.",
+                                profile_type="custom", rag_config=snapshot)
+        profile.id = _IMPORTED_ID
+        mgr.save_profile(profile)
+        set_active_profile(_IMPORTED_ID)
+        return _IMPORTED_ID
+    except Exception as e:
+        logger.warning(f"ensure_imported_profile: first-run import failed, continuing without it: {e}")
+        return None
