@@ -796,7 +796,7 @@ def test_settings_domain_category_contracts_are_explicit_about_mutation_scope():
     )
     assert "citations" in library_copy
     assert "snippets" in library_copy
-    assert "AppRAGSearchConfig.rag.search" in library_copy
+    assert "active RAG profile" in library_copy
 
 
 def test_settings_domain_category_ids_are_derived_from_contract_mapping():
@@ -842,7 +842,7 @@ def test_settings_domain_categories_are_grouped_and_have_ownership_records():
         record = records[category]
         if category is SettingsCategoryId.LIBRARY_RAG:
             assert record.writes_allowed
-            assert "AppRAGSearchConfig.rag.search" in " ".join(
+            assert "active RAG profile" in " ".join(
                 record.owns_config_sections
             )
         else:
@@ -852,35 +852,45 @@ def test_settings_domain_categories_are_grouped_and_have_ownership_records():
         assert record.runtime_owner
 
 
+def _wire_rag_profile_adapter(monkeypatch, tmp_path, *, active_id=None):
+    """Point the Settings RAG adapter at an isolated profile store for a test.
+
+    Returns (manager, profile) where `profile` is a writable clone of the
+    `hybrid_basic` builtin, already the active profile.
+    """
+    from tldw_chatbook.RAG_Search.config_profiles import ConfigProfileManager
+    import tldw_chatbook.UI.Screens.settings_rag_profile_adapter as rag_adapter_module
+
+    mgr = ConfigProfileManager(profiles_dir=tmp_path / "profiles")
+    profile = mgr.clone_profile("hybrid_basic", "My RAG")
+    mgr.save_profile(profile)
+    state = {"active": active_id or profile.id}
+    monkeypatch.setattr(rag_adapter_module, "_manager", lambda: mgr, raising=False)
+    monkeypatch.setattr(
+        rag_adapter_module, "_active_profile_id", lambda: state["active"], raising=False
+    )
+    return mgr, profile, state
+
+
 @pytest.mark.asyncio
-async def test_settings_library_rag_renders_guided_defaults_and_validates(monkeypatch):
+async def test_settings_library_rag_renders_guided_defaults_and_validates(
+    monkeypatch, tmp_path
+):
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    search = profile.rag_config.search
+    search.default_search_mode = "semantic"
+    search.default_top_k = 10
+    search.score_threshold = 0.0
+    search.include_citations = True
+    search.citation_style = "inline"
+    search.snippet_max_chars = 240
+    search.max_context_size = 16000
+    search.fts_top_k = 10
+    search.vector_top_k = 10
+    search.hybrid_alpha = 0.5
+    mgr.save_profile(profile)
+
     app = _build_test_app()
-    app.app_config["AppRAGSearchConfig"] = {
-        "rag": {
-            "search": {
-                "default_search_mode": "semantic",
-                "default_top_k": 10,
-                "score_threshold": 0.0,
-                "include_citations": True,
-                "citation_style": "inline",
-                "snippet_max_chars": 240,
-                "max_context_size": 16000,
-            },
-            "retriever": {
-                "fts_top_k": 10,
-                "vector_top_k": 10,
-                "hybrid_alpha": 0.5,
-            },
-        }
-    }
-    saved = []
-
-    class FakeAdapter:
-        def save_sections(self, section_values):
-            saved.append(section_values)
-            return True
-
-    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(190, 55)) as pilot:
@@ -888,15 +898,15 @@ async def test_settings_library_rag_renders_guided_defaults_and_validates(monkey
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
-        assert "Library & RAG" in text
+        assert "RAG" in text
         assert "Search defaults" in text
         assert "Citation and snippets" in text
         assert "Preview defaults" in text
         assert "Semantic search | 10 results | Inline citations" in text
         assert "Context budget: 16000 chars" in text
         assert "Config keys" in text
-        assert "10 editable defaults under AppRAGSearchConfig" in text
-        assert "AppRAGSearchConfig.rag.search.default_search_mode" not in text
+        assert "10 editable defaults in the active RAG profile" in text
+        assert "AppRAGSearchConfig" not in text
         assert (
             screen.query_one("#settings-library-rag-search-mode", Select).value
             == "semantic"
@@ -936,23 +946,26 @@ async def test_settings_library_rag_renders_guided_defaults_and_validates(monkey
         await pilot.click("#settings-save-category")
         await _wait_for_settings_text(screen, pilot, "Library/RAG defaults saved.")
 
-    assert saved
-    rag = saved[-1]["AppRAGSearchConfig"]["rag"]
-    assert rag["search"]["default_top_k"] == 12
-    assert rag["search"]["snippet_max_chars"] == 360
+    # Reload from disk via a FRESH manager over the same dir to confirm the
+    # active profile's file (not AppRAGSearchConfig) is what was written.
+    from tldw_chatbook.RAG_Search.config_profiles import ConfigProfileManager
+
+    mgr2 = ConfigProfileManager(profiles_dir=mgr.profiles_dir)
+    saved_search = mgr2.get_profile(profile.id).rag_config.search
+    assert saved_search.default_top_k == 12
+    assert saved_search.snippet_max_chars == 360
 
 
 @pytest.mark.asyncio
-async def test_settings_library_rag_sync_clamps_invalid_select_values():
+async def test_settings_library_rag_sync_clamps_invalid_select_values(
+    monkeypatch, tmp_path
+):
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    profile.rag_config.search.default_search_mode = "not-a-mode"
+    profile.rag_config.search.citation_style = "not-a-style"
+    mgr.save_profile(profile)
+
     app = _build_test_app()
-    app.app_config["AppRAGSearchConfig"] = {
-        "rag": {
-            "search": {
-                "default_search_mode": "not-a-mode",
-                "citation_style": "not-a-style",
-            },
-        }
-    }
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(190, 55)) as pilot:
@@ -1428,7 +1441,18 @@ def test_settings_storage_save_uses_exclusive_thread_worker():
 
 
 @pytest.mark.asyncio
-async def test_settings_library_rag_save_preserves_mapping_like_app_config(monkeypatch):
+async def test_settings_library_rag_save_does_not_touch_app_config_and_persists_profile(
+    monkeypatch, tmp_path
+):
+    """Regression guard for the dead-writes bug this task retires.
+
+    app_config may be Mapping-like (UserDict) elsewhere in Settings; the RAG
+    category must not choke on that. And since RAG saves now go through the
+    active-profile adapter, save must never mutate app_config -- it persists
+    to the active profile's file instead.
+    """
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+
     app = _build_test_app()
     app.app_config = UserDict(
         {
@@ -1440,14 +1464,6 @@ async def test_settings_library_rag_save_preserves_mapping_like_app_config(monke
             }
         }
     )
-    saved = []
-
-    class FakeAdapter:
-        def save_sections(self, section_values):
-            saved.append(section_values)
-            return True
-
-    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(190, 55)) as pilot:
@@ -1467,9 +1483,14 @@ async def test_settings_library_rag_save_preserves_mapping_like_app_config(monke
         await pilot.click("#settings-save-category")
         await _wait_for_settings_text(screen, pilot, "Library/RAG defaults saved.")
 
-    assert saved
     assert isinstance(app.app_config, UserDict)
-    assert app.app_config["AppRAGSearchConfig"]["rag"]["search"]["default_top_k"] == 12
+    # Untouched: the RAG category no longer writes AppRAGSearchConfig.* keys.
+    assert app.app_config["AppRAGSearchConfig"]["rag"]["search"]["default_top_k"] == 10
+
+    from tldw_chatbook.RAG_Search.config_profiles import ConfigProfileManager
+
+    mgr2 = ConfigProfileManager(profiles_dir=mgr.profiles_dir)
+    assert mgr2.get_profile(profile.id).rag_config.search.default_top_k == 12
 
 
 @pytest.mark.asyncio

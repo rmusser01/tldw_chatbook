@@ -121,11 +121,13 @@ from .settings_appearance_defaults import (
 )
 from .settings_library_rag_defaults import (
     SettingsLibraryRagDefaults,
-    build_library_rag_save_sections,
-    load_library_rag_defaults,
     normalise_library_rag_citation_style,
     normalise_library_rag_search_mode,
     validate_library_rag_defaults,
+)
+from .settings_rag_profile_adapter import (
+    load_rag_defaults_from_active_profile,
+    save_rag_defaults_to_active_profile,
 )
 from .settings_privacy_security import (
     SettingsPrivacyPosture,
@@ -404,7 +406,7 @@ SETTINGS_SERVER_SYNC_WORKSPACE_SOURCE_CONTRACTS = (
 SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
     SettingsDomainCategoryContract(
         category=SettingsCategoryId.LIBRARY_RAG,
-        title="Library & RAG",
+        title="RAG",
         owner_destination="Library",
         source_of_truth=(
             "Library source services",
@@ -422,11 +424,11 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
             ),
             (
                 "Retrieval defaults",
-                "AppRAGSearchConfig.rag.search and .retriever own result limits and blend defaults",
+                "the active RAG profile (rag_profiles/<id>.json) owns result limits and blend defaults",
             ),
             (
                 "Citation/snippet defaults",
-                "AppRAGSearchConfig.rag.search owns citations, snippets, and context budget defaults",
+                "the active RAG profile (rag_profiles/<id>.json) owns citations, snippets, and context budget defaults",
             ),
         ),
         settings_can_mutate=True,
@@ -687,7 +689,7 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
     SettingsCategoryId.LIBRARY_RAG: (
         (
             "Affected config",
-            "AppRAGSearchConfig.rag.search and AppRAGSearchConfig.rag.retriever defaults",
+            "the active RAG profile (rag_profiles/<id>.json) and the [rag.service].profile pointer",
         ),
         (
             "Recovery",
@@ -1274,7 +1276,7 @@ class SettingsScreen(BaseAppScreen):
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.LIBRARY_RAG,
-                "Library & RAG",
+                "RAG",
                 "Source search, retrieval, citations, snippets, and Console evidence defaults.",
                 "Guided",
             ),
@@ -1449,16 +1451,8 @@ class SettingsScreen(BaseAppScreen):
                     SettingsOwnershipRecord(
                         category=contract.category,
                         owns_config_sections=(
-                            "AppRAGSearchConfig.rag.search.default_search_mode",
-                            "AppRAGSearchConfig.rag.search.default_top_k",
-                            "AppRAGSearchConfig.rag.search.score_threshold",
-                            "AppRAGSearchConfig.rag.search.include_citations",
-                            "AppRAGSearchConfig.rag.search.citation_style",
-                            "AppRAGSearchConfig.rag.search.snippet_max_chars",
-                            "AppRAGSearchConfig.rag.search.max_context_size",
-                            "AppRAGSearchConfig.rag.retriever.fts_top_k",
-                            "AppRAGSearchConfig.rag.retriever.vector_top_k",
-                            "AppRAGSearchConfig.rag.retriever.hybrid_alpha",
+                            "the active RAG profile (rag_profiles/<id>.json)",
+                            "the [rag.service].profile pointer",
                         ),
                         reads_runtime_state_from=contract.source_of_truth,
                         writes_allowed=True,
@@ -2078,7 +2072,7 @@ class SettingsScreen(BaseAppScreen):
         return self._appearance_validation_result().valid
 
     def _library_rag_loaded_defaults(self) -> SettingsLibraryRagDefaults:
-        return load_library_rag_defaults(self._app_config_mapping())
+        return load_rag_defaults_from_active_profile()
 
     def _library_rag_loaded_values(self) -> dict[str, object]:
         return asdict(self._library_rag_loaded_defaults())
@@ -7339,7 +7333,7 @@ class SettingsScreen(BaseAppScreen):
         citation_style = normalise_library_rag_citation_style(values["citation_style"])
 
         yield Static(
-            "Library & RAG", classes="destination-section settings-column-title"
+            "RAG", classes="destination-section settings-column-title"
         )
         with Vertical(id="settings-library-rag-card", classes="settings-focus-card"):
             yield self._render_category_state_banner(SettingsCategoryId.LIBRARY_RAG)
@@ -7464,8 +7458,10 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-detail-row",
             )
             yield Static("Save targets", classes="destination-section")
-            yield self._detail_row("Search", "AppRAGSearchConfig.rag.search")
-            yield self._detail_row("Retriever", "AppRAGSearchConfig.rag.retriever")
+            yield self._detail_row(
+                "Profile", "the active RAG profile (rag_profiles/<id>.json)"
+            )
+            yield self._detail_row("Pointer", "the [rag.service].profile pointer")
             yield Static(
                 self._library_rag_result,
                 id="settings-library-rag-save-result",
@@ -8082,7 +8078,7 @@ class SettingsScreen(BaseAppScreen):
             yield self._detail_row("Writes allowed", "Yes")
             yield self._detail_row(
                 "Config keys",
-                "10 editable defaults under AppRAGSearchConfig",
+                "10 editable defaults in the active RAG profile",
             )
             yield self._detail_row("Recovery", ownership.recovery_copy)
             return
@@ -9938,15 +9934,11 @@ class SettingsScreen(BaseAppScreen):
                 self._update_draft_status_widgets(category)
                 self.app.notify(validation.message, severity="error")
                 return
-            section_values = build_library_rag_save_sections(
-                self._app_config_mapping(),
-                values,
-            )
             self._library_rag_result = "Saving Library/RAG defaults..."
             self._set_static_text(
                 "#settings-library-rag-save-result", self._library_rag_result
             )
-            self._settings_save_library_rag_worker(section_values)
+            self._settings_save_library_rag_worker(values)
             return
 
         if category is SettingsCategoryId.APPEARANCE:
@@ -10330,10 +10322,6 @@ class SettingsScreen(BaseAppScreen):
         return SettingsConfigAdapter().save_sections(section_values)
 
     @staticmethod
-    def _save_library_rag_sections(section_values: Mapping[str, object]) -> bool:
-        return SettingsConfigAdapter().save_sections(section_values)
-
-    @staticmethod
     def _save_storage_sections(section_values: Mapping[str, object]) -> bool:
         return SettingsConfigAdapter().save_sections(section_values)
 
@@ -10379,17 +10367,29 @@ class SettingsScreen(BaseAppScreen):
     def _apply_library_rag_save_result(
         self,
         saved: bool,
-        section_values: Mapping[str, object],
+        reason: str,
     ) -> None:
         if saved:
-            self._app_config_update_target().update(copy.deepcopy(dict(section_values)))
             self._settings_drafts.pop(SettingsCategoryId.LIBRARY_RAG, None)
             self._library_rag_result = "Library/RAG defaults saved."
             self._set_static_text(
                 "#settings-library-rag-save-result", self._library_rag_result
             )
+            self._sync_library_rag_widgets()
             self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
             self.app.notify("Library/RAG defaults saved.", severity="information")
+            return
+        if reason == "builtin":
+            self._library_rag_result = (
+                "Built-in profile is read-only — Clone to edit."
+            )
+            self._set_static_text(
+                "#settings-library-rag-save-result", self._library_rag_result
+            )
+            self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
+            self.app.notify(
+                "Built-in profile is read-only — Clone to edit", severity="warning"
+            )
             return
         self._library_rag_result = "Failed to save Library/RAG defaults."
         self._set_static_text(
@@ -10399,13 +10399,13 @@ class SettingsScreen(BaseAppScreen):
 
     @work(exclusive=True, thread=True)
     def _settings_save_library_rag_worker(
-        self, section_values: Mapping[str, object]
+        self, values: SettingsLibraryRagDefaults
     ) -> None:
-        saved = self._save_library_rag_sections(section_values)
+        saved, reason = save_rag_defaults_to_active_profile(values)
         self.app.call_from_thread(
             self._apply_library_rag_save_result,
             saved,
-            dict(section_values),
+            reason,
         )
 
     def _apply_storage_save_result(
