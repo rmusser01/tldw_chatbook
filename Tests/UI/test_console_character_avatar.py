@@ -515,3 +515,60 @@ async def test_expression_spec_cache_is_bounded(console_screen_with_db, monkeypa
             await screen._refresh_active_character_avatar_if_scope_changed()
 
     assert len(screen._console_expression_spec_cache) <= 16
+
+
+# --- P3d-1 Task 5: end-to-end integration + fail-soft ------------------------
+#
+# Regression guards locking the react-off gate and the corrupt-image
+# fail-soft path all the way through the real refresh entrypoint (not the
+# pure resolver, which is unit-tested separately).
+
+
+@pytest.mark.asyncio
+async def test_react_off_pins_idle_even_when_streaming(console_screen_with_db, monkeypatch):
+    """A genuinely "streaming" session (real assistant message, real
+    ``store``, no ``resolve_console_expression_state`` monkeypatch -- unlike
+    the P3d-1 Task 3 tests above) still resolves to "idle" once
+    ``react_character_expressions`` is off, proving the config gate is wired
+    all the way through the real refresh entrypoint, not just the pure
+    resolver (already locked at the unit level by
+    ``Tests/Chat/test_console_expression_state.py::test_react_disabled_pins_idle``).
+    """
+    app, screen, db = console_screen_with_db
+    from PIL import Image as PILImage
+    from io import BytesIO
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    def _png(c):
+        b = BytesIO(); PILImage.new("RGB", (16, 16), c).save(b, format="PNG"); return b.getvalue()
+    char_id = db.add_character_card({"name": "Ada", "image": _png((1, 1, 1))})
+    db.set_character_expression_image(char_id, "speaking", _png((0, 255, 0)))
+    _set_active_console_character(screen, char_id, "Ada")
+
+    # Put a genuinely-streaming assistant message on the active session so
+    # the raw status really would say "streaming" (-> "speaking") if react
+    # were on.
+    controller = screen._ensure_console_chat_controller()
+    session = screen._active_native_console_session()
+    message = controller.store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    controller.store.append_stream_chunk(message.id, "partial reply")
+
+    app.app_config["chat"] = {"images": {"react_character_expressions": False}}
+    # Even though the raw status is "streaming", react-off must pin idle.
+    # (resolve_console_expression_state honors react_enabled=False internally.)
+    await screen._refresh_active_character_avatar_if_scope_changed()
+    assert screen._last_console_avatar_scope == (char_id, "idle")
+
+
+@pytest.mark.asyncio
+async def test_reactive_avatar_never_raises_on_corrupt_expression(console_screen_with_db, monkeypatch):
+    app, screen, db = console_screen_with_db
+    char_id = db.add_character_card({"name": "Bad"})
+    db.set_character_expression_image(char_id, "speaking", b"not-an-image")
+    _set_active_console_character(screen, char_id, "Ada")
+    import tldw_chatbook.UI.Screens.chat_screen as cs
+    monkeypatch.setattr(cs, "resolve_console_expression_state", lambda *a, **k: "speaking")
+    # Must not raise into the sync tick even though the image is corrupt.
+    await screen._refresh_active_character_avatar_if_scope_changed()
+    assert screen._last_console_avatar_scope == (char_id, "speaking")
