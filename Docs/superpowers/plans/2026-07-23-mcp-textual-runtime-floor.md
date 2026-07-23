@@ -37,7 +37,7 @@ Reason: the fix changes dependency and runtime support policy, ends Textual
 - Consumes: PEP 508 requirement strings from `pyproject.toml` and `requirements.txt`
 - Produces: `_textual_requirement(entries: Iterable[str]) -> Requirement` and a semantic Textual 8.x contract enforced for both manifests
 
-- [ ] **Step 1: Create the semantic dependency test**
+- [x] **Step 1: Create the semantic dependency test**
 
 Create `Tests/CI/test_textual_runtime_contract.py` with:
 
@@ -91,7 +91,7 @@ def test_development_requirements_support_only_textual_8_x() -> None:
     _assert_textual_8_only(requirement)
 ```
 
-- [ ] **Step 2: Update the existing packaging seam to the intended contract**
+- [x] **Step 2: Update the existing packaging seam to the intended contract**
 
 In `Tests/UI/test_product_maturity_phase6_packaging_data_safety.py`, replace:
 
@@ -105,7 +105,7 @@ with:
 assert "textual>=8.0.0,<9" in project["dependencies"]
 ```
 
-- [ ] **Step 3: Run the tests and verify the red state**
+- [x] **Step 3: Run the tests and verify the red state**
 
 Run:
 
@@ -133,7 +133,7 @@ packaging seam expects the new declaration.
 - Consumes: the red semantic dependency contract from Task 1
 - Produces: matching Textual 8.x constraints for package installs and requirements-file installs
 
-- [ ] **Step 1: Change the authoritative package dependency**
+- [x] **Step 1: Change the authoritative package dependency**
 
 In `pyproject.toml`, replace:
 
@@ -147,7 +147,7 @@ with:
 "textual>=8.0.0,<9",
 ```
 
-- [ ] **Step 2: Mirror the range in the development requirements**
+- [x] **Step 2: Mirror the range in the development requirements**
 
 In `requirements.txt`, replace:
 
@@ -161,7 +161,7 @@ with:
 textual>=8.0.0,<9
 ```
 
-- [ ] **Step 3: Add the user-facing upgrade note**
+- [x] **Step 3: Add the user-facing upgrade note**
 
 Add this bullet under `CHANGELOG.md` → `Unreleased` → `Changed`:
 
@@ -172,7 +172,7 @@ Add this bullet under `CHANGELOG.md` → `Unreleased` → `Changed`:
   checkouts should reinstall dependencies after pulling this update.
 ```
 
-- [ ] **Step 4: Run the dependency tests and verify green**
+- [x] **Step 4: Run the dependency tests and verify green**
 
 Run:
 
@@ -185,7 +185,7 @@ Run:
 
 Expected: `3 passed`.
 
-- [ ] **Step 5: Commit the runtime contract**
+- [x] **Step 5: Commit the runtime contract**
 
 ```bash
 git add \
@@ -207,7 +207,7 @@ git commit -m "fix: require Textual 8 for MCP runtime"
 - Consumes: the Textual 8.x package contract from Task 2
 - Produces: GitHub Actions job `textual-minimum` that installs Textual 8.0.0 and runs the focused dependency and MCP suites
 
-- [ ] **Step 1: Write the failing workflow contract test**
+- [x] **Step 1: Write the failing workflow contract test**
 
 Append to `Tests/CI/test_github_actions_test_workflow.py`:
 
@@ -222,7 +222,7 @@ def test_ci_exercises_mcp_against_minimum_textual() -> None:
     assert "Tests/UI/test_mcp_tools_mode.py" in workflow
 ```
 
-- [ ] **Step 2: Run the workflow contract and verify the red state**
+- [x] **Step 2: Run the workflow contract and verify the red state**
 
 Run:
 
@@ -235,7 +235,7 @@ Run:
 Expected: FAIL because `.github/workflows/test.yml` has no
 `textual-minimum` job.
 
-- [ ] **Step 3: Add the minimum-version workflow job**
+- [x] **Step 3: Add the minimum-version workflow job**
 
 Insert this job before `all-tests` in `.github/workflows/test.yml`:
 
@@ -271,7 +271,7 @@ Insert this job before `all-tests` in `.github/workflows/test.yml`:
           --tb=short
 ```
 
-- [ ] **Step 4: Include the lane in aggregate workflow status**
+- [x] **Step 4: Include the lane in aggregate workflow status**
 
 Change the `test-summary` job dependency list from:
 
@@ -285,7 +285,7 @@ to:
 needs: [unit-tests, integration-tests, ui-tests, textual-minimum]
 ```
 
-- [ ] **Step 5: Run the workflow contract and verify green**
+- [x] **Step 5: Run the workflow contract and verify green**
 
 Run:
 
@@ -295,7 +295,7 @@ Run:
 
 Expected: all tests in the file PASS.
 
-- [ ] **Step 6: Commit the CI floor**
+- [x] **Step 6: Commit the CI floor**
 
 ```bash
 git add .github/workflows/test.yml Tests/CI/test_github_actions_test_workflow.py
@@ -313,7 +313,7 @@ git commit -m "ci: test MCP on minimum Textual"
 - Consumes: the corrected manifests and minimum-version CI lane
 - Produces: verification evidence and complete Backlog implementation notes
 
-- [ ] **Step 1: Run focused tests on the normal environment**
+- [x] **Step 1: Run focused tests on the normal environment**
 
 Run:
 
@@ -330,7 +330,7 @@ Run:
 Expected: all selected tests PASS. The two existing
 `MCPWorkbench._clear_tool_view` unawaited-coroutine warnings may remain.
 
-- [ ] **Step 2: Replay the MCP suites against exactly Textual 8.0.0**
+- [x] **Step 2: Replay the MCP suites against exactly Textual 8.0.0**
 
 Run:
 
@@ -347,7 +347,7 @@ PYTHONPATH="$minimum_textual_dir" .venv/bin/python -m pytest -q \
 Expected: all 184 tests PASS; the two pre-existing coroutine warnings may
 remain.
 
-- [ ] **Step 3: Run static hygiene**
+- [x] **Step 3: Run static hygiene**
 
 Run:
 
@@ -357,14 +357,14 @@ git diff --check
 
 Expected: no output and exit code 0.
 
-- [ ] **Step 4: Update TASK-400 acceptance criteria and notes**
+- [x] **Step 4: Update TASK-400 acceptance criteria and notes**
 
 Use `backlog task edit 400 --check-ac` for all five acceptance criteria, set
 implementation notes summarizing the bounded Textual range, semantic
 dual-manifest test, minimum-version CI lane, changelog, ADR-022, and exact-floor
 test evidence, then set the task to `Done`.
 
-- [ ] **Step 5: Commit closeout records**
+- [x] **Step 5: Commit closeout records**
 
 ```bash
 git add \
