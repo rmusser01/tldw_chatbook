@@ -1359,18 +1359,26 @@ class ConsoleChatController:
         ``store.set_active_leaf``, never deleted.
 
         All validation/blocking checks (active run, message role/session
-        ownership, non-blank content, provider readiness) run BEFORE either
-        new node is created, mirroring ``regenerate_message``'s
-        mutate-only-once-committed discipline: a blocked edit-and-resend
-        must not leave a stray orphan sibling forked into the tree. Building
-        ``provider_messages`` necessarily happens AFTER the fork here
-        (unlike ``regenerate_message``, which can build it from the still-
-        on-path anchor before forking) because the edited text itself must
-        be part of the payload -- it only exists once ``new_user`` has been
-        created. A skill-substitution refusal discovered at that point still
-        aborts the turn via ``_block`` exactly as ``regenerate_message``
-        does; the two new nodes remain forked (the edit itself is not
-        undone), matching ``submit_draft``'s own post-echo block precedent.
+        ownership, non-blank content, provider readiness) AND every payload
+        transform (skill substitution, chat dictionaries, world info) run
+        BEFORE either new node is created, mirroring ``regenerate_message``'s
+        "mutate last" discipline: a blocked or refused edit-and-resend must
+        not leave a stray orphan sibling -- or an un-streamed, un-retryable
+        ``"pending"`` assistant node -- forked into the tree. Unlike
+        ``regenerate_message`` (whose anchor is still on the active path, so
+        its payload can be read straight off the store), the edited text
+        does not exist as a stored node yet, so ``provider_messages`` is
+        built from the anchor's ancestors (``_provider_messages_for_session``
+        with ``before_message_id=message_id``, which excludes the anchor and
+        its subtree) plus a synthesized ``{"role": "user", "content":
+        clean_content}`` dict standing in for the not-yet-created sibling.
+        The transform pipeline operates purely on that ``list[dict]``
+        payload and never needs the real nodes to exist, so a
+        skill-substitution refusal aborts the turn via ``_block`` with
+        nothing to clean up. Only once every transform has succeeded are
+        ``new_user`` (``store.create_sibling``) and the empty ``assistant``
+        node (``store.append_message``) actually created, and the stream is
+        started against them.
 
         On stream FAILURE, the new assistant node becomes a ``failed`` node
         on the active path (retryable via ``retry_message``), rather than
@@ -1411,21 +1419,18 @@ class ConsoleChatController:
             )
             return self._block(session_id, visible_copy)
 
-        new_user = self.store.create_sibling(
-            message_id,
-            role=ConsoleMessageRole.USER,
-            content=clean_content,
-            persist=self.store.persistence is not None,
-        )
-        assistant = self.store.append_message(
-            session_id,
-            role=ConsoleMessageRole.ASSISTANT,
-            content="",
-            persist=self.store.persistence is not None,
-        )
+        # Build + transform the payload BEFORE creating either new node
+        # (task-2 review fix): the edited text is synthesized as a plain
+        # dict standing in for the not-yet-created sibling, so a
+        # skill-substitution refusal (or any other transform failure) has
+        # nothing to clean up -- no orphan sibling, no stuck "pending"
+        # assistant node.
         provider_messages = self._provider_messages_for_session(
             session_id,
-            before_message_id=assistant.id,
+            before_message_id=message_id,
+        )
+        provider_messages.append(
+            {"role": ConsoleMessageRole.USER.value, "content": clean_content}
         )
         self._ensure_user_continuation_instruction(provider_messages)
         provider_messages, refuse, skill_notes = await self._apply_skill_substitution(
@@ -1446,6 +1451,21 @@ class ConsoleChatController:
             provider_messages, session_id
         )
         prefill = self._pinned_prefill_for_session(session_id)
+
+        # Every transform succeeded: now (and only now) fork the edited USER
+        # sibling and append the empty ASSISTANT node to stream into.
+        new_user = self.store.create_sibling(
+            message_id,
+            role=ConsoleMessageRole.USER,
+            content=clean_content,
+            persist=self.store.persistence is not None,
+        )
+        assistant = self.store.append_message(
+            session_id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="",
+            persist=self.store.persistence is not None,
+        )
         return await self._stream_assistant_response(
             resolution=resolution,
             provider_messages=provider_messages,

@@ -232,3 +232,46 @@ async def test_edit_and_resend_provider_not_ready_blocks_without_orphan_sibling(
     siblings, _index, count = store.siblings_at(u1.id)
     assert count == 1
     assert store.get_message(u1.id).content == "Hi"
+
+
+@pytest.mark.asyncio
+async def test_edit_and_resend_skill_refusal_leaves_no_pending_node():
+    """Critical (Phase B Task 2 review): a skill-substitution refusal
+    discovered while resending an edited message must not leave a stray
+    ``pending`` ASSISTANT node forked into the tree.
+
+    Before the fix, ``new_user``/``assistant`` were created BEFORE the
+    skill-substitution check ran, so a refusal returned ``_block(...)``
+    while the empty ``assistant`` node was already on the active path --
+    it never streams (so it never becomes ``"failed"``), and
+    ``retry_message`` requires ``"failed"``, so it was permanently stuck
+    tree litter. The fix builds and transforms the provider payload FIRST
+    and only creates ``new_user``/``assistant`` after every transform
+    (including skill substitution) has succeeded, mirroring
+    ``regenerate_message``'s "mutate last" discipline.
+    """
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    u1 = store.append_message(session.id, role=ConsoleMessageRole.USER, content="original")
+
+    async def _refuse(provider_messages):
+        return provider_messages, "Skill refused for testing.", ()
+
+    controller._apply_skill_substitution = _refuse
+
+    result = await controller.edit_and_resend_message(u1.id, "edited")
+
+    assert result.accepted is False
+    assert result.visible_copy == "Skill refused for testing."
+
+    # No new USER sibling was forked: u1 still has no siblings at all.
+    siblings, _index, count = store.siblings_at(u1.id)
+    assert count == 1
+    assert store.get_message(u1.id).content == "original"
+
+    # No pending assistant node anywhere on the active path (or off it --
+    # nothing was ever created).
+    assert all(
+        m.status != "pending" for m in store.messages_for_session(session.id)
+    )
