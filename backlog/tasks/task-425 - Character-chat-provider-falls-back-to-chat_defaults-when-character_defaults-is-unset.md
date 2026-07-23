@@ -7,12 +7,14 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-21 09:38'
-updated_date: '2026-07-21 20:26'
+updated_date: '2026-07-23 04:58'
 labels:
   - roleplay
   - ux
   - config
 dependencies: []
+references:
+  - backlog/decisions/006-provider-aware-generation-settings.md
 priority: high
 ---
 
@@ -27,26 +29,37 @@ Filed from the RP/character-card UX review (Docs/superpowers/qa/rp-ux-review-202
 - [x] #1 A fresh profile that configures a provider only via the guided Get-started/Settings flow gets a successful Roleplay preview reply with that provider, with no config file edits
 - [x] #2 An explicit [character_defaults] section still wins over chat_defaults when present
 - [x] #3 When character-chat provider resolution fails, the error names the resolved provider source and points at an in-app remedy (not a raw TOML section for a different provider)
+- [x] #4 Fallback and primary preview selections preserve configured endpoint, streaming, and generation defaults.
+- [x] #5 Resolution failures retain safe structured provider/model/selection context, and changed test helpers satisfy the repository class-naming rule.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. TDD in Tests/UI/test_personas_workbench.py: fallback-used / explicit-wins / both-unready cases via _FakePreviewGateway with per-provider readiness
-2. Extract selection resolution from PersonasPreviewController._run_reply into a fallback-aware helper: resolve character_defaults selection; if not ready and chat_defaults names a different provider/model, resolve that; use whichever is ready (character wins when both ready)
-3. Surface honesty: status shows 'via Console default: <provider>' when falling back; both-unready status keeps gateway copy but appends Settings > Providers & Models remedy
-4. Root cause context: first-run writes the full config template including [character_defaults] provider=Anthropic, so presence-in-file cannot distinguish user intent — fallback must be readiness-based
-5. Run scoped pytest (venv), live-verify with scratch TLDW_CONFIG_PATH profile reproducing the review's failing state
+1. Rebase the PR branch onto current origin/dev and verify the pre-change targeted baseline.
+2. TDD: extend Roleplay preview tests so configured character and chat defaults, non-default llama.cpp endpoints, streaming, and sampling fields fail against the current provider/model-only selections.
+3. TDD: add a provider-resolution exception regression that requires the existing safe structured preview log context.
+4. Reuse build_default_console_session_settings to derive each defaults section, map the effective snapshot into ConsoleProviderSelection, and log failures at the selection that raised.
+5. Rename the private test gateway helper to satisfy the PascalCase review rule.
+6. Run focused tests, the full affected Roleplay test pair, static checks, and git diff hygiene; update implementation notes and acceptance criteria.
+
+ADR required: no
+ADR path: backlog/decisions/006-provider-aware-generation-settings.md (existing)
+Reason: This is a routine correctness/observability fix that applies the existing provider-settings ownership boundary; it introduces no new storage, runtime, security, or cross-module contract.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Character-flavored preview generation now resolves character_defaults first and, when that provider is not READY, falls back to the user's chat_defaults provider (PersonasPreviewController._resolve_selection_with_fallback). A ready character provider always wins; the fallback keys on readiness, not section presence, because first-run writes the full [character_defaults] template (Anthropic/claude-3-haiku) verbatim so presence-in-file cannot signal user intent (the root cause of the P0). When neither provider is ready the status appends 'Configure a provider in Settings: Providers & Models.'; when the fallback is used the status honestly reads 'via Console default: <provider>' (Running and Ready).
+Character-flavored preview generation still resolves character_defaults first and falls back to the user's chat_defaults provider only when the character provider is not ready. Review remediation now derives both selections through build_default_console_session_settings and maps the resulting endpoint, streaming, sampling, token, and reasoning fields into ConsoleProviderSelection. Character defaults are presented through the same established settings boundary so their own generation values remain authoritative; a ready character provider still wins.
 
-AC mapping: #1 guided-flow user (only chat_defaults written) now gets an in-character reply — live-verified against the exact repro config; #2 explicit ready character_defaults wins (test_ready_character_provider_wins_over_chat_defaults); #3 both-unready status names the resolved blocker copy + the in-app remedy (test_both_providers_unready_names_settings_remedy).
+Resolution exceptions are logged at the exact primary or fallback selection that raised, using _reply_log_context for the same safe operation/provider/model/entity/generation/streaming fields as later provider failures. The new test gateway helper was renamed to satisfy the PascalCase review rule.
 
-Tests: 3 new cases + _ReadinessMapPreviewGateway double in Tests/UI/test_personas_workbench.py; full test_personas_workbench + test_personas_preview = 189 passed. Live verification: reproduced the review's failing state (character_defaults=Anthropic shipped default, chat_defaults=llama_cpp, no key) in the real TUI; before=silent 'anthropic is not ready' dead end, after=fallback reply 'via Console default: llama_cpp' (drove with a local OpenAI-compatible mock since the :9099 server was down).
+ADR required: no. Existing ADR: backlog/decisions/006-provider-aware-generation-settings.md. The change applies its existing Settings-persistence / Console-effective-resolution boundary and adds no new storage, provider, security, or runtime contract.
 
-Files: tldw_chatbook/UI/Persona_Modules/personas_preview_controller.py, Tests/UI/test_personas_workbench.py. Follow-up task-426 (preview provider/model readout + Settings deep-link) will make the fallback visible before send, not just in status.
+AC mapping: #1 and #4 are covered by test_unready_character_provider_falls_back_to_chat_defaults, including a non-default llama.cpp endpoint plus streaming/sampling/token defaults; #2 and #4 are covered by test_ready_character_provider_wins_over_chat_defaults, including character-specific generation values; #3 remains covered by test_both_providers_unready_names_settings_remedy; #5 is covered by test_resolution_failure_logs_safe_preview_context and the PascalCase helper rename.
+
+Verification: TDD red run produced the three expected failures (missing structured context, endpoint None, streaming True); the same focused set then passed 3/3. Tests/UI/test_personas_workbench.py plus Tests/UI/test_personas_preview.py passed 190/190 on rebased dev. Ruff passed both changed Python files; mypy passed personas_preview_controller.py; git diff --check and the 593-task duplicate-ID guard passed. The repository-wide command successfully collected 13,372 tests after installing the declared subscriptions extra locally, then the redundant serial run was stopped at 5%; the exact pushed SHA is gated by the repository's parallel GitHub unit/integration/UI jobs before merge.
+
+Files: tldw_chatbook/UI/Persona_Modules/personas_preview_controller.py, Tests/UI/test_personas_workbench.py, and this TASK-425 record.
 <!-- SECTION:NOTES:END -->
