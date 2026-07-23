@@ -222,9 +222,10 @@ def interleave_rankings(
 def resolve_hybrid_alpha(explicit: Optional[float] = None) -> float:
     """Resolve the hybrid alpha from the single authoritative config knob.
 
-    Precedence: explicit value -> ``[AppRAGSearchConfig.rag.retriever]
-    hybrid_alpha`` in the user's config.toml -> ``DEFAULT_HYBRID_ALPHA``
-    (0.7, server parity). Semantics: 0 = FTS only, 1 = vector only.
+    Precedence: explicit value -> the active profile's
+    ``search.hybrid_alpha`` (via ``resolve_active_rag_config``) ->
+    ``DEFAULT_HYBRID_ALPHA`` (0.7, server parity). Semantics: 0 = FTS
+    only, 1 = vector only.
 
     Invalid or out-of-range values fall back to the default with a warning.
 
@@ -237,13 +238,11 @@ def resolve_hybrid_alpha(explicit: Optional[float] = None) -> float:
     value = explicit
     if value is None:
         try:
-            from tldw_chatbook.config import get_cli_setting
+            from .simplified.active_config import resolve_active_rag_config
 
-            rag_section = get_cli_setting("AppRAGSearchConfig", "rag", {}) or {}
-            retriever_section = rag_section.get("retriever", {}) or {}
-            value = retriever_section.get("hybrid_alpha")
+            value = resolve_active_rag_config().search.hybrid_alpha
         except Exception as e:  # config loading must never break search
-            logger.warning(f"Could not read hybrid_alpha from config: {e}")
+            logger.warning(f"Could not read hybrid_alpha from active profile: {e}")
             value = None
     if value is None:
         return DEFAULT_HYBRID_ALPHA

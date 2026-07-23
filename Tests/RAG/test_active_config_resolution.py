@@ -87,3 +87,15 @@ def test_override_persist_dir_and_embedding_model_args_win_over_env(active, monk
                                      override_persist_dir=override_dir)
     assert cfg.embedding.model == "explicit-model"
     assert str(cfg.vector_store.persist_directory) == str(override_dir)
+
+
+def test_hybrid_alpha_comes_from_active_profile(active, monkeypatch):
+    from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
+    from tldw_chatbook.RAG_Search.simplified.config import RAGConfig, SearchConfig, VectorStoreConfig
+    from tldw_chatbook.RAG_Search.fusion import resolve_hybrid_alpha
+    mgr, state = active
+    p = ProfileConfig(name="Alpha", description="d", profile_type="custom",
+                      rag_config=RAGConfig(search=SearchConfig(hybrid_alpha=0.33),
+                                           vector_store=VectorStoreConfig(type="memory")))
+    mgr.save_profile(p); state["active"] = p.id
+    assert resolve_hybrid_alpha() == pytest.approx(0.33)  # explicit=None -> active profile
