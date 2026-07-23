@@ -1,35 +1,48 @@
-"""Pure skills-command resolver for the native Console composer.
+"""Pure skills-command resolver for the native Console.
 
 This module has no dependency on Textual, the running app, or any I/O — it
 mirrors :mod:`console_command_grammar`'s purity discipline. It resolves a
-bare ``/skill-name [args]`` Console draft against a caller-supplied snapshot
-of skill candidates (exact case-insensitive name, then unique case-
-insensitive name-prefix), and builds the
-:meth:`console_command_grammar.ConsoleCommandRegistry.register_fallback_resolver`
-callable a caller wires up to claim those drafts.
+leading ``$skill-name [args]`` mention (or a `/skills <name>` registered-
+command word) against a caller-supplied snapshot of skill candidates (exact
+case-insensitive name, then unique case-insensitive name-prefix), and finds
+embedded ``$skill-name`` mentions anywhere else in a draft
+(:func:`find_embedded_mentions`).
 
 Callers own everything this module cannot: fetching the actual candidate
 snapshot (scoped to USER-INVOCABLE + TRUSTED skills only — this module never
 filters by trust or invocability itself, it only matches names), re-
-resolving authoritatively at dispatch time (the fallback resolver here only
-decides whether to *claim* a word so unknown words still fall through to the
-existing unknown-command hint), and formatting/emitting the untrusted-skill
-refusal text (:data:`SKILL_UNTRUSTED_REFUSE`) once a caller has determined a
-resolved name is not currently trusted.
+resolving authoritatively at execute time, and formatting/emitting the
+untrusted-skill refusal text (:data:`SKILL_UNTRUSTED_REFUSE`) once a caller
+has determined a resolved name is not currently trusted.
+
+Hard removal (Task 4 of the `$`-mention migration): this module used to also
+build a `console_command_grammar.ConsoleCommandRegistry.register_fallback_resolver`
+callable claiming a bare ``/skill-name`` composer draft
+(``make_skill_fallback_resolver``) — that factory has been deleted. Skill
+invocation is now exclusively the `$name` mention form.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from typing import Callable
-
-from .console_command_grammar import KIND_FALLBACK, CommandParse
 
 SKILL_ARGS_MAX = 4000
 """Maximum character length of skill invocation args after capping."""
 
 SKILLS_LIST_COMMAND_NAME = "skills"
 """Canonical registered-command name for listing available skills."""
+
+MENTION_SIGIL = "$"
+"""Leading character of a Codex-style skill mention (``$skill-name``)."""
+
+_MENTION_TOKEN = re.compile(r"[A-Za-z0-9-]+")
+_BACKTICK_RUN = re.compile(r"`+")
+
+SKILL_MENTION_SKIPPED_NOTE = (
+    'Skipped "${name}" — this skill needs review before it can run. '
+    "Open /skills to review it."
+)
 
 SKILL_UNTRUSTED_REFUSE = (
     'Skill "{name}" isn\'t trusted ({reason}) — review and approve it in '
@@ -46,7 +59,14 @@ SKILLS_EMPTY_LIST_ROW = "No skills yet — create them in Library ▸ Skills."
 
 @dataclass(frozen=True)
 class SkillCommandCandidate:
-    """One skill eligible for bare ``/skill-name`` resolution.
+    """One skill eligible for bare-word resolution via `resolve_skill_command`.
+
+    ``resolve_skill_command`` is sigil-agnostic -- its live caller is
+    `ConsoleChatController._apply_skill_substitution`'s leading `$skill-
+    name` mention form; `ChatScreen._console_command_run_skill` (formerly
+    reached via a bare ``/skill-name`` composer fallback, hard-removed in
+    Task 4 of the `$`-mention migration) still calls it too but has no live
+    caller of its own -- see that method's docstring.
 
     Args:
         name: Canonical skill name (already scoped to whatever population
@@ -57,6 +77,115 @@ class SkillCommandCandidate:
 
     name: str
     description: str = ""
+
+
+@dataclass(frozen=True)
+class SkillMention:
+    """One embedded ``$skill-name`` mention found in a draft.
+
+    Args:
+        start: Index of the ``$`` sigil in the scanned text.
+        end: Index one past the last token character.
+        name: The matched canonical (lowercase) skill name.
+    """
+
+    start: int
+    end: int
+    name: str
+
+
+def _code_span_mask(text: str) -> list[bool]:
+    """Return a per-character mask, True inside markdown code spans.
+
+    Fenced blocks: a line whose stripped form starts with ``````` toggles
+    fence state; fence lines and everything inside are masked.
+
+    Inline spans: each non-fence line is tokenized into RUNS of consecutive
+    backticks. An opening run pairs with the NEXT run of exactly equal
+    length (the CommonMark inline-code rule — a run of *unequal* length
+    encountered along the way is swallowed as the span's own content, never
+    treated as a delimiter itself); the whole span, both runs inclusive, is
+    masked, and scanning resumes right after the closing run. If ANY run on
+    the line ends up without a same-length partner, pairing is ambiguous —
+    fail SAFE by masking the ENTIRE line (over-mask, never under-mask; this
+    generalizes the old odd-backtick-count rule, since an odd total is only
+    one way to produce an unmatched run — an *even* total can too, e.g. one
+    2-backtick run plus one 4-backtick run never pair, six ticks total).
+    """
+    mask = [False] * len(text)
+    in_fence = False
+    pos = 0
+    for line in text.splitlines(keepends=True):
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+            for i in range(pos, pos + len(line)):
+                mask[i] = True
+        elif in_fence:
+            for i in range(pos, pos + len(line)):
+                mask[i] = True
+        else:
+            runs = list(_BACKTICK_RUN.finditer(line))
+            if not runs:
+                pos += len(line)
+                continue
+            spans: list[tuple[int, int]] = []
+            unmatched = False
+            i = 0
+            run_count = len(runs)
+            while i < run_count:
+                opening = runs[i]
+                closer_index = None
+                for j in range(i + 1, run_count):
+                    if len(runs[j].group(0)) == len(opening.group(0)):
+                        closer_index = j
+                        break
+                if closer_index is None:
+                    unmatched = True
+                    break
+                spans.append((opening.start(), runs[closer_index].end()))
+                i = closer_index + 1
+            if unmatched:
+                for i in range(pos, pos + len(line)):
+                    mask[i] = True
+            else:
+                for start, end in spans:
+                    for j in range(start, end):
+                        mask[pos + j] = True
+        pos += len(line)
+    return mask
+
+
+def find_embedded_mentions(
+    text: str, names: frozenset[str]
+) -> tuple[SkillMention, ...]:
+    """Find embedded ``$skill-name`` mentions eligible for splicing.
+
+    Exact, case-SENSITIVE matching against ``names`` (canonical lowercase
+    skill names): ``$PATH`` stays literal even when a skill named ``path``
+    exists. Mentions inside markdown code spans are skipped. Single pass —
+    callers must never re-scan spliced output (no recursion).
+
+    Args:
+        text: The draft text to scan (the user's original message).
+        names: Canonical skill names eligible for expansion.
+
+    Returns:
+        Non-overlapping mentions in document order.
+    """
+    mask = _code_span_mask(text)
+    mentions: list[SkillMention] = []
+    index = 0
+    while index < len(text):
+        if text[index] == MENTION_SIGIL and not mask[index]:
+            match = _MENTION_TOKEN.match(text, index + 1)
+            if match is not None and match.group(0) in names:
+                mentions.append(
+                    SkillMention(start=index, end=match.end(), name=match.group(0))
+                )
+                index = match.end()
+                continue
+        index += 1
+    return tuple(mentions)
 
 
 @dataclass(frozen=True)
@@ -79,10 +208,18 @@ class SkillResolution:
 def resolve_skill_command(
     word: str, args: str, candidates: tuple[SkillCommandCandidate, ...]
 ) -> SkillResolution:
-    """Resolve a bare ``/word`` Console token against a skill candidate snapshot.
+    """Resolve a bare skill-name word against a skill candidate snapshot.
+
+    Sigil-agnostic: the live caller (`ConsoleChatController.
+    _apply_skill_substitution`'s leading `$skill-name` mention form)
+    strips a `$`; the dead-but-retained `ChatScreen._console_command_
+    run_skill` (formerly reached via a bare ``/skill-name`` composer
+    fallback) strips a `/`. Either way ``word`` arrives with its leading
+    sigil already gone.
 
     Args:
-        word: The command word typed after the leading ``/`` (no slash).
+        word: The command word, with its leading sigil already stripped
+            by the caller.
         args: The remaining draft text after ``word``. Unused by the
             resolution rules themselves (callers pre-cap it via
             `cap_skill_args` before it reaches a dispatch layer) but kept in
@@ -92,9 +229,10 @@ def resolve_skill_command(
 
     Returns:
         `SkillResolution` with ``kind`` set as follows: an empty or
-        whitespace-only ``word`` (e.g. a bare ``/`` or ``/ `` draft, which
-        `console_command_grammar` splits into an empty command word) never
-        matches anything and is always `"none"` -- without this guard every
+        whitespace-only ``word`` (e.g. a bare ``$``/``$ `` mention, or a
+        bare ``/``/``/ `` draft which `console_command_grammar` splits into
+        an empty command word) never matches anything and is always
+        `"none"` -- without this guard every
         candidate name trivially ``.startswith("")``, so an empty word
         would otherwise "match" every candidate (resolving to a lone
         candidate, or reporting `"ambiguous"` for two or more) even though
@@ -148,7 +286,7 @@ def format_skills_list(candidates: tuple[SkillCommandCandidate, ...]) -> str:
 
     Returns:
         `SKILLS_EMPTY_LIST_ROW` when ``candidates`` is empty; otherwise one
-        ``/name — description`` line per candidate (just ``/name`` when its
+        ``$name — description`` line per candidate (just ``$name`` when its
         description is empty), joined with newlines.
     """
     if not candidates:
@@ -157,43 +295,7 @@ def format_skills_list(candidates: tuple[SkillCommandCandidate, ...]) -> str:
     lines = []
     for candidate in candidates:
         if candidate.description:
-            lines.append(f"/{candidate.name} — {candidate.description}")
+            lines.append(f"${candidate.name} — {candidate.description}")
         else:
-            lines.append(f"/{candidate.name}")
+            lines.append(f"${candidate.name}")
     return "\n".join(lines)
-
-
-def make_skill_fallback_resolver(
-    candidates_getter: Callable[[], tuple[SkillCommandCandidate, ...]],
-) -> Callable[[str, str], "CommandParse | None"]:
-    """Build a `console_command_grammar` fallback-resolver callable.
-
-    Args:
-        candidates_getter: Zero-argument callable a caller wires to fetch a
-            fresh candidate snapshot at parse time (kept as an injected
-            callable rather than a plain value so this module never imports
-            the real skills service — that wiring belongs to dispatch).
-
-    Returns:
-        A resolver suitable for
-        `console_command_grammar.ConsoleCommandRegistry.register_fallback_resolver`.
-        It claims (returns a `CommandParse`) only when `resolve_skill_command`
-        finds the word plausibly matches a cached skill (`"resolved"` or
-        `"ambiguous"`) — the returned `CommandParse.name` is the *typed*
-        word, not the resolved candidate name, so an unmodified round-trip
-        through the grammar always carries what the user actually typed;
-        re-resolving authoritatively (and refusing untrusted matches) is
-        dispatch's job. Any other word (no match) returns ``None`` so it
-        still falls through to the existing unknown-command hint.
-    """
-
-    def resolver(word: str, rest: str) -> CommandParse | None:
-        candidates = candidates_getter()
-        resolution = resolve_skill_command(word, rest, candidates)
-        if resolution.kind in ("resolved", "ambiguous"):
-            return CommandParse(
-                kind=KIND_FALLBACK, name=word, args=cap_skill_args(rest)
-            )
-        return None
-
-    return resolver

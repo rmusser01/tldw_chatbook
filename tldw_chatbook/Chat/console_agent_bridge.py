@@ -487,7 +487,7 @@ def _eligible_skill_entries(context: Mapping[str, Any]) -> list[Mapping[str, Any
 
     Mirrors ``ChatScreen._console_skill_trusted_candidates_from_context``'s
     defensive filter shape, but scoped to model-invocation eligibility
-    rather than user (``/skill-name``) invocation: a skill is eligible here
+    rather than user (``$skill-name``) invocation: a skill is eligible here
     when it is not ``trust_blocked`` (the local-skill-trust-integrity gate)
     and does not opt out of model calls via ``disable_model_invocation``
     (the skill author's own front-matter flag). Both fields default to
@@ -733,7 +733,7 @@ class _BridgeSkillRunner:
     a cached snapshot -- so a skill approved when the catalog was built but
     revoked before the model actually calls it still refuses (mirrors
     ``ConsoleChatController._apply_skill_substitution``'s own re-verification
-    discipline for the ``/skill-name`` user-invocation path).
+    discipline for the ``$skill-name`` user-invocation path).
     """
 
     def __init__(
