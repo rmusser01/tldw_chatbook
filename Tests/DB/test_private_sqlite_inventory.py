@@ -259,7 +259,7 @@ def _qualified_calls(source_path: Path, predicate) -> Counter[str]:
 def _qualified_sqlite_connect_calls(source_path: Path) -> Counter[str]:
     tree = _parse_source(source_path)
     module_aliases: set[str] = set()
-    connect_aliases: set[str] = set()
+    callable_aliases: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -270,20 +270,48 @@ def _qualified_sqlite_connect_calls(source_path: Path) -> Counter[str]:
             "sqlite3.dbapi2",
         }:
             for alias in node.names:
-                if alias.name == "connect":
-                    connect_aliases.add(alias.asname or alias.name)
+                if alias.name in {"connect", "Connection"}:
+                    callable_aliases.add(alias.asname or alias.name)
                 elif alias.name == "dbapi2":
                     module_aliases.add(alias.asname or alias.name)
+                elif alias.name == "*":
+                    callable_aliases.update({"connect", "Connection"})
 
-    def is_raw_connect(call: ast.Call) -> bool:
-        if isinstance(call.func, ast.Name):
-            return call.func.id in connect_aliases
-        if not isinstance(call.func, ast.Attribute) or call.func.attr != "connect":
+    def is_raw_callable(expression: ast.expr) -> bool:
+        if isinstance(expression, ast.Name):
+            return expression.id in callable_aliases
+        if not isinstance(expression, ast.Attribute) or expression.attr not in {
+            "connect",
+            "Connection",
+        }:
             return False
-        root = call.func.value
+        root = expression.value
         while isinstance(root, ast.Attribute):
             root = root.value
         return isinstance(root, ast.Name) and root.id in module_aliases
+
+    rebound_aliases: list[tuple[str, ast.expr]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            rebound_aliases.extend(
+                (target.id, node.value)
+                for target in node.targets
+                if isinstance(target, ast.Name)
+            )
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if node.value is not None:
+                rebound_aliases.append((node.target.id, node.value))
+
+    changed = True
+    while changed:
+        changed = False
+        for alias, expression in rebound_aliases:
+            if alias not in callable_aliases and is_raw_callable(expression):
+                callable_aliases.add(alias)
+                changed = True
+
+    def is_raw_connect(call: ast.Call) -> bool:
+        return is_raw_callable(call.func)
 
     visitor = _QualifiedCallVisitor(is_raw_connect)
     visitor.visit(tree)
@@ -446,6 +474,73 @@ def test_raw_connection_census_detects_sqlite_import_aliases(tmp_path: Path) -> 
     )
 
 
+def test_raw_connection_census_detects_constructor_and_rebound_bypasses(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "sqlite_bypasses.py"
+    source_path.write_text(
+        "\n".join(
+            (
+                "import sqlite3",
+                "import sqlite3 as sql",
+                "import sqlite3.dbapi2 as dbapi",
+                "from sqlite3 import Connection as ImportedConnection",
+                "from sqlite3 import dbapi2 as imported_dbapi",
+                "from sqlite3 import *",
+                "",
+                "raw_connect = sqlite3.connect",
+                "raw_connection = sql.Connection",
+                "",
+                "def module_constructor():",
+                "    return sqlite3.Connection(':memory:')",
+                "",
+                "def nested_dbapi_constructor():",
+                "    return sqlite3.dbapi2.Connection(':memory:')",
+                "",
+                "def nested_dbapi_connect():",
+                "    return sqlite3.dbapi2.connect(':memory:')",
+                "",
+                "def aliased_module_constructor():",
+                "    return dbapi.Connection(':memory:')",
+                "",
+                "def imported_constructor():",
+                "    return ImportedConnection(':memory:')",
+                "",
+                "def imported_dbapi_constructor():",
+                "    return imported_dbapi.Connection(':memory:')",
+                "",
+                "def rebound_connect():",
+                "    return raw_connect(':memory:')",
+                "",
+                "def rebound_constructor():",
+                "    return raw_connection(':memory:')",
+                "",
+                "def star_connect():",
+                "    return connect(':memory:')",
+                "",
+                "def star_constructor():",
+                "    return Connection(':memory:')",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    assert _qualified_sqlite_connect_calls(source_path) == Counter(
+        {
+            "module_constructor": 1,
+            "nested_dbapi_constructor": 1,
+            "nested_dbapi_connect": 1,
+            "aliased_module_constructor": 1,
+            "imported_constructor": 1,
+            "imported_dbapi_constructor": 1,
+            "rebound_connect": 1,
+            "rebound_constructor": 1,
+            "star_connect": 1,
+            "star_constructor": 1,
+        }
+    )
+
+
 def test_every_connection_and_backup_row_links_to_a_matching_policy() -> None:
     for row in [*_inventory_rows("C"), *_inventory_rows("B")]:
         policy = SQLITE_OWNER_REGISTRY[row["owner_id"]]
@@ -546,6 +641,20 @@ def test_parent_creator_inventory_is_checked_and_has_a_disposition() -> None:
             and row["state"] == "current"
         )
         assert creator_calls == expected_calls
+
+
+def test_parent_creator_discovery_boundary_is_explicit() -> None:
+    inventory = INVENTORY_PATH.read_text(encoding="utf-8")
+    normalized_inventory = " ".join(inventory.split())
+
+    assert (
+        "arbitrary `mkdir` calls do not reveal whether a directory will own SQLite data"
+        in normalized_inventory
+    )
+    assert (
+        "A new non-direct database-parent owner must add a checked `P` row"
+        in normalized_inventory
+    )
 
 
 def test_legacy_memory_and_parent_semantics_are_preserved_explicitly() -> None:

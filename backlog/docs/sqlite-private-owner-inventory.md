@@ -75,6 +75,12 @@ below. A migration changes the row to `migrated`, after which the test requires
 that legacy anchor to be absent; rows are not deleted when their call is
 removed.
 
+Parent discovery is intentionally curated because arbitrary `mkdir` calls do
+not reveal whether a directory will own SQLite data. The guard derives and
+checks every listed current anchor from production AST, but does not freeze all
+production directory creation. A new non-direct database-parent owner must add
+a checked `P` row when it is introduced.
+
 | ID | Module | Qualified containing symbol | Creator call | State | Owner ID | Disposition | Rationale |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | P01 | tldw_chatbook/config | get_user_data_dir | user_dir.mkdir(parents=True, exist_ok=True) | current | config.user_data_directory | secure_default | This application-owned default data directory becomes the explicit `0700` creation boundary. |
