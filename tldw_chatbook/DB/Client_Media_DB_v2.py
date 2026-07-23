@@ -51,7 +51,7 @@ from loguru import logger
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from .sql_validation import validate_table_name, validate_column_name
 from .sql_logging import preview_params
-from .private_sqlite import connect_private_sqlite
+from .private_sqlite import backup_connection_to_private, connect_private_sqlite
 from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
 #
 ########################################################################################################################
@@ -6263,37 +6263,14 @@ class MediaDatabase:
         logger.info(
             f"Starting database backup from '{self.db_path_str}' to '{backup_file_path}'"
         )
-        src_conn = None
-        backup_conn = None
         try:
-            # Ensure the backup file path is not the same as the source, unless it's an in-memory DB
-            if not self.is_memory_db and self.db_path == lexical_path(backup_file_path):
-                logger.error(
-                    "Backup path cannot be the same as the source database path."
-                )
-                raise ValueError(
-                    "Backup path cannot be the same as the source database path."
-                )
-
-            # Get connection to the source database
-            src_conn = (
-                self.get_connection()
-            )  # This uses the existing thread-local connection or creates one
-
-            backup_db_path = lexical_path(backup_file_path)
-            backup_conn = connect_private_sqlite(
+            src_conn = self.get_connection()
+            backup_connection_to_private(
                 "db.media.backup",
-                backup_db_path,
+                src_conn,
+                self.db_path_str,
+                backup_file_path,
             )
-
-            logger.debug(f"Source DB connection: {src_conn}")
-            logger.debug(
-                f"Backup DB connection: {backup_conn} to file {backup_file_path}"
-            )
-
-            # Perform the backup
-            # pages=0 means all pages will be copied
-            src_conn.backup(backup_conn, pages=0, progress=None)
 
             logger.info(
                 f"Database backup successful from '{self.db_path_str}' to '{backup_file_path}'"
@@ -6312,20 +6289,6 @@ class MediaDatabase:
                 f"Unexpected error during database backup: {e}"
             )
             return False
-        finally:
-            if backup_conn:
-                try:
-                    backup_conn.close()
-                    logger.debug("Closed backup database connection.")
-                except sqlite3.Error as e:
-                    logger.warning(f"Error closing backup database connection: {e}")
-            # Do not close src_conn here if it's managed by _get_thread_connection / close_connection
-            # self.close_connection() might close the main connection pool which might not be desired.
-            # The source connection is managed by the class's connection pooling.
-            # If this backup is a one-off, the connection will be closed when the thread context ends
-            # or if explicitly closed by the caller of this instance.
-            # For safety, if this method obtained a new connection not from the pool, it should close it.
-            # However, self.get_connection() reuses pooled connections.
 
     def get_distinct_media_types(
         self, include_deleted=False, include_trash=False

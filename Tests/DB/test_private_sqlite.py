@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import contextlib
 import os
 import sqlite3
 import stat
+import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -12,9 +14,14 @@ import pytest
 
 import tldw_chatbook.DB.private_sqlite as private_sqlite
 from tldw_chatbook.DB.private_sqlite import (
+    SQLiteRestoreIndeterminateError,
+    SQLiteRestoreBusyError,
     SQLitePrivacyUnverifiedWarning,
     _build_read_only_uri,
+    backup_connection_to_private,
     connect_private_sqlite,
+    copy_private_sqlite,
+    restore_private_sqlite,
 )
 from tldw_chatbook.Utils.private_paths import PrivatePathError, PrivatePathStatus
 
@@ -1515,3 +1522,902 @@ def test_windows_exact_memory_and_read_only_functionality(tmp_path, monkeypatch)
             read_only=True,
         )
         read_only.close()
+
+
+def _create_backup_fixture_database(
+    path: Path,
+    value: str,
+    *,
+    journal_mode: str = "DELETE",
+) -> sqlite3.Connection:
+    connection = sqlite3.connect(path)
+    connection.execute(f"PRAGMA journal_mode={journal_mode}")
+    connection.execute("CREATE TABLE backup_probe (value TEXT)")
+    connection.execute("INSERT INTO backup_probe VALUES (?)", (value,))
+    connection.commit()
+    return connection
+
+
+def _read_backup_fixture_value(path: Path) -> str:
+    connection = sqlite3.connect(path)
+    try:
+        return connection.execute("SELECT value FROM backup_probe").fetchone()[0]
+    finally:
+        connection.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX backup privacy contract")
+def test_backup_connection_creates_private_transactional_target_under_umask_zero(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "source.sqlite"
+    source = _create_backup_fixture_database(source_path, "expected")
+    target = tmp_path / "target.sqlite"
+    previous = os.umask(0)
+    try:
+        backup_connection_to_private(
+            "db.chachanotes.backup",
+            source,
+            source_path,
+            target,
+        )
+    finally:
+        os.umask(previous)
+        source.close()
+
+    assert _read_backup_fixture_value(target) == "expected"
+    _assert_private_regular_owned(target)
+
+
+def test_backup_connection_preserves_memory_source_and_rejects_non_backup_owner(
+    tmp_path: Path,
+) -> None:
+    source = sqlite3.connect(":memory:")
+    source.execute("CREATE TABLE backup_probe (value TEXT)")
+    source.execute("INSERT INTO backup_probe VALUES ('memory')")
+    source.commit()
+    try:
+        backup_connection_to_private(
+            "db.media.backup",
+            source,
+            Path(":memory:"),
+            tmp_path / "memory-backup.sqlite",
+        )
+        with pytest.raises(ValueError, match="centralized backup"):
+            backup_connection_to_private(
+                "db.base",
+                source,
+                ":memory:",
+                tmp_path / "forbidden.sqlite",
+            )
+    finally:
+        source.close()
+
+    assert _read_backup_fixture_value(tmp_path / "memory-backup.sqlite") == "memory"
+    assert not (tmp_path / "forbidden.sqlite").exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX identity contract")
+@pytest.mark.parametrize("alias_kind", ["same_lexical", "hardlink"])
+def test_backup_connection_rejects_same_source_identity_before_destination_open(
+    tmp_path: Path,
+    monkeypatch,
+    alias_kind: str,
+) -> None:
+    source_path = tmp_path / "source.sqlite"
+    source = _create_backup_fixture_database(source_path, "expected")
+    target = source_path
+    if alias_kind == "hardlink":
+        target = tmp_path / "alias.sqlite"
+        os.link(source_path, target)
+    raw_calls: list[tuple[object, ...]] = []
+
+    def forbidden_connect(*args, **kwargs):
+        raw_calls.append(args)
+        pytest.fail("destination SQLite connection opened")
+
+    monkeypatch.setattr(private_sqlite.sqlite3, "connect", forbidden_connect)
+    try:
+        with pytest.raises((PrivatePathError, ValueError)):
+            backup_connection_to_private(
+                "db.prompts.backup",
+                source,
+                source_path,
+                target,
+            )
+    finally:
+        source.close()
+
+    assert raw_calls == []
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX backup privacy contract")
+def test_backup_failure_retains_only_a_private_partial_target(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "partial.sqlite"
+
+    class FailingSource:
+        in_transaction = False
+
+        def backup(self, destination, **kwargs):
+            destination.execute("CREATE TABLE partial_state (value TEXT)")
+            raise RuntimeError("injected backup failure")
+
+    previous = os.umask(0)
+    try:
+        with pytest.raises(RuntimeError, match="injected backup failure"):
+            backup_connection_to_private(
+                "db.chachanotes.backup",
+                FailingSource(),
+                ":memory:",
+                target,
+            )
+    finally:
+        os.umask(previous)
+
+    assert target.exists()
+    _assert_private_regular_owned(target)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX WAL/source contract")
+def test_copy_private_sqlite_reopens_wal_source_read_only_and_hardens_target(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_path = tmp_path / "wal source.sqlite"
+    source = _create_backup_fixture_database(
+        source_path,
+        "wal-visible",
+        journal_mode="WAL",
+    )
+    target = tmp_path / "existing target.sqlite"
+    old_target = _create_backup_fixture_database(target, "old")
+    old_target.close()
+    target.chmod(0o644)
+    calls: list[tuple[str, Path, bool]] = []
+    real_connect = private_sqlite._connect_registered_sqlite
+
+    def tracking_connect(owner_id, database, *, read_only=False, **kwargs):
+        calls.append((owner_id, Path(database), read_only))
+        return real_connect(
+            owner_id,
+            database,
+            read_only=read_only,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        private_sqlite,
+        "_connect_registered_sqlite",
+        tracking_connect,
+    )
+    try:
+        copy_private_sqlite(
+            "settings.bulk_backup",
+            source_path,
+            target,
+        )
+    finally:
+        source.close()
+
+    assert calls == [
+        ("settings.bulk_backup", source_path, True),
+        ("settings.bulk_backup", target, False),
+    ]
+    assert _read_backup_fixture_value(target) == "wal-visible"
+    _assert_private_regular_owned(target)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX source/target contract")
+def test_copy_private_sqlite_rejects_unsafe_destination_before_raw_open(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_path = tmp_path / "source.sqlite"
+    source = _create_backup_fixture_database(source_path, "expected")
+    source.close()
+    outside = tmp_path / "outside.sqlite"
+    outside.write_bytes(b"outside")
+    target = tmp_path / "target.sqlite"
+    target.symlink_to(outside)
+    real_raw_connect = sqlite3.connect
+    raw_targets: list[object] = []
+
+    def tracking_raw_connect(database, *args, **kwargs):
+        raw_targets.append(database)
+        return real_raw_connect(database, *args, **kwargs)
+
+    monkeypatch.setattr(private_sqlite.sqlite3, "connect", tracking_raw_connect)
+
+    with pytest.raises(PrivatePathError):
+        copy_private_sqlite(
+            "settings.single_backup",
+            source_path,
+            target,
+        )
+
+    assert raw_targets == []
+    assert outside.read_bytes() == b"outside"
+
+
+def test_backup_close_failure_does_not_turn_committed_backup_into_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_path = tmp_path / "source.sqlite"
+    source = _create_backup_fixture_database(source_path, "expected")
+    target = tmp_path / "target.sqlite"
+
+    class FailingCloseConnection(sqlite3.Connection):
+        def close(self) -> None:
+            super().close()
+            raise sqlite3.OperationalError("injected backup close failure")
+
+    real_connect = private_sqlite._connect_registered_sqlite
+
+    def instrumented_connect(owner_id, database, *, read_only=False, **kwargs):
+        kwargs["factory"] = FailingCloseConnection
+        return real_connect(
+            owner_id,
+            database,
+            read_only=read_only,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        private_sqlite,
+        "_connect_registered_sqlite",
+        instrumented_connect,
+    )
+    try:
+        with pytest.warns(RuntimeWarning, match="backup close failure"):
+            backup_connection_to_private(
+                "db.chachanotes.backup",
+                source,
+                source_path,
+                target,
+            )
+        assert source.execute("SELECT 1").fetchone() == (1,)
+    finally:
+        source.close()
+
+    assert _read_backup_fixture_value(target) == "expected"
+
+
+def test_backup_cleanup_error_does_not_mask_operation_error(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_path = tmp_path / "source.sqlite"
+    source = _create_backup_fixture_database(source_path, "expected")
+    target = tmp_path / "target.sqlite"
+
+    class FailingCloseConnection(sqlite3.Connection):
+        def close(self) -> None:
+            super().close()
+            raise sqlite3.OperationalError("injected cleanup failure")
+
+    real_connect = private_sqlite._connect_registered_sqlite
+
+    def instrumented_connect(owner_id, database, *, read_only=False, **kwargs):
+        kwargs["factory"] = FailingCloseConnection
+        return real_connect(
+            owner_id,
+            database,
+            read_only=read_only,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        private_sqlite,
+        "_connect_registered_sqlite",
+        instrumented_connect,
+    )
+    monkeypatch.setattr(
+        private_sqlite,
+        "_backup_pages",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("injected backup operation failure")
+        ),
+    )
+    try:
+        with pytest.warns(RuntimeWarning, match="cleanup failure"):
+            with pytest.raises(RuntimeError, match="backup operation failure"):
+                backup_connection_to_private(
+                    "db.chachanotes.backup",
+                    source,
+                    source_path,
+                    target,
+                )
+    finally:
+        source.close()
+
+
+def test_copy_close_failure_is_independent_and_keeps_committed_target(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_path = tmp_path / "source.sqlite"
+    source = _create_backup_fixture_database(source_path, "expected")
+    source.close()
+    target = tmp_path / "target.sqlite"
+    close_events: list[str] = []
+
+    class SourceConnection(sqlite3.Connection):
+        def close(self) -> None:
+            close_events.append("source")
+            super().close()
+
+    class FailingDestinationConnection(sqlite3.Connection):
+        def close(self) -> None:
+            close_events.append("destination")
+            super().close()
+            raise sqlite3.OperationalError("injected copy close failure")
+
+    real_connect = private_sqlite._connect_registered_sqlite
+
+    def instrumented_connect(owner_id, database, *, read_only=False, **kwargs):
+        kwargs["factory"] = (
+            SourceConnection if read_only else FailingDestinationConnection
+        )
+        return real_connect(
+            owner_id,
+            database,
+            read_only=read_only,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        private_sqlite,
+        "_connect_registered_sqlite",
+        instrumented_connect,
+    )
+
+    with pytest.warns(RuntimeWarning, match="copy close failure"):
+        copy_private_sqlite(
+            "settings.single_backup",
+            source_path,
+            target,
+        )
+
+    assert close_events == ["destination", "source"]
+    assert _read_backup_fixture_value(target) == "expected"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX restore contract")
+@pytest.mark.parametrize("destination_journal_mode", ["DELETE", "WAL"])
+@pytest.mark.parametrize("source_journal_mode", ["DELETE", "WAL"])
+def test_restore_keeps_idle_connection_coherent_and_creates_pre_restore_backup(
+    tmp_path: Path,
+    destination_journal_mode: str,
+    source_journal_mode: str,
+) -> None:
+    destination = tmp_path / "live.sqlite"
+    current = _create_backup_fixture_database(
+        destination,
+        "before",
+        journal_mode=destination_journal_mode,
+    )
+    current.close()
+    source_path = tmp_path / "selected-backup.sqlite"
+    selected = _create_backup_fixture_database(
+        source_path,
+        "after",
+        journal_mode=source_journal_mode,
+    )
+    selected.close()
+    pre_restore = tmp_path / "pre-restore.sqlite"
+    idle = sqlite3.connect(destination, timeout=0)
+    try:
+        restore_private_sqlite(
+            "settings.restore",
+            "settings.pre_restore_backup",
+            source_path,
+            destination,
+            pre_restore,
+        )
+        observed = idle.execute("SELECT value FROM backup_probe").fetchone()[0]
+    finally:
+        idle.close()
+
+    assert observed == "after"
+    assert _read_backup_fixture_value(destination) == "after"
+    assert _read_backup_fixture_value(pre_restore) == "before"
+    verification = sqlite3.connect(destination)
+    try:
+        assert (
+            verification.execute("PRAGMA journal_mode").fetchone()[0].upper()
+            == destination_journal_mode
+        )
+    finally:
+        verification.close()
+    _assert_private_regular_owned(destination)
+    _assert_private_regular_owned(pre_restore)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX restore lock contract")
+@pytest.mark.parametrize("journal_mode", ["DELETE", "WAL"])
+@pytest.mark.parametrize("transaction_kind", ["reader", "writer"])
+def test_restore_fails_promptly_and_unchanged_for_active_transactions(
+    tmp_path: Path,
+    journal_mode: str,
+    transaction_kind: str,
+) -> None:
+    destination = tmp_path / "live.sqlite"
+    current = _create_backup_fixture_database(
+        destination,
+        "before",
+        journal_mode=journal_mode,
+    )
+    current.close()
+    source_path = tmp_path / "selected-backup.sqlite"
+    selected = _create_backup_fixture_database(source_path, "after")
+    selected.close()
+    pre_restore = tmp_path / "pre-restore.sqlite"
+    active = sqlite3.connect(destination, timeout=0)
+    if transaction_kind == "reader":
+        active.execute("BEGIN")
+        active.execute("SELECT value FROM backup_probe").fetchone()
+    else:
+        active.execute("BEGIN IMMEDIATE")
+        active.execute("UPDATE backup_probe SET value = 'uncommitted'")
+
+    started = time.monotonic()
+    try:
+        with pytest.raises(
+            SQLiteRestoreBusyError,
+            match="[Cc]lose.*retry|retry.*[Cc]lose",
+        ):
+            restore_private_sqlite(
+                "settings.restore",
+                "settings.pre_restore_backup",
+                source_path,
+                destination,
+                pre_restore,
+            )
+    finally:
+        elapsed = time.monotonic() - started
+        active.rollback()
+        active.close()
+
+    assert elapsed < 1.0
+    assert _read_backup_fixture_value(destination) == "before"
+    assert not pre_restore.exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX WAL restore contract")
+def test_restore_fails_closed_for_queried_idle_wal_connection(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "live.sqlite"
+    current = _create_backup_fixture_database(
+        destination,
+        "before",
+        journal_mode="WAL",
+    )
+    current.close()
+    source_path = tmp_path / "selected-backup.sqlite"
+    selected = _create_backup_fixture_database(source_path, "after")
+    selected.close()
+    pre_restore = tmp_path / "pre-restore.sqlite"
+    queried_idle = sqlite3.connect(destination, timeout=0)
+    queried_idle.execute("SELECT value FROM backup_probe").fetchone()
+    assert queried_idle.in_transaction is False
+    try:
+        with pytest.raises(SQLiteRestoreBusyError, match="live restore is unavailable"):
+            restore_private_sqlite(
+                "settings.restore",
+                "settings.pre_restore_backup",
+                source_path,
+                destination,
+                pre_restore,
+            )
+    finally:
+        queried_idle.close()
+
+    assert _read_backup_fixture_value(destination) == "before"
+    assert not pre_restore.exists()
+
+
+def test_restore_guard_rejects_unsupported_destination_journal_mode() -> None:
+    class Result:
+        def __init__(self, row):
+            self.row = row
+
+        def fetchone(self):
+            return self.row
+
+    class UnsupportedJournalConnection:
+        def execute(self, statement):
+            if statement == "PRAGMA busy_timeout = 0":
+                return Result(None)
+            if statement == "PRAGMA journal_mode":
+                return Result(("persist",))
+            pytest.fail(f"restore continued after unsupported mode: {statement}")
+
+    with pytest.raises(ValueError, match="does not support persist"):
+        private_sqlite._guard_destination(
+            UnsupportedJournalConnection(),
+            restore=True,
+        )
+
+
+def test_restore_guard_rolls_back_wal_probe_when_exclusive_begin_fails(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "live.sqlite"
+    connection = _create_backup_fixture_database(
+        database,
+        "before",
+        journal_mode="WAL",
+    )
+
+    class FailExclusiveBegin:
+        def execute(self, statement):
+            if statement == "BEGIN EXCLUSIVE":
+                raise sqlite3.OperationalError("injected exclusive failure")
+            return connection.execute(statement)
+
+        def rollback(self):
+            return connection.rollback()
+
+    try:
+        with pytest.raises(SQLiteRestoreBusyError):
+            private_sqlite._guard_destination(
+                FailExclusiveBegin(),
+                restore=True,
+            )
+        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    finally:
+        connection.close()
+
+
+def test_restore_failure_before_final_backup_keeps_old_data_and_wal_mode(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    destination = tmp_path / "live.sqlite"
+    current = _create_backup_fixture_database(
+        destination,
+        "before",
+        journal_mode="WAL",
+    )
+    current.close()
+    source_path = tmp_path / "selected-backup.sqlite"
+    selected = _create_backup_fixture_database(source_path, "after")
+    selected.close()
+    pre_restore = tmp_path / "pre-restore.sqlite"
+    real_restore_mode = private_sqlite._restore_destination_mode
+    injected = False
+
+    def fail_once(connection, journal_mode, *, restore):
+        nonlocal injected
+        if restore and journal_mode == "wal" and not injected:
+            injected = True
+            raise sqlite3.OperationalError("injected WAL restoration failure")
+        return real_restore_mode(
+            connection,
+            journal_mode,
+            restore=restore,
+        )
+
+    monkeypatch.setattr(
+        private_sqlite,
+        "_restore_destination_mode",
+        fail_once,
+    )
+
+    with pytest.raises(
+        sqlite3.OperationalError,
+        match="injected WAL restoration failure",
+    ):
+        restore_private_sqlite(
+            "settings.restore",
+            "settings.pre_restore_backup",
+            source_path,
+            destination,
+            pre_restore,
+        )
+
+    assert _read_backup_fixture_value(destination) == "before"
+    verification = sqlite3.connect(destination)
+    try:
+        assert verification.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    finally:
+        verification.close()
+
+
+def test_restore_mode_failure_after_final_backup_rolls_back_data_and_mode(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    destination = tmp_path / "live.sqlite"
+    current = _create_backup_fixture_database(
+        destination,
+        "before",
+        journal_mode="WAL",
+    )
+    current.close()
+    source_path = tmp_path / "selected-backup.sqlite"
+    selected = _create_backup_fixture_database(
+        source_path,
+        "after",
+        journal_mode="DELETE",
+    )
+    selected.close()
+    pre_restore = tmp_path / "pre-restore.sqlite"
+    real_restore_mode = private_sqlite._restore_destination_mode
+    restore_calls = 0
+
+    def fail_after_final_backup(connection, journal_mode, *, restore):
+        nonlocal restore_calls
+        if restore:
+            restore_calls += 1
+            if restore_calls == 2:
+                raise sqlite3.OperationalError(
+                    "injected post-backup mode restoration failure"
+                )
+        return real_restore_mode(
+            connection,
+            journal_mode,
+            restore=restore,
+        )
+
+    monkeypatch.setattr(
+        private_sqlite,
+        "_restore_destination_mode",
+        fail_after_final_backup,
+    )
+
+    with pytest.raises(
+        sqlite3.OperationalError,
+        match="post-backup mode restoration failure",
+    ):
+        restore_private_sqlite(
+            "settings.restore",
+            "settings.pre_restore_backup",
+            source_path,
+            destination,
+            pre_restore,
+        )
+
+    assert restore_calls == 3
+    assert _read_backup_fixture_value(destination) == "before"
+    assert _read_backup_fixture_value(pre_restore) == "before"
+    verification = sqlite3.connect(destination)
+    try:
+        assert verification.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    finally:
+        verification.close()
+
+
+def test_restore_rollback_failure_reports_indeterminate_live_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    destination = tmp_path / "live.sqlite"
+    current = _create_backup_fixture_database(destination, "before")
+    current.close()
+    source_path = tmp_path / "selected-backup.sqlite"
+    selected = _create_backup_fixture_database(source_path, "after")
+    selected.close()
+    pre_restore = tmp_path / "pre-restore.sqlite"
+    real_reverify = private_sqlite._reverify_source
+    real_backup_pages = private_sqlite._backup_pages
+    real_restore_mode = private_sqlite._restore_destination_mode
+    restore_backup_calls = 0
+    final_backup_completed = False
+    rollback_failed = False
+
+    def fail_post_commit_reverification(source_pin):
+        if final_backup_completed:
+            raise private_sqlite._failure(
+                source_path,
+                PrivatePathStatus.OPERATION_FAILED,
+                "injected_post_commit_source_change",
+            )
+        return real_reverify(source_pin)
+
+    def fail_recovery_backup(source, target, *, restore):
+        nonlocal final_backup_completed, restore_backup_calls, rollback_failed
+        if restore:
+            restore_backup_calls += 1
+            if restore_backup_calls == 2:
+                rollback_failed = True
+                raise sqlite3.OperationalError("injected rollback backup failure")
+        result = real_backup_pages(source, target, restore=restore)
+        if restore:
+            final_backup_completed = True
+        return result
+
+    def fail_cleanup_mode(connection, journal_mode, *, restore):
+        if rollback_failed and restore:
+            raise sqlite3.OperationalError("injected cleanup mode failure")
+        return real_restore_mode(
+            connection,
+            journal_mode,
+            restore=restore,
+        )
+
+    monkeypatch.setattr(
+        private_sqlite,
+        "_reverify_source",
+        fail_post_commit_reverification,
+    )
+    monkeypatch.setattr(
+        private_sqlite,
+        "_backup_pages",
+        fail_recovery_backup,
+    )
+    monkeypatch.setattr(
+        private_sqlite,
+        "_restore_destination_mode",
+        fail_cleanup_mode,
+    )
+
+    with pytest.raises(
+        SQLiteRestoreIndeterminateError,
+        match="may already contain restored data",
+    ) as caught:
+        restore_private_sqlite(
+            "settings.restore",
+            "settings.pre_restore_backup",
+            source_path,
+            destination,
+            pre_restore,
+        )
+
+    assert str(pre_restore) in str(caught.value)
+    assert "Do not retry" in str(caught.value)
+    assert any(
+        "cleanup mode failure" in note
+        for note in getattr(caught.value, "__notes__", ())
+    )
+    assert _read_backup_fixture_value(destination) == "after"
+    assert _read_backup_fixture_value(pre_restore) == "before"
+
+
+def test_restore_final_backup_failure_is_transactional_and_keeps_prebackup(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    destination = tmp_path / "live.sqlite"
+    current = _create_backup_fixture_database(
+        destination,
+        "before",
+        journal_mode="WAL",
+    )
+    current.close()
+    source_path = tmp_path / "selected-backup.sqlite"
+    selected = _create_backup_fixture_database(source_path, "after")
+    selected.close()
+    pre_restore = tmp_path / "pre-restore.sqlite"
+    real_backup_pages = private_sqlite._backup_pages
+
+    def fail_final(source, target, *, restore):
+        if restore:
+            raise RuntimeError("injected final backup failure")
+        return real_backup_pages(source, target, restore=restore)
+
+    monkeypatch.setattr(private_sqlite, "_backup_pages", fail_final)
+
+    with pytest.raises(RuntimeError, match="injected final backup failure"):
+        restore_private_sqlite(
+            "settings.restore",
+            "settings.pre_restore_backup",
+            source_path,
+            destination,
+            pre_restore,
+        )
+
+    assert _read_backup_fixture_value(destination) == "before"
+    assert _read_backup_fixture_value(pre_restore) == "before"
+    verification = sqlite3.connect(destination)
+    try:
+        assert verification.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    finally:
+        verification.close()
+
+
+def test_restore_close_failure_does_not_mask_commit_or_skip_other_connections(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    destination = tmp_path / "live.sqlite"
+    current = _create_backup_fixture_database(destination, "before")
+    current.close()
+    source_path = tmp_path / "selected-backup.sqlite"
+    selected = _create_backup_fixture_database(source_path, "after")
+    selected.close()
+    pre_restore = tmp_path / "pre-restore.sqlite"
+    close_events: list[str] = []
+    opened: list[sqlite3.Connection] = []
+
+    class SourceConnection(sqlite3.Connection):
+        def close(self) -> None:
+            close_events.append("source")
+            super().close()
+
+    class DestinationConnection(sqlite3.Connection):
+        def close(self) -> None:
+            close_events.append("destination")
+            super().close()
+
+    class FailingPreRestoreConnection(sqlite3.Connection):
+        def close(self) -> None:
+            close_events.append("pre_restore")
+            raise sqlite3.OperationalError("injected pre-restore close failure")
+
+    real_connect = private_sqlite._connect_registered_sqlite
+
+    def instrumented_connect(
+        owner_id,
+        database,
+        *,
+        read_only=False,
+        **kwargs,
+    ):
+        if owner_id == "settings.pre_restore_backup":
+            kwargs["factory"] = FailingPreRestoreConnection
+        elif read_only:
+            kwargs["factory"] = SourceConnection
+        else:
+            kwargs["factory"] = DestinationConnection
+        connection = real_connect(
+            owner_id,
+            database,
+            read_only=read_only,
+            **kwargs,
+        )
+        opened.append(connection)
+        return connection
+
+    monkeypatch.setattr(
+        private_sqlite,
+        "_connect_registered_sqlite",
+        instrumented_connect,
+    )
+    try:
+        with pytest.warns(RuntimeWarning, match="pre-restore close failure"):
+            restore_private_sqlite(
+                "settings.restore",
+                "settings.pre_restore_backup",
+                source_path,
+                destination,
+                pre_restore,
+            )
+
+        assert close_events == ["destination", "pre_restore", "source"]
+        assert _read_backup_fixture_value(destination) == "after"
+    finally:
+        for connection in opened:
+            with contextlib.suppress(sqlite3.Error):
+                sqlite3.Connection.close(connection)
+
+
+def test_restore_rejects_same_source_and_destination_before_open(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database = tmp_path / "same.sqlite"
+    source = _create_backup_fixture_database(database, "before")
+    source.close()
+    raw_calls: list[object] = []
+
+    def forbidden_connect(*args, **kwargs):
+        raw_calls.append(args)
+        pytest.fail("raw SQLite connection opened")
+
+    monkeypatch.setattr(private_sqlite.sqlite3, "connect", forbidden_connect)
+
+    with pytest.raises(ValueError, match="same"):
+        restore_private_sqlite(
+            "settings.restore",
+            "settings.pre_restore_backup",
+            database,
+            database,
+            tmp_path / "pre-restore.sqlite",
+        )
+
+    assert raw_calls == []

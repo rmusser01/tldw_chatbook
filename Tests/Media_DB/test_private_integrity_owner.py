@@ -57,6 +57,34 @@ def test_integrity_check_invalid_memory_target_preserves_bool_contract() -> None
     assert media_db.check_database_integrity(":memory:") is False
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX backup privacy contract")
+def test_media_backup_uses_private_transactional_target_under_umask_zero(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "media.db"
+    backup = tmp_path / "media-backup.db"
+    instance = media_db.MediaDatabase(database, client_id="backup-owner-test")
+    previous = os.umask(0)
+    try:
+        assert instance.backup_database(str(backup)) is True
+    finally:
+        os.umask(previous)
+        instance.close_connection()
+
+    assert backup.exists()
+    assert (backup.stat().st_mode & 0o777) == 0o600
+    verification = sqlite3.connect(backup)
+    try:
+        assert (
+            verification.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'"
+            ).fetchone()[0]
+            > 0
+        )
+    finally:
+        verification.close()
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX trust contract")
 def test_integrity_check_rejects_unsafe_parent_and_preserves_false_contract(
     tmp_path: Path,

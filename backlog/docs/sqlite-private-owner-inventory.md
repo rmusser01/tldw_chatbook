@@ -31,15 +31,15 @@ Classifications have these meanings:
 | C10 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._get_schema_version | settings.schema | read_only_uri | schema read | Route the schema lookup through a validated read-only URI. |
 | C11 | tldw_chatbook/DB/RAG_Indexing_DB | RAGIndexingDB._get_connection | db.rag_indexing | private_file, memory | read/write | Preserve memory support and route files through the checked seam. |
 | C12 | tldw_chatbook/DB/ChaChaNotes_DB | CharactersRAGDB._get_thread_connection | db.chachanotes.primary | private_file, memory | read/write | Preserve connection options while routing the target through the checked seam. |
-| C13 | tldw_chatbook/DB/ChaChaNotes_DB | CharactersRAGDB.backup_database | db.chachanotes.backup | private_file | backup target | Replace the raw target connection with the centralized SQLite backup operation. |
+| C13 | tldw_chatbook/DB/ChaChaNotes_DB | CharactersRAGDB.backup_database | db.chachanotes.backup | private_file | backup target | Uses the centralized caller-connection backup operation. |
 | C14 | tldw_chatbook/DB/base_db | BaseDB._get_connection | db.base | private_file, memory | read/write | Make the shared base connection the checked seam for its subclasses. |
 | C15 | tldw_chatbook/DB/Evals_DB | EvalsDB._get_connection | db.evals | private_file, memory | read/write | Preserve memory and thread options while routing files through the checked seam. |
 | C16 | tldw_chatbook/DB/search_history_db | SearchHistoryDB._get_connection | db.search_history | private_file, memory | read/write | Preserve memory support and route files through the checked seam. |
 | C17 | tldw_chatbook/DB/Client_Media_DB_v2 | MediaDatabase._get_thread_connection | db.media.primary | private_file, memory | read/write | Preserve connection options while routing the target through the checked seam. |
-| C18 | tldw_chatbook/DB/Client_Media_DB_v2 | MediaDatabase.backup_database | db.media.backup | private_file | backup target | Replace the raw target connection with the centralized SQLite backup operation. |
+| C18 | tldw_chatbook/DB/Client_Media_DB_v2 | MediaDatabase.backup_database | db.media.backup | private_file | backup target | Uses the centralized caller-connection backup operation. |
 | C19 | tldw_chatbook/DB/Client_Media_DB_v2 | check_database_integrity | db.media.integrity | read_only_uri | integrity read | Replace the interpolated URI with the validated URI builder. |
 | C20 | tldw_chatbook/DB/Prompts_DB | PromptsDatabase._get_thread_connection | db.prompts.primary | private_file, memory | read/write | Preserve connection options while routing the target through the checked seam. |
-| C21 | tldw_chatbook/DB/Prompts_DB | PromptsDatabase.backup_database | db.prompts.backup | private_file | backup target | Replace the raw target connection with the centralized SQLite backup operation. |
+| C21 | tldw_chatbook/DB/Prompts_DB | PromptsDatabase.backup_database | db.prompts.backup | private_file | backup target | Uses the centralized caller-connection backup operation. |
 | C22 | tldw_chatbook/DB/Library_Ingest_Jobs_DB | LibraryIngestJobsDB._get_connection | db.library_ingest_jobs | private_file, memory | read/write | Route the override through the checked seam without changing its WAL contract. |
 | C23 | tldw_chatbook/Kanban_Interop/local_kanban_db | open_connection | kanban.local | private_file, memory | read/write | Preserve `:memory:` and route files through the checked seam. |
 | C24 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage | SQLiteStorage._init_db | tamagotchi.sqlite | private_file, memory | read/write | Preserve the accepted `Path(":memory:")` form and use the common checked owner. |
@@ -55,15 +55,26 @@ Classifications have these meanings:
 
 | ID | Module | Symbol | Owner ID | Classification | Operation | Migration disposition |
 | --- | --- | --- | --- | --- | --- | --- |
-| B01 | tldw_chatbook/DB/ChaChaNotes_DB | CharactersRAGDB.backup_database | db.chachanotes.backup | private_file | Connection.backup | Centralize source verification and private target creation. |
-| B02 | tldw_chatbook/DB/Client_Media_DB_v2 | MediaDatabase.backup_database | db.media.backup | private_file | Connection.backup | Centralize source verification and private target creation. |
-| B03 | tldw_chatbook/DB/Prompts_DB | PromptsDatabase.backup_database | db.prompts.backup | private_file | Connection.backup | Centralize source verification and private target creation. |
-| B04 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_worker ChaChaNotes branch | settings.bulk_backup | private_file | shutil.copy2 | Replace live-file copying with centralized SQLite backup. |
-| B05 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_worker Prompts branch | settings.bulk_backup | private_file | shutil.copy2 | Replace live-file copying with centralized SQLite backup. |
-| B06 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_worker Media branch | settings.bulk_backup | private_file | shutil.copy2 | Replace live-file copying with centralized SQLite backup. |
-| B07 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_single_worker | settings.single_backup | private_file | shutil.copy2 | Replace live-file copying with centralized SQLite backup. |
-| B08 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._restore_single_worker pre-restore branch | settings.pre_restore_backup | private_file | shutil.copy2 | Create the pre-restore safety copy through centralized SQLite backup. |
-| B09 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._restore_single_worker restore branch | settings.restore | private_file | shutil.copy2 | Restore through a verified SQLite source and private destination lifecycle. |
+| B01 | tldw_chatbook/DB/ChaChaNotes_DB | CharactersRAGDB.backup_database | db.chachanotes.backup | private_file | backup_connection_to_private | Verifies the explicit caller-owned source and creates the private target centrally. |
+| B02 | tldw_chatbook/DB/Client_Media_DB_v2 | MediaDatabase.backup_database | db.media.backup | private_file | backup_connection_to_private | Verifies the explicit caller-owned source and creates the private target centrally. |
+| B03 | tldw_chatbook/DB/Prompts_DB | PromptsDatabase.backup_database | db.prompts.backup | private_file | backup_connection_to_private | Verifies the explicit caller-owned source and creates the private target centrally. |
+| B04 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_worker ChaChaNotes branch | settings.bulk_backup | private_file, read_only_uri | copy_private_sqlite | Opens the verified source read-only and transactionally backs it up to a private target. |
+| B05 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_worker Prompts branch | settings.bulk_backup | private_file, read_only_uri | copy_private_sqlite | Opens the verified source read-only and transactionally backs it up to a private target. |
+| B06 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_worker Media branch | settings.bulk_backup | private_file, read_only_uri | copy_private_sqlite | Opens the verified source read-only and transactionally backs it up to a private target. |
+| B07 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_single_worker | settings.single_backup | private_file, read_only_uri | copy_private_sqlite | Opens the verified source read-only and transactionally backs it up to a private target. |
+| B08 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._restore_single_worker pre-restore branch | settings.pre_restore_backup | private_file, read_only_uri | restore_private_sqlite | Creates the private safety snapshot inside the guarded destination lifecycle. |
+| B09 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._restore_single_worker restore branch | settings.restore | private_file, read_only_uri | restore_private_sqlite | Restores through verified source identity and prompt-fail destination quiescence. |
+
+Restore retains one exclusive destination connection across the quiescence
+probe, private safety snapshot, final transactional page backup, and
+reassertion of the destination's original DELETE/WAL journal mode. A
+post-commit validation or journal-mode failure triggers rollback from the
+private snapshot. If rollback fails, the UI reports an indeterminate live
+state, identifies the snapshot, and warns against an automatic retry. Active
+readers/writers fail promptly without a success notification. A previously
+queried idle WAL connection can also prevent SQLite from proving exclusivity;
+that case fails closed and reports that live restore is unavailable rather
+than replacing the database file.
 
 ## Database parent creator inventory
 
@@ -102,9 +113,9 @@ a checked `P` row when it is introduced.
 | P17 | tldw_chatbook/Research_Interop/local_research_service | LocalResearchService.__init__ | self.db_path.parent.mkdir(parents=True, exist_ok=True) | migrated | research.local | remove_custom_creation | The path-backed constructor stops creating arbitrary selected parents. |
 | P18 | tldw_chatbook/Writing_Interop/local_writing_service | LocalWritingService.__init__ | self.db_path.parent.mkdir(parents=True, exist_ok=True) | migrated | writing.local | remove_custom_creation | The constructor stops creating arbitrary selected parents. |
 | P19 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage | SQLiteStorage.__init__ | self.db_path.parent.mkdir(parents=True, exist_ok=True) | migrated | tamagotchi.sqlite | remove_custom_creation | The constructor stops creating arbitrary selected parents. |
-| P20 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_worker | backup_dir.mkdir(parents=True, exist_ok=True) | current | settings.bulk_backup | centralize_backup | Settings secures the application-owned timestamp backup directory before centralized backup. |
-| P21 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_single_worker | backup_dir.mkdir(parents=True, exist_ok=True) | current | settings.single_backup | centralize_backup | Settings secures the application-owned per-database backup directory before centralized backup. |
-| P22 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._restore_single_database | backup_dir.mkdir(parents=True, exist_ok=True) | current | settings.restore | centralize_backup | Settings secures the application-owned restore picker directory before restore. |
+| P20 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_worker | backup_dir.mkdir(parents=True, exist_ok=True) | migrated | settings.bulk_backup | centralize_backup | Settings secures the application-owned timestamp backup directory before centralized backup. |
+| P21 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_single_worker | backup_dir.mkdir(parents=True, exist_ok=True) | migrated | settings.single_backup | centralize_backup | Settings secures the application-owned per-database backup directory before centralized backup. |
+| P22 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._restore_single_database | backup_dir.mkdir(parents=True, exist_ok=True) | migrated | settings.restore | centralize_backup | Settings secures the application-owned restore picker directory before restore. |
 | P23 | tldw_chatbook/Evals/eval_orchestrator | EvaluationOrchestrator._initialize_database | Path(db_path).parent.mkdir(parents=True, exist_ok=True) | migrated | eval.orchestrator_parent | secure_default | Secure only the application-owned default; custom parents must already be trusted. |
 | P24 | tldw_chatbook/Event_Handlers/eval_events | get_orchestrator | db_path.parent.mkdir(parents=True, exist_ok=True) | migrated | eval.events_parent | secure_default | Secure only the application-owned default; custom parents must already be trusted. |
 | P25 | tldw_chatbook/app | TldwCli._init_prompts_service | prompts_db_path.parent.mkdir(parents=True, exist_ok=True) | migrated | app.prompts_parent | remove_custom_creation | Startup delegates parent policy to the configured default/custom path boundary. |
@@ -121,7 +132,7 @@ a checked `P` row when it is introduced.
 | X03 | tldw_chatbook/DB/Client_Media_DB_v2 | create_automated_backup | No-op placeholder; it creates no backup artifact. |
 | X04 | production tree | aiosqlite.connect | No production `aiosqlite.connect` owner exists. |
 
-The checked baseline therefore contains exactly 31 direct
-`sqlite3.connect` sites across 18 production modules, three direct
-`Connection.backup()` sites, and six SQLite database `shutil.copy2()` sites in
-`UI/Tools_Settings_Window.py`.
+The migrated boundary retains the 31 classified connection owners and nine
+classified backup/restore operations. Production has one raw
+`sqlite3.connect` site and one direct `Connection.backup()` site, both inside
+`DB/private_sqlite.py`; Settings has no SQLite database `shutil.copy2()` site.

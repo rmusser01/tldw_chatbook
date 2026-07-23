@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import os
 import sqlite3
 import stat
+import sys
 import warnings
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path, PureWindowsPath
-from threading import Lock
+from threading import Lock, RLock
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 from urllib.parse import quote
 
 import tldw_chatbook.Utils.private_paths as private_paths
@@ -37,6 +39,28 @@ class SQLitePrivacyUnverifiedWarning(RuntimeWarning):
     """Warn that a successful SQLite file open lacks verified ACL privacy."""
 
 
+class SQLiteRestoreBusyError(sqlite3.OperationalError):
+    """Report that a live database cannot be restored safely."""
+
+
+class SQLiteRestoreIndeterminateError(sqlite3.OperationalError):
+    """Report that a committed restore could not be rolled back reliably."""
+
+    def __init__(
+        self,
+        destination_path: str | os.PathLike[str],
+        pre_restore_path: str | os.PathLike[str],
+    ) -> None:
+        self.destination_path = Path(destination_path)
+        self.pre_restore_path = Path(pre_restore_path)
+        super().__init__(
+            "The live database may already contain restored data because "
+            "automatic recovery failed. Inspect "
+            f"{self.destination_path} and the pre-restore snapshot at "
+            f"{self.pre_restore_path}. Do not retry automatically."
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class SQLiteOwnerPolicy:
     """Immutable storage policy for one registered production owner."""
@@ -51,6 +75,9 @@ _PRIVATE_FILE = frozenset({SQLiteTargetKind.PRIVATE_FILE})
 _MEMORY = frozenset({SQLiteTargetKind.MEMORY})
 _PRIVATE_OR_MEMORY = frozenset({SQLiteTargetKind.PRIVATE_FILE, SQLiteTargetKind.MEMORY})
 _READ_ONLY_URI = frozenset({SQLiteTargetKind.READ_ONLY_URI})
+_PRIVATE_AND_READ_ONLY = frozenset(
+    {SQLiteTargetKind.PRIVATE_FILE, SQLiteTargetKind.READ_ONLY_URI}
+)
 
 _SQLITE_OWNER_POLICIES = {
     "app.prompts_parent": SQLiteOwnerPolicy(
@@ -198,8 +225,8 @@ _SQLITE_OWNER_POLICIES = {
     ),
     "settings.bulk_backup": SQLiteOwnerPolicy(
         "tldw_chatbook/UI/Tools_Settings_Window",
-        _PRIVATE_FILE,
-        "The Settings bulk worker backs up all three Chatbook databases.",
+        _PRIVATE_AND_READ_ONLY,
+        "Settings bulk backup reads a checked source into a private target.",
         centralized_backup_allowed=True,
     ),
     "settings.integrity": SQLiteOwnerPolicy(
@@ -209,14 +236,14 @@ _SQLITE_OWNER_POLICIES = {
     ),
     "settings.pre_restore_backup": SQLiteOwnerPolicy(
         "tldw_chatbook/UI/Tools_Settings_Window",
-        _PRIVATE_FILE,
-        "Settings creates a private safety backup before restoring.",
+        _PRIVATE_AND_READ_ONLY,
+        "Settings snapshots a checked live source into a private safety target.",
         centralized_backup_allowed=True,
     ),
     "settings.restore": SQLiteOwnerPolicy(
         "tldw_chatbook/UI/Tools_Settings_Window",
-        _PRIVATE_FILE,
-        "Settings restore uses verified source and destination identities.",
+        _PRIVATE_AND_READ_ONLY,
+        "Settings restore reads a checked backup into a private live target.",
         centralized_backup_allowed=True,
     ),
     "settings.schema": SQLiteOwnerPolicy(
@@ -226,8 +253,8 @@ _SQLITE_OWNER_POLICIES = {
     ),
     "settings.single_backup": SQLiteOwnerPolicy(
         "tldw_chatbook/UI/Tools_Settings_Window",
-        _PRIVATE_FILE,
-        "Settings single-database backups use centralized private creation.",
+        _PRIVATE_AND_READ_ONLY,
+        "Settings single backup reads a checked source into a private target.",
         centralized_backup_allowed=True,
     ),
     "settings.vacuum": SQLiteOwnerPolicy(
@@ -273,6 +300,7 @@ SQLITE_OWNER_REGISTRY: Mapping[str, SQLiteOwnerPolicy] = MappingProxyType(
 
 _WARNED_UNVERIFIED_OWNER_IDS: set[str] = set()
 _UNVERIFIED_WARNING_LOCK = Lock()
+_RESTORE_LOCK = RLock()
 
 _PRIVATE_FILE_MODE = 0o600
 _SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
@@ -787,15 +815,13 @@ def _classify_target(
     )
 
 
-def connect_private_sqlite(
+def _connect_registered_sqlite(
     owner_id: str,
     database: str | os.PathLike[str],
     *,
     read_only: bool = False,
     **kwargs: Any,
 ) -> sqlite3.Connection:
-    """Open SQLite only after enforcing the registered target policy."""
-
     if "uri" in kwargs:
         raise ValueError("The SQLite uri option is owned by the private seam")
     policy = _validated_owner_policy(owner_id)
@@ -840,10 +866,632 @@ def connect_private_sqlite(
     return sqlite3.connect(connection_target, uri=use_uri, **kwargs)
 
 
+def connect_private_sqlite(
+    owner_id: str,
+    database: str | os.PathLike[str],
+    *,
+    read_only: bool = False,
+    **kwargs: Any,
+) -> sqlite3.Connection:
+    """Open SQLite only after enforcing the registered target policy."""
+
+    return _connect_registered_sqlite(
+        owner_id,
+        database,
+        read_only=read_only,
+        **kwargs,
+    )
+
+
+@dataclass(slots=True)
+class _PinnedSQLiteSource:
+    selected: Path
+    identity: os.stat_result
+    parent_fd: int = -1
+    file_fd: int = -1
+
+    def close(self) -> None:
+        if self.file_fd >= 0:
+            os.close(self.file_fd)
+            self.file_fd = -1
+        if self.parent_fd >= 0:
+            os.close(self.parent_fd)
+            self.parent_fd = -1
+
+
+def _validate_backup_owner(
+    owner_id: str,
+    *,
+    required_kinds: frozenset[SQLiteTargetKind],
+) -> SQLiteOwnerPolicy:
+    policy = _validated_owner_policy(owner_id)
+    if not policy.centralized_backup_allowed:
+        raise ValueError(f"SQLite owner {owner_id} does not allow centralized backup")
+    missing = required_kinds - policy.allowed_target_kinds
+    if missing:
+        kinds = ", ".join(sorted(kind.value for kind in missing))
+        raise ValueError(f"SQLite backup owner {owner_id} does not allow {kinds}")
+    return policy
+
+
+def _source_selection(
+    database: str | os.PathLike[str],
+    *,
+    allow_memory: bool,
+) -> tuple[str, Path | None]:
+    raw = os.fspath(database)
+    if not isinstance(raw, str):
+        raise TypeError("SQLite paths must be text paths")
+    if "\x00" in raw:
+        raise ValueError("Path must not contain NUL")
+    if raw.startswith("file:"):
+        raise ValueError("Caller-supplied file: SQLite URIs are not supported")
+    if raw == ":memory:":
+        if not allow_memory:
+            raise ValueError("A file-backed SQLite source is required")
+        return raw, None
+    return raw, lexical_path(raw)
+
+
+def _prepare_source_artifacts(owner_id: str, selected: Path) -> None:
+    directory_result = verify_trusted_directory(
+        selected.parent,
+        allow_shared_sticky=False,
+    )
+    _prepare_artifact(
+        selected,
+        writable=False,
+        create_if_missing=False,
+    )
+    for suffix in _SIDECAR_SUFFIXES:
+        _prepare_artifact(
+            Path(f"{selected}{suffix}"),
+            writable=False,
+            create_if_missing=False,
+            optional=True,
+        )
+    if directory_result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
+        _warn_unverified_platform(owner_id)
+
+
+def _source_postcondition_holds(source: _PinnedSQLiteSource) -> bool:
+    if source.file_fd < 0:
+        try:
+            named = source.selected.lstat()
+        except OSError:
+            return False
+        if private_paths._WINDOWS_PLATFORM:
+            return (
+                private_paths._same_identity(named, source.identity)
+                and stat.S_ISREG(named.st_mode)
+                and named.st_nlink == 1
+            )
+        return (
+            private_paths._same_identity(named, source.identity)
+            and private_paths._classify_private_file_stat(
+                named,
+                expected_uid=os.geteuid(),
+            )
+            is None
+        )
+    try:
+        opened = os.fstat(source.file_fd)
+        named = os.stat(
+            source.selected.name,
+            dir_fd=source.parent_fd,
+            follow_symlinks=False,
+        )
+    except OSError:
+        return False
+    return (
+        private_paths._same_identity(opened, source.identity)
+        and private_paths._same_identity(named, source.identity)
+        and private_paths._classify_private_file_stat(
+            opened,
+            expected_uid=os.geteuid(),
+        )
+        is None
+        and private_paths._classify_private_file_stat(
+            named,
+            expected_uid=os.geteuid(),
+        )
+        is None
+        and stat.S_IMODE(opened.st_mode) == _PRIVATE_FILE_MODE
+    )
+
+
+def _reverify_source(source: _PinnedSQLiteSource) -> None:
+    if not _source_postcondition_holds(source):
+        raise _failure(
+            source.selected,
+            PrivatePathStatus.OPERATION_FAILED,
+            "private_sqlite_source_identity_changed",
+        )
+
+
+@contextlib.contextmanager
+def _pin_sqlite_source(
+    owner_id: str,
+    database: str | os.PathLike[str],
+    *,
+    allow_memory: bool,
+) -> Iterator[_PinnedSQLiteSource | None]:
+    _raw, selected = _source_selection(database, allow_memory=allow_memory)
+    if selected is None:
+        yield None
+        return
+
+    _prepare_source_artifacts(owner_id, selected)
+    if private_paths._posix_guards_available():
+        parent_fd, leaf = private_paths._open_verified_parent(
+            selected,
+            missing_leaf_allowed=False,
+        )
+        file_fd = -1
+        try:
+            file_fd = _open_artifact_fd(
+                parent_fd,
+                leaf,
+                writable=False,
+                create=False,
+            )
+            identity = os.fstat(file_fd)
+            source = _PinnedSQLiteSource(
+                selected=selected,
+                identity=identity,
+                parent_fd=parent_fd,
+                file_fd=file_fd,
+            )
+            parent_fd = -1
+            file_fd = -1
+            try:
+                _reverify_source(source)
+                yield source
+            finally:
+                source.close()
+        finally:
+            if file_fd >= 0:
+                os.close(file_fd)
+            if parent_fd >= 0:
+                os.close(parent_fd)
+        return
+
+    identity = selected.lstat()
+    source = _PinnedSQLiteSource(selected=selected, identity=identity)
+    _reverify_source(source)
+    yield source
+
+
+def _private_destination(database: str | os.PathLike[str]) -> Path:
+    raw, kind = _classify_target(database, read_only=False)
+    if kind is not SQLiteTargetKind.PRIVATE_FILE:
+        raise ValueError("A file-backed private SQLite destination is required")
+    return lexical_path(raw)
+
+
+def _existing_entry_stat(selected: Path) -> os.stat_result | None:
+    try:
+        return selected.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise _path_error_from_oserror(selected, exc) from None
+
+
+def _reject_unsafe_or_aliased_destination(
+    source: _PinnedSQLiteSource | None,
+    destination: Path,
+) -> None:
+    if source is not None and source.selected == destination:
+        raise ValueError("SQLite source and destination cannot be the same path")
+    destination_stat = _existing_entry_stat(destination)
+    if destination_stat is None:
+        return
+    rejected = (
+        (
+            None
+            if stat.S_ISREG(destination_stat.st_mode) and destination_stat.st_nlink == 1
+            else PrivatePathStatus.LINK_OR_NON_REGULAR
+        )
+        if private_paths._WINDOWS_PLATFORM
+        else private_paths._classify_private_file_stat(
+            destination_stat,
+            expected_uid=os.geteuid(),
+        )
+    )
+    if rejected is not None:
+        raise _failure(destination, rejected, "unsafe_sqlite_backup_target")
+    if source is not None and private_paths._same_identity(
+        source.identity,
+        destination_stat,
+    ):
+        raise ValueError("SQLite source and destination cannot be the same file")
+
+
+def _reject_path_pair_alias(left: Path, right: Path) -> None:
+    if left == right:
+        raise ValueError("SQLite backup paths cannot be the same")
+    left_stat = _existing_entry_stat(left)
+    right_stat = _existing_entry_stat(right)
+    if (
+        left_stat is not None
+        and right_stat is not None
+        and private_paths._same_identity(left_stat, right_stat)
+    ):
+        raise ValueError("SQLite backup paths cannot reference the same file")
+
+
+def _restore_busy(_exc: BaseException) -> SQLiteRestoreBusyError:
+    return SQLiteRestoreBusyError(
+        "Close database users and retry; if Chatbook already opened this "
+        "database, live restore is unavailable in this session and requires "
+        "offline maintenance."
+    )
+
+
+def _close_owned_connections(
+    connections: tuple[tuple[str, sqlite3.Connection | None], ...],
+) -> None:
+    for label, connection in connections:
+        if connection is None:
+            continue
+        try:
+            connection.close()
+        except Exception as exc:
+            try:
+                warnings.warn(
+                    f"SQLite {label} close failed: {exc}",
+                    RuntimeWarning,
+                    stacklevel=3,
+                )
+            except Exception:
+                pass
+
+
+def _guard_destination(
+    destination: sqlite3.Connection,
+    *,
+    restore: bool,
+) -> str:
+    journal_mode = ""
+    changed_wal_to_delete = False
+    try:
+        destination.execute("PRAGMA busy_timeout = 0")
+        row = destination.execute("PRAGMA journal_mode").fetchone()
+        journal_mode = str(row[0]).lower() if row else ""
+        if restore and journal_mode not in {"delete", "wal"}:
+            raise ValueError(
+                f"Live restore does not support {journal_mode or 'unknown'} "
+                "journal mode"
+            )
+        locking_row = destination.execute("PRAGMA locking_mode = EXCLUSIVE").fetchone()
+        if not locking_row or str(locking_row[0]).lower() != "exclusive":
+            raise sqlite3.OperationalError("SQLite refused exclusive locking mode")
+        if journal_mode == "wal":
+            mode_row = destination.execute("PRAGMA journal_mode = DELETE").fetchone()
+            if not mode_row or str(mode_row[0]).lower() != "delete":
+                raise sqlite3.OperationalError(
+                    "SQLite refused the DELETE journal quiescence probe"
+                )
+            changed_wal_to_delete = True
+        destination.execute("BEGIN EXCLUSIVE")
+        destination.rollback()
+        return journal_mode
+    except sqlite3.OperationalError as exc:
+        if changed_wal_to_delete:
+            try:
+                mode_row = destination.execute("PRAGMA journal_mode = WAL").fetchone()
+                if not mode_row or str(mode_row[0]).lower() != "wal":
+                    raise sqlite3.OperationalError(
+                        "SQLite refused to roll back the journal-mode probe"
+                    )
+            except sqlite3.OperationalError as recovery_exc:
+                if restore:
+                    raise _restore_busy(recovery_exc) from recovery_exc
+                raise
+        if restore:
+            raise _restore_busy(exc) from exc
+        raise
+
+
+def _restore_destination_mode(
+    destination: sqlite3.Connection,
+    journal_mode: str,
+    *,
+    restore: bool,
+) -> None:
+    if journal_mode not in {"delete", "wal"}:
+        raise ValueError(f"Cannot restore unsupported SQLite mode {journal_mode!r}")
+    try:
+        row = destination.execute(
+            f"PRAGMA journal_mode = {journal_mode.upper()}"
+        ).fetchone()
+        if not row or str(row[0]).lower() != journal_mode:
+            raise sqlite3.OperationalError(
+                f"SQLite refused to restore {journal_mode.upper()} mode"
+            )
+    except sqlite3.OperationalError as exc:
+        if restore:
+            raise _restore_busy(exc) from exc
+        raise
+
+
+def _backup_pages(
+    source: sqlite3.Connection,
+    destination: sqlite3.Connection,
+    *,
+    restore: bool,
+) -> None:
+    def abort_busy(status: int, _remaining: int, _total: int) -> None:
+        if status in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
+            error = sqlite3.OperationalError(
+                "SQLite backup could not acquire the required lock"
+            )
+            if restore:
+                raise _restore_busy(error) from error
+            raise error
+
+    source.backup(
+        destination,
+        pages=1,
+        progress=abort_busy,
+        sleep=0.0,
+    )
+
+
+def backup_connection_to_private(
+    owner_id: str,
+    source_connection: sqlite3.Connection,
+    source_database: str | os.PathLike[str],
+    target: str | os.PathLike[str],
+) -> None:
+    """Back up a caller-owned connection to a checked private target."""
+
+    _validate_backup_owner(owner_id, required_kinds=_PRIVATE_FILE)
+    if getattr(source_connection, "in_transaction", False):
+        raise sqlite3.OperationalError(
+            "Finish the source transaction before starting a backup"
+        )
+    destination_path = _private_destination(target)
+    with _pin_sqlite_source(
+        owner_id,
+        source_database,
+        allow_memory=True,
+    ) as source_pin:
+        _reject_unsafe_or_aliased_destination(source_pin, destination_path)
+        if source_pin is not None:
+            _reverify_source(source_pin)
+        destination = _connect_registered_sqlite(
+            owner_id,
+            destination_path,
+            timeout=0,
+        )
+        try:
+            journal_mode = _guard_destination(destination, restore=False)
+            _restore_destination_mode(
+                destination,
+                journal_mode,
+                restore=False,
+            )
+            if source_pin is not None:
+                _reverify_source(source_pin)
+            _backup_pages(
+                source_connection,
+                destination,
+                restore=False,
+            )
+            if source_pin is not None:
+                _reverify_source(source_pin)
+        finally:
+            _close_owned_connections((("backup destination", destination),))
+
+
+def copy_private_sqlite(
+    owner_id: str,
+    source_path: str | os.PathLike[str],
+    target_path: str | os.PathLike[str],
+) -> None:
+    """Copy a checked file source to a checked private target via SQLite."""
+
+    _validate_backup_owner(
+        owner_id,
+        required_kinds=_PRIVATE_AND_READ_ONLY,
+    )
+    destination_path = _private_destination(target_path)
+    with _pin_sqlite_source(
+        owner_id,
+        source_path,
+        allow_memory=False,
+    ) as source_pin:
+        assert source_pin is not None
+        _reject_unsafe_or_aliased_destination(source_pin, destination_path)
+        _reverify_source(source_pin)
+        source = _connect_registered_sqlite(
+            owner_id,
+            source_pin.selected,
+            read_only=True,
+            timeout=0,
+        )
+        try:
+            _reverify_source(source_pin)
+            destination = _connect_registered_sqlite(
+                owner_id,
+                destination_path,
+                timeout=0,
+            )
+            try:
+                journal_mode = _guard_destination(destination, restore=False)
+                _restore_destination_mode(
+                    destination,
+                    journal_mode,
+                    restore=False,
+                )
+                _reverify_source(source_pin)
+                _backup_pages(source, destination, restore=False)
+                _reverify_source(source_pin)
+            finally:
+                _close_owned_connections((("copy destination", destination),))
+        finally:
+            _close_owned_connections((("copy source", source),))
+
+
+def restore_private_sqlite(
+    owner_id: str,
+    pre_restore_owner_id: str,
+    source_path: str | os.PathLike[str],
+    destination_path: str | os.PathLike[str],
+    pre_restore_path: str | os.PathLike[str],
+) -> None:
+    """Restore a live database after a private safety snapshot and quiescence."""
+
+    _validate_backup_owner(
+        owner_id,
+        required_kinds=_PRIVATE_AND_READ_ONLY,
+    )
+    _validate_backup_owner(
+        pre_restore_owner_id,
+        required_kinds=_PRIVATE_AND_READ_ONLY,
+    )
+    selected_destination = _private_destination(destination_path)
+    selected_pre_restore = _private_destination(pre_restore_path)
+    with (
+        _RESTORE_LOCK,
+        _pin_sqlite_source(
+            owner_id,
+            source_path,
+            allow_memory=False,
+        ) as source_pin,
+    ):
+        assert source_pin is not None
+        _reject_unsafe_or_aliased_destination(
+            source_pin,
+            selected_destination,
+        )
+        if _existing_entry_stat(selected_destination) is None:
+            raise FileNotFoundError("Live SQLite destination must exist before restore")
+        _reject_unsafe_or_aliased_destination(
+            source_pin,
+            selected_pre_restore,
+        )
+        _reject_path_pair_alias(
+            selected_destination,
+            selected_pre_restore,
+        )
+        _reverify_source(source_pin)
+        source = _connect_registered_sqlite(
+            owner_id,
+            source_pin.selected,
+            read_only=True,
+            timeout=0,
+        )
+        destination: sqlite3.Connection | None = None
+        pre_restore: sqlite3.Connection | None = None
+        original_mode = ""
+        mode_restored = False
+        final_backup_completed = False
+        try:
+            _reverify_source(source_pin)
+            destination = _connect_registered_sqlite(
+                owner_id,
+                selected_destination,
+                timeout=0,
+            )
+            original_mode = _guard_destination(destination, restore=True)
+            mode_restored = original_mode != "wal"
+
+            pre_restore = _connect_registered_sqlite(
+                pre_restore_owner_id,
+                selected_pre_restore,
+                timeout=0,
+            )
+            pre_mode = _guard_destination(pre_restore, restore=False)
+            _restore_destination_mode(
+                pre_restore,
+                pre_mode,
+                restore=False,
+            )
+            _backup_pages(
+                destination,
+                pre_restore,
+                restore=False,
+            )
+
+            _restore_destination_mode(
+                destination,
+                original_mode,
+                restore=True,
+            )
+            mode_restored = True
+            _reverify_source(source_pin)
+            try:
+                mode_restored = False
+                _backup_pages(source, destination, restore=True)
+                final_backup_completed = True
+                _restore_destination_mode(
+                    destination,
+                    original_mode,
+                    restore=True,
+                )
+                mode_restored = True
+                _reverify_source(source_pin)
+            except BaseException as restore_exc:
+                if final_backup_completed:
+                    try:
+                        mode_restored = False
+                        _backup_pages(pre_restore, destination, restore=True)
+                        _restore_destination_mode(
+                            destination,
+                            original_mode,
+                            restore=True,
+                        )
+                        mode_restored = True
+                    except BaseException as recovery_exc:
+                        indeterminate = SQLiteRestoreIndeterminateError(
+                            selected_destination,
+                            selected_pre_restore,
+                        )
+                        indeterminate.add_note(
+                            f"Restore validation failure: {restore_exc!r}"
+                        )
+                        raise indeterminate from recovery_exc
+                raise
+        finally:
+            active_error = sys.exception()
+            cleanup_error: BaseException | None = None
+            try:
+                if destination is not None and original_mode and not mode_restored:
+                    _restore_destination_mode(
+                        destination,
+                        original_mode,
+                        restore=True,
+                    )
+            except BaseException as exc:
+                cleanup_error = exc
+            finally:
+                _close_owned_connections(
+                    (
+                        ("destination", destination),
+                        ("pre-restore backup", pre_restore),
+                        ("source", source),
+                    )
+                )
+            if cleanup_error is not None:
+                if active_error is None:
+                    raise cleanup_error
+                active_error.add_note(
+                    f"SQLite restore cleanup also failed: {cleanup_error!r}"
+                )
+
+
 __all__ = [
     "SQLITE_OWNER_REGISTRY",
     "SQLiteOwnerPolicy",
     "SQLitePrivacyUnverifiedWarning",
+    "SQLiteRestoreBusyError",
+    "SQLiteRestoreIndeterminateError",
     "SQLiteTargetKind",
+    "backup_connection_to_private",
     "connect_private_sqlite",
+    "copy_private_sqlite",
+    "restore_private_sqlite",
 ]

@@ -3,7 +3,6 @@
 #
 # Imports
 from typing import TYPE_CHECKING, Optional, List, Dict, Any
-import shutil
 import json
 from datetime import datetime
 from pathlib import Path
@@ -53,7 +52,13 @@ from loguru import logger
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
-from ..DB.private_sqlite import connect_private_sqlite
+from ..DB.private_sqlite import (
+    SQLiteRestoreIndeterminateError,
+    connect_private_sqlite,
+    copy_private_sqlite,
+    restore_private_sqlite,
+)
+from ..Utils.private_paths import create_private_text, secure_private_directory
 from .MCP_Modules.unified_mcp_panel import UnifiedMCPPanel
 from .Outputs_Panel import OutputsPanel
 from .Sharing_Panel import SharingPanel
@@ -6041,11 +6046,14 @@ Thank you for using tldw-chatbook! 🎉
             db_config = self.config_data.get("database", {})
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-            # Create backup directory
             backup_dir = (
                 Path.home() / ".local" / "share" / "tldw_cli" / "backups" / timestamp
             )
-            backup_dir.mkdir(parents=True, exist_ok=True)
+            secure_private_directory(
+                backup_dir,
+                create=True,
+                application_owned=True,
+            )
 
             backed_up = []
 
@@ -6058,14 +6066,22 @@ Thank you for using tldw-chatbook! 🎉
             ).expanduser()
             if chachanotes_path.exists():
                 backup_path = backup_dir / f"tldw_chatbook_ChaChaNotes_{timestamp}.db"
-                shutil.copy2(chachanotes_path, backup_path)
+                copy_private_sqlite(
+                    "settings.bulk_backup",
+                    chachanotes_path,
+                    backup_path,
+                )
                 backed_up.append(("ChaChaNotes", backup_path))
 
             # Backup Prompts database
             prompts_path = get_prompts_db_path()
             if prompts_path.exists():
                 backup_path = backup_dir / f"tldw_cli_prompts_{timestamp}.db"
-                shutil.copy2(prompts_path, backup_path)
+                copy_private_sqlite(
+                    "settings.bulk_backup",
+                    prompts_path,
+                    backup_path,
+                )
                 backed_up.append(("Prompts", backup_path))
 
             # Backup Media database
@@ -6076,7 +6092,11 @@ Thank you for using tldw-chatbook! 🎉
             ).expanduser()
             if media_path.exists():
                 backup_path = backup_dir / f"tldw_cli_media_v2_{timestamp}.db"
-                shutil.copy2(media_path, backup_path)
+                copy_private_sqlite(
+                    "settings.bulk_backup",
+                    media_path,
+                    backup_path,
+                )
                 backed_up.append(("Media", backup_path))
 
             # Create backup info file
@@ -6087,8 +6107,11 @@ Thank you for using tldw-chatbook! 🎉
                     {"name": name, "path": str(path)} for name, path in backed_up
                 ],
             }
-            with open(info_path, "w") as f:
-                json.dump(backup_info, f, indent=2)
+            create_private_text(
+                info_path,
+                json.dumps(backup_info, indent=2),
+                application_owned_directory=backup_dir,
+            )
 
             self.app.call_from_thread(
                 self.app_instance.notify,
@@ -6535,13 +6558,19 @@ Thank you for using tldw-chatbook! 🎉
                 backup_dir = (
                     Path.home() / ".local" / "share" / "tldw_cli" / "backups" / db_name
                 )
-                backup_dir.mkdir(parents=True, exist_ok=True)
+                secure_private_directory(
+                    backup_dir,
+                    create=True,
+                    application_owned=True,
+                )
 
                 backup_path = backup_dir / f"{db_name}_backup_{timestamp}.db"
 
-                import shutil
-
-                shutil.copy2(db_path, backup_path)
+                copy_private_sqlite(
+                    "settings.single_backup",
+                    db_path,
+                    backup_path,
+                )
 
                 # Create metadata file
                 metadata_path = backup_path.with_suffix(".json")
@@ -6553,10 +6582,11 @@ Thank you for using tldw-chatbook! 🎉
                     "schema_version": self._get_schema_version(db_path),
                 }
 
-                import json
-
-                with open(metadata_path, "w") as f:
-                    json.dump(metadata, f, indent=2)
+                create_private_text(
+                    metadata_path,
+                    json.dumps(metadata, indent=2),
+                    application_owned_directory=backup_dir,
+                )
 
                 self.call_from_thread(
                     self.app_instance.notify,
@@ -6577,21 +6607,29 @@ Thank you for using tldw-chatbook! 🎉
 
     async def _restore_single_database(self, db_name: str) -> None:
         """Restore a single database from backup."""
-        from ..Widgets.file_picker_dialog import FilePickerDialog
+        from ..Third_Party.textual_fspicker import Filters
+        from ..Widgets.enhanced_file_picker import EnhancedFileOpen
 
         try:
             # Show file picker to select backup
             backup_dir = (
                 Path.home() / ".local" / "share" / "tldw_cli" / "backups" / db_name
             )
-            backup_dir.mkdir(parents=True, exist_ok=True)
+            secure_private_directory(
+                backup_dir,
+                create=True,
+                application_owned=True,
+            )
 
             file_path = await self.app_instance.push_screen(
-                FilePickerDialog(
+                EnhancedFileOpen(
+                    location=backup_dir,
                     title=f"Select {db_name} Database Backup",
-                    start_path=str(backup_dir),
-                    file_filter="*.db",
-                    allow_create_new=False,
+                    filters=Filters(
+                        ("SQLite Backups", lambda path: path.suffix.lower() == ".db"),
+                    ),
+                    must_exist=True,
+                    context=f"database_restore_{db_name}",
                 ),
                 wait_for_dismiss=True,
             )
@@ -6645,19 +6683,17 @@ Thank you for using tldw-chatbook! 🎉
             db_path = self._get_database_path(db_name, db_config)
 
             if db_path:
-                # Create a backup of current database before restoring
-                if db_path.exists():
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    pre_restore_backup = (
-                        db_path.parent / f"{db_path.stem}_pre_restore_{timestamp}.db"
-                    )
-
-                    import shutil
-
-                    shutil.copy2(db_path, pre_restore_backup)
-
-                # Restore the backup
-                shutil.copy2(backup_path, db_path)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                pre_restore_backup = (
+                    db_path.parent / f"{db_path.stem}_pre_restore_{timestamp}.db"
+                )
+                restore_private_sqlite(
+                    "settings.restore",
+                    "settings.pre_restore_backup",
+                    backup_path,
+                    db_path,
+                    pre_restore_backup,
+                )
 
                 self.call_from_thread(
                     self.app_instance.notify,
@@ -6666,6 +6702,12 @@ Thank you for using tldw-chatbook! 🎉
                 )
 
                 self.call_from_thread(self._update_database_sizes)
+        except SQLiteRestoreIndeterminateError as e:
+            self.call_from_thread(
+                self.app_instance.notify,
+                str(e),
+                severity="error",
+            )
         except Exception as e:
             self.call_from_thread(
                 self.app_instance.notify,

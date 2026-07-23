@@ -57,7 +57,7 @@ from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 # Local Imports
 from .sql_validation import validate_table_name, validate_column_name
 from .sql_logging import preview_params
-from .private_sqlite import connect_private_sqlite
+from .private_sqlite import backup_connection_to_private, connect_private_sqlite
 from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
 #
 ########################################################################################################################
@@ -2654,37 +2654,17 @@ UPDATE db_schema_version
         logger.info(
             f"Starting database backup from '{self.db_path_str}' to '{backup_file_path}'"
         )
-        # src_conn is managed by get_connection and should not be closed by this method directly
-        # backup_conn is local to this method and must be closed
-        backup_conn: Optional[sqlite3.Connection] = None
         try:
-            # Ensure the backup file path is not the same as the source for file-based DBs
-            if not self.is_memory_db and self.db_path == lexical_path(backup_file_path):
-                logger.error(
-                    "Backup path cannot be the same as the source database path."
-                )
-                raise ValueError(
-                    "Backup path cannot be the same as the source database path."
-                )
-
             src_conn = self.get_connection()
-
-            backup_db_path_obj = lexical_path(backup_file_path)
-            backup_conn = connect_private_sqlite(
+            backup_connection_to_private(
                 "db.chachanotes.backup",
-                backup_db_path_obj,
+                src_conn,
+                self.db_path_str,
+                backup_file_path,
             )
-
-            logger.debug(f"Source DB connection: {src_conn}")
-            logger.debug(
-                f"Backup DB connection: {backup_conn} to file {str(backup_db_path_obj)}"
-            )
-
-            # Perform the backup
-            src_conn.backup(backup_conn, pages=0, progress=None)
 
             logger.info(
-                f"Database backup successful from '{self.db_path_str}' to '{str(backup_db_path_obj)}'"
+                f"Database backup successful from '{self.db_path_str}' to '{backup_file_path}'"
             )
             return True
         except ValueError as ve:  # Catch specific ValueError for path mismatch first
@@ -2700,15 +2680,6 @@ UPDATE db_schema_version
                 f"Unexpected error during database backup: {e}"
             )
             return False
-        finally:
-            if backup_conn:
-                try:
-                    backup_conn.close()
-                    logger.debug("Closed backup database connection.")
-                except sqlite3.Error as e:
-                    logger.warning(f"Error closing backup database connection: {e}")
-            # Source connection (src_conn) is managed by the thread-local mechanism
-            # and should not be closed here to allow continued use of the DB instance.
 
     def check_integrity(self) -> bool:
         """

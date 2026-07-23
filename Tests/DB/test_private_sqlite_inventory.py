@@ -370,12 +370,20 @@ def _dotted_name(expression: ast.expr) -> str | None:
     return ".".join(reversed(parts))
 
 
+_PUBLIC_PRIVATE_SQLITE_SEAMS = {
+    "backup_connection_to_private",
+    "connect_private_sqlite",
+    "copy_private_sqlite",
+    "restore_private_sqlite",
+}
+
+
 def _qualified_private_sqlite_calls(
     source_path: Path,
-) -> list[tuple[str, ast.Call]]:
+) -> list[tuple[str, str, ast.Call]]:
     tree = _parse_source(source_path)
     module_aliases: set[str] = set()
-    callable_aliases: set[str] = set()
+    callable_aliases: dict[str, str] = {}
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -386,10 +394,15 @@ def _qualified_private_sqlite_calls(
             imported_module = node.module or ""
             if imported_module.endswith("private_sqlite"):
                 for alias in node.names:
-                    if alias.name == "connect_private_sqlite":
-                        callable_aliases.add(alias.asname or "connect_private_sqlite")
+                    if alias.name in _PUBLIC_PRIVATE_SQLITE_SEAMS:
+                        callable_aliases[alias.asname or alias.name] = alias.name
                     elif alias.name == "*":
-                        callable_aliases.add("connect_private_sqlite")
+                        callable_aliases.update(
+                            {
+                                seam_name: seam_name
+                                for seam_name in _PUBLIC_PRIVATE_SQLITE_SEAMS
+                            }
+                        )
             elif imported_module.endswith("DB") or (
                 node.level > 0 and not imported_module
             ):
@@ -397,13 +410,20 @@ def _qualified_private_sqlite_calls(
                     if alias.name == "private_sqlite":
                         module_aliases.add(alias.asname or "private_sqlite")
 
-    def is_seam_callable(expression: ast.expr) -> bool:
+    def seam_callable_name(expression: ast.expr) -> str | None:
         if isinstance(expression, ast.Name):
-            return expression.id in callable_aliases
+            return callable_aliases.get(expression.id)
         dotted = _dotted_name(expression)
-        if dotted is None or not dotted.endswith(".connect_private_sqlite"):
-            return False
-        return dotted.removesuffix(".connect_private_sqlite") in module_aliases
+        if dotted is None:
+            return None
+        module_name, separator, callable_name = dotted.rpartition(".")
+        if (
+            separator
+            and module_name in module_aliases
+            and callable_name in _PUBLIC_PRIVATE_SQLITE_SEAMS
+        ):
+            return callable_name
+        return None
 
     def is_seam_module(expression: ast.expr) -> bool:
         dotted = _dotted_name(expression)
@@ -428,22 +448,32 @@ def _qualified_private_sqlite_calls(
             if alias not in module_aliases and is_seam_module(expression):
                 module_aliases.add(alias)
                 changed = True
-            if alias not in callable_aliases and is_seam_callable(expression):
-                callable_aliases.add(alias)
+            rebound_name = seam_callable_name(expression)
+            if alias not in callable_aliases and rebound_name is not None:
+                callable_aliases[alias] = rebound_name
                 changed = True
 
     visitor = _QualifiedCallNodeVisitor(
-        lambda call: is_seam_callable(call.func),
+        lambda call: seam_callable_name(call.func) is not None,
     )
     visitor.visit(tree)
-    return visitor.calls
+    return [
+        (symbol, seam_callable_name(call.func) or "", call)
+        for symbol, call in visitor.calls
+    ]
 
 
-def _literal_owner_id(call: ast.Call) -> str | None:
-    owner_expression: ast.expr | None = call.args[0] if call.args else None
+def _literal_string_argument(
+    call: ast.Call,
+    position: int,
+    keyword_name: str,
+) -> str | None:
+    owner_expression: ast.expr | None = (
+        call.args[position] if len(call.args) > position else None
+    )
     if owner_expression is None:
         owner_expression = next(
-            (keyword.value for keyword in call.keywords if keyword.arg == "owner_id"),
+            (keyword.value for keyword in call.keywords if keyword.arg == keyword_name),
             None,
         )
     if isinstance(owner_expression, ast.Constant) and isinstance(
@@ -456,25 +486,35 @@ def _literal_owner_id(call: ast.Call) -> str | None:
 def _private_sqlite_seam_violations(
     source_path: Path,
     production_module: str,
-) -> tuple[list[tuple[str, ast.Call]], list[str]]:
+) -> tuple[list[tuple[str, str, ast.Call]], list[str]]:
     calls = _qualified_private_sqlite_calls(source_path)
     violations: list[str] = []
-    for symbol, call in calls:
-        owner_id = _literal_owner_id(call)
-        if owner_id is None:
-            violations.append(f"{production_module}:{symbol}: non-literal owner")
-            continue
-        policy = SQLITE_OWNER_REGISTRY.get(owner_id)
-        if policy is None:
-            violations.append(
-                f"{production_module}:{symbol}: unknown owner {owner_id!r}"
+    for symbol, seam_name, call in calls:
+        owner_arguments = [(0, "owner_id")]
+        if seam_name == "restore_private_sqlite":
+            owner_arguments.append((1, "pre_restore_owner_id"))
+        for position, keyword_name in owner_arguments:
+            owner_id = _literal_string_argument(
+                call,
+                position,
+                keyword_name,
             )
-            continue
-        if policy.production_module != production_module:
-            violations.append(
-                f"{production_module}:{symbol}: owner {owner_id!r} belongs to "
-                f"{policy.production_module}"
-            )
+            if owner_id is None:
+                violations.append(
+                    f"{production_module}:{symbol}: non-literal {keyword_name}"
+                )
+                continue
+            policy = SQLITE_OWNER_REGISTRY.get(owner_id)
+            if policy is None:
+                violations.append(
+                    f"{production_module}:{symbol}: unknown owner {owner_id!r}"
+                )
+                continue
+            if policy.production_module != production_module:
+                violations.append(
+                    f"{production_module}:{symbol}: owner {owner_id!r} belongs to "
+                    f"{policy.production_module}"
+                )
     return calls, violations
 
 
@@ -512,7 +552,7 @@ def _assert_raw_connection_census(
     *,
     seam_exists: bool,
 ) -> None:
-    seam_site = ("tldw_chatbook/DB/private_sqlite", "connect_private_sqlite")
+    seam_site = ("tldw_chatbook/DB/private_sqlite", "_connect_registered_sqlite")
     if not seam_exists:
         assert sum(current.values()) == 31
         assert current == documented_legacy
@@ -558,7 +598,7 @@ def test_raw_connection_census_is_qualified_and_transition_aware() -> None:
 
 def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
     legacy_site = ("tldw_chatbook/DB/legacy", "Owner.connect")
-    seam_site = ("tldw_chatbook/DB/private_sqlite", "connect_private_sqlite")
+    seam_site = ("tldw_chatbook/DB/private_sqlite", "_connect_registered_sqlite")
     documented = Counter({legacy_site: 31})
 
     _assert_raw_connection_census(
@@ -630,10 +670,13 @@ def test_private_sqlite_seam_guard_detects_aliases_and_owner_bypasses(
                 "import tldw_chatbook.DB.private_sqlite as private_db",
                 "from tldw_chatbook.DB.private_sqlite import "
                 "connect_private_sqlite as checked_connect",
+                "from tldw_chatbook.DB.private_sqlite import "
+                "copy_private_sqlite as checked_copy",
                 "from tldw_chatbook.DB.private_sqlite import *",
                 "from . import private_sqlite as relative_private_db",
                 "",
                 "rebound_connect = checked_connect",
+                "rebound_copy = checked_copy",
                 "rebound_module = private_db",
                 "",
                 "def valid_alias():",
@@ -657,6 +700,17 @@ def test_private_sqlite_seam_guard_detects_aliases_and_owner_bypasses(
                 "    return relative_private_db.connect_private_sqlite("
                 "owner_id, ':memory:')",
                 "",
+                "def dynamic_copy_owner(owner_id):",
+                "    return rebound_copy(owner_id, 'a.db', 'b.db')",
+                "",
+                "def mismatched_copy_owner():",
+                "    return private_db.copy_private_sqlite("
+                "'settings.bulk_backup', 'a.db', 'b.db')",
+                "",
+                "def dynamic_restore_owners(owner_id, pre_owner_id):",
+                "    return restore_private_sqlite("
+                "owner_id, pre_owner_id, 'a.db', 'b.db', 'c.db')",
+                "",
                 "def unknown_owner():",
                 "    return checked_connect('unknown.owner', ':memory:')",
                 "",
@@ -672,18 +726,24 @@ def test_private_sqlite_seam_guard_detects_aliases_and_owner_bypasses(
         "tldw_chatbook/Writing_Interop/local_writing_service",
     )
 
-    assert [symbol for symbol, _call in calls] == [
+    assert [symbol for symbol, _seam_name, _call in calls] == [
         "valid_alias",
         "valid_module_alias",
         "star_import_owner",
         "dynamic_owner",
         "rebound_module_owner",
         "relative_module_owner",
+        "dynamic_copy_owner",
+        "mismatched_copy_owner",
+        "dynamic_restore_owners",
         "unknown_owner",
         "mismatched_owner",
     ]
-    assert len(violations) == 6
+    assert len(violations) == 10
     assert any("non-literal owner" in violation for violation in violations)
+    assert any(
+        "non-literal pre_restore_owner_id" in violation for violation in violations
+    )
     assert any("unknown owner 'unknown.owner'" in violation for violation in violations)
     assert any(
         "owner 'research.local' belongs to" in violation for violation in violations
@@ -860,8 +920,13 @@ def test_registry_is_immutable_complete_and_points_to_production_modules() -> No
 def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> None:
     backup_rows = _inventory_rows("B")
 
-    assert sum(row["operation"] == "Connection.backup" for row in backup_rows) == 3
-    assert sum(row["operation"] == "shutil.copy2" for row in backup_rows) == 6
+    assert Counter(row["operation"] for row in backup_rows) == Counter(
+        {
+            "backup_connection_to_private": 3,
+            "copy_private_sqlite": 4,
+            "restore_private_sqlite": 2,
+        }
+    )
     assert all(
         SQLITE_OWNER_REGISTRY[row["owner_id"]].centralized_backup_allowed
         for row in backup_rows
@@ -881,18 +946,61 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
             module = source_path.relative_to(PROJECT_ROOT).with_suffix("").as_posix()
             direct_backup_modules[module] = backup_count
 
-    backup_rows = _inventory_rows("B")
-    documented_direct = Counter(
-        row["module"] for row in backup_rows if row["operation"] == "Connection.backup"
-    )
-    assert direct_backup_modules == documented_direct
+    assert direct_backup_modules == Counter({"tldw_chatbook/DB/private_sqlite": 1})
 
     settings_path = PROJECT_ROOT / "tldw_chatbook/UI/Tools_Settings_Window.py"
     settings_copy_count = sum(
         isinstance(node, ast.Call) and _is_named_call(node, "shutil", "copy2")
         for node in ast.walk(_parse_source(settings_path))
     )
-    assert settings_copy_count == 6
+    assert settings_copy_count == 0
+
+    expected_calls = Counter(
+        {
+            (
+                "tldw_chatbook/DB/ChaChaNotes_DB",
+                "CharactersRAGDB.backup_database",
+                "backup_connection_to_private",
+            ): 1,
+            (
+                "tldw_chatbook/DB/Client_Media_DB_v2",
+                "MediaDatabase.backup_database",
+                "backup_connection_to_private",
+            ): 1,
+            (
+                "tldw_chatbook/DB/Prompts_DB",
+                "PromptsDatabase.backup_database",
+                "backup_connection_to_private",
+            ): 1,
+            (
+                "tldw_chatbook/UI/Tools_Settings_Window",
+                "ToolsSettingsWindow._backup_worker",
+                "copy_private_sqlite",
+            ): 3,
+            (
+                "tldw_chatbook/UI/Tools_Settings_Window",
+                "ToolsSettingsWindow._backup_single_worker",
+                "copy_private_sqlite",
+            ): 1,
+            (
+                "tldw_chatbook/UI/Tools_Settings_Window",
+                "ToolsSettingsWindow._restore_single_worker",
+                "restore_private_sqlite",
+            ): 1,
+        }
+    )
+    actual_calls: Counter[tuple[str, str, str]] = Counter()
+    for source_path in PRODUCTION_ROOT.rglob("*.py"):
+        module = source_path.relative_to(PROJECT_ROOT).with_suffix("").as_posix()
+        for symbol, seam_name, _call in _qualified_private_sqlite_calls(source_path):
+            if seam_name in {
+                "backup_connection_to_private",
+                "copy_private_sqlite",
+                "restore_private_sqlite",
+            }:
+                actual_calls[(module, symbol, seam_name)] += 1
+
+    assert actual_calls == expected_calls
 
 
 def test_parent_creator_inventory_is_checked_and_has_a_disposition() -> None:

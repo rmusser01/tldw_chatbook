@@ -715,6 +715,21 @@ without changing it, so no new ADR is needed.
   quiescence contract and performs pre-restore backup plus restore without a
   raw file copy.
 
+**Implementation-review note:** A WAL connection that has already queried can
+block the required WAL-to-DELETE quiescence probe even when Python reports
+`in_transaction == False`. The safe helper therefore supports live restore
+only when SQLite can establish and retain exclusivity; otherwise it fails
+promptly and reports that offline maintenance is required. Adding an
+application-wide database maintenance gate or pre-initialization pending
+restore belongs with the later application-state decomposition. For successful
+restores, the helper retains the exclusive lock, performs the transactional
+page backup, and then reasserts and verifies the destination's original
+DELETE/WAL mode because a source backup may carry a different mode. A
+post-copy mode or source-identity failure rolls the live database back from the
+private pre-restore snapshot. If that recovery itself fails, callers receive a
+distinct indeterminate-state error with the live and snapshot paths and an
+explicit warning not to retry automatically.
+
 - [ ] **Step 1: Add red centralized backup tests**
 
   Verify new and eligible existing backup targets become `0600` under
