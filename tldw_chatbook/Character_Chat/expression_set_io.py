@@ -5,6 +5,7 @@ db object as a parameter where needed. Reused by P3d-3's .vpack extractor.
 from __future__ import annotations
 
 import io
+import json
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -113,3 +114,40 @@ def resolve_local_expression_set(paths: list[Path]) -> ExpressionSetResolution:
         skipped=skipped,
         notes=notes,
     )
+
+
+_FORMAT_TO_EXT = {"PNG": "png", "JPEG": "jpg", "WEBP": "webp", "GIF": "gif"}
+
+
+def _detect_ext(data: bytes) -> str:
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            return _FORMAT_TO_EXT.get((im.format or "").upper(), "png")
+    except Exception:
+        return "png"
+
+
+def build_expression_set_zip(character_name: str, images: dict[str, bytes]) -> bytes:
+    """Build a .zip (bytes) of a character's expression set.
+
+    Args:
+        character_name: The character's display name (for the provenance marker).
+        images: {state: bytes} for any subset of EXPRESSION_STATES.
+
+    Returns:
+        The zip archive bytes: one ``{state}.{ext}`` per present state (ext
+        PIL-detected from the bytes) plus an ``expression_set.json`` provenance
+        marker. Always a valid zip, even for an empty set.
+    """
+    present = [s for s in EXPRESSION_STATES if s in images and images[s]]
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for state in present:
+            zf.writestr(f"{state}.{_detect_ext(images[state])}", images[state])
+        manifest = {
+            "format": "tldw-expression-set/1",
+            "character": character_name,
+            "states": present,
+        }
+        zf.writestr("expression_set.json", json.dumps(manifest, indent=2))
+    return buf.getvalue()

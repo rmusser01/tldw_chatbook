@@ -114,3 +114,28 @@ def test_not_a_zip_fails_cleanly(tmp_path):
     res = resolve_local_expression_set([bad])  # must not raise
     assert res.images == {}
     assert res.skipped or res.notes
+
+
+def test_build_zip_round_trips_through_resolver(tmp_path):
+    from tldw_chatbook.Character_Chat.expression_set_io import build_expression_set_zip
+    images = {"idle": _png(), "speaking": _jpg()}
+    blob = build_expression_set_zip("Ada Lovelace", images)
+    out = tmp_path / "ada.zip"
+    out.write_bytes(blob)
+    res = resolve_local_expression_set([out])
+    assert set(res.images) == {"idle", "speaking"}
+
+
+def test_build_zip_uses_detected_extension(tmp_path):
+    from tldw_chatbook.Character_Chat.expression_set_io import build_expression_set_zip
+    blob = build_expression_set_zip("Ada", {"speaking": _jpg()})
+    names = zipfile.ZipFile(io.BytesIO(blob)).namelist()
+    assert "speaking.jpg" in names          # JPEG bytes -> .jpg, not .png
+    assert "expression_set.json" in names    # provenance marker present
+
+
+def test_build_zip_empty_set_is_valid_zip():
+    from tldw_chatbook.Character_Chat.expression_set_io import build_expression_set_zip
+    blob = build_expression_set_zip("Ada", {})
+    zf = zipfile.ZipFile(io.BytesIO(blob))
+    assert zf.namelist() == ["expression_set.json"]
