@@ -198,6 +198,33 @@ async def test_console_unknown_command_roundtrip_edit_back_to_armed_text_require
 
 
 @pytest.mark.asyncio
+async def test_console_collapse_disarms_unknown_command_literal_send():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("/nope x")
+        submit_spy = await _spy_submit_draft(console)
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, UNKNOWN_NOPE_HINT)
+        assert console._console_unknown_send_armed == "/nope x"
+
+        console._set_console_composer_collapsed(True)
+        console._set_console_composer_collapsed(False)
+        await pilot.pause()
+        assert console._console_unknown_send_armed is None
+
+        console.query_one("#console-send-message", Button).press()
+        await pilot.pause()
+        submit_spy.assert_not_called()
+        assert console._console_unknown_send_armed == "/nope x"
+
+
+@pytest.mark.asyncio
 async def test_console_collapsed_paste_starting_with_slash_sends_normally():
     gateway = CapturingGateway()
     app = _build_test_app()

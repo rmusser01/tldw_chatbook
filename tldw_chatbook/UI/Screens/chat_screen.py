@@ -1,7 +1,7 @@
 """Chat screen implementation with comprehensive state management."""
 
 from collections.abc import Mapping
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 import asyncio
 import inspect
@@ -446,6 +446,15 @@ CONSOLE_FOCUS_TARGETS_BY_PANE = {
     "console-right-rail": ("console-inspector-rail-collapse", "console-right-rail"),
     "console-native-composer": ("console-native-composer",),
 }
+
+
+@dataclass(frozen=True)
+class _ConsoleTranscriptReadingState:
+    anchored: bool
+    scroll_y: float
+    selected_message_id: str | None
+
+
 CONSOLE_WORKBENCH_SHORTCUTS = (
     ("F6", "next pane"),
     ("Shift+F6", "previous pane"),
@@ -688,6 +697,13 @@ class ChatScreen(BaseAppScreen):
         Binding("alt+m", "open_console_model_popover", "Model", show=True),
         Binding("alt+v", "paste_clipboard_image", "Paste image", show=True),
         Binding("ctrl+shift+p", "view_chat_context", "View context", show=True),
+        Binding(
+            "escape",
+            "expand_collapsed_console_composer",
+            "Composer",
+            show=False,
+            priority=True,
+        ),
         # NOT priority: widget-level escapes (transcript clear-selection, modal
         # dismiss) must keep winning before this screen-level fallback runs.
         Binding("escape", "focus_console_composer_home", "Composer", show=False),
@@ -702,6 +718,24 @@ class ChatScreen(BaseAppScreen):
         Binding("alt+8", "jump_console_tab(8)", "Tab 8", show=False),
         Binding("alt+9", "jump_console_tab(9)", "Tab 9", show=False),
     ]
+
+    def check_action(
+        self,
+        action: str,
+        parameters: tuple[object, ...],
+    ) -> bool | None:
+        if action == "expand_collapsed_console_composer":
+            return (
+                self._console_composer_collapsed
+                and not self._console_setup_modal_blocking()
+            )
+        return super().check_action(action, parameters)
+
+    def action_expand_collapsed_console_composer(self) -> None:
+        """Expand the hidden Console composer and return keyboard focus to it."""
+        if self._console_setup_modal_blocking():
+            return
+        self._set_console_composer_collapsed(False)
 
     def action_focus_next(self) -> None:
         """Move focus to the next widget, trapping Tab inside a blocking modal.
@@ -1123,7 +1157,7 @@ class ChatScreen(BaseAppScreen):
 
     def _focus_console_workbench_target(self, widget_id: str) -> None:
         """Focus a visible Console Workbench target if it is available."""
-        for target_id in CONSOLE_FOCUS_TARGETS_BY_PANE.get(widget_id, (widget_id,)):
+        for target_id in self._console_workbench_focus_targets(widget_id):
             if not self._is_console_widget_displayed(target_id):
                 continue
             try:
@@ -1134,6 +1168,14 @@ class ChatScreen(BaseAppScreen):
             widget.focus()
             self._last_console_workbench_focus_id = widget_id
             return
+
+    def _console_workbench_focus_targets(self, pane_id: str) -> tuple[str, ...]:
+        """Return visible focus candidates for a Console Workbench pane."""
+        if pane_id == "console-native-composer":
+            if self._console_composer_collapsed:
+                return ("console-composer-expand",)
+            return ("console-native-composer",)
+        return CONSOLE_FOCUS_TARGETS_BY_PANE.get(pane_id, (pane_id,))
 
     def _focus_console_setup_modal_if_blocking(self) -> bool:
         """Trap pane cycling on the setup modal while it blocks the workbench."""
@@ -1149,7 +1191,7 @@ class ChatScreen(BaseAppScreen):
     def _ensure_console_workbench_targets_focusable(self) -> None:
         """Make mounted visible Console Workbench focus targets focusable."""
         for pane_id in CONSOLE_FOCUS_REGISTRY.pane_order:
-            for widget_id in CONSOLE_FOCUS_TARGETS_BY_PANE.get(pane_id, (pane_id,)):
+            for widget_id in self._console_workbench_focus_targets(pane_id):
                 if not self._is_console_widget_displayed(widget_id):
                     continue
                 try:
@@ -1774,6 +1816,8 @@ class ChatScreen(BaseAppScreen):
         self.chat_window: Optional[ChatWindowEnhanced] = None
         self.console_session_surface: Optional[ConsoleSessionSurface] = None
         self.chat_state = ChatScreenState()
+        self._console_composer_collapsed = False
+        self._console_composer_layout_revision = 0
         self._state_dirty = False
         self._diagnostics_run = False
         self._handoff_consumption_in_progress = False
@@ -3290,6 +3334,82 @@ class ChatScreen(BaseAppScreen):
             composer.draft_text(),
             composer.edit_serial,
         )
+
+    def _capture_console_transcript_reading_state(
+        self,
+    ) -> _ConsoleTranscriptReadingState | None:
+        """Capture the semantic reading position before composer layout changes."""
+        try:
+            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
+        except QueryError:
+            return None
+        return _ConsoleTranscriptReadingState(
+            anchored=bool(transcript.is_anchored),
+            scroll_y=float(transcript.scroll_y),
+            selected_message_id=transcript.selected_message_id,
+        )
+
+    def _restore_console_transcript_reading_state(
+        self,
+        state: _ConsoleTranscriptReadingState | None,
+    ) -> None:
+        """Restore the transcript anchor, offset, and selected message."""
+        if state is None:
+            return
+        try:
+            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
+        except QueryError:
+            return
+        transcript.selected_message_id = state.selected_message_id
+        if state.anchored:
+            transcript.anchor()
+            return
+        transcript.release_anchor()
+        transcript.scroll_to(
+            y=min(state.scroll_y, float(transcript.max_scroll_y)),
+            animate=False,
+        )
+
+    def _set_console_composer_collapsed(self, collapsed: bool) -> None:
+        """Synchronize screen-owned collapse state with the mounted composer."""
+        if self._console_setup_modal_blocking():
+            return
+        collapsed = bool(collapsed)
+        composer = self._console_composer_or_none()
+        if composer is None or self._console_composer_collapsed == collapsed:
+            return
+        reading_state = self._capture_console_transcript_reading_state()
+        self._console_composer_collapsed = collapsed
+        self._console_composer_layout_revision += 1
+        revision = self._console_composer_layout_revision
+        if collapsed:
+            self._console_unknown_send_armed = None
+            composer.reset_pending_unfurl()
+        composer.set_collapsed(collapsed)
+        self.call_after_refresh(
+            self._finish_console_composer_layout_change,
+            revision,
+            collapsed,
+            reading_state,
+        )
+
+    def _finish_console_composer_layout_change(
+        self,
+        revision: int,
+        expected_collapsed: bool,
+        reading_state: _ConsoleTranscriptReadingState | None,
+    ) -> None:
+        """Finish only the latest requested composer layout transition."""
+        if (
+            revision != self._console_composer_layout_revision
+            or expected_collapsed != self._console_composer_collapsed
+        ):
+            return
+        self._restore_console_transcript_reading_state(reading_state)
+        if expected_collapsed:
+            self._focus_console_workbench_target("console-transcript-surface")
+        else:
+            self._focus_console_workbench_target("console-native-composer")
 
     def _sync_console_session_draft(self) -> None:
         """Reconcile the composer draft with the active runtime Console session.
@@ -8103,7 +8223,7 @@ class ChatScreen(BaseAppScreen):
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
             return
-        composer.can_focus = not blocking
+        composer.can_focus = not blocking and not self._console_composer_collapsed
         if blocking and self._is_descendant_or_self(self.app.focused, composer):
             # Pull keyboard focus off the covered composer so typing can't tunnel.
             try:
@@ -9053,14 +9173,20 @@ class ChatScreen(BaseAppScreen):
                 id="console-status-chips",
                 classes="ds-panel",
             )
-            yield self._frame_console_region(
-                ConsoleComposerBar(
-                    id="console-native-composer",
-                    classes="ds-panel",
-                    collapse_large_pastes=self._console_collapse_large_pastes_enabled(),
-                    paste_collapse_threshold=self._console_paste_collapse_threshold(),
-                )
+            composer = ConsoleComposerBar(
+                id="console-native-composer",
+                classes="ds-panel",
+                collapsed=self._console_composer_collapsed,
+                collapse_large_pastes=self._console_collapse_large_pastes_enabled(),
+                paste_collapse_threshold=self._console_paste_collapse_threshold(),
             )
+            store = self._console_chat_store
+            if store is not None and store.active_session_id is not None:
+                try:
+                    composer.load_draft(store.session_draft(store.active_session_id))
+                except KeyError:
+                    pass
+            yield self._frame_console_region(composer)
             # Console-scoped first-run blocker. Sits on a dedicated overlay
             # layer over the whole Console shell so the workbench (rail,
             # transcript, tabs, composer) is covered/inert while setup is
@@ -11743,9 +11869,23 @@ class ChatScreen(BaseAppScreen):
         """
         self._console_unknown_send_armed = None
 
+    @on(Button.Pressed, "#console-composer-collapse")
+    def handle_console_composer_collapse(self, event: Button.Pressed) -> None:
+        """Collapse the Console composer into reading mode."""
+        event.stop()
+        self._set_console_composer_collapsed(True)
+
+    @on(Button.Pressed, "#console-composer-expand")
+    def handle_console_composer_expand(self, event: Button.Pressed) -> None:
+        """Expand the Console composer and restore draft focus."""
+        event.stop()
+        self._set_console_composer_collapsed(False)
+
     async def handle_console_stop_generation(self, event: Button.Pressed) -> None:
         """Route the Console stop action through native run control."""
         event.stop()
+        if self._console_setup_modal_blocking():
+            return
         await self._stop_console_generation_from_visible_action()
 
     async def _stop_console_generation_from_visible_action(self) -> None:
@@ -13080,6 +13220,9 @@ class ChatScreen(BaseAppScreen):
     def _focus_console_composer_if_needed(self, *, force: bool = False) -> None:
         """Route typing to the visible Console composer instead of hidden chat input."""
         self._hide_console_legacy_chat_inputs()
+        if self._console_composer_collapsed:
+            self._focus_console_workbench_target("console-native-composer")
+            return
         focused = self.app.focused
         if (
             not force
@@ -13122,7 +13265,15 @@ class ChatScreen(BaseAppScreen):
 
     def _should_capture_console_input(self, composer: ConsoleComposerBar) -> bool:
         """Return True when key/paste input should route to the Console composer."""
+        if composer.collapsed:
+            return False
         focused = self.app.focused
+        if getattr(focused, "id", None) in {
+            "console-composer-collapse",
+            "console-composer-expand",
+            "console-collapsed-stop-generation",
+        }:
+            return False
         if focused is None:
             return True
         return self._is_descendant_or_self(
@@ -13343,6 +13494,8 @@ class ChatScreen(BaseAppScreen):
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
+            return
+        if composer.collapsed:
             return
         screen_x = getattr(event, "screen_x", None)
         screen_y = getattr(event, "screen_y", None)
@@ -14438,7 +14591,10 @@ class ChatScreen(BaseAppScreen):
         if button_id == "console-send-message":
             await self.handle_console_send_message(event)
             return
-        if button_id == "console-stop-generation":
+        if button_id in {
+            "console-stop-generation",
+            "console-collapsed-stop-generation",
+        }:
             await self.handle_console_stop_generation(event)
             return
         if button_id == "console-settings-open":

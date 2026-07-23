@@ -65,7 +65,7 @@ async def _wait_for_focused_id(app: App[None], pilot, widget_id: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_f6_cycles_between_workbench_panes_and_wraps_backward():
+async def test_console_f6_cycles_wraps_backward_and_targets_expand_when_collapsed():
     app_instance = _build_test_app()
     _mark_console_onboarding_complete(app_instance)
     host = _ConsoleHarness(app_instance)
@@ -95,6 +95,15 @@ async def test_console_f6_cycles_between_workbench_panes_and_wraps_backward():
 
         await pilot.press("shift+f6")
         await _wait_for_focused_id(host, pilot, "console-inspector-rail-collapse")
+
+        console._set_console_composer_collapsed(True)
+        await pilot.pause()
+        console.query_one("#console-inspector-rail-collapse").focus()
+        await pilot.press("f6")
+        await _wait_for_focused_id(host, pilot, "console-composer-expand")
+        assert console.query_one("#console-native-composer").can_focus is False
+        console._ensure_console_workbench_targets_focusable()
+        assert console.query_one("#console-native-composer").can_focus is False
 
 
 @pytest.mark.asyncio
