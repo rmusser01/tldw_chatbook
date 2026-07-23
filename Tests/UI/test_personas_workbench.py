@@ -3043,10 +3043,48 @@ class TestPreviewIntegration:
             assert "local.gguf" in text
             assert "Console default" in text
 
+    async def test_provider_readout_uses_effective_provider_model(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """The readout and send share the model inherited from provider config."""
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic"},
+            "api_settings": {
+                "anthropic": {"model": "claude-3-5-haiku-latest"},
+            },
+        }
+        fake = ReadinessMapPreviewGateway(ready_providers={"anthropic"})
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen.preview.ensure_gateway = lambda: fake
+            text = await self._readout_text(screen)
+            assert text == "Provider: Anthropic / claude-3-5-haiku-latest"
+
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert fake.selections[0].provider == "anthropic"
+            assert fake.selections[0].explicit_model is None
+            assert (
+                fake.selections[0].configured_model
+                == "claude-3-5-haiku-latest"
+            )
+
     async def test_provider_readout_normalizes_whitespace_defaults(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
-        """Whitespace-only character defaults fall through to trimmed chat defaults."""
+        """Readout and send normalize whitespace before Console resolution."""
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+
         mock_app_instance.app_config = {
             "character_defaults": {"provider": "   ", "model": " ignored "},
             "chat_defaults": {
@@ -3054,12 +3092,27 @@ class TestPreviewIntegration:
                 "model": "  local.gguf  ",
             },
         }
+        fake = ReadinessMapPreviewGateway(ready_providers={"llama_cpp"})
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
+            screen.preview.ensure_gateway = lambda: fake
             text = await self._readout_text(screen)
             assert text == "Provider: llama.cpp / local.gguf (Console default)"
             assert screen.preview._readout_nav_provider == "llama_cpp"
+
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert [selection.provider for selection in fake.selections] == [
+                "",
+                "llama_cpp",
+            ]
+            fallback = fake.selections[-1]
+            assert fallback.explicit_model == "local.gguf"
+            assert fake.requests, "Normalized fallback selection should answer"
 
     async def test_configure_button_navigates_to_settings_providers(
         self, mock_app_instance, stub_characters, stub_conversations

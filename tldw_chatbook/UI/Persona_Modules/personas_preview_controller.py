@@ -170,13 +170,16 @@ class PersonasPreviewController:
             ``(readout_text, nav_provider)`` where ``nav_provider`` is the
             provider key the Configure deep-link should preselect.
         """
-        config = getattr(self.screen.app_instance, "app_config", {}) or {}
-        char = config.get("character_defaults", {}) or {}
-        chat = config.get("chat_defaults", {}) or {}
-        char_provider = str(char.get("provider") or "").strip()
-        char_model = str(char.get("model") or "").strip()
-        chat_provider = str(chat.get("provider") or "").strip()
-        chat_model = str(chat.get("model") or "").strip()
+        raw_config = getattr(self.screen.app_instance, "app_config", {}) or {}
+        config = raw_config if isinstance(raw_config, Mapping) else {}
+        char_selection = self._selection_from_defaults(
+            config, "character_defaults"
+        )
+        chat_selection = self._selection_from_defaults(config, "chat_defaults")
+        char_provider = char_selection.provider
+        char_model = self._selection_model(char_selection)
+        chat_provider = chat_selection.provider
+        chat_model = self._selection_model(chat_selection)
         if not char_provider:
             if chat_provider:
                 text = (
@@ -395,8 +398,8 @@ class PersonasPreviewController:
         """
         raw_defaults = config.get(defaults_key, {})
         defaults = raw_defaults if isinstance(raw_defaults, Mapping) else {}
-        provider = str(defaults.get("provider") or "")
-        explicit_model = str(defaults.get("model") or "") or None
+        provider = str(defaults.get("provider") or "").strip()
+        explicit_model = str(defaults.get("model") or "").strip() or None
 
         settings_config: Mapping[str, Any] = config
         if defaults_key != "chat_defaults":
@@ -413,7 +416,7 @@ class PersonasPreviewController:
             model=explicit_model,
         )
         return ConsoleProviderSelection(
-            provider=provider,
+            provider=settings.provider,
             base_url=settings.base_url,
             explicit_model=explicit_model,
             configured_model=None if explicit_model else settings.model,
