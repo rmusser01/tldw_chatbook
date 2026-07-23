@@ -58,3 +58,18 @@ def test_sd_cpp_llm_path_flattens(monkeypatch):
     monkeypatch.setattr(c, "_keyring_get", lambda backend: None, raising=False)
     cfg = c.get_image_generation_config(reload=True)
     assert cfg.sd_cpp_llm_path == "/models/qwen.gguf"
+
+def test_batch_and_variant_cap_defaults(monkeypatch):
+    from tldw_chatbook.Image_Generation import config as c
+    monkeypatch.setattr(c, "_read_image_generation_toml", lambda: {}, raising=False)
+    monkeypatch.setattr(c, "_keyring_get", lambda b: None, raising=False)
+    cfg = c.get_image_generation_config(reload=True)
+    assert cfg.default_batch == 1 and cfg.max_variants_per_message == 8
+
+def test_batch_and_variant_cap_from_toml_clamped(monkeypatch):
+    from tldw_chatbook.Image_Generation import config as c
+    monkeypatch.setattr(c, "_read_image_generation_toml",
+                        lambda: {"default_batch": 3, "max_variants_per_message": 0}, raising=False)
+    monkeypatch.setattr(c, "_keyring_get", lambda b: None, raising=False)
+    cfg = c.get_image_generation_config(reload=True)
+    assert cfg.default_batch == 3 and cfg.max_variants_per_message == 1  # clamped >=1

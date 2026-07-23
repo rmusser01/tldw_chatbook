@@ -2775,6 +2775,8 @@ max_pixels = 1048576
 max_steps = 50
 max_prompt_length = 1000
 inline_max_bytes = 4000000
+default_batch = 1
+max_variants_per_message = 8
 
 [image_generation.stable_diffusion_cpp]
 binary_path = ""                      # local `sd` CLI; empty = backend unusable
