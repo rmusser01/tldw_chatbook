@@ -770,6 +770,13 @@ def chat_with_openai(
                     usage.get("total_tokens", 0),
                     labels={"model": final_model},
                 )
+                log_histogram(
+                    "openai_api_cached_tokens",
+                    (usage.get("prompt_tokens_details") or {}).get(
+                        "cached_tokens", 0
+                    ),
+                    labels={"model": final_model},
+                )
 
             logger.debug("OpenAI: Non-streaming request successful.")
             if use_responses_api:
@@ -1456,6 +1463,16 @@ def chat_with_anthropic(
                 log_histogram(
                     "anthropic_api_total_tokens",
                     total_tokens,
+                    labels={"model": current_model},
+                )
+                log_histogram(
+                    "anthropic_api_cache_read_input_tokens",
+                    usage.get("cache_read_input_tokens", 0),
+                    labels={"model": current_model},
+                )
+                log_histogram(
+                    "anthropic_api_cache_creation_input_tokens",
+                    usage.get("cache_creation_input_tokens", 0),
                     labels={"model": current_model},
                 )
 
