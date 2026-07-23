@@ -957,6 +957,31 @@ def test_mark_message_send_blocked_rejects_non_user_rows():
         store.mark_message_send_blocked(system.id)
 
 
+def test_persist_message_if_needed_flushes_a_deferred_message():
+    """TASK-485: a message appended with persist=False stays out of the durable
+    store until persist_message_if_needed flushes it (used on send-accept so a
+    blocked attempt persists nothing); the flush creates the conversation and is
+    idempotent."""
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session(title="Chat 1")
+
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="hello", persist=False
+    )
+    assert persistence.created_messages == []
+    assert persistence.created_conversations == []
+
+    store.persist_message_if_needed(message.id)
+    assert len(persistence.created_conversations) == 1
+    assert len(persistence.created_messages) == 1
+    assert persistence.created_messages[0]["content"] == "hello"
+
+    # Idempotent — a second flush does not double-insert.
+    store.persist_message_if_needed(message.id)
+    assert len(persistence.created_messages) == 1
+
+
 def test_store_persists_chat_when_sync_enqueue_fails():
     persistence = FakePersistence()
     store = ConsoleChatStore(

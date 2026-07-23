@@ -913,6 +913,31 @@ class ConsoleChatStore:
         self._persist_existing_message(message)
         return self._snapshot(message)
 
+    def persist_message_if_needed(self, message_id: str) -> ConsoleChatMessage:
+        """Flush a message appended with ``persist=False`` to durable storage.
+
+        TASK-485: the cold-send optimistic echo is appended with ``persist=False``
+        so a blocked/failed attempt leaves NO durable record — no orphan row and
+        nothing that could re-enter the next send's provider context after a
+        resume (the resume path reconstructs every row as ``"complete"``, so a
+        persisted send-blocked row would silently lose its failed state). Once the
+        send is confirmed to proceed, the echoed row is flushed here (creating the
+        conversation via ``persist_session_if_needed``). Idempotent: a no-op
+        without a persistence backend or once the row is already persisted.
+
+        Args:
+            message_id: Id of the deferred row to flush.
+
+        Returns:
+            A snapshot of the message.
+        """
+        message = self._message_or_raise(message_id)
+        if self.persistence is None or message.persisted_message_id is not None:
+            return self._snapshot(message)
+        session_id = self._message_session_index[message.id]
+        self._persist_new_message_or_defer(session_id=session_id, message=message)
+        return self._snapshot(message)
+
     def prepare_message_retry(self, message_id: str) -> ConsoleChatMessage:
         """Prepare a failed assistant message to receive replacement stream content."""
         message = self._message_or_raise(message_id)

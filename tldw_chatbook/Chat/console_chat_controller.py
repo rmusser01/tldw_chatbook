@@ -417,12 +417,19 @@ class ConsoleChatController:
             )
             for index, pending in enumerate(attachment_mode_pendings)
         )
+        # TASK-485: the optimistic echo is appended WITHOUT persistence. A send
+        # that is blocked/fails before it reaches the provider must leave no
+        # durable record — otherwise the resume path (which reconstructs every
+        # row as "complete") would silently drop the row's failed state and let a
+        # never-sent message re-enter the next send's context, and the orphan
+        # would render as a lonely user prompt. The row is flushed to storage
+        # only once the turn is confirmed to proceed (below).
         echoed_user = self.store.append_message(
             session.id,
             role=ConsoleMessageRole.USER,
             content=clean_draft,
             attachments=staged_attachments,
-            persist=self.store.persistence is not None,
+            persist=False,
         )
 
         self._set_run_state(
@@ -493,6 +500,10 @@ class ConsoleChatController:
         # this hook -- this reorder just extends that same rule to cover
         # it too.
         self._notify_submission_accepted()
+        # TASK-485: the turn is confirmed to proceed — flush the deferred USER
+        # echo to durable storage now (creating the conversation), BEFORE the
+        # assistant row, so a reload shows the user's prompt ahead of its reply.
+        self.store.persist_message_if_needed(echoed_user.id)
         assistant = self.store.append_message(
             session.id,
             role=ConsoleMessageRole.ASSISTANT,
