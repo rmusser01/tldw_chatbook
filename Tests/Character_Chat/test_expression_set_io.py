@@ -1,6 +1,5 @@
 import io
 import zipfile
-from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -8,7 +7,6 @@ from PIL import Image
 from tldw_chatbook.Character_Chat.expression_set_io import (
     resolve_local_expression_set,
     MAX_ZIP_MEMBERS,
-    MAX_TOTAL_BYTES,
 )
 
 

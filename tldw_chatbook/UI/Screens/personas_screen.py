@@ -4418,8 +4418,15 @@ class PersonasScreen(BaseAppScreen):
         except QueryError:
             editor = None
         if idle and editor is not None:
-            editor.set_avatar_image(idle)
-            applied.append("idle")
+            # Guard the stage so the orchestrator NEVER raises into its caller
+            # (the import worker runs with exit_on_error=True, and P3d-3's .vpack
+            # extractor will reuse this too). Callers are expected to pass
+            # PIL-validated bytes; a bad idle degrades to a skip, not a crash.
+            try:
+                editor.set_avatar_image(idle)
+                applied.append("idle")
+            except Exception as exc:
+                skipped.append(("idle", f"could not stage avatar: {exc}"))
         # three -> DB (immediate), off-thread
         if db is not None:
             db_applied, db_skipped = await asyncio.to_thread(
