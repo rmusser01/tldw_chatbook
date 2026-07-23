@@ -1,9 +1,10 @@
 ---
 id: TASK-436
 title: Characters mode center pane empty-state guidance
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-21 09:38'
+updated_date: '2026-07-23 20:00'
 labels:
   - roleplay
   - ux
