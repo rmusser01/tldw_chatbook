@@ -4690,7 +4690,8 @@ class PersonasScreen(BaseAppScreen):
     async def _import_expression_set_from_path(
         self, character_id: int, path: str
     ) -> None:
-        """Resolve a .zip at ``path`` into an expression set and apply it.
+        """Resolve an archive at ``path`` (.zip or .tldw-persona-vpack --
+        format auto-detected by content) into an expression set and apply it.
 
         Dialog-free (directly testable): the path is validated at this
         screen boundary (the pure ``expression_set_io`` module never imports
