@@ -1341,6 +1341,119 @@ class ConsoleChatController:
             prefill=prefill,
         )
 
+    async def edit_and_resend_message(
+        self, message_id: str, new_content: str
+    ) -> ConsoleSubmitResult:
+        """Edit a USER message and resend it, forking a NEW sibling branch.
+
+        Sibling counterpart to ``regenerate_message``, but the anchor is a
+        USER message rather than an assistant one, and this creates TWO new
+        nodes instead of one: a USER sibling of ``message_id`` (``store.
+        create_sibling``, parented at the anchor's own parent, carrying the
+        edited text) followed by an empty ASSISTANT node appended under it
+        (``store.append_message``, which always parents at the current
+        active leaf -- the freshly created sibling). The anchor
+        (``message_id``) and any old tail beneath it (its prior assistant
+        reply, and anything after it for a mid-conversation edit) are left
+        untouched and simply drop off the active path -- still reachable via
+        ``store.set_active_leaf``, never deleted.
+
+        All validation/blocking checks (active run, message role/session
+        ownership, non-blank content, provider readiness) run BEFORE either
+        new node is created, mirroring ``regenerate_message``'s
+        mutate-only-once-committed discipline: a blocked edit-and-resend
+        must not leave a stray orphan sibling forked into the tree. Building
+        ``provider_messages`` necessarily happens AFTER the fork here
+        (unlike ``regenerate_message``, which can build it from the still-
+        on-path anchor before forking) because the edited text itself must
+        be part of the payload -- it only exists once ``new_user`` has been
+        created. A skill-substitution refusal discovered at that point still
+        aborts the turn via ``_block`` exactly as ``regenerate_message``
+        does; the two new nodes remain forked (the edit itself is not
+        undone), matching ``submit_draft``'s own post-echo block precedent.
+
+        On stream FAILURE, the new assistant node becomes a ``failed`` node
+        on the active path (retryable via ``retry_message``), rather than
+        restoring the anchor's prior reply in place -- this is the intended
+        node-model behavior, not a regression: the anchor is a completely
+        separate node and was never touched.
+        """
+        active_rejection = self._active_run_rejection()
+        if active_rejection is not None:
+            return active_rejection
+
+        session_id = self.store.active_session_id
+        if session_id is None:
+            return ConsoleSubmitResult(False, False, "No active Console session.")
+        message = self.store.get_message(message_id)
+        if message.role is not ConsoleMessageRole.USER:
+            return self._block(
+                session_id, "Only your messages can be edited and re-sent."
+            )
+        if self.store.session_id_for_message(message_id) != session_id:
+            visible_copy = "Open the original session before editing this message."
+            self._set_run_state(ConsoleRunState.blocked(visible_copy))
+            return ConsoleSubmitResult(False, False, visible_copy)
+
+        clean_content, validation_error = self._validated_draft(new_content)
+        if validation_error is not None:
+            return self._block(session_id, validation_error)
+
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
+        )
+        resolution = await self.provider_gateway.resolve_for_send(
+            self._provider_selection()
+        )
+        if not getattr(resolution, "ready", False):
+            visible_copy = self._blocked_visible_copy(
+                getattr(resolution, "visible_copy", "")
+            )
+            return self._block(session_id, visible_copy)
+
+        new_user = self.store.create_sibling(
+            message_id,
+            role=ConsoleMessageRole.USER,
+            content=clean_content,
+            persist=self.store.persistence is not None,
+        )
+        assistant = self.store.append_message(
+            session_id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="",
+            persist=self.store.persistence is not None,
+        )
+        provider_messages = self._provider_messages_for_session(
+            session_id,
+            before_message_id=assistant.id,
+        )
+        self._ensure_user_continuation_instruction(provider_messages)
+        provider_messages, refuse, skill_notes = await self._apply_skill_substitution(
+            provider_messages
+        )
+        if refuse is not None:
+            return self._block(session_id, refuse)
+        for note in skill_notes:
+            # An embedded skipped-skill note is never an abort: append the
+            # same system-row copy `_block` would, then let the turn proceed.
+            self.store.append_message(
+                session_id, role=ConsoleMessageRole.SYSTEM, content=note
+            )
+        provider_messages = await self._apply_chat_dictionaries(
+            provider_messages, session_id
+        )
+        provider_messages = await self._apply_world_info(
+            provider_messages, session_id
+        )
+        prefill = self._pinned_prefill_for_session(session_id)
+        return await self._stream_assistant_response(
+            resolution=resolution,
+            provider_messages=provider_messages,
+            assistant_message_id=assistant.id,
+            variant_mode=False,
+            prefill=prefill,
+        )
+
     async def build_context_snapshot(
         self,
         draft: str,
