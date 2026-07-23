@@ -36,6 +36,7 @@ from tldw_chatbook.Chat.console_history_budget import (
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_skill_resolver import (
+    MENTION_SIGIL,
     SKILL_UNTRUSTED_REFUSE,
     SkillCommandCandidate,
     cap_skill_args,
@@ -1753,7 +1754,7 @@ class ConsoleChatController:
             service configured, substitution is disabled, there is no final
             user message, or that message's content does not resolve to a
             known skill command (not a string, doesn't start with
-            `COMMAND_PREFIX`, or `resolve_skill_command` doesn't return
+            `MENTION_SIGIL`, or `resolve_skill_command` doesn't return
             ``"resolved"``). ``(new_messages, None)`` when a skill resolves
             and renders: ``inline`` replaces just the final message in
             place (history preserved); ``fork`` drops every message before
@@ -1777,11 +1778,11 @@ class ConsoleChatController:
             return provider_messages, None
 
         content = provider_messages[final_index].get("content")
-        if not isinstance(content, str) or not content.startswith(COMMAND_PREFIX):
+        if not isinstance(content, str) or not content.startswith(MENTION_SIGIL):
             return provider_messages, None
 
         word, rest = _split_skill_command_word(content)
-        name = word[len(COMMAND_PREFIX) :]
+        name = word[len(MENTION_SIGIL) :]
         if not name:
             return provider_messages, None
 

@@ -94,7 +94,7 @@ async def test_inline_substitutes_final_user_message_only():
         {"role": "system", "content": "sys"},
         {"role": "user", "content": "earlier"},
         {"role": "assistant", "content": "ok"},
-        {"role": "user", "content": "/code-review fix it"},
+        {"role": "user", "content": "$code-review fix it"},
     ]
     out, refuse = await controller._apply_skill_substitution(msgs)
     assert refuse is None
@@ -108,7 +108,7 @@ async def test_fork_drops_history_keeps_system():
     msgs = [
         {"role": "system", "content": "sys"},
         {"role": "user", "content": "earlier"},
-        {"role": "user", "content": "/code-review go"},
+        {"role": "user", "content": "$code-review go"},
     ]
     out, refuse = await controller._apply_skill_substitution(msgs)
     assert refuse is None
@@ -129,7 +129,7 @@ async def test_non_skill_final_message_unchanged():
 @pytest.mark.asyncio
 async def test_edited_skill_refuses_at_build():
     controller, _store = _controller(_Skills(raise_trust=True))
-    msgs = [{"role": "user", "content": "/code-review go"}]
+    msgs = [{"role": "user", "content": "$code-review go"}]
     out, refuse = await controller._apply_skill_substitution(msgs)
     assert out == msgs
     assert refuse == (
@@ -144,7 +144,7 @@ async def test_no_skills_service_is_a_noop():
     controller = ConsoleChatController(
         store=store, provider_gateway=object(), provider="llama_cpp", model="m"
     )
-    msgs = [{"role": "user", "content": "/code-review go"}]
+    msgs = [{"role": "user", "content": "$code-review go"}]
     out, refuse = await controller._apply_skill_substitution(msgs)
     assert out == msgs and refuse is None
 
@@ -167,7 +167,7 @@ async def test_submit_sends_rendered_payload_but_stores_raw_command():
         skills_service=skills,
     )
 
-    result = await controller.submit_draft("/code-review fix it")
+    result = await controller.submit_draft("$code-review fix it")
 
     assert result.accepted is True
     # Provider saw the rendered body as the triggering turn.
@@ -175,7 +175,7 @@ async def test_submit_sends_rendered_payload_but_stores_raw_command():
     # The store (transcript + persistence source) keeps the RAW command.
     messages = store.messages_for_session(store.active_session_id)
     user_rows = [m for m in messages if m.role is ConsoleMessageRole.USER]
-    assert user_rows[-1].content == "/code-review fix it"
+    assert user_rows[-1].content == "$code-review fix it"
 
 
 @pytest.mark.asyncio
@@ -190,7 +190,7 @@ async def test_fork_survives_retry_by_re_rendering_fresh():
         model="m",
         skills_service=skills,
     )
-    await controller.submit_draft("/code-review go")
+    await controller.submit_draft("$code-review go")
     messages = store.messages_for_session(store.active_session_id)
     failed = next(
         m
@@ -223,14 +223,14 @@ async def test_submit_refusal_appends_system_row_and_aborts_without_provider_cal
         skills_service=skills,
     )
 
-    result = await controller.submit_draft("/code-review go")
+    result = await controller.submit_draft("$code-review go")
 
     assert result.accepted is False
     assert gateway.payloads == []  # the run never reached the provider
     messages = store.messages_for_session(store.active_session_id)
     # Raw command persists (honest record), followed by the refuse system row.
     assert messages[-2].role is ConsoleMessageRole.USER
-    assert messages[-2].content == "/code-review go"
+    assert messages[-2].content == "$code-review go"
     assert messages[-1].role is ConsoleMessageRole.SYSTEM
     assert messages[-1].content == (
         'Skill "code-review" isn\'t trusted (skill_modified) — '
@@ -268,7 +268,7 @@ async def test_submit_refusal_never_invokes_accepted_hook():
     accepted_calls = []
     controller.on_submission_accepted = lambda: accepted_calls.append(True)
 
-    result = await controller.submit_draft("/code-review go")
+    result = await controller.submit_draft("$code-review go")
 
     assert result.accepted is False
     assert accepted_calls == []
@@ -301,7 +301,7 @@ async def test_submit_success_still_invokes_accepted_hook_before_assistant_row()
 
     controller.on_submission_accepted = _on_accepted
 
-    result = await controller.submit_draft("/code-review go")
+    result = await controller.submit_draft("$code-review go")
 
     assert result.accepted is True
     assert assistant_rows_seen_at_hook_time == [[]]
@@ -319,7 +319,7 @@ async def test_regenerate_refusal_after_skill_edit_keeps_prior_answer():
         model="m",
         skills_service=skills,
     )
-    await controller.submit_draft("/code-review go")
+    await controller.submit_draft("$code-review go")
     messages = store.messages_for_session(store.active_session_id)
     assistant = next(
         m for m in reversed(messages) if m.role is ConsoleMessageRole.ASSISTANT
@@ -336,3 +336,16 @@ async def test_regenerate_refusal_after_skill_edit_keeps_prior_answer():
     # The good prior answer is untouched by the refused regenerate.
     assert store.get_message(assistant.id).content == "reply"
     assert store.get_message(assistant.id).status == "complete"
+
+
+@pytest.mark.asyncio
+async def test_leading_slash_no_longer_invokes():
+    """Hard removal: a leading /code-review message passes through
+    untouched -- `$` is the only recognized skill-command sigil now."""
+    skills = _Skills("inline")
+    controller, _store = _controller(skills)
+    messages = [{"role": "user", "content": "/code-review look at this"}]
+    out, refuse = await controller._apply_skill_substitution(messages)
+    assert out == messages
+    assert refuse is None
+    assert skills.executions == []
