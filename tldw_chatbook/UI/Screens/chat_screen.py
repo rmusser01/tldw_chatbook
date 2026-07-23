@@ -12565,16 +12565,34 @@ class ChatScreen(BaseAppScreen):
     def _select_console_message_variant(
         self, message_id: str, *, direction: str
     ) -> None:
+        """Move the active leaf across ``message_id``'s persisted siblings.
+
+        ``message_id`` identifies the transcript ROW the swipe control was
+        clicked on -- this may be off the CURRENT active leaf's own subtree
+        (e.g. after a previous swipe landed deep inside a sibling's branch),
+        so sibling lookup always resolves from ``message_id`` itself via
+        ``store.siblings_at`` (works for off-path nodes too), never from
+        ``store.active_leaf``. The target sibling's own most-recent
+        descendant (``store._leaf_under``) becomes the new active leaf, so
+        swiping back into a branch that was mid-conversation resumes at its
+        deepest turn rather than snapping back to the fork point. A no-op at
+        either end of the sibling list (nothing before the first / after the
+        last) leaves the active leaf untouched -- the caller re-syncs the UI
+        either way, which is harmless when nothing moved.
+        """
         store = self._ensure_console_chat_store()
-        message = store.get_message(message_id)
-        if message.variants is None:
-            return
-        selected_index = message.variants.selected_index
+        siblings, index, count = store.siblings_at(message_id)
         if direction == "variant-previous":
-            selected_index -= 1
+            target_index = index - 1
         elif direction == "variant-next":
-            selected_index += 1
-        store.select_variant(message_id, selected_index)
+            target_index = index + 1
+        else:
+            return
+        if target_index < 0 or target_index >= count:
+            return
+        target_sibling_id = siblings[target_index].id
+        session_id = store.session_id_for_message(message_id)
+        store.set_active_leaf(session_id, store._leaf_under(target_sibling_id))
 
     def _get_shell_bar(self):
         """Get the mounted combined chat shell bar."""

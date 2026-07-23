@@ -184,6 +184,8 @@ def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Cont
     ``self.app``.
     """
     role_label = _message_role_label(message)
+    if message.sibling_count > 1:
+        role_label = f"{role_label} ({message.sibling_index + 1}/{message.sibling_count})"
     body = _message_body(message)
     chips = _message_attachment_chips(message)
     if chips:
