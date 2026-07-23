@@ -220,6 +220,14 @@ while the composer is collapsed and the setup modal is not blocking. This
 guarantees the agreed one-press expand-and-focus behavior even when the
 transcript has a selected message. Expanding does not clear that selection.
 
+Implement the dynamic binding with a priority, hidden Escape binding plus
+`ChatScreen.check_action`. For the collapsed-expand action, the check returns
+whether collapse is active and setup is non-blocking. For every other action,
+it delegates to `super().check_action`. Do not mutate the class binding list at
+runtime. Textual checks enabled priority bindings before focused-widget
+bindings, then falls back to the existing non-priority chain when the dynamic
+action is disabled.
+
 ### F6 pane cycling
 
 The composer remains in `CONSOLE_FOCUS_REGISTRY`. Both
@@ -282,6 +290,13 @@ A pending two-click `Unfurl?` confirmation resets on collapse, matching existing
 click-away safety. The underlying paste segment and canonical content remain
 unchanged, preventing an unexpectedly armed large-paste expansion later.
 
+Collapse also clears `ChatScreen._console_unknown_send_armed`. That field means
+the next Enter on an unchanged unknown slash command sends it literally; keeping
+it armed while the composer is hidden would leave a safety confirmation active
+across an unrelated reading interval. Clearing the arm does not change the
+draft. After expansion, the next Send/Enter shows the unknown-command guidance
+again before any literal send.
+
 Tab switching continues to use the existing `ConsoleChatStore` behavior:
 
 - the outgoing tab's canonical draft is saved to its session;
@@ -336,6 +351,9 @@ The Console setup modal remains authoritative:
 - Draft, segment state, caret, selection, and pending attachments survive a
   collapse/expand round trip.
 - `Unfurl?` confirmation resets without changing canonical pasted content.
+- An armed unknown-command literal-send confirmation is cleared without
+  changing the draft; the first post-expand Enter re-displays guidance and
+  does not send.
 - Status copy covers no retained work, draft, attachment, draft plus
   attachment, generating, and generating plus retained-work combinations.
 - Contextual Stop appears only for active runs.
@@ -354,6 +372,9 @@ The Console setup modal remains authoritative:
   composer root or adds it to Tab order.
 - One Escape expands and focuses even with an active transcript selection;
   expanded-mode Escape precedence remains unchanged.
+- The collapsed-only priority Escape action is dynamically disabled in
+  expanded and setup-blocked states, allowing the existing binding chain to
+  run.
 - Printable keys, editing keys, Enter, paste, and dropped paths do not reach a
   collapsed composer.
 - A rapid Collapse → Expand sequence ignores stale deferred focus work.
