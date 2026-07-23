@@ -326,6 +326,7 @@ def pytest_configure(config):
     )
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session, exitstatus):
     """Restore caller config variables and remove only an owned sandbox."""
     for name, previous in _PREVIOUS_TEST_ENV.items():
@@ -368,7 +369,7 @@ def isolate_test_environment(monkeypatch, tmp_path):
     # Common paths that need isolation
     monkeypatch.setenv("XDG_DATA_HOME", str(test_data_dir))
     test_config_dir = test_data_dir / "config"
-    test_config_dir.mkdir(mode=0o700)
+    test_config_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(test_config_dir))
     monkeypatch.setenv("HOME", str(test_data_dir / "home"))
     monkeypatch.setenv(

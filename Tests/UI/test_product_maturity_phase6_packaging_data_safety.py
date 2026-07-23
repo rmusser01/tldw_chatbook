@@ -137,6 +137,190 @@ def test_ui_collect_only_does_not_write_to_caller_home(
     assert list(caller_home.iterdir()) == []
 
 
+def test_mixed_root_and_ui_nodes_share_config_fixture_setup_safely(
+    tmp_path,
+) -> None:
+    caller_home = tmp_path / "caller-home"
+    caller_home.mkdir(mode=0o700)
+    env = os.environ.copy()
+    env["HOME"] = str(caller_home)
+    env.pop("TMPDIR", None)
+    for name in (
+        "TLDW_CONFIG_PATH",
+        "TLDW_TEST_CONFIG_ROOT",
+        "TLDW_TEST_CONFIG_ROOT_OWNER",
+    ):
+        env.pop(name, None)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            (
+                "Tests/test_config_private_bootstrap.py"
+                "::test_first_config_creation_is_private"
+            ),
+            (
+                "Tests/UI/test_product_maturity_phase6_packaging_data_safety.py"
+                "::test_phase6_packaging_config_and_data_safety_source_seams_are_present"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert list(caller_home.iterdir()) == []
+
+
+@pytest.mark.parametrize("inherited_root", [False, True])
+def test_mixed_conftests_restore_caller_environment_and_cleanup_owned_root(
+    tmp_path,
+    inherited_root,
+) -> None:
+    plugin_dir = tmp_path / "probe-plugin"
+    plugin_dir.mkdir(mode=0o700)
+    report_path = tmp_path / "fixture-report.json"
+    plugin_path = plugin_dir / "mixed_fixture_probe.py"
+    plugin_path.write_text(
+        """
+import json
+import os
+from pathlib import Path
+
+_ENV_NAMES = (
+    "HOME",
+    "XDG_DATA_HOME",
+    "XDG_CONFIG_HOME",
+    "TLDW_CONFIG_PATH",
+    "TLDW_TEST_CONFIG_ROOT",
+    "TLDW_TEST_CONFIG_ROOT_OWNER",
+)
+_bootstrap_root = None
+_hook_order = {}
+
+
+def pytest_sessionstart(session):
+    global _bootstrap_root, _hook_order
+    _bootstrap_root = os.environ.get("TLDW_TEST_CONFIG_ROOT")
+    for implementation in (
+        session.config.pluginmanager.hook.pytest_sessionfinish.get_hookimpls()
+    ):
+        plugin_file = getattr(implementation.plugin, "__file__", None)
+        plugin_path = Path(plugin_file).as_posix() if plugin_file else ""
+        if plugin_path.endswith("/Tests/conftest.py"):
+            _hook_order["root"] = {
+                "tryfirst": implementation.tryfirst,
+                "trylast": implementation.trylast,
+            }
+        elif plugin_path.endswith("/Tests/UI/conftest.py"):
+            _hook_order["ui"] = {
+                "tryfirst": implementation.tryfirst,
+                "trylast": implementation.trylast,
+            }
+
+
+def pytest_unconfigure(config):
+    sentinel = os.environ.get("TLDW_FIXTURE_SENTINEL")
+    payload = {
+        "env": {name: os.environ.get(name) for name in _ENV_NAMES},
+        "bootstrap_root": _bootstrap_root,
+        "bootstrap_exists": (
+            Path(_bootstrap_root).exists() if _bootstrap_root else None
+        ),
+        "sentinel_exists": Path(sentinel).exists() if sentinel else None,
+        "hook_order": _hook_order,
+    }
+    Path(os.environ["TLDW_FIXTURE_REPORT"]).write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    caller_home = tmp_path / "caller-home"
+    caller_data = tmp_path / "caller-data"
+    caller_config_home = tmp_path / "caller-config-home"
+    for directory in (caller_home, caller_data, caller_config_home):
+        directory.mkdir(mode=0o700)
+    previous_env = {
+        "HOME": str(caller_home),
+        "XDG_DATA_HOME": str(caller_data),
+        "XDG_CONFIG_HOME": str(caller_config_home),
+        "TLDW_CONFIG_PATH": str(caller_config_home / "caller.toml"),
+        "TLDW_TEST_CONFIG_ROOT": None,
+        "TLDW_TEST_CONFIG_ROOT_OWNER": None,
+    }
+
+    env = os.environ.copy()
+    env.pop("TMPDIR", None)
+    env.update(
+        {name: value for name, value in previous_env.items() if value is not None}
+    )
+    env.pop("TLDW_TEST_CONFIG_ROOT", None)
+    env.pop("TLDW_TEST_CONFIG_ROOT_OWNER", None)
+    env["TLDW_FIXTURE_REPORT"] = str(report_path)
+    env["PYTHONPATH"] = os.pathsep.join(
+        value for value in (str(plugin_dir), env.get("PYTHONPATH")) if value
+    )
+
+    sentinel = None
+    if inherited_root:
+        external_root = tmp_path / "external-root"
+        external_root.mkdir(mode=0o700)
+        sentinel = external_root / "sentinel.txt"
+        sentinel.write_text("preserve me", encoding="utf-8")
+        root_alias = tmp_path / "external-root-alias"
+        root_alias.symlink_to(external_root, target_is_directory=True)
+        previous_env["TLDW_TEST_CONFIG_ROOT"] = str(root_alias)
+        previous_env["TLDW_TEST_CONFIG_ROOT_OWNER"] = "caller-owned"
+        env["TLDW_TEST_CONFIG_ROOT"] = str(root_alias)
+        env["TLDW_TEST_CONFIG_ROOT_OWNER"] = "caller-owned"
+        env["TLDW_FIXTURE_SENTINEL"] = str(sentinel)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "mixed_fixture_probe",
+            (
+                "Tests/test_config_private_bootstrap.py"
+                "::test_first_config_creation_is_private"
+            ),
+            (
+                "Tests/UI/test_product_maturity_phase6_packaging_data_safety.py"
+                "::test_phase6_packaging_config_and_data_safety_source_seams_are_present"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["env"] == previous_env
+    assert report["bootstrap_exists"] is inherited_root
+    assert report["sentinel_exists"] is (True if inherited_root else None)
+    assert report["hook_order"] == {
+        "root": {"tryfirst": False, "trylast": True},
+        "ui": {"tryfirst": True, "trylast": False},
+    }
+    if sentinel is not None:
+        assert sentinel.read_text(encoding="utf-8") == "preserve me"
+
+
 def test_root_conftest_restores_inherited_bootstrap_environment(
     monkeypatch,
     tmp_path,

@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-23 13:55'
-updated_date: '2026-07-23 17:36'
+updated_date: '2026-07-23 18:14'
 labels:
   - security
   - privacy
@@ -64,4 +64,10 @@ ADR required: yes. ADR path: backlog/decisions/022-local-private-data-boundary.m
 Verification with repository Python 3.12.11: focused private/config/ignore slice 106 passed with 1 existing requests dependency warning; broader config/UI slice 260 passed, 16 expected skips, and the same existing warning; default-temp bootstrap probe 13 passed. compileall, dependency-leaf source assertion, git diff --check, scoped Ruff check, and Ruff format check passed. Final independent security review reported no unresolved findings.
 
 Primary implementation and coverage: tldw_chatbook/Utils/private_paths.py, tldw_chatbook/config.py, .gitignore, Tests/Utils/test_private_paths.py, Tests/Utils/test_repository_credential_ignore.py, Tests/test_config_private_bootstrap.py, adjacent config tests, and authorized test-harness isolation files. Detailed plan reconciled at Docs/superpowers/plans/2026-07-23-private-path-config-bootstrap.md.
+
+Final whole-range review found two unresolved P1 findings. TASK-488 is reopened pending strict-decrypt cache invalidation/success-only publication and mixed root/UI fixture session-finish idempotence independent of hook ordering. No follow-up implementation has begun.
+
+Mixed-fixture P1 follow-up implemented test-only. Shared root/UI autouse setup now creates the trusted per-test config directory idempotently; pytest_sessionfinish ordering is explicit so UI restores the root fixture state first and root restores the original caller state last, deleting only an owned bootstrap root. RED evidence reproduced the mixed-node FileExistsError and missing hook-order declarations. GREEN regression runs one non-UI and one UI node together and verifies exact environment restoration, owned-root deletion, inherited-root preservation, and external sentinel integrity: 3 passed. Current verification: focused private/config/ignore slice 107 passed with 1 existing requests dependency warning; broader config/UI slice 263 passed, 16 expected skips, and the same warning; compileall, dependency-leaf source assertion, git diff --check, scoped Ruff check, and Ruff format check passed. No production files were edited in this fixture follow-up. TASK-488 remains In Progress pending clean strict-decrypt and fixture re-reviews.
+
+Final strict-decryption P1 follow-up is complete and independently re-reviewed clean. Bootstrap decryption is recursive and strict when encryption is enabled and a password is present: any corrupt enc: value makes bootstrap unsuccessful, returns internal defaults, leaves raw and normalized caches empty, and retries a repaired file on the next ordinary load. The public decrypt_config_section helper remains tolerant and the no-password behavior is unchanged. The mixed-fixture P1 follow-up is also independently re-reviewed clean: shared trusted directory setup is idempotent, ordered UI/root session teardown restores exact caller values, only the owning root is deleted, and inherited external sentinels are preserved. Final verification on HEAD 141172fc plus the harness diff: mixed regression 3 passed; encryption/bootstrap suite 52 passed; exact focused Task 6 gate 108 passed with 1 existing requests dependency warning; broader config/UI gate 263 passed, 16 expected skips, and the same warning. compileall, dependency-leaf source assertion, git diff --check, scoped Ruff check, and Ruff format check passed. Both final P1 reviews report no unresolved findings.
 <!-- SECTION:NOTES:END -->

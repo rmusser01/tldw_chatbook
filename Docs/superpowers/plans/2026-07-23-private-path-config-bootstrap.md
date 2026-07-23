@@ -1480,6 +1480,13 @@ git commit -m "feat(security): create private files exclusively"
 > private creation, may populate the cache. Private creation failures propagate;
 > malformed TOML and generic read fallbacks return internal defaults uncached so
 > the next ordinary call retries the selected file.
+>
+> Bootstrap decryption is recursive and strict when encryption is enabled and a
+> password is available: one corrupt `enc:` value anywhere in the merged config
+> makes the bootstrap unsuccessful, returns internal defaults, and leaves both
+> raw and normalized caches empty so a repaired file is retried. The public
+> `decrypt_config_section()` helper remains tolerant for existing callers, and
+> the existing no-password behavior remains unchanged.
 
 - [ ] **Step 1: Add failing config-bootstrap tests**
 
@@ -1740,8 +1747,15 @@ Use the pinned stream for TOML:
             _report_config_path_posture(opened.result)
             user_config_from_file = tomllib.load(opened.stream)
         loaded_config = deep_merge_dicts(loaded_config, user_config_from_file)
-        loaded_config = decrypt_config_section(loaded_config)
-        bootstrap_succeeded = True
+        decryption = _decrypt_config_section_with_status(
+            loaded_config,
+            strict=True,
+        )
+        if decryption.succeeded:
+            loaded_config = decryption.config
+            bootstrap_succeeded = True
+        else:
+            loaded_config = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
     except FileNotFoundError:
         created = create_private_text(
             config_path,
@@ -1785,6 +1799,9 @@ Delete the `Path.exists()` branch and the `~/.tldw_cli_config.toml` fallback.
 Exceptions raised by either `create_private_text()` call propagate rather than
 falling through to defaults. Preserve the existing detailed TOML/generic
 diagnostics, but leave both cache fields empty on those fallbacks.
+Likewise, strict bootstrap decryption failure is a fallback result rather than
+a successful load: return internal defaults without publishing either raw or
+normalized caches. A later ordinary load must retry the selected file.
 
 Do not route save/delete/encryption/raw-editor/export paths in this task; TASK-491 owns their single-persistence-owner conversion. The private write/read seam created here is the required dependency.
 
@@ -1916,6 +1933,15 @@ git commit -m "chore(security): ignore local credential scratch files"
 - Consumes: every deliverable above.
 - Produces: verified acceptance checklist and implementation notes.
 
+> **Implementation correction (2026-07-23):** Mixed root/UI pytest runs load
+> both autouse config fixtures. Their shared trusted per-test config directory
+> is therefore created idempotently. Session teardown has explicit nested
+> ordering: the UI hook runs first and restores the root fixture state, then the
+> root hook restores the original caller environment and deletes the bootstrap
+> root only when it owns that root. Subprocess regressions exercise one non-UI
+> and one UI node together, assert exact caller-environment restoration, verify
+> owned-root deletion, and preserve an inherited external sentinel.
+
 - [ ] **Step 1: Run the complete focused test set**
 
 Run:
@@ -1958,6 +1984,10 @@ python3 -m pytest -q \
 ```
 
 Expected: all tests pass. If a test asserts the removed fallback or resolved-path behavior, update only that obsolete assertion and rerun.
+
+The broader slice also includes mixed-root harness regressions. They must run a
+non-UI node and a UI node in the same subprocess, verify idempotent config
+fixture setup, and observe post-session cleanup from `pytest_unconfigure`.
 
 - [ ] **Step 4: Request a security-focused code review**
 

@@ -69,6 +69,7 @@ W = TypeVar("W", bound=Widget)
 A = TypeVar("A", bound=App)
 
 
+@pytest.hookimpl(tryfirst=True)
 def pytest_sessionfinish(session, exitstatus):
     """Restore the caller environment and remove the owned module sandbox."""
     for name, previous in _PREVIOUS_UI_TEST_ENV.items():
@@ -85,7 +86,7 @@ def isolate_ui_config_path(monkeypatch, tmp_path):
     """Isolate config when Tests/UI/pytest.ini is the pytest root."""
     test_data_dir = tmp_path / "test_data"
     test_config_dir = test_data_dir / "config"
-    test_config_dir.mkdir(parents=True, mode=0o700)
+    test_config_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
     monkeypatch.setattr("tldw_chatbook.config.BASE_DATA_DIR_CLI", test_data_dir)
     monkeypatch.setenv(
         "TLDW_CONFIG_PATH",
