@@ -415,3 +415,71 @@ async def test_greeting_text_property_returns_seeded_greeting():
         assert pane.greeting_text == "Hello, traveller."
         pane.refresh_greeting_seed("Updated greeting.")
         assert pane.greeting_text == "Updated greeting."
+
+
+async def test_speaker_labels_use_character_name():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.set_speakers(character="Sherlock Holmes")
+        await pane.seed_greeting("Greetings.")
+        await pilot.pause()
+        pane.append_user("Hi")
+        pane.append_reply("Elementary.")
+        await pilot.pause()
+        assert _line_texts(app) == [
+            "Sherlock Holmes: Greetings.",
+            "you: Hi",
+            "Sherlock Holmes: Elementary.",
+        ]
+        assert pane.transcript_text() == (
+            "Sherlock Holmes: Greetings.\nyou: Hi\nSherlock Holmes: Elementary."
+        )
+
+
+async def test_speaker_labels_default_without_name():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.append_user("Hi")
+        pane.append_reply("Hello.")
+        await pilot.pause()
+        assert _line_texts(app) == ["you: Hi", "character: Hello."]
+
+
+async def test_set_speakers_ignores_empty_name():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.set_speakers(character="")
+        pane.append_reply("Hi.")
+        await pilot.pause()
+        assert _line_texts(app) == ["character: Hi."]
+
+
+def test_styled_line_italicizes_action_and_escapes_markup():
+    # Pure-helper unit test — no app needed for the transform assertions.
+    app = PreviewApp()
+
+    async def run():
+        async with app.run_test() as pilot:
+            pane = app.query_one(PersonasPreviewPane)
+            waves = pane._styled_line("*waves*")
+            assert str(waves) == "waves"
+            assert any("italic" in str(span.style) for span in waves.spans)
+            assert str(pane._styled_line("[/oops]")) == "[/oops]"
+            assert str(pane._styled_line("you: 5 * 3")) == "you: 5 * 3"
+    import asyncio
+    asyncio.run(run())
+
+
+async def test_action_span_renders_italic_not_literal_asterisks():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.append_reply("*smiles warmly*")
+        await pilot.pause()
+        line = app.query(".personas-preview-line").last()
+        assert "*" not in str(line.renderable)
+        assert "smiles warmly" in str(line.renderable)
+        assert any("italic" in str(s.style) for s in line.renderable.spans)

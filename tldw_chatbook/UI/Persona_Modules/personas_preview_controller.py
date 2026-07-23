@@ -246,6 +246,7 @@ class PersonasPreviewController:
         greeting = replace_placeholders(
             str(record.get("first_message") or ""), name, "User"
         )
+        pane.set_speakers(character=name)
         # Same-character reloads after an edit should update the reset seed,
         # not erase an in-progress preview conversation.
         if self.seeded_for == character_id and pane.transcript_text():

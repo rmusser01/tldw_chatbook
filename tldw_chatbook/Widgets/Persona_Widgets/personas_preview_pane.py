@@ -8,6 +8,10 @@ here touches a database.
 
 from __future__ import annotations
 
+import re
+
+from rich.markup import escape
+from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -92,6 +96,8 @@ class PersonasPreviewPane(Vertical):
         self._partial_widget: Static | None = None
         self._partial_index: int | None = None
         self._partial_text: str = ""
+        self._character_label = "character"
+        self._user_label = "you"
 
     def compose(self) -> ComposeResult:
         yield Button(
@@ -168,13 +174,27 @@ class PersonasPreviewPane(Vertical):
         """The greeting a Reset restores (transcript line 0), for state capture."""
         return self._greeting
 
+    def set_speakers(self, *, character: str | None = None, user: str | None = None) -> None:
+        """Set transcript speaker labels; empty/None keeps the current label.
+
+        Args:
+            character: Display name for character/greeting lines (e.g. the card name).
+            user: Display name for the user's lines (unused until TASK-442).
+        """
+        if character:
+            self._character_label = character
+        if user:
+            self._user_label = user
+
     def append_user(self, text: str) -> None:
         """Append a "you: ..." transcript line."""
-        self._append_line(f"you: {text}", "personas-preview-line-you")
+        self._append_line(f"{self._user_label}: {text}", "personas-preview-line-you")
 
     def append_reply(self, text: str) -> None:
         """Append a complete "character: ..." transcript line in one go."""
-        self._append_line(f"character: {text}", "personas-preview-line-character")
+        self._append_line(
+            f"{self._character_label}: {text}", "personas-preview-line-character"
+        )
 
     def begin_reply(self) -> None:
         """Start a streamed "character: ..." line, grown by append_reply_chunk.
@@ -184,12 +204,12 @@ class PersonasPreviewPane(Vertical):
         expected to finalize or discard first).
         """
         self._partial_text = ""
-        line = "character:"
+        line = f"{self._character_label}:"
         widget = Static(
-            line,
+            self._styled_line(line),
             classes="personas-preview-line personas-preview-line-character",
-            # markup=False: streamed text must render literally, never as Rich
-            # markup (unmatched tags raise MarkupError at render).
+            # markup=False: content is a pre-styled Text; Static must not
+            # re-parse it as Rich markup.
             markup=False,
         )
         self._partial_widget = widget
@@ -202,10 +222,10 @@ class PersonasPreviewPane(Vertical):
         if self._partial_widget is None:
             self.begin_reply()
         self._partial_text += str(text)
-        line = f"character: {self._partial_text}"
+        line = f"{self._character_label}: {self._partial_text}"
         if self._partial_index is not None and self._partial_index < len(self._lines):
             self._lines[self._partial_index] = line
-        self._partial_widget.update(line)
+        self._partial_widget.update(self._styled_line(line))
 
     def finalize_reply(self) -> None:
         """Commit the streamed line: it is now a permanent transcript entry."""
@@ -250,6 +270,20 @@ class PersonasPreviewPane(Vertical):
 
     # ===== Internals =====
 
+    _ACTION_SPAN = re.compile(r"\*([^*\n]+)\*")
+
+    def _styled_line(self, line: str) -> Text:
+        """Render a transcript line: escape Rich markup, italicize *action* spans.
+
+        Args:
+            line: Plain transcript line (``"label: text"``).
+
+        Returns:
+            A Rich ``Text`` whose plain string equals the line with matched
+            ``*...*`` asterisks removed, and with italic spans over those runs.
+        """
+        return Text.from_markup(self._ACTION_SPAN.sub(r"[i]\1[/i]", escape(line)))
+
     async def _render_seed_lines(self) -> None:
         """Replace the transcript with the greeting line (or nothing)."""
         # remove_children below also removes any in-progress streamed line, so
@@ -261,13 +295,13 @@ class PersonasPreviewPane(Vertical):
         await container.remove_children()
         widgets: list[Static] = []
         if self._greeting:
-            line = f"character: {self._greeting}"
+            line = f"{self._character_label}: {self._greeting}"
             self._lines.append(line)
             widgets.append(
-                # markup=False: greeting text must render literally, never as
-                # Rich markup (unmatched tags raise MarkupError at render).
+                # markup=False: content is a pre-styled Text; Static must not
+                # re-parse it as Rich markup.
                 Static(
-                    line,
+                    self._styled_line(line),
                     classes="personas-preview-line personas-preview-line-character",
                     markup=False,
                 )
@@ -277,10 +311,14 @@ class PersonasPreviewPane(Vertical):
 
     def _append_line(self, line: str, role_class: str) -> None:
         self._lines.append(line)
-        # markup=False: user/character text must render literally, never as
-        # Rich markup (unmatched tags raise MarkupError at render).
+        # markup=False: content is a pre-styled Text; Static must not re-parse
+        # it as Rich markup.
         self.query_one("#personas-preview-transcript", VerticalScroll).mount(
-            Static(line, classes=f"personas-preview-line {role_class}", markup=False)
+            Static(
+                self._styled_line(line),
+                classes=f"personas-preview-line {role_class}",
+                markup=False,
+            )
         )
 
     # ===== Events =====

@@ -1784,6 +1784,7 @@ class PersonasScreen(BaseAppScreen):
             entity_id=entity_id,
             entity_name=entity_name,
         )
+        self.query_one(PersonasPreviewPane).set_speakers(character=entity_name)
         self._edit_mode = "view"
         self.query_one(PersonasLibraryPane).mark_active_row("character", entity_id)
         await self.character_handler.load_character(entity_id)
