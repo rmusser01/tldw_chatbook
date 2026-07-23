@@ -22,6 +22,7 @@ from tldw_chatbook.Agents.agent_models import (
 from tldw_chatbook.Agents.agent_service import (
     SUBAGENT_SYSTEM_PROMPT,
     AgentService,
+    _usage_total_tokens,
 )
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
@@ -1007,3 +1008,113 @@ def test_native_endpoint_with_no_schemas_omits_tools_kwarg(db):
     )
     assert outcome.status == RUN_DONE
     assert "tools" not in chat.calls[0]
+
+
+def test_usage_total_tokens_reads_total():
+    assert _usage_total_tokens({"usage": {"total_tokens": 150}}) == 150
+
+
+def test_usage_total_tokens_sums_prompt_and_completion():
+    assert _usage_total_tokens(
+        {"usage": {"prompt_tokens": 100, "completion_tokens": 50}}
+    ) == 150
+
+
+def test_usage_total_tokens_none_when_absent_or_malformed():
+    assert _usage_total_tokens({"choices": []}) is None
+    assert _usage_total_tokens("a string") is None
+    assert _usage_total_tokens({"usage": "bad"}) is None
+    assert _usage_total_tokens({"usage": {"prompt_tokens": 10}}) is None
+    # Malformed values must not corrupt spend accounting (Qodo review):
+    assert _usage_total_tokens({"usage": {"total_tokens": True}}) is None  # bool
+    assert _usage_total_tokens({"usage": {"total_tokens": 0}}) is None
+    assert _usage_total_tokens({"usage": {"total_tokens": -7}}) is None
+    assert _usage_total_tokens(
+        {"usage": {"prompt_tokens": -5, "completion_tokens": 10}}
+    ) is None
+    assert _usage_total_tokens(
+        {"usage": {"prompt_tokens": False, "completion_tokens": 5}}
+    ) is None
+    assert _usage_total_tokens(
+        {"usage": {"prompt_tokens": 0, "completion_tokens": 0}}
+    ) is None
+    # Valid non-negative sum still works.
+    assert _usage_total_tokens(
+        {"usage": {"prompt_tokens": 0, "completion_tokens": 5}}
+    ) == 5
+
+
+def _service_with_chat(db, chat_call):
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    return AgentService(db=db, registry=registry, chat_call=chat_call)
+
+
+def test_call_model_uses_real_provider_usage(db):
+    def chat(**kwargs):
+        return {
+            "choices": [{"message": {"content": "hello there"}}],
+            "usage": {"total_tokens": 150},
+        }
+    service = _service_with_chat(db, chat)
+    cfg = AgentConfig(model="gpt-4o", system_prompt="s", native_tools=False)
+    call_model = service._make_call_model(cfg, "openai", [])
+    turn = call_model([{"role": "user", "content": "hi"}], ())
+    assert turn.tokens == 150
+
+
+def test_call_model_estimates_when_no_usage(db):
+    def chat(**kwargs):
+        return {"choices": [{"message": {"content": "hello there world"}}]}
+    service = _service_with_chat(db, chat)
+    cfg = AgentConfig(model="gpt-4o", system_prompt="s", native_tools=False)
+    call_model = service._make_call_model(cfg, "openai", [])
+    turn = call_model([{"role": "user", "content": "count these tokens"}], ())
+    # No provider usage -> estimate of sent payload + response text, always > 0.
+    assert turn.tokens > 0
+
+
+def test_call_model_estimate_strips_provider_prefix(db):
+    # A provider-qualified id (openai/gpt-4o-mini) must be normalized for token
+    # counting so the GPT framing overhead applies -> same estimate as the bare
+    # model. (Qodo review: prefixed models otherwise undercount.)
+    def chat(**kwargs):
+        return {"choices": [{"message": {"content": "hello there world"}}]}
+    service = _service_with_chat(db, chat)
+    msgs = [{"role": "user", "content": "count these tokens please"}]
+    prefixed = service._make_call_model(
+        AgentConfig(model="openai/gpt-4o-mini", system_prompt="s", native_tools=False),
+        "openai", [],
+    )(msgs, ())
+    bare = service._make_call_model(
+        AgentConfig(model="gpt-4o-mini", system_prompt="s", native_tools=False),
+        "openai", [],
+    )(msgs, ())
+    assert prefixed.tokens == bare.tokens
+    assert prefixed.tokens > 0
+
+
+def test_call_model_native_path_reports_provider_tokens(db):
+    """Native tool-call return path (turn.tool_calls set) must also report
+    real provider usage on .tokens -- the non-native tests above only cover
+    the early ``if not native: return ModelTurn(...)`` branch."""
+
+    def chat(**kwargs):
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [native_call("calculator", {"expression": "2+2"})],
+                    }
+                }
+            ],
+            "usage": {"total_tokens": 77},
+        }
+
+    service = _service_with_chat(db, chat)
+    cfg = AgentConfig(model="gpt-4o", system_prompt="s", native_tools=True)
+    call_model = service._make_call_model(cfg, "openai", [])
+    turn = call_model([{"role": "user", "content": "2+2?"}], ())
+    assert turn.tokens == 77
+    assert turn.tool_calls
