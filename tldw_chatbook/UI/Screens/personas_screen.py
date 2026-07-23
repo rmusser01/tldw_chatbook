@@ -4669,8 +4669,10 @@ class PersonasScreen(BaseAppScreen):
 
         try:
             picker = EnhancedFileOpen(
-                title="Import Expression Set (.zip)",
-                filters=Filters(("Zip Archives", lambda p: p.suffix.lower() == ".zip")),
+                title="Import Expression Set (.zip / .tldw-persona-vpack)",
+                filters=Filters(
+                    ("Archives", lambda p: p.suffix.lower() in (".zip", ".tldw-persona-vpack")),
+                ),
                 context="character_expression_set_import",
             )
             try:

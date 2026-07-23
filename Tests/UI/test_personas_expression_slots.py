@@ -159,6 +159,23 @@ async def test_import_expression_set_from_zip_path(personas_editor_with_saved_ch
 
 
 @pytest.mark.asyncio
+async def test_import_vpack_from_path(personas_editor_with_saved_character, tmp_path):
+    app, screen, db, char_id = personas_editor_with_saved_character
+    from Tests.Character_Chat.test_expression_set_io import simple_vpack, _png
+    z = tmp_path / "pack.tldw-persona-vpack"
+    z.write_bytes(simple_vpack({"idle": _png(), "speaking": _png(), "thinking": _png()}))
+
+    await screen._import_expression_set_from_path(char_id, str(z))
+
+    assert db.get_character_expression_image(char_id, "speaking") is not None
+    assert db.get_character_expression_image(char_id, "thinking") is not None
+    from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget import (
+        PersonasCharacterEditorWidget,
+    )
+    assert screen.query_one(PersonasCharacterEditorWidget).current_avatar_bytes() is not None  # idle staged
+
+
+@pytest.mark.asyncio
 async def test_export_expression_set_writes_a_zip(personas_editor_with_saved_character):
     app, screen, db, char_id = personas_editor_with_saved_character
     import io as _io
