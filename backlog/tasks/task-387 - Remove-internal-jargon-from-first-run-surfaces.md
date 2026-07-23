@@ -1,8 +1,9 @@
 ---
 id: TASK-387
 title: Remove internal jargon from first-run surfaces
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
 labels: [console, ux]
 dependencies: []
@@ -23,6 +24,32 @@ User-facing copy includes 'api_settings.llama_cpp.api_url=http://...', 'LLAMA_CP
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 First-run copy in user vocabulary ('Endpoint', 'API key: not needed', 'Test failed: connection refused')
-- [ ] #2 Internal decision-record IDs and UUIDs kept out of primary UI or behind a details view
+- [x] #1 First-run copy in user vocabulary ('Endpoint', 'API key: not needed', 'Test failed: connection refused')
+- [x] #2 Internal decision-record IDs and UUIDs kept out of primary UI or behind a details view
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Targeted the first-run jargon the verifier flagged, staying inside the caveat
+("target the toast/detail/row copy and the Scope UUID, not config-path language
+wholesale").
+
+AC#1 (user vocabulary): the model-discovery selection rows read
+'gemma-4.gguf · session · discovered · capabilities unknown' instead of the
+enum dump 'gemma-4.gguf | runtime | runtime_discovered | capability=unknown'
+(source enum -> discovered/discovered (cached)/saved; persisted 'runtime' ->
+'session'; 'capability=X' -> 'capabilities X'). The provider-Test *detail* line's
+'status=ready/blocked' + config-path tokens were deliberately left: they are a
+tested TASK-366 diagnostic contract (asserted in 5 places), and the user-facing
+TOAST ('Provider test failed: <message>') plus the app's existing
+'API key: not required for this provider' copy already read in plain language.
+
+AC#2 (no internal ids/UUIDs in primary UI): the raw conversation-UUID Scope
+label was already humanized to 'This conversation' (id on hover) by task-373;
+here the 'Automatic refresh (ADR-020)' Settings heading drops the decision-record
+id to plain 'Automatic refresh' (the id survives in the code comment).
+
+RED->GREEN unit test on the discovery-row label vocabulary. settings_screen.py
+only.
+<!-- SECTION:NOTES:END -->

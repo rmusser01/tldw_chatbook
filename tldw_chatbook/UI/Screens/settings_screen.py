@@ -5322,10 +5322,20 @@ class SettingsScreen(BaseAppScreen):
                 continue
             source = str(getattr(model, "source", "runtime_discovered"))
             capability = str(getattr(model, "capability_status", "unknown"))
-            persisted = (
-                "saved" if bool(getattr(model, "persisted", False)) else "runtime"
+            # TASK-387: humanize the row so a first-run user can read it instead
+            # of decoding internal enum names (runtime_discovered / capability=…).
+            saved_label = (
+                "saved" if bool(getattr(model, "persisted", False)) else "session"
             )
-            label = f"{model_id} | {persisted} | {source} | capability={capability}"
+            source_label = {
+                "runtime_discovered": "discovered",
+                "persisted_discovered": "discovered (cached)",
+                "saved": "saved",
+            }.get(source, source.replace("_", " "))
+            capability_label = f"capabilities {capability}"
+            label = (
+                f"{model_id} · {saved_label} · {source_label} · {capability_label}"
+            )
             options.append(
                 (
                     label,
@@ -6743,7 +6753,9 @@ class SettingsScreen(BaseAppScreen):
             # inline from the saved config (the Connect block pattern) and
             # persist immediately on change via the handlers below.
             model_catalog_settings = load_model_catalog_settings(load_settings())
-            yield Static("Automatic refresh (ADR-020)", classes="destination-section")
+            # TASK-387: keep the internal decision-record id (ADR-020) out of the
+            # user-facing heading; it survives in the code comment above.
+            yield Static("Automatic refresh", classes="destination-section")
             yield Checkbox(
                 "Auto-refresh model lists on startup",
                 value=model_catalog_settings.auto_refresh_enabled,

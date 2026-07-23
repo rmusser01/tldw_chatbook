@@ -329,6 +329,42 @@ async def test_model_field_suggester_completes_discovered_ids():
     assert screen._model_field_suggester() is None
 
 
+def test_discovery_row_labels_use_user_vocabulary_not_internal_jargon():
+    """TASK-387: the model-discovery selection rows must read in plain language,
+    not the internal ``runtime_discovered`` / ``capability=unknown`` enum dump."""
+    screen = _bare_settings_screen({})
+    screen._model_discovery_selected_model_ids = set()
+    screen._model_discovery_models = (
+        SimpleNamespace(
+            model_id="gemma-4.gguf",
+            source="runtime_discovered",
+            capability_status="unknown",
+            persisted=False,
+        ),
+        SimpleNamespace(
+            model_id="mistral-7b.gguf",
+            source="persisted_discovered",
+            capability_status="known",
+            persisted=True,
+        ),
+    )
+
+    labels = [label for label, _id, _sel in screen._model_discovery_selection_options()]
+    joined = " ".join(labels)
+
+    # Model ids are still shown for recognition.
+    assert "gemma-4.gguf" in joined
+    assert "mistral-7b.gguf" in joined
+    # Internal enum jargon is gone.
+    assert "runtime_discovered" not in joined
+    assert "persisted_discovered" not in joined
+    assert "capability=" not in joined
+    # Replaced by user-facing vocabulary.
+    assert "discovered" in labels[0]
+    assert "capabilities unknown" in labels[0]
+    assert "capabilities known" in labels[1]
+
+
 # --- Pilot tests: the clickable Test button path (AC#2/AC#3) + widget wiring ---
 #
 # These drive the real SettingsScreen through the harness
