@@ -327,3 +327,117 @@ async def test_httpx_async_variant_and_auth_suppression(monkeypatch):
     assert resp.content == b"ok"
     assert "authorization" in seen[0].headers
     assert "authorization" not in seen[1].headers
+
+
+# ---------------------------------------------------------------------------
+# Guarded requests helper
+# ---------------------------------------------------------------------------
+import io
+
+import requests as requests_lib
+from requests.adapters import BaseAdapter
+from requests.models import Response as RequestsResponse
+
+from tldw_chatbook.Utils.egress import guarded_fetch_requests
+
+
+class _FakeHTTPAdapter(BaseAdapter):
+    """Serves canned responses; records every prepared request."""
+
+    def __init__(self, routes):
+        super().__init__()
+        self.routes = routes  # {url_prefix: (status, headers, body)}
+        self.seen = []
+
+    def send(self, request, **kwargs):
+        self.seen.append(request)
+        for prefix, (status, headers, body) in self.routes.items():
+            if request.url.startswith(prefix):
+                resp = RequestsResponse()
+                resp.status_code = status
+                resp.headers.update(headers)
+                resp.raw = io.BytesIO(body)
+                resp.url = request.url
+                resp.request = request
+                return resp
+        resp = RequestsResponse()
+        resp.status_code = 404
+        resp.raw = io.BytesIO(b"")
+        resp.url = request.url
+        return resp
+
+    def close(self):
+        pass
+
+
+def _session_with(routes):
+    sess = requests_lib.Session()
+    adapter = _FakeHTTPAdapter(routes)
+    sess.mount("http://", adapter)
+    sess.mount("https://", adapter)
+    return sess, adapter
+
+
+def test_requests_basic_fetch_preloads_content():
+    sess, adapter = _session_with(
+        {"https://example.com/": (200, {"content-type": "text/html"}, b"<p>hi</p>")}
+    )
+    resp = guarded_fetch_requests(
+        "https://example.com/p", session=sess, max_bytes=1024
+    )
+    assert resp.status_code == 200
+    assert resp.content == b"<p>hi</p>"
+    assert resp.text == "<p>hi</p>"
+
+
+def test_requests_redirect_to_internal_blocked(monkeypatch):
+    def fake_resolve(host):
+        return ["10.0.0.5"] if host == "internal.example" else ["93.184.216.34"]
+
+    monkeypatch.setattr(egress, "_resolve", fake_resolve)
+    sess, adapter = _session_with(
+        {"https://example.com/": (302, {"location": "http://internal.example/"}, b"")}
+    )
+    with pytest.raises(EgressBlockedError):
+        guarded_fetch_requests("https://example.com/r", session=sess, max_bytes=64)
+    assert all("internal.example" not in r.url for r in adapter.seen)
+
+
+def test_requests_session_auth_suppressed_cross_origin():
+    sess, adapter = _session_with(
+        {
+            "https://a.example/": (302, {"location": "https://b.example/n"}, b""),
+            "https://b.example/": (200, {}, b"fin"),
+        }
+    )
+    sess.auth = ("user", "pw")
+    resp = guarded_fetch_requests("https://a.example/s", session=sess, max_bytes=64)
+    assert resp.content == b"fin"
+    assert "Authorization" in adapter.seen[0].headers
+    assert "Authorization" not in adapter.seen[1].headers
+
+
+def test_requests_byte_cap():
+    sess, _ = _session_with({"https://example.com/": (200, {}, b"y" * 4096)})
+    with pytest.raises(EgressFetchError, match="exceeds"):
+        guarded_fetch_requests("https://example.com/big", session=sess, max_bytes=1024)
+
+
+def test_requests_sink_streams_without_buffering():
+    body = b"z" * 3000
+    sess, _ = _session_with({"https://example.com/": (200, {}, body)})
+    sink = io.BytesIO()
+    resp = guarded_fetch_requests(
+        "https://example.com/file", session=sess, max_bytes=4096, sink=sink
+    )
+    assert sink.getvalue() == body
+    assert resp.content == b""
+    assert resp.status_code == 200
+
+
+def test_requests_sink_cap_still_enforced():
+    sess, _ = _session_with({"https://example.com/": (200, {}, b"w" * 4096)})
+    with pytest.raises(EgressFetchError, match="exceeds"):
+        guarded_fetch_requests(
+            "https://example.com/file", session=sess, max_bytes=1024, sink=io.BytesIO()
+        )

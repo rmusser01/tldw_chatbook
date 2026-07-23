@@ -375,3 +375,76 @@ async def guarded_fetch_httpx_async(
         finally:
             await response.aclose()
     raise EgressFetchError("too many redirects", url=url)
+
+
+def guarded_fetch_requests(
+    url,
+    *,
+    session=None,
+    max_bytes,
+    trusted_origins=frozenset(),
+    timeout=30.0,
+    headers=None,
+    sink=None,
+):
+    """Capped GET via requests with per-hop egress re-validation.
+
+    Returns the final ``requests.Response`` with ``._content`` preloaded
+    (unless ``sink`` is given, in which case bytes stream to ``sink`` and
+    ``.content`` is empty). ``session.auth`` is suppressed on cross-origin
+    hops (credential-stripping rule).
+    """
+    import requests
+
+    sess = session or requests.Session()
+    owns_session = session is None
+    try:
+        first_host = _host_of(url)
+        current = url
+        for _hop in range(MAX_REDIRECT_HOPS + 1):
+            check_url_or_raise(current, trusted_origins=trusted_origins)
+            same_origin = _host_of(current) == first_host
+            prepared = sess.prepare_request(
+                requests.Request(
+                    "GET", current, headers=_hop_headers(headers, same_origin)
+                )
+            )
+            if not same_origin:
+                # prepare_request applies session.auth/cookies into headers;
+                # a cross-origin hop must not carry them.
+                for key in ("Authorization", "Cookie", "Proxy-Authorization"):
+                    prepared.headers.pop(key, None)
+            response = sess.send(
+                prepared, stream=True, timeout=timeout, allow_redirects=False
+            )
+            if response.is_redirect:
+                location = response.headers.get("location")
+                response.close()
+                if not location:
+                    raise EgressFetchError("redirect without Location", url=current)
+                current = urljoin(current, location)
+                continue
+            collected = bytearray() if sink is None else None
+            received = 0
+            try:
+                for chunk in response.iter_content(chunk_size=65536):
+                    if not chunk:
+                        continue
+                    received += len(chunk)
+                    if received > max_bytes:
+                        raise EgressFetchError(
+                            f"response exceeds {max_bytes} bytes", url=current
+                        )
+                    if sink is None:
+                        collected += chunk
+                    else:
+                        sink.write(chunk)
+            finally:
+                response.close()
+            response._content = bytes(collected) if collected is not None else b""
+            response._content_consumed = True
+            return response
+        raise EgressFetchError("too many redirects", url=url)
+    finally:
+        if owns_session:
+            sess.close()
