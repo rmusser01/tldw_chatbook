@@ -3499,8 +3499,12 @@ def load_cli_config_and_ensure_existence(
     ):
         return _CONFIG_CACHE
 
+    _CONFIG_CACHE = None
+    _CONFIG_CACHE_SOURCE = None
+
     # Start with the programmatic defaults defined in CONFIG_TOML_CONTENT
     loaded_config = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
+    bootstrap_succeeded = False
     application_directory = _application_owned_config_directory(config_path)
     logger.info(f"Attempting to load CLI config from: {config_path}")
     try:
@@ -3510,6 +3514,7 @@ def load_cli_config_and_ensure_existence(
         loaded_config = deep_merge_dicts(loaded_config, user_config_from_file)
         logger.info(f"Successfully loaded and merged CLI config from {config_path}")
         loaded_config = decrypt_config_section(loaded_config)
+        bootstrap_succeeded = True
     except FileNotFoundError:
         logger.info(
             f"CLI Config file not found at {config_path}. Creating with default values from CONFIG_TOML_CONTENT."
@@ -3522,6 +3527,7 @@ def load_cli_config_and_ensure_existence(
         _report_config_path_posture(created)
         logger.info(f"Created default CLI config file at {config_path}")
         loaded_config["_first_run"] = True
+        bootstrap_succeeded = True
     except PrivatePathError as exc:
         if (
             application_directory is not None
@@ -3538,9 +3544,8 @@ def load_cli_config_and_ensure_existence(
             _report_config_path_posture(created)
             logger.info(f"Created default CLI config file at {config_path}")
             loaded_config["_first_run"] = True
+            bootstrap_succeeded = True
         else:
-            _CONFIG_CACHE = None
-            _CONFIG_CACHE_SOURCE = None
             raise
     except tomllib.TOMLDecodeError as e:
         logger.opt(exception=True).error(
@@ -3551,8 +3556,9 @@ def load_cli_config_and_ensure_existence(
             f"An unexpected error occurred while loading CLI config {config_path}: {e}. Using internal defaults + any previous successful load."
         )
 
-    _CONFIG_CACHE = loaded_config
-    _CONFIG_CACHE_SOURCE = config_path
+    if bootstrap_succeeded:
+        _CONFIG_CACHE = loaded_config
+        _CONFIG_CACHE_SOURCE = config_path
     # Log the keys of the configuration being returned to verify its structure
     logger.debug(
         f"load_cli_config_and_ensure_existence returning config with top-level keys: {list(loaded_config.keys())}"
@@ -3566,7 +3572,7 @@ def load_cli_config_and_ensure_existence(
             "  'api_settings' key NOT FOUND in the loaded configuration for load_cli_config_and_ensure_existence."
         )
 
-    return _CONFIG_CACHE
+    return loaded_config
 
 
 def _is_sensitive_setting_key(key: Any) -> bool:

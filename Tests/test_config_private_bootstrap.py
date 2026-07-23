@@ -114,6 +114,48 @@ def test_config_loader_does_not_create_custom_config_parent(
     assert not selected.parent.exists()
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX namespace contract")
+def test_failed_private_creation_clears_existing_config_cache(
+    tmp_path,
+    monkeypatch,
+):
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o1777)
+    selected = shared / "config.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(selected))
+    config_module._CONFIG_CACHE = {"stale": True}
+    config_module._CONFIG_CACHE_SOURCE = selected.absolute()
+
+    with pytest.raises(PrivatePathError):
+        config_module.load_cli_config_and_ensure_existence(force_reload=True)
+
+    assert config_module._CONFIG_CACHE is None
+    assert config_module._CONFIG_CACHE_SOURCE is None
+
+
+def test_malformed_config_defaults_are_not_cached_and_repaired_file_is_reloaded(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "config.toml"
+    target.write_text("[chat_defaults\n", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    _clear_config_cache()
+
+    loaded = config_module.load_cli_config_and_ensure_existence(force_reload=True)
+
+    assert loaded["chat_defaults"]["temperature"] == 0.6
+    assert config_module._CONFIG_CACHE is None
+    assert config_module._CONFIG_CACHE_SOURCE is None
+
+    target.write_text("[chat_defaults]\ntemperature = 0.17\n", encoding="utf-8")
+
+    repaired = config_module.load_cli_config_and_ensure_existence()
+
+    assert repaired["chat_defaults"]["temperature"] == 0.17
+
+
 def test_effective_path_preserves_symlink_spelling(tmp_path, monkeypatch):
     real = tmp_path / "real"
     real.mkdir()
