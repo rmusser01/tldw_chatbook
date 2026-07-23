@@ -800,6 +800,16 @@ class ProviderEndpointURLValidator(Validator):
     """
 
     def validate(self, value: str) -> ValidationResult:
+        """Validate a provider endpoint URL for the field's blur check.
+
+        Args:
+            value: The endpoint text currently in the field.
+
+        Returns:
+            ``success()`` for an empty value (endpoint optional) or a
+            well-formed http/https URL; otherwise ``failure()`` with a
+            corrective message.
+        """
         text = str(value or "").strip()
         if not text or validate_url(text):
             return self.success()

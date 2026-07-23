@@ -197,7 +197,7 @@ def test_findings_avoid_ready_claim_when_blocked_on_missing_model():
     """TASK-366: a config-ready provider with no default model must not read
     'is ready' next to 'status=blocked' — the detail leads with one verdict
     consistent with the final status line, and still explains the block."""
-    app_config = {"api_settings": {"openai": {"api_key": "sk-test-fake"}}}
+    app_config = {"api_settings": {"openai": {"api_key": "placeholder-not-a-real-key"}}}
     screen = _bare_settings_screen(app_config)
     readiness = get_provider_readiness("OpenAI", app_config, environ={})
     assert readiness.ready is True  # config-level readiness is fine...
@@ -215,7 +215,7 @@ def test_findings_avoid_ready_claim_when_blocked_on_missing_model():
 
 def test_findings_keep_ready_verdict_when_passing():
     """TASK-366 guard: a genuine pass must still read 'ready' / status=ready."""
-    app_config = {"api_settings": {"openai": {"api_key": "sk-test-fake"}}}
+    app_config = {"api_settings": {"openai": {"api_key": "placeholder-not-a-real-key"}}}
     screen = _bare_settings_screen(app_config)
     readiness = get_provider_readiness("OpenAI", app_config, environ={})
 
