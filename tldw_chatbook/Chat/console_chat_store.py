@@ -2021,13 +2021,31 @@ class ConsoleChatStore:
         walks only the LAST root, collapsing the transcript to its final message
         and rendering a phantom ``n/n`` sibling counter on the survivor.
 
-        A GENUINE Console branch is ALWAYS a set of siblings under a shared
-        *non-None* parent (regenerate / create-sibling parent the new node at
-        the anchor's parent), NEVER two separate root threads -- a conversation's
-        real root is its single first message. Therefore more than one
-        root-level thread unambiguously means legacy flat data (fully flat, or a
-        flat prefix followed by post-feature branched messages), and it is
-        always correct to chain the roots into a single linear spine.
+        Historically a GENUINE Console branch was ALWAYS a set of siblings
+        under a shared *non-None* parent (regenerate / create-sibling parent
+        the new node at the anchor's parent), NEVER two separate root
+        threads -- a conversation's real root is its single first message.
+        So more than one root-level thread meant legacy flat data (fully
+        flat, or a flat prefix followed by post-feature branched messages),
+        and it was always correct to chain the roots into a single linear
+        spine.
+
+        Phase B's ``edit_and_resend_message`` broke that invariant on
+        purpose: editing-and-resending the conversation's very FIRST user
+        message forks a NEW root-level USER sibling (``create_sibling``
+        parents the fork at the anchor's own parent, which is ``None`` for a
+        root message) -- a genuine branch that legitimately has more than one
+        root thread. Legacy flat data, by construction, ALWAYS mixes roles at
+        the root (every message, both USER and ASSISTANT, was written with
+        ``parent_message_id=NULL``), whereas a genuine root-level fork's
+        siblings are ALWAYS all USER (an ASSISTANT node's native parent is
+        never ``None`` -- it always replies to a user turn, even the very
+        first one). So role-homogeneity is the distinguishing signal: when
+        every root shares one role, this is a genuine Phase-B branch and must
+        be left alone (chaining it would silently splice the newer branch
+        onto the older one as a fake parent-child link, corrupting the tree
+        so a swipe/resume shows the wrong content); only a role-MIXED root
+        set is unambiguously legacy data.
 
         Roots are chained in their existing insertion order, which is the DB's
         timestamp-ASC order (``get_root_messages_for_conversation`` orders roots
@@ -2050,6 +2068,14 @@ class ConsoleChatStore:
             return
         roots = children.get(None, [])
         if len(roots) <= 1:
+            return
+        nodes = self._nodes_by_session.get(session_id, {})
+        root_roles = {nodes[root_id].role for root_id in roots if root_id in nodes}
+        if len(root_roles) <= 1:
+            # Every root-level node shares one role: a genuine Phase-B
+            # root-level branch (all USER), not legacy flat data (which
+            # always mixes USER and ASSISTANT rows at the root). Leave each
+            # root independently navigable via `siblings_at`/`set_active_leaf`.
             return
         # Keep only the first root under None; chain the rest onto their
         # predecessor, preserving each root's own existing subtree.
