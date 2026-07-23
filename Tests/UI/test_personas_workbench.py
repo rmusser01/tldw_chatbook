@@ -4307,7 +4307,19 @@ class TestCharactersEmptyStateGuidance:
     ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
-            screen = await self._select_first_character(pilot)
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            # Guidance is visible before any selection (pins the transition so
+            # the "hidden after" assertion below is non-vacuous).
+            assert (
+                screen.query_one("#personas-characters-empty", Static).display
+                is True
+            )
+            # ... and disappears the moment a character is selected (AC#2).
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
             assert screen.state.selected_entity_id
             assert (
                 screen.query_one("#personas-characters-empty", Static).display
