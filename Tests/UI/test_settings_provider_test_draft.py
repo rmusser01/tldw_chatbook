@@ -293,6 +293,42 @@ def test_provider_endpoint_url_validator_flags_malformed_only():
     assert not validator.validate("ttp://127.0.0.1:9099/v1").is_valid
 
 
+def test_model_to_activate_after_save_prefers_first_saved_when_field_empty():
+    """TASK-369: after saving discovered models, an empty Model field is filled
+    with the first saved model (recognition over recall); a field the user
+    already set is left untouched."""
+    activate = SettingsScreen._model_to_activate_after_save
+    assert activate("", ("gemma-4.gguf", "mistral-7b.gguf")) == "gemma-4.gguf"
+    assert activate("   ", ("gemma-4.gguf",)) == "gemma-4.gguf"
+    assert activate("already-chosen", ("gemma-4.gguf",)) == "already-chosen"
+    assert activate("", ()) == ""
+    assert activate("", ("", "  ", "real.gguf")) == "real.gguf"
+
+
+@pytest.mark.asyncio
+async def test_model_field_suggester_completes_discovered_ids():
+    """TASK-369: the Model field offers discovered model ids for typeahead, so a
+    prefix completes to the full gguf name."""
+    from types import SimpleNamespace
+
+    screen = _bare_settings_screen({})
+    screen._model_discovery_models = (
+        SimpleNamespace(model_id="gemma-4-26B-A4B-it-ultra.Q4_K_M.gguf"),
+        SimpleNamespace(model_id="mistral-7b-instruct.Q5_K_M.gguf"),
+    )
+
+    suggester = screen._model_field_suggester()
+    assert suggester is not None
+    assert (
+        await suggester.get_suggestion("gemma")
+        == "gemma-4-26B-A4B-it-ultra.Q4_K_M.gguf"
+    )
+
+    # No discovered models -> nothing to suggest.
+    screen._model_discovery_models = ()
+    assert screen._model_field_suggester() is None
+
+
 # --- Pilot tests: the clickable Test button path (AC#2/AC#3) + widget wiring ---
 #
 # These drive the real SettingsScreen through the harness

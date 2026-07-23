@@ -19,6 +19,7 @@ from textual.events import DescendantFocus, Key
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.strip import Strip
+from textual.suggester import SuggestFromList
 from textual.validation import ValidationResult, Validator
 from textual.widgets import (
     Button,
@@ -5470,6 +5471,7 @@ class SettingsScreen(BaseAppScreen):
                 f"Discovered {len(models)} model(s) from {provider_list_key}."
             )
             self._refresh_model_discovery_widgets()
+            self._refresh_model_field_suggester()  # TASK-369: enable typeahead
             self.app.notify(
                 "Provider model discovery finished.", severity="information"
             )
@@ -5484,6 +5486,66 @@ class SettingsScreen(BaseAppScreen):
     @work(exclusive=True, group="settings-model-discovery")
     async def _save_selected_discovered_provider_models_worker(self) -> None:
         await self._save_selected_discovered_provider_models()
+
+    def _model_field_suggester(self) -> SuggestFromList | None:
+        """TASK-369: typeahead of discovered model ids for the Model field.
+
+        Recognition over recall — while a discovery result is on screen, typing a
+        prefix (e.g. ``gemma``) completes to the full gguf id instead of forcing
+        the user to recall a 56-character filename. Returns ``None`` when there
+        is nothing to suggest.
+        """
+        ids = sorted(
+            {
+                str(getattr(model, "model_id", "") or "").strip()
+                for model in self._model_discovery_models
+                if str(getattr(model, "model_id", "") or "").strip()
+            }
+        )
+        return SuggestFromList(ids, case_sensitive=False) if ids else None
+
+    def _refresh_model_field_suggester(self) -> None:
+        """Point the Model field's suggester at the current discovered models."""
+        try:
+            self.query_one("#settings-model-value", Input).suggester = (
+                self._model_field_suggester()
+            )
+        except (QueryError, AttributeError):
+            pass
+
+    @staticmethod
+    def _model_to_activate_after_save(
+        current_model: object, saved_model_ids: tuple[str, ...]
+    ) -> str:
+        """TASK-369: the Model value to set after saving discovered models.
+
+        An empty field is filled with the first saved model (so readiness can
+        pass without retyping a long gguf name); a field the user already set is
+        left untouched.
+        """
+        current = str(current_model or "").strip()
+        if current:
+            return current
+        for model_id in saved_model_ids:
+            candidate = str(model_id or "").strip()
+            if candidate:
+                return candidate
+        return ""
+
+    def _activate_saved_model_if_field_empty(
+        self, saved_model_ids: tuple[str, ...]
+    ) -> None:
+        """Populate the empty Model field with a just-saved model (TASK-369)."""
+        try:
+            model_input = self.query_one("#settings-model-value", Input)
+        except QueryError:
+            return
+        next_value = self._model_to_activate_after_save(
+            model_input.value, saved_model_ids
+        )
+        if next_value and next_value != model_input.value:
+            # Setting .value fires Input.Changed, which stages the model draft.
+            model_input.value = next_value
 
     async def _save_selected_discovered_provider_models(self) -> None:
         provider = self._provider_widget_value()
@@ -5541,10 +5603,16 @@ class SettingsScreen(BaseAppScreen):
         if status == "saved":
             provider_list_key = getattr(result, "provider_list_key", None)
             self._append_saved_discovered_models(provider_list_key, saved_model_ids)
+            # TASK-369: recognition over recall — offer the saved model for
+            # activation instead of leaving an empty Model field the user must
+            # retype from memory of a name the cleared discovery list no longer
+            # shows.
+            self._activate_saved_model_if_field_empty(saved_model_ids)
             self._model_discovery_status = (
                 message or f"Saved {len(saved_model_ids)} discovered model(s)."
             )
             self._refresh_model_discovery_widgets()
+            self._refresh_model_field_suggester()
             self.app.notify("Discovered models saved.", severity="information")
             return
 
@@ -6509,6 +6577,7 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-model-value",
                     classes="settings-compact-input",
                     placeholder="Model name",
+                    suggester=self._model_field_suggester(),
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Endpoint", classes="settings-input-label")
