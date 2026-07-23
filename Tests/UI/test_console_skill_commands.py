@@ -33,7 +33,6 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_skill_resolver import SKILLS_EMPTY_LIST_ROW
 from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_SKILL_NEEDS_REVIEW_HINT_TEMPLATE,
-    CONSOLE_SKILL_RUN_MARKER_TEMPLATE,
 )
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
@@ -218,16 +217,49 @@ async def test_skills_command_named_run_form_shows_dollar_hint_for_blocked_name(
 
 
 @pytest.mark.asyncio
+async def test_skills_command_exact_trusted_name_shows_hint_and_never_runs():
+    """The highest-value hard-removal regression: `/skills code-review`
+    where "code-review" EXACTLY matches a real, trusted skill -- the
+    previously-working run form. It must show the same static `$name` hint,
+    execute nothing, and submit nothing."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    skills = FakeSkillsScopeService(
+        available_skills=[_skill("code-review", "Reviews a diff.")]
+    )
+    app.skills_scope_service = skills
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("/skills code-review fix it")
+        submit_spy = AsyncMock()
+        console._submit_console_native_draft = submit_spy
+
+        console.query_one("#console-send-message", Button).press()
+        await pilot.pause(0.2)
+
+        expected = "Run skills by typing $code-review — /skills only lists them."
+        assert expected in _console_message_contents(console, ConsoleMessageRole.SYSTEM)
+        submit_spy.assert_not_called()
+        assert skills.executions == []
+        # The draft is preserved for correction into the `$` form.
+        assert composer.draft_text() == "/skills code-review fix it"
+
+
+@pytest.mark.asyncio
 async def test_leading_dollar_skill_mention_executes_through_normal_send():
     """Hard removal (Task 4): typing `$code-review fix it` directly is no
     longer intercepted by any composer-level command dispatch -- it is a
     plain user send. The skill still actually runs because the CONTROLLER
     (Tasks 2/3) resolves and splices the leading `$name` mention at
     provider-payload build time; the stored transcript keeps the raw
-    `$`-prefixed text untouched (ephemeral substitution only). There is no
-    composer-staged TOOL "driving this turn" marker for this path anymore
-    -- that mechanism only ever fired for the now-removed bare `/name`
-    dispatch-time resolution."""
+    `$`-prefixed text untouched (ephemeral substitution only). The
+    composer-staged TOOL "driving this turn" marker machinery was deleted
+    with the bare `/name` dispatch it served (fix-wave branch (a)), so no
+    TOOL row of any kind appears for a `$name` send."""
     app = _build_test_app()
     _configure_native_ready_console(app)
     skills = FakeSkillsScopeService(
@@ -264,12 +296,10 @@ async def test_leading_dollar_skill_mention_executes_through_normal_send():
             if message.role is ConsoleMessageRole.USER
         ]
         assert "$code-review fix it" in user_rows
-        # No TOOL "driving this turn" marker -- that composer-staged
-        # mechanism no longer fires for a directly-typed `$name` send.
-        marker_text = CONSOLE_SKILL_RUN_MARKER_TEMPLATE.format(name="code-review")
-        assert marker_text not in _console_message_contents(
-            console, ConsoleMessageRole.TOOL
-        )
+        # No TOOL rows at all -- the composer-staged "driving this turn"
+        # marker machinery is deleted (the visible `$name` user row already
+        # documents which skill drove the turn).
+        assert _console_message_contents(console, ConsoleMessageRole.TOOL) == []
 
 
 @pytest.mark.asyncio

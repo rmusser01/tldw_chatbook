@@ -259,9 +259,8 @@ async def test_submit_refusal_never_invokes_accepted_hook():
     `submit_draft` called `_notify_submission_accepted()` right after the
     USER row was appended -- BEFORE `_apply_skill_substitution` even ran --
     so a refused/untrusted skill still fired the hook. In the real
-    ChatScreen that hook is the sole consume point for a staged
-    "driving this turn" TOOL marker, so a refused submit still appended a
-    marker claiming the skill ran, right before the refuse row."""
+    ChatScreen that hook clears the composer, so firing it on a refusal
+    would eat the refused draft the user needs to correct in place."""
     skills = _Skills(raise_trust=True)
     store = ConsoleChatStore()
     gateway = _RecordingGateway()

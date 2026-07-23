@@ -497,17 +497,13 @@ class ConsoleChatController:
         # The accepted-hook fires only once the turn is confirmed to
         # actually proceed (Qodo finding 3, PR #636 bot review): it used to
         # fire right after the USER row was appended, BEFORE this skill
-        # substitution/trust check ran. In the real ChatScreen, this hook
-        # is the sole consume point for a staged resolved-skill "driving
-        # this turn" TOOL marker (see `_on_console_submission_accepted`'s
-        # own docstring) -- firing it before a substitution refusal meant
-        # a refused/untrusted skill submit still consumed and appended
-        # that marker, claiming the skill drove the turn right before the
-        # refuse row that says it never ran. A substitution refusal is a
-        # `_block()` outcome exactly like any other (provider not ready,
-        # policy block, validation failure) and those already never reach
-        # this hook -- this reorder just extends that same rule to cover
-        # it too.
+        # substitution/trust check ran. In the real ChatScreen this hook
+        # clears the composer, so firing it before a substitution refusal
+        # ate the refused draft the user needs to correct. A substitution
+        # refusal is a `_block()` outcome exactly like any other (provider
+        # not ready, policy block, validation failure) and those already
+        # never reach this hook -- this ordering just extends that same
+        # rule to cover it too.
         self._notify_submission_accepted()
         # TASK-485: the turn is confirmed to proceed — flush the deferred USER
         # echo to durable storage now (creating the conversation), BEFORE the

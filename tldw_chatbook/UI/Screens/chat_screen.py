@@ -380,15 +380,6 @@ CONSOLE_SYSTEM_PROMPT_SAVE_STATUS_COPY = {
     "error": "Couldn't save this prompt. Try again.",
 }
 CONSOLE_SYSTEM_PROMPT_NO_SYSTEM_PART_TEMPLATE = 'Prompt "{name}" has no system part.'
-# Task 9 (Skills Console dispatch): a resolved-single skill run's raw command
-# is submitted as the actual user turn (Task 10 renders the substitution at
-# payload build); this TOOL-role marker is appended once that submit is
-# ACCEPTED (the USER message has actually landed in the store -- see
-# `_on_console_submission_accepted`, never right after `run_worker` merely
-# *schedules* the submit, which raced the scheduled coroutine and could
-# append this marker before the user turn it is meant to follow) so the
-# transcript records which skill is "driving" the turn.
-CONSOLE_SKILL_RUN_MARKER_TEMPLATE = "skill {name} → driving this turn"
 # "Absent" bucket of the untrusted-refuse copy (Task 7's SKILL_UNTRUSTED_REFUSE):
 # a typed skill name that matches nothing at all -- not a trusted candidate,
 # not even a needs-review one.
@@ -1926,24 +1917,7 @@ class ChatScreen(BaseAppScreen):
         self._console_command_registry: ConsoleCommandRegistry = (
             default_console_registry()
         )
-        # Task 9: cached trusted-skill candidate snapshot (refreshed on
-        # mount/resume by `_refresh_console_skill_candidates`). Hard removal
-        # (Task 4 of the `$`-mention migration): no bare `/skill-name`
-        # fallback resolver is registered here anymore -- skill invocation
-        # is exclusively the controller-side `$name` mention now. Any
-        # dispatch-time re-resolution against this snapshot's population
-        # always re-fetches a FRESH `get_context` for the authoritative
-        # trust decision, since this snapshot may be stale.
-        self._console_skill_candidates: tuple[SkillCommandCandidate, ...] = ()
         self._console_unknown_send_armed: str | None = None
-        # Task 9 fix-wave (reviewer repro): the skill name to append as a
-        # TOOL "driving this turn" marker once the submit it was staged for
-        # is actually ACCEPTED (consumed by `_on_console_submission_accepted`,
-        # fired synchronously right after the USER message lands and before
-        # the ASSISTANT placeholder -- see `_run_resolved_console_skill`).
-        # Cleared on consume and on any dispatch failure so a refused/
-        # blocked run never leaks its marker onto a later, unrelated send.
-        self._console_pending_skill_marker_name: str | None = None
         self._console_image_view_state: ConsoleImageViewState | None = None
         self._console_image_cache: ConsoleImageRenderCache | None = None
         self._console_image_default_mode: Literal["pixels", "graphics"] | None = None
@@ -9346,7 +9320,6 @@ class ChatScreen(BaseAppScreen):
         self.call_after_refresh(self._sync_native_console_chat_ui)
         self.call_after_refresh(self._restore_console_workbench_focus)
         self.set_timer(0.2, self._restore_console_workbench_focus)
-        self.run_worker(self._refresh_console_skill_candidates(), exclusive=False)
 
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
@@ -10736,19 +10709,6 @@ class ChatScreen(BaseAppScreen):
         # conversation (title, updated_at) -- invalidate so the browser
         # reflects it on the very next sync instead of the TTL window.
         self._invalidate_console_persisted_rows_cache()
-        if not result.accepted:
-            # A resolved skill run (`_run_resolved_console_skill`) stages its
-            # TOOL marker name BEFORE this worker even runs. `submit_draft`
-            # can still refuse/block the submit for reasons only known once
-            # it actually executes (provider not ready, policy block, an
-            # active-run race) -- entirely separate from the composer-level
-            # gate `_dispatch_console_draft_send` already passed to get here.
-            # None of those paths ever reach the accepted-hook
-            # (`_on_console_submission_accepted`) that would otherwise
-            # consume and clear the staged name, so it must be cleared here
-            # too -- otherwise it would silently leak onto whatever the
-            # NEXT, unrelated accepted send turns out to be.
-            self._console_pending_skill_marker_name = None
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
@@ -10786,26 +10746,11 @@ class ChatScreen(BaseAppScreen):
         Keeping the sent text in the composer for the whole run reads as
         "not sent" during long local-model generations; blocked submits never
         reach this hook, so their draft is preserved for correction.
-
-        Also the sole consume point for a staged resolved-skill "driving this
-        turn" TOOL marker (Task 9 fix-wave): ``ConsoleChatController.
-        submit_draft`` invokes this hook synchronously after the USER
-        message is appended and after its own skill-substitution/trust
-        re-check settles, but before the ASSISTANT placeholder, so
-        appending the marker here -- rather than back at the dispatch call
-        site -- guarantees store order ``[USER, TOOL, ASSISTANT]`` instead of
-        racing the ``run_worker``-scheduled submit.
-
-        Qodo finding 3 (PR #636 bot review): this hook must NEVER fire for a
-        submit that ``submit_draft`` ultimately blocks -- including a skill
-        substitution refusal (an edited/untrusted skill re-checked at
-        build time). ``submit_draft`` used to call this hook right after the
-        USER append, before that trust re-check ran, so a refused skill
-        submit still consumed the staged marker and appended it right before
-        the refuse row -- a marker claiming the skill drove the turn even
-        though it never ran. The controller now only calls this hook once
-        the substitution check has confirmed the turn actually proceeds, so
-        a refusal (like any other blocked submit) never reaches it.
+        ``ConsoleChatController.submit_draft`` invokes this hook only once
+        its own skill-substitution/trust re-check has confirmed the turn
+        actually proceeds (Qodo finding 3, PR #636 bot review) -- a
+        substitution refusal, like any other blocked submit, never reaches
+        it, so a refused draft stays in the composer too.
         """
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
@@ -10818,10 +10763,6 @@ class ChatScreen(BaseAppScreen):
             self._console_inflight_send_stash = None
         elif composer is not None:
             composer.clear_draft()
-        pending_skill_name = self._console_pending_skill_marker_name
-        if pending_skill_name is not None:
-            self._console_pending_skill_marker_name = None
-            self._append_console_skill_run_marker(pending_skill_name)
         # task-351(a): echo the just-appended USER message immediately rather
         # than waiting up to a full 0.2s transcript-poll cycle (and a heavy
         # first poll after it). The composer clears here at acceptance, so
@@ -10995,8 +10936,8 @@ class ChatScreen(BaseAppScreen):
         self, draft: str, stash: "ConsoleDraftStash | None" = None
     ) -> bool:
         """Run the send-blocked/readiness gate, then queue ``draft`` as the
-        user turn (the normal-text-send tail, shared with Task 9's resolved
-        `/skill-name` run path so both go through the exact same gating).
+        user turn (the normal-text-send tail, shared with the skill-picker
+        `$name` submit path so both go through the exact same gating).
 
         ``stash`` is the keypress-captured draft of a keyboard send
         (TASK-340): restored on every blocked path here, handed to the
@@ -11005,10 +10946,9 @@ class ChatScreen(BaseAppScreen):
         Returns:
             ``True`` once the submit has actually been queued via
             ``run_worker`` (a caller-visible "this is really going out"
-            signal -- Task 9's skill-run path only appends its "driving this
-            turn" marker when this is ``True``); ``False`` when blocked or
-            when a run is already in progress, in which case nothing is
-            queued and an explanatory row/toast was already shown.
+            signal); ``False`` when blocked or when a run is already in
+            progress, in which case nothing is queued and an explanatory
+            row/toast was already shown.
         """
         if blocked_reason := self._console_send_blocked_reason():
             self._restore_console_send_stash(stash)
@@ -11635,8 +11575,10 @@ class ChatScreen(BaseAppScreen):
         )
 
     # ------------------------------------------------------------------
-    # Task 9 (Skills spec, Phase 2): `/skills` registered command + bare
-    # `/skill-name` fallback dispatch (list / run / refuse).
+    # Task 9 (Skills spec, Phase 2), reshaped by the `$`-mention migration
+    # (Task 4 hard removal): `/skills` registered command (bare list /
+    # `$name` run-form hint) + the KIND_UNKNOWN needs-review hint.
+    # Invocation itself is the controller-side `$name` mention.
     # ------------------------------------------------------------------
 
     # Bounded skill-search page size for the picker's `skill_search`
@@ -11646,9 +11588,8 @@ class ChatScreen(BaseAppScreen):
     async def _fetch_console_skill_context(self) -> Mapping[str, Any]:
         """Fetch a FRESH ``skills_scope_service.get_context`` payload.
 
-        Used by every run/list/search path that needs an authoritative (not
-        cached) view -- the cached ``_console_skill_candidates`` snapshot is
-        reserved for the fallback resolver's word-claiming decision alone.
+        Used by every list/search/hint path -- always an authoritative
+        fetch, never a cached snapshot.
         Returns ``{}`` (never raises) when the service is unavailable or the
         call fails, so callers can treat "no skills" and "service down" the
         same way: an empty candidate/blocked population.
@@ -11706,18 +11647,6 @@ class ChatScreen(BaseAppScreen):
             item
             for item in (blocked or [])
             if isinstance(item, Mapping) and item.get("name")
-        )
-
-    async def _refresh_console_skill_candidates(self) -> None:
-        """Refresh the cached trusted-candidate snapshot for the fallback resolver.
-
-        Called on Console mount/resume; the fallback resolver itself always
-        reads through ``self._console_skill_candidates`` via a closure, so
-        updating this attribute is all a refresh needs to do.
-        """
-        context = await self._fetch_console_skill_context()
-        self._console_skill_candidates = (
-            self._console_skill_trusted_candidates_from_context(context)
         )
 
     async def _console_skill_search(self, query: str) -> list[Mapping[str, object]]:
@@ -11881,54 +11810,17 @@ class ChatScreen(BaseAppScreen):
         """Submit a resolved skill's raw `$name [args]` command as the user turn.
 
         Hard removal (Task 4 of the `$`-mention migration): this composes
-        the `$`-sigil invocation form now, not `/name [args]`.
-
-        Task 10 (the substitution rule) renders this at payload build time --
-        this method only sends the literal, unmodified command text through
-        the exact same send-blocked/readiness gate a normal Enter-to-send
-        goes through.
-
-        Fix-wave note (reviewer repro): the "driving this turn" TOOL marker
-        is NOT appended here anymore. ``_dispatch_console_draft_send``
-        returning ``True`` only means ``run_worker`` *scheduled* the actual
-        submit -- the USER message it appends has not necessarily landed yet
-        by the time this coroutine resumes, so appending the marker
-        immediately after could (and, per the repro, reliably did) land it
-        BEFORE the user turn it is meant to follow. Instead, ``name`` is
-        staged here and consumed by ``_on_console_submission_accepted``,
-        which fires synchronously from inside the real submit -- right after
-        the USER message is appended and before the ASSISTANT placeholder --
-        guaranteeing store order ``[USER, TOOL, ASSISTANT]``. A dispatch that
-        never even gets queued (blocked send, run already in progress) must
-        not leave a stale marker staged for some later, unrelated send.
+        the `$`-sigil invocation form now, not `/name [args]`. The
+        substitution rule renders it at payload build time -- this method
+        only sends the literal, unmodified command text through the exact
+        same send-blocked/readiness gate a normal Enter-to-send goes
+        through. The old composer-staged TOOL "driving this turn" marker
+        was deleted along with the bare `/name` dispatch it annotated (Task
+        4 fix wave): the visible `$name` USER row is itself the transcript
+        record of which skill drove the turn.
         """
         raw_command = f"${name} {args}" if args else f"${name}"
-        self._console_pending_skill_marker_name = name
-        queued = await self._dispatch_console_draft_send(raw_command)
-        if not queued:
-            self._console_pending_skill_marker_name = None
-
-    def _append_console_skill_run_marker(self, name: str) -> None:
-        """Append the TOOL-role "driving this turn" marker for a resolved skill run.
-
-        Mirrors ``ConsoleAgentBridge._append_marker``: a raw (unescaped)
-        content string, appended without persisting -- both transcript
-        renderers (``console_transcript.py`` and the legacy fallback) render
-        TOOL rows with markup off, so escaping here would just leave stray
-        backslashes in what the user sees.
-        """
-        store = self._ensure_console_chat_store()
-        session_id = store.active_session_id
-        if session_id is None:
-            return
-        try:
-            store.append_message(
-                session_id,
-                role=ConsoleMessageRole.TOOL,
-                content=CONSOLE_SKILL_RUN_MARKER_TEMPLATE.format(name=name),
-            )
-        except KeyError:
-            pass  # session vanished mid-dispatch; nothing left to annotate
+        await self._dispatch_console_draft_send(raw_command)
 
     async def _append_skill_refuse_row(self, name: str, reason: str) -> None:
         """Append the `SKILL_UNTRUSTED_REFUSE` transcript row for a run attempt.
@@ -14651,7 +14543,6 @@ class ChatScreen(BaseAppScreen):
         # regardless of which lifecycle hook scheduled it.
         self.set_timer(0.15, self._consume_pending_console_prompt_insert)
         self.call_after_refresh(self._restore_console_workbench_focus)
-        self.run_worker(self._refresh_console_skill_candidates(), exclusive=False)
         # Note: BaseAppScreen doesn't have on_screen_resume, so no super() call
 
     def set_task_resume_state(self, task_state: TaskResumeState) -> None:
