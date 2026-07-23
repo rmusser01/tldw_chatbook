@@ -15,9 +15,10 @@ from typing import Optional, Union
 
 from loguru import logger
 
-from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
 from .config import RAGConfig
 from ..config_profiles import get_profile_manager
+from ..ingestion_indexing import reset_shared_rag_service
 
 DEFAULT_PROFILE = "hybrid_basic"
 
@@ -96,3 +97,25 @@ def resolve_active_rag_config(override_embedding_model: Optional[str] = None,
     profile = _manager().get_profile(active) or _manager().get_profile(DEFAULT_PROFILE)
     base = copy.deepcopy(profile.rag_config) if profile else RAGConfig()
     return _apply_env_overrides(base, override_embedding_model, override_persist_dir)
+
+
+def set_active_profile(profile_id: str) -> None:
+    """Point [rag.service].profile at `profile_id` and drop the shared service.
+
+    The next resolve_active_rag_config()/get_shared_rag_service() rebuilds on the
+    new profile (and, via SP1, its fingerprinted collection). An in-flight worker
+    keeps its own service reference — the reset never yanks a running op; it only
+    clears the singleton so the NEXT caller rebuilds. The (potentially expensive)
+    embedding-model reload is the caller's concern to run off-thread (SP3 UI).
+
+    NOTE: save_setting_to_cli_config(section, key, value) nests via the
+    `section` argument (it handles dotted sections like "api_settings.openai"),
+    so the pointer write below is section="rag.service", key="profile" — this
+    lands at TOML path [rag.service].profile, exactly what the read side
+    (_active_profile_id() -> get_cli_setting("rag", "service", {}).get("profile"))
+    resolves. section="rag", key="service.profile" would land at the WRONG path
+    ([rag]["service.profile"], a literal dotted key) and silently break the
+    active-profile pointer.
+    """
+    save_setting_to_cli_config("rag.service", "profile", profile_id)
+    reset_shared_rag_service()
