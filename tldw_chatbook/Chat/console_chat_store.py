@@ -1963,6 +1963,12 @@ class ConsoleChatStore:
             self._register_tree_node(
                 session_id, restored, parent_native_id=native_parent
             )
+        # Legacy flat-data repair (C1): before branching, every message was
+        # persisted with parent_message_id=NULL, so an existing conversation
+        # loads as N separate roots (all siblings under None) with no children.
+        # Chain them into one linear spine so the active-leaf walk traverses the
+        # whole conversation instead of truncating to the last root.
+        self._chain_legacy_flat_roots(session_id)
         # Resolve the active leaf from the stored pointer; fall back to the
         # most-recent leaf when it is missing/unknown/dangling, and repair the
         # durable pointer so the next resume is exact.
@@ -1978,6 +1984,56 @@ class ConsoleChatStore:
             # Map the fallback leaf back to its persisted id and write it
             # through (``_persist_active_leaf`` no-ops without a durable seam).
             self._persist_active_leaf(session_id, leaf_native)
+
+    def _chain_legacy_flat_roots(self, session_id: str) -> None:
+        """Chain multiple root-level threads into one linear spine (C1 repair).
+
+        Pre-feature Console persistence wrote EVERY message with
+        ``parent_message_id=NULL`` (the base ``_persist_new_message`` hardcoded
+        ``None``), so an existing conversation ``[U1, A1, U2, A2]`` is stored as
+        four separate roots -- all siblings under ``None``, none with children.
+        On resume the active-leaf fallback (``_most_recent_leaf_native``) then
+        walks only the LAST root, collapsing the transcript to its final message
+        and rendering a phantom ``n/n`` sibling counter on the survivor.
+
+        A GENUINE Console branch is ALWAYS a set of siblings under a shared
+        *non-None* parent (regenerate / create-sibling parent the new node at
+        the anchor's parent), NEVER two separate root threads -- a conversation's
+        real root is its single first message. Therefore more than one
+        root-level thread unambiguously means legacy flat data (fully flat, or a
+        flat prefix followed by post-feature branched messages), and it is
+        always correct to chain the roots into a single linear spine.
+
+        Roots are chained in their existing insertion order, which is the DB's
+        timestamp-ASC order (``get_root_messages_for_conversation`` orders roots
+        by timestamp; ``ConsoleChatMessage`` carries no timestamp of its own, so
+        insertion order is the ordering signal -- exactly the accepted fallback
+        for equal/absent timestamps). Each root ``r_i`` (i >= 1) is re-parented
+        onto ``r_{i-1}`` and moved out of the ``None`` bucket into
+        ``r_{i-1}``'s ordered child list; any real subtree already hanging off a
+        root (e.g. a post-feature message whose real parent is a flat row) is
+        left intact. After chaining there is exactly one root (``r_0``) and the
+        active-leaf ancestry walk traverses the full spine plus any subtrees.
+
+        A single-root (genuine) tree is left untouched -- the chaining branch
+        never triggers. This is an IN-MEMORY reconstruction only; durable
+        ``parent_message_id`` rows are never rewritten (the active-leaf pointer
+        repair on resume is the durable fix).
+        """
+        children = self._children_by_parent.get(session_id)
+        if children is None:
+            return
+        roots = children.get(None, [])
+        if len(roots) <= 1:
+            return
+        # Keep only the first root under None; chain the rest onto their
+        # predecessor, preserving each root's own existing subtree.
+        children[None] = [roots[0]]
+        previous = roots[0]
+        for root in roots[1:]:
+            self._native_parent_by_message[root] = previous
+            children.setdefault(previous, []).append(root)
+            previous = root
 
     def _most_recent_leaf_native(self, session_id: str) -> str | None:
         """Return the deepest ``children[-1]`` leaf under the most-recent root.

@@ -69,6 +69,95 @@ def _persist_branched_conversation(db: CharactersRAGDB):
     return conversation_id, u1, a1, a1_prime
 
 
+def _persist_flat_legacy_conversation(db: CharactersRAGDB):
+    """Persist a legacy FLAT conversation: every message a NULL-parent root.
+
+    Mimics pre-branching persistence, where the base ``_persist_new_message``
+    hardcoded ``parent_message_id=None`` for every message. The four rows
+    therefore load on resume as four separate roots (all siblings under
+    ``None``), not one linear thread. Strictly increasing timestamps pin the
+    DB's ``ORDER BY timestamp ASC`` root order.
+    """
+    service = ChatConversationService(db)
+    conversation_id = service.create_conversation(
+        id="flat-conv-1",
+        title="Flat",
+        scope_type="global",
+        state="in-progress",
+    )
+    for i, (content, sender) in enumerate(
+        [("u1", "user"), ("a1", "assistant"), ("u2", "user"), ("a2", "assistant")]
+    ):
+        db.add_message(
+            {
+                "id": f"m-flat-{i}",
+                "conversation_id": conversation_id,
+                "sender": sender,
+                "role": sender,
+                "content": content,
+                "timestamp": f"2026-01-01T00:00:0{i}.000000+00:00",
+            }
+        )
+    return conversation_id
+
+
+def _persist_mixed_legacy_then_branched_conversation(db: CharactersRAGDB):
+    """Flat legacy prefix ``[u1,a1,u2,a2]`` (NULL parents) then a post-feature
+    continuation ``u3 -> a3`` genuinely parented onto ``a2``.
+
+    Reproduces an old conversation that gained new messages after branching
+    landed: the prefix is four roots, the continuation is a real subtree
+    hanging off the last flat row.
+    """
+    service = ChatConversationService(db)
+    conversation_id = service.create_conversation(
+        id="mixed-conv-1",
+        title="Mixed",
+        scope_type="global",
+        state="in-progress",
+    )
+    ids = []
+    for i, (content, sender) in enumerate(
+        [("u1", "user"), ("a1", "assistant"), ("u2", "user"), ("a2", "assistant")]
+    ):
+        ids.append(
+            db.add_message(
+                {
+                    "id": f"m-mixed-{i}",
+                    "conversation_id": conversation_id,
+                    "sender": sender,
+                    "role": sender,
+                    "content": content,
+                    "timestamp": f"2026-01-01T00:00:0{i}.000000+00:00",
+                }
+            )
+        )
+    a2_id = ids[-1]
+    u3 = db.add_message(
+        {
+            "id": "m-mixed-u3",
+            "conversation_id": conversation_id,
+            "parent_message_id": a2_id,
+            "sender": "user",
+            "role": "user",
+            "content": "u3",
+            "timestamp": "2026-01-01T00:00:05.000000+00:00",
+        }
+    )
+    db.add_message(
+        {
+            "id": "m-mixed-a3",
+            "conversation_id": conversation_id,
+            "parent_message_id": u3,
+            "sender": "assistant",
+            "role": "assistant",
+            "content": "a3",
+            "timestamp": "2026-01-01T00:00:06.000000+00:00",
+        }
+    )
+    return conversation_id
+
+
 def _resume_into_store(db: CharactersRAGDB, conversation_id: str):
     """Mirror the production resume plumbing end to end.
 
@@ -191,6 +280,45 @@ def test_resume_falls_back_to_recent_leaf_and_repairs_pointer_when_missing():
         view = [m.content for m in store.messages_for_session(session.id)]
         assert view == ["u1", "a1-prime"]
         assert db.get_conversation_active_leaf(conversation_id) == a1_prime
+    finally:
+        db.close_connection()
+
+
+def test_resume_chains_legacy_flat_roots_into_full_transcript():
+    """C1 regression: legacy flat data (every message a NULL-parent root, no
+    active-leaf pointer) resumes as the FULL transcript, not truncated to the
+    last row, and every message reports a single sibling (no phantom counter).
+
+    Before the fix the active-leaf fallback walked only the LAST root, so the
+    transcript collapsed to ``['a2']`` and each row rendered a bogus ``4/4``.
+    """
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        conversation_id = _persist_flat_legacy_conversation(db)
+        assert db.get_conversation_active_leaf(conversation_id) is None
+
+        store, session = _resume_into_store(db, conversation_id)
+
+        view = store.messages_for_session(session.id)
+        assert [m.content for m in view] == ["u1", "a1", "u2", "a2"]
+        for message in view:
+            _snapshots, _index, count = store.siblings_at(message.id)
+            assert count == 1
+    finally:
+        db.close_connection()
+
+
+def test_resume_chains_flat_prefix_then_preserves_real_continuation():
+    """C1 mixed case: a flat legacy prefix followed by a genuinely-parented
+    continuation resumes as the full linear transcript, real subtree intact."""
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        conversation_id = _persist_mixed_legacy_then_branched_conversation(db)
+
+        store, session = _resume_into_store(db, conversation_id)
+
+        view = [m.content for m in store.messages_for_session(session.id)]
+        assert view == ["u1", "a1", "u2", "a2", "u3", "a3"]
     finally:
         db.close_connection()
 
