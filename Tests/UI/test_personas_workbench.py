@@ -4252,6 +4252,127 @@ class TestDelete:
             )
 
 
+class TestCharactersEmptyStateGuidance:
+    """task-436: Characters mode shows onboarding guidance when nothing is
+    selected, instead of a blank center pane that reads as broken."""
+
+    @pytest.fixture
+    def stub_conversations(self, monkeypatch):
+        """Mirrors TestDelete.stub_conversations: stub the DB resolver and
+        conversation listing so a real character selection/delete round-trip
+        doesn't hit an unstubbed DB."""
+        monkeypatch.setattr(
+            character_handler_module, "_default_character_db", lambda: object()
+        )
+        monkeypatch.setattr(
+            conversations_controller_module,
+            "list_character_conversations",
+            lambda db, character_id, limit=50, offset=0: [
+                {"id": "conv-1", "title": "First case"}
+            ],
+        )
+
+    @staticmethod
+    def _bypass_confirm(screen, result: bool) -> None:
+        async def _confirm(name: str) -> bool:
+            return result
+
+        screen._confirm_delete = _confirm
+
+    async def _select_first_character(self, pilot):
+        screen = await _mounted(pilot)
+        await pilot.pause()
+        await pilot.click("#personas-library-row-character-1")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        return screen
+
+    async def test_guidance_shown_when_no_selection(
+        self, mock_app_instance, stub_characters
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            assert screen.state.active_mode == "characters"
+            assert not screen.state.selected_entity_id
+            guidance = screen.query_one("#personas-characters-empty", Static)
+            assert guidance.display is True
+            body = str(guidance.renderable)
+            assert "New" in body and "Import" in body
+            assert screen.query_one("#ccp-character-card-view").display is False
+
+    async def test_guidance_hidden_after_selection(
+        self, mock_app_instance, stub_characters
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            # Guidance is visible before any selection (pins the transition so
+            # the "hidden after" assertion below is non-vacuous).
+            assert (
+                screen.query_one("#personas-characters-empty", Static).display
+                is True
+            )
+            # ... and disappears the moment a character is selected (AC#2).
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.state.selected_entity_id
+            assert (
+                screen.query_one("#personas-characters-empty", Static).display
+                is False
+            )
+            assert screen.query_one("#ccp-character-card-view").display is True
+
+    async def test_guidance_hidden_in_other_modes(
+        self, mock_app_instance, stub_characters
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await screen._apply_mode("lore")
+            await pilot.pause()
+            assert (
+                screen.query_one("#personas-characters-empty", Static).display
+                is False
+            )
+            await screen._apply_mode("characters")
+            await pilot.pause()
+            assert (
+                screen.query_one("#personas-characters-empty", Static).display
+                is True
+            )
+
+    async def test_guidance_returns_after_delete(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        monkeypatch.setattr(
+            character_handler_module,
+            "delete_character",
+            lambda character_id, expected_version: True,
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            assert (
+                screen.query_one("#personas-characters-empty", Static).display
+                is False
+            )
+            self._bypass_confirm(screen, True)
+            screen.query_one("#personas-delete", Button).press()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert not screen.state.selected_entity_id
+            assert (
+                screen.query_one("#personas-characters-empty", Static).display
+                is True
+            )
+
+
 class TestKeyboardInteraction:
     """UX-E2: context-sensitive Escape, real Ctrl+S, mode keys, managed focus."""
 

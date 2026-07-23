@@ -191,6 +191,14 @@ _MODE_PLACEHOLDER_BODY: dict[str, str] = {
     "prompts": "Prompts are moving to the Library — you'll manage them there.",
 }
 _PLACEHOLDER_FALLBACK = "This mode is coming soon."
+
+#: Onboarding guidance shown in the Characters center pane when nothing is
+#: selected (task-436). Non-adaptive: rendered at on_mount before the character
+#: count loads, so it must read correctly whether or not characters exist.
+_CHARACTERS_EMPTY_GUIDANCE = (
+    "No character selected. Pick one from the list on the left, or use "
+    "[b]New[/b] or [b]Import[/b] to add a character."
+)
 PERSONAS_SEARCH_DEBOUNCE_SECONDS = 0.2
 #: Rows per library page. ``page_offset`` is always kept a multiple of this so
 #: the pane's "start-end of N" label math stays exact.
@@ -266,6 +274,7 @@ _CENTER_VIEW_IDS: tuple[str, ...] = (
     "#ccp-persona-editor-view",
     _CONVERSATION_VIEW_ID,
     "#personas-mode-placeholder",
+    "#personas-characters-empty",
 )
 
 
@@ -440,6 +449,15 @@ class PersonasScreen(BaseAppScreen):
         width: 100%;
         height: 1fr;
         min-height: 0;
+    }
+
+    #personas-characters-empty {
+        width: 1fr;
+        height: 1fr;
+        content-align: center middle;
+        text-align: center;
+        padding: 2 4;
+        color: $text-muted;
     }
 
     #personas-library-rows {
@@ -681,6 +699,11 @@ class PersonasScreen(BaseAppScreen):
                         yield Static(
                             self._mode_placeholder_text("prompts"),
                             id="personas-mode-placeholder",
+                        )
+                        yield Static(
+                            _CHARACTERS_EMPTY_GUIDANCE,
+                            id="personas-characters-empty",
+                            markup=True,
                         )
                     yield PersonasPreviewPane(id="personas-preview-pane")
                     tryit = PersonasDictionaryTryItWidget(id="personas-dict-tryit")
@@ -5984,8 +6007,41 @@ class PersonasScreen(BaseAppScreen):
 
     # ===== Helpers =====
 
+    def _should_show_characters_empty_guidance(self) -> bool:
+        """True when the Characters center should show onboarding guidance.
+
+        Returns:
+            True in Characters mode with no selection (empty center), else False.
+        """
+        return (
+            self.state.active_mode == "characters"
+            and not self.state.selected_entity_id
+        )
+
+    def _characters_empty_guidance_text(self) -> str:
+        """Return the onboarding guidance for the empty Characters center pane.
+
+        Returns:
+            Static guidance copy naming the three next actions.
+        """
+        return _CHARACTERS_EMPTY_GUIDANCE
+
     def _show_center(self, visible_id: str | None) -> None:
         """Show one center-area view (or none); tolerate missing nodes."""
+        # Characters mode with nothing selected shows onboarding guidance, not a
+        # blank pane (task-436). Every no-selection path funnels through here, so
+        # resolving it once keeps mode-enter, first mount, delete, cancel-New and
+        # restore-failure consistent; non-character modes and explicit-id calls
+        # (card / editor) are unaffected, which makes AC#2 automatic.
+        if visible_id is None and self._should_show_characters_empty_guidance():
+            try:
+                self.query_one("#personas-characters-empty", Static).update(
+                    self._characters_empty_guidance_text()
+                )
+            except QueryError:
+                pass
+            else:
+                visible_id = "#personas-characters-empty"
         for selector in _CENTER_VIEW_IDS:
             try:
                 widget = self.query_one(selector)
