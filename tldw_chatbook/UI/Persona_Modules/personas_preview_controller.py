@@ -97,7 +97,7 @@ class PersonasPreviewController:
         Sets ``seeded_for`` before the first ``await``: ``invalidate`` cancels
         only the preview worker group, so the character-load worker's
         ``handle_character_loaded`` may still fire -- and must hit the
-        seeded-for guard (``:133``) rather than erase the restored turns.
+        seeded-for guard (``:159``) rather than erase the restored turns.
         """
         self.invalidate()
         self.seeded_for = str(seeded_for) if seeded_for else None

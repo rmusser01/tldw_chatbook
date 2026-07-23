@@ -739,27 +739,41 @@ class PersonasScreen(BaseAppScreen):
         Runs before this (fresh) screen mounts, so it only seeds state here;
         the actual re-selection is applied by ``_apply_pending_restore`` once
         the screen (and its widgets) exist.
+
+        Gated to Characters mode: ``on_mount`` only unconditionally wires the
+        Characters path (character list refresh, center-view routing) -
+        every other mode's library rows and mode-specific widgets (the
+        Preview pane, the Dictionary/Lore Try-It panes) are only refreshed
+        and toggled by ``_apply_mode``, which a restore never calls.
+        Reconstructing ``self.state`` for a saved non-Characters mode here
+        would restore the mode chip while leaving the library empty and the
+        wrong panes visible/hidden - a regression, not a restore. So a
+        non-Characters round-trip is left at the fresh ``__init__`` default
+        (Characters, no selection) instead; restoring the other modes in
+        full is a filed follow-up.
         """
         super().restore_state(state)
         if not isinstance(state, dict):
             self._pending_restore = None
             return
         wb = state.get("personas_workbench")
-        if isinstance(wb, dict):
+        if isinstance(wb, dict) and wb.get("active_mode") == "characters":
             names = {f.name for f in dataclasses.fields(PersonasWorkbenchState)}
             self.state = PersonasWorkbenchState(
                 **{k: v for k, v in wb.items() if k in names}
             )
-        self._pending_restore = (
-            {
-                "kind": self.state.selected_entity_kind,
-                "id": self.state.selected_entity_id,
-                "name": self.state.selected_entity_name,
-                "preview": state.get("personas_preview"),
-            }
-            if self.state.selected_entity_id
-            else None
-        )
+            self._pending_restore = (
+                {
+                    "kind": self.state.selected_entity_kind,
+                    "id": self.state.selected_entity_id,
+                    "name": self.state.selected_entity_name,
+                    "preview": state.get("personas_preview"),
+                }
+                if self.state.selected_entity_id
+                else None
+            )
+        else:
+            self._pending_restore = None
 
     async def _apply_pending_restore(self) -> None:
         """Re-apply a selection saved before a navigation round-trip (task-434)."""

@@ -293,3 +293,41 @@ class TestPendingRestoreGuards:
             screen = await _mounted(pilot)
             # Must not have crashed the app; center stays blank.
             assert screen.query_one("#ccp-character-card-view").display is False
+
+
+class TestNonCharacterModeRestoreGate:
+    """A saved non-Characters mode must never be restored (task-434 review).
+
+    ``on_mount`` only unconditionally wires the Characters path; every other
+    mode's library rows and mode-specific widgets (Preview pane, Try-It
+    panes) are refreshed/toggled solely by ``_apply_mode``, which a restore
+    never calls. Reconstructing ``self.state`` for a saved non-Characters
+    mode would therefore restore the mode chip while leaving the library
+    empty and the wrong panes visible - a regression, not a restore. The
+    gate keeps that path on the safe, already-correct default view.
+    """
+
+    async def test_saved_dictionaries_mode_falls_back_to_characters_on_restore(
+        self, mock_app_instance, stub_characters
+    ):
+        mock_app_instance.chat_dictionary_scope_service = None
+        saved = {
+            "personas_workbench": {
+                "active_mode": "dictionaries",
+                "selected_entity_kind": "dictionary",
+                "selected_entity_id": "dict-1",
+                "selected_entity_name": "Some Dictionary",
+            },
+            "personas_preview": None,
+        }
+
+        app = _RestoringPersonasTestApp(mock_app_instance, saved)
+        async with app.run_test() as pilot:
+            screen2 = await _mounted(pilot)
+            # Falls back to the fresh default: Characters mode, no selection.
+            assert screen2.state.active_mode == "characters"
+            assert screen2.state.selected_entity_id is None
+            assert screen2.state.selected_entity_kind is None
+            assert screen2._pending_restore is None
+            # Blank center, same as any fresh Characters-mode mount.
+            assert screen2.query_one("#ccp-character-card-view").display is False
