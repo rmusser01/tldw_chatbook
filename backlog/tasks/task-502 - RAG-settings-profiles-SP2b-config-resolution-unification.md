@@ -1,8 +1,8 @@
 ---
-id: TASK-487
+id: TASK-502
 title: >-
   RAG settings + profiles SP2b: config-resolution unification onto the active profile
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-23 00:00'
 updated_date: '2026-07-23 00:00'

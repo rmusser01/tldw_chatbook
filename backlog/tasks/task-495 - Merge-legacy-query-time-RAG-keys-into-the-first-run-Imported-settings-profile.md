@@ -11,7 +11,7 @@ labels:
   - profiles
   - followup
 dependencies:
-  - task-487
+  - task-502
 priority: low
 ---
 
