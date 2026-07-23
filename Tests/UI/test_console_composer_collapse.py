@@ -1,5 +1,6 @@
 """Mounted regressions for the collapsible Console composer."""
 
+import inspect
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
@@ -40,6 +41,12 @@ class _ComposerGeometryApp(App[None]):
         )
 
 
+class _BundledConsoleGeometryHarness(ConsoleHarness):
+    """Mount the full Console with the generated production stylesheet."""
+
+    CSS_PATH = str(_BUNDLED_STYLESHEET)
+
+
 def _ready_console_host() -> ConsoleHarness:
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -50,6 +57,35 @@ async def _mounted_console(host: ConsoleHarness, pilot):
     console = host.screen_stack[-1]
     await _wait_for_selector(console, pilot, "#console-native-composer")
     return console
+
+
+async def _seed_overflowing_transcript(console):
+    """Populate enough multi-line rows to exercise transcript scrolling."""
+    store = console._ensure_console_chat_store()
+    selected_message_id = ""
+    for index in range(24):
+        message = store.append_message(
+            store.active_session_id,
+            role=(
+                ConsoleMessageRole.USER
+                if index % 2 == 0
+                else ConsoleMessageRole.ASSISTANT
+            ),
+            content="\n".join(f"message {index} line {line}" for line in range(3)),
+        )
+        selected_message_id = message.id
+    await console._sync_native_console_chat_ui()
+    transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+    assert transcript.max_scroll_y > 0
+    transcript.select_message(selected_message_id)
+    return transcript, selected_message_id
+
+
+def _transcript_tail_is_anchored(transcript: ConsoleTranscript) -> bool:
+    """Return Textual's semantic tail-follow state, including manual release."""
+    return bool(
+        transcript.is_anchored and not getattr(transcript, "_anchor_released", False)
+    )
 
 
 @pytest.mark.asyncio
@@ -274,45 +310,90 @@ async def test_stale_composer_layout_revision_does_not_override_current_focus():
 
 
 @pytest.mark.asyncio
-async def test_screen_collapse_round_trip_restores_transcript_reading_state():
+async def test_rapid_toggle_ignores_stale_collapse_focus_callback():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        store = console._ensure_console_chat_store()
-        selected_message_id = ""
-        for index in range(24):
-            message = store.append_message(
-                store.active_session_id,
-                role=(
-                    ConsoleMessageRole.USER
-                    if index % 2 == 0
-                    else ConsoleMessageRole.ASSISTANT
-                ),
-                content="\n".join(f"message {index} line {line}" for line in range(3)),
-            )
-            selected_message_id = message.id
-        await console._sync_native_console_chat_ui()
-        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
-        assert transcript.max_scroll_y > 0
-        transcript.select_message(selected_message_id)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        transcript, selected = await _seed_overflowing_transcript(console)
+
+        console._set_console_composer_collapsed(True)
+        console._set_console_composer_collapsed(False)
         await pilot.pause()
-        transcript.anchor(False)
-        transcript.scroll_to(y=min(4, transcript.max_scroll_y), animate=False)
         await pilot.pause()
-        assert transcript.is_anchored is False
-        expected_scroll_y = transcript.scroll_y
+
+        assert composer.collapsed is False
+        assert host.focused is composer
+        assert transcript.selected_message_id == selected
+
+
+@pytest.mark.asyncio
+async def test_rapid_collapse_then_priority_escape_ignores_stale_focus_callback():
+    host = _ready_console_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        transcript, selected = await _seed_overflowing_transcript(console)
+
+        console._set_console_composer_collapsed(True)
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert composer.collapsed is False
+        assert host.focused is composer
+        assert transcript.selected_message_id == selected
+
+
+@pytest.mark.asyncio
+async def test_anchored_tail_and_selection_survive_collapse_round_trip():
+    host = _ready_console_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        transcript, selected = await _seed_overflowing_transcript(console)
+        transcript.anchor()
+        await pilot.pause()
+
+        assert transcript.is_anchored
+        assert transcript.scroll_y == transcript.max_scroll_y
 
         console._set_console_composer_collapsed(True)
         await pilot.pause()
-        assert transcript.is_anchored is False
-        assert transcript.scroll_y == min(expected_scroll_y, transcript.max_scroll_y)
-        assert transcript.selected_message_id == selected_message_id
+        assert transcript.is_anchored
+        assert transcript.scroll_y == transcript.max_scroll_y
+        assert transcript.selected_message_id == selected
 
         console._set_console_composer_collapsed(False)
         await pilot.pause()
-        assert transcript.is_anchored is False
-        assert transcript.scroll_y == min(expected_scroll_y, transcript.max_scroll_y)
-        assert transcript.selected_message_id == selected_message_id
+        assert transcript.is_anchored
+        assert transcript.scroll_y == transcript.max_scroll_y
+        assert transcript.selected_message_id == selected
+
+
+@pytest.mark.asyncio
+async def test_manual_reading_position_and_selection_survive_collapse_round_trip():
+    host = _ready_console_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        transcript, selected = await _seed_overflowing_transcript(console)
+        await pilot.pause()
+        transcript.release_anchor()
+        transcript.scroll_to(y=2, animate=False)
+        await pilot.pause()
+        assert _transcript_tail_is_anchored(transcript) is False
+        reading_y = transcript.scroll_y
+
+        console._set_console_composer_collapsed(True)
+        await pilot.pause()
+        assert _transcript_tail_is_anchored(transcript) is False
+        assert transcript.scroll_y == min(reading_y, transcript.max_scroll_y)
+        assert transcript.selected_message_id == selected
+
+        console._set_console_composer_collapsed(False)
+        await pilot.pause()
+        assert _transcript_tail_is_anchored(transcript) is False
+        assert transcript.scroll_y == min(reading_y, transcript.max_scroll_y)
+        assert transcript.selected_message_id == selected
 
 
 @pytest.mark.asyncio
@@ -322,23 +403,18 @@ async def test_replacement_composer_inherits_screen_state_and_active_session_dra
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         store = console._ensure_console_chat_store()
-        store.set_session_draft(store.active_session_id, "persisted draft")
-        console._set_console_composer_collapsed(True)
+        composer.load_draft("canonical session draft")
+        console._console_composer_collapsed = True
+        console._sync_console_session_draft()
+
+        await console.recompose()
         await pilot.pause()
+        replacement = console.query_one("#console-native-composer", ConsoleComposerBar)
 
-        console.refresh(recompose=True)
-        for _ in range(40):
-            await pilot.pause(0.05)
-            replacement = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
-            if replacement is not composer:
-                break
-        else:
-            raise AssertionError("Expected screen recompose to replace the composer")
-
+        assert replacement is not composer
         assert replacement.collapsed is True
-        assert replacement.draft_text() == "persisted draft"
+        assert replacement.draft_text() == "canonical session draft"
+        assert store.session_draft(store.active_session_id) == "canonical session draft"
 
 
 @pytest.mark.asyncio
@@ -411,6 +487,51 @@ async def test_console_composer_compact_geometry_keeps_status_and_expand_visible
             ).region.width
             > 0
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(140, 42), (100, 32)])
+async def test_console_responsive_collapsed_geometry_preserves_controls_and_rows(size):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _BundledConsoleGeometryHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        composer.load_draft("retained draft")
+        composer.set_pending_attachment_label("photo.png · 12 B")
+        await pilot.pause()
+        expanded_transcript_height = transcript.region.height
+
+        console._set_console_composer_collapsed(True)
+        await pilot.pause()
+        status = composer.query_one("#console-composer-collapsed-status", Static)
+        stop = composer.query_one("#console-collapsed-stop-generation", Button)
+        expand = composer.query_one("#console-composer-expand", Button)
+
+        assert composer.region.height == 1
+        assert transcript.region.height >= expanded_transcript_height + 4
+        assert "Draft retained" in str(status.renderable)
+        assert "Attachment retained" in str(status.renderable)
+        assert status.region.right <= expand.region.x
+        assert expand.region.right <= composer.region.right
+
+        composer.sync_action_state(
+            has_draft=True,
+            run_active=True,
+            can_save_chatbook=False,
+        )
+        await pilot.pause()
+
+        assert composer.region.height == 1
+        assert stop.display is True
+        assert status.region.right <= stop.region.x
+        assert stop.region.right <= expand.region.x
+        assert expand.region.right <= composer.region.right
+        assert stop.region.width == 8
+        assert expand.region.width == 10
 
 
 @pytest.mark.asyncio
@@ -567,3 +688,9 @@ def test_console_composer_collapsed_styles_are_pinned(stylesheet: Path):
 
     for token in required:
         assert token in css
+
+
+def test_console_composer_has_no_status_strip_selector_dependency():
+    source = inspect.getsource(ConsoleComposerBar)
+
+    assert "console-status-chips" not in source
