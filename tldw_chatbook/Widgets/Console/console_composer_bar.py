@@ -1911,7 +1911,7 @@ class ConsoleComposerBar(Horizontal):
         with expanded:
             yield self._bounded_button(
                 "Composer ▾",
-                width=10,
+                width=14,
                 id="console-composer-collapse",
                 classes="destination-action-button console-composer-toggle",
                 tooltip="Collapse composer for more transcript space.",
@@ -2061,7 +2061,7 @@ class ConsoleComposerBar(Horizontal):
             yield collapsed_stop
             yield self._bounded_button(
                 "Expand ▴",
-                width=10,
+                width=12,
                 id="console-composer-expand",
                 classes="destination-action-button console-composer-toggle",
                 tooltip="Expand composer and return to the draft.",

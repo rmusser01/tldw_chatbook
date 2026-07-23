@@ -2695,8 +2695,8 @@ ConsoleSystemPromptModal {
 }
 
 #console-composer-collapse {
-    width: 10;
-    min-width: 10;
+    width: 14;
+    min-width: 14;
 }
 
 #console-composer-collapsed-status {
@@ -2715,8 +2715,8 @@ ConsoleSystemPromptModal {
 }
 
 #console-composer-expand {
-    width: 10;
-    min-width: 10;
+    width: 12;
+    min-width: 12;
 }
 
 #console-command-visible-text {
