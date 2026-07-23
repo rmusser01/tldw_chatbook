@@ -258,6 +258,7 @@ from ...Widgets.Console import (
     ConsoleDraftStash,
     ConsoleControlBar,
     ConsoleEditMessageModal,
+    ConsoleEditResult,
     ConsoleRailHandle,
     ConsoleRenameSessionModal,
     ConsoleRetrievalScopeRow,
@@ -12968,37 +12969,57 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         """Open the dedicated transcript edit modal for one Console message."""
         store = self._ensure_console_chat_store()
+        message = store.get_message(message_id)
+        can_resend = message.role is ConsoleMessageRole.USER
 
-        def _apply_edit(result: str | None) -> None:
+        def _apply_edit(result: ConsoleEditResult | None) -> None:
             if result is None:
                 return
-            try:
-                store.update_message_content(message_id, result)
-            except ValueError as exc:
-                self.app_instance.notify(str(exc), severity="warning")
+            if not result.resend:
+                try:
+                    store.update_message_content(message_id, result.text)
+                except ValueError as exc:
+                    self.app_instance.notify(str(exc), severity="warning")
+                    return
+                except KeyError:
+                    self.app_instance.notify(
+                        "Console message action target no longer exists.",
+                        severity="error",
+                    )
+                    return
+                self._last_console_action = ConsoleActionResult(
+                    action_id="edit",
+                    status="completed",
+                    visible_copy="Edited message.",
+                    target_message_id=message_id,
+                    target_content=result.text,
+                )
+                self.run_worker(
+                    self._sync_native_console_chat_ui(),
+                    exclusive=True,
+                    group="console-sync",
+                )
+                self.app_instance.notify("Edited message.", severity="information")
                 return
-            except KeyError:
+            controller = self._ensure_console_chat_controller()
+            # Gate BEFORE spawning: an exclusive console-run worker cancels the
+            # in-flight run at creation time, before the controller's own
+            # rejection can run -- the screen must refuse, like the submit path.
+            if not controller.run_state.is_send_allowed:
                 self.app_instance.notify(
-                    "Console message action target no longer exists.",
-                    severity="error",
+                    CONSOLE_RUN_ALREADY_RUNNING_COPY, severity="warning"
                 )
                 return
-            self._last_console_action = ConsoleActionResult(
-                action_id="edit",
-                status="completed",
-                visible_copy="Edited message.",
-                target_message_id=message_id,
-                target_content=result,
-            )
             self.run_worker(
-                self._sync_native_console_chat_ui(),
+                self._edit_resend_console_message(
+                    controller, message_id, result.text
+                ),
                 exclusive=True,
-                group="console-sync",
+                group="console-run",
             )
-            self.app_instance.notify("Edited message.", severity="information")
 
         await self.app.push_screen(
-            ConsoleEditMessageModal(content=content),
+            ConsoleEditMessageModal(content=content, can_resend=can_resend),
             callback=_apply_edit,
         )
 
@@ -13061,6 +13082,21 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         self._start_console_transcript_sync_timer()
         result = await controller.regenerate_message(message_id)
+        if result.visible_copy and not result.accepted:
+            self.app_instance.notify(result.visible_copy, severity="warning")
+        await self._sync_native_console_chat_ui()
+
+    async def _edit_resend_console_message(
+        self,
+        controller: ConsoleChatController,
+        message_id: str,
+        new_content: str,
+    ) -> None:
+        # TASK-343: without the sync timer these awaits run the whole
+        # generation with zero on-screen feedback (the timer self-stops
+        # when the run leaves an active status).
+        self._start_console_transcript_sync_timer()
+        result = await controller.edit_and_resend_message(message_id, new_content)
         if result.visible_copy and not result.accepted:
             self.app_instance.notify(result.visible_copy, severity="warning")
         await self._sync_native_console_chat_ui()
