@@ -158,9 +158,19 @@ def get_shared_rag_service(profile_name: Optional[str] = None) -> Optional[Any]:
         if _shared_service is None:
             try:
                 from .simplified import create_rag_service
+                # Function-level import: active_config is consumed by
+                # ingestion_indexing (Task 4 wires the reverse edge), so a
+                # module-top import here would risk a circular import.
+                from .simplified.active_config import resolve_active_rag_config
 
-                profile = profile_name or _configured_profile()
-                _shared_service = create_rag_service(profile_name=profile)
+                if profile_name is None:
+                    profile = _configured_profile()
+                    _shared_service = create_rag_service(
+                        profile_name=profile, config=resolve_active_rag_config()
+                    )
+                else:
+                    profile = profile_name
+                    _shared_service = create_rag_service(profile_name=profile_name)
                 logger.info(f"Created shared RAG service (profile={profile})")
             except Exception as e:
                 logger.error(f"Failed to create shared RAG service: {e}")
