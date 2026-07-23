@@ -1,16 +1,26 @@
-"""Checked ownership inventory for Chatbook SQLite targets.
-
-Connection and backup behavior is added in later TASK-489 slices. This module
-currently defines only the immutable target classifications and owner registry
-used to keep that migration complete.
-"""
+"""Checked ownership and private connection boundary for SQLite targets."""
 
 from __future__ import annotations
 
+import errno
+import os
+import sqlite3
+import stat
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path, PureWindowsPath
 from types import MappingProxyType
-from typing import Mapping
+from typing import Any, Mapping
+from urllib.parse import quote
+
+import tldw_chatbook.Utils.private_paths as private_paths
+from tldw_chatbook.Utils.private_paths import (
+    PrivatePathError,
+    PrivatePathResult,
+    PrivatePathStatus,
+    lexical_path,
+    verify_trusted_directory,
+)
 
 
 class SQLiteTargetKind(StrEnum):
@@ -255,8 +265,333 @@ SQLITE_OWNER_REGISTRY: Mapping[str, SQLiteOwnerPolicy] = MappingProxyType(
     _SQLITE_OWNER_POLICIES
 )
 
+
+_PRIVATE_FILE_MODE = 0o600
+_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+
+
+def _failure(
+    selected: Path,
+    status: PrivatePathStatus,
+    reason: str,
+) -> PrivatePathError:
+    return PrivatePathError(PrivatePathResult(selected, status, reason=reason))
+
+
+def _open_artifact_fd(
+    parent_fd: int,
+    leaf: str,
+    *,
+    writable: bool,
+    create: bool,
+) -> int:
+    flags = os.O_RDWR if writable else os.O_RDONLY
+    flags |= (
+        getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_NOCTTY", 0)
+    )
+    if create:
+        flags |= os.O_CREAT | os.O_EXCL
+    return os.open(
+        leaf,
+        flags,
+        _PRIVATE_FILE_MODE,
+        dir_fd=parent_fd,
+    )
+
+
+def _artifact_postcondition_holds(
+    file_fd: int,
+    parent_fd: int,
+    leaf: str,
+    *,
+    expected_identity: os.stat_result,
+    selected: Path,
+) -> bool:
+    del selected
+    opened = os.fstat(file_fd)
+    entry = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+    return (
+        private_paths._same_identity(opened, expected_identity)
+        and private_paths._same_identity(entry, expected_identity)
+        and stat.S_ISREG(opened.st_mode)
+        and opened.st_nlink == 1
+        and entry.st_nlink == 1
+        and opened.st_uid == os.geteuid()
+        and stat.S_IMODE(opened.st_mode) == _PRIVATE_FILE_MODE
+    )
+
+
+def _path_error_from_oserror(selected: Path, exc: OSError) -> PrivatePathError:
+    status = (
+        PrivatePathStatus.LINK_OR_NON_REGULAR
+        if exc.errno in {errno.ELOOP, errno.ENOTDIR}
+        else PrivatePathStatus.OPERATION_FAILED
+    )
+    return _failure(selected, status, type(exc).__name__)
+
+
+def _prepare_posix_artifact(
+    selected: Path,
+    *,
+    writable: bool,
+    create_if_missing: bool,
+    optional: bool = False,
+) -> bool:
+    parent_fd, leaf = private_paths._open_verified_parent(
+        selected,
+        missing_leaf_allowed=create_if_missing,
+    )
+    file_fd = -1
+    try:
+        try:
+            entry_stat = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            if optional:
+                return False
+            if not create_if_missing:
+                raise _failure(
+                    selected,
+                    PrivatePathStatus.OPERATION_FAILED,
+                    "missing_sqlite_artifact",
+                ) from None
+            entry_stat = None
+        except OSError as exc:
+            raise _path_error_from_oserror(selected, exc) from None
+
+        if entry_stat is not None and not stat.S_ISREG(entry_stat.st_mode):
+            raise _failure(
+                selected,
+                PrivatePathStatus.LINK_OR_NON_REGULAR,
+                "non_regular_sqlite_artifact",
+            )
+
+        created = entry_stat is None
+        try:
+            file_fd = _open_artifact_fd(
+                parent_fd,
+                leaf,
+                writable=writable or created,
+                create=created,
+            )
+        except OSError as exc:
+            raise _path_error_from_oserror(selected, exc) from None
+
+        opened_stat = os.fstat(file_fd)
+        rejected = private_paths._classify_private_file_stat(
+            opened_stat,
+            expected_uid=os.geteuid(),
+        )
+        if rejected is not None:
+            raise _failure(selected, rejected, "unsafe_sqlite_artifact")
+        if entry_stat is not None and not private_paths._same_identity(
+            entry_stat,
+            opened_stat,
+        ):
+            raise _failure(
+                selected,
+                PrivatePathStatus.OPERATION_FAILED,
+                "private_sqlite_identity_changed",
+            )
+
+        if stat.S_IMODE(opened_stat.st_mode) != _PRIVATE_FILE_MODE:
+            os.fchmod(file_fd, _PRIVATE_FILE_MODE)
+        if not _artifact_postcondition_holds(
+            file_fd,
+            parent_fd,
+            leaf,
+            expected_identity=opened_stat,
+            selected=selected,
+        ):
+            raise _failure(
+                selected,
+                PrivatePathStatus.OPERATION_FAILED,
+                "private_sqlite_postcondition_failed",
+            )
+        return True
+    except PrivatePathError:
+        raise
+    except OSError as exc:
+        raise _path_error_from_oserror(selected, exc) from None
+    finally:
+        if file_fd >= 0:
+            os.close(file_fd)
+        os.close(parent_fd)
+
+
+def _prepare_windows_artifact(
+    selected: Path,
+    *,
+    writable: bool,
+    create_if_missing: bool,
+    optional: bool = False,
+) -> bool:
+    del writable
+    try:
+        file_stat = selected.lstat()
+    except FileNotFoundError:
+        if optional:
+            return False
+        if not create_if_missing:
+            raise _failure(
+                selected,
+                PrivatePathStatus.OPERATION_FAILED,
+                "missing_sqlite_artifact",
+            ) from None
+        file_fd = os.open(
+            selected,
+            os.O_RDWR | os.O_CREAT | os.O_EXCL,
+            _PRIVATE_FILE_MODE,
+        )
+        os.close(file_fd)
+        return True
+
+    if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_nlink != 1:
+        raise _failure(
+            selected,
+            PrivatePathStatus.LINK_OR_NON_REGULAR,
+            "unsafe_sqlite_artifact",
+        )
+    return True
+
+
+def _prepare_artifact(
+    selected: Path,
+    *,
+    writable: bool,
+    create_if_missing: bool,
+    optional: bool = False,
+) -> bool:
+    if private_paths._posix_guards_available():
+        return _prepare_posix_artifact(
+            selected,
+            writable=writable,
+            create_if_missing=create_if_missing,
+            optional=optional,
+        )
+    if private_paths._WINDOWS_PLATFORM:
+        return _prepare_windows_artifact(
+            selected,
+            writable=writable,
+            create_if_missing=create_if_missing,
+            optional=optional,
+        )
+    raise _failure(
+        selected,
+        PrivatePathStatus.OPERATION_FAILED,
+        "required_posix_guards_unavailable",
+    )
+
+
+def _build_read_only_uri(
+    database: str | os.PathLike[str],
+    *,
+    windows: bool | None = None,
+) -> str:
+    raw = os.fspath(database)
+    if not isinstance(raw, str):
+        raise TypeError("SQLite paths must be text paths")
+    if "\x00" in raw:
+        raise ValueError("Path must not contain NUL")
+    windows = os.name == "nt" if windows is None else windows
+    if windows:
+        path = PureWindowsPath(raw)
+        posix_path = path.as_posix()
+        if posix_path.startswith("//"):
+            authority_and_path = posix_path[2:].split("/", 1)
+            authority = authority_and_path[0]
+            remainder = authority_and_path[1] if len(authority_and_path) == 2 else ""
+            encoded = quote(remainder, safe="/")
+            return f"file://{authority}/{encoded}?mode=ro"
+        encoded = quote(posix_path, safe="/:")
+        return f"file:///{encoded}?mode=ro"
+
+    encoded = quote(raw, safe="/")
+    return f"file:{encoded}?mode=ro"
+
+
+def _validated_owner_policy(owner_id: str) -> SQLiteOwnerPolicy:
+    try:
+        return SQLITE_OWNER_REGISTRY[owner_id]
+    except KeyError:
+        raise ValueError(f"Unknown SQLite owner: {owner_id}") from None
+
+
+def _classify_target(
+    database: str | os.PathLike[str],
+    *,
+    read_only: bool,
+) -> tuple[str, SQLiteTargetKind]:
+    raw = os.fspath(database)
+    if not isinstance(raw, str):
+        raise TypeError("SQLite paths must be text paths")
+    if "\x00" in raw:
+        raise ValueError("Path must not contain NUL")
+    if raw.startswith("file:"):
+        raise ValueError("Caller-supplied file: SQLite URIs are not supported")
+    if raw == ":memory:":
+        if read_only:
+            raise ValueError("A read-only memory database is not supported")
+        return raw, SQLiteTargetKind.MEMORY
+    return raw, (
+        SQLiteTargetKind.READ_ONLY_URI if read_only else SQLiteTargetKind.PRIVATE_FILE
+    )
+
+
+def connect_private_sqlite(
+    owner_id: str,
+    database: str | os.PathLike[str],
+    *,
+    read_only: bool = False,
+    **kwargs: Any,
+) -> sqlite3.Connection:
+    """Open SQLite only after enforcing the registered target policy."""
+
+    if "uri" in kwargs:
+        raise ValueError("The SQLite uri option is owned by the private seam")
+    policy = _validated_owner_policy(owner_id)
+    raw, target_kind = _classify_target(database, read_only=read_only)
+    if target_kind not in policy.allowed_target_kinds:
+        if not read_only and policy.allowed_target_kinds == _READ_ONLY_URI:
+            raise ValueError(f"SQLite owner {owner_id} is read-only")
+        raise ValueError(
+            f"SQLite target kind {target_kind.value} is not allowed for {owner_id}"
+        )
+
+    connection_target = raw
+    use_uri = False
+    if target_kind is not SQLiteTargetKind.MEMORY:
+        selected = lexical_path(raw)
+        verify_trusted_directory(
+            selected.parent,
+            allow_shared_sticky=read_only,
+        )
+        _prepare_artifact(
+            selected,
+            writable=not read_only,
+            create_if_missing=not read_only,
+        )
+        for suffix in _SIDECAR_SUFFIXES:
+            _prepare_artifact(
+                Path(f"{selected}{suffix}"),
+                writable=not read_only,
+                create_if_missing=False,
+                optional=True,
+            )
+        if read_only:
+            connection_target = _build_read_only_uri(
+                selected,
+                windows=os.name == "nt",
+            )
+            use_uri = True
+
+    return sqlite3.connect(connection_target, uri=use_uri, **kwargs)
+
+
 __all__ = [
     "SQLITE_OWNER_REGISTRY",
     "SQLiteOwnerPolicy",
     "SQLiteTargetKind",
+    "connect_private_sqlite",
 ]

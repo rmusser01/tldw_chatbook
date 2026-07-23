@@ -15,6 +15,7 @@ from tldw_chatbook.Utils.private_paths import (
     lexical_path,
     open_private_binary,
     secure_private_directory,
+    verify_trusted_directory,
 )
 
 
@@ -29,6 +30,7 @@ from tldw_chatbook.Utils.private_paths import (
         (PrivatePathStatus.WRONG_OWNER, False, False),
         (PrivatePathStatus.LINK_OR_NON_REGULAR, False, False),
         (PrivatePathStatus.OPERATION_FAILED, False, False),
+        (PrivatePathStatus.TRUSTED_DIRECTORY, False, True),
     ],
 )
 def test_private_path_result_classifies_posture(status, verified_private, usable):
@@ -628,3 +630,225 @@ def test_open_private_binary_fails_before_traversal_when_leaf_guard_is_unavailab
     assert caught.value.result.reason == "required_posix_guards_unavailable"
     assert stat.S_IMODE(target.stat().st_mode) == 0o644
     assert target.read_bytes() == content
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX directory contract")
+def test_verify_trusted_directory_accepts_owned_non_writable_without_mutation(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "custom-databases"
+    target.mkdir(mode=0o750)
+    before = stat.S_IMODE(target.stat().st_mode)
+
+    def fail_mutation(*args, **kwargs):
+        pytest.fail("trusted-directory verification must not mutate the directory")
+
+    monkeypatch.setattr(private_paths.os, "fchmod", fail_mutation)
+    monkeypatch.setattr(private_paths.os, "mkdir", fail_mutation)
+    monkeypatch.setattr(private_paths, "_posix_guards_available", lambda: True)
+
+    result = verify_trusted_directory(target, allow_shared_sticky=False)
+
+    assert result.status is PrivatePathStatus.TRUSTED_DIRECTORY
+    assert result.usable is True
+    assert result.verified_private is False
+    assert stat.S_IMODE(target.stat().st_mode) == before
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX directory contract")
+def test_verify_trusted_directory_allows_shared_sticky_only_when_requested(tmp_path):
+    target = tmp_path / "shared"
+    target.mkdir()
+    target.chmod(0o1777)
+
+    result = verify_trusted_directory(target, allow_shared_sticky=True)
+
+    assert result.status is PrivatePathStatus.TRUSTED_DIRECTORY
+    with pytest.raises(PrivatePathError) as caught:
+        verify_trusted_directory(target, allow_shared_sticky=False)
+    assert caught.value.result.status is PrivatePathStatus.UNSAFE_PARENT
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX directory contract")
+@pytest.mark.parametrize("final_component", [False, True])
+def test_verify_trusted_directory_rejects_directory_symlinks(
+    tmp_path,
+    final_component,
+):
+    real = tmp_path / "real"
+    child = real / "child"
+    child.mkdir(parents=True)
+    alias = tmp_path / "alias"
+    if final_component:
+        alias.symlink_to(child, target_is_directory=True)
+        selected = alias
+    else:
+        alias.symlink_to(real, target_is_directory=True)
+        selected = alias / "child"
+
+    with pytest.raises(PrivatePathError) as caught:
+        verify_trusted_directory(selected, allow_shared_sticky=False)
+
+    assert caught.value.result.status is PrivatePathStatus.LINK_OR_NON_REGULAR
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX directory contract")
+def test_verify_trusted_directory_rejects_wrong_owner_simulation(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "custom-databases"
+    target.mkdir()
+    actual_euid = os.geteuid()
+    monkeypatch.setattr(private_paths.os, "geteuid", lambda: actual_euid + 1000)
+
+    with pytest.raises(PrivatePathError) as caught:
+        verify_trusted_directory(target, allow_shared_sticky=False)
+
+    assert caught.value.result.status in {
+        PrivatePathStatus.UNSAFE_PARENT,
+        PrivatePathStatus.WRONG_OWNER,
+    }
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX directory contract")
+@pytest.mark.parametrize("mode", [0o770, 0o707, 0o777])
+def test_verify_trusted_directory_rejects_non_sticky_shared_writable(
+    tmp_path,
+    mode,
+):
+    target = tmp_path / "custom-databases"
+    target.mkdir()
+    target.chmod(mode)
+
+    with pytest.raises(PrivatePathError) as caught:
+        verify_trusted_directory(target, allow_shared_sticky=True)
+
+    assert caught.value.result.status is PrivatePathStatus.UNSAFE_PARENT
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX directory contract")
+def test_verify_trusted_directory_rejects_missing_directory_without_creation(tmp_path):
+    target = tmp_path / "missing" / "databases"
+
+    with pytest.raises(PrivatePathError):
+        verify_trusted_directory(target, allow_shared_sticky=False)
+
+    assert not target.exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX descriptor contract")
+def test_verify_trusted_directory_closes_every_component_descriptor(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "custom" / "databases"
+    target.mkdir(parents=True)
+    opened_components: set[int] = set()
+    real_open_component = private_paths._open_directory_component
+
+    def track_open(parent_fd, component):
+        opened = real_open_component(parent_fd, component)
+        opened_components.add(opened)
+        return opened
+
+    monkeypatch.setattr(private_paths, "_open_directory_component", track_open)
+
+    verify_trusted_directory(target, allow_shared_sticky=False)
+
+    for opened_fd in opened_components:
+        with pytest.raises(OSError):
+            os.fstat(opened_fd)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX descriptor contract")
+def test_verify_trusted_directory_closes_descriptors_on_error(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "custom" / "missing"
+    target.parent.mkdir()
+    opened_components: set[int] = set()
+    real_open_component = private_paths._open_directory_component
+
+    def track_open(parent_fd, component):
+        opened = real_open_component(parent_fd, component)
+        opened_components.add(opened)
+        return opened
+
+    monkeypatch.setattr(private_paths, "_open_directory_component", track_open)
+
+    with pytest.raises(PrivatePathError):
+        verify_trusted_directory(target, allow_shared_sticky=False)
+
+    for opened_fd in opened_components:
+        with pytest.raises(OSError):
+            os.fstat(opened_fd)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX identity contract")
+def test_verify_trusted_directory_rejects_entry_replacement_during_walk(
+    tmp_path,
+    monkeypatch,
+):
+    selected = tmp_path / "selected"
+    selected.mkdir()
+    displaced = tmp_path / "selected-displaced"
+    real_open_component = private_paths._open_directory_component
+
+    def replace_after_open(parent_fd, component):
+        opened = real_open_component(parent_fd, component)
+        if component == selected.name:
+            selected.rename(displaced)
+            selected.mkdir()
+        return opened
+
+    monkeypatch.setattr(
+        private_paths,
+        "_open_directory_component",
+        replace_after_open,
+    )
+
+    with pytest.raises(PrivatePathError) as caught:
+        verify_trusted_directory(selected, allow_shared_sticky=False)
+
+    assert caught.value.result.status is PrivatePathStatus.OPERATION_FAILED
+    assert caught.value.result.reason == "trusted_directory_postcondition_failed"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX identity contract")
+def test_verify_trusted_directory_rejects_forced_final_postcondition_failure(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "custom-databases"
+    target.mkdir()
+    monkeypatch.setattr(
+        private_paths,
+        "_trusted_directory_postcondition_holds",
+        lambda *args, **kwargs: False,
+    )
+
+    with pytest.raises(PrivatePathError) as caught:
+        verify_trusted_directory(target, allow_shared_sticky=False)
+
+    assert caught.value.result.status is PrivatePathStatus.OPERATION_FAILED
+    assert caught.value.result.reason == "trusted_directory_postcondition_failed"
+
+
+def test_verify_trusted_directory_reports_windows_as_unverified_without_mutation(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "custom-databases"
+    target.mkdir(mode=0o755)
+    before = stat.S_IMODE(target.stat().st_mode)
+    monkeypatch.setattr(private_paths, "_posix_guards_available", lambda: False)
+    monkeypatch.setattr(private_paths, "_WINDOWS_PLATFORM", True)
+
+    result = verify_trusted_directory(target, allow_shared_sticky=False)
+
+    assert result.status is PrivatePathStatus.UNVERIFIED_PLATFORM
+    assert result.verified_private is False
+    assert stat.S_IMODE(target.stat().st_mode) == before

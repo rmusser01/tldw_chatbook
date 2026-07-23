@@ -35,6 +35,7 @@ class PrivatePathStatus(StrEnum):
     WRONG_OWNER = "wrong_owner"
     LINK_OR_NON_REGULAR = "link_or_non_regular"
     OPERATION_FAILED = "operation_failed"
+    TRUSTED_DIRECTORY = "trusted_directory"
     UNVERIFIED_PLATFORM = "unverified_platform"
 
 
@@ -54,9 +55,10 @@ class PrivatePathResult:
 
     @property
     def usable(self) -> bool:
-        return self.verified_private or (
-            self.status is PrivatePathStatus.UNVERIFIED_PLATFORM
-        )
+        return self.verified_private or self.status in {
+            PrivatePathStatus.TRUSTED_DIRECTORY,
+            PrivatePathStatus.UNVERIFIED_PLATFORM,
+        }
 
 
 class PrivatePathError(OSError):
@@ -164,6 +166,23 @@ def _private_directory_postcondition_holds(
         and stat.S_ISDIR(opened.st_mode)
         and opened.st_uid == os.geteuid()
         and stat.S_IMODE(opened.st_mode) == _PRIVATE_DIRECTORY_MODE
+    )
+
+
+def _trusted_directory_postcondition_holds(
+    directory_fd: int,
+    parent_fd: int,
+    component: str,
+    *,
+    expected_identity: os.stat_result,
+) -> bool:
+    opened = os.fstat(directory_fd)
+    entry = os.stat(component, dir_fd=parent_fd, follow_symlinks=False)
+    return (
+        _same_identity(opened, expected_identity)
+        and _same_identity(entry, expected_identity)
+        and stat.S_ISDIR(opened.st_mode)
+        and _trusted_directory_owner(opened, os.geteuid())
     )
 
 
@@ -669,6 +688,163 @@ def secure_private_directory(
             )
         )
         return PrivatePathResult(selected, status)
+    except PrivatePathError:
+        raise
+    except OSError as exc:
+        raise _private_path_error_from_oserror(selected, exc) from None
+    finally:
+        os.close(current_fd)
+
+
+def verify_trusted_directory(
+    path: PathInput,
+    *,
+    allow_shared_sticky: bool,
+) -> PrivatePathResult:
+    """Verify an existing lexical directory without creating or changing it."""
+
+    selected = lexical_path(path)
+    if not _posix_guards_available():
+        if _WINDOWS_PLATFORM:
+            if not selected.is_dir():
+                raise PrivatePathError(
+                    PrivatePathResult(
+                        selected,
+                        PrivatePathStatus.OPERATION_FAILED,
+                        reason="missing_or_non_directory",
+                    )
+                )
+            return PrivatePathResult(
+                selected,
+                PrivatePathStatus.UNVERIFIED_PLATFORM,
+                reason="native_acl_not_verified",
+            )
+        raise PrivatePathError(
+            PrivatePathResult(
+                selected,
+                PrivatePathStatus.OPERATION_FAILED,
+                reason="required_posix_guards_unavailable",
+            )
+        )
+
+    parts = selected.parts
+    if len(parts) < 2 or parts[0] != os.sep:
+        raise PrivatePathError(
+            PrivatePathResult(
+                selected,
+                PrivatePathStatus.OPERATION_FAILED,
+                reason="invalid_absolute_path",
+            )
+        )
+
+    euid = os.geteuid()
+    current_fd = os.open(os.sep, _DIRECTORY_OPEN_FLAGS | _NOFOLLOW)
+    try:
+        current_stat = os.fstat(current_fd)
+        for index, component in enumerate(parts[1:], start=1):
+            is_final = index == len(parts) - 1
+            if not _trusted_directory_owner(current_stat, euid):
+                raise PrivatePathError(
+                    PrivatePathResult(
+                        selected,
+                        PrivatePathStatus.UNSAFE_PARENT,
+                        reason="untrusted_directory_owner",
+                    )
+                )
+            current_mode = stat.S_IMODE(current_stat.st_mode)
+            current_writable = bool(current_mode & 0o022)
+            current_sticky = bool(current_mode & stat.S_ISVTX)
+            if current_writable and not current_sticky:
+                raise PrivatePathError(
+                    PrivatePathResult(
+                        selected,
+                        PrivatePathStatus.UNSAFE_PARENT,
+                        reason="shared_writable_parent",
+                    )
+                )
+
+            try:
+                next_fd = _open_directory_component(current_fd, component)
+            except FileNotFoundError:
+                raise PrivatePathError(
+                    PrivatePathResult(
+                        selected,
+                        PrivatePathStatus.UNSAFE_PARENT,
+                        reason="missing_directory",
+                    )
+                ) from None
+            except OSError as exc:
+                raise _private_path_error_from_oserror(selected, exc) from None
+
+            transferred = False
+            try:
+                next_stat = os.fstat(next_fd)
+                if not stat.S_ISDIR(next_stat.st_mode):
+                    raise PrivatePathError(
+                        PrivatePathResult(
+                            selected,
+                            PrivatePathStatus.LINK_OR_NON_REGULAR,
+                            reason="non_directory_component",
+                        )
+                    )
+                if not _trusted_directory_owner(next_stat, euid):
+                    raise PrivatePathError(
+                        PrivatePathResult(
+                            selected,
+                            (
+                                PrivatePathStatus.WRONG_OWNER
+                                if is_final
+                                else PrivatePathStatus.UNSAFE_PARENT
+                            ),
+                            reason="untrusted_directory_owner",
+                        )
+                    )
+                if not _trusted_directory_postcondition_holds(
+                    next_fd,
+                    current_fd,
+                    component,
+                    expected_identity=next_stat,
+                ):
+                    raise PrivatePathError(
+                        PrivatePathResult(
+                            selected,
+                            PrivatePathStatus.OPERATION_FAILED,
+                            reason="trusted_directory_postcondition_failed",
+                        )
+                    )
+
+                next_mode = stat.S_IMODE(next_stat.st_mode)
+                next_writable = bool(next_mode & 0o022)
+                next_sticky = bool(next_mode & stat.S_ISVTX)
+                if next_writable and (
+                    not next_sticky or (is_final and not allow_shared_sticky)
+                ):
+                    raise PrivatePathError(
+                        PrivatePathResult(
+                            selected,
+                            PrivatePathStatus.UNSAFE_PARENT,
+                            reason=(
+                                "shared_sticky_directory_not_allowed"
+                                if next_sticky and is_final
+                                else "shared_writable_parent"
+                            ),
+                        )
+                    )
+
+                old_fd = current_fd
+                current_fd = next_fd
+                transferred = True
+                os.close(old_fd)
+                current_stat = next_stat
+            finally:
+                if not transferred:
+                    os.close(next_fd)
+
+        return PrivatePathResult(
+            selected,
+            PrivatePathStatus.TRUSTED_DIRECTORY,
+            reason="trusted_existing_directory",
+        )
     except PrivatePathError:
         raise
     except OSError as exc:
