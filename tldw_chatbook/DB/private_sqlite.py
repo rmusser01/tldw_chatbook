@@ -352,12 +352,40 @@ def _path_error_from_oserror(selected: Path, exc: OSError) -> PrivatePathError:
     return _failure(selected, status, type(exc).__name__)
 
 
-def _prepare_posix_artifact(
+class _OptionalSQLiteGenerationChanged(Exception):
+    """Restart optional-sidecar validation against the current named inode."""
+
+
+_OPTIONAL_SIDECAR_REVALIDATION_ATTEMPTS = 4
+
+
+def _optional_sidecar_restart_or_absent(
+    parent_fd: int,
+    leaf: str,
+    selected: Path,
+) -> bool:
+    try:
+        current = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise _path_error_from_oserror(selected, exc) from None
+
+    rejected = private_paths._classify_private_file_stat(
+        current,
+        expected_uid=os.geteuid(),
+    )
+    if rejected is not None:
+        raise _failure(selected, rejected, "unsafe_sqlite_artifact")
+    raise _OptionalSQLiteGenerationChanged
+
+
+def _prepare_posix_artifact_generation(
     selected: Path,
     *,
     writable: bool,
     create_if_missing: bool,
-    optional: bool = False,
+    optional: bool,
 ) -> bool:
     parent_fd, leaf = private_paths._open_verified_parent(
         selected,
@@ -387,6 +415,28 @@ def _prepare_posix_artifact(
                 PrivatePathStatus.LINK_OR_NON_REGULAR,
                 "non_regular_sqlite_artifact",
             )
+        if (
+            optional
+            and entry_stat is not None
+            and entry_stat.st_nlink == 0
+            and entry_stat.st_uid == os.geteuid()
+        ):
+            return _optional_sidecar_restart_or_absent(
+                parent_fd,
+                leaf,
+                selected,
+            )
+        if entry_stat is not None:
+            entry_rejected = private_paths._classify_private_file_stat(
+                entry_stat,
+                expected_uid=os.geteuid(),
+            )
+            if entry_rejected is not None:
+                raise _failure(
+                    selected,
+                    entry_rejected,
+                    "unsafe_sqlite_artifact",
+                )
 
         created = entry_stat is None
         try:
@@ -396,10 +446,40 @@ def _prepare_posix_artifact(
                 writable=created,
                 create=created,
             )
+        except FileNotFoundError:
+            if optional:
+                return _optional_sidecar_restart_or_absent(
+                    parent_fd,
+                    leaf,
+                    selected,
+                )
+            raise _failure(
+                selected,
+                PrivatePathStatus.OPERATION_FAILED,
+                "missing_sqlite_artifact",
+            ) from None
         except OSError as exc:
             raise _path_error_from_oserror(selected, exc) from None
 
         opened_stat = os.fstat(file_fd)
+        if optional and opened_stat.st_nlink == 0:
+            if not stat.S_ISREG(opened_stat.st_mode):
+                raise _failure(
+                    selected,
+                    PrivatePathStatus.LINK_OR_NON_REGULAR,
+                    "unsafe_sqlite_artifact",
+                )
+            if opened_stat.st_uid != os.geteuid():
+                raise _failure(
+                    selected,
+                    PrivatePathStatus.WRONG_OWNER,
+                    "unsafe_sqlite_artifact",
+                )
+            return _optional_sidecar_restart_or_absent(
+                parent_fd,
+                leaf,
+                selected,
+            )
         rejected = private_paths._classify_private_file_stat(
             opened_stat,
             expected_uid=os.geteuid(),
@@ -410,6 +490,12 @@ def _prepare_posix_artifact(
             entry_stat,
             opened_stat,
         ):
+            if optional:
+                return _optional_sidecar_restart_or_absent(
+                    parent_fd,
+                    leaf,
+                    selected,
+                )
             raise _failure(
                 selected,
                 PrivatePathStatus.OPERATION_FAILED,
@@ -418,13 +504,33 @@ def _prepare_posix_artifact(
 
         if stat.S_IMODE(opened_stat.st_mode) != _PRIVATE_FILE_MODE:
             os.fchmod(file_fd, _PRIVATE_FILE_MODE)
-        if not _artifact_postcondition_holds(
-            file_fd,
-            parent_fd,
-            leaf,
-            expected_identity=opened_stat,
-            selected=selected,
-        ):
+        try:
+            postcondition_holds = _artifact_postcondition_holds(
+                file_fd,
+                parent_fd,
+                leaf,
+                expected_identity=opened_stat,
+                selected=selected,
+            )
+        except FileNotFoundError:
+            if optional:
+                return _optional_sidecar_restart_or_absent(
+                    parent_fd,
+                    leaf,
+                    selected,
+                )
+            raise _failure(
+                selected,
+                PrivatePathStatus.OPERATION_FAILED,
+                "private_sqlite_postcondition_failed",
+            ) from None
+        if not postcondition_holds:
+            if optional:
+                return _optional_sidecar_restart_or_absent(
+                    parent_fd,
+                    leaf,
+                    selected,
+                )
             raise _failure(
                 selected,
                 PrivatePathStatus.OPERATION_FAILED,
@@ -439,10 +545,40 @@ def _prepare_posix_artifact(
                     writable=True,
                     create=False,
                 )
+            except FileNotFoundError:
+                if optional:
+                    return _optional_sidecar_restart_or_absent(
+                        parent_fd,
+                        leaf,
+                        selected,
+                    )
+                raise _failure(
+                    selected,
+                    PrivatePathStatus.OPERATION_FAILED,
+                    "missing_sqlite_artifact",
+                ) from None
             except OSError as exc:
                 raise _path_error_from_oserror(selected, exc) from None
 
             writable_stat = os.fstat(writable_fd)
+            if optional and writable_stat.st_nlink == 0:
+                if not stat.S_ISREG(writable_stat.st_mode):
+                    raise _failure(
+                        selected,
+                        PrivatePathStatus.LINK_OR_NON_REGULAR,
+                        "unsafe_sqlite_artifact",
+                    )
+                if writable_stat.st_uid != os.geteuid():
+                    raise _failure(
+                        selected,
+                        PrivatePathStatus.WRONG_OWNER,
+                        "unsafe_sqlite_artifact",
+                    )
+                return _optional_sidecar_restart_or_absent(
+                    parent_fd,
+                    leaf,
+                    selected,
+                )
             rejected = private_paths._classify_private_file_stat(
                 writable_stat,
                 expected_uid=os.geteuid(),
@@ -450,18 +586,44 @@ def _prepare_posix_artifact(
             if rejected is not None:
                 raise _failure(selected, rejected, "unsafe_sqlite_artifact")
             if not private_paths._same_identity(opened_stat, writable_stat):
+                if optional:
+                    return _optional_sidecar_restart_or_absent(
+                        parent_fd,
+                        leaf,
+                        selected,
+                    )
                 raise _failure(
                     selected,
                     PrivatePathStatus.OPERATION_FAILED,
                     "private_sqlite_identity_changed",
                 )
-            if not _artifact_postcondition_holds(
-                writable_fd,
-                parent_fd,
-                leaf,
-                expected_identity=opened_stat,
-                selected=selected,
-            ):
+            try:
+                writable_postcondition_holds = _artifact_postcondition_holds(
+                    writable_fd,
+                    parent_fd,
+                    leaf,
+                    expected_identity=opened_stat,
+                    selected=selected,
+                )
+            except FileNotFoundError:
+                if optional:
+                    return _optional_sidecar_restart_or_absent(
+                        parent_fd,
+                        leaf,
+                        selected,
+                    )
+                raise _failure(
+                    selected,
+                    PrivatePathStatus.OPERATION_FAILED,
+                    "private_sqlite_postcondition_failed",
+                ) from None
+            if not writable_postcondition_holds:
+                if optional:
+                    return _optional_sidecar_restart_or_absent(
+                        parent_fd,
+                        leaf,
+                        selected,
+                    )
                 raise _failure(
                     selected,
                     PrivatePathStatus.OPERATION_FAILED,
@@ -478,6 +640,32 @@ def _prepare_posix_artifact(
         if file_fd >= 0:
             os.close(file_fd)
         os.close(parent_fd)
+
+
+def _prepare_posix_artifact(
+    selected: Path,
+    *,
+    writable: bool,
+    create_if_missing: bool,
+    optional: bool = False,
+) -> bool:
+    attempts = _OPTIONAL_SIDECAR_REVALIDATION_ATTEMPTS if optional else 1
+    for attempt in range(attempts):
+        try:
+            return _prepare_posix_artifact_generation(
+                selected,
+                writable=writable,
+                create_if_missing=create_if_missing,
+                optional=optional,
+            )
+        except _OptionalSQLiteGenerationChanged:
+            if attempt + 1 == attempts:
+                raise _failure(
+                    selected,
+                    PrivatePathStatus.OPERATION_FAILED,
+                    "optional_sqlite_generation_churn",
+                ) from None
+    raise AssertionError("unreachable optional SQLite revalidation state")
 
 
 def _prepare_windows_artifact(
@@ -639,6 +827,7 @@ def connect_private_sqlite(
                 create_if_missing=False,
                 optional=True,
             )
+        connection_target = os.fspath(selected)
         if read_only:
             connection_target = _build_read_only_uri(
                 selected,

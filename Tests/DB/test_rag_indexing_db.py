@@ -10,8 +10,6 @@ and supports incremental indexing.
 """
 
 import pytest
-import tempfile
-from pathlib import Path
 from datetime import datetime, timezone, timedelta
 import time
 
@@ -23,10 +21,9 @@ class TestRAGIndexingDB:
     """Test cases for RAG indexing database."""
 
     @pytest.fixture
-    def temp_db(self):
+    def temp_db(self, tmp_path):
         """Create a temporary database for testing."""
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-            db_path = Path(tmp.name)
+        db_path = tmp_path / "rag-indexing.db"
 
         db = RAGIndexingDB(db_path)
         yield db

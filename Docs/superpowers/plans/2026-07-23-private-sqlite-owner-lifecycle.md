@@ -507,6 +507,8 @@ without changing it, so no new ADR is needed.
 - Modify: `tldw_chatbook/DB/Library_Ingest_Jobs_DB.py`
 - Modify: `tldw_chatbook/DB/RAG_Indexing_DB.py`
 - Modify: `tldw_chatbook/DB/search_history_db.py`
+- Modify: `tldw_chatbook/DB/private_sqlite.py`
+- Modify: `Tests/DB/test_private_sqlite.py`
 - Modify: focused tests in `Tests/ChaChaNotesDB/`, `Tests/Media_DB/`,
   `Tests/Prompts_DB/`, `Tests/DB/`, and `Tests/Evals/`.
 - Modify: `backlog/docs/sqlite-private-owner-inventory.md`
@@ -548,6 +550,18 @@ without changing it, so no new ADR is needed.
   direct `.backup()` calls for Task 6. This ordering ensures the Task 5
   raw-connect guard can pass.
 
+  Optional SQLite sidecars use a bounded four-attempt full-generation
+  revalidation loop for legitimate concurrent rollback-journal churn. A
+  missing current name is treated as an absent optional sidecar; a present
+  eligible current-user regular single-link candidate restarts the complete
+  stat/open/fstat/harden/writable-reopen/postcondition cycle. Unsafe
+  replacements and exhausted churn fail closed. Main-database identity changes
+  never retry. This implements ADR-022's unauthorized-other-UID privacy
+  boundary and does not claim same-UID process isolation.
+
+  ADR required: no. This is an internal lifecycle correction required to
+  implement ADR-022 without changing its accepted threat model.
+
   In the checked inventory, change P06-P15 from `current` to `migrated` in the
   same commit. The inventory test must prove the removed constructor and
   backup-parent calls remain absent.
@@ -560,7 +574,8 @@ without changing it, so no new ADR is needed.
 - [ ] **Step 6: Commit core owners**
 
   ```bash
-    git add tldw_chatbook/DB \
+  git add Docs/superpowers/plans/2026-07-23-private-sqlite-owner-lifecycle.md \
+    tldw_chatbook/DB \
     backlog/docs/sqlite-private-owner-inventory.md \
     Tests/DB Tests/Evals Tests/ChaChaNotesDB Tests/Media_DB Tests/Prompts_DB
   git commit -m "fix(security): migrate core sqlite owners"

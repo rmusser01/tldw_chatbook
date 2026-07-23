@@ -672,6 +672,37 @@ def test_task_three_parent_creators_are_recorded_as_migrated() -> None:
     }
 
 
+def test_task_four_parent_creators_are_recorded_as_migrated() -> None:
+    parent_rows = {row["id"]: row for row in _inventory_rows("P")}
+
+    assert {
+        parent_id: parent_rows[parent_id]["state"]
+        for parent_id in (
+            "P06",
+            "P07",
+            "P08",
+            "P09",
+            "P10",
+            "P11",
+            "P12",
+            "P13",
+            "P14",
+            "P15",
+        )
+    } == {
+        "P06": "migrated",
+        "P07": "migrated",
+        "P08": "migrated",
+        "P09": "migrated",
+        "P10": "migrated",
+        "P11": "migrated",
+        "P12": "migrated",
+        "P13": "migrated",
+        "P14": "migrated",
+        "P15": "migrated",
+    }
+
+
 def test_parent_creator_discovery_boundary_is_explicit() -> None:
     inventory = INVENTORY_PATH.read_text(encoding="utf-8")
     normalized_inventory = " ".join(inventory.split())

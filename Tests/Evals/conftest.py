@@ -14,8 +14,6 @@ Provides common fixtures for testing evaluation components:
 
 import asyncio
 import json
-import tempfile
-from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -29,13 +27,9 @@ from tldw_chatbook.Evals.eval_orchestrator import EvaluationOrchestrator
 
 
 @pytest.fixture
-def temp_db_path():
+def temp_db_path(tmp_path):
     """Create a temporary database file path."""
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        temp_path = f.name
-    yield temp_path
-    # Cleanup
-    Path(temp_path).unlink(missing_ok=True)
+    yield str(tmp_path / "evals.db")
 
 
 @pytest.fixture

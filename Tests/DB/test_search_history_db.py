@@ -24,10 +24,9 @@ class TestSearchHistoryDB:
     """Test cases for SearchHistoryDB."""
 
     @pytest.fixture
-    def temp_db(self):
+    def temp_db(self, tmp_path):
         """Create a temporary database for testing."""
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-            db_path = Path(tmp.name)
+        db_path = tmp_path / "search-history.db"
 
         db = SearchHistoryDB(db_path)
         yield db
@@ -345,30 +344,32 @@ class TestSearchHistoryDB:
         assert history[0]["query"] == "recent query"
 
     def test_concurrent_recording(self, temp_db, sample_results):
-        """Test concurrent search recording."""
+        """Test concurrent recording across two owners of the same database."""
         import threading
 
         errors = []
         search_ids = []
+        instances = (temp_db, SearchHistoryDB(temp_db.db_path))
 
         def record_searches(thread_id):
             """Record searches from a thread."""
             try:
-                for i in range(5):
-                    search_id = temp_db.record_search(
+                database = instances[thread_id % len(instances)]
+                for i in range(40):
+                    search_id = database.record_search(
                         query=f"thread_{thread_id}_query_{i}",
                         search_type="full",
                         results=sample_results[:2],
                         execution_time_ms=100 + i,
                     )
                     search_ids.append(search_id)
-                    time.sleep(0.01)  # Small delay
+                    time.sleep(0.001)
             except Exception as e:
                 errors.append(e)
 
         # Create multiple threads
         threads = []
-        for i in range(3):
+        for i in range(8):
             t = threading.Thread(target=record_searches, args=(i,))
             threads.append(t)
             t.start()
@@ -381,11 +382,11 @@ class TestSearchHistoryDB:
         assert len(errors) == 0
 
         # Verify all searches were recorded
-        history = temp_db.get_search_history(limit=20)
-        assert len(history) == 15  # 3 threads * 5 searches
+        history = temp_db.get_search_history(limit=400)
+        assert len(history) == 320
 
         # Verify search IDs are unique
-        assert len(set(search_ids)) == 15
+        assert len(set(search_ids)) == 320
 
     def test_search_result_ordering(self, temp_db):
         """Test that search results maintain their order."""

@@ -508,7 +508,7 @@ def test_wrong_owner_existing_sidecar_blocks_raw_connect(
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX sidecar identity contract")
 @pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
-def test_sidecar_replacement_blocks_raw_connect(
+def test_safe_sidecar_replacement_at_first_open_is_fully_revalidated(
     tmp_path,
     monkeypatch,
     suffix,
@@ -520,8 +520,10 @@ def test_sidecar_replacement_blocks_raw_connect(
     sidecar.write_bytes(b"sidecar")
     replacement = tmp_path / f"replacement{suffix}"
     replacement.write_bytes(b"replacement")
+    replacement.chmod(0o600)
     real_open = private_sqlite._open_artifact_fd
     raced = False
+    raw_connect_calls = []
 
     def replace_then_open(parent_fd, leaf, *, writable, create):
         nonlocal raced
@@ -531,21 +533,24 @@ def test_sidecar_replacement_blocks_raw_connect(
         return real_open(parent_fd, leaf, writable=writable, create=create)
 
     monkeypatch.setattr(private_sqlite, "_open_artifact_fd", replace_then_open)
-    monkeypatch.setattr(
-        private_sqlite.sqlite3,
-        "connect",
-        lambda *args, **kwargs: pytest.fail("raw connect reached raced sidecar"),
-    )
 
-    with pytest.raises(PrivatePathError) as caught:
-        connect_private_sqlite("db.base", target)
+    def observe_connect(database, **kwargs):
+        raw_connect_calls.append((database, kwargs))
+        return sqlite3.Connection(":memory:")
 
-    assert caught.value.result.reason == "private_sqlite_identity_changed"
+    monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
+    connection = connect_private_sqlite("db.base", target)
+    connection.close()
+
+    assert raced is True
+    assert raw_connect_calls
+    assert sidecar.read_bytes() == b"replacement"
+    assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX sidecar reopen contract")
 @pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
-def test_sidecar_replacement_between_hardening_and_writable_reopen_is_rejected(
+def test_safe_sidecar_replacement_at_writable_reopen_is_fully_revalidated(
     tmp_path,
     monkeypatch,
     suffix,
@@ -558,8 +563,10 @@ def test_sidecar_replacement_between_hardening_and_writable_reopen_is_rejected(
     sidecar.chmod(0o400)
     replacement = tmp_path / f"replacement{suffix}"
     replacement.write_bytes(b"replacement")
+    replacement.chmod(0o600)
     real_open = private_sqlite._open_artifact_fd
     sidecar_open_count = 0
+    raw_connect_calls = []
 
     def replace_before_writable_reopen(parent_fd, leaf, *, writable, create):
         nonlocal sidecar_open_count
@@ -574,17 +581,19 @@ def test_sidecar_replacement_between_hardening_and_writable_reopen_is_rejected(
         "_open_artifact_fd",
         replace_before_writable_reopen,
     )
-    monkeypatch.setattr(
-        private_sqlite.sqlite3,
-        "connect",
-        lambda *args, **kwargs: pytest.fail("raw connect reached raced sidecar"),
-    )
 
-    with pytest.raises(PrivatePathError) as caught:
-        connect_private_sqlite("db.base", target)
+    def observe_connect(database, **kwargs):
+        raw_connect_calls.append((database, kwargs))
+        return sqlite3.Connection(":memory:")
 
-    assert sidecar_open_count == 2
-    assert caught.value.result.reason == "private_sqlite_identity_changed"
+    monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
+    connection = connect_private_sqlite("db.base", target)
+    connection.close()
+
+    assert sidecar_open_count == 4
+    assert raw_connect_calls
+    assert sidecar.read_bytes() == b"replacement"
+    assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX sidecar identity contract")
@@ -613,7 +622,7 @@ def test_sidecar_postcondition_failure_blocks_raw_connect(
     with pytest.raises(PrivatePathError) as caught:
         connect_private_sqlite("db.base", target)
 
-    assert caught.value.result.reason == "private_sqlite_postcondition_failed"
+    assert caught.value.result.reason == "optional_sqlite_generation_churn"
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX sidecar contract")
@@ -633,6 +642,523 @@ def test_missing_sidecars_are_not_precreated(tmp_path, monkeypatch):
     connection.close()
 
     assert seen == [False, False, False]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX sidecar unlink race contract")
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_optional_sidecar_unlinked_after_open_is_treated_as_vanished(
+    tmp_path,
+    monkeypatch,
+    suffix,
+):
+    target = tmp_path / "db.sqlite"
+    target.write_bytes(b"")
+    target.chmod(0o600)
+    sidecar = Path(f"{target}{suffix}")
+    sidecar.write_bytes(b"transient")
+    sidecar.chmod(0o600)
+    real_open = private_sqlite._open_artifact_fd
+    raw_connect_calls = []
+
+    def unlink_after_open(parent_fd, leaf, *, writable, create):
+        file_fd = real_open(parent_fd, leaf, writable=writable, create=create)
+        if leaf == sidecar.name:
+            sidecar.unlink()
+        return file_fd
+
+    def observe_connect(database, **kwargs):
+        raw_connect_calls.append((database, kwargs))
+        return sqlite3.Connection(":memory:")
+
+    monkeypatch.setattr(private_sqlite, "_open_artifact_fd", unlink_after_open)
+    monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
+
+    connection = connect_private_sqlite("db.base", target)
+    connection.close()
+
+    assert raw_connect_calls
+    assert not sidecar.exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX sidecar unlink race contract")
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_optional_replaced_sidecar_unlinked_after_initial_open_is_vanished(
+    tmp_path,
+    monkeypatch,
+    suffix,
+):
+    target = tmp_path / "db.sqlite"
+    target.write_bytes(b"")
+    target.chmod(0o600)
+    sidecar = Path(f"{target}{suffix}")
+    sidecar.write_bytes(b"generation-a")
+    sidecar.chmod(0o600)
+    replacement = tmp_path / f"generation-b{suffix}"
+    replacement.write_bytes(b"generation-b")
+    replacement.chmod(0o600)
+    real_open = private_sqlite._open_artifact_fd
+    raw_connect_calls = []
+
+    def replace_open_and_unlink(parent_fd, leaf, *, writable, create):
+        if leaf == sidecar.name:
+            replacement.replace(sidecar)
+            file_fd = real_open(parent_fd, leaf, writable=writable, create=create)
+            sidecar.unlink()
+            return file_fd
+        return real_open(parent_fd, leaf, writable=writable, create=create)
+
+    def observe_connect(database, **kwargs):
+        raw_connect_calls.append((database, kwargs))
+        return sqlite3.Connection(":memory:")
+
+    monkeypatch.setattr(
+        private_sqlite,
+        "_open_artifact_fd",
+        replace_open_and_unlink,
+    )
+    monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
+
+    connection = connect_private_sqlite("db.base", target)
+    connection.close()
+
+    assert raw_connect_calls
+    assert not sidecar.exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX sidecar unlink race contract")
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_optional_replaced_sidecar_unlinked_after_writable_reopen_is_vanished(
+    tmp_path,
+    monkeypatch,
+    suffix,
+):
+    target = tmp_path / "db.sqlite"
+    target.write_bytes(b"")
+    target.chmod(0o600)
+    sidecar = Path(f"{target}{suffix}")
+    sidecar.write_bytes(b"generation-a")
+    sidecar.chmod(0o600)
+    replacement = tmp_path / f"generation-b{suffix}"
+    replacement.write_bytes(b"generation-b")
+    replacement.chmod(0o600)
+    real_open = private_sqlite._open_artifact_fd
+    sidecar_opens = 0
+    raw_connect_calls = []
+
+    def replace_open_and_unlink(parent_fd, leaf, *, writable, create):
+        nonlocal sidecar_opens
+        if leaf == sidecar.name:
+            sidecar_opens += 1
+            if sidecar_opens == 2:
+                replacement.replace(sidecar)
+                file_fd = real_open(
+                    parent_fd,
+                    leaf,
+                    writable=writable,
+                    create=create,
+                )
+                sidecar.unlink()
+                return file_fd
+        return real_open(parent_fd, leaf, writable=writable, create=create)
+
+    def observe_connect(database, **kwargs):
+        raw_connect_calls.append((database, kwargs))
+        return sqlite3.Connection(":memory:")
+
+    monkeypatch.setattr(
+        private_sqlite,
+        "_open_artifact_fd",
+        replace_open_and_unlink,
+    )
+    monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
+
+    connection = connect_private_sqlite("db.base", target)
+    connection.close()
+
+    assert raw_connect_calls
+    assert sidecar_opens == 2
+    assert not sidecar.exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX sidecar unlink race contract")
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_optional_safe_sidecar_replacement_after_unlink_is_fully_revalidated(
+    tmp_path,
+    monkeypatch,
+    suffix,
+):
+    target = tmp_path / "db.sqlite"
+    target.write_bytes(b"")
+    target.chmod(0o600)
+    sidecar = Path(f"{target}{suffix}")
+    sidecar.write_bytes(b"transient")
+    sidecar.chmod(0o600)
+    replacement = tmp_path / f"replacement{suffix}"
+    replacement.write_bytes(b"replacement")
+    replacement.chmod(0o600)
+    real_open = private_sqlite._open_artifact_fd
+    replaced = False
+    raw_connect_calls = []
+
+    def replace_after_open(parent_fd, leaf, *, writable, create):
+        nonlocal replaced
+        file_fd = real_open(parent_fd, leaf, writable=writable, create=create)
+        if leaf == sidecar.name and not replaced:
+            replaced = True
+            sidecar.unlink()
+            replacement.replace(sidecar)
+        return file_fd
+
+    monkeypatch.setattr(private_sqlite, "_open_artifact_fd", replace_after_open)
+
+    def observe_connect(database, **kwargs):
+        raw_connect_calls.append((database, kwargs))
+        return sqlite3.Connection(":memory:")
+
+    monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
+    connection = connect_private_sqlite("db.base", target)
+    connection.close()
+
+    assert raw_connect_calls
+    assert sidecar.read_bytes() == b"replacement"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX sidecar generation contract")
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_eligible_0644_sidecar_replacement_is_hardened_before_raw_connect(
+    tmp_path,
+    monkeypatch,
+    suffix,
+):
+    target = tmp_path / "db.sqlite"
+    target.write_bytes(b"")
+    target.chmod(0o600)
+    sidecar = Path(f"{target}{suffix}")
+    sidecar.write_bytes(b"first")
+    sidecar.chmod(0o600)
+    replacement = tmp_path / f"replacement{suffix}"
+    replacement.write_bytes(b"historical")
+    replacement.chmod(0o644)
+    real_open = private_sqlite._open_artifact_fd
+    replaced = False
+    observed_modes = []
+
+    def replace_then_open(parent_fd, leaf, *, writable, create):
+        nonlocal replaced
+        if leaf == sidecar.name and not replaced:
+            replaced = True
+            replacement.replace(sidecar)
+        return real_open(parent_fd, leaf, writable=writable, create=create)
+
+    def observe_connect(database, **kwargs):
+        observed_modes.append(stat.S_IMODE(sidecar.stat().st_mode))
+        return sqlite3.Connection(":memory:")
+
+    monkeypatch.setattr(private_sqlite, "_open_artifact_fd", replace_then_open)
+    monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
+    connection = connect_private_sqlite("db.base", target)
+    connection.close()
+
+    assert observed_modes == [0o600]
+    assert sidecar.read_bytes() == b"historical"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX sidecar generation contract")
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_optional_sidecar_disappearing_during_open_is_treated_as_absent(
+    tmp_path,
+    monkeypatch,
+    suffix,
+):
+    target = tmp_path / "db.sqlite"
+    target.write_bytes(b"")
+    target.chmod(0o600)
+    sidecar = Path(f"{target}{suffix}")
+    sidecar.write_bytes(b"transient")
+    sidecar.chmod(0o600)
+    real_open = private_sqlite._open_artifact_fd
+    removed = False
+    raw_connect_calls = []
+
+    def unlink_before_open(parent_fd, leaf, *, writable, create):
+        nonlocal removed
+        if leaf == sidecar.name and not removed:
+            removed = True
+            sidecar.unlink()
+        return real_open(parent_fd, leaf, writable=writable, create=create)
+
+    def observe_connect(database, **kwargs):
+        raw_connect_calls.append((database, kwargs))
+        return sqlite3.Connection(":memory:")
+
+    monkeypatch.setattr(private_sqlite, "_open_artifact_fd", unlink_before_open)
+    monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
+    connection = connect_private_sqlite("db.base", target)
+    connection.close()
+
+    assert raw_connect_calls
+    assert not sidecar.exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX sidecar generation contract")
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_optional_sidecar_initial_unlinked_snapshot_revalidates_current_generation(
+    tmp_path,
+    monkeypatch,
+    suffix,
+):
+    target = tmp_path / "db.sqlite"
+    target.write_bytes(b"")
+    target.chmod(0o600)
+    sidecar = Path(f"{target}{suffix}")
+    sidecar.write_bytes(b"current")
+    sidecar.chmod(0o600)
+    real_stat = private_sqlite.os.stat
+    sidecar_stats = 0
+    raw_connect_calls = []
+
+    def report_unlinked_first_generation(path, *args, **kwargs):
+        nonlocal sidecar_stats
+        file_stat = real_stat(path, *args, **kwargs)
+        if (
+            path == sidecar.name
+            and kwargs.get("dir_fd") is not None
+            and kwargs.get("follow_symlinks") is False
+        ):
+            sidecar_stats += 1
+            if sidecar_stats == 1:
+                fields = list(file_stat)
+                fields[3] = 0
+                return os.stat_result(fields)
+        return file_stat
+
+    def observe_connect(database, **kwargs):
+        raw_connect_calls.append((database, kwargs))
+        return sqlite3.Connection(":memory:")
+
+    monkeypatch.setattr(
+        private_sqlite.private_paths, "_posix_guards_available", lambda: True
+    )
+    monkeypatch.setattr(private_sqlite.os, "stat", report_unlinked_first_generation)
+    monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
+
+    connection = connect_private_sqlite("db.base", target)
+    connection.close()
+
+    assert raw_connect_calls
+    assert sidecar_stats > 1
+    assert sidecar.read_bytes() == b"current"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX sidecar generation contract")
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_safe_sidecar_replacement_during_postcondition_is_revalidated(
+    tmp_path,
+    monkeypatch,
+    suffix,
+):
+    target = tmp_path / "db.sqlite"
+    target.write_bytes(b"")
+    target.chmod(0o600)
+    sidecar = Path(f"{target}{suffix}")
+    sidecar.write_bytes(b"first")
+    sidecar.chmod(0o600)
+    replacement = tmp_path / f"replacement{suffix}"
+    replacement.write_bytes(b"replacement")
+    replacement.chmod(0o600)
+    real_postcondition = private_sqlite._artifact_postcondition_holds
+    replaced = False
+    raw_connect_calls = []
+
+    def replace_during_postcondition(*args, **kwargs):
+        nonlocal replaced
+        if kwargs.get("selected") == sidecar and not replaced:
+            replaced = True
+            replacement.replace(sidecar)
+            return False
+        return real_postcondition(*args, **kwargs)
+
+    def observe_connect(database, **kwargs):
+        raw_connect_calls.append((database, kwargs))
+        return sqlite3.Connection(":memory:")
+
+    monkeypatch.setattr(
+        private_sqlite,
+        "_artifact_postcondition_holds",
+        replace_during_postcondition,
+    )
+    monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
+    connection = connect_private_sqlite("db.base", target)
+    connection.close()
+
+    assert raw_connect_calls
+    assert sidecar.read_bytes() == b"replacement"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX sidecar generation contract")
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+@pytest.mark.parametrize(
+    ("unsafe_kind", "expected_status"),
+    [
+        ("symlink", PrivatePathStatus.LINK_OR_NON_REGULAR),
+        ("directory", PrivatePathStatus.LINK_OR_NON_REGULAR),
+        ("hardlink", PrivatePathStatus.LINK_OR_NON_REGULAR),
+        ("wrong_owner", PrivatePathStatus.WRONG_OWNER),
+    ],
+)
+def test_unsafe_sidecar_replacement_fails_before_raw_connect(
+    tmp_path,
+    monkeypatch,
+    suffix,
+    unsafe_kind,
+    expected_status,
+):
+    target = tmp_path / "db.sqlite"
+    target.write_bytes(b"")
+    target.chmod(0o600)
+    sidecar = Path(f"{target}{suffix}")
+    sidecar.write_bytes(b"first")
+    sidecar.chmod(0o600)
+    outside = tmp_path / f"outside{suffix}"
+    outside.write_bytes(b"outside")
+    alias = tmp_path / f"alias{suffix}"
+    real_open = private_sqlite._open_artifact_fd
+    real_classify = private_sqlite.private_paths._classify_private_file_stat
+    replacement_identity = None
+    replaced = False
+
+    def replace_after_open(parent_fd, leaf, *, writable, create):
+        nonlocal replaced, replacement_identity
+        file_fd = real_open(parent_fd, leaf, writable=writable, create=create)
+        if leaf == sidecar.name and not replaced:
+            replaced = True
+            sidecar.unlink()
+            if unsafe_kind == "symlink":
+                sidecar.symlink_to(outside)
+            elif unsafe_kind == "directory":
+                sidecar.mkdir()
+            else:
+                sidecar.write_bytes(b"unsafe")
+                sidecar.chmod(0o600)
+                replacement_stat = sidecar.stat()
+                replacement_identity = (
+                    replacement_stat.st_dev,
+                    replacement_stat.st_ino,
+                )
+                if unsafe_kind == "hardlink":
+                    os.link(sidecar, alias)
+        return file_fd
+
+    def report_wrong_owner(file_stat, *, expected_uid):
+        if unsafe_kind == "wrong_owner" and replacement_identity == (
+            file_stat.st_dev,
+            file_stat.st_ino,
+        ):
+            return PrivatePathStatus.WRONG_OWNER
+        return real_classify(file_stat, expected_uid=expected_uid)
+
+    monkeypatch.setattr(private_sqlite, "_open_artifact_fd", replace_after_open)
+    if unsafe_kind == "wrong_owner":
+        monkeypatch.setattr(
+            private_sqlite.private_paths,
+            "_classify_private_file_stat",
+            report_wrong_owner,
+        )
+    monkeypatch.setattr(
+        private_sqlite.sqlite3,
+        "connect",
+        lambda *args, **kwargs: pytest.fail(
+            "raw connect reached an unsafe sidecar replacement"
+        ),
+    )
+
+    with pytest.raises(PrivatePathError) as caught:
+        connect_private_sqlite("db.base", target)
+
+    assert caught.value.result.status is expected_status
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX sidecar generation contract")
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_continuous_safe_sidecar_churn_exhausts_budget_and_fails_closed(
+    tmp_path,
+    monkeypatch,
+    suffix,
+):
+    target = tmp_path / "db.sqlite"
+    target.write_bytes(b"")
+    target.chmod(0o600)
+    sidecar = Path(f"{target}{suffix}")
+    sidecar.write_bytes(b"generation-0")
+    sidecar.chmod(0o600)
+    real_open = private_sqlite._open_artifact_fd
+    generations = 0
+
+    def replace_every_open(parent_fd, leaf, *, writable, create):
+        nonlocal generations
+        file_fd = real_open(parent_fd, leaf, writable=writable, create=create)
+        if leaf == sidecar.name:
+            generations += 1
+            sidecar.unlink()
+            sidecar.write_bytes(f"generation-{generations}".encode())
+            sidecar.chmod(0o600)
+        return file_fd
+
+    monkeypatch.setattr(private_sqlite, "_open_artifact_fd", replace_every_open)
+    monkeypatch.setattr(
+        private_sqlite.sqlite3,
+        "connect",
+        lambda *args, **kwargs: pytest.fail(
+            "raw connect reached continuously churning sidecar"
+        ),
+    )
+
+    with pytest.raises(PrivatePathError) as caught:
+        connect_private_sqlite("db.base", target)
+
+    assert caught.value.result.reason == "optional_sqlite_generation_churn"
+    assert generations == 4
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX sidecar unlink race contract")
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_optional_hardlinked_sidecar_cannot_be_laundered_by_unlink(
+    tmp_path,
+    monkeypatch,
+    suffix,
+):
+    target = tmp_path / "db.sqlite"
+    target.write_bytes(b"")
+    target.chmod(0o600)
+    sidecar = Path(f"{target}{suffix}")
+    sidecar.write_bytes(b"shared")
+    sidecar.chmod(0o600)
+    alias = tmp_path / f"alias{suffix}"
+    os.link(sidecar, alias)
+    real_open = private_sqlite._open_artifact_fd
+
+    def unlink_all_names_after_open(parent_fd, leaf, *, writable, create):
+        file_fd = real_open(parent_fd, leaf, writable=writable, create=create)
+        if leaf == sidecar.name:
+            sidecar.unlink()
+            alias.unlink()
+        return file_fd
+
+    monkeypatch.setattr(
+        private_sqlite,
+        "_open_artifact_fd",
+        unlink_all_names_after_open,
+    )
+    monkeypatch.setattr(
+        private_sqlite.sqlite3,
+        "connect",
+        lambda *args, **kwargs: pytest.fail(
+            "raw connect reached a laundered hardlinked sidecar"
+        ),
+    )
+
+    with pytest.raises(PrivatePathError):
+        connect_private_sqlite("db.base", target)
 
 
 def _assert_private_regular_owned(path: Path) -> None:

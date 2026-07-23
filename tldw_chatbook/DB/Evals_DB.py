@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Evals.ab_testing import ABTestResult
 
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
 # Database Schema Version
 SCHEMA_VERSION = 3
@@ -89,8 +90,6 @@ class EvalsDB:
             self.db_path = db_path
         else:
             self.db_path = Path(db_path)
-            # Ensure database directory exists
-            self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
         self.client_id = client_id
         self._local = threading.local()
@@ -107,7 +106,11 @@ class EvalsDB:
             db_path_str = (
                 self.db_path if isinstance(self.db_path, str) else str(self.db_path)
             )
-            conn = sqlite3.connect(db_path_str, check_same_thread=False)
+            conn = connect_private_sqlite(
+                "db.evals",
+                db_path_str,
+                check_same_thread=False,
+            )
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")
             conn.execute("PRAGMA journal_mode = WAL")

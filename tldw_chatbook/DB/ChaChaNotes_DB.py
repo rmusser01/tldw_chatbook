@@ -57,6 +57,8 @@ from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 # Local Imports
 from .sql_validation import validate_table_name, validate_column_name
 from .sql_logging import preview_params
+from .private_sqlite import connect_private_sqlite
+from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
 #
 ########################################################################################################################
 #
@@ -2444,25 +2446,17 @@ UPDATE db_schema_version
         """
         if isinstance(db_path, Path):
             self.is_memory_db = False
-            self.db_path = db_path.resolve()
+            self.db_path = lexical_path(db_path)
         else:
             self.is_memory_db = db_path == ":memory:"
             self.db_path = (
-                Path(db_path).resolve() if not self.is_memory_db else Path(":memory:")
+                lexical_path(db_path) if not self.is_memory_db else Path(":memory:")
             )
         self.db_path_str = str(self.db_path) if not self.is_memory_db else ":memory:"
 
         if not client_id:
             raise ValueError("Client ID cannot be empty or None.")
         self.client_id = client_id
-
-        if not self.is_memory_db:
-            try:
-                self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            except OSError as e:
-                raise CharactersRAGDBError(
-                    f"Failed to create database directory {self.db_path.parent}: {e}"
-                )
 
         logger.info(
             f"Initializing CharactersRAGDB for path: {self.db_path_str} [Client ID: {self.client_id}]"
@@ -2547,7 +2541,8 @@ UPDATE db_schema_version
 
         if not conn:
             try:
-                conn = sqlite3.connect(
+                conn = connect_private_sqlite(
+                    "db.chachanotes.primary",
                     self.db_path_str,
                     detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
                     check_same_thread=False,  # Required for threading.local approach
@@ -2562,7 +2557,7 @@ UPDATE db_schema_version
                 logger.debug(
                     f"Opened/Reopened SQLite connection to {self.db_path_str} (Journal: {conn.execute('PRAGMA journal_mode;').fetchone()[0]}) for thread {threading.get_ident()}"
                 )
-            except sqlite3.Error as e:
+            except (sqlite3.Error, PrivatePathError) as e:
                 logger.opt(exception=True).error(
                     f"Failed to connect to database {self.db_path_str}: {e}"
                 )
@@ -2664,10 +2659,7 @@ UPDATE db_schema_version
         backup_conn: Optional[sqlite3.Connection] = None
         try:
             # Ensure the backup file path is not the same as the source for file-based DBs
-            if (
-                not self.is_memory_db
-                and self.db_path.resolve() == Path(backup_file_path).resolve()
-            ):
+            if not self.is_memory_db and self.db_path == lexical_path(backup_file_path):
                 logger.error(
                     "Backup path cannot be the same as the source database path."
                 )
@@ -2677,13 +2669,11 @@ UPDATE db_schema_version
 
             src_conn = self.get_connection()
 
-            # Ensure parent directory for backup_file_path exists
-            backup_db_path_obj = Path(backup_file_path)
-            backup_db_path_obj.parent.mkdir(parents=True, exist_ok=True)
-
-            backup_conn = sqlite3.connect(
-                str(backup_db_path_obj)
-            )  # Use string path for connect
+            backup_db_path_obj = lexical_path(backup_file_path)
+            backup_conn = connect_private_sqlite(
+                "db.chachanotes.backup",
+                backup_db_path_obj,
+            )
 
             logger.debug(f"Source DB connection: {src_conn}")
             logger.debug(

@@ -16,6 +16,7 @@ from typing import Iterator, Union
 from loguru import logger
 
 from .base_db import BaseDB
+from .private_sqlite import connect_private_sqlite
 
 
 class LibraryIngestJobsDB(BaseDB):
@@ -40,7 +41,11 @@ class LibraryIngestJobsDB(BaseDB):
 
     def _get_connection(self) -> sqlite3.Connection:
         if self._conn is None:
-            self._conn = sqlite3.connect(self.db_path_str, check_same_thread=False)
+            self._conn = connect_private_sqlite(
+                "db.library_ingest_jobs",
+                self.db_path_str,
+                check_same_thread=False,
+            )
             self._conn.row_factory = sqlite3.Row
             self._conn.execute("PRAGMA journal_mode=WAL")
             # NORMAL is safe under WAL and avoids an fsync per commit -- writes

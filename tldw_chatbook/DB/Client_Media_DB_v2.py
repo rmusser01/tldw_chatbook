@@ -51,6 +51,8 @@ from loguru import logger
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from .sql_validation import validate_table_name, validate_column_name
 from .sql_logging import preview_params
+from .private_sqlite import connect_private_sqlite
+from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
 #
 ########################################################################################################################
 #
@@ -546,14 +548,14 @@ class MediaDatabase:
             ValueError: If client_id is empty or None.
             DatabaseError: If database initialization or schema setup fails.
         """
-        # Determine if it's an in-memory DB and resolve the path
+        # Determine if it's an in-memory DB and normalize the path lexically.
         if isinstance(db_path, Path):
             self.is_memory_db = False
-            self.db_path = db_path.resolve()
+            self.db_path = lexical_path(db_path)
         else:  # Treat as string
             self.is_memory_db = db_path == ":memory:"
             if not self.is_memory_db:
-                self.db_path = Path(db_path).resolve()
+                self.db_path = lexical_path(db_path)
             else:
                 # Even for memory, Path object can be useful internally, though str is ':memory:'
                 self.db_path = Path(":memory:")  # Represent in-memory path consistently
@@ -565,16 +567,6 @@ class MediaDatabase:
         if not client_id:
             raise ValueError("Client ID cannot be empty or None.")
         self.client_id = client_id
-
-        # Ensure parent directory exists if it's a file-based DB
-        if not self.is_memory_db:
-            try:
-                self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            except OSError as e:
-                # Catch potential errors creating the directory (e.g., permissions)
-                raise DatabaseError(
-                    f"Failed to create database directory {self.db_path.parent}: {e}"
-                ) from e
 
         logging.info(
             f"Initializing Database object for path: {self.db_path_str} [Client ID: {self.client_id}]"
@@ -679,7 +671,8 @@ class MediaDatabase:
 
         if is_closed:
             try:
-                conn = sqlite3.connect(
+                conn = connect_private_sqlite(
+                    "db.media.primary",
                     self.db_path_str,
                     detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
                     check_same_thread=False,
@@ -693,7 +686,7 @@ class MediaDatabase:
                 logging.debug(
                     f"Opened/Reopened SQLite connection to {self.db_path_str} [Client: {self.client_id}, Thread: {threading.current_thread().name}]"
                 )
-            except sqlite3.Error as e:
+            except (sqlite3.Error, PrivatePathError) as e:
                 logging.error(
                     f"Failed to connect to database at {self.db_path_str}: {e}",
                     exc_info=True,
@@ -6274,10 +6267,7 @@ class MediaDatabase:
         backup_conn = None
         try:
             # Ensure the backup file path is not the same as the source, unless it's an in-memory DB
-            if (
-                not self.is_memory_db
-                and Path(self.db_path_str).resolve() == Path(backup_file_path).resolve()
-            ):
+            if not self.is_memory_db and self.db_path == lexical_path(backup_file_path):
                 logger.error(
                     "Backup path cannot be the same as the source database path."
                 )
@@ -6290,12 +6280,11 @@ class MediaDatabase:
                 self.get_connection()
             )  # This uses the existing thread-local connection or creates one
 
-            # Create a connection to the backup database file
-            # Ensure parent directory for backup_file_path exists
-            backup_db_path = Path(backup_file_path)
-            backup_db_path.parent.mkdir(parents=True, exist_ok=True)
-
-            backup_conn = sqlite3.connect(backup_file_path)
+            backup_db_path = lexical_path(backup_file_path)
+            backup_conn = connect_private_sqlite(
+                "db.media.backup",
+                backup_db_path,
+            )
 
             logger.debug(f"Source DB connection: {src_conn}")
             logger.debug(
