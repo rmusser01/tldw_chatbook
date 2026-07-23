@@ -25,9 +25,11 @@ def test_master_shell_destination_order_matches_spec():
 
 
 def test_personas_destination_renamed_to_rpcd_with_roleplay_alias():
-    """task-435: the nav destination is "RP&CD" / "Roleplay & Chat
-    Dictionaries" -- "Personas" is reserved for the in-screen user-identity
-    mode (``MODE_LABELS["personas"]``), which this test does not touch."""
+    """The nav destination is renamed to "RP&CD" / "Roleplay & Chat Dictionaries".
+
+    "Personas" stays reserved for the in-screen user-identity mode
+    (``MODE_LABELS["personas"]``), which this test does not touch (task-435).
+    """
     dest = get_shell_destination("personas")
     assert dest.label == "RP&CD"
     assert dest.full_label == "Roleplay & Chat Dictionaries"
@@ -44,8 +46,10 @@ def test_personas_destination_renamed_to_rpcd_with_roleplay_alias():
 
 
 def test_tab_display_labels_use_rpcd_for_personas_and_ccp_tabs():
-    """task-435: both tab ids that seat the Personas screen show the
-    renamed destination label in the top-level tab chrome."""
+    """Both Personas-seating tab ids show the renamed destination label.
+
+    Covers the top-level tab chrome for the RP&CD rename (task-435).
+    """
     from tldw_chatbook.Constants import TAB_CCP, TAB_PERSONAS, get_tab_display_label
 
     assert get_tab_display_label(TAB_CCP) == "RP&CD"
