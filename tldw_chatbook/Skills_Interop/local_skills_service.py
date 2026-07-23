@@ -1208,13 +1208,15 @@ class LocalSkillsService:
         self._verify_exact_skill_content(skill)
         _, body = self._parse_front_matter(skill["content"])
         rendered_prompt = body.strip().replace("{{args}}", request.args or "")
-        manifest = self._read_bundle_manifest(self._skill_dir(skill["name"]))
+        # get_skill's payload already carries the bundle manifest — derive from
+        # it rather than re-walking the skill directory a second time.
+        bundle_files = skill.get("bundle_files")
         reference_files = (
             [
                 {"path": entry["path"], "size": entry["size"], "is_text": entry["is_text"]}
-                for entry in manifest
+                for entry in bundle_files
             ]
-            if manifest is not None
+            if bundle_files
             else None
         )
         payload = self._dump(

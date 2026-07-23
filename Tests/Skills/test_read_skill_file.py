@@ -101,14 +101,26 @@ def test_policy_action_id_registered():
 
 
 @pytest.mark.asyncio
-async def test_execute_skill_carries_reference_files(tmp_path):
+async def test_execute_skill_carries_reference_files(tmp_path, monkeypatch):
     svc = _svc(tmp_path)
     await _make_skill(svc)
+
+    real_manifest = svc._read_bundle_manifest
+    walks = []
+
+    def _counting(skill_dir):
+        walks.append(skill_dir)
+        return real_manifest(skill_dir)
+
+    monkeypatch.setattr(svc, "_read_bundle_manifest", _counting)
     result = await svc.execute_skill("demo")
     refs = {r["path"]: r for r in (result.get("reference_files") or [])}
     assert refs["references/api.md"]["is_text"] is True
     assert refs["assets/logo.png"]["is_text"] is False
     assert "executable" not in refs["references/api.md"]
+    # Mechanism: exactly ONE bundle walk per invocation (get_skill's own) —
+    # reference_files must be derived from the in-hand payload, not a re-walk.
+    assert len(walks) == 1
 
 
 @pytest.mark.asyncio
