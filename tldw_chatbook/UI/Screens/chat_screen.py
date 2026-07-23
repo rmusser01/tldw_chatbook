@@ -479,6 +479,50 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     ("Ctrl+P", "palette"),
 )
 
+#: TASK-362: the full Console keyboard vocabulary for the F1 help panel, grouped
+#: by surface. The flat CONSOLE_WORKBENCH_SHORTCUTS above stays the compact
+#: footer set; the transcript j/k/c/e/r keys, F2, Shift+Enter and Alt+M were
+#: previously undiscoverable anywhere in the app.
+CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
+    (
+        "Panes",
+        (
+            ("F6", "next pane"),
+            ("Shift+F6", "previous pane"),
+            ("Escape", "return to the composer"),
+        ),
+    ),
+    (
+        "Transcript",
+        (
+            ("j / k", "select next / previous message"),
+            ("Enter", "show the selected message's actions"),
+            ("c", "copy the selected message"),
+            ("e", "edit the selected message"),
+            ("r", "regenerate the selected message"),
+            ("Escape", "clear the selection"),
+        ),
+    ),
+    (
+        "Composer",
+        (
+            ("Enter", "send"),
+            ("Shift+Enter", "insert a newline"),
+            ("Ctrl+K", "switch session"),
+            ("Ctrl+T", "new tab"),
+        ),
+    ),
+    (
+        "Global & modals",
+        (
+            ("F1", "help"),
+            ("Ctrl+P", "command palette"),
+            ("Alt+M", "quick change model"),
+            ("F2", "rename a session (in the Ctrl+K switcher)"),
+        ),
+    ),
+)
+
 
 def _is_empty_select_value(value: Any) -> bool:
     """Return True for Textual's blank/null select sentinels."""
@@ -1106,7 +1150,7 @@ class ChatScreen(BaseAppScreen):
                     route_id=workbench_state.route_id,
                     title="Console",
                     actions=workbench_state.actions,
-                    shortcuts=CONSOLE_WORKBENCH_SHORTCUTS,
+                    shortcut_groups=CONSOLE_WORKBENCH_SHORTCUT_GROUPS,
                 )
             )
         )

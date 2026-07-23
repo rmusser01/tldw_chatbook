@@ -21,6 +21,11 @@ class WorkbenchHelpState:
     title: str
     actions: tuple[WorkbenchAction, ...] = ()
     shortcuts: tuple[tuple[str, str], ...] = ()
+    #: TASK-362: grouped keyboard map (group name -> (key, label) pairs). When
+    #: present it replaces the flat ``shortcuts`` list so the help can surface the
+    #: full vocabulary (panes, transcript, composer, modals), not just the handful
+    #: of top-level bindings.
+    shortcut_groups: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = ()
 
     def render_text(self) -> str:
         """Render visible actions and explicit shortcuts as plain text."""
@@ -31,7 +36,14 @@ class WorkbenchHelpState:
         if visible_actions:
             lines.append("Actions:")
             lines.extend(f"- {action.label}" for action in visible_actions)
-        if self.shortcuts:
+        if self.shortcut_groups:
+            lines.append("Shortcuts:")
+            for group_name, group_shortcuts in self.shortcut_groups:
+                lines.append(f"  {group_name}:")
+                lines.extend(
+                    f"    {key}: {label}" for key, label in group_shortcuts
+                )
+        elif self.shortcuts:
             lines.append("Shortcuts:")
             lines.extend(f"- {key}: {label}" for key, label in self.shortcuts)
         return "\n".join(lines)
