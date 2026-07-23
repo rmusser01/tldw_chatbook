@@ -1055,3 +1055,29 @@ def test_call_model_estimates_when_no_usage(db):
     turn = call_model([{"role": "user", "content": "count these tokens"}], ())
     # No provider usage -> estimate of sent payload + response text, always > 0.
     assert turn.tokens > 0
+
+
+def test_call_model_native_path_reports_provider_tokens(db):
+    """Native tool-call return path (turn.tool_calls set) must also report
+    real provider usage on .tokens -- the non-native tests above only cover
+    the early ``if not native: return ModelTurn(...)`` branch."""
+
+    def chat(**kwargs):
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [native_call("calculator", {"expression": "2+2"})],
+                    }
+                }
+            ],
+            "usage": {"total_tokens": 77},
+        }
+
+    service = _service_with_chat(db, chat)
+    cfg = AgentConfig(model="gpt-4o", system_prompt="s", native_tools=True)
+    call_model = service._make_call_model(cfg, "openai", [])
+    turn = call_model([{"role": "user", "content": "2+2?"}], ())
+    assert turn.tokens == 77
+    assert turn.tool_calls

@@ -276,7 +276,9 @@ def run_agent_loop(
     Args:
         config: The agent's model, system prompt, allow-list, and budget
             (step count, wall-clock seconds, and — task-244 —
-            provider-call/model-turn count all independently cap the run).
+            provider-call/model-turn count all independently cap the run;
+            task-326 adds ``max_total_tokens``, a cumulative prompt+
+            completion token spend ceiling — 0 means unlimited).
         initial_messages: The starting conversation history (role/content
             dicts); not mutated in place — the loop works on a copy.
         active_schemas: Tool schemas already disclosed to the model at the
@@ -289,7 +291,9 @@ def run_agent_loop(
     Returns:
         A ``RunOutcome`` capturing the terminal status
         (``done``/``stuck``/``cancelled``), the full step log, the final
-        answer text (when done), and how many sub-agents were spawned.
+        answer text (when done), how many sub-agents were spawned, and
+        (task-326) ``total_tokens`` — the measured cumulative prompt+
+        completion token spend checked against ``max_total_tokens``.
     """
     budget = config.budget
     steps: list[AgentStep] = []
