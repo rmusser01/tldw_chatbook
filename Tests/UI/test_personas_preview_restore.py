@@ -51,3 +51,29 @@ async def test_restore_conversation_seeds_greeting_then_turns_and_sets_seeded_fo
     # controller state updated
     assert ctrl.seeded_for == "7"
     assert ctrl.history == history
+
+
+@pytest.mark.asyncio
+async def test_handle_character_loaded_does_not_relabel_on_preserve():
+    # task-437 review: a same-character reload that PRESERVES an in-progress
+    # transcript must not call set_speakers — that only relabels FUTURE lines,
+    # leaving the already-rendered lines under the old prefix (mixed/stale).
+    ctrl, _ = _controller_with_mock_pane()
+    ctrl.seeded_for = "7"
+    pane = ctrl.screen.query_one.return_value
+    pane.transcript_text = MagicMock(return_value="Sam: hi")
+    pane.refresh_greeting_seed = MagicMock()
+    ctrl.refresh_provider_readout = MagicMock()
+    ctrl.screen.state = MagicMock(
+        active_mode="characters",
+        selected_entity_kind="character",
+        selected_entity_id="7",
+        selected_entity_name="Sam",
+    )
+    await ctrl.handle_character_loaded(
+        character_id="7",
+        card_data={"name": "Detective Sam", "first_message": "Hi from {{char}}."},
+    )
+    # Reload refreshed the reset seed but did NOT relabel (no mixed prefixes).
+    pane.refresh_greeting_seed.assert_called_once()
+    pane.set_speakers.assert_not_called()
