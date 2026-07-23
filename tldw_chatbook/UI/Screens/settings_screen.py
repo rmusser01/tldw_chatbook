@@ -13,11 +13,13 @@ from rich.cells import cell_len
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
 from textual.events import DescendantFocus, Key
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
+from textual.screen import ModalScreen
 from textual.strip import Strip
 from textual.suggester import SuggestFromList
 from textual.validation import ValidationResult, Validator
@@ -52,6 +54,7 @@ from ...Sync_Interop.sync_readiness import (
 )
 from ...Sync_Interop.manual_sync_control import ManualSyncPreview, ManualSyncRunResult
 from ...Workspaces.display_state import LIBRARY_WORKSPACE_VISIBILITY_COPY
+from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ...Chat.provider_catalog import (
     PROVIDER_CUSTOM_GROUP_KEYS,
@@ -126,7 +129,13 @@ from .settings_library_rag_defaults import (
     validate_library_rag_defaults,
 )
 from .settings_rag_profile_adapter import (
+    activate_profile,
+    active_profile_info,
+    clone_profile_as,
+    delete_user_profile,
+    list_profiles_grouped,
     load_rag_defaults_from_active_profile,
+    rename_user_profile,
     save_rag_defaults_to_active_profile,
 )
 from .settings_privacy_security import (
@@ -1002,6 +1011,112 @@ def overlay_provider_draft_config(
     return merged
 
 
+class RagProfileNameModal(ModalScreen[str | None]):
+    """Minimal name-prompt modal for the RAG profile-manager Clone/Rename actions.
+
+    No existing text-prompt modal precedent lives in this screen (task-2
+    brief) -- this follows the same dismiss-with-a-value + push_screen(modal,
+    callback) shape as ``ConsoleSystemPromptModal``. Dismisses with the
+    trimmed name, or ``None`` on Cancel/Escape/a blank submission.
+    """
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+
+    def __init__(self, *, title: str, initial: str = "", confirm_label: str = "Save") -> None:
+        super().__init__()
+        self._modal_title = title
+        self._initial = initial
+        self._confirm_label = confirm_label
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="settings-rag-profile-name-modal", classes="settings-rag-profile-modal"):
+            yield Static(self._modal_title, classes="destination-section")
+            yield Input(value=self._initial, id="settings-rag-profile-name-input")
+            with Horizontal(classes="settings-action-row"):
+                yield Button("Cancel", id="settings-rag-profile-name-cancel")
+                yield Button(
+                    self._confirm_label,
+                    id="settings-rag-profile-name-confirm",
+                    variant="primary",
+                )
+
+    def on_mount(self) -> None:
+        try:
+            self.query_one("#settings-rag-profile-name-input", Input).focus()
+        except QueryError:
+            pass
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#settings-rag-profile-name-cancel")
+    def _handle_cancel(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#settings-rag-profile-name-confirm")
+    def _handle_confirm(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._submit_current_value()
+
+    @on(Input.Submitted, "#settings-rag-profile-name-input")
+    def _handle_submit(self, event: Input.Submitted) -> None:
+        event.stop()
+        self._submit_current_value()
+
+    def _submit_current_value(self) -> None:
+        try:
+            value = self.query_one("#settings-rag-profile-name-input", Input).value
+        except QueryError:
+            value = ""
+        self.dismiss(value.strip() or None)
+
+
+class RagProfileSwitchConfirmModal(ModalScreen[str]):
+    """Unsaved-Library/RAG-draft prompt before switching the active profile.
+
+    Dismisses with ``"save"``, ``"discard"``, or ``"cancel"`` (also the
+    Escape/no-choice outcome) -- never raises, never silently drops the
+    caller's draft.
+    """
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(
+            id="settings-rag-profile-switch-modal", classes="settings-rag-profile-modal"
+        ):
+            yield Static("Unsaved Library/RAG changes", classes="destination-section")
+            yield Static(
+                "Save your changes before switching the active profile, or discard them?",
+                classes="settings-detail-row",
+            )
+            with Horizontal(classes="settings-action-row"):
+                yield Button("Cancel", id="settings-rag-profile-switch-cancel")
+                yield Button("Discard", id="settings-rag-profile-switch-discard")
+                yield Button(
+                    "Save", id="settings-rag-profile-switch-save", variant="primary"
+                )
+
+    def action_cancel(self) -> None:
+        self.dismiss("cancel")
+
+    @on(Button.Pressed, "#settings-rag-profile-switch-cancel")
+    def _handle_cancel(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss("cancel")
+
+    @on(Button.Pressed, "#settings-rag-profile-switch-discard")
+    def _handle_discard(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss("discard")
+
+    @on(Button.Pressed, "#settings-rag-profile-switch-save")
+    def _handle_save(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss("save")
+
+
 class SettingsScreen(BaseAppScreen):
     """Global preferences, appearance, accounts, storage, and app behavior."""
 
@@ -1052,6 +1167,11 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_console_defaults = False
         self._syncing_console_background_effects = False
         self._syncing_library_rag_defaults = False
+        #: A profile id set by the "Save then switch" branch of the unsaved-
+        #: changes prompt (RagProfileSwitchConfirmModal): remembered here so
+        #: _apply_library_rag_save_result can dispatch the deferred set-active
+        #: once the save worker reports back, then always self-clears.
+        self._rag_profile_pending_activate: str | None = None
         self._syncing_appearance_defaults = False
         self._syncing_storage_defaults = False
         self._active_settings_field_id: str | None = None
@@ -1083,6 +1203,9 @@ class SettingsScreen(BaseAppScreen):
         self._console_behavior_saved_this_session = False
         self._library_rag_result = (
             "Library/RAG defaults have not been saved this session."
+        )
+        self._library_rag_profile_result = (
+            "No RAG profile action taken this session."
         )
         self._appearance_result = (
             "Appearance defaults have not been saved this session."
@@ -7327,16 +7450,146 @@ class SettingsScreen(BaseAppScreen):
             else "Disabled"
         )
 
+    @staticmethod
+    def _library_rag_profile_select_options(grouped: dict) -> list[tuple[str, str]]:
+        return [(f"{p['name']} (built-in)", p["id"]) for p in grouped["builtin"]] + [
+            (p["name"], p["id"]) for p in grouped["user"]
+        ]
+
+    def _library_rag_selected_profile_id(self) -> str | None:
+        try:
+            select = self.query_one("#settings-library-rag-profile-select", Select)
+        except QueryError:
+            return None
+        value = select.value
+        if value is None or value is Select.BLANK:
+            return None
+        return str(value)
+
+    def _library_rag_profile_name(self, profile_id: str) -> str:
+        grouped = list_profiles_grouped()
+        for entry in grouped["builtin"] + grouped["user"]:
+            if entry["id"] == profile_id:
+                return entry["name"]
+        return profile_id
+
+    def _render_library_rag_profile_block(self) -> ComposeResult:
+        info = active_profile_info()
+        grouped = list_profiles_grouped()
+        options = self._library_rag_profile_select_options(grouped)
+        valid_ids = {value for _, value in options}
+        active_id = grouped["active_id"]
+        select_value = active_id if active_id in valid_ids else Select.BLANK
+        active_label = f"{info['name']} (built-in)" if info["read_only"] else info["name"]
+
+        yield Static("Profiles", classes="destination-section")
+        yield Static(
+            f"Active: {active_label}",
+            id="settings-library-rag-active-profile",
+            classes="settings-detail-row",
+        )
+        with Horizontal(classes="settings-input-row settings-select-row"):
+            yield Static("Profile", classes="settings-input-label")
+            yield Select(
+                options,
+                value=select_value,
+                id="settings-library-rag-profile-select",
+                classes="settings-compact-select",
+                allow_blank=True,
+                compact=True,
+            )
+        with Horizontal(classes="settings-action-row"):
+            yield Button("Set active", id="settings-library-rag-profile-set-active")
+            yield Button("Clone…", id="settings-library-rag-profile-clone")
+            yield Button("Rename…", id="settings-library-rag-profile-rename")
+            yield Button("Delete", id="settings-library-rag-profile-delete")
+        readonly_banner = Static(
+            "Built-in profile — read-only. Clone to edit.",
+            id="settings-library-rag-profile-readonly-banner",
+            classes="settings-status-row settings-library-rag-readonly-banner",
+        )
+        readonly_banner.display = bool(info["read_only"])
+        yield readonly_banner
+        yield Static(
+            self._library_rag_profile_result,
+            id="settings-library-rag-profile-result",
+            classes="settings-status-row",
+        )
+
+    def _sync_library_rag_profile_widgets(self) -> None:
+        """Refresh the Profiles block imperatively (no recompose) after any
+        set-active/clone/rename/delete action, and after a category revert.
+
+        Mirrors ``_sync_library_rag_widgets``: query-and-update each widget,
+        swallowing ``QueryError`` so a not-yet-mounted region never crashes a
+        call from an off-thread worker's main-thread callback.
+        """
+        info = active_profile_info()
+        grouped = list_profiles_grouped()
+        active_label = f"{info['name']} (built-in)" if info["read_only"] else info["name"]
+        self._set_static_text(
+            "#settings-library-rag-active-profile", f"Active: {active_label}"
+        )
+
+        options = self._library_rag_profile_select_options(grouped)
+        valid_ids = {value for _, value in options}
+        active_id = grouped["active_id"]
+        try:
+            select = self.query_one("#settings-library-rag-profile-select", Select)
+            select.set_options(options)
+            select.value = active_id if active_id in valid_ids else Select.BLANK
+        except QueryError:
+            pass
+
+        try:
+            self.query_one(
+                "#settings-library-rag-profile-readonly-banner", Static
+            ).display = bool(info["read_only"])
+        except QueryError:
+            pass
+
+        for key in (
+            "default_search_mode",
+            "default_top_k",
+            "fts_top_k",
+            "vector_top_k",
+            "hybrid_alpha",
+            "score_threshold",
+            "citation_style",
+            "snippet_max_chars",
+            "max_context_size",
+        ):
+            selector = self._library_rag_field_selector(key)
+            if selector is None:
+                continue
+            try:
+                self.query_one(selector).disabled = bool(info["read_only"])
+            except QueryError:
+                pass
+        try:
+            self.query_one(
+                "#settings-library-rag-include-citations", Button
+            ).disabled = bool(info["read_only"])
+        except QueryError:
+            pass
+
     def _render_library_rag_detail(self) -> ComposeResult:
         values = self._library_rag_setting_values()
         search_mode = normalise_library_rag_search_mode(values["default_search_mode"])
         citation_style = normalise_library_rag_citation_style(values["citation_style"])
+        # A built-in active profile is read-only: the editor fields render
+        # disabled from the very first paint (not just after a later
+        # set-active/clone/rename/delete action re-syncs them) -- this is the
+        # state a brand-new install starts in (active = the "hybrid_basic"
+        # builtin).
+        field_disabled = active_profile_info()["read_only"]
 
         yield Static(
             "RAG", classes="destination-section settings-column-title"
         )
         with Vertical(id="settings-library-rag-card", classes="settings-focus-card"):
             yield self._render_category_state_banner(SettingsCategoryId.LIBRARY_RAG)
+            yield from self._render_library_rag_profile_block()
             yield Static("Search defaults", classes="destination-section")
             yield Static(
                 "Used by future Library-native Search/RAG and Console evidence handoff defaults.",
@@ -7355,6 +7608,7 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-compact-select",
                     allow_blank=False,
                     compact=True,
+                    disabled=field_disabled,
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Default results", classes="settings-input-label")
@@ -7364,6 +7618,7 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-compact-input",
                     placeholder="1 - 100",
                     restrict=r"^[0-9]*$",
+                    disabled=field_disabled,
                 )
             yield Static("Retriever balance", classes="destination-section")
             with Horizontal(classes="settings-input-row"):
@@ -7374,6 +7629,7 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-compact-input",
                     placeholder="1 - 100",
                     restrict=r"^[0-9]*$",
+                    disabled=field_disabled,
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Vector results", classes="settings-input-label")
@@ -7383,6 +7639,7 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-compact-input",
                     placeholder="1 - 100",
                     restrict=r"^[0-9]*$",
+                    disabled=field_disabled,
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Hybrid alpha", classes="settings-input-label")
@@ -7391,6 +7648,7 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-library-rag-hybrid-alpha",
                     classes="settings-compact-input",
                     placeholder="0.0 - 1.0",
+                    disabled=field_disabled,
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Min score", classes="settings-input-label")
@@ -7399,12 +7657,14 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-library-rag-score-threshold",
                     classes="settings-compact-input",
                     placeholder="0.0 - 1.0",
+                    disabled=field_disabled,
                 )
             yield Static("Citation and snippets", classes="destination-section")
             yield Button(
                 self._library_rag_include_citations_label(),
                 id="settings-library-rag-include-citations",
                 tooltip="Toggle citation metadata in future RAG answers where supported.",
+                disabled=field_disabled,
             )
             with Horizontal(classes="settings-input-row settings-select-row"):
                 yield Static("Citation style", classes="settings-input-label")
@@ -7419,6 +7679,7 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-compact-select",
                     allow_blank=False,
                     compact=True,
+                    disabled=field_disabled,
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Snippet chars", classes="settings-input-label")
@@ -7428,6 +7689,7 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-compact-input",
                     placeholder="50 - 10000",
                     restrict=r"^[0-9]*$",
+                    disabled=field_disabled,
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Context budget", classes="settings-input-label")
@@ -7437,6 +7699,7 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-compact-input",
                     placeholder="1000 - 1000000",
                     restrict=r"^[0-9]*$",
+                    disabled=field_disabled,
                 )
             yield Static("Preview defaults", classes="destination-section")
             preview_summary, preview_retrieval, preview_context = (
@@ -9144,6 +9407,183 @@ class SettingsScreen(BaseAppScreen):
         )
         self._mark_library_rag_settings_staged()
 
+    @on(Button.Pressed, "#settings-library-rag-profile-set-active")
+    def handle_library_rag_profile_set_active(self, event: Button.Pressed) -> None:
+        event.stop()
+        profile_id = self._library_rag_selected_profile_id()
+        if profile_id is None:
+            self.app.notify("Choose a profile first.", severity="warning")
+            return
+        info = active_profile_info()
+        if profile_id == info["id"]:
+            self.app.notify(
+                f"'{info['name']}' is already active.", severity="information"
+            )
+            return
+        if self._category_has_unsaved_changes(SettingsCategoryId.LIBRARY_RAG):
+            self.app.push_screen(
+                RagProfileSwitchConfirmModal(),
+                lambda result: self._handle_rag_profile_switch_confirm(
+                    result, profile_id
+                ),
+            )
+            return
+        self._dispatch_rag_set_active(profile_id)
+
+    def _handle_rag_profile_switch_confirm(
+        self, result: str | None, profile_id: str
+    ) -> None:
+        if result == "discard":
+            self._settings_drafts.pop(SettingsCategoryId.LIBRARY_RAG, None)
+            self._sync_library_rag_widgets()
+            self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
+            self._dispatch_rag_set_active(profile_id)
+        elif result == "save":
+            self._rag_profile_pending_activate = profile_id
+            self.action_settings_save_category(allow_text_entry_focus=True)
+        # "cancel"/None (Escape): leave the draft and active profile untouched.
+
+    def _dispatch_rag_set_active(self, profile_id: str) -> None:
+        self._library_rag_profile_result = "Setting active profile..."
+        self._set_static_text(
+            "#settings-library-rag-profile-result", self._library_rag_profile_result
+        )
+        self._rag_set_active_worker(profile_id)
+
+    @work(exclusive=True, thread=True, group="settings-rag-set-active")
+    def _rag_set_active_worker(self, profile_id: str) -> None:
+        ok, reason = activate_profile(profile_id)
+        self.app.call_from_thread(self._rag_after_set_active, ok, reason)
+
+    def _rag_after_set_active(self, ok: bool, reason: str) -> None:
+        if ok:
+            self._settings_drafts.pop(SettingsCategoryId.LIBRARY_RAG, None)
+            info = active_profile_info()
+            message = f"Active profile: {info['name']}"
+            self._library_rag_profile_result = message
+            self._set_static_text("#settings-library-rag-profile-result", message)
+            self._sync_library_rag_widgets()
+            self._sync_library_rag_profile_widgets()
+            self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
+            self.app.notify(message, severity="information")
+            return
+        message = f"Couldn't switch active profile: {reason}"
+        self._library_rag_profile_result = message
+        self._set_static_text("#settings-library-rag-profile-result", message)
+        self.app.notify(message, severity="error")
+
+    @on(Button.Pressed, "#settings-library-rag-profile-clone")
+    def handle_library_rag_profile_clone(self, event: Button.Pressed) -> None:
+        event.stop()
+        source_id = (
+            self._library_rag_selected_profile_id() or active_profile_info()["id"]
+        )
+        self.app.push_screen(
+            RagProfileNameModal(title="Clone profile", confirm_label="Clone"),
+            lambda name: self._handle_rag_profile_clone_result(name, source_id),
+        )
+
+    def _handle_rag_profile_clone_result(
+        self, name: str | None, source_id: str
+    ) -> None:
+        if not name:
+            return
+        self._dispatch_rag_profile_action("clone", source_id, name)
+
+    @on(Button.Pressed, "#settings-library-rag-profile-rename")
+    def handle_library_rag_profile_rename(self, event: Button.Pressed) -> None:
+        event.stop()
+        profile_id = self._library_rag_selected_profile_id()
+        if profile_id is None:
+            self.app.notify("Choose a profile first.", severity="warning")
+            return
+        current_name = self._library_rag_profile_name(profile_id)
+        self.app.push_screen(
+            RagProfileNameModal(
+                title="Rename profile", initial=current_name, confirm_label="Rename"
+            ),
+            lambda name: self._handle_rag_profile_rename_result(name, profile_id),
+        )
+
+    def _handle_rag_profile_rename_result(
+        self, name: str | None, profile_id: str
+    ) -> None:
+        if not name:
+            return
+        self._dispatch_rag_profile_action("rename", profile_id, name)
+
+    @on(Button.Pressed, "#settings-library-rag-profile-delete")
+    def handle_library_rag_profile_delete(self, event: Button.Pressed) -> None:
+        event.stop()
+        profile_id = self._library_rag_selected_profile_id()
+        if profile_id is None:
+            self.app.notify("Choose a profile first.", severity="warning")
+            return
+        name = self._library_rag_profile_name(profile_id)
+        modal = ConfirmationDialog(
+            title="Delete profile",
+            message=f'Delete the "{name}" RAG profile? This cannot be undone.',
+            confirm_label="Delete",
+            cancel_label="Cancel",
+        )
+        self.app.push_screen(
+            modal,
+            lambda confirmed: self._handle_rag_profile_delete_result(
+                confirmed, profile_id
+            ),
+        )
+
+    def _handle_rag_profile_delete_result(
+        self, confirmed: bool | None, profile_id: str
+    ) -> None:
+        if not confirmed:
+            return
+        self._dispatch_rag_profile_action("delete", profile_id, "")
+
+    def _dispatch_rag_profile_action(
+        self, action: str, profile_id: str, arg: str
+    ) -> None:
+        self._library_rag_profile_result = f"{action.capitalize()} profile..."
+        self._set_static_text(
+            "#settings-library-rag-profile-result", self._library_rag_profile_result
+        )
+        self._rag_profile_action_worker(action, profile_id, arg)
+
+    @work(exclusive=True, thread=True, group="settings-rag-profile-crud")
+    def _rag_profile_action_worker(
+        self, action: str, profile_id: str, arg: str
+    ) -> None:
+        if action == "clone":
+            ok, result = clone_profile_as(profile_id, arg)
+        elif action == "rename":
+            ok, result = rename_user_profile(profile_id, arg)
+        elif action == "delete":
+            ok, result = delete_user_profile(profile_id)
+        else:
+            ok, result = False, "unknown-action"
+        self.app.call_from_thread(self._rag_after_profile_action, action, ok, result)
+
+    def _rag_after_profile_action(self, action: str, ok: bool, result: str) -> None:
+        if ok:
+            messages = {
+                "clone": "Profile cloned.",
+                "rename": "Profile renamed.",
+                "delete": "Profile deleted.",
+            }
+            message = messages.get(action, "Done.")
+            self._library_rag_profile_result = message
+            self._set_static_text("#settings-library-rag-profile-result", message)
+            self._sync_library_rag_widgets()
+            self._sync_library_rag_profile_widgets()
+            self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
+            self.app.notify(message, severity="information")
+            return
+        reason = result or "failed"
+        message = f"Couldn't {action} profile: {reason}"
+        self._library_rag_profile_result = message
+        self._set_static_text("#settings-library-rag-profile-result", message)
+        self.app.notify(message, severity="error")
+
     @on(Input.Changed, "#settings-storage-user-db-base-dir")
     def handle_storage_user_db_base_dir_changed(self, event: Input.Changed) -> None:
         if self._syncing_storage_defaults:
@@ -10369,6 +10809,12 @@ class SettingsScreen(BaseAppScreen):
         saved: bool,
         reason: str,
     ) -> None:
+        # A "Save" choice from RagProfileSwitchConfirmModal defers the profile
+        # switch until this save completes; consumed (and cleared) exactly
+        # once here regardless of outcome, so a later unrelated save never
+        # replays a stale switch.
+        pending_activate = self._rag_profile_pending_activate
+        self._rag_profile_pending_activate = None
         if saved:
             self._settings_drafts.pop(SettingsCategoryId.LIBRARY_RAG, None)
             self._library_rag_result = "Library/RAG defaults saved."
@@ -10378,6 +10824,8 @@ class SettingsScreen(BaseAppScreen):
             self._sync_library_rag_widgets()
             self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
             self.app.notify("Library/RAG defaults saved.", severity="information")
+            if pending_activate:
+                self._dispatch_rag_set_active(pending_activate)
             return
         if reason == "builtin":
             self._library_rag_result = (

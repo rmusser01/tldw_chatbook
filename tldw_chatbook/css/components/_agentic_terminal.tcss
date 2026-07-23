@@ -3838,6 +3838,27 @@ Button.settings-category-button.settings-secondary-search-match {
     text-style: bold;
 }
 
+/* RAG profile-manager region (task-2): read-only note for a built-in active
+   profile -- attention-worthy like #library-skill-warnings above, not muted
+   like the surrounding .settings-status-row lines. */
+.settings-library-rag-readonly-banner {
+    color: $ds-status-warning;
+    text-style: bold;
+}
+
+RagProfileNameModal,
+RagProfileSwitchConfirmModal {
+    align: center middle;
+}
+
+.settings-rag-profile-modal {
+    width: 60;
+    height: auto;
+    padding: 1 2;
+    border: thick $ds-action-focus;
+    background: $ds-surface-panel;
+}
+
 .settings-focus-card {
     width: 100%;
     height: auto;
