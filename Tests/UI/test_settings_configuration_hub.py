@@ -5439,7 +5439,7 @@ async def test_settings_provider_revert_restores_provider_dependent_placeholders
 
         provider.value = "llama_cpp"
         screen.handle_provider_value_changed(Select.Changed(provider, "llama_cpp"))
-        assert endpoint.placeholder == "http://127.0.0.1:9099/v1"
+        assert endpoint.placeholder == "http://127.0.0.1:9099"
         assert credential.placeholder == "No credential required"
 
         await pilot.click("#settings-revert-category")

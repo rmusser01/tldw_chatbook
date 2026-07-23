@@ -5,6 +5,7 @@ import pytest
 import base64
 import io
 import json
+import tomllib
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -16,6 +17,7 @@ from PIL import Image
 #
 # Local Imports
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.config import CONFIG_TOML_CONTENT
 import tldw_chatbook.Chat.Chat_Functions as chat_functions_module
 import tldw_chatbook.LLM_Calls.LLM_API_Calls as llm_api_calls_module
 from tldw_chatbook.Chat.Chat_Functions import (
@@ -170,6 +172,13 @@ def test_chat_provider_adapters_do_not_log_api_key_fragments():
                 )
 
     assert suspicious_lines == []
+
+
+def test_llama_cpp_default_endpoint_is_server_root():
+    cfg = tomllib.loads(CONFIG_TOML_CONTENT)
+    api_url = cfg["api_settings"]["llama_cpp"]["api_url"]
+    assert api_url == "http://localhost:8080"
+    assert "/completion" not in api_url
 
 
 def create_base64_image():

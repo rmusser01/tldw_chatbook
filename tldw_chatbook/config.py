@@ -2472,7 +2472,7 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     [api_settings.llama_cpp] # Matches key in [providers]
     api_key_env_var = "LLAMA_CPP_API_KEY" # If you set one on the server
     # api_key = ""
-    api_url = "http://localhost:8080/completion" # llama.cpp /completion endpoint
+    api_url = "http://localhost:8080" # llama.cpp server root; the OpenAI-compatible /v1/chat/completions path is appended automatically
     model = "" # Often not needed if server serves one model
     temperature = 0.7
     top_p = 0.95
