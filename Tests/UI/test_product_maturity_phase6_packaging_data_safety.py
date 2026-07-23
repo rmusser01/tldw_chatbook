@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import os
 import re
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
+
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -86,6 +92,84 @@ def _assert_no_local_path_prefixes(text: str) -> None:
     assert not leaked_prefixes, (
         f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
     )
+
+
+@pytest.mark.parametrize("inherited_root", [False, True])
+def test_ui_collect_only_does_not_write_to_caller_home(
+    tmp_path,
+    inherited_root,
+) -> None:
+    caller_home = tmp_path / "caller-home"
+    caller_home.mkdir(mode=0o700)
+    env = os.environ.copy()
+    env["HOME"] = str(caller_home)
+    env.pop("TMPDIR", None)
+    for name in (
+        "TLDW_CONFIG_PATH",
+        "TLDW_TEST_CONFIG_ROOT",
+        "TLDW_TEST_CONFIG_ROOT_OWNER",
+    ):
+        env.pop(name, None)
+    if inherited_root:
+        trusted_root = tmp_path / "trusted-root"
+        trusted_root.mkdir(mode=0o700)
+        root_alias = tmp_path / "trusted-root-alias"
+        root_alias.symlink_to(trusted_root, target_is_directory=True)
+        env["TLDW_TEST_CONFIG_ROOT"] = str(root_alias)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--collect-only",
+            "-q",
+            "Tests/UI/test_tools_settings_window.py",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert list(caller_home.iterdir()) == []
+
+
+def test_root_conftest_restores_inherited_bootstrap_environment(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    trusted_root = tmp_path / "trusted-root"
+    trusted_root.mkdir(mode=0o700)
+    root_alias = tmp_path / "trusted-root-alias"
+    root_alias.symlink_to(trusted_root, target_is_directory=True)
+    previous_env = {
+        "TLDW_CONFIG_PATH": "caller-config.toml",
+        "TLDW_TEST_CONFIG_ROOT": str(root_alias),
+        "TLDW_TEST_CONFIG_ROOT_OWNER": "caller-owned",
+    }
+    for name, value in previous_env.items():
+        monkeypatch.setenv(name, value)
+
+    spec = importlib.util.spec_from_file_location(
+        "_task488_root_conftest_probe",
+        REPO_ROOT / "Tests" / "conftest.py",
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    root_conftest = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(root_conftest)
+
+    assert os.environ["TLDW_TEST_CONFIG_ROOT"] == str(trusted_root.resolve())
+    assert os.environ["TLDW_CONFIG_PATH"] == str(
+        trusted_root.resolve() / "config" / "config.toml"
+    )
+
+    root_conftest.pytest_sessionfinish(None, 0)
+
+    assert {name: os.environ.get(name) for name in previous_env} == previous_env
 
 
 def test_phase6_packaging_config_and_data_safety_source_seams_are_present() -> None:

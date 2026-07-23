@@ -6409,6 +6409,7 @@ def test_settings_privacy_secret_count_ignores_non_secret_numeric_token_limits()
 @pytest.mark.asyncio
 async def test_settings_storage_test_shortcut_runs_safety_check(monkeypatch, tmp_path):
     config_path = tmp_path / "config" / "config.toml"
+    config_path.parent.mkdir(mode=0o700)
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))

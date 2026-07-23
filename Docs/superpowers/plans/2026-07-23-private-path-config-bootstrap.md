@@ -225,6 +225,14 @@ git commit -m "feat(security): define private path outcomes"
 - Consumes: `lexical_path()`, `PrivatePathResult`, `PrivatePathError`.
 - Produces: `open_private_binary(path) -> ContextManager[PrivateBinaryFile]` and `secure_private_directory(path, *, create, application_owned) -> PrivatePathResult`.
 
+> **Implementation correction (2026-07-23):** P1 security review made
+> `O_NONBLOCK` and `O_NOCTTY` mandatory POSIX guards, added a no-follow entry
+> preclassification before the guarded final open, and rejects multiply-linked
+> files before `fchmod` or read and again in the postcondition. These checks
+> prevent FIFO/device blocking and hard-link alias hardening. Temporary parent
+> descriptors close before caller code runs; the pinned file descriptor belongs
+> to the returned stream and closes on context exit.
+
 - [ ] **Step 1: Add failing POSIX traversal, ownership, and mode tests**
 
 ```python
@@ -284,6 +292,38 @@ def test_open_private_binary_rejects_non_regular_leaf(tmp_path):
             pass
 
     assert caught.value.result.status is PrivatePathStatus.LINK_OR_NON_REGULAR
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX descriptor contract")
+@pytest.mark.timeout(2, method="signal")
+def test_open_private_binary_rejects_fifo_without_blocking(tmp_path):
+    target = tmp_path / "config.toml"
+    os.mkfifo(target, mode=0o644)
+
+    with pytest.raises(PrivatePathError) as caught:
+        with open_private_binary(target):
+            pass
+
+    assert caught.value.result.status is PrivatePathStatus.LINK_OR_NON_REGULAR
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX descriptor contract")
+def test_open_private_binary_rejects_multiply_linked_file_without_changing_alias(
+    tmp_path,
+):
+    target = tmp_path / "config.toml"
+    alias = tmp_path / "shared-alias.toml"
+    target.write_bytes(b"shared private data")
+    target.chmod(0o644)
+    os.link(target, alias)
+
+    with pytest.raises(PrivatePathError) as caught:
+        with open_private_binary(target):
+            pass
+
+    assert caught.value.result.status is PrivatePathStatus.LINK_OR_NON_REGULAR
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644
+    assert stat.S_IMODE(alias.stat().st_mode) == 0o644
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX descriptor contract")
@@ -376,7 +416,7 @@ def test_stat_classification_rejects_wrong_owner():
     fake = type(
         "FakeStat",
         (),
-        {"st_mode": stat.S_IFREG | 0o600, "st_uid": 2222},
+        {"st_mode": stat.S_IFREG | 0o600, "st_nlink": 1, "st_uid": 2222},
     )()
 
     assert (
@@ -490,6 +530,33 @@ def test_open_private_binary_fails_closed_when_posix_guards_are_unavailable(
     assert caught.value.result.status is PrivatePathStatus.OPERATION_FAILED
     assert caught.value.result.reason == "required_posix_guards_unavailable"
     assert stat.S_IMODE(target.stat().st_mode) == 0o644
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX capability contract")
+@pytest.mark.parametrize("missing_capability", ["_NONBLOCK", "_NOCTTY"])
+def test_open_private_binary_fails_before_traversal_when_leaf_guard_is_unavailable(
+    tmp_path,
+    monkeypatch,
+    missing_capability,
+):
+    target = tmp_path / "config.toml"
+    target.write_bytes(b"private")
+    target.chmod(0o644)
+    monkeypatch.setattr(private_paths, missing_capability, 0, raising=False)
+    monkeypatch.setattr(
+        private_paths,
+        "_open_verified_parent",
+        lambda *args, **kwargs: pytest.fail(
+            "target traversal occurred without required leaf guards"
+        ),
+    )
+
+    with pytest.raises(PrivatePathError) as caught:
+        with open_private_binary(target):
+            pass
+
+    assert caught.value.result.reason == "required_posix_guards_unavailable"
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644
 ```
 
 - [ ] **Step 2: Run the tests and confirm missing-interface failures**
@@ -512,14 +579,19 @@ _PRIVATE_FILE_MODE = 0o600
 _PRIVATE_DIRECTORY_MODE = 0o700
 _DIRECTORY_OPEN_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
+_NOCTTY = getattr(os, "O_NOCTTY", 0)
+_PRIVATE_FILE_OPEN_FLAGS = os.O_RDONLY | _NOFOLLOW | _NONBLOCK | _NOCTTY
 _WINDOWS_PLATFORM = os.name == "nt"
 
 
 def _posix_guards_available() -> bool:
-    required_dir_fd = {os.open, os.stat, os.mkdir, os.unlink}
+    required_dir_fd = {os.open, os.stat, os.mkdir}
     return (
         os.name == "posix"
         and _NOFOLLOW != 0
+        and _NONBLOCK != 0
+        and _NOCTTY != 0
         and getattr(os, "O_DIRECTORY", 0) != 0
         and required_dir_fd.issubset(os.supports_dir_fd)
         and os.stat in os.supports_follow_symlinks
@@ -542,6 +614,8 @@ def _classify_private_file_stat(
     expected_uid: int,
 ) -> PrivatePathStatus | None:
     if not stat.S_ISREG(file_stat.st_mode):
+        return PrivatePathStatus.LINK_OR_NON_REGULAR
+    if file_stat.st_nlink != 1:
         return PrivatePathStatus.LINK_OR_NON_REGULAR
     if file_stat.st_uid != expected_uid:
         return PrivatePathStatus.WRONG_OWNER
@@ -581,6 +655,8 @@ def _private_file_postcondition_holds(
         _same_identity(opened, expected_identity)
         and _same_identity(entry, expected_identity)
         and stat.S_ISREG(opened.st_mode)
+        and opened.st_nlink == 1
+        and entry.st_nlink == 1
         and opened.st_uid == os.geteuid()
         and stat.S_IMODE(opened.st_mode) == _PRIVATE_FILE_MODE
     )
@@ -755,7 +831,15 @@ def open_private_binary(path: PathInput) -> Iterator[PrivateBinaryFile]:
     )
     file_fd = -1
     try:
-        file_fd = os.open(leaf, os.O_RDONLY | _NOFOLLOW, dir_fd=parent_fd)
+        entry_stat = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+        if not stat.S_ISREG(entry_stat.st_mode):
+            raise PrivatePathError(
+                PrivatePathResult(
+                    selected,
+                    PrivatePathStatus.LINK_OR_NON_REGULAR,
+                )
+            )
+        file_fd = os.open(leaf, _PRIVATE_FILE_OPEN_FLAGS, dir_fd=parent_fd)
         file_stat = os.fstat(file_fd)
         rejected = _classify_private_file_stat(
             file_stat,
@@ -782,12 +866,8 @@ def open_private_binary(path: PathInput) -> Iterator[PrivateBinaryFile]:
                     reason="private_file_postcondition_failed",
                 )
             )
-        with os.fdopen(file_fd, "rb", closefd=True) as stream:
-            file_fd = -1
-            yield PrivateBinaryFile(
-                stream=stream,
-                result=PrivatePathResult(selected, status),
-            )
+        stream = os.fdopen(file_fd, "rb", closefd=True)
+        file_fd = -1
     except (PrivatePathError, FileNotFoundError):
         raise
     except OSError as exc:
@@ -807,6 +887,12 @@ def open_private_binary(path: PathInput) -> Iterator[PrivateBinaryFile]:
         if file_fd >= 0:
             os.close(file_fd)
         os.close(parent_fd)
+
+    with stream:
+        yield PrivateBinaryFile(
+            stream=stream,
+            result=PrivatePathResult(selected, status),
+        )
 ```
 
 The complete `_open_verified_parent` component loop above enforces:
@@ -1032,6 +1118,14 @@ git commit -m "feat(security): pin private file traversal"
 - Consumes: verified parent traversal and structured results.
 - Produces: `create_private_text(path, text, *, application_owned_directory=None, encoding="utf-8") -> PrivatePathResult`.
 
+> **Implementation correction (2026-07-23):** Security review rejected
+> pathname rollback after exclusive creation because a check-then-unlink sequence
+> can delete an intervening replacement. The final implementation encodes before
+> any filesystem mutation, never unlinks by the selected name, retains any
+> post-create failure residue at owner-only mode, treats zero-byte writes as a
+> bounded failure, and therefore does not require descriptor-relative
+> `os.unlink` support.
+
 - [ ] **Step 1: Add failing creation, sticky-parent, race, and Windows-posture tests**
 
 ```python
@@ -1109,7 +1203,7 @@ def test_unsupported_posix_guards_fail_closed_without_creating(
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX capability contract")
-def test_missing_unlink_dir_fd_capability_fails_before_creation(
+def test_missing_unlink_dir_fd_capability_does_not_block_creation(
     tmp_path,
     monkeypatch,
 ):
@@ -1122,16 +1216,15 @@ def test_missing_unlink_dir_fd_capability_fails_before_creation(
     monkeypatch.setattr(private_paths.os, "supports_dir_fd", restricted)
     monkeypatch.setattr(private_paths, "_WINDOWS_PLATFORM", False)
 
-    assert private_paths._posix_guards_available() is False
-    with pytest.raises(PrivatePathError) as caught:
-        create_private_text(target, "[chat]\n")
+    assert private_paths._posix_guards_available() is True
+    result = create_private_text(target, "[chat]\n")
 
-    assert caught.value.result.status is PrivatePathStatus.OPERATION_FAILED
-    assert not target.exists()
+    assert result.status is PrivatePathStatus.CREATED_PRIVATE
+    assert target.read_text(encoding="utf-8") == "[chat]\n"
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX postcondition contract")
-def test_create_private_text_removes_failed_postcondition_entry(
+def test_create_private_text_retains_private_entry_on_failed_postcondition(
     tmp_path,
     monkeypatch,
 ):
@@ -1147,7 +1240,69 @@ def test_create_private_text_removes_failed_postcondition_entry(
 
     assert caught.value.result.status is PrivatePathStatus.OPERATION_FAILED
     assert caught.value.result.reason == "private_file_postcondition_failed"
+    assert target.read_text(encoding="utf-8") == "[chat]\n"
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX mutation contract")
+def test_posix_encoding_failure_has_no_filesystem_residue(tmp_path):
+    owned_directory = tmp_path / "application-config"
+    target = owned_directory / "config.toml"
+
+    with pytest.raises(UnicodeEncodeError):
+        create_private_text(
+            target,
+            "\ud800",
+            application_owned_directory=owned_directory,
+        )
+
+    assert not owned_directory.exists()
     assert not target.exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX rollback race contract")
+def test_create_private_text_never_unlinks_name_after_postcondition_failure(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "config.toml"
+    unlink_calls = []
+
+    monkeypatch.setattr(
+        private_paths,
+        "_private_file_postcondition_holds",
+        lambda *args, **kwargs: False,
+    )
+    monkeypatch.setattr(
+        private_paths.os,
+        "unlink",
+        lambda *args, **kwargs: unlink_calls.append((args, kwargs)),
+    )
+    monkeypatch.setattr(private_paths, "_posix_guards_available", lambda: True)
+
+    with pytest.raises(PrivatePathError):
+        create_private_text(target, "[chat]\n")
+
+    assert unlink_calls == []
+    assert target.read_text(encoding="utf-8") == "[chat]\n"
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX write contract")
+@pytest.mark.timeout(2, method="signal")
+def test_create_private_text_zero_byte_write_fails_without_spinning(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "config.toml"
+    monkeypatch.setattr(private_paths.os, "write", lambda *args, **kwargs: 0)
+
+    with pytest.raises(PrivatePathError) as caught:
+        create_private_text(target, "[chat]\n")
+
+    assert caught.value.result.reason == "zero_byte_write"
+    assert target.exists()
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
 ```
 
 - [ ] **Step 2: Run the creation tests and confirm the missing function**
@@ -1167,6 +1322,7 @@ def create_private_text(
     encoding: str = "utf-8",
 ) -> PrivatePathResult:
     selected = lexical_path(path)
+    payload = text.encode(encoding)
     if application_owned_directory is not None:
         owned_dir = lexical_path(application_owned_directory)
         if selected.parent != owned_dir:
@@ -1179,8 +1335,8 @@ def create_private_text(
 
     if not _posix_guards_available():
         if _WINDOWS_PLATFORM:
-            with selected.open("x", encoding=encoding) as handle:
-                handle.write(text)
+            with selected.open("xb") as handle:
+                handle.write(payload)
                 handle.flush()
             return PrivatePathResult(
                 selected,
@@ -1200,18 +1356,23 @@ def create_private_text(
         missing_leaf_allowed=True,
     )
     file_fd = -1
-    created_stat: os.stat_result | None = None
     try:
         file_fd = _open_leaf_for_create(parent_fd, leaf)
         created_stat = os.fstat(file_fd)
         os.fchmod(file_fd, _PRIVATE_FILE_MODE)
-        payload = text.encode(encoding)
         view = memoryview(payload)
         while view:
             written = os.write(file_fd, view)
+            if written == 0:
+                raise PrivatePathError(
+                    PrivatePathResult(
+                        selected,
+                        PrivatePathStatus.OPERATION_FAILED,
+                        reason="zero_byte_write",
+                    )
+                )
             view = view[written:]
         os.fsync(file_fd)
-        assert created_stat is not None
         if not _private_file_postcondition_holds(
             file_fd,
             parent_fd,
@@ -1229,39 +1390,8 @@ def create_private_text(
     except FileExistsError:
         raise
     except PrivatePathError:
-        if created_stat is not None:
-            try:
-                current = os.stat(
-                    leaf,
-                    dir_fd=parent_fd,
-                    follow_symlinks=False,
-                )
-                if (current.st_dev, current.st_ino) == (
-                    created_stat.st_dev,
-                    created_stat.st_ino,
-                ):
-                    os.unlink(leaf, dir_fd=parent_fd)
-            except OSError:
-                pass
         raise
     except OSError as exc:
-        # If writing the created inode failed, unlink only when the current
-        # directory entry still identifies created_stat. Never delete a
-        # replacement installed after failure.
-        if created_stat is not None:
-            try:
-                current = os.stat(
-                    leaf,
-                    dir_fd=parent_fd,
-                    follow_symlinks=False,
-                )
-                if (current.st_dev, current.st_ino) == (
-                    created_stat.st_dev,
-                    created_stat.st_ino,
-                ):
-                    os.unlink(leaf, dir_fd=parent_fd)
-            except OSError:
-                pass
         raise PrivatePathError(
             PrivatePathResult(
                 selected,
@@ -1343,6 +1473,13 @@ git commit -m "feat(security): create private files exclusively"
 
 - Consumes: `lexical_path`, `open_private_binary`, `create_private_text`, `PrivatePathError`, `PrivatePathStatus`.
 - Produces: a lexical `_get_effective_config_path()` and fail-closed bootstrap behavior.
+
+> **Implementation correction (2026-07-23):** Cache review requires every
+> real load attempt to clear the prior cache immediately after the cache-hit
+> fast path. Only a successful pinned parse plus decrypt, or a successful
+> private creation, may populate the cache. Private creation failures propagate;
+> malformed TOML and generic read fallbacks return internal defaults uncached so
+> the next ordinary call retries the selected file.
 
 - [ ] **Step 1: Add failing config-bootstrap tests**
 
@@ -1489,6 +1626,47 @@ def test_config_loader_reports_unverified_platform_without_claiming_acl_safety(
     assert "permission posture is unverified" in text
     assert "owner-only" not in text
     assert "acl-secure" not in text
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX namespace contract")
+def test_failed_private_creation_clears_existing_config_cache(
+    tmp_path,
+    monkeypatch,
+):
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o1777)
+    selected = shared / "config.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(selected))
+    config_module._CONFIG_CACHE = {"stale": True}
+    config_module._CONFIG_CACHE_SOURCE = selected.absolute()
+
+    with pytest.raises(PrivatePathError):
+        config_module.load_cli_config_and_ensure_existence(force_reload=True)
+
+    assert config_module._CONFIG_CACHE is None
+    assert config_module._CONFIG_CACHE_SOURCE is None
+
+
+def test_malformed_config_defaults_are_not_cached_and_repaired_file_is_reloaded(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "config.toml"
+    target.write_text("[chat_defaults\n", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    _clear_config_cache()
+
+    loaded = config_module.load_cli_config_and_ensure_existence(force_reload=True)
+
+    assert loaded["chat_defaults"]["temperature"] == 0.6
+    assert config_module._CONFIG_CACHE is None
+    assert config_module._CONFIG_CACHE_SOURCE is None
+
+    target.write_text("[chat_defaults]\ntemperature = 0.17\n", encoding="utf-8")
+    repaired = config_module.load_cli_config_and_ensure_existence()
+
+    assert repaired["chat_defaults"]["temperature"] == 0.17
 ```
 
 - [ ] **Step 2: Run the bootstrap tests and verify current failures**
@@ -1544,11 +1722,26 @@ other config function uses it.
 Use the pinned stream for TOML:
 
 ```python
+    config_path = _get_effective_config_path()
+    if (
+        _CONFIG_CACHE is not None
+        and _CONFIG_CACHE_SOURCE == config_path
+        and not force_reload
+    ):
+        return _CONFIG_CACHE
+
+    _CONFIG_CACHE = None
+    _CONFIG_CACHE_SOURCE = None
+    loaded_config = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
+    bootstrap_succeeded = False
     application_directory = _application_owned_config_directory(config_path)
     try:
         with open_private_binary(config_path) as opened:
             _report_config_path_posture(opened.result)
             user_config_from_file = tomllib.load(opened.stream)
+        loaded_config = deep_merge_dicts(loaded_config, user_config_from_file)
+        loaded_config = decrypt_config_section(loaded_config)
+        bootstrap_succeeded = True
     except FileNotFoundError:
         created = create_private_text(
             config_path,
@@ -1557,6 +1750,7 @@ Use the pinned stream for TOML:
         )
         _report_config_path_posture(created)
         loaded_config["_first_run"] = True
+        bootstrap_succeeded = True
     except PrivatePathError as exc:
         if (
             application_directory is not None
@@ -1569,13 +1763,28 @@ Use the pinned stream for TOML:
             )
             _report_config_path_posture(created)
             loaded_config["_first_run"] = True
+            bootstrap_succeeded = True
         else:
-            _CONFIG_CACHE = None
-            _CONFIG_CACHE_SOURCE = None
             raise
+    except tomllib.TOMLDecodeError:
+        logger.opt(exception=True).error(
+            "Invalid selected config; using internal defaults without caching."
+        )
+    except Exception:
+        logger.opt(exception=True).error(
+            "Config read failed; using internal defaults without caching."
+        )
+
+    if bootstrap_succeeded:
+        _CONFIG_CACHE = loaded_config
+        _CONFIG_CACHE_SOURCE = config_path
+    return loaded_config
 ```
 
-Delete the `Path.exists()` branch and the `~/.tldw_cli_config.toml` fallback. Preserve existing TOML-decode handling after the secure stream is open, preserve default deep-merge/decryption behavior, and cache only a successfully created or read config.
+Delete the `Path.exists()` branch and the `~/.tldw_cli_config.toml` fallback.
+Exceptions raised by either `create_private_text()` call propagate rather than
+falling through to defaults. Preserve the existing detailed TOML/generic
+diagnostics, but leave both cache fields empty on those fallbacks.
 
 Do not route save/delete/encryption/raw-editor/export paths in this task; TASK-491 owns their single-persistence-owner conversion. The private write/read seam created here is the required dependency.
 

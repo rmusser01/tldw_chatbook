@@ -10,17 +10,25 @@ from pathlib import Path
 
 _TEST_CONFIG_ROOT_ENV = "TLDW_TEST_CONFIG_ROOT"
 _TEST_CONFIG_OWNER_ENV = "TLDW_TEST_CONFIG_ROOT_OWNER"
+_SANDBOXED_ENV_NAMES = (
+    "TLDW_CONFIG_PATH",
+    _TEST_CONFIG_ROOT_ENV,
+    _TEST_CONFIG_OWNER_ENV,
+)
+_PREVIOUS_TEST_ENV = {name: os.environ.get(name) for name in _SANDBOXED_ENV_NAMES}
 _existing_test_config_root = os.environ.get(_TEST_CONFIG_ROOT_ENV)
 if _existing_test_config_root:
     _BOOTSTRAP_CONFIG_ROOT = Path(_existing_test_config_root)
     _OWNS_BOOTSTRAP_CONFIG_ROOT = False
 else:
     _BOOTSTRAP_CONFIG_ROOT = Path(tempfile.mkdtemp(prefix="tldw_test_config_"))
-    os.environ[_TEST_CONFIG_ROOT_ENV] = str(_BOOTSTRAP_CONFIG_ROOT)
-    os.environ[_TEST_CONFIG_OWNER_ENV] = str(Path(__file__).resolve())
     _OWNS_BOOTSTRAP_CONFIG_ROOT = True
+_BOOTSTRAP_CONFIG_ROOT = _BOOTSTRAP_CONFIG_ROOT.resolve(strict=True)
+os.environ[_TEST_CONFIG_ROOT_ENV] = str(_BOOTSTRAP_CONFIG_ROOT)
+if _OWNS_BOOTSTRAP_CONFIG_ROOT:
+    os.environ[_TEST_CONFIG_OWNER_ENV] = str(Path(__file__).resolve())
 _BOOTSTRAP_CONFIG_PATH = _BOOTSTRAP_CONFIG_ROOT / "config" / "config.toml"
-_BOOTSTRAP_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+_BOOTSTRAP_CONFIG_PATH.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
 os.environ["TLDW_CONFIG_PATH"] = str(_BOOTSTRAP_CONFIG_PATH)
 
 import pytest  # noqa: E402
@@ -319,15 +327,14 @@ def pytest_configure(config):
 
 
 def pytest_sessionfinish(session, exitstatus):
-    """Remove the module-load config sandbox created by this conftest."""
-    if not _OWNS_BOOTSTRAP_CONFIG_ROOT:
-        return
-    if os.environ.get("TLDW_CONFIG_PATH") == str(_BOOTSTRAP_CONFIG_PATH):
-        os.environ.pop("TLDW_CONFIG_PATH", None)
-    if os.environ.get(_TEST_CONFIG_ROOT_ENV) == str(_BOOTSTRAP_CONFIG_ROOT):
-        os.environ.pop(_TEST_CONFIG_ROOT_ENV, None)
-        os.environ.pop(_TEST_CONFIG_OWNER_ENV, None)
-    shutil.rmtree(_BOOTSTRAP_CONFIG_ROOT, ignore_errors=True)
+    """Restore caller config variables and remove only an owned sandbox."""
+    for name, previous in _PREVIOUS_TEST_ENV.items():
+        if previous is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = previous
+    if _OWNS_BOOTSTRAP_CONFIG_ROOT:
+        shutil.rmtree(_BOOTSTRAP_CONFIG_ROOT, ignore_errors=True)
 
 
 # ========== Async Support ==========
