@@ -11,6 +11,7 @@ from pathlib import Path
 _TEST_CONFIG_ROOT_ENV = "TLDW_TEST_CONFIG_ROOT"
 _TEST_CONFIG_OWNER_ENV = "TLDW_TEST_CONFIG_ROOT_OWNER"
 _SANDBOXED_ENV_NAMES = (
+    "XDG_DATA_HOME",
     "TLDW_CONFIG_PATH",
     _TEST_CONFIG_ROOT_ENV,
     _TEST_CONFIG_OWNER_ENV,
@@ -27,8 +28,11 @@ _BOOTSTRAP_CONFIG_ROOT = _BOOTSTRAP_CONFIG_ROOT.resolve(strict=True)
 os.environ[_TEST_CONFIG_ROOT_ENV] = str(_BOOTSTRAP_CONFIG_ROOT)
 if _OWNS_BOOTSTRAP_CONFIG_ROOT:
     os.environ[_TEST_CONFIG_OWNER_ENV] = str(Path(__file__).resolve())
+_BOOTSTRAP_DATA_HOME = _BOOTSTRAP_CONFIG_ROOT / "data"
 _BOOTSTRAP_CONFIG_PATH = _BOOTSTRAP_CONFIG_ROOT / "config" / "config.toml"
+_BOOTSTRAP_DATA_HOME.mkdir(parents=True, mode=0o700, exist_ok=True)
 _BOOTSTRAP_CONFIG_PATH.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+os.environ["XDG_DATA_HOME"] = str(_BOOTSTRAP_DATA_HOME)
 os.environ["TLDW_CONFIG_PATH"] = str(_BOOTSTRAP_CONFIG_PATH)
 
 import pytest  # noqa: E402

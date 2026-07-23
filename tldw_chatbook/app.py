@@ -4965,7 +4965,6 @@ class TldwCli(
         self.prompts_service_initialized = False
         try:
             prompts_db_path = get_prompts_db_path()
-            prompts_db_path.parent.mkdir(parents=True, exist_ok=True)
             prompts_interop.initialize_interop(
                 db_path=prompts_db_path, client_id=self.prompts_client_id
             )

@@ -61,23 +61,7 @@ def get_orchestrator() -> EvaluationOrchestrator:
     """Get or create the global evaluation orchestrator."""
     global _orchestrator
     if _orchestrator is None:
-        # Initialize with proper database path
-        from pathlib import Path
-        from tldw_chatbook.config import load_settings
-
-        settings = load_settings()
-        user_data_dir = Path(
-            settings.get("user_data_dir", "~/.local/share/tldw_cli")
-        ).expanduser()
-
-        # Use user ID from config instead of hardcoded 'default_user'
-        user_id = settings.get("user_id", settings.get("username", "default_user"))
-        db_path = user_data_dir / user_id / "evals.db"
-
-        # Ensure directory exists
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-
-        _orchestrator = EvaluationOrchestrator(db_path=str(db_path))
+        _orchestrator = EvaluationOrchestrator()
     return _orchestrator
 
 

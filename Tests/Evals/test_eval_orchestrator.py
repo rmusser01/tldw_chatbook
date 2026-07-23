@@ -8,11 +8,17 @@ Test Evaluation Orchestrator
 Tests for the main orchestrator including the _active_tasks bug fix.
 """
 
+import os
+import stat
+from pathlib import Path
+
 import pytest
 from unittest.mock import Mock, patch
 
+from tldw_chatbook import config
 from tldw_chatbook.Evals.eval_orchestrator import EvaluationOrchestrator
 from tldw_chatbook.Evals.eval_errors import EvaluationError, ErrorContext, ErrorCategory
+from tldw_chatbook.Utils.private_paths import PrivatePathError
 
 
 class TestEvaluationOrchestrator:
@@ -136,6 +142,57 @@ class TestEvaluationOrchestrator:
         assert orchestrator.db is not None, "Database should be initialized"
         assert hasattr(orchestrator.db, "db_path"), "Database should have db_path"
 
+    def test_default_database_uses_secured_user_data_directory(
+        self, monkeypatch, tmp_path
+    ):
+        user_data_dir = tmp_path / "secured-user-data"
+        user_data_dir.mkdir()
+        monkeypatch.setattr(config, "get_user_data_dir", lambda: user_data_dir)
+
+        with patch("tldw_chatbook.Evals.eval_orchestrator.EvalsDB") as evals_db_class:
+            EvaluationOrchestrator()
+
+        evals_db_class.assert_called_once_with(
+            db_path=str(user_data_dir / "evals.db"),
+            client_id="eval_orchestrator",
+        )
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX mode contract")
+    def test_custom_database_parent_is_not_created_or_mutated(self, tmp_path: Path):
+        custom_parent = tmp_path / "custom"
+        custom_parent.mkdir()
+        custom_parent.chmod(0o751)
+        db_path = custom_parent / "evals.db"
+
+        with patch("tldw_chatbook.Evals.eval_orchestrator.EvalsDB") as evals_db_class:
+            EvaluationOrchestrator(db_path=db_path)
+
+        assert stat.S_IMODE(custom_parent.stat().st_mode) == 0o751
+        evals_db_class.assert_called_once_with(
+            db_path=str(db_path),
+            client_id="eval_orchestrator",
+        )
+
+    def test_custom_database_parent_must_exist(self, tmp_path: Path):
+        db_path = tmp_path / "missing" / "evals.db"
+
+        with (
+            patch("tldw_chatbook.Evals.eval_orchestrator.EvalsDB") as evals_db_class,
+            pytest.raises(PrivatePathError),
+        ):
+            EvaluationOrchestrator(db_path=db_path)
+
+        evals_db_class.assert_not_called()
+
+    def test_memory_database_token_is_preserved(self):
+        with patch("tldw_chatbook.Evals.eval_orchestrator.EvalsDB") as evals_db_class:
+            EvaluationOrchestrator(db_path=":memory:")
+
+        evals_db_class.assert_called_once_with(
+            db_path=":memory:",
+            client_id="eval_orchestrator",
+        )
+
     def test_component_initialization(self, orchestrator):
         """Test all components are properly initialized."""
         assert orchestrator.concurrent_manager is not None, "Concurrent manager missing"
@@ -204,6 +261,18 @@ class TestEvaluationOrchestrator:
             assert len(tasks) == 2
             assert tasks[0]["name"] == "Task 1"
             mock_list.assert_called_once()
+
+
+def test_eval_event_singleton_delegates_default_path_selection(monkeypatch):
+    from tldw_chatbook.Event_Handlers import eval_events
+
+    orchestrator = Mock()
+    orchestrator_class = Mock(return_value=orchestrator)
+    monkeypatch.setattr(eval_events, "EvaluationOrchestrator", orchestrator_class)
+    monkeypatch.setattr(eval_events, "_orchestrator", None)
+
+    assert eval_events.get_orchestrator() is orchestrator
+    orchestrator_class.assert_called_once_with()
 
 
 class TestOrchestratorIntegration:

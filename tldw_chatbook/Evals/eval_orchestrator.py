@@ -30,6 +30,10 @@ from .eval_runner import EvalRunner, EvalSampleResult
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.Utils.path_validation import validate_path_simple
+from tldw_chatbook.Utils.private_paths import (
+    lexical_path,
+    verify_trusted_directory,
+)
 from .eval_errors import (
     get_error_handler,
     EvaluationError,
@@ -55,7 +59,11 @@ class EvaluationOrchestrator:
     specific tasks to specialized components.
     """
 
-    def __init__(self, db_path: str = None, client_id: str = "eval_orchestrator"):
+    def __init__(
+        self,
+        db_path: str | Path | None = None,
+        client_id: str = "eval_orchestrator",
+    ):
         """
         Initialize the evaluation orchestrator.
 
@@ -78,25 +86,26 @@ class EvaluationOrchestrator:
         # Initialize task loader
         self.task_loader = TaskLoader()
 
-    def _initialize_database(self, db_path: str, client_id: str) -> EvalsDB:
+    def _initialize_database(
+        self,
+        db_path: str | Path | None,
+        client_id: str,
+    ) -> EvalsDB:
         """Initialize database connection with proper path."""
         if db_path is None:
-            # Use default path in user data directory
-            from tldw_chatbook.config import load_settings
+            from tldw_chatbook.config import get_user_data_dir
 
-            settings = load_settings()
-            user_data_dir = Path(
-                settings.get("user_data_dir", "~/.local/share/tldw_cli")
-            ).expanduser()
+            selected = get_user_data_dir() / "evals.db"
+        elif db_path == ":memory:":
+            selected = ":memory:"
+        else:
+            selected = lexical_path(db_path)
+            verify_trusted_directory(
+                selected.parent,
+                allow_shared_sticky=False,
+            )
 
-            # Use user ID from config
-            user_id = settings.get("user_id", settings.get("username", "default_user"))
-            db_path = user_data_dir / user_id / "evals.db"
-
-        # Ensure directory exists
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-
-        return EvalsDB(db_path=str(db_path), client_id=client_id)
+        return EvalsDB(db_path=str(selected), client_id=client_id)
 
     @contextmanager
     def _db_operation(self, operation_name: str):

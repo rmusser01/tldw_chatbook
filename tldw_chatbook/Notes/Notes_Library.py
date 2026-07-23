@@ -21,6 +21,10 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
     SchemaError,
 )
 from tldw_chatbook.config import chachanotes_db as global_db_from_config
+from tldw_chatbook.Utils.private_paths import (
+    lexical_path,
+    verify_trusted_directory,
+)
 from ..Metrics.metrics_logger import log_counter, log_histogram
 #
 #######################################################################################################################
@@ -38,7 +42,7 @@ class NotesInteropService:
         global_db_to_use: Optional[CharactersRAGDB] = None,
     ):
 
-        self.base_db_directory = Path(base_db_directory).resolve()
+        self.base_db_directory = lexical_path(base_db_directory)
         # self.api_client_id is not directly used if _get_db uses user_id as client_id
         # It's good to have it for context or if some methods need a generic app client_id.
         self.api_client_id = api_client_id
@@ -49,16 +53,19 @@ class NotesInteropService:
         self._db_lock = threading.Lock()
 
         try:
-            self.base_db_directory.mkdir(parents=True, exist_ok=True)
+            verify_trusted_directory(
+                self.base_db_directory,
+                allow_shared_sticky=False,
+            )
             logger.info(
-                f"NotesInteropService: Ensured base directory exists: {self.base_db_directory}"
+                f"NotesInteropService: Verified base directory: {self.base_db_directory}"
             )
         except OSError as e:
             logger.error(
-                f"Failed to create base DB directory {self.base_db_directory}: {e}"
+                f"Failed to verify base DB directory {self.base_db_directory}: {e}"
             )
             raise CharactersRAGDBError(
-                f"Failed to create base DB directory {self.base_db_directory}: {e}"
+                f"Failed to verify base DB directory {self.base_db_directory}: {e}"
             ) from e
 
         # Store the global DB instance

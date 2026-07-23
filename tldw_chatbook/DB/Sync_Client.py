@@ -4,6 +4,7 @@ import json
 import os
 import sqlite3  # For specific error types
 from datetime import datetime
+from pathlib import Path
 from typing import List, Dict, Optional
 
 from loguru import logger
@@ -20,6 +21,7 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import (
     DateTimeEncoder,
 )
 from tldw_chatbook.DB.sql_logging import preview_params
+from tldw_chatbook.Utils.private_paths import secure_private_directory
 #
 #######################################################################################################################
 #
@@ -926,8 +928,11 @@ class ClientSyncEngine:
 if __name__ == "__main__":
     logger.info("Setting up Client Sync Engine example...")
 
-    # Ensure client directory exists
-    os.makedirs(os.path.dirname(DATABASE_PATH) or ".", exist_ok=True)
+    secure_private_directory(
+        Path(DATABASE_PATH).parent,
+        create=True,
+        application_owned=True,
+    )
 
     # Initialize db to None outside the try block
     db: Optional[Database] = None

@@ -252,7 +252,10 @@ def get_safe_relative_path(
 
 
 def validate_path_simple(
-    user_path: Union[str, Path], require_exists: bool = False
+    user_path: Union[str, Path],
+    require_exists: bool = False,
+    *,
+    probe_existing: bool = True,
 ) -> Path:
     """
     Simple path validation that checks for common security issues without requiring a base directory.
@@ -260,6 +263,8 @@ def validate_path_simple(
     Args:
         user_path: The path to validate
         require_exists: Whether to require the path exists
+        probe_existing: Whether to inspect and resolve an existing selected path.
+            Disable this when a later no-follow boundary owns link validation.
 
     Returns:
         Path: The validated path
@@ -307,14 +312,17 @@ def validate_path_simple(
         # Convert to Path object and check basic validity
         path = Path(user_path)
 
-        # If path exists, resolve it to catch symlink attacks
-        if path.exists():
-            resolved = path.resolve()
-            # Check if resolution changed the path significantly (possible symlink attack)
-            if path.is_absolute() and resolved != path:
-                logger.warning(f"Path resolution changed: {path} -> {resolved}")
+        if probe_existing:
+            # If path exists, resolve it to catch symlink attacks
+            if path.exists():
+                resolved = path.resolve()
+                # Check if resolution changed the path significantly (possible symlink attack)
+                if path.is_absolute() and resolved != path:
+                    logger.warning(f"Path resolution changed: {path} -> {resolved}")
+            elif require_exists:
+                raise ValueError(f"Path does not exist: {path}")
         elif require_exists:
-            raise ValueError(f"Path does not exist: {path}")
+            raise ValueError("require_exists requires probe_existing=True")
 
         # Log success
         duration = time.time() - start_time

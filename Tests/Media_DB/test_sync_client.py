@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import pytest
 import json
 import os
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 #
@@ -20,6 +21,24 @@ from tldw_chatbook.DB.Sync_Client import ClientSyncEngine
 
 # Test marker for unit tests
 pytestmark = pytest.mark.unit
+
+
+def test_executable_example_secures_its_application_owned_database_directory():
+    source_path = Path(__file__).parents[2] / "tldw_chatbook" / "DB" / "Sync_Client.py"
+    source = source_path.read_text(encoding="utf-8")
+
+    assert (
+        "os.makedirs(os.path.dirname(DATABASE_PATH) or '.', exist_ok=True)"
+        not in source
+    )
+    assert (
+        "secure_private_directory(\n"
+        "        Path(DATABASE_PATH).parent,\n"
+        "        create=True,\n"
+        "        application_owned=True,\n"
+        "    )"
+    ) in source
+
 
 #######################################################################################################################
 #

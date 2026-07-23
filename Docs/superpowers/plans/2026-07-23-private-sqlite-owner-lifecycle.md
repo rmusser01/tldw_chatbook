@@ -363,6 +363,7 @@ without changing it, so no new ADR is needed.
 **Files:**
 
 - Modify: `tldw_chatbook/config.py`
+- Modify: `tldw_chatbook/Utils/path_validation.py`
 - Modify: `tldw_chatbook/Evals/eval_orchestrator.py`
 - Modify: `tldw_chatbook/Event_Handlers/eval_events.py`
 - Modify: `tldw_chatbook/app.py`
@@ -371,6 +372,7 @@ without changing it, so no new ADR is needed.
 - Modify: `tldw_chatbook/runtime_policy/server_parity_state.py`
 - Modify: `backlog/docs/sqlite-private-owner-inventory.md`
 - Modify: `Tests/DB/test_private_sqlite_inventory.py`
+- Modify: `Tests/conftest.py`
 - Create: `Tests/test_database_path_privacy.py`
 - Modify: adjacent config path tests where their old canonical-path assertion
   conflicts with ADR-022.
@@ -445,6 +447,19 @@ without changing it, so no new ADR is needed.
   `DATABASE_URL`/`USER_DB_BASE_DIR` directory-creation branches, while leaving
   any compatibility values themselves unchanged.
 
+  The default application data base honors `XDG_DATA_HOME/tldw_cli` when
+  `XDG_DATA_HOME` is set and otherwise retains the existing
+  `~/.local/share/tldw_cli` fallback. The root test bootstrap sets a dedicated
+  private `XDG_DATA_HOME` before project imports so collection cannot touch a
+  developer's real data directory. Preserve the exact `:memory:` token at the
+  eval-orchestrator boundary; broader URI normalization remains Task 4.
+
+  Custom DB selection uses a non-resolving mode of the existing input
+  validator so even an existing symlinked leaf is not probed or canonicalized
+  before the private SQLite seam. Preserve the scheduled-tasks helper's
+  historical validation order so a raw `~/...` value remains rejected; other
+  helpers retain their previous expand-before-validation behavior.
+
   In the checked inventory, change P01-P03 and P23-P28 from `current` to
   `migrated` in the same commit. The inventory test must then prove every
   listed legacy creator-call anchor is absent.
@@ -456,7 +471,9 @@ without changing it, so no new ADR is needed.
 - [ ] **Step 8: Commit path policy**
 
   ```bash
-  git add tldw_chatbook/config.py \
+  git add Docs/superpowers/plans/2026-07-23-private-sqlite-owner-lifecycle.md \
+    tldw_chatbook/config.py \
+    tldw_chatbook/Utils/path_validation.py \
     tldw_chatbook/Evals/eval_orchestrator.py \
     tldw_chatbook/Event_Handlers/eval_events.py \
     tldw_chatbook/app.py \
@@ -471,7 +488,8 @@ without changing it, so no new ADR is needed.
     Tests/Evals/test_eval_orchestrator.py \
     Tests/Notes/test_notes_library_unit.py \
     Tests/Media_DB/test_sync_client.py \
-    Tests/RuntimePolicy/test_server_parity_state.py
+    Tests/RuntimePolicy/test_server_parity_state.py \
+    Tests/conftest.py
   git commit -m "fix(security): secure database path selection"
   ```
 

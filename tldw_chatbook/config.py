@@ -37,6 +37,7 @@ from tldw_chatbook.Utils.private_paths import (
     lexical_path,
     open_private_binary,
     secure_private_directory,
+    verify_trusted_directory,
 )
 #
 #######################################################################################################################
@@ -1989,32 +1990,6 @@ def load_settings(force_reload: bool = False) -> Dict:
         if f"{ctype}_language" not in config_dict["chunking_config"]:
             config_dict["chunking_config"][f"{ctype}_language"] = _get_typed_value(
                 chunking_section, f"{ctype}_language", default_language
-            )
-
-    # --- Warnings ---
-
-    # Create necessary directories if they don't exist
-    # Ensure main SQLite database directory exists
-    db_url_server = config_dict.get("DATABASE_URL", "")
-    if db_url_server and db_url_server.startswith("sqlite:///"):
-        main_db_file_path_str_server = db_url_server.replace("sqlite:///", "")
-        main_db_file_path_server = Path(main_db_file_path_str_server)
-        if not main_db_file_path_server.is_absolute() and ACTUAL_PROJECT_ROOT:
-            main_db_file_path_server = ACTUAL_PROJECT_ROOT / main_db_file_path_server
-        try:
-            main_db_file_path_server.parent.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            logger.error(
-                f"Could not create server database directory {main_db_file_path_server.parent}: {e}"
-            )
-
-    user_data_base_dir_server = config_dict.get("USER_DB_BASE_DIR")
-    if user_data_base_dir_server and isinstance(user_data_base_dir_server, Path):
-        try:
-            user_data_base_dir_server.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            logger.error(
-                f"Could not create server user data base directory {user_data_base_dir_server}: {e}"
             )
 
     # Set the chat dictionaries folder path dynamically
@@ -4340,7 +4315,15 @@ def change_encryption_password(old_password: str, new_password: str) -> bool:
 
 
 # --- CLI Database and Log File Path Getters ---
-BASE_DATA_DIR_CLI = Path.home() / ".local" / "share" / "tldw_cli"  # Renamed for clarity
+def _default_cli_data_base() -> Path:
+    """Return the platform-selected application data base."""
+    xdg_data_home = os.environ.get("XDG_DATA_HOME")
+    if xdg_data_home:
+        return Path(xdg_data_home).expanduser() / "tldw_cli"
+    return Path.home() / ".local" / "share" / "tldw_cli"
+
+
+BASE_DATA_DIR_CLI = _default_cli_data_base()
 
 
 def get_api_key(api_name: str) -> Optional[str]:
@@ -4417,168 +4400,114 @@ def get_user_folder_name() -> str:
 
 
 def get_user_data_dir() -> Path:
-    """Get the user-specific data directory."""
+    """Return the secured lexical user-specific data directory."""
     user_folder = get_user_folder_name()
     configured_data_dir = get_cli_setting("paths", "data_dir", None)
     if configured_data_dir is None:
         configured_data_dir = get_cli_setting("Paths", "data_dir", None)
-    base_data_dir = (
-        Path(configured_data_dir).expanduser()
-        if configured_data_dir
-        else BASE_DATA_DIR_CLI
-    )
+    if configured_data_dir:
+        base_data_dir = lexical_path(configured_data_dir)
+        verify_trusted_directory(base_data_dir, allow_shared_sticky=False)
+    else:
+        base_data_dir = secure_private_directory(
+            BASE_DATA_DIR_CLI,
+            create=True,
+            application_owned=True,
+        ).lexical_path
     user_dir = base_data_dir / user_folder
-    # Create directory if it doesn't exist
-    user_dir.mkdir(parents=True, exist_ok=True)
-    return user_dir
+    return secure_private_directory(
+        user_dir,
+        create=True,
+        application_owned=True,
+    ).lexical_path
+
+
+def _get_custom_database_path(
+    setting_name: str,
+    *,
+    expand_before_validation: bool = True,
+) -> Path | None:
+    """Return a validated lexical custom DB path, if explicitly configured."""
+    custom_path = get_cli_setting("database", setting_name, None)
+    default_path = DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(setting_name)
+    if not custom_path or custom_path == default_path:
+        return None
+    selected_input = Path(str(custom_path))
+    if expand_before_validation:
+        selected_input = selected_input.expanduser()
+    validated = validate_path_simple(
+        selected_input,
+        require_exists=False,
+        probe_existing=False,
+    )
+    return lexical_path(validated)
 
 
 def get_chachanotes_db_path() -> Path:
-    # Check if a custom path is configured
-    custom_path = get_cli_setting("database", "chachanotes_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+    return _get_custom_database_path(
         "chachanotes_db_path"
-    ):
-        # Use custom path if explicitly configured
-        db_path = Path(custom_path).expanduser().resolve()
-    else:
-        # Use user-specific folder
-        user_dir = get_user_data_dir()
-        db_path = user_dir / "tldw_chatbook_ChaChaNotes.db"
-    return db_path
+    ) or get_user_data_dir() / "tldw_chatbook_ChaChaNotes.db"
 
 
 def get_prompts_db_path() -> Path:
-    # Check if a custom path is configured
-    custom_path = get_cli_setting("database", "prompts_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+    return _get_custom_database_path(
         "prompts_db_path"
-    ):
-        # Use custom path if explicitly configured
-        db_path = Path(custom_path).expanduser().resolve()
-    else:
-        # Use user-specific folder
-        user_dir = get_user_data_dir()
-        db_path = user_dir / "tldw_chatbook_prompts.db"
-    return db_path
+    ) or get_user_data_dir() / "tldw_chatbook_prompts.db"
 
 
 def get_media_db_path() -> Path:
-    # Check if a custom path is configured
-    custom_path = get_cli_setting("database", "media_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+    return _get_custom_database_path(
         "media_db_path"
-    ):
-        # Use custom path if explicitly configured
-        db_path = Path(custom_path).expanduser().resolve()
-    else:
-        # Use user-specific folder
-        user_dir = get_user_data_dir()
-        db_path = user_dir / "tldw_chatbook_media_v2.db"
-    return db_path
+    ) or get_user_data_dir() / "tldw_chatbook_media_v2.db"
 
 
 def get_library_collections_db_path() -> Path:
-    custom_path = get_cli_setting("database", "library_collections_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+    return _get_custom_database_path(
         "library_collections_db_path"
-    ):
-        db_path = validate_path_simple(
-            Path(str(custom_path)).expanduser(), require_exists=False
-        ).resolve()
-    else:
-        user_dir = get_user_data_dir()
-        db_path = user_dir / "tldw_chatbook_library_collections.db"
-    return db_path
+    ) or get_user_data_dir() / "tldw_chatbook_library_collections.db"
 
 
 def get_library_ingest_jobs_db_path() -> Path:
-    custom_path = get_cli_setting("database", "library_ingest_jobs_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+    return _get_custom_database_path(
         "library_ingest_jobs_db_path"
-    ):
-        db_path = validate_path_simple(
-            Path(str(custom_path)).expanduser(), require_exists=False
-        ).resolve()
-    else:
-        db_path = get_user_data_dir() / "tldw_chatbook_library_ingest_jobs.db"
-    return db_path
+    ) or get_user_data_dir() / "tldw_chatbook_library_ingest_jobs.db"
 
 
 def get_workspaces_db_path() -> Path:
-    custom_path = get_cli_setting("database", "workspaces_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+    return _get_custom_database_path(
         "workspaces_db_path"
-    ):
-        db_path = validate_path_simple(
-            Path(str(custom_path)).expanduser(), require_exists=False
-        ).resolve()
-    else:
-        user_dir = get_user_data_dir()
-        db_path = user_dir / "tldw_chatbook_workspaces.db"
-    return db_path
+    ) or get_user_data_dir() / "tldw_chatbook_workspaces.db"
 
 
 def get_subscriptions_db_path() -> Path:
-    # Check if a custom path is configured
-    custom_path = get_cli_setting("database", "subscriptions_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+    return _get_custom_database_path(
         "subscriptions_db_path"
-    ):
-        # Use custom path if explicitly configured
-        db_path = Path(custom_path).expanduser().resolve()
-    else:
-        # Use user-specific folder
-        user_dir = get_user_data_dir()
-        db_path = user_dir / "tldw_chatbook_subscriptions.db"
-    return db_path
+    ) or get_user_data_dir() / "tldw_chatbook_subscriptions.db"
 
 
 def get_notifications_db_path() -> Path:
-    # Check if a custom path is configured
-    custom_path = get_cli_setting("database", "notifications_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+    return _get_custom_database_path(
         "notifications_db_path"
-    ):
-        db_path = Path(custom_path).expanduser().resolve()
-    else:
-        user_dir = get_user_data_dir()
-        db_path = user_dir / "tldw_chatbook_notifications.db"
-    return db_path
+    ) or get_user_data_dir() / "tldw_chatbook_notifications.db"
 
 
 def get_research_db_path() -> Path:
-    # Check if a custom path is configured
-    custom_path = get_cli_setting("database", "research_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+    return _get_custom_database_path(
         "research_db_path"
-    ):
-        db_path = Path(custom_path).expanduser().resolve()
-    else:
-        user_dir = get_user_data_dir()
-        db_path = user_dir / "tldw_chatbook_research.db"
-    return db_path
+    ) or get_user_data_dir() / "tldw_chatbook_research.db"
 
 
 def get_writing_db_path() -> Path:
-    custom_path = get_cli_setting("database", "writing_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
+    return _get_custom_database_path(
         "writing_db_path"
-    ):
-        db_path = Path(custom_path).expanduser().resolve()
-    else:
-        user_dir = get_user_data_dir()
-        db_path = user_dir / "tldw_chatbook_writing.db"
-    return db_path
+    ) or get_user_data_dir() / "tldw_chatbook_writing.db"
 
 
 def get_scheduled_tasks_db_path() -> Path:
-    custom_path = get_cli_setting("database", "scheduled_tasks_db_path", None)
-    if custom_path and custom_path != DEFAULT_CONFIG_FROM_TOML.get("database", {}).get(
-        "scheduled_tasks_db_path"
-    ):
-        return validate_path_simple(custom_path)
-    return get_user_data_dir() / "tldw_chatbook_scheduled_tasks.db"
+    return _get_custom_database_path(
+        "scheduled_tasks_db_path",
+        expand_before_validation=False,
+    ) or get_user_data_dir() / "tldw_chatbook_scheduled_tasks.db"
 
 
 def get_cli_log_file_path() -> Path:
