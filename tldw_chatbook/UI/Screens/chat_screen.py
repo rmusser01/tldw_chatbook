@@ -1076,6 +1076,9 @@ class ChatScreen(BaseAppScreen):
             self._apply_console_setup_block(True)
             return
         self._ensure_console_workbench_targets_focusable()
+        if self._console_composer_collapsed:
+            self._focus_console_workbench_target("console-native-composer")
+            return
         current = self._console_workbench_focus_id_for_widget(self.app.focused)
         if current is not None and self._is_console_widget_displayed(current):
             self._last_console_workbench_focus_id = current
@@ -2975,7 +2978,10 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return None
         return _ConsoleTranscriptReadingState(
-            anchored=bool(transcript.is_anchored),
+            anchored=bool(
+                transcript.is_anchored
+                and not getattr(transcript, "_anchor_released", False)
+            ),
             scroll_y=float(transcript.scroll_y),
             selected_message_id=transcript.selected_message_id,
         )
@@ -3017,6 +3023,10 @@ class ChatScreen(BaseAppScreen):
             self._console_unknown_send_armed = None
             composer.reset_pending_unfurl()
         composer.set_collapsed(collapsed)
+        composer.styles.border = (
+            CONSOLE_QUIET_FRAME_BORDER if collapsed else CONSOLE_FRAME_BORDER
+        )
+        composer.refresh(layout=True)
         self.call_after_refresh(
             self._finish_console_composer_layout_change,
             revision,
@@ -6732,7 +6742,11 @@ class ChatScreen(BaseAppScreen):
             widget.styles.border = CONSOLE_QUIET_FRAME_BORDER
             return widget
         widget.add_class("console-frame-solid")
-        widget.styles.border = CONSOLE_FRAME_BORDER
+        widget.styles.border = (
+            CONSOLE_QUIET_FRAME_BORDER
+            if isinstance(widget, ConsoleComposerBar) and widget.collapsed
+            else CONSOLE_FRAME_BORDER
+        )
         if not top:
             widget.styles.border_top = ("none", CONSOLE_FRAME_COLOR)
         return widget
@@ -7155,6 +7169,7 @@ class ChatScreen(BaseAppScreen):
                     classes="ds-panel destination-workbench",
                 )
             )
+            workspace_grid.styles.min_height = 0
             with workspace_grid:
                 left_handle = ConsoleRailHandle(
                     label=rail_state.left_label,
@@ -7484,6 +7499,7 @@ class ChatScreen(BaseAppScreen):
                 main_column = Vertical(id="console-main-column")
                 main_column.styles.width = "13fr"
                 main_column.styles.min_width = 56
+                main_column.styles.min_height = 0
                 with main_column:
                     transcript_region = self._frame_console_region(
                         Vertical(
