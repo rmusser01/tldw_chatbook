@@ -63,11 +63,11 @@ hand-rolled range list):
   `100.100.100.200` (Alibaba); hostnames `metadata.google.internal`,
   `metadata.azure.com` (union of `SecurityValidator.METADATA_ENDPOINTS` + the
   cloud-IPs it missed). Hostname matches are checked pre-resolution.
-- `private` — anything where `ip.is_private or ip.is_loopback or
-  ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified`,
-  plus CGNAT `100.64.0.0/10`; IPv6 incl. ULA `fc00::/7` and IPv4-mapped
-  addresses classified by their embedded IPv4.
-- `public` — everything else.
+- `public` — the metadata check first, then `ip.is_global` (Python ≥3.11
+  `ipaddress` — already covers RFC1918, loopback, link-local, ULA, CGNAT
+  `100.64.0.0/10`, reserved, multicast, unspecified, and doc ranges; IPv4-mapped
+  IPv6 classified by the embedded IPv4).
+- `private` — everything not metadata and not `is_global`.
 
 **API:**
 
@@ -103,10 +103,11 @@ async def check_url_or_raise_async(url, *, trusted_origins=frozenset()) -> None
 - Config (`[web_security]`, read via the canonical `config.py` accessors, with
   defaults registered in `config.py`'s defaults so the section is surfaced —
   the `[image_generation]`/`load_settings()` lesson):
-  - `enabled = true` — kill switch. When `false`, every decision returns
-    `allowed=True, reason="disabled"` but still logs the would-block at DEBUG
-    and increments the counter — protection can be turned off, visibility
-    cannot.
+  - `enabled = true` — kill switch. When `false`, the check **short-circuits
+    before DNS resolution** (a user who disabled the guard — possibly because
+    of DNS problems — must not still pay resolution latency or failures) and
+    returns `allowed=True, reason="disabled"`, logging the skip at DEBUG and
+    incrementing a counter — protection can be turned off, visibility cannot.
   - `allowed_hosts = []` — exact lowercase hostnames/IP literals exempt from
     all blocking (incl. metadata). The escape hatch for exotic setups.
 - Observability: `log_counter("egress_blocked", labels={"reason": ...})` on
@@ -146,19 +147,30 @@ cap. Shared rules:
   precedent).
 - Hop targets do NOT get added to `trusted_origins`; only the original set
   carries through the chain.
+- Timeouts are per-hop (each surface's existing/added value); total chain time
+  is bounded by the 10-hop cap.
 
 Helpers (thin — policy logic lives only in Unit 1):
 
-- `guarded_fetch_httpx(url, *, client, max_bytes, trusted_origins, ...)` —
-  sync + async variants; returns `(bytes, final_url, response_headers)`-shaped
-  result. Used by subscriptions, watchlists, `web_article_ingestion`.
-- `guarded_fetch_requests(url, *, session=None, max_bytes, trusted_origins,
-  timeout, ...)` — accepts an existing `requests.Session` (Confluence auth
-  lives on the session); raises/propagates `requests` exception types so
-  existing callers' `except requests...` blocks keep working.
-- `guarded_fetch_aiohttp(url, *, session, max_bytes, trusted_origins, ...)` —
-  for `Article_Scraper/crawler.py` (`allow_redirects=False` + manual loop +
-  `iter_chunked` cap).
+- **Return shape carries status semantics.** Helpers never call
+  `raise_for_status` — status handling belongs to callers (`FeedMonitor`
+  needs `304 Not Modified` from conditional GETs; `web_article_ingestion`
+  classifies retryable-vs-permanent from status codes). Request headers
+  (`If-None-Match`, `If-Modified-Since`, auth, UA) pass through.
+  - `guarded_fetch_httpx(url, *, client, max_bytes, trusted_origins,
+    headers=None, ...)` — sync + async variants; returns a `GuardedResponse`
+    dataclass: `status_code`, `headers`, `content: bytes`, `final_url`. Used
+    by subscriptions, watchlists, `web_article_ingestion`.
+  - `guarded_fetch_requests(url, *, session=None, max_bytes, trusted_origins,
+    timeout, ...)` — accepts an existing `requests.Session` (Confluence auth
+    lives on the session); returns a real `requests.Response` with
+    `._content` preloaded under the cap, so `make_request`'s callers keep
+    using `.json()`/`.status_code`/`.headers` unchanged; raises/propagates
+    `requests` exception types so existing `except requests...` blocks keep
+    working.
+  - `guarded_fetch_aiohttp(url, *, session, max_bytes, trusted_origins, ...)`
+    — returns `GuardedResponse`; for `Article_Scraper/crawler.py`
+    (`allow_redirects=False` + manual loop + `iter_chunked` cap).
 - Playwright navigation guard:
   - `check` before `page.goto` (async or sync variant per call site) — a bad
     initial target never launches.
@@ -178,13 +190,29 @@ Helpers (thin — policy logic lives only in Unit 1):
 
 ### Unit 3: Wiring (the fan-out)
 
-| Surface | trusted_origins seed | Cap | Timeout | Notes |
+**Trust-threading rule (Global Constraint — fail-closed).** Shared pipeline
+functions (`scrape_article*`, `Scraper._fetch_html`, `get_page_title`, the
+guarded helpers themselves) accept `trusted_origins` as a parameter
+**defaulting to the empty set** — they must NEVER auto-trust their own input
+URL's host. If they did, a content-derived URL (a malicious feed item pointing
+at `http://192.168.1.1/admin`) would arrive as the "initial URL" and be
+trusted, collapsing the posture. Trust is seeded ONLY at the boundaries where
+user intent is known — the UI/ingest handlers, subscription/watchlist source
+config, Confluence `base_url`, sitemap entry, media/audio URL ingest — and
+threaded down. A user-driven path that misses the threading fails VISIBLY (an
+intranet fetch gets blocked with a remedy-bearing message) rather than
+silently opening a hole; that is the correct failure direction. The plan
+traces every user-driven entry point and threads trust explicitly; the
+"trusted_origins seed" column below names the boundary that supplies the set
+each surface receives.
+
+| Surface | trusted_origins seed (threaded from the boundary) | Cap | Timeout | Notes |
 |---|---|---|---|---|
-| `Article_Extractor_Lib.get_page_title` | target host (user URL) | 10MB | keep 10s | → `guarded_fetch_requests` |
+| `Article_Extractor_Lib.get_page_title` | caller-threaded (user-URL callers pass the host; content-derived callers pass none) | 10MB | keep 10s | → `guarded_fetch_requests` |
 | `scrape_from_sitemap` (L999) | sitemap host | **50MB** (sitemap protocol allows up to 50MB uncompressed) | **add 30s** (has none) | sitemap URL user-supplied; URLs *from* it are content-derived |
 | `collect_internal_links` (L1055) | seed host | 10MB | **add 30s** (has none) | crawl-discovered links content-derived |
 | `Article_Scraper/crawler.py` `crawl_site`/`get_urls_from_sitemap` | seed host | 10MB / 50MB | keep 10s/30s | → `guarded_fetch_aiohttp` |
-| `Scraper._fetch_html` + Playwright paths (`fetch_html`, `recursive_scrape`, `scrape_article_async`) | initial URL host; Confluence subclass adds its `base_url` host | n/a (rendered page) | keep config-driven | pre-goto check + post-nav chain validation |
+| `Scraper._fetch_html` + Playwright paths (`fetch_html`, `recursive_scrape`, `scrape_article_async`) | caller-threaded (user "scrape this URL" flows pass the host; feed-item/discovered-link flows pass none); Confluence subclass adds its `base_url` host | n/a (rendered page) | keep config-driven | pre-goto check + post-nav chain validation |
 | Confluence `make_request`, `_extract_page_id_from_url` | `base_url` host | 10MB | **add 30s** (has none) | via `guarded_fetch_requests` w/ the auth session; **sync-in-async refactor filed as a follow-up backlog task, not fixed here** |
 | `web_article_ingestion.extract_article_for_ingest` | target host | keep 10MB | keep 30s | swap hand-rolled stream loop → `guarded_fetch_httpx`; content-type allowlist, retryable-vs-permanent classification, and post-redirect canonical `url` semantics preserved at the call site |
 | Subscriptions `FeedMonitor._fetch_and_parse_feed`, `URLMonitor._fetch_url_content`, `website_monitor._fetch_url_content` | subscription source host | 10MB | keep 30s | → async `guarded_fetch_httpx`; `URLMonitor` gains guarding it never had |
@@ -200,8 +228,14 @@ Additional wiring:
 - **`Subscriptions/security.py` delegation:** `SecurityValidator.validate_feed_url`
   and `SSRFProtector.is_safe_url` keep their public APIs but delegate all
   host/IP policy to `evaluate_url_policy`; the duplicate `PRIVATE_IP_RANGES` /
-  `METADATA_ENDPOINTS` logic is deleted. Existing `Tests/Subscriptions`
-  security tests must stay green (API-compatible delegation).
+  `METADATA_ENDPOINTS` logic is deleted. `validate_feed_url` gains an optional
+  `trusted_origins=frozenset()` parameter and `sanitize_item` passes the
+  feed's host — otherwise intranet feeds whose ITEMS live on the same private
+  host as the feed would break under delegation (the old code blocked all
+  private item URLs unconditionally; the new posture must allow same-origin
+  items). Existing `Tests/Subscriptions` security tests must stay green
+  except where they pinned the old unconditional-private-block for
+  same-origin items — those update to the new posture deliberately.
 - **`ssl_verify=0`** (monitoring_engine L370/L778): feature kept (self-signed
   intranet feeds are legitimate) but each fetch with TLS verification disabled
   logs a loguru WARNING (once per host per process, module-level seen-set) and
@@ -241,7 +275,11 @@ uncaught worker exceptions).
   fakes). Playwright guard: unit-test the chain-validation function on faked
   request/redirect objects (no browser in CI).
 - **Wiring tests per surface**: a blocked URL produces the surface's error
-  type (containment), oversize produces the explicit message.
+  type (containment), oversize produces the explicit message; shared pipeline
+  functions called WITHOUT `trusted_origins` reject a private-resolving URL
+  (the fail-closed default is itself under test); a `304 Not Modified`
+  round-trips through `guarded_fetch_httpx` into `FeedMonitor`'s
+  conditional-GET path.
 - **Test-mock fallout inventoried up front:** existing Tests/Subscriptions
   (and any others) that mock `client.get(..., follow_redirects=True)` are
   enumerated during planning and updated to the manual-loop shape —
