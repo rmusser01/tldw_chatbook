@@ -305,6 +305,133 @@ def _private_path_error_from_oserror(
     )
 
 
+def _open_leaf_for_create(parent_fd: int, leaf: str) -> int:
+    return os.open(
+        leaf,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW,
+        _PRIVATE_FILE_MODE,
+        dir_fd=parent_fd,
+    )
+
+
+def create_private_text(
+    path: PathInput,
+    text: str,
+    *,
+    application_owned_directory: PathInput | None = None,
+    encoding: str = "utf-8",
+) -> PrivatePathResult:
+    """Create a new private text file without replacing an existing entry."""
+
+    selected = lexical_path(path)
+    if application_owned_directory is not None:
+        owned_dir = lexical_path(application_owned_directory)
+        if selected.parent != owned_dir:
+            raise ValueError("Application-owned directory must be the target parent")
+        secure_private_directory(
+            owned_dir,
+            create=True,
+            application_owned=True,
+        )
+
+    if not _posix_guards_available():
+        if _WINDOWS_PLATFORM:
+            with selected.open("x", encoding=encoding) as handle:
+                handle.write(text)
+                handle.flush()
+            return PrivatePathResult(
+                selected,
+                PrivatePathStatus.UNVERIFIED_PLATFORM,
+                reason="native_acl_not_verified",
+            )
+        raise PrivatePathError(
+            PrivatePathResult(
+                selected,
+                PrivatePathStatus.OPERATION_FAILED,
+                reason="required_posix_guards_unavailable",
+            )
+        )
+
+    parent_fd, leaf = _open_verified_parent(
+        selected,
+        missing_leaf_allowed=True,
+    )
+    file_fd = -1
+    created_stat: os.stat_result | None = None
+    try:
+        file_fd = _open_leaf_for_create(parent_fd, leaf)
+        created_stat = os.fstat(file_fd)
+        os.fchmod(file_fd, _PRIVATE_FILE_MODE)
+        payload = text.encode(encoding)
+        view = memoryview(payload)
+        while view:
+            written = os.write(file_fd, view)
+            view = view[written:]
+        os.fsync(file_fd)
+        assert created_stat is not None
+        if not _private_file_postcondition_holds(
+            file_fd,
+            parent_fd,
+            leaf,
+            expected_identity=created_stat,
+        ):
+            raise PrivatePathError(
+                PrivatePathResult(
+                    selected,
+                    PrivatePathStatus.OPERATION_FAILED,
+                    reason="private_file_postcondition_failed",
+                )
+            )
+        return PrivatePathResult(selected, PrivatePathStatus.CREATED_PRIVATE)
+    except FileExistsError:
+        raise
+    except PrivatePathError:
+        if created_stat is not None:
+            try:
+                current = os.stat(
+                    leaf,
+                    dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+                if (current.st_dev, current.st_ino) == (
+                    created_stat.st_dev,
+                    created_stat.st_ino,
+                ):
+                    os.unlink(leaf, dir_fd=parent_fd)
+            except OSError:
+                pass
+        raise
+    except OSError as exc:
+        # If writing the created inode failed, unlink only when the current
+        # directory entry still identifies created_stat. Never delete a
+        # replacement installed after failure.
+        if created_stat is not None:
+            try:
+                current = os.stat(
+                    leaf,
+                    dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+                if (current.st_dev, current.st_ino) == (
+                    created_stat.st_dev,
+                    created_stat.st_ino,
+                ):
+                    os.unlink(leaf, dir_fd=parent_fd)
+            except OSError:
+                pass
+        raise PrivatePathError(
+            PrivatePathResult(
+                selected,
+                PrivatePathStatus.OPERATION_FAILED,
+                reason=type(exc).__name__,
+            )
+        ) from None
+    finally:
+        if file_fd >= 0:
+            os.close(file_fd)
+        os.close(parent_fd)
+
+
 @contextlib.contextmanager
 def open_private_binary(path: PathInput) -> Iterator[PrivateBinaryFile]:
     """Open and harden an existing private file without following links."""

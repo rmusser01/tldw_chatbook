@@ -11,6 +11,7 @@ from tldw_chatbook.Utils.private_paths import (
     PrivatePathResult,
     PrivatePathStatus,
     _classify_private_file_stat,
+    create_private_text,
     lexical_path,
     open_private_binary,
     secure_private_directory,
@@ -66,6 +67,143 @@ def test_lexical_path_normalizes_without_resolving_symlink(tmp_path, monkeypatch
 def test_lexical_path_rejects_nul():
     with pytest.raises(ValueError, match="NUL"):
         lexical_path("bad\x00path")
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX mode contract")
+def test_create_private_text_is_0600_under_0022_umask(tmp_path):
+    target = tmp_path / "config.toml"
+    previous = os.umask(0o022)
+    try:
+        result = create_private_text(target, "[chat]\n")
+    finally:
+        os.umask(previous)
+
+    assert result.status is PrivatePathStatus.CREATED_PRIVATE
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX namespace contract")
+def test_create_private_text_rejects_missing_leaf_in_shared_sticky_parent(tmp_path):
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o1777)
+
+    with pytest.raises(PrivatePathError) as caught:
+        create_private_text(shared / "config.toml", "[chat]\n")
+
+    assert caught.value.result.status is PrivatePathStatus.UNSAFE_PARENT
+    assert not (shared / "config.toml").exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX namespace contract")
+def test_create_private_text_does_not_replace_existing_target(tmp_path):
+    target = tmp_path / "config.toml"
+    target.write_text("existing", encoding="utf-8")
+
+    with pytest.raises(FileExistsError):
+        create_private_text(target, "replacement")
+
+    assert target.read_text(encoding="utf-8") == "existing"
+
+
+def test_unverified_platform_does_not_claim_private(tmp_path, monkeypatch):
+    target = tmp_path / "config.toml"
+    monkeypatch.setattr(
+        private_paths,
+        "_posix_guards_available",
+        lambda: False,
+    )
+    monkeypatch.setattr(private_paths, "_WINDOWS_PLATFORM", True)
+
+    result = create_private_text(target, "[chat]\n")
+
+    assert result.status is PrivatePathStatus.UNVERIFIED_PLATFORM
+    assert result.usable is True
+    assert result.verified_private is False
+
+
+def test_unsupported_posix_guards_fail_closed_without_creating(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "config.toml"
+    monkeypatch.setattr(
+        private_paths,
+        "_posix_guards_available",
+        lambda: False,
+    )
+    monkeypatch.setattr(private_paths, "_WINDOWS_PLATFORM", False)
+
+    with pytest.raises(PrivatePathError) as caught:
+        create_private_text(target, "[chat]\n")
+
+    assert caught.value.result.status is PrivatePathStatus.OPERATION_FAILED
+    assert caught.value.result.reason == "required_posix_guards_unavailable"
+    assert not target.exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX capability contract")
+def test_missing_unlink_dir_fd_capability_fails_before_creation(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "config.toml"
+    restricted = frozenset(
+        capability
+        for capability in private_paths.os.supports_dir_fd
+        if capability is not private_paths.os.unlink
+    )
+    monkeypatch.setattr(private_paths.os, "supports_dir_fd", restricted)
+    monkeypatch.setattr(private_paths, "_WINDOWS_PLATFORM", False)
+
+    assert private_paths._posix_guards_available() is False
+    with pytest.raises(PrivatePathError) as caught:
+        create_private_text(target, "[chat]\n")
+
+    assert caught.value.result.status is PrivatePathStatus.OPERATION_FAILED
+    assert not target.exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX postcondition contract")
+def test_create_private_text_removes_failed_postcondition_entry(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "config.toml"
+    monkeypatch.setattr(
+        private_paths,
+        "_private_file_postcondition_holds",
+        lambda *args, **kwargs: False,
+    )
+
+    with pytest.raises(PrivatePathError) as caught:
+        create_private_text(target, "[chat]\n")
+
+    assert caught.value.result.status is PrivatePathStatus.OPERATION_FAILED
+    assert caught.value.result.reason == "private_file_postcondition_failed"
+    assert not target.exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX race contract")
+def test_create_private_text_never_follows_raced_final_symlink(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "config.toml"
+    outside = tmp_path / "outside.toml"
+    outside.write_text("sentinel", encoding="utf-8")
+    real_open = private_paths._open_leaf_for_create
+
+    def raced_open(parent_fd, leaf):
+        target.symlink_to(outside)
+        return real_open(parent_fd, leaf)
+
+    monkeypatch.setattr(private_paths, "_open_leaf_for_create", raced_open)
+
+    with pytest.raises((FileExistsError, PrivatePathError)):
+        create_private_text(target, "private")
+
+    assert outside.read_text(encoding="utf-8") == "sentinel"
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX descriptor contract")
