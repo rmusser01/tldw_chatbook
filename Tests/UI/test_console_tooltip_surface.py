@@ -26,8 +26,15 @@ BUNDLE = ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
 
 
 def _tooltip_block(css_text: str) -> str:
-    """Return the declaration body of the top-level ``Tooltip { ... }`` rule."""
-    match = re.search(r"(?<![\w.#-])Tooltip\s*\{([^}]*)\}", css_text)
+    """Return the declaration body of the *global* ``Tooltip { ... }`` rule.
+
+    Anchored to the start of a line with only horizontal whitespace before the
+    selector and the brace, so a compound/descendant selector such as
+    ``Screen Tooltip { ... }`` or a pseudo-class variant ``Tooltip:focus { ... }``
+    does NOT satisfy the contract -- the guard must fail if the standalone global
+    rule is ever removed.
+    """
+    match = re.search(r"(?m)^[ \t]*Tooltip[ \t]*\{([^}]*)\}", css_text)
     return match.group(1) if match else ""
 
 
@@ -46,11 +53,25 @@ def test_overrides_give_tooltip_an_opaque_bordered_surface():
     bg_match = re.search(r"\bbackground\s*:\s*([^;]+);", body)
     assert bg_match, "Tooltip rule must declare a background"
     bg_value = bg_match.group(1).strip()
-    assert bg_value.split()[0] != "transparent"
-    # Reject a fractional alpha suffix like `$panel 60%` that would show through.
-    assert not re.search(r"\b\d{1,2}%\s*$", bg_value), (
-        f"tooltip background '{bg_value}' is translucent; it must be opaque"
+    low = bg_value.lower()
+    assert low.split()[0] != "transparent", f"tooltip background '{bg_value}' is transparent"
+    # Reject every translucency syntax, not just a trailing percent:
+    #   Textual token alpha   `$panel 60%`
+    assert not re.search(r"\b\d{1,3}%\s*$", bg_value), (
+        f"tooltip background '{bg_value}' has a percent alpha; it must be opaque"
     )
+    #   functional alpha      `rgba(...)` / `hsla(...)` with alpha < 1
+    fn_alpha = re.search(r"(?:rgba|hsla)\([^)]*?,\s*([0-9.]+)\s*\)", low)
+    if fn_alpha:
+        assert float(fn_alpha.group(1)) == 1.0, (
+            f"tooltip background '{bg_value}' is translucent (rgba/hsla alpha < 1)"
+        )
+    #   modern slash alpha    `rgb(... / 50%)` / `hsl(... / 0.5)`
+    assert not re.search(r"/\s*[0-9.]+%?\s*\)", low), (
+        f"tooltip background '{bg_value}' is translucent (slash alpha)"
+    )
+    # A stray `opacity:` on the block would make the whole surface see-through.
+    assert not re.search(r"\bopacity\s*:", body), "Tooltip rule must not set opacity"
 
 
 def test_generated_bundle_carries_the_tooltip_surface():
