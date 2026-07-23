@@ -88,6 +88,24 @@ def _transcript_tail_is_anchored(transcript: ConsoleTranscript) -> bool:
     )
 
 
+def _assert_full_button_label_fits(button: Button, expected_label: str) -> None:
+    """Assert the mounted button renders its complete label inside its chrome."""
+    rendered_line = button.render_line(0)
+    rendered_text = rendered_line.text
+    internal_chrome_cells = len(rendered_text) - len(rendered_text.strip())
+    rendered_label_capacity = button.content_region.width - internal_chrome_cells
+
+    assert str(button.label) == expected_label
+    assert rendered_label_capacity >= button.label.cell_length, (
+        f"{button.id} region={button.region.width}, "
+        f"content={button.content_region.width}, "
+        f"label_capacity={rendered_label_capacity}, "
+        f"label_cells={button.label.cell_length}, "
+        f"rendered={rendered_text!r}"
+    )
+    assert rendered_text.strip() == expected_label
+
+
 @pytest.mark.asyncio
 async def test_collapse_button_moves_focus_to_transcript_without_sending():
     host = _ready_console_host()
@@ -472,6 +490,36 @@ async def test_console_composer_geometry_is_bounded_then_exactly_one_row():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(140, 42), (100, 32)])
+async def test_expanded_composer_toggle_renders_full_approved_label(size):
+    app = _ComposerGeometryApp()
+
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        collapse = app.query_one("#console-composer-collapse", Button)
+
+        _assert_full_button_label_fits(collapse, "Composer ▾")
+        assert collapse.region.width == 14
+        assert collapse.content_region.width == 12
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(140, 42), (100, 32)])
+async def test_collapsed_composer_toggle_renders_full_approved_label(size):
+    app = _ComposerGeometryApp(collapsed=True)
+
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        composer = app.query_one("#console-native-composer", ConsoleComposerBar)
+        expand = composer.query_one("#console-composer-expand", Button)
+
+        _assert_full_button_label_fits(expand, "Expand ▴")
+        assert composer.region.height == 1
+        assert expand.region.width == 12
+        assert expand.content_region.width == 10
+
+
+@pytest.mark.asyncio
 async def test_console_composer_compact_geometry_keeps_status_and_expand_visible():
     app = _ComposerGeometryApp(collapsed=True)
 
@@ -531,7 +579,7 @@ async def test_console_responsive_collapsed_geometry_preserves_controls_and_rows
         assert stop.region.right <= expand.region.x
         assert expand.region.right <= composer.region.right
         assert stop.region.width == 8
-        assert expand.region.width == 10
+        assert expand.region.width == 12
 
 
 @pytest.mark.asyncio
@@ -684,6 +732,8 @@ def test_console_composer_collapsed_styles_are_pinned(stylesheet: Path):
         "#console-composer-collapsed-status",
         "#console-composer-expand",
         "text-overflow: ellipsis",
+        "#console-composer-collapse {\n    width: 14;\n    min-width: 14;\n}",
+        "#console-composer-expand {\n    width: 12;\n    min-width: 12;\n}",
     )
 
     for token in required:
