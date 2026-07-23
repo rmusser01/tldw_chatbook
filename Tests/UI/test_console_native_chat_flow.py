@@ -1506,8 +1506,9 @@ async def test_console_collapsed_stop_interrupts_real_run_without_expanding():
 
         store = console._ensure_console_chat_store()
         messages = store.messages_for_session(store.active_session_id)
-        assert messages[-1].content == "partial"
-        assert messages[-1].status == "stopped"
+        assert messages[-1].content == "Response stopped by user."
+        assert messages[-2].content == "partial"
+        assert messages[-2].status == "stopped"
         assert composer.collapsed is True
         assert composer.query_one("#console-composer-expanded").display is False
         assert expanded_stop.display is False
