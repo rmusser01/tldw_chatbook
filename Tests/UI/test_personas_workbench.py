@@ -2909,6 +2909,25 @@ class TestPreviewIntegration:
             await pilot.pause()
             assert pane._character_label == "character"
 
+    async def test_delete_selected_character_resets_speaker_label(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        # task-437 review: deleting the selected character drops its speaker
+        # label so a later Test Reply isn't labelled with the deleted name (the
+        # preview stays live/visible in Characters mode).
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            pane = screen.query_one("#personas-preview-pane", PersonasPreviewPane)
+            assert pane._character_label == "Detective Sam"
+            await screen._after_delete("character")
+            await pilot.pause()
+            assert pane._character_label == "character"
+
     async def test_greeting_seeds_after_character_load(
         self, mock_app_instance, stub_characters, stub_conversations
     ):

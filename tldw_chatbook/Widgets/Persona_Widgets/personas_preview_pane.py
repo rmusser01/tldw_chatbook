@@ -182,23 +182,56 @@ class PersonasPreviewPane(Vertical):
     def set_speakers(self, *, character: str | None = None, user: str | None = None) -> None:
         """Set transcript speaker labels; empty/None keeps the current label.
 
+        When the character label changes, already-rendered character lines are
+        relabelled too (e.g. a rename mid-conversation), so the transcript never
+        shows stale or mixed speaker prefixes.
+
         Args:
             character: Display name for character/greeting lines (e.g. the card name).
             user: Display name for the user's lines (unused until TASK-442).
         """
+        old_character = self._character_label
         if character:
             self._character_label = character
         if user:
             self._user_label = user
+        if character and character != old_character:
+            self._relabel_character_lines(old_character, character)
 
     def reset_speakers(self) -> None:
         """Reset speaker labels to their neutral defaults (no character context).
 
-        Called when the preview leaves a character context (e.g. a mode switch)
-        so a later reply never renders under a stale previous character's name.
+        Called when the preview leaves a character context (mode switch, deleting
+        the selected character) so a later reply never renders under a stale
+        previous character's name.
         """
         self._character_label = _DEFAULT_CHARACTER_LABEL
         self._user_label = _DEFAULT_USER_LABEL
+
+    def _relabel_character_lines(self, old_label: str, new_label: str) -> None:
+        """Rewrite already-rendered character-role lines to a new speaker label.
+
+        ``_lines`` is parallel (append order) to the mounted
+        ``.personas-preview-line`` widgets; character lines are identified by
+        their role class so a ``you:``-line that happens to start with the name
+        is never touched.
+        """
+        full_old, bare_old = f"{old_label}: ", f"{old_label}:"
+        widgets = list(self.query(".personas-preview-line"))
+        for index, widget in enumerate(widgets):
+            if index >= len(self._lines) or not widget.has_class(
+                "personas-preview-line-character"
+            ):
+                continue
+            line = self._lines[index]
+            if line.startswith(full_old):
+                new_line = f"{new_label}: {line[len(full_old):]}"
+            elif line == bare_old:
+                new_line = f"{new_label}:"
+            else:
+                continue
+            self._lines[index] = new_line
+            widget.update(self._styled_line(new_line))
 
     def append_user(self, text: str) -> None:
         """Append a "you: ..." transcript line."""

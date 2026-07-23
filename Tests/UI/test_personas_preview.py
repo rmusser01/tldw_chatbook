@@ -480,6 +480,24 @@ async def test_action_span_renders_italic_not_literal_asterisks():
         assert any("italic" in str(s.style) for s in line.renderable.spans)
 
 
+async def test_set_speakers_relabels_existing_character_lines():
+    # task-437 review: a rename mid-conversation relabels already-rendered
+    # character lines (no stale/mixed prefixes); user lines are untouched.
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.set_speakers(character="Alice")
+        await pane.seed_greeting("Hi.")
+        pane.append_user("hello")
+        pane.append_reply("hey")
+        await pilot.pause()
+        pane.set_speakers(character="Bob")
+        await pilot.pause()
+        assert pane.transcript_text() == "Bob: Hi.\nyou: hello\nBob: hey"
+        assert "Alice" not in pane.transcript_text()
+        assert _line_texts(app) == ["Bob: Hi.", "you: hello", "Bob: hey"]
+
+
 async def test_reset_speakers_restores_defaults():
     # task-437: leaving a character context must drop the stale name so a later
     # reply renders under the neutral default, not the previous character's name.
