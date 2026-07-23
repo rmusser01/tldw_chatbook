@@ -417,12 +417,19 @@ class ConsoleChatController:
             )
             for index, pending in enumerate(attachment_mode_pendings)
         )
+        # TASK-485: the optimistic echo is appended WITHOUT persistence. A send
+        # that is blocked/fails before it reaches the provider must leave no
+        # durable record — otherwise the resume path (which reconstructs every
+        # row as "complete") would silently drop the row's failed state and let a
+        # never-sent message re-enter the next send's context, and the orphan
+        # would render as a lonely user prompt. The row is flushed to storage
+        # only once the turn is confirmed to proceed (below).
         echoed_user = self.store.append_message(
             session.id,
             role=ConsoleMessageRole.USER,
             content=clean_draft,
             attachments=staged_attachments,
-            persist=self.store.persistence is not None,
+            persist=False,
         )
 
         self._set_run_state(
@@ -453,19 +460,31 @@ class ConsoleChatController:
 
         if pendings:
             self.store.clear_pending_attachments(session.id)
-        provider_messages = self._provider_messages_for_session(session.id)
-        provider_messages, refuse = await self._apply_skill_substitution(
-            provider_messages
-        )
-        if refuse is not None:
-            return self._block(session.id, refuse)
-        provider_messages = await self._apply_chat_dictionaries(
-            provider_messages, session.id
-        )
-        provider_messages = await self._apply_world_info(
-            provider_messages, session.id
-        )
-        prefill, prefill_from_one_shot = self._resolve_submit_prefill(session.id)
+        try:
+            provider_messages = self._provider_messages_for_session(session.id)
+            provider_messages, refuse = await self._apply_skill_substitution(
+                provider_messages
+            )
+            if refuse is not None:
+                # A substitution refusal is a block outcome like any other
+                # (provider not ready, probe raise): fail the echoed row so the
+                # refused command never enters the next send's provider context.
+                self.store.mark_message_send_blocked(echoed_user.id)
+                return self._block(session.id, refuse)
+            provider_messages = await self._apply_chat_dictionaries(
+                provider_messages, session.id
+            )
+            provider_messages = await self._apply_world_info(
+                provider_messages, session.id
+            )
+            prefill, prefill_from_one_shot = self._resolve_submit_prefill(session.id)
+        except BaseException:
+            # Any failure between the optimistic echo and the confirmed turn
+            # (dictionary/world-info application, prefill resolution) must also
+            # fail the echoed row, or a never-sent message leaks into the next
+            # send's provider context (`skip_failed` only drops "failed" rows).
+            self.store.mark_message_send_blocked(echoed_user.id)
+            raise
         # The accepted-hook fires only once the turn is confirmed to
         # actually proceed (Qodo finding 3, PR #636 bot review): it used to
         # fire right after the USER row was appended, BEFORE this skill
@@ -481,6 +500,10 @@ class ConsoleChatController:
         # this hook -- this reorder just extends that same rule to cover
         # it too.
         self._notify_submission_accepted()
+        # TASK-485: the turn is confirmed to proceed — flush the deferred USER
+        # echo to durable storage now (creating the conversation), BEFORE the
+        # assistant row, so a reload shows the user's prompt ahead of its reply.
+        self.store.persist_message_if_needed(echoed_user.id)
         assistant = self.store.append_message(
             session.id,
             role=ConsoleMessageRole.ASSISTANT,
@@ -2795,6 +2818,12 @@ class ConsoleChatController:
             if budget <= 0:
                 break
             if message.role is not ConsoleMessageRole.USER:
+                continue
+            if skip_failed and message.status == "failed":
+                # A send-blocked echo keeps its attachment data but is dropped
+                # from the emitted payload below (skip_failed); it must not
+                # reserve image budget a real message would then lose (TASK-457
+                # code-review finding 2).
                 continue
             usable = [
                 attachment

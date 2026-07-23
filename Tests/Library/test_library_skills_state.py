@@ -1,4 +1,5 @@
 from tldw_chatbook.Library.library_skills_state import (
+    SkillEditorSupportingFile,
     build_skill_editor_state,
     build_skills_list_state,
     classify_skill_save_error,
@@ -113,8 +114,34 @@ def test_editor_state_splits_frontmatter_and_body():
     assert state.name == "code-review" and state.argument_hint == "[path]"
     assert state.allowed_tools_csv == "calculator"
     assert state.body.strip() == "Review {{args}} now."
-    assert state.supporting_files == (("notes.md", 5),)
+    # No bundle_files on this detail -> falls back to supporting_files
+    # (task-11: nested/binary listing only kicks in when bundle_files is
+    # present), reduced to SkillEditorSupportingFile rows (is_text=True,
+    # the fallback path's default -- it only ever carries decoded text).
+    assert state.supporting_files == (
+        SkillEditorSupportingFile(name="notes.md", size=5, is_text=True),
+    )
     assert state.version == 3
+
+
+def test_editor_lists_nested_and_marks_binary():
+    from tldw_chatbook.Library.library_skills_state import build_skill_editor_state
+
+    detail = {
+        "name": "demo", "content": "body", "version": 1,
+        "supporting_files": {"references/api.md": "# api\n"},
+        "bundle_files": [
+            {"path": "references/api.md", "size": 6, "executable": False, "is_text": True},
+            {"path": "assets/logo.png", "size": 2048, "executable": False, "is_text": False},
+        ],
+        "trust_status": "trusted", "trust_blocked": False,
+    }
+    state = build_skill_editor_state(detail)
+    names = [f.name for f in state.supporting_files]
+    assert "references/api.md" in names
+    assert "assets/logo.png" in names          # binary listed
+    binary = next(f for f in state.supporting_files if f.name == "assets/logo.png")
+    assert binary.is_text is False             # view-only marker
 
 
 def test_compose_roundtrips_through_frontmatter_grammar():

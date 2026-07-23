@@ -8,8 +8,8 @@ Consumes record mappings shaped like ``LocalSkillsService.get_context``'s
 ``trust_reason_code``/``trust_changed_files``/... from
 ``LocalSkillsService._trust_fields_for_record``) and detail mappings shaped
 like ``LocalSkillsService.get_skill``'s response (a ``SkillResponse`` dump --
-adds ``content``, ``supporting_files``, ``version`` -- plus the same trust
-fields).
+adds ``content``, ``supporting_files``, ``bundle_files``, ``version`` -- plus
+the same trust fields).
 
 No Textual/DB/IO imports. The only non-stdlib imports are ``yaml`` (frontmatter
 serialization -- matches the service's own use of it), the static
@@ -90,6 +90,25 @@ class SkillsListState:
 
 
 @dataclass(frozen=True)
+class SkillEditorSupportingFile:
+    """One row in the skill editor's read-only supporting-files list.
+
+    Attributes:
+        name: The file's path, relative to the skill's directory. Nested
+            paths (e.g. ``"references/api.md"``) render as-is.
+        size: The file's size in bytes.
+        is_text: Whether the file is text. ``False`` marks a binary file
+            as view-only (it can't be edited as text). Defaults to
+            ``True`` so the ``supporting_files``-only fallback path
+            (which only ever carries decoded text) stays correct.
+    """
+
+    name: str
+    size: int
+    is_text: bool = True
+
+
+@dataclass(frozen=True)
 class SkillEditorState:
     """Display state for the Library Skills canvas's in-canvas editor.
 
@@ -108,7 +127,9 @@ class SkillEditorState:
         body: The skill's prompt body (the text after the frontmatter
             block), verbatim.
         supporting_files: The skill's supporting files as sorted
-            ``(name, byte_length)`` pairs.
+            ``SkillEditorSupportingFile`` rows (built from ``bundle_files``
+            when present -- covering nested paths and binaries -- falling
+            back to ``supporting_files`` (text only) otherwise).
         version: The skill's optimistic-lock version, or ``None`` when
             unknown.
         trust_status: The skill's current trust status.
@@ -126,7 +147,7 @@ class SkillEditorState:
     context: str
     model: str | None
     body: str
-    supporting_files: tuple[tuple[str, int], ...]
+    supporting_files: tuple[SkillEditorSupportingFile, ...]
     version: int | None
     trust_status: str
     trust_blocked: bool
@@ -371,20 +392,46 @@ def build_skill_editor_state(detail: Mapping[str, Any]) -> SkillEditorState:
     Returns:
         Immutable editor state, with ``allowed_tools`` joined into a
         single comma-separated string and ``supporting_files`` reduced to
-        sorted ``(name, byte_length)`` pairs.
+        sorted ``SkillEditorSupportingFile`` rows -- built from
+        ``bundle_files`` (nested paths, binaries included) when present,
+        falling back to ``supporting_files`` (text only, e.g. a
+        remote/server skill that doesn't populate ``bundle_files``)
+        otherwise.
     """
     if not isinstance(detail, Mapping):
         detail = {}
     content = _raw_text(detail.get("content"))
     front_matter, body = LocalSkillsService._parse_front_matter(content)
 
-    supporting_source = detail.get("supporting_files") or {}
-    supporting_files = tuple(
-        sorted(
-            (name, len(str(text).encode("utf-8")))
-            for name, text in supporting_source.items()
+    bundle_source = detail.get("bundle_files")
+    if bundle_source:
+        supporting_files = tuple(
+            sorted(
+                (
+                    SkillEditorSupportingFile(
+                        name=_text(entry.get("path")),
+                        size=_to_int(entry.get("size")) or 0,
+                        is_text=bool(entry.get("is_text", True)),
+                    )
+                    for entry in bundle_source
+                    if isinstance(entry, Mapping)
+                ),
+                key=lambda row: row.name,
+            )
         )
-    )
+    else:
+        supporting_source = detail.get("supporting_files") or {}
+        supporting_files = tuple(
+            sorted(
+                (
+                    SkillEditorSupportingFile(
+                        name=name, size=len(str(text).encode("utf-8"))
+                    )
+                    for name, text in supporting_source.items()
+                ),
+                key=lambda row: row.name,
+            )
+        )
 
     changed_files = detail.get("trust_changed_files") or ()
 

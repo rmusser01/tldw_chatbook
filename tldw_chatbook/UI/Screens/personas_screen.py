@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import re
 from datetime import datetime
@@ -30,6 +31,7 @@ from ...Character_Chat.persona_list_paging import page_persona_profiles
 from ...Character_Chat.world_book_import import normalize_world_book_import
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...Chat.console_expression_state import EXPRESSION_IMAGE_STATES
 from ...DB.ChaChaNotes_DB import ConflictError
 from ...tldw_api import PersonaProfileCreate, PersonaProfileUpdate
 from ...Utils.path_validation import validate_path_simple
@@ -80,6 +82,8 @@ from ...Widgets.Persona_Widgets.personas_messages import (
 from ...Widgets.Persona_Widgets.tag_filter_picker import TagFilterPicker
 from ...Widgets.Persona_Widgets.personas_pane_messages import (
     CharacterEditorCancelled,
+    CharacterExpressionClearRequested,
+    CharacterExpressionUploadRequested,
     CharacterImageRemoveRequested,
     CharacterImageUploadRequested,
     CharacterSaveRequested,
@@ -89,6 +93,7 @@ from ...Widgets.Persona_Widgets.personas_pane_messages import (
     EditPersonaRequested,
     PersonaProfileEditCancelled,
     PersonaProfileSaveRequested,
+    PreviewConfigureProviderRequested,
     PreviewOpenInConsoleRequested,
     PreviewReplyRequested,
     PreviewResetRequested,
@@ -513,6 +518,10 @@ class PersonasScreen(BaseAppScreen):
     def __init__(self, app_instance: Any, **kwargs: Any) -> None:
         super().__init__(app_instance, "personas", **kwargs)
         self.state = PersonasWorkbenchState()
+        # A selection + preview snapshot captured by save_state() before a
+        # navigation round-trip (task-434); consumed once by
+        # _apply_pending_restore() at the end of on_mount.
+        self._pending_restore: dict | None = None
         self._edit_mode: str = "view"
         self._guard_active: bool = False
         # Refuse-reentry flag for the import/export file dialogs. Cancelling
@@ -573,7 +582,7 @@ class PersonasScreen(BaseAppScreen):
         with Vertical(id="personas-shell"):
             yield DestinationHeader(
                 WorkbenchHeaderState(
-                    title="Roleplay",
+                    title="Roleplay & Chat Dictionaries",
                     subtitle=self._header_subtitle_text(),
                     status="ready",
                 ),
@@ -701,6 +710,112 @@ class PersonasScreen(BaseAppScreen):
                     inspector_handle.display = False
                 yield inspector_handle
 
+    # ===== State persistence (task-434) =====
+    #
+    # A Personas -> Console -> back round-trip pushes/pops this screen, and
+    # ``BaseAppScreen``'s default save_state/restore_state only round-trips
+    # ``self.state_data`` (empty for this screen). Capture the workbench
+    # selection (``PersonasWorkbenchState``) and the ephemeral preview
+    # (greeting + turns, which live outside ``self.state``) so both survive.
+
+    def save_state(self) -> dict:
+        """Snapshot the workbench selection and preview for a later restore."""
+        state = dict(super().save_state() or {})
+        state["personas_workbench"] = dataclasses.asdict(self.state)
+        preview = getattr(self, "preview", None)
+        if preview is not None:
+            greeting = ""
+            try:
+                greeting = self.query_one(PersonasPreviewPane).greeting_text
+            except QueryError:
+                # Tolerate a save requested before/around the pane's lifetime.
+                pass
+            state["personas_preview"] = {
+                "greeting": greeting,
+                "history": [dict(m) for m in preview.history],
+                "seeded_for": preview.seeded_for,
+            }
+        return state
+
+    def restore_state(self, state: dict) -> None:
+        """Seed ``self.state`` and stash the deferred re-selection payload.
+
+        Runs before this (fresh) screen mounts, so it only seeds state here;
+        the actual re-selection is applied by ``_apply_pending_restore`` once
+        the screen (and its widgets) exist.
+
+        Gated to Characters mode: ``on_mount`` only unconditionally wires the
+        Characters path (character list refresh, center-view routing) -
+        every other mode's library rows and mode-specific widgets (the
+        Preview pane, the Dictionary/Lore Try-It panes) are only refreshed
+        and toggled by ``_apply_mode``, which a restore never calls.
+        Reconstructing ``self.state`` for a saved non-Characters mode here
+        would restore the mode chip while leaving the library empty and the
+        wrong panes visible/hidden - a regression, not a restore. So a
+        non-Characters round-trip is left at the fresh ``__init__`` default
+        (Characters, no selection) instead; restoring the other modes in
+        full is a filed follow-up.
+        """
+        super().restore_state(state)
+        if not isinstance(state, dict):
+            self._pending_restore = None
+            return
+        wb = state.get("personas_workbench")
+        if isinstance(wb, dict) and wb.get("active_mode") == "characters":
+            names = {f.name for f in dataclasses.fields(PersonasWorkbenchState)}
+            self.state = PersonasWorkbenchState(
+                **{k: v for k, v in wb.items() if k in names}
+            )
+            self._pending_restore = (
+                {
+                    "kind": self.state.selected_entity_kind,
+                    "id": self.state.selected_entity_id,
+                    "name": self.state.selected_entity_name,
+                    "preview": state.get("personas_preview"),
+                }
+                if self.state.selected_entity_id
+                else None
+            )
+        else:
+            self._pending_restore = None
+
+    async def _apply_pending_restore(self) -> None:
+        """Re-apply a selection saved before a navigation round-trip (task-434)."""
+        pending = getattr(self, "_pending_restore", None)
+        self._pending_restore = None
+        if not pending or not pending.get("id"):
+            return
+        kind = pending.get("kind")
+        entity_id = str(pending["id"])
+        name = str(pending.get("name") or "")
+        try:
+            if kind == "character":
+                await self._select_character(
+                    entity_id, name, restore_preview=pending.get("preview")
+                )
+            elif kind == "persona_profile":
+                await self._select_profile(entity_id, name)
+            elif kind == "dictionary":
+                await self._select_dictionary(entity_id, name)
+            elif kind == "lore":
+                await self._select_lore_entry(entity_id, name)
+        except Exception:
+            # A stale/deleted entity must degrade to a fully cleared selection,
+            # not just a blank center: leaving self.state's selection populated
+            # would let _console_action_allowed() keep attach/Start-Chat wrongly
+            # enabled and the inspector showing a stale selection.
+            logger.opt(exception=True).warning(
+                f"Could not restore Personas selection {kind}/{entity_id}; "
+                "clearing selection."
+            )
+            self.state.clear_selection()
+            try:
+                await self.query_one(PersonasInspectorPane).clear_selection()
+            except QueryError:
+                pass
+            self._show_center(None)
+            self._sync_title_and_console_actions()
+
     async def on_mount(self) -> None:
         super().on_mount()
         loading_manager = getattr(self, "loading_manager", None)
@@ -714,6 +829,7 @@ class PersonasScreen(BaseAppScreen):
         self._show_center(None)
         await self.character_handler.refresh_character_list()
         self._sync_title_and_console_actions()
+        await self._apply_pending_restore()
 
     async def on_unmount(self) -> None:
         super().on_unmount()
@@ -1584,7 +1700,7 @@ class PersonasScreen(BaseAppScreen):
             return
         header.sync_state(
             WorkbenchHeaderState(
-                title="Roleplay",
+                title="Roleplay & Chat Dictionaries",
                 subtitle=self._header_subtitle_text(),
                 status="ready",
             )
@@ -1635,7 +1751,9 @@ class PersonasScreen(BaseAppScreen):
         # Prompts are not wired here: prompt management is retired from
         # Personas and lives entirely inside Library (Task 7).
 
-    async def _select_character(self, entity_id: str, entity_name: str) -> None:
+    async def _select_character(
+        self, entity_id: str, entity_name: str, *, restore_preview: dict | None = None
+    ) -> None:
         self.state.select_entity(
             entity_kind="character",
             entity_id=entity_id,
@@ -1656,18 +1774,28 @@ class PersonasScreen(BaseAppScreen):
         self.conversations.reset()
         await inspector.show_conversations_loading()
         self.conversations.load_conversations(entity_id)
-        # Seed the ephemeral preview with the character's greeting. The list
-        # rows are id/name-only summaries and load_character only SCHEDULES a
-        # thread worker, so the full record (with first_message) is usually
-        # not available yet here. Instant path: when the handler already holds
-        # this character's full card (re-selection), seed now; otherwise clear
-        # the preview and let the CharacterMessage.Loaded handler seed it.
-        record = self._full_character_record(entity_id)
-        await self.preview.reset_for_character(
-            character_id=entity_id,
-            character_name=entity_name,
-            record=record,
-        )
+        if restore_preview is not None:
+            # A navigation round-trip (task-434): rebuild the saved preview
+            # transcript instead of reseeding just the greeting.
+            await self.preview.restore_conversation(
+                greeting=str(restore_preview.get("greeting") or ""),
+                history=list(restore_preview.get("history") or []),
+                seeded_for=entity_id,
+            )
+        else:
+            # Seed the ephemeral preview with the character's greeting. The
+            # list rows are id/name-only summaries and load_character only
+            # SCHEDULES a thread worker, so the full record (with
+            # first_message) is usually not available yet here. Instant
+            # path: when the handler already holds this character's full
+            # card (re-selection), seed now; otherwise clear the preview and
+            # let the CharacterMessage.Loaded handler seed it.
+            record = self._full_character_record(entity_id)
+            await self.preview.reset_for_character(
+                character_id=entity_id,
+                character_name=entity_name,
+                record=record,
+            )
         await self._refresh_character_dictionaries()
         await self._refresh_character_worldbooks()
 
@@ -3448,6 +3576,13 @@ class PersonasScreen(BaseAppScreen):
         message.stop()
         self.preview.open_in_console()
 
+    @on(PreviewConfigureProviderRequested)
+    def _handle_preview_configure(
+        self, message: PreviewConfigureProviderRequested
+    ) -> None:
+        message.stop()
+        self.preview.open_provider_settings()
+
     # ===== Create / edit =====
 
     @on(PersonaActionRequested)
@@ -3494,9 +3629,12 @@ class PersonasScreen(BaseAppScreen):
         # Change-based dirty tracking: the session starts clean; the editor
         # posts EditorContentChanged on the first real modification.
         self.query_one(PersonasCharacterEditorWidget).new_character()
-        # A new character never has an avatar, but a stale thumbnail from
-        # the previous editor session must not linger under the new one.
-        await self._render_character_editor_avatar()
+        # A new character never has an avatar or expression images, but a
+        # stale thumbnail from the previous editor session must not linger
+        # under the new one. A brand-new character has no id yet, so the
+        # expression slots render empty (and stay disabled - see
+        # PersonasCharacterEditorWidget._sync_expression_slots_enabled).
+        await self._render_all_character_editor_thumbnails(None)
         self._show_center("#ccp-character-editor-view")
         inspector = self.query_one(PersonasInspectorPane)
         # Create mode: the previous selection's identity (and conversation
@@ -3798,11 +3936,17 @@ class PersonasScreen(BaseAppScreen):
         self._character_save_inflight = False
         # Change-based dirty tracking: the session starts clean; the editor
         # posts EditorContentChanged on the first real modification.
-        self.query_one(PersonasCharacterEditorWidget).load_character(record)
+        editor = self.query_one(PersonasCharacterEditorWidget)
+        editor.load_character(record)
         # Sync handler: dispatch the (async, off-thread-decoding) thumbnail
-        # render as a worker rather than awaiting it inline.
+        # render as a worker rather than awaiting it inline. This character
+        # is loaded from a saved record, so expression_character_id() is
+        # populated - the render also loads each expression slot's existing
+        # image (Task 4).
         self.run_worker(
-            self._render_character_editor_avatar(),
+            self._render_all_character_editor_thumbnails(
+                editor.expression_character_id()
+            ),
             group="personas-avatar-render",
             exit_on_error=False,
         )
@@ -4097,6 +4241,119 @@ class PersonasScreen(BaseAppScreen):
         thumb.thumbnail((AVATAR_THUMB_COLS, AVATAR_THUMB_LINES * 2))
         return rich_pixels.Pixels.from_image(thumb)
 
+    async def _render_all_character_editor_thumbnails(
+        self, character_id: int | None
+    ) -> None:
+        """Render the avatar thumbnail plus all 3 expression-state thumbnails.
+
+        Called whenever the character editor session's identity changes: a
+        new create/edit session opens, or a save assigns a brand-new
+        character its first id (Roleplay P3d-1 Task 4). ``character_id``
+        gates the expression slots - ``None`` (a still-unsaved character)
+        clears them instead of reading the DB, since there is no row to read.
+
+        Args:
+            character_id: The loaded character's row id, or ``None`` when
+                the editor session has not been saved yet.
+        """
+        await self._render_character_editor_avatar()
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except QueryError:
+            return
+        if character_id is None:
+            for state in EXPRESSION_IMAGE_STATES:
+                editor.set_expression_thumbnail(state, None)
+            return
+        for state in EXPRESSION_IMAGE_STATES:
+            await self._render_character_expression_slot(character_id, state)
+
+    async def _render_character_expression_slot(
+        self, character_id: int, state: str
+    ) -> None:
+        """Decode and mount one expression slot's thumbnail off-thread.
+
+        Mirrors ``_render_character_editor_avatar``'s token-capture /
+        off-thread decode / post-await token re-check, scoped to a single
+        (character, state) pair read from ``character_expression_images``
+        (Task 1's DB seam) rather than the staged avatar bytes on the
+        character record. Reading the DB is itself an extra off-thread await
+        beyond the avatar path, so the token is re-checked after that read
+        too, not just after the image decode.
+
+        Args:
+            character_id: The character's row id.
+            state: One of ``EXPRESSION_IMAGE_STATES``.
+        """
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except QueryError:
+            return
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            editor.set_expression_thumbnail(state, None)
+            return
+        token = self._character_editor_generation
+        try:
+            data = await asyncio.to_thread(
+                db.get_character_expression_image, character_id, state
+            )
+        except Exception:
+            logger.opt(exception=True).debug(
+                f"Could not read the {state} expression image for character "
+                f"{character_id}."
+            )
+            data = None
+        if token != self._character_editor_generation or not self.is_mounted:
+            return  # a different editor session started while reading
+        if not data:
+            editor.set_expression_thumbnail(state, None)
+            return
+        from ...Chat.console_image_view import (
+            ConsoleImageRenderCache,
+            resolve_default_mode,
+        )
+
+        if getattr(self, "_avatar_render_cache", None) is None:
+            self._avatar_render_cache = ConsoleImageRenderCache()
+        cache = self._avatar_render_cache
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        mode = resolve_default_mode(app_config)
+        # Per-session, per-state cache key: same rationale as the avatar's
+        # own cache_key (avoid one session's decode racing another's, or one
+        # state's racing another's, under the same cache slot).
+        cache_key = f"char-editor-expr-{state}-{token}"
+        try:
+            ok = await asyncio.to_thread(cache.prepare, cache_key, bytes(data))
+        except Exception:
+            logger.opt(exception=True).debug(f"{state} expression image decode failed.")
+            ok = False
+        if token != self._character_editor_generation or not self.is_mounted:
+            return  # a different editor session started while decoding
+        renderable = None
+        if ok:
+            if mode == "graphics":
+                try:
+                    from textual_image.widget import Image as _GraphicsImage
+
+                    pil = cache.get_pil(cache_key)
+                    if pil is not None:
+                        renderable = _GraphicsImage(pil)
+                        # Fixed cell size - same rationale as the avatar's own
+                        # render (see _render_character_editor_avatar): both
+                        # dims must stay explicit ints to avoid a transient
+                        # 0-width/height resize() crash.
+                        w_cells, h_cells = self._fit_avatar_cell_size(
+                            pil.width, pil.height
+                        )
+                        renderable.styles.width = w_cells
+                        renderable.styles.height = h_cells
+                except Exception:
+                    renderable = self._build_avatar_pixels(cache, cache_key)
+            else:
+                renderable = self._build_avatar_pixels(cache, cache_key)
+        editor.set_expression_thumbnail(state, renderable)
+
     @on(CharacterImageRemoveRequested)
     def _handle_character_image_remove(
         self, message: CharacterImageRemoveRequested
@@ -4126,6 +4383,175 @@ class PersonasScreen(BaseAppScreen):
             group="personas-avatar-render",
             exit_on_error=False,
         )
+
+    # ===== Expression authoring slots (Roleplay P3d-1 Task 4) =====
+    #
+    # Independent of the character card's own optimistic-lock version: these
+    # write straight to character_expression_images (Task 1's DB seam), never
+    # to character_cards - no card save, no version bump.
+
+    async def _apply_expression_upload(
+        self, character_id: int, state: str, image: bytes, mime: str | None = None
+    ) -> None:
+        """Write an uploaded expression-state image and re-render its slot."""
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            self._notify("Database is not available.", "error")
+            return
+        try:
+            await asyncio.to_thread(
+                db.set_character_expression_image, character_id, state, image, mime
+            )
+        except Exception as exc:
+            logger.opt(exception=True).error(
+                f"Could not save the {state} expression image for character "
+                f"{character_id}: {exc}"
+            )
+            self._notify(f"Expression upload failed: {exc}", "error")
+            return
+        self._character_editor_generation += 1
+        self._notify(f"{state.capitalize()} expression image saved.", "information")
+        await self._render_character_expression_slot(character_id, state)
+
+    async def _clear_expression_slot(self, character_id: int, state: str) -> None:
+        """Soft-delete an expression-state image and clear its slot's thumbnail."""
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            self._notify("Database is not available.", "error")
+            return
+        try:
+            await asyncio.to_thread(
+                db.delete_character_expression_image, character_id, state
+            )
+        except Exception as exc:
+            logger.opt(exception=True).error(
+                f"Could not clear the {state} expression image for character "
+                f"{character_id}: {exc}"
+            )
+            self._notify(f"Could not clear the {state} expression image.", "error")
+            return
+        self._character_editor_generation += 1
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except QueryError:
+            return
+        editor.set_expression_thumbnail(state, None)
+
+    @on(CharacterExpressionUploadRequested)
+    def _handle_character_expression_upload_requested(
+        self, message: CharacterExpressionUploadRequested
+    ) -> None:
+        message.stop()
+        if not self._character_editor_is_active():
+            self._notify(
+                "Open a character editor before uploading an expression image.",
+                "warning",
+            )
+            return
+        editor = self.query_one(PersonasCharacterEditorWidget)
+        character_id = editor.expression_character_id()
+        if character_id is None:
+            self._notify("Save the character to add expressions.", "warning")
+            return
+        if self._io_dialog_active:
+            logger.debug(
+                "Import/export dialog already active; ignoring expression "
+                "upload request."
+            )
+            return
+        self._io_dialog_active = True
+        self.run_worker(
+            self._expression_upload_dialog_worker(character_id, message.state),
+            group="personas-io",
+        )
+
+    @on(CharacterExpressionClearRequested)
+    def _handle_character_expression_clear_requested(
+        self, message: CharacterExpressionClearRequested
+    ) -> None:
+        message.stop()
+        if not self._character_editor_is_active():
+            return
+        editor = self.query_one(PersonasCharacterEditorWidget)
+        character_id = editor.expression_character_id()
+        if character_id is None:
+            return
+        self.run_worker(
+            self._clear_expression_slot(character_id, message.state),
+            group="personas-avatar-render",
+            exit_on_error=False,
+        )
+
+    async def _expression_upload_dialog_worker(
+        self, character_id: int, state: str
+    ) -> None:
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+
+        try:
+            picker = EnhancedFileOpen(
+                title=f"Upload {state.capitalize()} Expression Image",
+                filters=Filters(
+                    (
+                        "Image Files",
+                        lambda p: p.suffix.lower() in PERSONAS_AVATAR_IMAGE_SUFFIXES,
+                    ),
+                    ("PNG Files", lambda p: p.suffix.lower() == ".png"),
+                    ("JPEG Files", lambda p: p.suffix.lower() in (".jpg", ".jpeg")),
+                    ("WEBP Files", lambda p: p.suffix.lower() == ".webp"),
+                    ("GIF Files", lambda p: p.suffix.lower() == ".gif"),
+                ),
+                context="character_expression_upload",
+            )
+            try:
+                file_path = await self.app.push_screen_wait(picker)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not show the expression image upload file dialog."
+                )
+                return
+            if file_path:
+                await self._stage_character_expression_from_path(
+                    character_id, state, str(file_path)
+                )
+        finally:
+            self._io_dialog_active = False
+
+    async def _stage_character_expression_from_path(
+        self, character_id: int, state: str, path: str
+    ) -> None:
+        session_token = self._character_editor_session_token()
+        if session_token is None:
+            self._notify(
+                "Open a character editor before uploading an expression image.",
+                "warning",
+            )
+            return
+        try:
+            # Reuses the avatar's own read (suffix allowlist + size cap +
+            # non-empty check) - the same constraints apply to expression
+            # images.
+            image_data = await asyncio.to_thread(self._read_avatar_image_bytes, path)
+        except ValueError as exc:
+            self._notify(str(exc), "error")
+            return
+        except OSError as exc:
+            logger.opt(exception=True).error(
+                f"Error reading expression image from {path}: {exc}"
+            )
+            self._notify(f"Expression upload failed: {exc}", "error")
+            return
+        if self._character_editor_session_token() != session_token:
+            logger.debug(
+                "Expression upload result ignored because the character "
+                f"editor session changed. path={path!r}, state={state!r}, "
+                f"original_session={session_token!r}, "
+                f"current_session={self._character_editor_session_token()!r}"
+            )
+            return
+        import mimetypes
+
+        mime = mimetypes.guess_type(path)[0]
+        await self._apply_expression_upload(character_id, state, image_data, mime)
 
     # ===== Import / export =====
     #
@@ -5123,8 +5549,13 @@ class PersonasScreen(BaseAppScreen):
             # which invalidates (drops) any render still in flight from
             # before the save - so re-render now with the new token or the
             # thumbnail can be left blank/stale until the next unrelated
-            # avatar action.
-            await self._render_character_editor_avatar()
+            # avatar action. A create-session's first save is also the
+            # moment a brand-new character gains its id, so this is where
+            # its (still-empty) expression slots flip from disabled to
+            # enabled (mark_saved already re-synced that above).
+            await self._render_all_character_editor_thumbnails(
+                editor.expression_character_id()
+            )
         self._character_save_inflight = False
         self._sync_title_and_console_actions()
         self._notify("Character saved.", severity="information")

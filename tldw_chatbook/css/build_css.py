@@ -4,8 +4,8 @@ CSS Build Script for tldw_chatbook
 Concatenates modular CSS files into a single file for Textual
 """
 
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 # Define the order of imports (based on dependencies)
 CSS_MODULES = [
@@ -78,8 +78,23 @@ CSS_MODULES = [
 ]
 
 
-def build_css(css_dir: Path, output_file: Path):
-    """Concatenate all CSS modules into a single file."""
+def build_css(css_dir: Path, output_file: Path) -> None:
+    """Concatenate all declared CSS modules into a single file.
+
+    Args:
+        css_dir: Root directory containing the modular stylesheets.
+        output_file: Generated bundle path.
+
+    Raises:
+        FileNotFoundError: If any declared module is missing. The existing
+            output is left unchanged.
+    """
+    missing_modules = [
+        module for module in CSS_MODULES if not (css_dir / module).is_file()
+    ]
+    if missing_modules:
+        missing = ", ".join(missing_modules)
+        raise FileNotFoundError(f"Missing declared CSS module(s): {missing}")
 
     # Header for the generated file
     header = f"""/* ========================================
@@ -100,22 +115,17 @@ def build_css(css_dir: Path, output_file: Path):
     for module in CSS_MODULES:
         module_path = css_dir / module
 
-        if module_path.exists():
-            print(f"✓ Processing: {module}")
-            with open(module_path, "r", encoding="utf-8") as f:
-                content = f.read()
+        print(f"✓ Processing: {module}")
+        with open(module_path, "r", encoding="utf-8") as f:
+            content = f.read()
 
-                # Add module separator
-                combined_css.append(f"\n/* ===== MODULE: {module} ===== */\n")
-                combined_css.append(content)
+            # Add module separator
+            combined_css.append(f"\n/* ===== MODULE: {module} ===== */\n")
+            combined_css.append(content)
 
-                # Ensure there's a newline at the end
-                if not content.endswith("\n"):
-                    combined_css.append("\n")
-        else:
-            print(f"⚠ Missing module: {module}")
-            # Add placeholder comment
-            combined_css.append(f"\n/* ===== MODULE: {module} (NOT FOUND) ===== */\n")
+            # Ensure there's a newline at the end
+            if not content.endswith("\n"):
+                combined_css.append("\n")
 
     # Write the combined CSS
     with open(output_file, "w", encoding="utf-8") as f:

@@ -49,6 +49,25 @@ Tree:focus > .tree--cursor {
     text-style: bold underline;
 }
 
+/* TASK-368: the discovered-model SelectionList checkbox glyph (▐X▌) must clearly
+   distinguish selected from unselected. The shared native-choice contract above
+   paints the toggle classes the same ($surface/$text), erasing the
+   checked/unchecked distinction and rendering the ▐▌ caps fg==bg (invisible).
+   Scope a distinct toggle to THIS list only (id specificity). The CHECKED states
+   are a sanctioned high-contrast override (the $ds-focus contract); the base
+   unchecked glyph renders as an empty box (no inner X). `-button-highlighted`
+   (an unchecked row under the cursor) is left to the shared contract above. */
+#settings-discovered-models-list .selection-list--button {
+    color: $ds-grid-line;
+    background: $ds-grid-line;
+}
+#settings-discovered-models-list .selection-list--button-selected,
+#settings-discovered-models-list .selection-list--button-selected-highlighted {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
 /* TASK-430 AC#1: the file picker's list must show a clearly-visible selected
    row. The generic OptionList rule above paints $surface (≈ dialog
    background), which is near-invisible; scope a higher-contrast focus token

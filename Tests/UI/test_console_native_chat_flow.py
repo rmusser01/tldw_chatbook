@@ -1473,6 +1473,83 @@ async def test_console_stop_interrupts_stream_and_keeps_partial_message_visible(
 
 
 @pytest.mark.asyncio
+async def test_console_collapsed_stop_interrupts_real_run_without_expanding():
+    gateway = WaitingGateway()
+    app = _build_test_app()
+    _configure_native_ready_console(app, model="test-model")
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        _select_llamacpp_console(console)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello")
+
+        composer.query_one("#console-send-message", Button).press()
+        await asyncio.wait_for(gateway.started.wait(), timeout=1)
+        await _wait_for_text(console, pilot, "partial")
+        console._set_console_composer_collapsed(True)
+        await pilot.pause()
+
+        collapsed_stop = composer.query_one(
+            "#console-collapsed-stop-generation", Button
+        )
+        expanded_stop = composer.query_one("#console-stop-generation", Button)
+        assert composer.region.height == 1
+        assert collapsed_stop.display is True
+        assert composer.query_one("#console-composer-expanded").display is False
+
+        collapsed_stop.press()
+        await _wait_for_text(console, pilot, "stopped")
+
+        store = console._ensure_console_chat_store()
+        messages = store.messages_for_session(store.active_session_id)
+        assert messages[-1].content == "Response stopped by user."
+        assert messages[-2].content == "partial"
+        assert messages[-2].status == "stopped"
+        assert composer.collapsed is True
+        assert composer.query_one("#console-composer-expanded").display is False
+        assert expanded_stop.display is False
+
+
+@pytest.mark.asyncio
+async def test_console_collapsed_stop_stale_action_warns_without_expanding():
+    gateway = WaitingGateway()
+    app = _build_test_app()
+    _configure_native_ready_console(app, model="test-model")
+    app.console_provider_gateway_factory = lambda: gateway
+    notifications: list[tuple[str, dict]] = []
+    app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        _select_llamacpp_console(console)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello")
+
+        composer.query_one("#console-send-message", Button).press()
+        await asyncio.wait_for(gateway.started.wait(), timeout=1)
+        await _wait_for_text(console, pilot, "partial")
+        console._set_console_composer_collapsed(True)
+        await pilot.pause()
+        assert composer.query_one("#console-collapsed-stop-generation", Button).display
+
+        gateway.release.set()
+        await _wait_for_text(console, pilot, "partial done")
+        await console._stop_console_generation_from_visible_action()
+
+        assert (
+            "No active Console run to stop.",
+            {"severity": "warning"},
+        ) in notifications
+        assert composer.collapsed is True
+
+
+@pytest.mark.asyncio
 async def test_console_composer_stop_is_subdued_when_idle():
     gateway = WaitingGateway()
     app = _build_test_app()
@@ -6408,6 +6485,58 @@ async def test_console_native_tab_strip_isolates_composer_drafts():
 
 
 @pytest.mark.asyncio
+async def test_console_collapsed_layout_follows_cross_workspace_tab_state():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    service = app.workspace_registry_service
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace B")
+    service.set_active_workspace("ws-a")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Workspace A Chat", workspace_id="ws-a")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("workspace A draft")
+
+        second = store.create_session(
+            title="Workspace B Chat",
+            workspace_id="ws-b",
+        )
+        store.set_session_draft(second.id, "workspace B draft")
+        store.set_pending_attachment(second.id, _staged_image_attachment())
+        store.switch_session(first.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{second.id}")
+
+        console._set_console_composer_collapsed(True)
+        await pilot.pause()
+        await pilot.click(f"#console-session-tab-{second.id}")
+        await _wait_for_active_session(store, pilot, second.id)
+        expand = composer.query_one("#console-composer-expand", Button)
+        await _wait_for_focus(host, pilot, expand)
+
+        status = composer.query_one("#console-composer-collapsed-status", Static)
+        assert composer.collapsed is True
+        assert composer.draft_text() == "workspace B draft"
+        assert "Draft retained" in str(status.renderable)
+        assert "Attachment retained" in str(status.renderable)
+        assert service.get_active_workspace().workspace_id == "ws-b"
+
+        await pilot.click(f"#console-session-tab-{first.id}")
+        await _wait_for_active_session(store, pilot, first.id)
+        await _wait_for_focus(host, pilot, expand)
+
+        assert composer.collapsed is True
+        assert composer.draft_text() == "workspace A draft"
+        assert "Attachment retained" not in str(status.renderable)
+        assert service.get_active_workspace().workspace_id == "ws-a"
+
+
+@pytest.mark.asyncio
 async def test_console_native_tab_strip_keeps_compact_close_x():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -6808,6 +6937,107 @@ async def test_ctrl_k_is_inert_while_setup_modal_blocks():
         await pilot.press("ctrl+k")
         await pilot.pause(0.2)
         assert host.screen_stack[-1] is console
+
+
+@pytest.mark.asyncio
+async def test_console_setup_modal_blocks_programmatic_composer_toggles():
+    app = _build_test_app()
+    _configure_openai_missing_api_key(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        collapse = composer.query_one("#console-composer-collapse", Button)
+        expand = composer.query_one("#console-composer-expand", Button)
+        assert console._console_setup_modal_blocking()
+
+        collapse.press()
+        expand.press()
+        await pilot.pause()
+
+        assert console._console_composer_collapsed is False
+        assert composer.collapsed is False
+        assert console.check_action("expand_collapsed_console_composer", ()) is False
+
+
+@pytest.mark.asyncio
+async def test_console_setup_modal_retains_collapsed_layout_and_restores_expand_focus():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        console._set_console_composer_collapsed(True)
+        await pilot.pause()
+
+        _configure_openai_missing_api_key(app)
+        console._replace_active_console_session_settings(
+            ConsoleSessionSettings(
+                provider="openai",
+                model="gpt-4o",
+                source="user",
+            )
+        )
+        console._sync_console_transcript_guidance()
+        await pilot.pause()
+        assert console._console_setup_modal_blocking()
+        assert console._console_composer_collapsed is True
+        assert composer.collapsed is True
+
+        composer.query_one("#console-composer-expand", Button).press()
+        await pilot.pause()
+        assert composer.collapsed is True
+        assert console.check_action("expand_collapsed_console_composer", ()) is False
+
+        _configure_native_ready_console(app)
+        console._replace_active_console_session_settings(
+            ConsoleSessionSettings(
+                provider="llama_cpp",
+                model="local-model",
+                base_url="http://127.0.0.1:9099",
+                source="user",
+            )
+        )
+        console._sync_console_transcript_guidance()
+        await pilot.pause()
+        assert console._console_setup_modal_blocking() is False
+
+        console._restore_console_workbench_focus()
+        await pilot.pause()
+        expand = composer.query_one("#console-composer-expand", Button)
+        assert host.focused is expand
+        assert composer.can_focus is False
+
+
+@pytest.mark.asyncio
+async def test_console_navigation_resume_retains_collapsed_composer():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleNavigationHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        console._set_console_composer_collapsed(True)
+        await pilot.pause()
+
+        console.post_message(NavigateToScreen("library"))
+        await pilot.pause()
+        assert [message.screen_name for message in host.navigation_messages] == [
+            "library"
+        ]
+
+        console.on_screen_resume()
+        await pilot.pause()
+
+        assert console._console_composer_collapsed is True
+        assert composer.collapsed is True
 
 
 @pytest.mark.asyncio

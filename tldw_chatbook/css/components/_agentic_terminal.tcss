@@ -2667,7 +2667,25 @@ ConsoleSystemPromptModal {
     color: $ds-status-warning;
 }
 
-#console-composer-title,
+#console-composer-expanded,
+#console-composer-collapsed {
+    width: 1fr;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    layout: horizontal;
+    align: left middle;
+}
+
+#console-native-composer.console-composer-collapsed {
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    padding: 0;
+    border: none;
+    background: $ds-surface-raised;
+}
+
 #console-composer-status,
 .console-composer-recovery,
 .console-send-disabled-reason,
@@ -2676,9 +2694,29 @@ ConsoleSystemPromptModal {
     min-height: 1;
 }
 
-#console-composer-title {
-    width: 10;
-    min-width: 10;
+#console-composer-collapse {
+    width: 14;
+    min-width: 14;
+}
+
+#console-composer-collapsed-status {
+    width: 1fr;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    text-overflow: ellipsis;
+    text-wrap: nowrap;
+    color: $ds-text-muted;
+}
+
+#console-collapsed-stop-generation {
+    width: 8;
+    min-width: 8;
+}
+
+#console-composer-expand {
+    width: 12;
+    min-width: 12;
 }
 
 #console-command-visible-text {

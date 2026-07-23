@@ -371,6 +371,89 @@ async def test_probe_exception_after_optimistic_echo_marks_row_blocked():
 
 
 @pytest.mark.asyncio
+async def test_blocked_send_persists_no_durable_record():
+    """TASK-485: a send blocked before it reaches the provider must leave NO
+    durable record (no conversation, no message), so it cannot re-enter the next
+    send's context after a resume/restart and leaves no orphan row. The in-memory
+    echo is still shown (feedback) and failed (in-session context exclusion)."""
+    from Tests.Chat.test_console_chat_store import FakePersistence
+
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    controller = ConsoleChatController(store=store, provider_gateway=BlockedGateway())
+
+    result = await controller.submit_draft("hello")
+
+    assert result.accepted is False
+    messages = store.messages_for_session(store.active_session_id)
+    assert messages[0].role.value == "user"
+    assert messages[0].status == "failed"
+    assert persistence.created_conversations == []
+    assert persistence.created_messages == []
+
+
+@pytest.mark.asyncio
+async def test_accepted_send_persists_the_deferred_user_echo():
+    """TASK-485: once a send is accepted the deferred USER echo is flushed to the
+    durable conversation, so a reload shows the user's prompt (not just the
+    assistant reply) — the successful path must not regress to a missing echo."""
+    from Tests.Chat.test_console_chat_store import FakePersistence
+
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+
+    await controller.submit_draft("hello")
+
+    senders = [m["sender"] for m in persistence.created_messages]
+    assert "user" in senders
+    assert len(persistence.created_conversations) == 1
+
+
+@pytest.mark.asyncio
+async def test_skill_refuse_after_optimistic_echo_marks_row_blocked():
+    """TASK-457(a) (code-review finding 1): a skill-substitution refusal after
+    the optimistic echo is a block outcome like the not-ready / probe-raise
+    paths — the echoed USER row must be failed so the refused command cannot
+    leak into the next send's provider context (skip_failed only drops failed)."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+
+    async def _refuse(messages):
+        return messages, "Refused: untrusted skill."
+
+    controller._apply_skill_substitution = _refuse
+
+    result = await controller.submit_draft("run /evil")
+
+    assert result.accepted is False
+    messages = store.messages_for_session(store.active_session_id)
+    assert messages[0].role.value == "user"
+    assert messages[0].status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_dictionary_apply_raise_after_optimistic_echo_marks_row_blocked():
+    """TASK-457(a) (code-review finding 1): a raise from chat-dictionary / world-
+    info application (or prefill) after the optimistic echo must also fail the
+    echoed row so a never-sent message cannot leak into the next send."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+
+    async def _boom(messages, session_id):
+        raise RuntimeError("dict boom")
+
+    controller._apply_chat_dictionaries = _boom
+
+    with pytest.raises(RuntimeError):
+        await controller.submit_draft("hello")
+
+    messages = store.messages_for_session(store.active_session_id)
+    assert messages[0].role.value == "user"
+    assert messages[0].status == "failed"
+
+
+@pytest.mark.asyncio
 async def test_blocked_workspace_source_preserves_draft_and_skips_provider_call():
     class RecordingGateway(BlockedGateway):
         calls = 0
@@ -1566,6 +1649,63 @@ def test_submit_stages_all_pendings_and_clears(monkeypatch):
     user_message = [m for m in messages if m.role is ConsoleMessageRole.USER][-1]
     assert len(user_message.attachments) == 2
     assert user_message.image_data is not None  # mirror holds
+
+
+def test_image_budget_excludes_failed_send_blocked_echo(monkeypatch):
+    """TASK-457(a) (code-review finding 2): a send-blocked USER echo persists as
+    a `failed` row that KEEPS its attachment data but is dropped from the emitted
+    payload by skip_failed. The image-budget RESERVATION loop must skip it too —
+    otherwise the reserved-but-never-emitted slots starve a real older image
+    message (silent wrong payload)."""
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
+    monkeypatch.setattr(controller_module, "max_history_images", lambda p, m: 1)
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=StreamingGateway(), model="vision-model"
+    )
+    session = store.ensure_session()
+    from tldw_chatbook.Chat.console_chat_models import MessageAttachment
+
+    def _att(tag):
+        return (
+            MessageAttachment(
+                data=tag.encode(),
+                mime_type="image/png",
+                display_name=f"{tag}.png",
+                position=0,
+            ),
+        )
+
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="real",
+        attachments=_att("real"),
+    )
+    blocked = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="blocked",
+        attachments=_att("blocked"),
+    )
+    # Newer than the real message, failed, but still carrying its image bytes.
+    store.mark_message_send_blocked(blocked.id)
+
+    messages = store.messages_for_session(session.id)
+    payloads = controller._provider_message_payloads(messages, skip_failed=True)
+
+    user_payloads = [m for m in payloads if m["role"] == "user"]
+    assert len(user_payloads) == 1
+    images = (
+        [p for p in user_payloads[0]["content"] if p["type"] == "image_url"]
+        if isinstance(user_payloads[0]["content"], list)
+        else []
+    )
+    assert len(images) == 1
+    import base64
+
+    decoded = base64.b64decode(images[0]["image_url"]["url"].split(",", 1)[1])
+    assert decoded == b"real"
 
 
 def test_image_budget_counts_images_newest_first(monkeypatch):

@@ -449,6 +449,7 @@ def test_console_rail_preferences_serialize_to_public_dict_shape():
         "model_open": True,
         "details_open": False,
         "agent_open": False,
+        "character_open": True,
     }
 
 
@@ -514,16 +515,18 @@ def test_console_rail_section_defaults():
 
     prefs = ConsoleRailPreferences()
     # Task-400: "context" (staged sources) is no longer a left-rail section;
-    # it renders in the Inspector rail instead.
+    # it renders in the Inspector rail instead. P3c added "character".
     assert CONSOLE_RAIL_SECTION_IDS == (
         "session",
         "model",
         "details",
         "agent",
+        "character",
     )
     assert prefs.session_open is True
     assert prefs.model_open is True
     assert prefs.details_open is False
+    assert prefs.character_open is True
 
 
 def test_coerce_console_rail_preferences_reads_section_fields():

@@ -1026,6 +1026,60 @@ async def test_console_settings_modal_save_returns_validated_settings() -> None:
 
 
 @pytest.mark.asyncio
+async def test_console_settings_validation_error_clears_on_edit() -> None:
+    """TASK-363: a validation error must clear as soon as the user edits any
+    field, not linger stale until the next Save."""
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = ConsoleSettingsModal(
+            settings=settings,
+            app_config=app.app_config,
+            providers_models={"llama_cpp": ["model-a"]},
+            context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+            can_save=True,
+        )
+        await app.push_screen(modal, callback=app.capture_saved_settings)
+        await pilot.pause()
+
+        temperature = app.screen.query_one("#console-settings-temperature", Input)
+        temperature.value = ""
+        await pilot.click("#console-settings-save")
+        await pilot.pause()
+
+        error = app.screen.query_one("#console-settings-error", Static)
+        assert "Temperature is required" in str(error.renderable)
+
+        # Editing the field invalidates the stale summary immediately.
+        temperature.value = "0.5"
+        await pilot.pause()
+        assert str(error.renderable).strip() == ""
+
+
+@pytest.mark.asyncio
+async def test_console_settings_error_summary_is_visually_distinct() -> None:
+    """TASK-363: the validation summary must read as an error (bold, error
+    colour), not near-body-text salience."""
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = ConsoleSettingsModal(
+            settings=settings,
+            app_config=app.app_config,
+            providers_models={"llama_cpp": ["model-a"]},
+            context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+            can_save=True,
+        )
+        await app.push_screen(modal, callback=app.capture_saved_settings)
+        await pilot.pause()
+
+        error = app.screen.query_one("#console-settings-error", Static)
+        assert "bold" in str(error.styles.text_style)
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_single_model_uses_readonly_value_not_dead_dropdown() -> (
     None
 ):

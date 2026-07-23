@@ -124,6 +124,12 @@ class ConflictError(CharactersRAGDBError):
         return f"{base} ({', '.join(details)})" if details else base
 
 
+# --- Reaction-avatar expression states (P3d) ---
+# ``idle`` is intentionally excluded: it reuses character_cards.image and is
+# never stored in character_expression_images.
+_EXPRESSION_IMAGE_STATE_IDS = frozenset({"thinking", "speaking", "error"})
+
+
 # --- Database Class ---
 class CharactersRAGDB:
     """
@@ -151,7 +157,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 23  # Adds conversations.active_leaf_message_id (Console branching Phase A).
+    _CURRENT_SCHEMA_VERSION = 24  # Adds conversations.active_leaf_message_id (Console branching Phase A).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -2455,15 +2461,36 @@ UPDATE db_schema_version
 """
 
     # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v22_to_v23_conversation_active_leaf.sql.
-    # NOTE: no trigger DDL. `active_leaf_message_id` is a LOCAL-ONLY pointer that
-    # must never reach sync_log, so the conversations_sync_* triggers are left
-    # untouched and the column is never added to their payloads.
+    # tldw_chatbook/DB/migrations/chachanotes_v22_to_v23_character_expression_images.sql.
     _MIGRATE_V22_TO_V23_SQL = """
+CREATE TABLE IF NOT EXISTS character_expression_images(
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  character_id  INTEGER NOT NULL REFERENCES character_cards(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  state_id      TEXT    NOT NULL,
+  image         BLOB    NOT NULL,
+  mime          TEXT,
+  created_at    TEXT    NOT NULL DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ','NOW')),
+  updated_at    TEXT    NOT NULL DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ','NOW')),
+  deleted       INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(character_id, state_id)
+);
+CREATE INDEX IF NOT EXISTS idx_char_expr_images_char ON character_expression_images(character_id);
 UPDATE db_schema_version
    SET version = 23
  WHERE schema_name = 'rag_char_chat_schema'
    AND version = 22;
+"""
+
+    # Keep this runner SQL aligned with
+    # tldw_chatbook/DB/migrations/chachanotes_v23_to_v24_conversation_active_leaf.sql.
+    # NOTE: no trigger DDL. `active_leaf_message_id` is a LOCAL-ONLY pointer that
+    # must never reach sync_log, so the conversations_sync_* triggers are left
+    # untouched and the column is never added to their payloads.
+    _MIGRATE_V23_TO_V24_SQL = """
+UPDATE db_schema_version
+   SET version = 24
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 23;
 """
 
     # Keep this runner SQL aligned with
@@ -3812,16 +3839,10 @@ UPDATE db_schema_version
             raise SchemaError(f"Unexpected error migrating from V21 to V22 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v22_to_v23(self, conn: sqlite3.Connection):
-        """Migrate schema V22→V23: add the local-only ``active_leaf_message_id``
-        pointer column to ``conversations``. No triggers change — the column is
-        never synced (see ``set_conversation_active_leaf``)."""
+        """Migrate schema V22→V23: add the local ``character_expression_images``
+        BLOB table (per-state reaction avatars; idle reuses character_cards.image)."""
         logger.info(f"Migrating schema from V22 to V23 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
         try:
-            existing_columns = {
-                row[1] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()
-            }
-            if "active_leaf_message_id" not in existing_columns:
-                conn.execute("ALTER TABLE conversations ADD COLUMN active_leaf_message_id TEXT")
             conn.executescript(self._MIGRATE_V22_TO_V23_SQL)
             logger.debug(f"[{self._SCHEMA_NAME} V22→V23] Migration script executed.")
             final_version = self._get_db_version(conn)
@@ -3836,6 +3857,32 @@ UPDATE db_schema_version
         except Exception as e:
             logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V22→V23] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V22 to V23 for '{self._SCHEMA_NAME}': {e}") from e
+
+    def _migrate_from_v23_to_v24(self, conn: sqlite3.Connection):
+        """Migrate schema V23→V24: add the local-only ``active_leaf_message_id``
+        pointer column to ``conversations``. No triggers change — the column is
+        never synced (see ``set_conversation_active_leaf``)."""
+        logger.info(f"Migrating schema from V23 to V24 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            existing_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()
+            }
+            if "active_leaf_message_id" not in existing_columns:
+                conn.execute("ALTER TABLE conversations ADD COLUMN active_leaf_message_id TEXT")
+            conn.executescript(self._MIGRATE_V23_TO_V24_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V23→V24] Migration script executed.")
+            final_version = self._get_db_version(conn)
+            if final_version != 24:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V23→V24] Migration version check failed. Expected 24, got: {final_version}"
+                )
+            logger.info(f"[{self._SCHEMA_NAME} V23→V24] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V23→V24] Migration failed: {e}")
+            raise SchemaError(f"Migration from V23 to V24 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V23→V24] Unexpected error during migration: {e}")
+            raise SchemaError(f"Unexpected error migrating from V23 to V24 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
@@ -3990,6 +4037,7 @@ UPDATE db_schema_version
                     20: self._migrate_from_v20_to_v21,
                     21: self._migrate_from_v21_to_v22,
                     22: self._migrate_from_v22_to_v23,
+                    23: self._migrate_from_v23_to_v24,
                 }
 
                 if current_db_version == 0:
@@ -4438,6 +4486,95 @@ UPDATE db_schema_version
                 f"Database error fetching character card ID {character_id}: {e}"
             )
             raise
+
+    # --- Reaction-avatar expression images (P3d) ---
+
+    def set_character_expression_image(
+        self, character_id: int, state_id: str, image: bytes, mime: str | None = None
+    ) -> None:
+        """Upsert a per-state expression image for a character.
+
+        State-agnostic store; ``idle`` is never stored here -- it reuses
+        ``character_cards.image``. Existing rows for the same
+        ``(character_id, state_id)`` are overwritten and re-activated
+        (``deleted`` reset to 0).
+
+        Args:
+            character_id: Integer id of the owning character card.
+            state_id: One of ``_EXPRESSION_IMAGE_STATE_IDS``
+                (``thinking``/``speaking``/``error``).
+            image: Non-empty raw image bytes.
+            mime: Optional MIME type of the image.
+
+        Raises:
+            ValueError: If ``state_id`` is not a known expression state, or
+                ``image`` is not non-empty bytes.
+        """
+        if state_id not in _EXPRESSION_IMAGE_STATE_IDS:
+            raise ValueError(f"Unknown expression state_id: {state_id!r}")
+        if not isinstance(image, (bytes, bytearray)) or not image:
+            raise ValueError("Expression image must be non-empty bytes.")
+        query = """
+            INSERT INTO character_expression_images(character_id, state_id, image, mime, deleted, updated_at)
+            VALUES (?, ?, ?, ?, 0, STRFTIME('%Y-%m-%dT%H:%M:%fZ','NOW'))
+            ON CONFLICT(character_id, state_id) DO UPDATE SET
+                image = excluded.image,
+                mime = excluded.mime,
+                deleted = 0,
+                updated_at = STRFTIME('%Y-%m-%dT%H:%M:%fZ','NOW')
+        """
+        with self.transaction() as conn:
+            conn.execute(query, (character_id, state_id, bytes(image), mime))
+
+    def get_character_expression_image(self, character_id: int, state_id: str) -> bytes | None:
+        """Return the active expression image bytes for a character state.
+
+        Args:
+            character_id: Integer id of the owning character card.
+            state_id: The expression state to look up.
+
+        Returns:
+            The image bytes, or ``None`` if no active (non-deleted) row exists.
+        """
+        cursor = self.execute_query(
+            "SELECT image FROM character_expression_images "
+            "WHERE character_id = ? AND state_id = ? AND deleted = 0",
+            (character_id, state_id),
+        )
+        row = cursor.fetchone()
+        return bytes(row[0]) if row is not None and row[0] is not None else None
+
+    def list_character_expression_states(self, character_id: int) -> list[str]:
+        """Return the expression states that have an active image for a character.
+
+        Args:
+            character_id: Integer id of the owning character card.
+
+        Returns:
+            The ``state_id`` values with an active (non-deleted) image,
+            ordered alphabetically.
+        """
+        cursor = self.execute_query(
+            "SELECT state_id FROM character_expression_images "
+            "WHERE character_id = ? AND deleted = 0 ORDER BY state_id",
+            (character_id,),
+        )
+        return [row[0] for row in cursor.fetchall()]
+
+    def delete_character_expression_image(self, character_id: int, state_id: str) -> None:
+        """Soft-delete a character's expression image for one state.
+
+        Args:
+            character_id: Integer id of the owning character card.
+            state_id: The expression state whose image to soft-delete.
+        """
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE character_expression_images SET deleted = 1, "
+                "updated_at = STRFTIME('%Y-%m-%dT%H:%M:%fZ','NOW') "
+                "WHERE character_id = ? AND state_id = ?",
+                (character_id, state_id),
+            )
 
     def get_character_card_by_name(self, name: str) -> Optional[Dict[str, Any]]:
         """

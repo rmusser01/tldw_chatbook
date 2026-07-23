@@ -6,14 +6,14 @@ def _db(tmp_path):
     return CharactersRAGDB(str(tmp_path / "c.db"), client_id="test-client")
 
 
-def test_fresh_db_is_v23_with_active_leaf_column(tmp_path):
+def test_fresh_db_is_v24_with_active_leaf_column(tmp_path):
     db = _db(tmp_path)
     with db.get_connection() as conn:
         version = conn.execute(
             "SELECT version FROM db_schema_version WHERE schema_name = 'rag_char_chat_schema'"
         ).fetchone()["version"]
         cols = {row[1] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()}
-    assert version == 23
+    assert version == 24
     assert "active_leaf_message_id" in cols
 
 

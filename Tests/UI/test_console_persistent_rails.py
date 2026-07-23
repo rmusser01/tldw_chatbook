@@ -224,14 +224,16 @@ def _rail_prefs(
     model_open: bool = True,
     details_open: bool = False,
     agent_open: bool = False,
+    character_open: bool = True,
 ) -> dict[str, bool]:
-    """Full serialized rail-preference shape (left/right rails + four sections).
+    """Full serialized rail-preference shape (left/right rails + five sections).
 
-    The persisted shape carries the four collapsible left-rail section states
+    The persisted shape carries the five collapsible left-rail section states
     alongside the left/right rail openness. Section states default to the
-    first-run layout (Session/Model open, Details/Agent collapsed). Task-400
-    dropped the Context section (staged sources moved to the Inspector), so
-    serialized payloads no longer carry a ``context_open`` key.
+    first-run layout (Session/Model/Character open, Details/Agent collapsed).
+    Task-400 dropped the Context section (staged sources moved to the
+    Inspector), so serialized payloads no longer carry a ``context_open`` key.
+    P3c added the Character section (``character_open``).
     """
     return {
         "left_open": left_open,
@@ -240,6 +242,7 @@ def _rail_prefs(
         "model_open": model_open,
         "details_open": details_open,
         "agent_open": agent_open,
+        "character_open": character_open,
     }
 
 

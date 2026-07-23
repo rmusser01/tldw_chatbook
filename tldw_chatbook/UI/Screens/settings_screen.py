@@ -19,6 +19,8 @@ from textual.events import DescendantFocus, Key
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.strip import Strip
+from textual.suggester import SuggestFromList
+from textual.validation import ValidationResult, Validator
 from textual.widgets import (
     Button,
     Checkbox,
@@ -339,8 +341,8 @@ PROVIDER_ENDPOINT_PLACEHOLDERS = {
     "google": "https://generativelanguage.googleapis.com",
     "groq": "https://api.groq.com/openai/v1",
     "koboldcpp": "http://127.0.0.1:5001",
-    "llama_cpp": "http://127.0.0.1:9099/v1",
-    "local_llamacpp": "http://127.0.0.1:9099/v1",
+    "llama_cpp": "http://127.0.0.1:9099",
+    "local_llamacpp": "http://127.0.0.1:9099",
     "local_ollama": "http://127.0.0.1:11434",
     "local_vllm": "http://127.0.0.1:8000/v1",
     "mistral": "https://api.mistral.ai/v1",
@@ -788,6 +790,34 @@ def _textual_web_safe_url_display_index(value: str, index: int) -> int:
     return display_index
 
 
+class ProviderEndpointURLValidator(Validator):
+    """TASK-367: inline endpoint URL validation, run on blur/submit.
+
+    An empty endpoint is allowed (not every provider needs one); a non-empty
+    value must be a well-formed http/https URL. Surfacing this on blur flags a
+    malformed URL (e.g. a dropped scheme character) at the field itself instead
+    of only when the user later saves or runs Discover.
+    """
+
+    def validate(self, value: str) -> ValidationResult:
+        """Validate a provider endpoint URL for the field's blur check.
+
+        Args:
+            value: The endpoint text currently in the field.
+
+        Returns:
+            ``success()`` for an empty value (endpoint optional) or a
+            well-formed http/https URL; otherwise ``failure()`` with a
+            corrective message.
+        """
+        text = str(value or "").strip()
+        if not text or validate_url(text):
+            return self.success()
+        return self.failure(
+            "Enter a full http:// or https:// URL, e.g. http://127.0.0.1:9099/v1."
+        )
+
+
 class SettingsURLInput(Input):
     """Render endpoint URLs without browser autolinking.
 
@@ -894,6 +924,82 @@ class SettingsURLInput(Input):
         return strip.apply_style(self.rich_style)
 
 
+def _mask_url_userinfo(url: object) -> str:
+    """Mask a password embedded in a URL's userinfo before display.
+
+    ``redact_secret_text`` is assignment-name based and misses credentials in
+    ``scheme://user:pass@host`` form, so mask them positionally here. Non-URL
+    or password-less input is returned unchanged.
+
+    Args:
+        url: A candidate endpoint string.
+
+    Returns:
+        The URL with any userinfo password replaced by ``***``.
+    """
+    from urllib.parse import urlsplit, urlunsplit
+
+    text = str(url or "")
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return text
+    # Reconstruct from the raw netloc substring rather than the lazy
+    # ``.hostname``/``.port`` properties: ``.port`` raises ValueError on a
+    # malformed/out-of-range port (crashing the Test on a typo'd endpoint), and
+    # ``.hostname`` strips IPv6 brackets. Keep host:port verbatim; only the
+    # userinfo password is masked. (Never fall back to returning ``text`` with
+    # the password intact -- redact_secret_text can't catch ``user:pass@host``.)
+    netloc = parts.netloc
+    userinfo, at, hostport = netloc.rpartition("@")
+    if not at or ":" not in userinfo:
+        # No userinfo, or a username with no password -> nothing to mask.
+        return text
+    user = userinfo.partition(":")[0]
+    masked = f"{user}:***@{hostport}" if user else f"***@{hostport}"
+    return urlunsplit((parts.scheme, masked, parts.path, parts.query, parts.fragment))
+
+
+def overlay_provider_draft_config(
+    app_config,
+    *,
+    provider_save_key: str,
+    endpoint_key: str,
+    draft_endpoint: str | None,
+    draft_env_var: str | None,
+    draft_api_key: str | None,
+) -> dict:
+    """Return a deep copy of ``app_config`` with unsaved draft provider fields overlaid.
+
+    Args:
+        app_config: The loaded application configuration.
+        provider_save_key: The ``api_settings`` section key to overlay onto.
+        endpoint_key: The endpoint setting key for this provider (e.g. ``api_url``).
+        draft_endpoint: Draft endpoint, or ``None`` to leave the saved endpoint.
+        draft_env_var: Draft credential env-var name, or ``None`` to leave saved.
+        draft_api_key: Draft API key (``""`` models an explicit clear), or ``None``.
+
+    Returns:
+        A new config dict; ``app_config`` is never mutated.
+    """
+    merged = copy.deepcopy(dict(app_config)) if isinstance(app_config, Mapping) else {}
+    api_settings = merged.get("api_settings")
+    if not isinstance(api_settings, dict):
+        api_settings = {}
+        merged["api_settings"] = api_settings
+    section = api_settings.get(provider_save_key)
+    if not isinstance(section, dict):
+        section = {}
+        api_settings[provider_save_key] = section
+    if draft_endpoint is not None:
+        section[endpoint_key] = draft_endpoint
+    if draft_env_var is not None:
+        section["api_key_env_var"] = draft_env_var
+    if draft_api_key is not None:
+        section["api_key"] = draft_api_key
+    return merged
+
+
 class SettingsScreen(BaseAppScreen):
     """Global preferences, appearance, accounts, storage, and app behavior."""
 
@@ -917,10 +1023,16 @@ class SettingsScreen(BaseAppScreen):
     manual_sync_rows = reactive((), recompose=True)
     theme_editor_modified = reactive(False, recompose=True)
 
+    #: TASK-366: sentinel copies for the provider Test result row.
+    _PROVIDER_TEST_NOT_RUN_COPY = "Provider test has not run."
+    _PROVIDER_TEST_STALE_COPY = (
+        "Provider settings changed since the last test — re-run Test Provider."
+    )
+
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "settings", **kwargs)
         self._settings_drafts: dict[SettingsCategoryId, SettingsDraft] = {}
-        self._provider_test_result = "Provider test has not run."
+        self._provider_test_result = self._PROVIDER_TEST_NOT_RUN_COPY
         self._provider_save_result = (
             "Provider settings have not been saved this session."
         )
@@ -4571,6 +4683,8 @@ class SettingsScreen(BaseAppScreen):
         draft.set_value(key, original, value)
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
+        # TASK-366: any edit to a provider field outdates the last Test result.
+        self._mark_provider_test_result_stale()
 
     def _provider_config_entry(
         self, provider: str
@@ -5134,6 +5248,45 @@ class SettingsScreen(BaseAppScreen):
             is not None
         )
 
+    def _provider_test_staged_config(self, provider: str) -> Mapping[str, object]:
+        """Return app_config with the unsaved draft provider fields overlaid.
+
+        Only dirty fields are overlaid, so a provider with no unsaved edits tests
+        exactly the saved config (task-432).
+
+        Args:
+            provider: The provider whose Test is running (the draft widget value).
+
+        Returns:
+            A config mapping the Test's readiness check can evaluate.
+        """
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        draft = self._provider_draft()
+        dirty = draft.dirty_keys if draft is not None else set()
+        if not ({"endpoint", "credential_env_var", "api_key"} & dirty):
+            return app_config
+        provider_save_key, _config = self._provider_config_entry(provider)
+        provider_save_key = provider_save_key or provider_config_key(provider)
+        if not provider_save_key:
+            return app_config
+        try:
+            endpoint = self.query_one("#settings-provider-endpoint-value", Input).value.strip()
+            env_var = self.query_one("#settings-provider-credential-env-var", Input).value.strip()
+            api_key = self.query_one("#settings-provider-api-key", Input).value.strip()
+        except QueryError:
+            values = self._provider_setting_values_mapping()
+            endpoint = str(values.get("endpoint") or "").strip()
+            env_var = str(values.get("credential_env_var") or "").strip()
+            api_key = str(values.get("api_key") or "").strip()
+        return overlay_provider_draft_config(
+            app_config,
+            provider_save_key=provider_save_key,
+            endpoint_key=self._provider_endpoint_setting_key(provider),
+            draft_endpoint=endpoint if "endpoint" in dirty else None,
+            draft_env_var=env_var if "credential_env_var" in dirty else None,
+            draft_api_key=api_key if "api_key" in dirty else None,
+        )
+
     def _provider_discovery_staged_settings(self, provider: str) -> dict[str, object]:
         provider_key = provider_config_key(provider)
         if not provider_key:
@@ -5196,10 +5349,15 @@ class SettingsScreen(BaseAppScreen):
         kind = str(getattr(error, "kind", "") or "")
         if kind == "ambiguous_provider_key":
             return MODEL_DISCOVERY_AMBIGUOUS_PROVIDER_COPY
-        if kind == "unsupported_endpoint":
-            return MODEL_DISCOVERY_UNSUPPORTED_ENDPOINT_COPY
         message = str(getattr(error, "message", "") or "").strip()
         recovery = str(getattr(error, "recovery_hint", "") or "").strip()
+        # TASK-367: surface the discovery client's DISTINCT message for endpoint
+        # problems — a malformed URL and a valid-but-unsupported path now read
+        # differently instead of collapsing into the single generic /v1 copy.
+        if kind in {"unsupported_endpoint", "malformed_endpoint"}:
+            if message or recovery:
+                return redact_secret_text(f"{message} {recovery}".strip())
+            return MODEL_DISCOVERY_UNSUPPORTED_ENDPOINT_COPY
         if recovery:
             return redact_secret_text(f"{message} {recovery}".strip())
         if message:
@@ -5323,6 +5481,7 @@ class SettingsScreen(BaseAppScreen):
                 f"Discovered {len(models)} model(s) from {provider_list_key}."
             )
             self._refresh_model_discovery_widgets()
+            self._refresh_model_field_suggester()  # TASK-369: enable typeahead
             self.app.notify(
                 "Provider model discovery finished.", severity="information"
             )
@@ -5337,6 +5496,66 @@ class SettingsScreen(BaseAppScreen):
     @work(exclusive=True, group="settings-model-discovery")
     async def _save_selected_discovered_provider_models_worker(self) -> None:
         await self._save_selected_discovered_provider_models()
+
+    def _model_field_suggester(self) -> SuggestFromList | None:
+        """TASK-369: typeahead of discovered model ids for the Model field.
+
+        Recognition over recall — while a discovery result is on screen, typing a
+        prefix (e.g. ``gemma``) completes to the full gguf id instead of forcing
+        the user to recall a 56-character filename. Returns ``None`` when there
+        is nothing to suggest.
+        """
+        ids = sorted(
+            {
+                str(getattr(model, "model_id", "") or "").strip()
+                for model in self._model_discovery_models
+                if str(getattr(model, "model_id", "") or "").strip()
+            }
+        )
+        return SuggestFromList(ids, case_sensitive=False) if ids else None
+
+    def _refresh_model_field_suggester(self) -> None:
+        """Point the Model field's suggester at the current discovered models."""
+        try:
+            self.query_one("#settings-model-value", Input).suggester = (
+                self._model_field_suggester()
+            )
+        except (QueryError, AttributeError):
+            pass
+
+    @staticmethod
+    def _model_to_activate_after_save(
+        current_model: object, saved_model_ids: tuple[str, ...]
+    ) -> str:
+        """TASK-369: the Model value to set after saving discovered models.
+
+        An empty field is filled with the first saved model (so readiness can
+        pass without retyping a long gguf name); a field the user already set is
+        left untouched.
+        """
+        current = str(current_model or "").strip()
+        if current:
+            return current
+        for model_id in saved_model_ids:
+            candidate = str(model_id or "").strip()
+            if candidate:
+                return candidate
+        return ""
+
+    def _activate_saved_model_if_field_empty(
+        self, saved_model_ids: tuple[str, ...]
+    ) -> None:
+        """Populate the empty Model field with a just-saved model (TASK-369)."""
+        try:
+            model_input = self.query_one("#settings-model-value", Input)
+        except QueryError:
+            return
+        next_value = self._model_to_activate_after_save(
+            model_input.value, saved_model_ids
+        )
+        if next_value and next_value != model_input.value:
+            # Setting .value fires Input.Changed, which stages the model draft.
+            model_input.value = next_value
 
     async def _save_selected_discovered_provider_models(self) -> None:
         provider = self._provider_widget_value()
@@ -5394,10 +5613,16 @@ class SettingsScreen(BaseAppScreen):
         if status == "saved":
             provider_list_key = getattr(result, "provider_list_key", None)
             self._append_saved_discovered_models(provider_list_key, saved_model_ids)
+            # TASK-369: recognition over recall — offer the saved model for
+            # activation instead of leaving an empty Model field the user must
+            # retype from memory of a name the cleared discovery list no longer
+            # shows.
+            self._activate_saved_model_if_field_empty(saved_model_ids)
             self._model_discovery_status = (
                 message or f"Saved {len(saved_model_ids)} discovered model(s)."
             )
             self._refresh_model_discovery_widgets()
+            self._refresh_model_field_suggester()
             self.app.notify("Discovered models saved.", severity="information")
             return
 
@@ -5495,7 +5720,7 @@ class SettingsScreen(BaseAppScreen):
         save_settings_to_cli_config(section_values)
 
     def _provider_readiness_test_report(self) -> tuple[str, str, bool]:
-        """Run the local provider readiness test.
+        """Run the local provider readiness test against the DRAFT config.
 
         Returns:
             Tuple of (detail line for the results row, toast summary stating
@@ -5504,39 +5729,109 @@ class SettingsScreen(BaseAppScreen):
         try:
             provider = self._provider_widget_value()
             model = self.query_one("#settings-model-value", Input).value.strip()
+            draft_endpoint = self.query_one(
+                "#settings-provider-endpoint-value", Input
+            ).value.strip()
         except QueryError:
             values = self._provider_setting_values()
             provider = str(values.get("provider") or "").strip()
             model = str(values.get("model") or "").strip()
-
+            draft_endpoint = str(values.get("endpoint") or "").strip()
+        draft = self._provider_draft()
+        dirty = draft.dirty_keys if draft is not None else set()  # dirty_keys is a @property
         readiness = get_provider_readiness(
-            provider,
-            getattr(self.app_instance, "app_config", {}) or {},
+            provider, self._provider_test_staged_config(provider)
+        )
+        return self._build_provider_readiness_findings(
+            provider, model, readiness, draft_endpoint=draft_endpoint, dirty=dirty
         )
 
-        findings: list[str] = ["Provider test"]
-        findings.append(readiness.user_message)
+    def _build_provider_readiness_findings(
+        self,
+        provider: str,
+        model: str,
+        readiness,
+        *,
+        draft_endpoint: str,
+        dirty: set[str],
+    ) -> tuple[str, str, bool]:
+        """Assemble the Test evidence line + toast from resolved inputs.
+
+        Reads only ``app_config`` (via helpers) and ``os.environ`` -- never widgets
+        -- so it is unit-testable on a bare screen instance.
+
+        Args:
+            provider: Provider under test (draft widget value).
+            model: Model under test (draft widget value).
+            readiness: ``ProviderReadiness`` from the draft-overlaid config.
+            draft_endpoint: The endpoint the test used (draft widget, may be empty).
+            dirty: The provider draft's dirty field keys.
+
+        Returns:
+            Tuple of (redacted detail line, redacted toast summary, passed).
+        """
+        provider_key = provider_config_key(provider)
+        passed = bool(readiness.ready and model)
+        display_name = self._provider_display_name(provider) if provider else "Provider"
+        # TASK-366: lead with ONE verdict consistent with the status line below.
+        # A config-ready provider with no default model is still blocked, so it
+        # must not read "<provider> is ready" next to "status=blocked".
+        if readiness.ready and not model:
+            verdict_message = f"{display_name} is configured, but no default model is set."
+        else:
+            verdict_message = readiness.user_message
+        findings: list[str] = ["Provider test", verdict_message]
+
         if not model:
             findings.append("model=missing")
         else:
-            findings.append(f"model={model}")
+            findings.append(f"model={model}{' (draft)' if 'model' in dirty else ''}")
 
+        # This literal marker holds no secret material (just a provenance
+        # label). redact_secret_text() pattern-matches on "...key...=value",
+        # so if it were run through the same redaction pass as the other
+        # findings it would truncate the word "draft" right after "=". It is
+        # therefore excluded from redaction below (see `api_key_relabelled`).
+        draft_api_key_label = "api_key_source=draft api_key (unsaved)"
+        api_key_relabelled = False
         if readiness.api_key_source:
-            findings.append(f"api_key_source={readiness.api_key_source}")
+            if (
+                "api_key" in dirty
+                and readiness.api_key_source
+                == f"config:api_settings.{provider_key}.api_key"
+            ):
+                findings.append(draft_api_key_label)
+                api_key_relabelled = True
+            else:
+                findings.append(f"api_key_source={readiness.api_key_source}")
         if readiness.env_var:
-            raw_value = os.environ.get(readiness.env_var)
+            # Report presence only, never the raw value. ``redact_secret_text``
+            # is name-pattern based (it redacts only ``*_API_KEY``/``TOKEN``/...),
+            # so a custom-named credential env var (e.g. ``MY_LLAMA_CRED``) would
+            # otherwise print its secret verbatim into this screenshot-able UI.
+            # Emitting the established ``<redacted>`` marker for any set value
+            # keeps the standard-name output identical while closing that gap
+            # (folds in task-483).
+            env_present = bool(os.environ.get(readiness.env_var))
+            env_tag = " (draft env var)" if "credential_env_var" in dirty else ""
             findings.append(
-                f"{readiness.env_var}={raw_value if raw_value else 'missing'}"
+                f"{readiness.env_var}={'<redacted>' if env_present else 'missing'}{env_tag}"
             )
         elif not readiness.requires_api_key:
             findings.append("api_key=not required")
-        findings.append(self._provider_endpoint_summary(provider))
 
-        passed = bool(readiness.ready and model)
+        # Mask any password embedded in the endpoint's userinfo before display
+        # (name-pattern redaction misses ``scheme://user:pass@host``).
+        endpoint_summary = self._provider_endpoint_summary(
+            provider, endpoint=_mask_url_userinfo(draft_endpoint)
+        )
+        if "endpoint" in dirty:
+            endpoint_summary = f"{endpoint_summary} (draft)"
+        findings.append(endpoint_summary)
+
         findings.append(f"status={'ready' if passed else 'blocked'}")
 
         # task-185: the toast must state the outcome, not just "finished".
-        display_name = self._provider_display_name(provider) if provider else "Provider"
         if passed:
             summary = f"Provider test passed: {display_name} is ready; model {model}."
         elif not readiness.ready:
@@ -5544,9 +5839,18 @@ class SettingsScreen(BaseAppScreen):
             if not model:
                 summary += " Also set a default model."
         else:
-            summary = f"Provider test failed: {display_name} is ready but no default model is set."
+            summary = (
+                f"Provider test failed: {display_name} is ready but no default model is set."
+            )
+        if api_key_relabelled:
+            detail = " | ".join(
+                finding if finding == draft_api_key_label else redact_secret_text(finding)
+                for finding in findings
+            )
+        else:
+            detail = redact_secret_text(" | ".join(findings))
         return (
-            redact_secret_text(" | ".join(findings)),
+            detail,
             redact_secret_text(summary),
             passed,
         )
@@ -5614,8 +5918,29 @@ class SettingsScreen(BaseAppScreen):
             self.query_one("#settings-provider-test-result", Static).update(
                 self._provider_test_result
             )
-        except QueryError:
+        except (QueryError, AttributeError):
+            # QueryError: widget not mounted yet. AttributeError: called on an
+            # unmounted screen (no DOM) — the state is still updated for the next
+            # render either way.
             pass
+
+    def _mark_provider_test_result_stale(self) -> None:
+        """Invalidate a prior Test Provider result when provider inputs change.
+
+        TASK-366: a stale ``ready``/``blocked`` verdict that no longer reflects
+        the draft in the form is misleading (the review saw a ``blocked`` line
+        persist after a successful save until Test was re-run). Once any provider
+        field is edited or saved, the last result is replaced with a re-run
+        prompt. A no-op when nothing has run yet or it is already marked stale, so
+        it never clobbers the not-run sentinel or thrashes on every keystroke.
+        """
+        if self._provider_test_result in (
+            self._PROVIDER_TEST_NOT_RUN_COPY,
+            self._PROVIDER_TEST_STALE_COPY,
+        ):
+            return
+        self._provider_test_result = self._PROVIDER_TEST_STALE_COPY
+        self._update_provider_test_result()
 
     def _update_provider_dynamic_widgets(self) -> None:
         try:
@@ -6262,6 +6587,7 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-model-value",
                     classes="settings-compact-input",
                     placeholder="Model name",
+                    suggester=self._model_field_suggester(),
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Endpoint", classes="settings-input-label")
@@ -6270,6 +6596,8 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-provider-endpoint-value",
                     classes="settings-compact-input",
                     placeholder=self._provider_endpoint_placeholder(provider),
+                    validators=[ProviderEndpointURLValidator()],
+                    validate_on={"blur", "submitted"},
                 )
             yield Static("Credentials", classes="destination-section")
             yield Static(
@@ -9551,6 +9879,9 @@ class SettingsScreen(BaseAppScreen):
                 self._set_static_text(
                     "#settings-provider-save-result", self._provider_save_result
                 )
+                # TASK-366: the last Test verdict described the pre-save draft;
+                # don't let a stale ready/blocked line persist after saving.
+                self._mark_provider_test_result_stale()
                 self._sync_provider_credential_widget(provider)
                 self._update_provider_dynamic_widgets()
                 self._update_draft_status_widgets(category)

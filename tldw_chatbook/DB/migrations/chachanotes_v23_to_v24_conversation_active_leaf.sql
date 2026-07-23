@@ -1,4 +1,4 @@
--- Migration: ChaChaNotes V22 to V23 — conversations.active_leaf_message_id
+-- Migration: ChaChaNotes V23 to V24 — conversations.active_leaf_message_id
 -- Adds a nullable, LOCAL-ONLY pointer column recording which leaf message is
 -- the active branch tip for the native Console. It is intentionally NOT synced:
 -- the setter writes it without bumping version/last_modified, so the
@@ -9,6 +9,6 @@
 ALTER TABLE conversations ADD COLUMN active_leaf_message_id TEXT;
 
 UPDATE db_schema_version
-   SET version = 23
+   SET version = 24
  WHERE schema_name = 'rag_char_chat_schema'
-   AND version = 22;
+   AND version = 23;

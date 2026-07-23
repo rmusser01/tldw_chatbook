@@ -84,6 +84,7 @@ class ModelTurn:
     text: str = ""
     tool_calls: tuple[ToolCall, ...] = ()
     assistant_message: dict | None = None
+    tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -110,6 +111,10 @@ class RunBudget:
     # (every model turn appends >=1 step, so the step check fires first) —
     # engine-default behavior is byte-identical to the pre-task-244 loop.
     max_model_turns: int = 8
+    # task-326: cumulative prompt+completion token spend ceiling for one run.
+    # 0 = unlimited (default), keeping existing runs byte-identical. This is a
+    # SPEND ceiling (the growing prompt is re-sent each call), not a window size.
+    max_total_tokens: int = 0
 
 
 @dataclass
@@ -138,6 +143,7 @@ class RunOutcome:
     steps: list[AgentStep]
     final_text: str = ""
     subagents_spawned: int = 0
+    total_tokens: int = 0
 
 
 def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> RunBudget:
@@ -156,4 +162,5 @@ def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> Run
         max_active_tools=child.max_active_tools,
         max_subagent_result_chars=child.max_subagent_result_chars,
         max_model_turns=child.max_model_turns,
+        max_total_tokens=child.max_total_tokens,
     )

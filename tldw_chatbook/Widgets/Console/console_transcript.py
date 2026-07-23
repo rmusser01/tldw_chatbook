@@ -45,8 +45,11 @@ EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL = "Choose model"
 EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP = (
     "Choose the provider and model for this Console session."
 )
+# TASK-362 AC#2: the guide names the single-key shortcuts (j/k/c/e/r/Esc), which
+# were otherwise undiscoverable anywhere in the app, alongside the icon meanings.
 SELECTED_MESSAGE_ACTION_GUIDE = (
-    "Guide: ♻ Regenerate  ---> Continue  👍/👎 Rate  🗑 Delete"
+    "Guide: j/k select · c Copy · e Edit · r Regenerate ♻ · "
+    "---> Continue · 👍/👎 Rate · 🗑 Delete · Esc clear"
 )
 _ACTION_TOOLTIPS = {
     "copy": "Copy this message to the clipboard.",

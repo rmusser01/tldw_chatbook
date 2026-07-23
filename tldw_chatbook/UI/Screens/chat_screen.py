@@ -1,7 +1,7 @@
 """Chat screen implementation with comprehensive state management."""
 
 from collections.abc import Mapping
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 import asyncio
 import inspect
@@ -26,6 +26,7 @@ from textual.color import Color
 from textual.events import Click, DescendantFocus, Key, MouseUp, Paste, Resize
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
+from textual.widget import Widget
 from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
 
 from ..Navigation.base_app_screen import BaseAppScreen
@@ -180,13 +181,20 @@ from ...Chat.console_live_work import (
     ConsoleLiveWorkStatusCardState,
 )
 from ...Chat.console_glyphs import GLYPH_COLLAPSE_LEFT, GLYPH_COLLAPSE_RIGHT
+from ...Chat.console_expression_state import (
+    EXPRESSION_IMAGE_STATES,
+    resolve_console_expression_state,
+)
 from ...Chat.console_image_view import (
     IMAGE_CACHE_MAX_ENTRIES,
     ConsoleImageRenderCache,
     ConsoleImageRowSpec,
     ConsoleImageViewState,
+    fit_image_cell_size,
     next_view_mode,
     resolve_default_mode,
+    resolve_react_character_expressions,
+    resolve_show_character_avatar,
 )
 from ...Chat.console_paste_attach import (
     extract_dropped_path,
@@ -231,7 +239,7 @@ from ...Utils.console_background_effects import (
     normalize_console_background_effects,
 )
 from ...Utils.input_validation import sanitize_string, validate_text_input
-from ...Utils.token_counter import count_tokens_tiktoken
+from ...Utils.token_counter import estimate_tokens
 from ...UI.Workbench import (
     CommandStrip,
     DestinationHeader,
@@ -344,6 +352,9 @@ CONSOLE_LIBRARY_RAG_QUERY_EMPTY_MESSAGE = (
 # Measured live: composer clips at <=34 rows, fits at 35; the freed header
 # lets it fit down to ~29-30 rows.
 CONSOLE_COMPACT_HEIGHT_ROWS = 35
+#: TASK-365: trailing affordance marking the clickable rail system-prompt line as
+#: interactive (matches the ▸ the rail uses for its other actionable controls).
+CONSOLE_RAIL_SYSTEM_EDIT_AFFORDANCE = "▸"
 CONSOLE_FRAME_COLOR = "#6f7782"
 CONSOLE_FRAME_BORDER = ("solid", CONSOLE_FRAME_COLOR)
 CONSOLE_QUIET_FRAME_BORDER = ("none", CONSOLE_FRAME_COLOR)
@@ -421,6 +432,17 @@ CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS = 2.0
 # bound, same "explicit invalidation is a nice-to-have, the TTL is the
 # correctness backstop" philosophy).
 CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
+# P3c Task 3: the "Character" rail avatar box's fitted cell size (mirrors
+# the transcript inline-image row's `fit_image_cell_size` usage, sized
+# smaller for the rail's narrower column).
+CHARACTER_AVATAR_COLS = 16
+CHARACTER_AVATAR_LINES = 8
+# P3d-1 Task 3 (review fix): bound `_console_expression_spec_cache` so a
+# long session visiting many characters/states doesn't retain unbounded PIL
+# image references (the spec dicts hold their own `PILImage.Image`, so the
+# `_console_image_cache` LRU cap below does not protect this cache). Matches
+# the render cache's bound.
+_EXPRESSION_SPEC_CACHE_MAX = 16
 CONSOLE_FOCUS_REGISTRY = WorkbenchFocusRegistry(
     (
         "console-left-rail",
@@ -438,6 +460,15 @@ CONSOLE_FOCUS_TARGETS_BY_PANE = {
     "console-right-rail": ("console-inspector-rail-collapse", "console-right-rail"),
     "console-native-composer": ("console-native-composer",),
 }
+
+
+@dataclass(frozen=True)
+class _ConsoleTranscriptReadingState:
+    anchored: bool
+    scroll_y: float
+    selected_message_id: str | None
+
+
 CONSOLE_WORKBENCH_SHORTCUTS = (
     ("F6", "next pane"),
     ("Shift+F6", "previous pane"),
@@ -446,6 +477,50 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     ("Ctrl+K", "switch session"),
     ("Ctrl+T", "new tab"),
     ("Ctrl+P", "palette"),
+)
+
+#: TASK-362: the full Console keyboard vocabulary for the F1 help panel, grouped
+#: by surface. The flat CONSOLE_WORKBENCH_SHORTCUTS above stays the compact
+#: footer set; the transcript j/k/c/e/r keys, F2, Shift+Enter and Alt+M were
+#: previously undiscoverable anywhere in the app.
+CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
+    (
+        "Panes",
+        (
+            ("F6", "next pane"),
+            ("Shift+F6", "previous pane"),
+            ("Escape", "return to the composer"),
+        ),
+    ),
+    (
+        "Transcript",
+        (
+            ("j / k", "select next / previous message"),
+            ("Enter", "show the selected message's actions"),
+            ("c", "copy the selected message"),
+            ("e", "edit the selected message"),
+            ("r", "regenerate the selected message"),
+            ("Escape", "clear the selection"),
+        ),
+    ),
+    (
+        "Composer",
+        (
+            ("Enter", "send"),
+            ("Shift+Enter", "insert a newline"),
+            ("Ctrl+K", "switch session"),
+            ("Ctrl+T", "new tab"),
+        ),
+    ),
+    (
+        "Global & modals",
+        (
+            ("F1", "help"),
+            ("Ctrl+P", "command palette"),
+            ("Alt+M", "quick change model"),
+            ("F2", "rename a session (in the Ctrl+K switcher)"),
+        ),
+    ),
 )
 
 
@@ -680,6 +755,13 @@ class ChatScreen(BaseAppScreen):
         Binding("alt+m", "open_console_model_popover", "Model", show=True),
         Binding("alt+v", "paste_clipboard_image", "Paste image", show=True),
         Binding("ctrl+shift+p", "view_chat_context", "View context", show=True),
+        Binding(
+            "escape",
+            "expand_collapsed_console_composer",
+            "Composer",
+            show=False,
+            priority=True,
+        ),
         # NOT priority: widget-level escapes (transcript clear-selection, modal
         # dismiss) must keep winning before this screen-level fallback runs.
         Binding("escape", "focus_console_composer_home", "Composer", show=False),
@@ -694,6 +776,34 @@ class ChatScreen(BaseAppScreen):
         Binding("alt+8", "jump_console_tab(8)", "Tab 8", show=False),
         Binding("alt+9", "jump_console_tab(9)", "Tab 9", show=False),
     ]
+
+    def check_action(
+        self,
+        action: str,
+        parameters: tuple[object, ...],
+    ) -> bool | None:
+        """Return whether a named screen action is currently available.
+
+        Args:
+            action: Textual action name being checked.
+            parameters: Parsed positional parameters for the action.
+
+        Returns:
+            The collapse-action availability, or the superclass result for
+            every other action.
+        """
+        if action == "expand_collapsed_console_composer":
+            return (
+                self._console_composer_collapsed
+                and not self._console_setup_modal_blocking()
+            )
+        return super().check_action(action, parameters)
+
+    def action_expand_collapsed_console_composer(self) -> None:
+        """Expand the hidden Console composer and return keyboard focus to it."""
+        if self._console_setup_modal_blocking():
+            return
+        self._set_console_composer_collapsed(False)
 
     def action_focus_next(self) -> None:
         """Move focus to the next widget, trapping Tab inside a blocking modal.
@@ -1040,7 +1150,7 @@ class ChatScreen(BaseAppScreen):
                     route_id=workbench_state.route_id,
                     title="Console",
                     actions=workbench_state.actions,
-                    shortcuts=CONSOLE_WORKBENCH_SHORTCUTS,
+                    shortcut_groups=CONSOLE_WORKBENCH_SHORTCUT_GROUPS,
                 )
             )
         )
@@ -1115,7 +1225,7 @@ class ChatScreen(BaseAppScreen):
 
     def _focus_console_workbench_target(self, widget_id: str) -> None:
         """Focus a visible Console Workbench target if it is available."""
-        for target_id in CONSOLE_FOCUS_TARGETS_BY_PANE.get(widget_id, (widget_id,)):
+        for target_id in self._console_workbench_focus_targets(widget_id):
             if not self._is_console_widget_displayed(target_id):
                 continue
             try:
@@ -1126,6 +1236,14 @@ class ChatScreen(BaseAppScreen):
             widget.focus()
             self._last_console_workbench_focus_id = widget_id
             return
+
+    def _console_workbench_focus_targets(self, pane_id: str) -> tuple[str, ...]:
+        """Return visible focus candidates for a Console Workbench pane."""
+        if pane_id == "console-native-composer":
+            if self._console_composer_collapsed:
+                return ("console-composer-expand",)
+            return ("console-native-composer",)
+        return CONSOLE_FOCUS_TARGETS_BY_PANE.get(pane_id, (pane_id,))
 
     def _focus_console_setup_modal_if_blocking(self) -> bool:
         """Trap pane cycling on the setup modal while it blocks the workbench."""
@@ -1141,7 +1259,7 @@ class ChatScreen(BaseAppScreen):
     def _ensure_console_workbench_targets_focusable(self) -> None:
         """Make mounted visible Console Workbench focus targets focusable."""
         for pane_id in CONSOLE_FOCUS_REGISTRY.pane_order:
-            for widget_id in CONSOLE_FOCUS_TARGETS_BY_PANE.get(pane_id, (pane_id,)):
+            for widget_id in self._console_workbench_focus_targets(pane_id):
                 if not self._is_console_widget_displayed(widget_id):
                     continue
                 try:
@@ -1155,6 +1273,9 @@ class ChatScreen(BaseAppScreen):
             self._apply_console_setup_block(True)
             return
         self._ensure_console_workbench_targets_focusable()
+        if self._console_composer_collapsed:
+            self._focus_console_workbench_target("console-native-composer")
+            return
         current = self._console_workbench_focus_id_for_widget(self.app.focused)
         if current is not None and self._is_console_widget_displayed(current):
             self._last_console_workbench_focus_id = current
@@ -1393,10 +1514,7 @@ class ChatScreen(BaseAppScreen):
         text = payload.get("draft", "")
         if not text:
             return None
-        try:
-            return count_tokens_tiktoken(text)
-        except Exception:
-            return int(len(text.split()) * 1.3)
+        return estimate_tokens(text, "", "")
 
     async def action_jump_console_tab(self, number: int) -> None:
         """Jump directly to the Nth native Console session tab (Alt+1..9).
@@ -1769,6 +1887,8 @@ class ChatScreen(BaseAppScreen):
         self.chat_window: Optional[ChatWindowEnhanced] = None
         self.console_session_surface: Optional[ConsoleSessionSurface] = None
         self.chat_state = ChatScreenState()
+        self._console_composer_collapsed = False
+        self._console_composer_layout_revision = 0
         self._state_dirty = False
         self._diagnostics_run = False
         self._handoff_consumption_in_progress = False
@@ -1934,6 +2054,20 @@ class ChatScreen(BaseAppScreen):
         # P2g-2 Task 4: same double-open guard, for the World Books
         # inspector block's Attach/Detach picker flow.
         self._console_worldbook_dialog_active = False
+        # P3c: cached avatar spec (dict | None) for the active character in
+        # the "Character" rail section, plus its display name and the
+        # scope (conversation/character) it was last computed for. Mirrors
+        # the dictionaries/world-books caches above -- the compose path
+        # reads only this cache, never doing I/O on recompose. T3 fills
+        # `_active_character_avatar`; this task only seeds the empty state.
+        self._active_character_avatar: dict | None = None
+        self._active_character_avatar_name: str | None = None
+        self._last_console_avatar_scope: Any | None = None
+        # P3d-1: per-(character_id, state) decode cache so revisiting an
+        # expression state already seen this session is served instantly
+        # (no re-fetch/re-decode). Keyed on the full scope tuple, mirroring
+        # `_last_console_avatar_scope`.
+        self._console_expression_spec_cache: dict[tuple[int, str], dict] = {}
         self.ui_state = UIState()
         self._load_sidebar_state()
 
@@ -2442,6 +2576,11 @@ class ChatScreen(BaseAppScreen):
         """
         settings = self._ensure_active_console_session_settings()
         line_text = build_console_rail_system_line(settings.system_prompt)
+        # TASK-365: this rail line is clickable (opens the system-prompt editor)
+        # but otherwise reads as inert label text like the Provider/Model lines
+        # above it. A trailing affordance (the same ▸ the rail uses elsewhere for
+        # interactive controls) marks it as the one actionable row in the section.
+        line_text = f"{line_text} {CONSOLE_RAIL_SYSTEM_EDIT_AFFORDANCE}"
         is_dim = not str(settings.system_prompt or "").strip()
         return line_text, is_dim
 
@@ -3277,6 +3416,89 @@ class ChatScreen(BaseAppScreen):
             composer.edit_serial,
         )
 
+    def _capture_console_transcript_reading_state(
+        self,
+    ) -> _ConsoleTranscriptReadingState | None:
+        """Capture the semantic reading position before composer layout changes."""
+        try:
+            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
+        except QueryError:
+            return None
+        return _ConsoleTranscriptReadingState(
+            anchored=bool(
+                transcript.is_anchored
+                and not getattr(transcript, "_anchor_released", False)
+            ),
+            scroll_y=float(transcript.scroll_y),
+            selected_message_id=transcript.selected_message_id,
+        )
+
+    def _restore_console_transcript_reading_state(
+        self,
+        state: _ConsoleTranscriptReadingState | None,
+    ) -> None:
+        """Restore the transcript anchor, offset, and selected message."""
+        if state is None:
+            return
+        try:
+            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
+        except QueryError:
+            return
+        transcript.selected_message_id = state.selected_message_id
+        if state.anchored:
+            transcript.anchor()
+            return
+        transcript.release_anchor()
+        transcript.scroll_to(
+            y=min(state.scroll_y, float(transcript.max_scroll_y)),
+            animate=False,
+        )
+
+    def _set_console_composer_collapsed(self, collapsed: bool) -> None:
+        """Synchronize screen-owned collapse state with the mounted composer."""
+        if self._console_setup_modal_blocking():
+            return
+        collapsed = bool(collapsed)
+        composer = self._console_composer_or_none()
+        if composer is None or self._console_composer_collapsed == collapsed:
+            return
+        reading_state = self._capture_console_transcript_reading_state()
+        self._console_composer_collapsed = collapsed
+        self._console_composer_layout_revision += 1
+        revision = self._console_composer_layout_revision
+        if collapsed:
+            self._console_unknown_send_armed = None
+            composer.reset_pending_unfurl()
+        composer.set_collapsed(collapsed)
+        composer.styles.border = (
+            CONSOLE_QUIET_FRAME_BORDER if collapsed else CONSOLE_FRAME_BORDER
+        )
+        composer.refresh(layout=True)
+        self.call_after_refresh(
+            self._finish_console_composer_layout_change,
+            revision,
+            collapsed,
+            reading_state,
+        )
+
+    def _finish_console_composer_layout_change(
+        self,
+        revision: int,
+        expected_collapsed: bool,
+        reading_state: _ConsoleTranscriptReadingState | None,
+    ) -> None:
+        """Finish only the latest requested composer layout transition."""
+        if (
+            revision != self._console_composer_layout_revision
+            or expected_collapsed != self._console_composer_collapsed
+        ):
+            return
+        self._restore_console_transcript_reading_state(reading_state)
+        if expected_collapsed:
+            self._focus_console_workbench_target("console-transcript-surface")
+        else:
+            self._focus_console_workbench_target("console-native-composer")
+
     def _sync_console_session_draft(self) -> None:
         """Reconcile the composer draft with the active runtime Console session.
 
@@ -3875,6 +4097,233 @@ class ChatScreen(BaseAppScreen):
             return str(conversation_id) if conversation_id else None
         return self._current_console_conversation_id()
 
+    def _current_console_rail_character_id(self) -> Optional[int]:
+        """Active native Console session's character id (int), or None.
+
+        Resolved ONLY off the live session (#754 sets it at Start-Chat, on
+        DB-resume, and on screen-state restore); never from legacy
+        ``app.current_chat_*`` reactives. None for a generic session.
+        """
+        native_session = self._active_native_console_session()
+        if native_session is None:
+            return None
+        character_id = getattr(native_session, "character_id", None)
+        try:
+            return int(character_id) if character_id is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _current_console_rail_character_name(self) -> Optional[str]:
+        """Active native Console session's character name, or None."""
+        native_session = self._active_native_console_session()
+        if native_session is None:
+            return None
+        name = getattr(native_session, "character_name", None)
+        return str(name) if name else None
+
+    def _fetch_character_card_for_avatar(self, character_id: int) -> dict | None:
+        """Synchronous character-card fetch for the avatar refresh (off-thread).
+
+        Canonical DB accessor used throughout `chat_screen.py` (e.g. the
+        resume path `_resolve_resumed_character_name`); there is no
+        `self.chachanotes_db`.
+        """
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return None
+        try:
+            return db.get_character_card_by_id(int(character_id))
+        except Exception:
+            logger.opt(exception=True).debug("avatar: character fetch failed")
+            return None
+
+    def _fetch_expression_image_bytes(self, character_id: int, state: str) -> bytes | None:
+        """Return the image bytes for (character, state): the expression-table
+        image for a non-idle state, else the character's idle avatar. Runs
+        off-thread (called via asyncio.to_thread). Never raises -> None on any error."""
+        try:
+            db = getattr(self.app_instance, "chachanotes_db", None)
+            if db is None:
+                return None
+            if state in EXPRESSION_IMAGE_STATES:
+                img = db.get_character_expression_image(character_id, state)
+                if img:
+                    return img
+            card = self._fetch_character_card_for_avatar(character_id)  # idle fallback
+            image = (card or {}).get("image")
+            return bytes(image) if isinstance(image, (bytes, bytearray)) and image else None
+        except Exception:
+            logger.opt(exception=True).debug("avatar: expression fetch failed")
+            return None
+
+    async def _refresh_active_character_avatar_if_scope_changed(self) -> None:
+        """Refresh the cached character avatar only when the active
+        (character, expression state) scope changed.
+
+        P3d-1: widens the P3c `(character_id,)` scope to `(character_id,
+        state)` so the avatar reacts to the character thinking/speaking, via
+        `resolve_console_expression_state` (pure, DB-free, reads only the
+        active native Console session's live message statuses).
+        """
+        if not resolve_show_character_avatar(
+            getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
+        ):
+            # Feature is config-off: the rail section isn't composed, so
+            # skip the off-thread DB fetch + PIL decode below entirely and
+            # keep the cache empty for when the section is next shown.
+            self._active_character_avatar = None
+            self._active_character_avatar_name = None
+            # Invalidate the scope guard too: otherwise, if the feature is
+            # re-enabled while character_id is unchanged, the equality check
+            # below would early-return and the section would stay stuck in
+            # the empty state (Qodo #782-3). Resetting forces a repopulate on
+            # the next config-on tick.
+            self._last_console_avatar_scope = None
+            return
+        character_id = self._current_console_rail_character_id()
+        controller = getattr(self, "_console_chat_controller", None)
+        store = getattr(controller, "store", None) if controller is not None else None
+        active_session_id = getattr(store, "active_session_id", None) if store is not None else None
+        react = resolve_react_character_expressions(
+            getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
+        )
+        state = resolve_console_expression_state(store, active_session_id, react_enabled=react)
+        scope = (character_id, state)
+        if scope == self._last_console_avatar_scope:
+            return
+        self._last_console_avatar_scope = scope
+        name = self._current_console_rail_character_name()
+        self._active_character_avatar_name = name
+        if character_id is None:
+            self._active_character_avatar = None
+            await self._render_character_avatar_into_section()
+            return
+        # Serve from the per-state cache when this (character, state) scope
+        # was already decoded this session -- no re-fetch/re-decode.
+        cached = self._console_expression_spec_cache.get((character_id, state))
+        if cached is not None:
+            self._active_character_avatar = cached
+            await self._render_character_avatar_into_section()
+            return
+        _, cache = self._ensure_console_image_view()
+        mode = getattr(self, "_console_image_default_mode", "pixels")
+        key = f"character:{character_id}:{state}"
+        spec = {"character_id": character_id, "state": state, "name": name,
+                "mode": mode, "pil": None, "pixels": None}
+        try:
+            image = await asyncio.to_thread(self._fetch_expression_image_bytes, character_id, state)
+            if image:
+                ok = await asyncio.to_thread(cache.prepare, key, image)
+                if ok:
+                    if mode == "graphics":
+                        spec["pil"] = cache.get_pil(key)
+                    else:
+                        spec["pixels"] = cache.get_pixels(key)
+        except Exception:
+            logger.opt(exception=True).debug("avatar: expression decode failed")
+        # Post-await staleness re-check on the FULL (character_id, state)
+        # scope: the state can flip mid-decode while streaming, so recompute
+        # it live -- both the session id and the state -- rather than reusing
+        # the `active_session_id` captured before the await, so two tabs
+        # sharing one character can't paint a stale render.
+        current_session_id = getattr(store, "active_session_id", None) if store is not None else None
+        current_state = resolve_console_expression_state(store, current_session_id, react_enabled=react)
+        if (self._current_console_rail_character_id(), current_state) != scope or not self.is_mounted:
+            return
+        self._console_expression_spec_cache[(character_id, state)] = spec
+        # Bound the cache: evict oldest insertion-ordered entries (dicts
+        # preserve insertion order) so a long session visiting many
+        # characters/states doesn't retain unbounded PIL image references.
+        while len(self._console_expression_spec_cache) > _EXPRESSION_SPEC_CACHE_MAX:
+            del self._console_expression_spec_cache[next(iter(self._console_expression_spec_cache))]
+        self._active_character_avatar = spec
+        await self._render_character_avatar_into_section()
+
+    async def _render_character_avatar_into_section(self) -> None:
+        """Re-mount the avatar widget + name into the (already-composed) section.
+
+        Async because Textual `Widget.mount()` returns an `AwaitMount` that
+        must be awaited so the widget is present before the caller returns.
+        `test_refresh_populates_avatar_cache_and_mounts` asserts the mounted
+        DOM state (not just the cached spec dict) right after the refresh
+        awaits this.
+        """
+        try:
+            holder = self.query_one("#console-character-avatar", Container)
+        except QueryError:
+            return  # section not composed (config off / not mounted)
+        try:
+            await holder.remove_children()
+            await holder.mount(self._build_character_avatar_widget(self._active_character_avatar))
+            try:
+                self.query_one("#console-character-name", Static).update(
+                    self._active_character_avatar_name or "No character in this chat"
+                )
+            except QueryError:
+                pass
+        except Exception:
+            # Must never raise: called from `_refresh_active_character_avatar_
+            # if_scope_changed` at two sites outside that method's own
+            # try/except, which is itself invoked unconditionally on every
+            # 0.2s Console sync tick (`_sync_native_console_chat_ui`) -- some
+            # worker dispatch sites run with `exit_on_error=True`, so an
+            # escaping mount failure (e.g. a session-switch/resume tick
+            # racing a transient layout state) could crash the app.
+            logger.opt(exception=True).debug("avatar: render into section failed")
+
+    def _build_character_avatar_widget(self, spec: dict | None) -> Widget:
+        """Build a fresh avatar widget from the cached spec (data, not a widget).
+
+        `spec` is `{character_id, name, mode, pil, pixels}` (T3 fills it via
+        `_refresh_active_character_avatar_if_scope_changed`). With no spec,
+        or a spec whose image decode failed/is pending, render a compact
+        text placeholder. The cache holds this spec (data), not a live
+        widget -- every (re)mount builds a fresh widget from it.
+
+        This method must NEVER raise: it is reached from
+        `_render_character_avatar_into_section`, which runs outside
+        `_refresh_active_character_avatar_if_scope_changed`'s try/except (and
+        that refresh itself must never raise into the 0.2s Console sync
+        poll). Any image-build failure -- graphics mount OR the rich_pixels
+        fallback -- degrades to the same text placeholder used for the
+        no-image case.
+        """
+        if not spec or (spec.get("pil") is None and spec.get("pixels") is None):
+            hint = "no avatar" if (spec and spec.get("character_id") is not None) else "No character in this chat"
+            return Static(hint, id="console-character-avatar-empty")
+        if spec.get("mode") == "graphics" and spec.get("pil") is not None:
+            try:
+                from textual_image.widget import Image as _GraphicsImage
+                widget = _GraphicsImage(spec["pil"], id="console-character-avatar-image")
+                # Explicit fitted cell size, not just max-width/max-height --
+                # see `console_transcript._image_row_widget`'s identical
+                # guard: textual_image's "auto" sizing resolves its render
+                # region from the parent's settled layout, and mounting a
+                # tick before that settles can ask the renderer to scale
+                # into a transient 0-width/height region, which PIL's
+                # resize() raises on.
+                w, h = fit_image_cell_size(spec["pil"].width, spec["pil"].height,
+                                           CHARACTER_AVATAR_COLS, CHARACTER_AVATAR_LINES)
+                widget.styles.width = w
+                widget.styles.height = h
+                return widget
+            except Exception:
+                logger.opt(exception=True).debug("avatar: graphics mount failed")
+        try:
+            pixels = spec.get("pixels")
+            if pixels is None and spec.get("pil") is not None:
+                scaled = spec["pil"].copy()
+                scaled.thumbnail((CHARACTER_AVATAR_COLS, CHARACTER_AVATAR_LINES * 2))
+                from rich_pixels import Pixels
+                pixels = Pixels.from_image(scaled)
+            widget = Static(pixels if pixels is not None else "", id="console-character-avatar-image")
+            widget.styles.max_width = CHARACTER_AVATAR_COLS
+            widget.styles.max_height = CHARACTER_AVATAR_LINES
+            return widget
+        except Exception:
+            logger.opt(exception=True).debug("avatar: pixels build failed")
+            return Static("no avatar", id="console-character-avatar-empty")
+
     def _console_session_id_for_workspace_conversation(
         self,
         conversation_id: str,
@@ -4152,6 +4601,34 @@ class ChatScreen(BaseAppScreen):
         if not card:
             return ""
         return str(card.get("name") or "").strip()
+
+    def _set_console_conversation_row_loading(
+        self, conversation_id: str, loading: bool
+    ) -> None:
+        """Toggle a loading indicator on the matching workspace rail row.
+
+        task-457(b): clicking a not-yet-open persisted conversation awaits
+        ``_resume_console_workspace_conversation`` inline, so a slow or failing
+        open otherwise reads as a dead click. Flagging the pressed row
+        ``loading`` gives immediate feedback until the resume completes (the
+        post-resume rail recompose rebuilds the row without the flag) or errors
+        (the caller clears it in a ``finally``). Matches on the row's
+        ``conversation_id`` attribute and no-ops when the row is no longer
+        mounted, e.g. a recompose already replaced it.
+
+        Args:
+            conversation_id: The row's ``conversation_id`` attribute to match;
+                a blank value is a no-op.
+            loading: ``True`` to show the row's loading spinner, ``False`` to
+                clear it.
+        """
+        target = str(conversation_id or "").strip()
+        if not target:
+            return
+        for row in self.query(".console-workspace-conversation-row"):
+            if str(getattr(row, "conversation_id", "") or "").strip() == target:
+                row.loading = loading
+                return
 
     async def _resume_console_workspace_conversation(
         self,
@@ -7943,7 +8420,7 @@ class ChatScreen(BaseAppScreen):
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
             return
-        composer.can_focus = not blocking
+        composer.can_focus = not blocking and not self._console_composer_collapsed
         if blocking and self._is_descendant_or_self(self.app.focused, composer):
             # Pull keyboard focus off the covered composer so typing can't tunnel.
             try:
@@ -7966,7 +8443,11 @@ class ChatScreen(BaseAppScreen):
             widget.styles.border = CONSOLE_QUIET_FRAME_BORDER
             return widget
         widget.add_class("console-frame-solid")
-        widget.styles.border = CONSOLE_FRAME_BORDER
+        widget.styles.border = (
+            CONSOLE_QUIET_FRAME_BORDER
+            if isinstance(widget, ConsoleComposerBar) and widget.collapsed
+            else CONSOLE_FRAME_BORDER
+        )
         if not top:
             widget.styles.border_top = ("none", CONSOLE_FRAME_COLOR)
         return widget
@@ -8436,6 +8917,7 @@ class ChatScreen(BaseAppScreen):
                     classes="ds-panel destination-workbench",
                 )
             )
+            workspace_grid.styles.min_height = 0
             with workspace_grid:
                 left_handle = ConsoleRailHandle(
                     label=rail_state.left_label,
@@ -8727,9 +9209,39 @@ class ChatScreen(BaseAppScreen):
                             details_tray.styles.min_width = 0
                             yield details_tray
 
+                        # Section 5: Character (avatar of the active character).
+                        if resolve_show_character_avatar(
+                            getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
+                        ):
+                            yield ConsoleRailSectionHeader(
+                                "Character",
+                                section_id="character",
+                                open=rail_state.character_open,
+                                id="console-rail-section-header-character",
+                            )
+                            character_body = Vertical(
+                                id="console-rail-section-body-character",
+                                classes="console-rail-section-body",
+                            )
+                            character_body.styles.height = "auto"
+                            if not rail_state.character_open:
+                                character_body.styles.display = "none"
+                            with character_body:
+                                avatar_holder = Container(id="console-character-avatar")
+                                with avatar_holder:
+                                    yield self._build_character_avatar_widget(
+                                        self._active_character_avatar
+                                    )
+                                yield Static(
+                                    self._active_character_avatar_name
+                                    or "No character in this chat",
+                                    id="console-character-name",
+                                )
+
                 main_column = Vertical(id="console-main-column")
                 main_column.styles.width = "13fr"
                 main_column.styles.min_width = 56
+                main_column.styles.min_height = 0
                 with main_column:
                     transcript_region = self._frame_console_region(
                         Vertical(
@@ -8864,14 +9376,20 @@ class ChatScreen(BaseAppScreen):
                 id="console-status-chips",
                 classes="ds-panel",
             )
-            yield self._frame_console_region(
-                ConsoleComposerBar(
-                    id="console-native-composer",
-                    classes="ds-panel",
-                    collapse_large_pastes=self._console_collapse_large_pastes_enabled(),
-                    paste_collapse_threshold=self._console_paste_collapse_threshold(),
-                )
+            composer = ConsoleComposerBar(
+                id="console-native-composer",
+                classes="ds-panel",
+                collapsed=self._console_composer_collapsed,
+                collapse_large_pastes=self._console_collapse_large_pastes_enabled(),
+                paste_collapse_threshold=self._console_paste_collapse_threshold(),
             )
+            store = self._console_chat_store
+            if store is not None and store.active_session_id is not None:
+                try:
+                    composer.load_draft(store.session_draft(store.active_session_id))
+                except KeyError:
+                    pass
+            yield self._frame_console_region(composer)
             # Console-scoped first-run blocker. Sits on a dedicated overlay
             # layer over the whole Console shell so the workbench (rail,
             # transcript, tabs, composer) is covered/inert while setup is
@@ -10185,6 +10703,13 @@ class ChatScreen(BaseAppScreen):
             # stale frame behind.
             await self._refresh_active_dictionaries_summary_if_scope_changed()
             await self._refresh_active_world_books_summary_if_scope_changed()
+            # P3c Task 4: mirrors the dictionary/world-book scope-guarded
+            # refresh pattern immediately above -- safe to call unconditionally
+            # on every sync tick because the refresh is itself scope-guarded
+            # (no-op when the active character hasn't changed) and never
+            # raises (see `_refresh_active_character_avatar_if_scope_changed`
+            # docstring, T3).
+            await self._refresh_active_character_avatar_if_scope_changed()
             # task-280: hand the control bar a pre-await snapshot (its own
             # pre-existing timing). The rail-VISIBILITY call below must NOT
             # reuse this snapshot: `_sync_console_native_session_tabs` can
@@ -11547,9 +12072,23 @@ class ChatScreen(BaseAppScreen):
         """
         self._console_unknown_send_armed = None
 
+    @on(Button.Pressed, "#console-composer-collapse")
+    def handle_console_composer_collapse(self, event: Button.Pressed) -> None:
+        """Collapse the Console composer into reading mode."""
+        event.stop()
+        self._set_console_composer_collapsed(True)
+
+    @on(Button.Pressed, "#console-composer-expand")
+    def handle_console_composer_expand(self, event: Button.Pressed) -> None:
+        """Expand the Console composer and restore draft focus."""
+        event.stop()
+        self._set_console_composer_collapsed(False)
+
     async def handle_console_stop_generation(self, event: Button.Pressed) -> None:
         """Route the Console stop action through native run control."""
         event.stop()
+        if self._console_setup_modal_blocking():
+            return
         await self._stop_console_generation_from_visible_action()
 
     async def _stop_console_generation_from_visible_action(self) -> None:
@@ -12902,6 +13441,9 @@ class ChatScreen(BaseAppScreen):
     def _focus_console_composer_if_needed(self, *, force: bool = False) -> None:
         """Route typing to the visible Console composer instead of hidden chat input."""
         self._hide_console_legacy_chat_inputs()
+        if self._console_composer_collapsed:
+            self._focus_console_workbench_target("console-native-composer")
+            return
         focused = self.app.focused
         if (
             not force
@@ -12944,7 +13486,15 @@ class ChatScreen(BaseAppScreen):
 
     def _should_capture_console_input(self, composer: ConsoleComposerBar) -> bool:
         """Return True when key/paste input should route to the Console composer."""
+        if composer.collapsed:
+            return False
         focused = self.app.focused
+        if getattr(focused, "id", None) in {
+            "console-composer-collapse",
+            "console-composer-expand",
+            "console-collapsed-stop-generation",
+        }:
+            return False
         if focused is None:
             return True
         return self._is_descendant_or_self(
@@ -13165,6 +13715,8 @@ class ChatScreen(BaseAppScreen):
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
+            return
+        if composer.collapsed:
             return
         screen_x = getattr(event, "screen_x", None)
         screen_y = getattr(event, "screen_y", None)
@@ -14260,7 +14812,10 @@ class ChatScreen(BaseAppScreen):
         if button_id == "console-send-message":
             await self.handle_console_send_message(event)
             return
-        if button_id == "console-stop-generation":
+        if button_id in {
+            "console-stop-generation",
+            "console-collapsed-stop-generation",
+        }:
             await self.handle_console_stop_generation(event)
             return
         if button_id == "console-settings-open":
@@ -14381,6 +14936,20 @@ class ChatScreen(BaseAppScreen):
                     severity="warning",
                 )
                 return
+            # TASK-357: confirm the toggle so a star/unstar is not a silent state
+            # change (the review saw an accidental star go unnoticed).
+            title = str(
+                getattr(event.button, "conversation_title", "") or ""
+            ).splitlines()[0].strip()
+            # notify() interprets Rich markup, so escape the stored title before
+            # interpolating it (a title like "[red]x[/red]" would otherwise inject
+            # styling into the toast) — matches the escape_markup convention used
+            # for the attachment toasts above.
+            title_suffix = f' "{escape_markup(title)}"' if title else ""
+            if star_action == "star":
+                self.app_instance.notify(f"Starred{title_suffix}.")
+            elif star_action == "unstar":
+                self.app_instance.notify(f"Unstarred{title_suffix}.")
             self._sync_console_workspace_context()
             return
         if button_id == "console-workspace-conversations-toggle":
@@ -14469,15 +15038,28 @@ class ChatScreen(BaseAppScreen):
                         severity="warning",
                     )
                     return
-                resumed = await self._resume_console_workspace_conversation(
-                    row_conversation_id,
-                    target_scope_type=(
-                        browser_row.scope_type if browser_row is not None else None
-                    ),
-                    target_workspace_id=(
-                        browser_row.workspace_id if browser_row is not None else None
-                    ),
-                )
+                # task-457(b): the resume is awaited inline and can be slow or
+                # fail; flag the pressed row loading for the duration so it does
+                # not read as a dead click, and always clear it afterwards (a
+                # successful resume also recomposes the rail, which drops the
+                # flag; the finally covers the not-resumable/error return).
+                self._set_console_conversation_row_loading(row_conversation_id, True)
+                try:
+                    resumed = await self._resume_console_workspace_conversation(
+                        row_conversation_id,
+                        target_scope_type=(
+                            browser_row.scope_type if browser_row is not None else None
+                        ),
+                        target_workspace_id=(
+                            browser_row.workspace_id
+                            if browser_row is not None
+                            else None
+                        ),
+                    )
+                finally:
+                    self._set_console_conversation_row_loading(
+                        row_conversation_id, False
+                    )
                 if resumed:
                     await self._refresh_console_conversation_browser_after_selection()
                     return

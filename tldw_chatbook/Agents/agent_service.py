@@ -17,6 +17,7 @@ from typing import Callable, Protocol
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Internal_Prompts.catalog import CATALOG
+from tldw_chatbook.Utils.token_counter import count_tokens_messages, estimate_tokens
 
 from .agent_models import (
     AGENT_KIND_PRIMARY,
@@ -120,6 +121,41 @@ def _response_message(resp) -> dict:
     return message if isinstance(message, dict) else {}
 
 
+def _usage_total_tokens(resp) -> int | None:
+    """Prompt+completion tokens from a provider's OpenAI-shaped usage block,
+    or None when the provider didn't report usage.
+
+    Args:
+        resp: The provider response (dict when the provider reports usage).
+
+    Returns:
+        The total tokens for the call, or None to signal "estimate instead".
+    """
+    try:
+        usage = resp["usage"]
+    except (KeyError, TypeError):
+        return None
+    if not isinstance(usage, dict):
+        return None
+    # `type(x) is int` (not isinstance) rejects bool, which subclasses int;
+    # require positive/non-negative real ints so a malformed usage block can't
+    # corrupt or shrink the accumulated spend the runtime enforces on.
+    total = usage.get("total_tokens")
+    if type(total) is int and total > 0:
+        return total
+    prompt = usage.get("prompt_tokens")
+    completion = usage.get("completion_tokens")
+    if (
+        type(prompt) is int
+        and type(completion) is int
+        and prompt >= 0
+        and completion >= 0
+        and prompt + completion > 0
+    ):
+        return prompt + completion
+    return None
+
+
 class AgentService:
     """Run one agent turn (primary + any sub-agents) and persist it."""
 
@@ -210,8 +246,24 @@ class AgentService:
                 **call_kwargs,
             )
             text = _response_text(resp)
+            tokens = _usage_total_tokens(resp)
+            if tokens is None:
+                # Provider reported no usage -> estimate from sent payload +
+                # response text (native tool_calls JSON is not separately
+                # counted here; the prompt term dominates the per-turn total).
+                # Strip a provider prefix ("openai/gpt-4o-mini" -> "gpt-4o-mini")
+                # so the tokenizer's model-family framing detection matches, and
+                # pass the endpoint as the provider hint for the chars ratio.
+                est_model = (
+                    config.model.split("/", 1)[-1]
+                    if "/" in config.model
+                    else config.model
+                )
+                tokens = count_tokens_messages(
+                    payload, est_model, provider=api_endpoint
+                ) + estimate_tokens(text, est_model, provider=api_endpoint)
             if not native:
-                return ModelTurn(text=text)
+                return ModelTurn(text=text, tokens=tokens)
             message = _response_message(resp)
             # Id-less entries get synthesized ids BEFORE parsing, and the
             # SAME normalized list feeds the assistant echo — the echo and
@@ -229,7 +281,10 @@ class AgentService:
                     "tool_calls": raw_calls,
                 }
             return ModelTurn(
-                text=text, tool_calls=tool_calls, assistant_message=assistant_message
+                text=text,
+                tool_calls=tool_calls,
+                assistant_message=assistant_message,
+                tokens=tokens,
             )
 
         return call_model

@@ -362,6 +362,76 @@ async def test_console_workspace_context_renders_grouped_conversation_browser() 
 
 
 @pytest.mark.asyncio
+async def test_console_conversation_star_uses_recognizable_star_glyphs():
+    """TASK-357: the star toggle must use a recognizable ★/☆ pair, not the
+    near-invisible one-cell '*'/'.' distinction."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+
+        for star in console.query(".console-conversation-star"):
+            label = str(star.label)
+            assert "*" not in label and label.strip() != "."
+            if getattr(star, "starred", False):
+                assert "★" in label
+            else:
+                assert "☆" in label
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_star_press_confirms_the_toggle():
+    """TASK-357: starring must confirm the change ('Starred "<title>"') rather
+    than toggle state silently (the review saw an accidental star go unnoticed)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+
+        star = next(
+            s
+            for s in console.query(".console-conversation-star")
+            if not getattr(s, "starred", False)
+        )
+        # A title with Rich markup must be escaped in the toast, not interpreted.
+        star.conversation_title = "[b]Plan[/b]"
+
+        class _Marks:
+            def is_starred(self, conversation_id):
+                return False
+
+            def star_conversation(self, conversation_id):
+                return None
+
+            def unstar_conversation(self, conversation_id):
+                return None
+
+        console.app_instance.conversation_local_marks_service = _Marks()
+        notes: list[str] = []
+        console.app_instance.notify = lambda message, **kwargs: notes.append(message)
+
+        await console.on_button_pressed(Button.Pressed(star))
+
+        assert any("Starred" in note for note in notes)
+        # The markup is escaped (literal backslash-brackets), never interpreted.
+        assert any(r"\[b]Plan\[/b]" in note for note in notes)
+
+
+@pytest.mark.asyncio
 async def test_console_workspace_context_preserves_duplicate_starred_workspace_row_keys() -> (
     None
 ):
@@ -1789,3 +1859,122 @@ async def test_console_rail_wrap_budget_tracks_terminal_width() -> None:
             name_lines = _first_row_name_lines(console)
             assert all(cell_len(line) <= budget for line in name_lines)
     assert budgets["narrow"] < budgets["wide"]
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_row_loading_toggles_on_matching_row() -> None:
+    """task-457(b): the rail must be able to flag a conversation row as loading
+    (spinner) so a slow open reads as acknowledged, and clear it, matching by
+    conversation id; an unknown id is a no-op that never raises."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(rows=(_browser_row("conv-x", "Saved chat"),))
+        )
+        await pilot.pause()
+
+        row = console.query_one("#console-workspace-conversation-0", Button)
+        assert getattr(row, "conversation_id", "") == "conv-x"
+        assert row.loading is False
+
+        console._set_console_conversation_row_loading("conv-x", True)
+        assert row.loading is True
+
+        console._set_console_conversation_row_loading("conv-x", False)
+        assert row.loading is False
+
+        # Unknown id must not raise or touch the row.
+        console._set_console_conversation_row_loading("nope", True)
+        assert row.loading is False
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_row_click_shows_loading_until_resume_finishes() -> None:
+    """task-457(b): clicking a not-yet-open persisted conversation awaits the
+    resume inline; the pressed row must show a loading acknowledgment for the
+    duration and clear it once the resume settles, so a slow/failed open no
+    longer reads as a dead click."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(rows=(_browser_row("conv-y", "Saved chat"),))
+        )
+        await pilot.pause()
+
+        row = console.query_one("#console-workspace-conversation-0", Button)
+        assert getattr(row, "conversation_id", "") == "conv-y"
+
+        loading_during_resume: list[bool] = []
+
+        async def _fake_resume(conversation_id, **kwargs):
+            # The pressed row must already read as loading before the slow
+            # resume work runs, and match the clicked conversation.
+            assert conversation_id == "conv-y"
+            loading_during_resume.append(
+                console.query_one(
+                    "#console-workspace-conversation-0", Button
+                ).loading
+            )
+            return False
+
+        console._resume_console_workspace_conversation = _fake_resume
+
+        await console.on_button_pressed(Button.Pressed(row))
+
+        assert loading_during_resume == [True]
+        # Once the resume settles (here: not resumable) the row is not left
+        # stuck spinning.
+        assert (
+            console.query_one("#console-workspace-conversation-0", Button).loading
+            is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_row_loading_cleared_when_resume_raises() -> None:
+    """task-457(b): if the inline resume RAISES, the `finally` must still clear
+    the row's loading spinner so a failed open never leaves it stuck (the error
+    itself still propagates out of the handler)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(rows=(_browser_row("conv-z", "Saved chat"),))
+        )
+        await pilot.pause()
+
+        row = console.query_one("#console-workspace-conversation-0", Button)
+        assert getattr(row, "conversation_id", "") == "conv-z"
+
+        async def _raising_resume(conversation_id, **kwargs):
+            raise RuntimeError("resume boom")
+
+        console._resume_console_workspace_conversation = _raising_resume
+
+        with pytest.raises(RuntimeError):
+            await console.on_button_pressed(Button.Pressed(row))
+
+        assert (
+            console.query_one("#console-workspace-conversation-0", Button).loading
+            is False
+        )

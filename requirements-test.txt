@@ -35,6 +35,7 @@ defusedxml
 ebooklib
 html2text
 lxml
+markdown
 markdownify
 beautifulsoup4
 anytree

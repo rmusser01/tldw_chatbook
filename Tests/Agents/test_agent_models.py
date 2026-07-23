@@ -118,6 +118,30 @@ def test_models_construct_and_are_frozen_where_stated():
         assert frozen.__dataclass_params__.frozen is True
 
 
+def test_modelturn_tokens_defaults_zero():
+    from tldw_chatbook.Agents.agent_models import ModelTurn
+    assert ModelTurn(text="hi").tokens == 0
+    assert ModelTurn(text="hi", tokens=42).tokens == 42
+
+
+def test_runbudget_max_total_tokens_defaults_zero():
+    from tldw_chatbook.Agents.agent_models import RunBudget
+    assert RunBudget().max_total_tokens == 0
+    assert RunBudget(max_total_tokens=5000).max_total_tokens == 5000
+
+
+def test_runoutcome_total_tokens_defaults_zero():
+    from tldw_chatbook.Agents.agent_models import RunOutcome, RUN_DONE
+    assert RunOutcome(RUN_DONE, []).total_tokens == 0
+    assert RunOutcome(RUN_DONE, [], total_tokens=123).total_tokens == 123
+
+
+def test_clamp_child_budget_preserves_max_total_tokens():
+    from tldw_chatbook.Agents.agent_models import RunBudget, clamp_child_budget
+    child = RunBudget(max_total_tokens=7000)
+    assert clamp_child_budget(child, 10.0).max_total_tokens == 7000
+
+
 def test_pure_module_has_no_forbidden_imports():
     import tldw_chatbook.Agents.agent_models as mod
 

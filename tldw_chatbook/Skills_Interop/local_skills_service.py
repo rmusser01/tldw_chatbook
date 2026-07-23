@@ -154,6 +154,14 @@ class LocalSkillsService:
         temp_path.replace(path)
 
     @staticmethod
+    def _write_bytes_atomic(path: Path, data: bytes) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = path.with_name(f"{path.name}.tmp")
+        with temp_path.open("wb") as handle:
+            handle.write(data)
+        temp_path.replace(path)
+
+    @staticmethod
     def _parse_front_matter(content: str) -> tuple[dict[str, Any], str]:
         match = _FRONT_MATTER_PATTERN.match(content)
         if match is None:
@@ -389,20 +397,96 @@ class LocalSkillsService:
         return base
 
     @staticmethod
-    def _read_supporting_files(skill_dir: Path) -> dict[str, str] | None:
+    def _iter_bundle_files(skill_dir: Path):
+        """Yield (relative_posix, abs_path) for every non-junk file, junk dirs pruned.
+
+        Skips the top-level ``SKILL.md`` body by comparing the POSIX relative
+        path to exactly ``"SKILL.md"`` -- not by a fragile ``Path(root) ==
+        skill_dir`` comparison. A nested file literally named ``SKILL.md``
+        (e.g. ``references/SKILL.md``) is therefore NOT skipped here; it is
+        later rejected by ``validate_supporting_file_path``, which is the
+        correct handling for a shadow body file.
+        """
+        from .skill_trust_scanner import SUPPORTING_JUNK_DIRS, _is_junk  # reuse
+        import os
+        from pathlib import PurePosixPath
+
         if not skill_dir.exists():
-            return None
-        supporting_files: dict[str, str] = {}
-        for path in sorted(skill_dir.iterdir(), key=lambda item: item.name):
-            if not path.is_file() or path.name == _SKILL_FILENAME:
-                continue
-            supporting_files[path.name] = (
-                LocalSkillsService._read_text_preserving_newlines(
-                    path,
-                    base_dir=skill_dir,
+            return
+        for root, dirs, files in os.walk(skill_dir, followlinks=False):
+            dirs[:] = [d for d in dirs if d not in SUPPORTING_JUNK_DIRS]
+            for name in files:
+                if _is_junk(name):
+                    continue
+                abs_path = Path(root) / name
+                relative_path = str(
+                    PurePosixPath(abs_path.relative_to(skill_dir).as_posix())
                 )
-            )
+                if relative_path == _SKILL_FILENAME:
+                    continue
+                yield relative_path, abs_path
+
+    @staticmethod
+    def _read_supporting_files(skill_dir: Path) -> dict[str, str] | None:
+        from ..tldw_api.skills_schemas import validate_supporting_file_path
+
+        supporting_files: dict[str, str] = {}
+        for relative_path, path in sorted(
+            LocalSkillsService._iter_bundle_files(skill_dir), key=lambda x: x[0]
+        ):
+            # Skip symlinks and non-regular files (FIFOs/sockets/device nodes):
+            # opening a FIFO with no writer would block read_bytes() forever.
+            # Mirrors the guard in _read_bundle_manifest.
+            if path.is_symlink() or not path.is_file():
+                continue
+            try:
+                validate_supporting_file_path(relative_path)
+            except ValueError:
+                continue
+            try:
+                raw = path.read_bytes()
+            except OSError:
+                continue
+            if b"\x00" in raw:
+                continue
+            try:
+                supporting_files[relative_path] = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                continue  # binary — excluded from the text view, never raises
         return supporting_files or None
+
+    @staticmethod
+    def _read_bundle_manifest(skill_dir: Path) -> list[dict[str, Any]] | None:
+        import stat
+
+        from ..tldw_api.skills_schemas import validate_supporting_file_path
+
+        manifest: list[dict[str, Any]] = []
+        for relative_path, path in sorted(
+            LocalSkillsService._iter_bundle_files(skill_dir), key=lambda x: x[0]
+        ):
+            if path.is_symlink() or not path.is_file():
+                continue
+            try:
+                validate_supporting_file_path(relative_path)
+                raw = path.read_bytes()
+            except (ValueError, OSError):
+                continue
+            is_text = b"\x00" not in raw
+            if is_text:
+                try:
+                    raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    is_text = False
+            manifest.append(
+                {
+                    "path": relative_path,
+                    "size": len(raw),
+                    "executable": bool(path.stat().st_mode & stat.S_IXUSR),
+                    "is_text": is_text,
+                }
+            )
+        return manifest or None
 
     @staticmethod
     def _read_text_preserving_newlines(
@@ -432,6 +516,7 @@ class LocalSkillsService:
             **record,
             content=content,
             supporting_files=self._read_supporting_files(skill_dir),
+            bundle_files=self._read_bundle_manifest(skill_dir),
         )
         payload = self._dump(response)
         payload.update(self._trust_fields_for_record(record))
@@ -560,10 +645,16 @@ class LocalSkillsService:
     def _apply_supporting_files(
         skill_dir: Path, supporting_files: dict[str, str | None] | None
     ) -> None:
+        from ..tldw_api.skills_schemas import validate_supporting_file_path
+
         if supporting_files is None:
             return
+        base = skill_dir.resolve()
         for filename, content in supporting_files.items():
+            validate_supporting_file_path(filename)  # raises on traversal/bad name
             path = skill_dir / filename
+            if base not in path.resolve().parents and path.resolve() != base:
+                raise ValueError(f"unsafe supporting file path: {filename}")
             if content is None:
                 if path.exists():
                     path.unlink()
@@ -587,17 +678,52 @@ class LocalSkillsService:
 
     @staticmethod
     def _validate_archive_member(name: str) -> str:
-        posix_path = PurePosixPath(name)
-        if (
-            posix_path.is_absolute()
-            or ".." in posix_path.parts
-            or len(posix_path.parts) != 1
-        ):
-            raise ValueError(f"local_skill_invalid_archive:{name}")
-        filename = posix_path.name
-        if not filename:
-            raise ValueError(f"local_skill_invalid_archive:{name}")
-        return filename
+        from ..tldw_api.skills_schemas import validate_supporting_file_path
+
+        posix = PurePosixPath(name)
+        if str(posix) == _SKILL_FILENAME:
+            return _SKILL_FILENAME
+        return validate_supporting_file_path(str(posix))
+
+    @staticmethod
+    def _read_zip_member_bounded(
+        archive: "zipfile.ZipFile",
+        member: "zipfile.ZipInfo",
+        member_name: str,
+        max_bytes: int,
+    ) -> bytes:
+        """Read a zip member with a bounded, streaming decompress.
+
+        Pulls fixed-size chunks via ``archive.open(member)`` so the transient
+        decompressor allocation is capped at ~one chunk regardless of the
+        member's (possibly forged/understated) declared ``file_size`` -- unlike
+        ``archive.read(member)``, which decompresses the whole member into RAM
+        before truncating output, letting a high-ratio DEFLATE bomb spike memory
+        to hundreds of MB from a few-hundred-KB upload. Aborts the moment
+        cumulative bytes exceed ``max_bytes``; a corrupt/forged member (CRC
+        mismatch, bad deflate stream) surfaces as the standard ``ValueError``
+        contract, never a raw ``zipfile.BadZipFile``.
+        """
+        import zlib
+
+        chunk_size = 65536
+        buffer = bytearray()
+        try:
+            with archive.open(member) as handle:
+                while True:
+                    chunk = handle.read(chunk_size)
+                    if not chunk:
+                        break
+                    buffer.extend(chunk)
+                    if len(buffer) > max_bytes:
+                        raise ValueError(
+                            f"local_skill_file_too_large:{member_name}"
+                        )
+        except (zipfile.BadZipFile, zlib.error, OSError) as exc:
+            raise ValueError(
+                f"local_skill_invalid_archive:corrupt_member:{member_name}"
+            ) from exc
+        return bytes(buffer)
 
     async def list_skills(
         self,
@@ -824,6 +950,105 @@ class LocalSkillsService:
             )
             return self._response_for_record(record)
 
+    async def import_skill_directory(
+        self,
+        source_dir: Path,
+        *,
+        name: str,
+        overwrite: bool = False,
+        trust_approved: bool = False,
+    ) -> dict[str, Any]:
+        import os
+        import stat
+        from pathlib import PurePosixPath
+
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillImportRequest
+        from ..tldw_api.skills_schemas import (
+            MAX_SUPPORTING_FILE_BYTES,
+            MAX_SUPPORTING_FILES_COUNT,
+            MAX_SUPPORTING_FILES_TOTAL_BYTES,
+            _normalize_skill_name,
+            validate_supporting_file_path,
+        )
+
+        self._enforce("skills.import.launch.local")
+        skill_name = _normalize_skill_name(name)
+        source_dir = Path(source_dir)
+        body = source_dir / _SKILL_FILENAME
+        # A symlinked SKILL.md would read its (out-of-bundle) target into the
+        # skill body -- reject it as an invalid body, not follow it.
+        if body.is_symlink() or not body.is_file():
+            raise ValueError("local_skill_missing_skill_md")
+        content = body.read_text(encoding="utf-8", errors="strict")
+        # Enforce the same body-length bounds ``import_skill`` gets for free from
+        # ``SkillImportRequest`` -- this path builds the record directly rather
+        # than routing content through that model, so the check is explicit here.
+        SkillImportRequest(name=skill_name, content=content)
+        # Collect the faithful file set (junk pruned, symlinks skipped, caps enforced).
+        files: list[tuple[str, Path]] = []
+        total = 0
+        for relative_path, abs_path in self._iter_bundle_files(source_dir):
+            # Skip symlinks and non-regular files (FIFOs/sockets/device nodes):
+            # opening a FIFO with no writer would block read_bytes() forever --
+            # and this runs under self._lock, so it would wedge the whole store.
+            # Mirrors the guard in _read_supporting_files/_read_bundle_manifest.
+            if abs_path.is_symlink() or not abs_path.is_file():
+                continue  # skip-not-fail
+            try:
+                validate_supporting_file_path(relative_path)
+            except ValueError:
+                continue
+            size = abs_path.stat().st_size
+            if size > MAX_SUPPORTING_FILE_BYTES:
+                raise ValueError(f"local_skill_file_too_large:{relative_path}")
+            total += size
+            files.append((relative_path, abs_path))
+        if len(files) > MAX_SUPPORTING_FILES_COUNT:
+            raise ValueError("local_skill_too_many_files")
+        if total > MAX_SUPPORTING_FILES_TOTAL_BYTES:
+            raise ValueError("local_skill_bundle_too_large")
+        async with self._lock:
+            records = self._load_index()
+            if skill_name in records and not overwrite:
+                raise ValueError(f"local_skill_exists:{skill_name}")
+            skill_dir = self._skill_dir(skill_name)
+            if overwrite and skill_dir.exists():
+                shutil.rmtree(skill_dir)
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            existing = records.get(skill_name) if overwrite else None
+            self._write_text_atomic(skill_dir / _SKILL_FILENAME, content)
+            # Belt-and-braces containment, mirroring the zip-import path's own
+            # resolve-and-contain check (~:1127): every relative_path here was
+            # already collected via _iter_bundle_files + validate_supporting_
+            # file_path above, so this should never actually trip -- but a
+            # filesystem write is cheap insurance to assert against, not a
+            # place to trust a single upstream validation layer.
+            base = skill_dir.resolve()
+            for relative_path, abs_path in files:
+                dest = skill_dir / PurePosixPath(relative_path)
+                if base not in dest.resolve().parents:
+                    raise ValueError(f"local_skill_invalid_bundle_path:{relative_path}")
+                self._write_bytes_atomic(dest, abs_path.read_bytes())
+                if abs_path.stat().st_mode & stat.S_IXUSR:
+                    # Trust only the owner-exec fingerprint; adding 0o755 would
+                    # widen a non-world-readable source to world-r/x.
+                    os.chmod(dest, dest.stat().st_mode | 0o100)
+            record = self._metadata_from_content(
+                name=skill_name,
+                content=content,
+                skill_dir=skill_dir,
+                existing=existing,
+            )
+            if existing is not None:
+                record["version"] = int(existing.get("version", 0)) + 1
+            records[skill_name] = record
+            self._save_index(records)
+            self._trust_after_approved_mutation(
+                skill_name, trust_approved=trust_approved
+            )
+            return self._response_for_record(record)
+
     async def import_skill_file(
         self,
         file_content: bytes,
@@ -846,43 +1071,126 @@ class LocalSkillsService:
                 trust_approved=trust_approved,
             )
 
-        supporting_files: dict[str, str] = {}
+        import stat as _stat
+        from .skill_trust_scanner import SUPPORTING_JUNK_DIRS, _is_junk
+        from ..tldw_api.skills_schemas import (
+            MAX_SUPPORTING_FILES_COUNT, MAX_SUPPORTING_FILE_BYTES,
+            MAX_SUPPORTING_FILES_TOTAL_BYTES,
+        )
+        skill_name = self._derive_name_from_filename(filename)
+        # Compute the (not-yet-created) destination dir up front so every member
+        # can be fully validated -- caps, zip-slip containment, decodability --
+        # BEFORE import_skill creates SKILL.md + an index entry. A rejection then
+        # leaves no partial trust-pending skill behind (atomicity).
+        skill_dir = self._skill_dir(skill_name)
+        base = skill_dir.resolve()
+        members: list[tuple[Path, bytes, bool]] = []
         skill_content: str | None = None
+        total = 0
+        count = 0
+        seen_lower: set[str] = set()
         with zipfile.ZipFile(io.BytesIO(file_content), "r") as archive:
             for member in archive.infolist():
                 if member.is_dir():
                     continue
-                member_name = self._validate_archive_member(member.filename)
-                data = archive.read(member).decode("utf-8")
+                mode = (member.external_attr >> 16) & 0xFFFF
+                if _stat.S_ISLNK(mode):
+                    continue                       # symlink member: skip-not-fail
+                parts = PurePosixPath(member.filename).parts
+                if not parts:
+                    continue                       # empty/all-slash member name: skip-not-fail
+                if any(p in SUPPORTING_JUNK_DIRS for p in parts) or _is_junk(parts[-1]):
+                    continue                       # junk pruned
+                member_name = self._validate_archive_member(member.filename)  # raises on zip-slip
+                lower = member_name.lower()
+                if lower in seen_lower:             # case-fold collision on a case-insensitive FS
+                    raise ValueError(f"local_skill_invalid_archive:case_collision:{member_name}")
+                seen_lower.add(lower)
+                # DoS guard, fast path: reject an obviously-oversized DECLARED
+                # size (free from the zip header) without even opening the
+                # member. The real defense is the bounded streaming read below
+                # -- a forged/understated header cannot slip past it because it
+                # aborts on CUMULATIVE bytes actually read, not the declared size.
+                if member.file_size > MAX_SUPPORTING_FILE_BYTES:
+                    raise ValueError(f"local_skill_file_too_large:{member_name}")
+                total += member.file_size
+                if total > MAX_SUPPORTING_FILES_TOTAL_BYTES:     # early exit before more reads
+                    raise ValueError("local_skill_bundle_too_large")
                 if member_name == _SKILL_FILENAME:
-                    skill_content = data
-                else:
-                    supporting_files[member_name] = data
+                    data = self._read_zip_member_bounded(
+                        archive, member, member_name, MAX_SUPPORTING_FILE_BYTES
+                    )
+                    try:
+                        skill_content = data.decode("utf-8")
+                    except UnicodeDecodeError as exc:
+                        raise ValueError(
+                            f"local_skill_invalid_archive:non_utf8_body:{member_name}"
+                        ) from exc
+                    continue
+                count += 1
+                if count > MAX_SUPPORTING_FILES_COUNT:           # early exit before more reads
+                    raise ValueError("local_skill_too_many_files")
+                # Zip-slip containment resolved against the computed dest BEFORE
+                # anything is created on disk.
+                dest = skill_dir / PurePosixPath(member_name)
+                if base not in dest.resolve().parents:
+                    raise ValueError(f"local_skill_invalid_archive:{member_name}")
+                data = self._read_zip_member_bounded(
+                    archive, member, member_name, MAX_SUPPORTING_FILE_BYTES
+                )
+                members.append((dest, data, bool(mode & 0o111)))
         if skill_content is None:
             raise ValueError("local_skill_invalid_archive:missing_skill_md")
-        return await self.import_skill(
-            name=self._derive_name_from_filename(filename),
-            content=skill_content,
-            supporting_files=supporting_files or None,
-            overwrite=overwrite,
-            trust_approved=trust_approved,
+        await self.import_skill(
+            name=skill_name, content=skill_content, overwrite=overwrite,
+            trust_approved=False,   # re-trusted below only if approved
         )
+        import os as _os
+        for dest, data, executable in members:
+            # Every dest was contained-checked during collection; write only now.
+            self._write_bytes_atomic(dest, data)
+            if executable:
+                # Trust only the owner-exec fingerprint; adding 0o755 would
+                # widen a non-world-readable source to world-r/x.
+                _os.chmod(dest, dest.stat().st_mode | 0o100)
+        # Re-derive trust state now that the full bundle is on disk.
+        self._trust_after_approved_mutation(skill_name, trust_approved=trust_approved)
+        return self._response_for_record(self._load_index()[skill_name])
 
     async def export_skill(self, skill_name: str) -> Any:
+        import stat
+
+        from ..tldw_api.skills_schemas import _normalize_skill_name
+
         self._enforce("skills.export.launch.local")
-        skill = await self.get_skill(skill_name)
+        normalized = _normalize_skill_name(skill_name)
+        skill_dir = self._skill_dir(normalized)
         archive_buffer = io.BytesIO()
         with zipfile.ZipFile(
             archive_buffer, "w", compression=zipfile.ZIP_DEFLATED
         ) as archive:
-            archive.writestr(_SKILL_FILENAME, skill["content"])
-            for filename, content in sorted(
-                (skill.get("supporting_files") or {}).items()
+            body = skill_dir / _SKILL_FILENAME
+            # Same guard every other body read in this service already has
+            # (e.g. import_skill_directory's own check): a corrupted store
+            # (index entry present, on-disk body missing) must fail with a
+            # domain error, not a raw FileNotFoundError -- and a symlinked
+            # body must be rejected, not followed, to avoid archiving
+            # content from outside the bundle.
+            if body.is_symlink() or not body.is_file():
+                raise ValueError(f"local_skill_missing_skill_md:{normalized}")
+            archive.writestr(_SKILL_FILENAME, body.read_bytes())
+            for relative_path, path in sorted(
+                self._iter_bundle_files(skill_dir), key=lambda x: x[0]
             ):
-                archive.writestr(filename, content)
+                if path.is_symlink() or not path.is_file():
+                    continue
+                info = zipfile.ZipInfo(relative_path)
+                mode = path.stat().st_mode
+                info.external_attr = (mode & 0xFFFF) << 16
+                archive.writestr(info, path.read_bytes())
         return {
             "content": archive_buffer.getvalue(),
-            "filename": f"{skill['name']}.zip",
+            "filename": f"{normalized}.zip",
             "content_type": "application/zip",
         }
 

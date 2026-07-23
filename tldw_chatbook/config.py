@@ -81,7 +81,6 @@ DEFAULT_RAG_SEARCH_CONFIG = {
     "vector_top_k": 10,
     "web_vector_top_k": 10,
     "llm_context_document_limit": 10,
-    "chat_context_limit": 10,
     # New comprehensive RAG settings
     "retriever": {
         "fts_top_k": 10,
@@ -2473,7 +2472,7 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     [api_settings.llama_cpp] # Matches key in [providers]
     api_key_env_var = "LLAMA_CPP_API_KEY" # If you set one on the server
     # api_key = ""
-    api_url = "http://localhost:8080/completion" # llama.cpp /completion endpoint
+    api_url = "http://localhost:8080" # llama.cpp server root; the OpenAI-compatible /v1/chat/completions path is appended automatically
     model = "" # Often not needed if server serves one model
     temperature = 0.7
     top_p = 0.95
@@ -2740,6 +2739,8 @@ max_tabs = 10  # Maximum number of chat tabs allowed
 [chat.images]
 enabled = true
 show_attach_button = true  # Show/hide the attach file button in chat
+# show_character_avatar = true  # show the active character's avatar in the Console left rail
+# react_character_expressions = true  # swap the Console character avatar among idle/thinking/speaking/error as it generates a reply (requires per-state images on the character); set false to keep a static avatar
 default_render_mode = "auto"  # auto, pixels, regular
 max_size_mb = 10.0
 auto_resize = true
@@ -3031,7 +3032,6 @@ fts_top_k = 10
 vector_top_k = 10
 web_vector_top_k = 10
 llm_context_document_limit = 10
-chat_context_limit = 10
 
 
 # --- Model Capabilities Configuration ---
