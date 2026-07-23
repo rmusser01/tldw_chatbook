@@ -13436,7 +13436,18 @@ class ChatScreen(BaseAppScreen):
         80x24 default terminal). Toggling `-console-compact` hides the ~5-row
         header banner (title/purpose/Ready) so transcript+composer stay
         visible; the setup-card/onboarding overlay is unaffected.
+
+        TASK-361: a live resize also dismisses any hover tooltip. The review saw
+        a nav-tab tooltip ("Open the live agent Console.") stick over the header
+        across reflows — a mounted overlay that survived the repaint. Clearing it
+        on resize removes that stale-overlay class of artifact. (The pane reflow
+        itself converges to the cold-start layout on a native resize; the
+        divergence in the review was specific to textual-serve's browser-viewport
+        resize path at the pre-TASK-346 state and is regression-locked below.)
         """
+        clear_tooltip = getattr(self, "_clear_tooltip", None)
+        if callable(clear_tooltip):
+            clear_tooltip()
         try:
             shell = self.query_one("#console-shell")
         except QueryError:
