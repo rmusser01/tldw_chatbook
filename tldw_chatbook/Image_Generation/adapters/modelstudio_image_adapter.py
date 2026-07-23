@@ -393,7 +393,9 @@ class ModelStudioImageAdapter:
         allowlist = list(self._ALLOWED_IMAGE_HOST_ALLOWLIST)
         if base_host:
             allowlist.append(base_host)
-        policy_result = evaluate_url_policy(raw_url)
+        policy_result = evaluate_url_policy(
+            raw_url, allowed_hosts={host.lower() for host in allowlist}
+        )
         if policy_result.allowed:
             return True
         logger.warning(

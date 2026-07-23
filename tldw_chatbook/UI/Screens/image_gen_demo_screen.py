@@ -43,16 +43,27 @@ class ImageGenDemoScreen(BaseAppScreen):
                 )
                 for entry in list_image_models_for_catalog()
             ]
-            select_options = opts or [("(no backends enabled)", "")]
-            # Pre-select the first entry so the panel is generate-ready
-            # without an extra manual pick -- this is a one-backend-at-a-time
-            # proof surface, not a form the user is expected to leave blank.
-            yield Select(
-                select_options,
-                id="imagegen-backend",
-                value=select_options[0][1],
-                allow_blank=False,
-            )
+            if opts:
+                # Pre-select the first entry so the panel is generate-ready
+                # without an extra manual pick -- a one-backend-at-a-time proof
+                # surface, not a form the user is expected to leave blank.
+                yield Select(
+                    opts,
+                    id="imagegen-backend",
+                    value=opts[0][1],
+                    allow_blank=False,
+                )
+            else:
+                # No enabled backends: a placeholder with a sentinel value.
+                # Generate no-ops with a clear message (see on_button_pressed),
+                # rather than the old contradictory blank-value/allow_blank=False
+                # state that guaranteed a failed generation.
+                yield Select(
+                    [("(no backends enabled)", "none")],
+                    id="imagegen-backend",
+                    value="none",
+                    allow_blank=False,
+                )
             yield TextArea(id="imagegen-prompt")
             yield TextArea(id="imagegen-negative")
             yield Input(placeholder="seed (blank = -1)", id="imagegen-seed")
@@ -67,6 +78,11 @@ class ImageGenDemoScreen(BaseAppScreen):
         # Read all inputs on the main (UI) thread, then hand them to the
         # worker -- query_one() is not thread-safe against the DOM.
         backend = self.query_one("#imagegen-backend", Select).value
+        if not backend or backend == "none":
+            self._set_status(
+                "No backend enabled — set [image_generation].enabled_backends in config."
+            )
+            return
         prompt = self.query_one("#imagegen-prompt", TextArea).text
         negative = self.query_one("#imagegen-negative", TextArea).text or None
         seed_raw = self.query_one("#imagegen-seed", Input).value.strip()
@@ -74,8 +90,13 @@ class ImageGenDemoScreen(BaseAppScreen):
             seed = int(seed_raw)
         except ValueError:
             seed = -1
-        self.query_one("#imagegen-status", Static).update("Generating…")
+        self._set_status("Generating…")
         self._generate(backend, prompt, negative, seed)
+
+    def _set_status(self, message: str) -> None:
+        """Update the status line. UI-thread only (call via ``call_from_thread``
+        from a worker)."""
+        self.query_one("#imagegen-status", Static).update(message)
 
     @work(thread=True, exclusive=True, group="imagegen-demo")
     def _generate(self, backend, prompt, negative, seed) -> None:
@@ -95,9 +116,9 @@ class ImageGenDemoScreen(BaseAppScreen):
             self.app.call_from_thread(self._render_result, res, req)
         except Exception as exc:  # surface any failure (incl. render/decode) as status
             logger.warning("Image Gen (dev) generation failed: {}", exc)
-            self.app.call_from_thread(
-                self.query_one("#imagegen-status", Static).update, f"Error: {exc}"
-            )
+            # Marshal the DOM write onto the UI thread -- query_one() must not
+            # run on the worker thread.
+            self.app.call_from_thread(self._set_status, f"Error: {exc}")
 
     def _render_result(self, res, req) -> None:
         # Low-level render (rich-pixels), decoupled from the Console

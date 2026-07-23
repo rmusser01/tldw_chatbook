@@ -23,6 +23,7 @@ def test_evaluate_url_policy_allowlist(hc):
 def test_fetch_json_parses(monkeypatch, hc):
     class FakeResp:
         status_code = 200
+        is_redirect = False
         def json(self): return {"ok": True}
         def raise_for_status(self): pass
     class FakeClient:
@@ -32,3 +33,34 @@ def test_fetch_json_parses(monkeypatch, hc):
         def request(self, *a, **k): return FakeResp()
     monkeypatch.setattr(hc.httpx, "Client", FakeClient)
     assert hc.fetch_json("POST", "http://127.0.0.1:7801/API/x", json={"a": 1}) == {"ok": True}
+
+
+def test_fetch_json_revalidates_redirect_hop(monkeypatch, hc):
+    # A redirect to a disallowed scheme must be re-validated and rejected,
+    # not blindly followed (egress guard must run on every hop).
+    from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
+
+    class RedirResp:
+        is_redirect = True
+        headers = {"location": "file:///etc/passwd"}
+        url = "http://127.0.0.1:7801/x"
+        def raise_for_status(self): pass
+        def json(self): return {}
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def request(self, *a, **k): return RedirResp()
+    monkeypatch.setattr(hc.httpx, "Client", FakeClient)
+    with pytest.raises(ImageGenerationError):
+        hc.fetch_json("GET", "http://127.0.0.1:7801/x")
+
+
+def test_fetch_json_defaults_no_autofollow(hc):
+    # create_client must not auto-follow redirects by default (the manual
+    # validated loop in fetch_json handles them instead).
+    client = hc.create_client()
+    try:
+        assert client.follow_redirects is False
+    finally:
+        client.close()
