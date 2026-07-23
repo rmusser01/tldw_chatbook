@@ -441,3 +441,140 @@ def test_requests_sink_cap_still_enforced():
         guarded_fetch_requests(
             "https://example.com/file", session=sess, max_bytes=1024, sink=io.BytesIO()
         )
+
+
+# ---------------------------------------------------------------------------
+# Guarded aiohttp helper + Playwright chain validation
+# ---------------------------------------------------------------------------
+from tldw_chatbook.Utils.egress import (
+    collect_navigation_chain,
+    guarded_fetch_aiohttp,
+    validate_navigation_chain,
+    validate_navigation_chain_async,
+)
+
+
+class _FakeAiohttpContent:
+    def __init__(self, body):
+        self._body = body
+
+    async def iter_chunked(self, size):
+        for i in range(0, len(self._body), size):
+            yield self._body[i : i + size]
+
+
+class _FakeAiohttpResponse:
+    def __init__(self, status, headers, body, url):
+        self.status = status
+        self.headers = headers
+        self.content = _FakeAiohttpContent(body)
+        self.url = url
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def raise_for_status(self):
+        if self.status >= 400:
+            raise RuntimeError(f"HTTP {self.status}")
+
+
+class _FakeAiohttpSession:
+    def __init__(self, routes):
+        self.routes = routes
+        self.seen = []
+
+    def get(self, url, **kwargs):
+        self.seen.append((url, kwargs))
+        for prefix, (status, headers, body) in self.routes.items():
+            if url.startswith(prefix):
+                return _FakeAiohttpResponse(status, headers, body, url)
+        return _FakeAiohttpResponse(404, {}, b"", url)
+
+
+@pytest.mark.asyncio
+async def test_aiohttp_fetch_and_redirect_revalidation(monkeypatch):
+    def fake_resolve_ok(host):
+        return ["10.9.9.9"] if host == "intra.example" else ["93.184.216.34"]
+
+    async def fake_async(host):
+        return fake_resolve_ok(host)
+
+    monkeypatch.setattr(egress, "_resolve_async", fake_async)
+    session = _FakeAiohttpSession(
+        {"https://example.com/": (302, {"Location": "http://intra.example/"}, b"")}
+    )
+    with pytest.raises(EgressBlockedError):
+        await guarded_fetch_aiohttp(
+            "https://example.com/r", session=session, max_bytes=64
+        )
+    assert all("intra.example" not in u for u, _ in session.seen)
+
+
+@pytest.mark.asyncio
+async def test_aiohttp_basic_fetch_capped():
+    session = _FakeAiohttpSession(
+        {"https://example.com/": (200, {"Content-Type": "text/html"}, b"page")}
+    )
+    resp = await guarded_fetch_aiohttp(
+        "https://example.com/x", session=session, max_bytes=64
+    )
+    assert resp.status_code == 200 and resp.content == b"page"
+    # allow_redirects must be forced off (manual loop owns redirects)
+    assert session.seen[0][1].get("allow_redirects") is False
+
+    big = _FakeAiohttpSession({"https://example.com/": (200, {}, b"q" * 4096)})
+    with pytest.raises(EgressFetchError, match="exceeds"):
+        await guarded_fetch_aiohttp("https://example.com/b", session=big, max_bytes=1024)
+
+
+class _FakePlaywrightRequest:
+    def __init__(self, url, redirected_from=None):
+        self.url = url
+        self.redirected_from = redirected_from
+
+
+class _FakePlaywrightResponse:
+    def __init__(self, request):
+        self.request = request
+
+
+def test_collect_navigation_chain_walks_redirects():
+    first = _FakePlaywrightRequest("https://a.example/start")
+    second = _FakePlaywrightRequest("https://a.example/hop", redirected_from=first)
+    final = _FakePlaywrightRequest("https://b.example/end", redirected_from=second)
+    chain = collect_navigation_chain(_FakePlaywrightResponse(final))
+    assert chain == [
+        "https://a.example/start",
+        "https://a.example/hop",
+        "https://b.example/end",
+    ]
+
+
+def test_validate_navigation_chain_blocks_internal_hop(monkeypatch):
+    def fake_resolve(host):
+        return ["169.254.169.254"] if host == "meta.example" else ["93.184.216.34"]
+
+    monkeypatch.setattr(egress, "_resolve", fake_resolve)
+    with pytest.raises(EgressBlockedError):
+        validate_navigation_chain(
+            ["https://ok.example/", "http://meta.example/x"]
+        )
+    validate_navigation_chain(["https://ok.example/"])  # no raise
+
+
+@pytest.mark.asyncio
+async def test_validate_navigation_chain_async(monkeypatch):
+    async def fake_async(host):
+        return ["192.168.7.7"]
+
+    monkeypatch.setattr(egress, "_resolve_async", fake_async)
+    with pytest.raises(EgressBlockedError):
+        await validate_navigation_chain_async(["http://internal.example/"])
+    # trusted origin passes
+    await validate_navigation_chain_async(
+        ["http://internal.example/"],
+        trusted_origins=frozenset({"internal.example"}),
+    )

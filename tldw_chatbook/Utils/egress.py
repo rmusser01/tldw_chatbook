@@ -448,3 +448,75 @@ def guarded_fetch_requests(
     finally:
         if owns_session:
             sess.close()
+
+
+async def guarded_fetch_aiohttp(
+    url,
+    *,
+    session,
+    max_bytes,
+    trusted_origins=frozenset(),
+    headers=None,
+    timeout=None,
+):
+    """Capped GET via aiohttp.ClientSession with per-hop re-validation."""
+    first_host = _host_of(url)
+    current = url
+    for _hop in range(MAX_REDIRECT_HOPS + 1):
+        await check_url_or_raise_async(current, trusted_origins=trusted_origins)
+        same_origin = _host_of(current) == first_host
+        kwargs = {
+            "allow_redirects": False,
+            "headers": _hop_headers(headers, same_origin),
+        }
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        async with session.get(current, **kwargs) as response:
+            if response.status in (301, 302, 303, 307, 308):
+                location = response.headers.get("Location")
+                if not location:
+                    raise EgressFetchError("redirect without Location", url=current)
+                current = urljoin(current, location)
+                continue
+            collected = bytearray()
+            async for chunk in response.content.iter_chunked(65536):
+                collected += chunk
+                if len(collected) > max_bytes:
+                    raise EgressFetchError(
+                        f"response exceeds {max_bytes} bytes", url=current
+                    )
+            return GuardedResponse(
+                status_code=response.status,
+                headers=dict(response.headers),
+                content=bytes(collected),
+                final_url=str(response.url),
+                _response=response,
+            )
+    raise EgressFetchError("too many redirects", url=url)
+
+
+def collect_navigation_chain(response) -> list:
+    """Playwright ``Response`` -> every URL in its redirect chain, oldest first.
+
+    Playwright route handlers intercept only the INITIAL request of a
+    navigation; server redirect hops are followed by the browser without
+    re-invoking the route. Post-navigation validation of this chain is
+    therefore the enforcement point (the pre-``goto`` check blocks bad
+    initial targets outright).
+    """
+    urls = []
+    request = getattr(response, "request", None) if response is not None else None
+    while request is not None:
+        urls.append(request.url)
+        request = getattr(request, "redirected_from", None)
+    return list(reversed(urls))
+
+
+def validate_navigation_chain(urls, *, trusted_origins=frozenset()) -> None:
+    for u in urls:
+        check_url_or_raise(u, trusted_origins=trusted_origins)
+
+
+async def validate_navigation_chain_async(urls, *, trusted_origins=frozenset()) -> None:
+    for u in urls:
+        await check_url_or_raise_async(u, trusted_origins=trusted_origins)
