@@ -32,6 +32,7 @@ from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
     AgentStep,
     RunOutcome,
+    SkillFileBindings,
     ToolCall,
     ToolCatalogEntry,
     ToolResult,
@@ -742,10 +743,12 @@ class _BridgeSkillRunner:
         skills_service: Any,
         skill_names: frozenset[str],
         builtin_names: tuple[str, ...],
+        skill_file_bindings: SkillFileBindings | None = None,
     ) -> None:
         self._skills_service = skills_service
         self._skill_names = skill_names
         self._builtin_names = builtin_names
+        self._skill_file_bindings = skill_file_bindings
 
     def is_skill_tool(self, name: str) -> bool:
         return name in self._skill_names
@@ -769,6 +772,23 @@ class _BridgeSkillRunner:
         allowed_tools = intersect_skill_tools(
             declared_allowed_tools, self._builtin_names
         )
+        # task-4 (skills-fork-reachability): grant the spawned skill's own
+        # name skill_file authorization BEFORE spawn -- so the child's very
+        # first turn can already read its own bundled reference files (see
+        # SkillFileBindings' own docstring: authorization lives here, never
+        # in config.allowed_tools) -- then append a "Bundled files" pointer
+        # block to the rendered task text whenever execute_skill reported
+        # any (absent when the skill has no bundle beyond SKILL.md).
+        if self._skill_file_bindings is not None:
+            self._skill_file_bindings.authorized.add(name)
+        refs = result.get("reference_files") if isinstance(result, Mapping) else None
+        if refs and self._skill_file_bindings is not None:
+            rows = ", ".join(
+                f"{r['path']} ({r['size']} bytes"
+                f"{'' if r.get('is_text', True) else ', binary'})"
+                for r in refs
+            )
+            rendered = f"{rendered}\n\nBundled files (readable via skill_file): {rows}"
         return spawn(rendered, allowed_tools=allowed_tools)
 
 
@@ -862,6 +882,16 @@ class ConsoleAgentBridge:
         registry = self._registry
         allowed_tools = self._allowed_tools
         skill_runner = None
+        # task-4 (skills-fork-reachability): one SkillFileBindings per run,
+        # handed to BOTH AgentService (the loop's authorization + reader
+        # closure -- Task 3) and this run's _BridgeSkillRunner (which grants
+        # a spawned skill's own name pre-spawn) -- never two independently-
+        # seeded copies, or the runner's grant would never reach the loop's
+        # check. `authorized` starts empty here (Task 5 seeds the turn's
+        # $skill names); the reader is a SYNC adapter over the async scope-
+        # service read, matching _BridgeSkillRunner.run's own
+        # asyncio.run-in-worker-thread pattern just below.
+        skill_file_bindings = None
         if self._skills_service is not None or mcp_provider is not None:
             context: Mapping[str, Any] = {}
             if self._skills_service is not None:
@@ -874,10 +904,19 @@ class ConsoleAgentBridge:
                     str(item["name"])
                     for item in _non_colliding_skill_entries(context, builtin_names)
                 )
+                skill_file_bindings = SkillFileBindings(
+                    authorized=set(),
+                    reader=lambda skill_name, path: asyncio.run(
+                        self._skills_service.read_skill_file(
+                            skill_name, path, mode="local"
+                        )
+                    ),
+                )
                 skill_runner = _BridgeSkillRunner(
                     skills_service=self._skills_service,
                     skill_names=skill_names,
                     builtin_names=builtin_names,
+                    skill_file_bindings=skill_file_bindings,
                 )
         # [console] native_tool_calls kill-switch (Task 5): a caller-supplied
         # predicate (chat_screen.py's _console_native_tool_calls_enabled)
@@ -996,6 +1035,7 @@ class ConsoleAgentBridge:
             clock=self._clock,
             on_step=on_step,
             skill_runner=skill_runner,
+            skill_file_bindings=skill_file_bindings,
             review_tool_calls=review_tool_calls,
             review_state_scope=review_state_scope,
         )

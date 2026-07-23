@@ -155,6 +155,51 @@ def test_skill_file_unauthorized_name_is_refused(tmp_path):
     assert "other" in refusal
 
 
+def test_skill_file_reader_returning_non_mapping_fails_the_call_not_the_run(
+    tmp_path,
+):
+    """A reader is caller-supplied (the bridge's asyncio.run adapter over
+    SkillsScopeService.read_skill_file); a malformed/misbehaving reader that
+    returns a bare string (not a dict-like result) must fail only THAT tool
+    call -- not crash the whole run via an uncaught AttributeError from
+    `.get` on a non-mapping."""
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    reg = _registry_with_builtins()
+
+    def bad_reader(skill_name, path):
+        return "not a dict"
+
+    bindings = SkillFileBindings(authorized={"demo"}, reader=bad_reader)
+
+    script = [
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": _skill_file_fence("demo", "references/api.md")
+                    }
+                }
+            ]
+        },
+        {"choices": [{"message": {"content": "Done."}}]},
+    ]
+    service = AgentService(
+        db, reg, chat_call=lambda **k: script.pop(0), skill_file_bindings=bindings
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c1",
+        messages=[{"role": "user", "content": "go"}],
+        config=_base_config(),
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    run = db.get_run(run_id)
+    results = [s for s in run["steps"] if s["kind"] == "tool_result"]
+    refusal = results[0]["result"]
+    assert refusal.startswith("ERROR:")
+    assert "skill_file" in refusal
+
+
 def test_skill_file_bindings_none_schema_absent_and_falls_through(tmp_path):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_builtins()

@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import time
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Callable, Protocol
 
@@ -577,9 +578,21 @@ class AgentService:
                 return ToolResult(ok=False, error="skill_file: no reader configured")
             try:
                 out = bindings.reader(skill_name, path)
+                # task-4 (skills-fork-reachability) hardening: a reader is
+                # caller-supplied (the bridge's asyncio.run adapter over
+                # SkillsScopeService.read_skill_file) -- a misbehaving one
+                # returning a non-mapping must fail only THIS call, not
+                # crash the whole run via an uncaught AttributeError from
+                # `.get` on something that isn't dict-like.
+                if not isinstance(out, Mapping):
+                    return ToolResult(
+                        ok=False,
+                        error="skill_file: reader returned invalid result",
+                    )
+                content = out.get("content", "")
             except Exception as exc:  # SkillTrustBlockedError, ValueError, OSError
                 return ToolResult(ok=False, error=f"skill_file: {exc}")
-            return ToolResult(ok=True, content=str(out.get("content", "")))
+            return ToolResult(ok=True, content=str(content))
 
         deps = LoopDeps(
             call_model=self._make_call_model(config, api_endpoint, runtime_schemas),

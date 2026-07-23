@@ -12,6 +12,7 @@ from tldw_chatbook.Chat.console_agent_bridge import (
     compose_agent_system_prompt,
     format_agent_step_marker,
     inject_resume_agent_markers,
+    _BridgeSkillRunner,
     _compose_run_allowed_tools,
     _compose_run_registry_and_allowed,
     _non_colliding_mcp_names,
@@ -33,6 +34,7 @@ from tldw_chatbook.Agents.agent_models import (
     STEP_SPAWN,
     STEP_TOOL_RESULT,
     RunOutcome,
+    SkillFileBindings,
     ToolCatalogEntry,
     ToolResult,
     ToolSchema,
@@ -966,6 +968,152 @@ def test_skill_trust_blocked_refuses_without_spawning(tmp_path):
 
     assert outcome.status == "done"
     assert db.count_subagent_runs("conv-blocked") == 0
+
+
+# -- task-4 (skills-fork-reachability): _BridgeSkillRunner grants its own
+# name skill_file authorization pre-spawn and appends a "Bundled files"
+# pointer block to the rendered task text whenever execute_skill reports
+# reference_files -- unit-level, directly against _BridgeSkillRunner, so
+# these don't need a full run_reply/model round trip. --
+
+
+class _FakeSkillsServiceWithRefs(_FakeSkillsService):
+    """Same fake as above, but execute_skill also reports a bundle manifest."""
+
+    async def execute_skill(self, name, *, mode="local", args=None):
+        self.execute_calls.append(args)
+        return {
+            "skill_name": name,
+            "rendered_prompt": f"Review this: {args}",
+            "allowed_tools": self.allowed_tools,
+            "execution_mode": "inline",
+            "reference_files": [
+                {"path": "references/api.md", "size": 120, "is_text": True},
+                {"path": "assets/logo.png", "size": 2048, "is_text": False},
+            ],
+        }
+
+
+def test_bridge_skill_runner_grants_own_name_and_appends_bundle_block_before_spawn():
+    skills_service = _FakeSkillsServiceWithRefs()
+    bindings = SkillFileBindings(authorized=set())
+    runner = _BridgeSkillRunner(
+        skills_service=skills_service,
+        skill_names=frozenset({"code-review"}),
+        builtin_names=(),
+        skill_file_bindings=bindings,
+    )
+    spawn_calls = []
+
+    def spawn(rendered, *, allowed_tools):
+        # The name must already be authorized by the time spawn actually
+        # runs -- so the spawned child's very first turn can read its own
+        # bundle -- not merely by the time .run() returns.
+        assert "code-review" in bindings.authorized
+        spawn_calls.append(rendered)
+        return ToolResult(ok=True, content="sub-agent result")
+
+    result = runner.run("code-review", "the diff", spawn)
+
+    assert result.ok
+    assert spawn_calls == [
+        "Review this: the diff\n\nBundled files (readable via skill_file): "
+        "references/api.md (120 bytes), assets/logo.png (2048 bytes, binary)"
+    ]
+    assert "code-review" in bindings.authorized
+
+
+def test_bridge_skill_runner_no_reference_files_body_unchanged_still_authorizes():
+    skills_service = _FakeSkillsService()  # no reference_files key at all
+    bindings = SkillFileBindings(authorized=set())
+    runner = _BridgeSkillRunner(
+        skills_service=skills_service,
+        skill_names=frozenset({"code-review"}),
+        builtin_names=(),
+        skill_file_bindings=bindings,
+    )
+    spawn_calls = []
+
+    def spawn(rendered, *, allowed_tools):
+        spawn_calls.append(rendered)
+        return ToolResult(ok=True, content="sub-agent result")
+
+    runner.run("code-review", "the diff", spawn)
+
+    assert spawn_calls == ["Review this: the diff"]
+    assert "code-review" in bindings.authorized
+
+
+def test_bridge_skill_runner_bindings_none_is_byte_identical_legacy_behavior():
+    # reference_files IS present in the execute_skill result, but with no
+    # skill_file_bindings wired at all (legacy/non-bridge construction) the
+    # block must never be appended and nothing must crash.
+    skills_service = _FakeSkillsServiceWithRefs()
+    runner = _BridgeSkillRunner(
+        skills_service=skills_service,
+        skill_names=frozenset({"code-review"}),
+        builtin_names=(),
+    )
+    spawn_calls = []
+
+    def spawn(rendered, *, allowed_tools):
+        spawn_calls.append(rendered)
+        return ToolResult(ok=True, content="sub-agent result")
+
+    runner.run("code-review", "the diff", spawn)
+
+    assert spawn_calls == ["Review this: the diff"]
+
+
+def test_run_reply_wires_one_skill_file_bindings_to_both_service_and_runner(
+    tmp_path,
+):
+    """run_reply must construct exactly ONE SkillFileBindings per run and
+    hand the SAME object to both AgentService and the _BridgeSkillRunner --
+    never two independently-seeded copies (which would let the runner's
+    pre-spawn grant silently fail to reach the loop's authorization check)."""
+    captured = {}
+    real_runner_init = _BridgeSkillRunner.__init__
+    real_service_init = AgentService.__init__
+
+    def spy_runner_init(self, **kwargs):
+        captured["runner_bindings"] = kwargs.get("skill_file_bindings")
+        real_runner_init(self, **kwargs)
+
+    def spy_service_init(self, *args, **kwargs):
+        captured["service_bindings"] = kwargs.get("skill_file_bindings")
+        real_service_init(self, *args, **kwargs)
+
+    scripts = [
+        [_fence("code-review", {"args": "the diff"})],
+        ["Looks fine to me."],
+        ["All done."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    skills_service = _FakeSkillsService()
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=_ChunkGateway(scripts),
+        skills_service=skills_service,
+    )
+
+    with patch.object(_BridgeSkillRunner, "__init__", spy_runner_init), patch.object(
+        AgentService, "__init__", spy_service_init
+    ):
+        outcome = _run(
+            bridge, store, session, assistant.id, conversation_id="conv-bindings"
+        )
+
+    assert outcome.status == "done"
+    assert captured["runner_bindings"] is not None
+    assert captured["runner_bindings"] is captured["service_bindings"]
 
 
 def test_no_skills_service_leaves_shared_registry_path_untouched(tmp_path):
