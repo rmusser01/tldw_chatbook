@@ -246,6 +246,11 @@ class PersonasPreviewController:
         greeting = replace_placeholders(
             str(record.get("first_message") or ""), name, "User"
         )
+        # The speaker label is set once at selection (_select_character, from the
+        # selection's display name) and must NOT be re-set here: set_speakers only
+        # relabels FUTURE lines, so changing it on a same-character reload that
+        # preserves the transcript would leave the existing lines under the old
+        # prefix (mixed/stale prefixes — task-437 review).
         # Same-character reloads after an edit should update the reset seed,
         # not erase an in-progress preview conversation.
         if self.seeded_for == character_id and pane.transcript_text():

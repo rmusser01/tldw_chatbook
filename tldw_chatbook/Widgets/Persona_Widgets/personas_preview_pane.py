@@ -8,6 +8,10 @@ here touches a database.
 
 from __future__ import annotations
 
+import re
+
+from rich.markup import escape
+from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -24,6 +28,11 @@ from .personas_pane_messages import (
 #: Boundary cap for one preview test message; generous for a test exchange
 #: while keeping pathological pastes out of the provider request.
 PREVIEW_MESSAGE_MAX_CHARS = 4000
+
+#: Neutral speaker labels used until a character is seeded (task-437). "you"
+#: stays the user label until TASK-442 introduces the active persona/user name.
+_DEFAULT_CHARACTER_LABEL = "character"
+_DEFAULT_USER_LABEL = "you"
 
 
 class PersonasPreviewPane(Vertical):
@@ -92,6 +101,8 @@ class PersonasPreviewPane(Vertical):
         self._partial_widget: Static | None = None
         self._partial_index: int | None = None
         self._partial_text: str = ""
+        self._character_label = _DEFAULT_CHARACTER_LABEL
+        self._user_label = _DEFAULT_USER_LABEL
 
     def compose(self) -> ComposeResult:
         yield Button(
@@ -168,13 +179,69 @@ class PersonasPreviewPane(Vertical):
         """The greeting a Reset restores (transcript line 0), for state capture."""
         return self._greeting
 
+    def set_speakers(self, *, character: str | None = None, user: str | None = None) -> None:
+        """Set transcript speaker labels; empty/None keeps the current label.
+
+        When the character label changes, already-rendered character lines are
+        relabelled too (e.g. a rename mid-conversation), so the transcript never
+        shows stale or mixed speaker prefixes.
+
+        Args:
+            character: Display name for character/greeting lines (e.g. the card name).
+            user: Display name for the user's lines (unused until TASK-442).
+        """
+        old_character = self._character_label
+        if character:
+            self._character_label = character
+        if user:
+            self._user_label = user
+        if character and character != old_character:
+            self._relabel_character_lines(old_character, character)
+
+    def reset_speakers(self) -> None:
+        """Reset speaker labels to their neutral defaults (no character context).
+
+        Called when the preview leaves a character context (mode switch, deleting
+        the selected character) so a later reply never renders under a stale
+        previous character's name.
+        """
+        self._character_label = _DEFAULT_CHARACTER_LABEL
+        self._user_label = _DEFAULT_USER_LABEL
+
+    def _relabel_character_lines(self, old_label: str, new_label: str) -> None:
+        """Rewrite already-rendered character-role lines to a new speaker label.
+
+        ``_lines`` is parallel (append order) to the mounted
+        ``.personas-preview-line`` widgets; character lines are identified by
+        their role class so a ``you:``-line that happens to start with the name
+        is never touched.
+        """
+        full_old, bare_old = f"{old_label}: ", f"{old_label}:"
+        widgets = list(self.query(".personas-preview-line"))
+        for index, widget in enumerate(widgets):
+            if index >= len(self._lines) or not widget.has_class(
+                "personas-preview-line-character"
+            ):
+                continue
+            line = self._lines[index]
+            if line.startswith(full_old):
+                new_line = f"{new_label}: {line[len(full_old):]}"
+            elif line == bare_old:
+                new_line = f"{new_label}:"
+            else:
+                continue
+            self._lines[index] = new_line
+            widget.update(self._styled_line(new_line))
+
     def append_user(self, text: str) -> None:
         """Append a "you: ..." transcript line."""
-        self._append_line(f"you: {text}", "personas-preview-line-you")
+        self._append_line(f"{self._user_label}: {text}", "personas-preview-line-you")
 
     def append_reply(self, text: str) -> None:
         """Append a complete "character: ..." transcript line in one go."""
-        self._append_line(f"character: {text}", "personas-preview-line-character")
+        self._append_line(
+            f"{self._character_label}: {text}", "personas-preview-line-character"
+        )
 
     def begin_reply(self) -> None:
         """Start a streamed "character: ..." line, grown by append_reply_chunk.
@@ -184,12 +251,12 @@ class PersonasPreviewPane(Vertical):
         expected to finalize or discard first).
         """
         self._partial_text = ""
-        line = "character:"
+        line = f"{self._character_label}:"
         widget = Static(
-            line,
+            self._styled_line(line),
             classes="personas-preview-line personas-preview-line-character",
-            # markup=False: streamed text must render literally, never as Rich
-            # markup (unmatched tags raise MarkupError at render).
+            # markup=False: content is a pre-styled Text; Static must not
+            # re-parse it as Rich markup.
             markup=False,
         )
         self._partial_widget = widget
@@ -202,10 +269,10 @@ class PersonasPreviewPane(Vertical):
         if self._partial_widget is None:
             self.begin_reply()
         self._partial_text += str(text)
-        line = f"character: {self._partial_text}"
+        line = f"{self._character_label}: {self._partial_text}"
         if self._partial_index is not None and self._partial_index < len(self._lines):
             self._lines[self._partial_index] = line
-        self._partial_widget.update(line)
+        self._partial_widget.update(self._styled_line(line))
 
     def finalize_reply(self) -> None:
         """Commit the streamed line: it is now a permanent transcript entry."""
@@ -250,6 +317,20 @@ class PersonasPreviewPane(Vertical):
 
     # ===== Internals =====
 
+    _ACTION_SPAN = re.compile(r"\*([^*\n]+)\*")
+
+    def _styled_line(self, line: str) -> Text:
+        """Render a transcript line: escape Rich markup, italicize *action* spans.
+
+        Args:
+            line: Plain transcript line (``"label: text"``).
+
+        Returns:
+            A Rich ``Text`` whose plain string equals the line with matched
+            ``*...*`` asterisks removed, and with italic spans over those runs.
+        """
+        return Text.from_markup(self._ACTION_SPAN.sub(r"[i]\1[/i]", escape(line)))
+
     async def _render_seed_lines(self) -> None:
         """Replace the transcript with the greeting line (or nothing)."""
         # remove_children below also removes any in-progress streamed line, so
@@ -261,13 +342,13 @@ class PersonasPreviewPane(Vertical):
         await container.remove_children()
         widgets: list[Static] = []
         if self._greeting:
-            line = f"character: {self._greeting}"
+            line = f"{self._character_label}: {self._greeting}"
             self._lines.append(line)
             widgets.append(
-                # markup=False: greeting text must render literally, never as
-                # Rich markup (unmatched tags raise MarkupError at render).
+                # markup=False: content is a pre-styled Text; Static must not
+                # re-parse it as Rich markup.
                 Static(
-                    line,
+                    self._styled_line(line),
                     classes="personas-preview-line personas-preview-line-character",
                     markup=False,
                 )
@@ -277,10 +358,14 @@ class PersonasPreviewPane(Vertical):
 
     def _append_line(self, line: str, role_class: str) -> None:
         self._lines.append(line)
-        # markup=False: user/character text must render literally, never as
-        # Rich markup (unmatched tags raise MarkupError at render).
+        # markup=False: content is a pre-styled Text; Static must not re-parse
+        # it as Rich markup.
         self.query_one("#personas-preview-transcript", VerticalScroll).mount(
-            Static(line, classes=f"personas-preview-line {role_class}", markup=False)
+            Static(
+                self._styled_line(line),
+                classes=f"personas-preview-line {role_class}",
+                markup=False,
+            )
         )
 
     # ===== Events =====

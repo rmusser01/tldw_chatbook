@@ -415,3 +415,98 @@ async def test_greeting_text_property_returns_seeded_greeting():
         assert pane.greeting_text == "Hello, traveller."
         pane.refresh_greeting_seed("Updated greeting.")
         assert pane.greeting_text == "Updated greeting."
+
+
+async def test_speaker_labels_use_character_name():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.set_speakers(character="Sherlock Holmes")
+        await pane.seed_greeting("Greetings.")
+        await pilot.pause()
+        pane.append_user("Hi")
+        pane.append_reply("Elementary.")
+        await pilot.pause()
+        assert _line_texts(app) == [
+            "Sherlock Holmes: Greetings.",
+            "you: Hi",
+            "Sherlock Holmes: Elementary.",
+        ]
+        assert pane.transcript_text() == (
+            "Sherlock Holmes: Greetings.\nyou: Hi\nSherlock Holmes: Elementary."
+        )
+
+
+async def test_speaker_labels_default_without_name():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.append_user("Hi")
+        pane.append_reply("Hello.")
+        await pilot.pause()
+        assert _line_texts(app) == ["you: Hi", "character: Hello."]
+
+
+async def test_set_speakers_ignores_empty_name():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.set_speakers(character="")
+        pane.append_reply("Hi.")
+        await pilot.pause()
+        assert _line_texts(app) == ["character: Hi."]
+
+
+async def test_styled_line_italicizes_action_and_escapes_markup():
+    app = PreviewApp()
+    async with app.run_test():
+        pane = app.query_one(PersonasPreviewPane)
+        waves = pane._styled_line("*waves*")
+        assert str(waves) == "waves"
+        assert any("italic" in str(span.style) for span in waves.spans)
+        assert str(pane._styled_line("[/oops]")) == "[/oops]"
+        assert str(pane._styled_line("you: 5 * 3")) == "you: 5 * 3"
+
+
+async def test_action_span_renders_italic_not_literal_asterisks():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.append_reply("*smiles warmly*")
+        await pilot.pause()
+        line = app.query(".personas-preview-line").last()
+        assert "*" not in str(line.renderable)
+        assert "smiles warmly" in str(line.renderable)
+        assert any("italic" in str(s.style) for s in line.renderable.spans)
+
+
+async def test_set_speakers_relabels_existing_character_lines():
+    # task-437 review: a rename mid-conversation relabels already-rendered
+    # character lines (no stale/mixed prefixes); user lines are untouched.
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.set_speakers(character="Alice")
+        await pane.seed_greeting("Hi.")
+        pane.append_user("hello")
+        pane.append_reply("hey")
+        await pilot.pause()
+        pane.set_speakers(character="Bob")
+        await pilot.pause()
+        assert pane.transcript_text() == "Bob: Hi.\nyou: hello\nBob: hey"
+        assert "Alice" not in pane.transcript_text()
+        assert _line_texts(app) == ["Bob: Hi.", "you: hello", "Bob: hey"]
+
+
+async def test_reset_speakers_restores_defaults():
+    # task-437: leaving a character context must drop the stale name so a later
+    # reply renders under the neutral default, not the previous character's name.
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.set_speakers(character="Alice")
+        pane.reset_speakers()
+        pane.append_user("Hi")
+        pane.append_reply("Hello.")
+        await pilot.pause()
+        assert _line_texts(app) == ["you: Hi", "character: Hello."]

@@ -1665,6 +1665,10 @@ class PersonasScreen(BaseAppScreen):
         # clear_selection empties the conversations panel; drop the caches too.
         self.conversations.reset()
         await self.preview.reset("")
+        # A mode switch clears the character context; reset the transcript
+        # speaker labels so a later reply never renders under a stale previous
+        # character's name (task-437). A character selection re-sets them.
+        self.query_one(PersonasPreviewPane).reset_speakers()
         await self.query_one(PersonasInspectorPane).clear_selection()
         if mode == "characters":
             await self._render_library_rows()
@@ -1784,6 +1788,7 @@ class PersonasScreen(BaseAppScreen):
             entity_id=entity_id,
             entity_name=entity_name,
         )
+        self.query_one(PersonasPreviewPane).set_speakers(character=entity_name)
         self._edit_mode = "view"
         self.query_one(PersonasLibraryPane).mark_active_row("character", entity_id)
         await self.character_handler.load_character(entity_id)
@@ -5638,6 +5643,10 @@ class PersonasScreen(BaseAppScreen):
             # panel; drop the controller caches and the ephemeral preview too.
             self.conversations.reset()
             await self.preview.reset("")
+            # The selected character is gone; drop its speaker label so a later
+            # Test Reply never renders under the deleted character's name (the
+            # preview stays live/visible in Characters mode — task-437).
+            self.query_one(PersonasPreviewPane).reset_speakers()
             await self.query_one(PersonasInspectorPane).clear_selection()
             self._show_center(None)
             self._sync_title_and_console_actions()
@@ -5780,6 +5789,10 @@ class PersonasScreen(BaseAppScreen):
         self.state.select_entity(
             entity_kind="character", entity_id=saved_id, entity_name=name
         )
+        # A save can rename the selected character; this path bypasses
+        # _select_character, so update the preview speaker label here (it
+        # relabels any already-rendered lines, task-437).
+        self.query_one(PersonasPreviewPane).set_speakers(character=name)
         self.state.has_unsaved_changes = False
         inspector = self.query_one(PersonasInspectorPane)
         inspector.show_selection(name=name, kind="character", authority="Local")

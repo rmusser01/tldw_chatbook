@@ -2890,6 +2890,44 @@ class TestPreviewIntegration:
             work_area = screen.query_one("#personas-work-area")
             assert pane in work_area.children
 
+    async def test_mode_switch_resets_stale_character_speaker_label(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        # task-437: after selecting a character then leaving Characters mode,
+        # the preview must not keep the previous character's speaker label
+        # (else a persona Test Reply would render under the stale name).
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            pane = screen.query_one("#personas-preview-pane", PersonasPreviewPane)
+            assert pane._character_label == "Detective Sam"
+            await screen._apply_mode("personas")
+            await pilot.pause()
+            assert pane._character_label == "character"
+
+    async def test_delete_selected_character_resets_speaker_label(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        # task-437 review: deleting the selected character drops its speaker
+        # label so a later Test Reply isn't labelled with the deleted name (the
+        # preview stays live/visible in Characters mode).
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            pane = screen.query_one("#personas-preview-pane", PersonasPreviewPane)
+            assert pane._character_label == "Detective Sam"
+            await screen._after_delete("character")
+            await pilot.pause()
+            assert pane._character_label == "character"
+
     async def test_greeting_seeds_after_character_load(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
@@ -2909,7 +2947,7 @@ class TestPreviewIntegration:
             await pilot.pause()
             pane = screen.query_one(PersonasPreviewPane)
             assert (
-                "character: The name's Detective Sam. Who's asking?"
+                "Detective Sam: The name's Detective Sam. Who's asking?"
                 in pane.transcript_text()
             )
 
@@ -2935,7 +2973,7 @@ class TestPreviewIntegration:
             await _select(pilot, "#personas-library-row-character-2")
             await _select(pilot, "#personas-library-row-character-1")
             pane = screen.query_one(PersonasPreviewPane)
-            greeting_line = "character: The name's Detective Sam. Who's asking?"
+            greeting_line = "Detective Sam: The name's Detective Sam. Who's asking?"
             lines = [line for line in pane.transcript_text().splitlines() if line]
             assert lines == [greeting_line]
 
@@ -2960,7 +2998,7 @@ class TestPreviewIntegration:
             screen = await self._select_first_character(pilot)
             pane = screen.query_one(PersonasPreviewPane)
             assert (
-                "character: The name's Detective Sam. Who's asking?"
+                "Detective Sam: The name's Detective Sam. Who's asking?"
                 in pane.transcript_text()
             )
 
@@ -2977,13 +3015,13 @@ class TestPreviewIntegration:
             )
             await pilot.pause()
             assert pane.transcript_text() == (
-                "character: The name's Detective Sam. Who's asking?"
+                "Detective Sam: The name's Detective Sam. Who's asking?"
             )
             screen.query_one("#personas-preview-reset", Button).press()
             await pilot.pause()
 
             assert pane.transcript_text() == (
-                "character: Edited opener from Detective Sam to User."
+                "Detective Sam: Edited opener from Detective Sam to User."
             )
 
     async def _readout_text(self, screen):
@@ -3226,7 +3264,7 @@ class TestPreviewIntegration:
             await app.workers.wait_for_complete()
             await pilot.pause()
             pane = screen.query_one(PersonasPreviewPane)
-            assert "character: Hello, world." in pane.transcript_text()
+            assert "Detective Sam: Hello, world." in pane.transcript_text()
             assert screen.preview.history == [
                 {"role": "user", "content": "Hi there"},
                 {"role": "assistant", "content": "Hello, world."},
@@ -3265,10 +3303,10 @@ class TestPreviewIntegration:
             await pilot.pause()
             # The first chunk must be visible WHILE the stream is held open.
             for _ in range(50):
-                if "character: Hello, " in pane.transcript_text():
+                if "Detective Sam: Hello, " in pane.transcript_text():
                     break
                 await pilot.pause()
-            assert "character: Hello, " in pane.transcript_text()
+            assert "Detective Sam: Hello, " in pane.transcript_text()
             # History gets the consolidated entry only at the end.
             assert not any(
                 entry["role"] == "assistant" for entry in screen.preview.history
@@ -3277,9 +3315,9 @@ class TestPreviewIntegration:
             await app.workers.wait_for_complete()
             await pilot.pause()
             lines = pane.transcript_text().splitlines()
-            assert lines.count("character: Hello, world.") == 1
-            assert "character: Hello, " not in [
-                line for line in lines if line != "character: Hello, world."
+            assert lines.count("Detective Sam: Hello, world.") == 1
+            assert "Detective Sam: Hello, " not in [
+                line for line in lines if line != "Detective Sam: Hello, world."
             ]
             assert screen.preview.history[-1] == {
                 "role": "assistant",
@@ -3311,10 +3349,10 @@ class TestPreviewIntegration:
             screen.post_message(PreviewReplyRequested("Hi"))
             await pilot.pause()
             for _ in range(50):
-                if "character: Hello, " in pane.transcript_text():
+                if "Detective Sam: Hello, " in pane.transcript_text():
                     break
                 await pilot.pause()
-            assert "character: Hello, " in pane.transcript_text()
+            assert "Detective Sam: Hello, " in pane.transcript_text()
             screen.query_one("#personas-preview-reset", _Button).press()
             await pilot.pause()
             mid_gate.set()
@@ -3322,7 +3360,7 @@ class TestPreviewIntegration:
             await pilot.pause()
             assert "Hello" not in pane.transcript_text()
             assert pane.transcript_text() == (
-                "character: The name's Detective Sam. Who's asking?"
+                "Detective Sam: The name's Detective Sam. Who's asking?"
             )
             assert not any(
                 entry["role"] == "assistant" for entry in screen.preview.history
@@ -3351,10 +3389,10 @@ class TestPreviewIntegration:
             screen.post_message(PreviewReplyRequested("Hi"))
             await pilot.pause()
             for _ in range(50):
-                if "character: Hello, " in pane.transcript_text():
+                if "Detective Sam: Hello, " in pane.transcript_text():
                     break
                 await pilot.pause()
-            assert "character: Hello, " in pane.transcript_text()
+            assert "Detective Sam: Hello, " in pane.transcript_text()
             await pilot.click("#personas-library-row-character-2")
             await pilot.pause()
             mid_gate.set()
@@ -3559,7 +3597,7 @@ class TestPreviewIntegration:
             await app.workers.wait_for_complete()
             await pilot.pause()
             pane = screen.query_one(PersonasPreviewPane)
-            assert "character: Hello, world." in pane.transcript_text()
+            assert "Detective Sam: Hello, world." in pane.transcript_text()
             assert [s.provider for s in fake.selections] == ["anthropic", "llama_cpp"]
             fallback = fake.selections[-1]
             assert fallback.explicit_model == "local.gguf"
@@ -3611,7 +3649,7 @@ class TestPreviewIntegration:
             await app.workers.wait_for_complete()
             await pilot.pause()
             pane = screen.query_one(PersonasPreviewPane)
-            assert "character: Hello, world." in pane.transcript_text()
+            assert "Detective Sam: Hello, world." in pane.transcript_text()
             assert [s.provider for s in fake.selections] == ["anthropic"]
             character_selection = fake.selections[0]
             assert character_selection.streaming is False
@@ -3683,7 +3721,7 @@ class TestPreviewIntegration:
             await app.workers.wait_for_complete()
             await pilot.pause()
             pane = screen.query_one(PersonasPreviewPane)
-            assert "character: Hello, world." in pane.transcript_text()
+            assert "Detective Sam: Hello, world." in pane.transcript_text()
             # anthropic (unready) -> llama_cpp (ready, streaming) ->
             # llama_cpp (non-streaming retry re-resolve).
             assert [s.provider for s in fake.selections] == [
@@ -3741,7 +3779,7 @@ class TestPreviewIntegration:
         assert payload.item_type == "preview-conversation"
         assert payload.title == "Personas preview conversation"
         assert "you: Hi" in payload.body
-        assert "character: Hello." in payload.body
+        assert "Detective Sam: Hello." in payload.body
         assert payload.suggested_prompt == "Continue this conversation in character."
 
     async def test_stale_reply_is_dropped_after_selection_change(
@@ -3779,7 +3817,7 @@ class TestPreviewIntegration:
             await app.workers.wait_for_complete()
             await pilot.pause()
             pane = screen.query_one(PersonasPreviewPane)
-            assert "character: Hello, world." not in pane.transcript_text()
+            assert "Detective Sam: Hello, world." not in pane.transcript_text()
             assert not any(
                 entry["role"] == "assistant" for entry in screen.preview.history
             )
@@ -3850,7 +3888,7 @@ class TestPreviewIntegration:
             await app.workers.wait_for_complete()
             await pilot.pause()
             pane = screen.query_one(PersonasPreviewPane)
-            assert "character: Hello, world." not in pane.transcript_text()
+            assert "Detective Sam: Hello, world." not in pane.transcript_text()
             assert not any(
                 entry["role"] == "assistant" for entry in screen.preview.history
             )
@@ -3918,7 +3956,7 @@ class TestPreviewIntegration:
             assert [s.streaming for s in fake.selections] == [True, False]
             assert len(fake.requests) == 2
             pane = screen.query_one(PersonasPreviewPane)
-            assert "character: Hello, world." in pane.transcript_text()
+            assert "Detective Sam: Hello, world." in pane.transcript_text()
             assert screen.preview.history[-1] == {
                 "role": "assistant",
                 "content": "Hello, world.",
