@@ -10,7 +10,6 @@ from typing import Any
 import keyring
 from loguru import logger
 
-from tldw_chatbook.config import get_cli_setting, get_api_key
 
 DEFAULT_BACKEND = "stable_diffusion_cpp"
 DEFAULT_MAX_WIDTH = 1024
@@ -53,10 +52,14 @@ _SECRETS = {
     "modelstudio": ("modelstudio_image_api_key",  ["DASHSCOPE_API_KEY", "QWEN_API_KEY"],   "modelstudio"),
 }
 # Non-secret nested keys: (backend, toml_key) -> flat_field_name
+# NOTE: `reference_image_supported_models` is intentionally NOT mapped here —
+# reference-image support is deferred (reference_images.py was dropped in Phase 1),
+# so the dataclass field correctly defaults to {} until a later phase wires it.
 _NON_SECRET = {
     ("stable_diffusion_cpp", "binary_path"):          "sd_cpp_binary_path",
     ("stable_diffusion_cpp", "diffusion_model_path"): "sd_cpp_diffusion_model_path",
     ("stable_diffusion_cpp", "model_path"):           "sd_cpp_model_path",
+    ("stable_diffusion_cpp", "llm_path"):             "sd_cpp_llm_path",
     ("stable_diffusion_cpp", "vae_path"):             "sd_cpp_vae_path",
     ("stable_diffusion_cpp", "lora_paths"):           "sd_cpp_lora_paths",
     ("stable_diffusion_cpp", "device"):               "sd_cpp_device",

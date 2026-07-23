@@ -50,3 +50,11 @@ def test_secret_from_keyring_populates_field(monkeypatch):
     monkeypatch.setattr(c, "_keyring_get", lambda backend: "kr-secret" if backend == "novita" else None, raising=False)
     cfg = c.get_image_generation_config(reload=True)
     assert cfg.novita_image_api_key == "kr-secret"
+
+def test_sd_cpp_llm_path_flattens(monkeypatch):
+    from tldw_chatbook.Image_Generation import config as c
+    fake = {"stable_diffusion_cpp": {"llm_path": "/models/qwen.gguf"}}
+    monkeypatch.setattr(c, "_read_image_generation_toml", lambda: fake, raising=False)
+    monkeypatch.setattr(c, "_keyring_get", lambda backend: None, raising=False)
+    cfg = c.get_image_generation_config(reload=True)
+    assert cfg.sd_cpp_llm_path == "/models/qwen.gguf"

@@ -2770,6 +2770,7 @@ inline_max_bytes = 4000000
 binary_path = ""                      # local `sd` CLI; empty = backend unusable
 diffusion_model_path = ""             # OR model_path
 model_path = ""
+llm_path = ""
 vae_path = ""
 lora_paths = []
 device = "auto"
