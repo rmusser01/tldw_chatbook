@@ -97,7 +97,6 @@ from ...Chat.console_skill_resolver import (
     SkillCommandCandidate,
     cap_skill_args,
     format_skills_list,
-    make_skill_fallback_resolver,
     resolve_skill_command,
 )
 from ...Chat.console_chat_models import (
@@ -1927,15 +1926,15 @@ class ChatScreen(BaseAppScreen):
         self._console_command_registry: ConsoleCommandRegistry = (
             default_console_registry()
         )
-        # Task 9: cached snapshot the bare `/skill-name` fallback resolver
-        # closes over (refreshed on mount/resume by
-        # `_refresh_console_skill_candidates`); dispatch itself always
-        # re-resolves against a FRESH `get_context` for the authoritative
+        # Task 9: cached trusted-skill candidate snapshot (refreshed on
+        # mount/resume by `_refresh_console_skill_candidates`). Hard removal
+        # (Task 4 of the `$`-mention migration): no bare `/skill-name`
+        # fallback resolver is registered here anymore -- skill invocation
+        # is exclusively the controller-side `$name` mention now. Any
+        # dispatch-time re-resolution against this snapshot's population
+        # always re-fetches a FRESH `get_context` for the authoritative
         # trust decision, since this snapshot may be stale.
         self._console_skill_candidates: tuple[SkillCommandCandidate, ...] = ()
-        self._console_command_registry.register_fallback_resolver(
-            make_skill_fallback_resolver(lambda: self._console_skill_candidates)
-        )
         self._console_unknown_send_armed: str | None = None
         # Task 9 fix-wave (reviewer repro): the skill name to append as a
         # TOOL "driving this turn" marker once the submit it was staged for
@@ -10957,20 +10956,18 @@ class ChatScreen(BaseAppScreen):
             return
 
         if parse.kind == KIND_UNKNOWN:
-            # Fold-in (Task 9 fix-wave review): the fallback resolver only
-            # ever claims a word against the trusted-only cached
-            # `_console_skill_candidates` snapshot -- a typed `/name` that
-            # matches ONLY needs-review (trust-blocked) skills therefore
-            # always reaches here as KIND_UNKNOWN, previously falling
-            # through to the generic "Unknown command" hint just like any
-            # other unrecognized word. Re-checking against a FRESH context
-            # (never that cached snapshot) surfaces the same
-            # `/skills <name>` needs-review response instead, before the
-            # unknown-command arm/hint logic ever runs. This never arms the
-            # unknown-command escape: a blocked match is a known-but-blocked
-            # command, not an unrecognized one, so a repeated Enter shows
-            # the same response again rather than silently falling through
-            # to a literal send.
+            # Fold-in (Task 9 fix-wave review; hard removal Task 4 -- there
+            # is no fallback resolver at all anymore, so EVERY unmatched
+            # `/word` reaches here as KIND_UNKNOWN): a typed `/name` that
+            # matches ONLY needs-review (trust-blocked) skills would
+            # otherwise fall through to the generic "Unknown command" hint
+            # just like any other unrecognized word. Checking against a
+            # FRESH context surfaces the same needs-review response instead,
+            # before the unknown-command arm/hint logic ever runs. This
+            # never arms the unknown-command escape: a blocked match is a
+            # known-but-blocked command, not an unrecognized one, so a
+            # repeated Enter shows the same response again rather than
+            # silently falling through to a literal send.
             context = await self._fetch_console_skill_context()
             blocked_summaries = self._console_skill_blocked_summaries(context)
             if await self._console_skill_blocked_match_response(
@@ -11092,10 +11089,13 @@ class ChatScreen(BaseAppScreen):
 
         A ``handler_id`` that resolves to nothing (an unrecognized command
         name) is consumed silently: nothing is sent and the draft is left
-        untouched. ``KIND_FALLBACK`` (Task 9's bare `/skill-name` Console
-        surface) always routes to the skill-run handler regardless of any
-        handler-id lookup, since fallback-resolved parses never carry a
-        registered command name.
+        untouched. The ``KIND_FALLBACK`` branch below is dead code as of
+        the hard removal (Task 4 of the `$`-mention migration): no caller
+        registers a fallback resolver anymore, so
+        ``self._console_command_registry.parse`` never produces that kind.
+        Kept only because the grammar's generic
+        ``register_fallback_resolver`` extension point itself is not being
+        removed -- a future caller could still register one.
         """
         if parse.kind == KIND_FALLBACK:
             await self._console_command_run_skill(parse.name, parse.args)
@@ -11751,7 +11751,13 @@ class ChatScreen(BaseAppScreen):
         return text, ""
 
     async def _console_command_skills(self, parse: CommandParse) -> None:
-        """Handle the registered `/skills` command: bare list, or `<name> [args]` run."""
+        """Handle the registered `/skills` command: bare list, or `<name> [args]` hint.
+
+        Hard removal (Task 4 of the `$`-mention migration): `/skills` only
+        ever lists now -- a typed `<name> [args]` never resolves or runs
+        anything, it just points the user at the `$name` invocation form
+        via a transcript hint row (the same mechanism the list uses).
+        """
         args = parse.args.strip()
         if not args:
             context = await self._fetch_console_skill_context()
@@ -11760,16 +11766,23 @@ class ChatScreen(BaseAppScreen):
                 format_skills_list(candidates)
             )
             return
-        name, rest = self._split_console_skill_name_args(args)
-        await self._console_command_run_skill(name, rest)
+        name, _rest = self._split_console_skill_name_args(args)
+        await self._append_native_console_system_message(
+            f"Run skills by typing ${name} — /skills only lists them."
+        )
 
     async def _console_command_run_skill(self, name: str, args: str) -> None:
         """Resolve and run a skill by name (spec Slash surface run semantics).
 
-        Shared by the `/skills <name> [args]` registered command and the
-        bare `/skill-name [args]` fallback -- both converge here. Always
-        re-resolves against a FRESH ``get_context`` (never the cached
-        fallback-resolver snapshot) for the authoritative trust decision.
+        Hard removal (Task 4 of the `$`-mention migration): neither of this
+        method's original two callers reach it anymore -- `/skills <name>`
+        now always shows a static `$name` hint instead
+        (`_console_command_skills`), and the bare `/skill-name` fallback
+        dispatch (`KIND_FALLBACK`) that used to route here has no resolver
+        registered to ever produce that parse kind. Left in place (with the
+        picker chain it opens) since nothing currently calls it; if that
+        changes, it still re-resolves against a FRESH ``get_context`` (never
+        a cached snapshot) for the authoritative trust decision.
         """
         args = cap_skill_args(args)
         context = await self._fetch_console_skill_context()
@@ -11790,9 +11803,8 @@ class ChatScreen(BaseAppScreen):
         # "exists but needs review" before falling back to the picker --
         # review-mandated addition (Task 8 review): a typed name/prefix that
         # matches ONLY needs-review skills must not read like the generic
-        # empty state. Shared with the bare `/skill-name` KIND_UNKNOWN
-        # fallback dispatch site (fix-wave fold-in below) via
-        # `_console_skill_blocked_match_response`.
+        # empty state. Shares `_console_skill_blocked_match_response` with
+        # the composer's KIND_UNKNOWN dispatch site.
         if await self._console_skill_blocked_match_response(name, blocked_summaries):
             return
         if args:
@@ -11807,20 +11819,20 @@ class ChatScreen(BaseAppScreen):
     ) -> bool:
         """Surface the needs-review response for ``name`` against blocked skill summaries.
 
-        Shared by `/skills <name>`'s "none" branch above and the bare
-        `/skill-name` `KIND_UNKNOWN` fallback dispatch site
-        (``_send_console_message_from_visible_action``) -- fold-in from the
-        Task 9 fix-wave review -- so a typed name/prefix that matches ONLY
-        needs-review (trust-blocked) skills reads the same way from either
-        surface, instead of the generic "genuinely absent"/unknown-command
-        copy the fallback resolver's own trusted-only cached snapshot would
-        otherwise fall through to.
+        Called from the composer's `KIND_UNKNOWN` dispatch site (a bare
+        draft that matched no registered command -- there is no fallback
+        resolver to claim it anymore, hard removal Task 4) so a typed
+        name/prefix that matches ONLY needs-review (trust-blocked) skills
+        reads as a distinguishing hint instead of the generic
+        "Unknown command" copy. `_console_command_run_skill`'s "none" branch
+        also calls this (fold-in from the Task 9 fix-wave review), though
+        that method currently has no live caller of its own -- see its
+        docstring.
 
         Args:
             name: The typed command word (no leading slash).
             blocked_summaries: Fresh ``get_context``-derived blocked-skill
-                summaries (never the fallback resolver's cached trusted-only
-                snapshot).
+                summaries (never a cached snapshot).
 
         Returns:
             ``True`` when a blocked match was found and a response was
@@ -11829,8 +11841,8 @@ class ChatScreen(BaseAppScreen):
             ``CONSOLE_SKILL_NEEDS_REVIEW_HINT_TEMPLATE`` hint) -- the caller
             should stop further handling. ``False`` when ``name`` matches no
             blocked skill at all, so the caller falls through to its own
-            default (the skill picker for `/skills <name>`, the generic
-            unknown-command hint for bare fallback).
+            default (the generic "Unknown command" hint for the composer's
+            `KIND_UNKNOWN` site).
         """
         name_lower = name.lower()
         exact_blocked = next(
@@ -11866,7 +11878,10 @@ class ChatScreen(BaseAppScreen):
         return False
 
     async def _run_resolved_console_skill(self, name: str, args: str) -> None:
-        """Submit a resolved skill's raw `/name [args]` command as the user turn.
+        """Submit a resolved skill's raw `$name [args]` command as the user turn.
+
+        Hard removal (Task 4 of the `$`-mention migration): this composes
+        the `$`-sigil invocation form now, not `/name [args]`.
 
         Task 10 (the substitution rule) renders this at payload build time --
         this method only sends the literal, unmodified command text through
@@ -11887,7 +11902,7 @@ class ChatScreen(BaseAppScreen):
         never even gets queued (blocked send, run already in progress) must
         not leave a stale marker staged for some later, unrelated send.
         """
-        raw_command = f"/{name} {args}" if args else f"/{name}"
+        raw_command = f"${name} {args}" if args else f"${name}"
         self._console_pending_skill_marker_name = name
         queued = await self._dispatch_console_draft_send(raw_command)
         if not queued:

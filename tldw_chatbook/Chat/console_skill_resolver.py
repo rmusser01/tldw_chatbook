@@ -1,30 +1,31 @@
-"""Pure skills-command resolver for the native Console composer.
+"""Pure skills-command resolver for the native Console.
 
 This module has no dependency on Textual, the running app, or any I/O — it
 mirrors :mod:`console_command_grammar`'s purity discipline. It resolves a
-bare ``/skill-name [args]`` Console draft against a caller-supplied snapshot
-of skill candidates (exact case-insensitive name, then unique case-
-insensitive name-prefix), and builds the
-:meth:`console_command_grammar.ConsoleCommandRegistry.register_fallback_resolver`
-callable a caller wires up to claim those drafts.
+leading ``$skill-name [args]`` mention (or a `/skills <name>` registered-
+command word) against a caller-supplied snapshot of skill candidates (exact
+case-insensitive name, then unique case-insensitive name-prefix), and finds
+embedded ``$skill-name`` mentions anywhere else in a draft
+(:func:`find_embedded_mentions`).
 
 Callers own everything this module cannot: fetching the actual candidate
 snapshot (scoped to USER-INVOCABLE + TRUSTED skills only — this module never
 filters by trust or invocability itself, it only matches names), re-
-resolving authoritatively at dispatch time (the fallback resolver here only
-decides whether to *claim* a word so unknown words still fall through to the
-existing unknown-command hint), and formatting/emitting the untrusted-skill
-refusal text (:data:`SKILL_UNTRUSTED_REFUSE`) once a caller has determined a
-resolved name is not currently trusted.
+resolving authoritatively at execute time, and formatting/emitting the
+untrusted-skill refusal text (:data:`SKILL_UNTRUSTED_REFUSE`) once a caller
+has determined a resolved name is not currently trusted.
+
+Hard removal (Task 4 of the `$`-mention migration): this module used to also
+build a `console_command_grammar.ConsoleCommandRegistry.register_fallback_resolver`
+callable claiming a bare ``/skill-name`` composer draft
+(``make_skill_fallback_resolver``) — that factory has been deleted. Skill
+invocation is now exclusively the `$name` mention form.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Callable
-
-from .console_command_grammar import KIND_FALLBACK, CommandParse
 
 SKILL_ARGS_MAX = 4000
 """Maximum character length of skill invocation args after capping."""
@@ -268,39 +269,3 @@ def format_skills_list(candidates: tuple[SkillCommandCandidate, ...]) -> str:
         else:
             lines.append(f"${candidate.name}")
     return "\n".join(lines)
-
-
-def make_skill_fallback_resolver(
-    candidates_getter: Callable[[], tuple[SkillCommandCandidate, ...]],
-) -> Callable[[str, str], "CommandParse | None"]:
-    """Build a `console_command_grammar` fallback-resolver callable.
-
-    Args:
-        candidates_getter: Zero-argument callable a caller wires to fetch a
-            fresh candidate snapshot at parse time (kept as an injected
-            callable rather than a plain value so this module never imports
-            the real skills service — that wiring belongs to dispatch).
-
-    Returns:
-        A resolver suitable for
-        `console_command_grammar.ConsoleCommandRegistry.register_fallback_resolver`.
-        It claims (returns a `CommandParse`) only when `resolve_skill_command`
-        finds the word plausibly matches a cached skill (`"resolved"` or
-        `"ambiguous"`) — the returned `CommandParse.name` is the *typed*
-        word, not the resolved candidate name, so an unmodified round-trip
-        through the grammar always carries what the user actually typed;
-        re-resolving authoritatively (and refusing untrusted matches) is
-        dispatch's job. Any other word (no match) returns ``None`` so it
-        still falls through to the existing unknown-command hint.
-    """
-
-    def resolver(word: str, rest: str) -> CommandParse | None:
-        candidates = candidates_getter()
-        resolution = resolve_skill_command(word, rest, candidates)
-        if resolution.kind in ("resolved", "ambiguous"):
-            return CommandParse(
-                kind=KIND_FALLBACK, name=word, args=cap_skill_args(rest)
-            )
-        return None
-
-    return resolver

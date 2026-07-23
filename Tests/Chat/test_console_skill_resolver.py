@@ -1,4 +1,3 @@
-from tldw_chatbook.Chat.console_command_grammar import KIND_FALLBACK
 from tldw_chatbook.Chat.console_skill_resolver import (
     SKILLS_EMPTY_LIST_ROW,
     SkillCommandCandidate,
@@ -6,7 +5,6 @@ from tldw_chatbook.Chat.console_skill_resolver import (
     cap_skill_args,
     find_embedded_mentions,
     format_skills_list,
-    make_skill_fallback_resolver,
     resolve_skill_command,
 )
 
@@ -71,24 +69,6 @@ def test_format_list_empty():
 def test_format_list_lines_include_name_and_desc():
     text = format_skills_list(_cands("summarize"))
     assert "summarize" in text and "summarize desc" in text
-
-
-def test_fallback_claims_matching_word_only():
-    resolver = make_skill_fallback_resolver(lambda: _cands("summarize"))
-    claimed = resolver("summ", "the doc")
-    assert (
-        claimed is not None and claimed.kind == KIND_FALLBACK and claimed.name == "summ"
-    )
-    assert resolver("unknownword", "x") is None
-
-
-def test_fallback_does_not_claim_a_bare_slash_draft():
-    """A `/` or `/ ` draft (console_command_grammar splits it into an
-    empty word) must fall through to the unknown-command hint, never
-    open a picker or silently resolve to whatever skill happens to exist."""
-    resolver = make_skill_fallback_resolver(lambda: _cands("summarize"))
-    assert resolver("", "") is None
-    assert resolver("", " ") is None
 
 
 _NAMES = frozenset({"code-review", "style-guide", "path"})

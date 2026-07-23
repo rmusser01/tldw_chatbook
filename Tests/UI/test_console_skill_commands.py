@@ -1,5 +1,8 @@
-"""Task 9: `/skills` registered command + bare `/skill-name` fallback dispatch
-(list / run / refuse) on the native Console composer.
+"""`/skills` registered command (list / static `$name` run-form hint) on
+the native Console composer (Task 4: the OLD bare `/skill-name` fallback
+dispatch this file used to also cover was hard-removed -- invocation is now
+exclusively the controller-side `$name` mention, tested in
+``Tests/Chat/test_console_skill_substitution.py``).
 
 Mirrors ``Tests/UI/test_console_command_composer.py``'s harness style (real
 ``TldwCli`` app via ``_build_test_app``, real ``ChatScreen`` via
@@ -10,7 +13,6 @@ store.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import Any, Mapping
 from unittest.mock import AsyncMock
 
@@ -28,15 +30,10 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-from tldw_chatbook.Chat.console_skill_resolver import (
-    SKILL_UNTRUSTED_REFUSE,
-    SKILLS_EMPTY_LIST_ROW,
-)
-from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
+from tldw_chatbook.Chat.console_skill_resolver import SKILLS_EMPTY_LIST_ROW
 from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_SKILL_NEEDS_REVIEW_HINT_TEMPLATE,
     CONSOLE_SKILL_RUN_MARKER_TEMPLATE,
-    CONSOLE_SKILL_RUN_REFUSE_REASON_ABSENT,
 )
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
@@ -63,13 +60,13 @@ def _blocked_skill(name: str, *, reason: str = "skill_modified") -> dict[str, An
 class FakeSkillsScopeService:
     """Minimal stand-in for ``SkillsScopeService.get_context``/``execute_skill``.
 
-    ``execute_skill`` exists because Task 10's provider-payload substitution
-    rule renders the triggering `/skill-name` turn at build time through
-    the controller's injected skills service (the same object staged on
+    ``execute_skill`` exists because the provider-payload substitution rule
+    renders the triggering `$skill-name` turn at build time through the
+    controller's injected skills service (the same object staged on
     ``app.skills_scope_service`` here) -- a raw-command submit in these
-    tests therefore reaches ``execute_skill`` even though the assertions
-    below are about dispatch (raw command stored + marker order), not the
-    rendered payload.
+    tests therefore reaches ``execute_skill`` even though some assertions
+    below are about dispatch (raw command stored, no skill run) rather than
+    the rendered payload.
     """
 
     def __init__(
@@ -134,8 +131,8 @@ async def test_bare_skills_command_lists_trusted_skills():
 
         system_rows = _console_message_contents(console, ConsoleMessageRole.SYSTEM)
         assert any(
-            "/code-review — Reviews a diff." in row
-            and "/release-notes — Drafts release notes." in row
+            "$code-review — Reviews a diff." in row
+            and "$release-notes — Drafts release notes." in row
             for row in system_rows
         )
 
@@ -162,7 +159,10 @@ async def test_bare_skills_command_with_no_skills_shows_empty_row():
 
 
 @pytest.mark.asyncio
-async def test_skills_command_unknown_name_shows_absent_refuse_row():
+async def test_skills_command_named_run_form_shows_dollar_hint_for_unknown_name():
+    """Hard removal (Task 4): `/skills <name>` never resolves or runs a
+    skill anymore -- it always shows the same "run it with $name" hint,
+    regardless of whether the typed name matches anything at all."""
     app = _build_test_app()
     _configure_native_ready_console(app)
     app.skills_scope_service = FakeSkillsScopeService(
@@ -181,17 +181,18 @@ async def test_skills_command_unknown_name_shows_absent_refuse_row():
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.2)
 
-        expected = SKILL_UNTRUSTED_REFUSE.format(
-            name="unknownskill", reason=CONSOLE_SKILL_RUN_REFUSE_REASON_ABSENT
-        )
+        expected = "Run skills by typing $unknownskill — /skills only lists them."
         assert expected in _console_message_contents(console, ConsoleMessageRole.SYSTEM)
         submit_spy.assert_not_called()
-        # The draft is preserved -- a refusal never clears the composer.
+        # The draft is preserved -- the hint never clears the composer.
         assert composer.draft_text() == "/skills unknownskill"
 
 
 @pytest.mark.asyncio
-async def test_skills_command_named_blocked_skill_shows_untrusted_refuse_row():
+async def test_skills_command_named_run_form_shows_dollar_hint_for_blocked_name():
+    """Same hint even when the typed name matches a trust-blocked skill --
+    `/skills <name>` no longer distinguishes blocked/absent/ambiguous, it
+    never resolves anything at all."""
     app = _build_test_app()
     _configure_native_ready_console(app)
     app.skills_scope_service = FakeSkillsScopeService(
@@ -211,20 +212,28 @@ async def test_skills_command_named_blocked_skill_shows_untrusted_refuse_row():
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.2)
 
-        expected = SKILL_UNTRUSTED_REFUSE.format(
-            name="sketchy-skill", reason="skill_modified"
-        )
+        expected = "Run skills by typing $sketchy-skill — /skills only lists them."
         assert expected in _console_message_contents(console, ConsoleMessageRole.SYSTEM)
         submit_spy.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_bare_fallback_trusted_skill_submits_raw_command_and_appends_marker():
+async def test_leading_dollar_skill_mention_executes_through_normal_send():
+    """Hard removal (Task 4): typing `$code-review fix it` directly is no
+    longer intercepted by any composer-level command dispatch -- it is a
+    plain user send. The skill still actually runs because the CONTROLLER
+    (Tasks 2/3) resolves and splices the leading `$name` mention at
+    provider-payload build time; the stored transcript keeps the raw
+    `$`-prefixed text untouched (ephemeral substitution only). There is no
+    composer-staged TOOL "driving this turn" marker for this path anymore
+    -- that mechanism only ever fired for the now-removed bare `/name`
+    dispatch-time resolution."""
     app = _build_test_app()
     _configure_native_ready_console(app)
-    app.skills_scope_service = FakeSkillsScopeService(
+    skills = FakeSkillsScopeService(
         available_skills=[_skill("code-review", "Reviews a diff.")]
     )
+    app.skills_scope_service = skills
     gateway = CapturingGateway(chunks=("accepted",))
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -232,235 +241,110 @@ async def test_bare_fallback_trusted_skill_submits_raw_command_and_appends_marke
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        # Let the mount-time cache refresh populate the fallback resolver's
-        # candidate snapshot before typing a bare `/code-review` draft.
-        for _ in range(40):
-            if console._console_skill_candidates:
-                break
-            await pilot.pause(0.05)
-        assert console._console_skill_candidates, "candidate snapshot never populated"
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        composer.load_draft("/code-review fix it")
-        # `wraps=` keeps the real submit path running (needed for the
-        # accepted-hook that now appends the marker -- see below) while
-        # still letting us assert what was actually submitted.
+        composer.load_draft("$code-review fix it")
         submit_spy = await _spy_submit_draft(console)
 
         console.query_one("#console-send-message", Button).press()
         await _wait_for_text(console, pilot, "accepted")
 
-        submit_spy.assert_called_once_with("/code-review fix it")
-        marker_expected = CONSOLE_SKILL_RUN_MARKER_TEMPLATE.format(name="code-review")
-        assert marker_expected in _console_message_contents(
+        # The raw `$`-prefixed draft is submitted verbatim -- no composer
+        # command dispatch ever intercepts it.
+        submit_spy.assert_called_once_with("$code-review fix it")
+        # The skill actually ran (controller-side substitution).
+        assert skills.executions == [("code-review", "fix it")]
+        # The stored transcript keeps the raw mention -- only the ephemeral
+        # provider payload is rendered.
+        user_rows = [
+            message.content
+            for message in console._ensure_console_chat_store().messages_for_session(
+                console._ensure_console_chat_store().active_session_id
+            )
+            if message.role is ConsoleMessageRole.USER
+        ]
+        assert "$code-review fix it" in user_rows
+        # No TOOL "driving this turn" marker -- that composer-staged
+        # mechanism no longer fires for a directly-typed `$name` send.
+        marker_text = CONSOLE_SKILL_RUN_MARKER_TEMPLATE.format(name="code-review")
+        assert marker_text not in _console_message_contents(
             console, ConsoleMessageRole.TOOL
         )
 
 
 @pytest.mark.asyncio
-async def test_bare_fallback_skill_marker_lands_after_user_message_not_before():
-    """Reviewer repro (Task 9 fix-wave): appending the TOOL "driving this
-    turn" marker right after `_dispatch_console_draft_send` merely
-    *schedules* the real submit via `run_worker` -- not after it actually
-    runs -- so the marker could land BEFORE the user turn it is meant to
-    follow. Store order must always be [USER, TOOL, ASSISTANT]."""
+async def test_bare_slash_skill_name_no_longer_auto_runs_shows_unknown_command_hint():
+    """Hard removal (Task 4): a bare `/code-review fix it` draft -- the OLD
+    invocation form -- is no longer claimed by any fallback resolver, even
+    though "code-review" is a real, trusted skill. It parses exactly like
+    any other unrecognized word: the generic "Unknown command" hint, armed
+    for a literal send on a second Enter. The skill never runs."""
     app = _build_test_app()
     _configure_native_ready_console(app)
-    app.skills_scope_service = FakeSkillsScopeService(
+    skills = FakeSkillsScopeService(
         available_skills=[_skill("code-review", "Reviews a diff.")]
     )
-    gateway = CapturingGateway(chunks=("accepted",))
-    app.console_provider_gateway_factory = lambda: gateway
+    app.skills_scope_service = skills
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        for _ in range(40):
-            if console._console_skill_candidates:
-                break
-            await pilot.pause(0.05)
-        assert console._console_skill_candidates, "candidate snapshot never populated"
-
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("/code-review fix it")
+        submit_spy = AsyncMock()
+        console._submit_console_native_draft = submit_spy
 
-        console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "accepted")
-
-        store = console._ensure_console_chat_store()
-        session_id = store.active_session_id
-        assert session_id is not None
-        messages = store.messages_for_session(session_id)
-
-        marker_expected = CONSOLE_SKILL_RUN_MARKER_TEMPLATE.format(name="code-review")
-        assert [message.role for message in messages] == [
-            ConsoleMessageRole.USER,
-            ConsoleMessageRole.TOOL,
-            ConsoleMessageRole.ASSISTANT,
-        ]
-        assert messages[0].content == "/code-review fix it"
-        assert messages[1].content == marker_expected
-
-
-class _RaceConditionSkillsScopeService(FakeSkillsScopeService):
-    """Reports a skill as trusted at candidate-listing time, but refuses it
-    (``SkillTrustBlockedError``) at actual execute-time -- simulating trust
-    being revoked in the window between the composer's dispatch-time
-    resolution (``_console_command_run_skill``, which staged the "driving
-    this turn" marker) and the controller's own build-time re-verification
-    (``ConsoleChatController._apply_skill_substitution``)."""
-
-    async def execute_skill(self, name, *, mode=None, args=None):
-        self.executions.append((name, args))
-        raise SkillTrustBlockedError(
-            skill_name=name,
-            reason_code="skill_modified",
-            trust_status="quarantined_modified",
-        )
-
-
-@pytest.mark.asyncio
-async def test_skill_trust_revoked_between_resolve_and_submit_refuses_without_marker():
-    """Qodo finding 3 (PR #636 bot review) repro: a skill resolved (and
-    staged for the "driving this turn" marker) at dispatch time can still
-    be refused by the controller's own build-time trust re-check. The
-    refusal must produce NO TOOL marker (the skill never actually ran) and
-    must not leak the staged marker name onto the next, unrelated send."""
-    app = _build_test_app()
-    _configure_native_ready_console(app)
-    app.skills_scope_service = _RaceConditionSkillsScopeService(
-        available_skills=[_skill("code-review", "Reviews a diff.")]
-    )
-    gateway = CapturingGateway(chunks=("accepted",))
-    app.console_provider_gateway_factory = lambda: gateway
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
-        for _ in range(40):
-            if console._console_skill_candidates:
-                break
-            await pilot.pause(0.05)
-        assert console._console_skill_candidates, "candidate snapshot never populated"
-
-        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        composer.load_draft("/code-review fix it")
-        console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "isn't trusted (skill_modified)")
-
-        store = console._ensure_console_chat_store()
-        session_id = store.active_session_id
-        assert session_id is not None
-        messages = store.messages_for_session(session_id)
-
-        # The raw command still persists (honest record), followed by the
-        # refuse row -- but NO TOOL marker: the skill never actually ran.
-        assert not [m for m in messages if m.role is ConsoleMessageRole.TOOL]
-        expected = SKILL_UNTRUSTED_REFUSE.format(
-            name="code-review", reason="skill_modified"
-        )
-        assert expected in _console_message_contents(console, ConsoleMessageRole.SYSTEM)
-        assert console._console_pending_skill_marker_name is None
-
-        # The staged marker must not leak onto the NEXT, unrelated send.
-        composer.load_draft("just a normal message")
-        console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "accepted")
-        assert not [
-            message
-            for message in store.messages_for_session(session_id)
-            if message.role is ConsoleMessageRole.TOOL
-        ]
-
-
-class _ToggleReadinessGateway:
-    """First ``resolve_for_send`` call is blocked; every later call is ready.
-
-    Lets a single test drive "the skill run's submit is refused inside
-    `submit_draft`" followed immediately by a normal successful send,
-    without needing to tear down/rebuild the Console controller (whose
-    ``provider_gateway`` is cached at construction) mid test.
-    """
-
-    def __init__(self) -> None:
-        self._calls = 0
-
-    async def resolve_for_send(self, selection):
-        self._calls += 1
-        ready = self._calls > 1
-        return SimpleNamespace(
-            provider=selection.provider,
-            base_url=selection.base_url or "",
-            model=selection.explicit_model
-            or selection.configured_model
-            or "test-model",
-            ready=ready,
-            visible_copy="" if ready else "Provider blocked: test setup incomplete.",
-        )
-
-    async def stream_chat(self, resolution, messages):
-        yield "accepted"
-
-
-@pytest.mark.asyncio
-async def test_blocked_skill_run_does_not_leak_marker_into_next_send():
-    """Leak test: a refused/blocked submit must never leave its staged skill
-    marker name to attach itself to the NEXT, unrelated accepted send."""
-    app = _build_test_app()
-    _configure_native_ready_console(app)
-    app.skills_scope_service = FakeSkillsScopeService(
-        available_skills=[_skill("code-review", "Reviews a diff.")]
-    )
-    gateway = _ToggleReadinessGateway()
-    app.console_provider_gateway_factory = lambda: gateway
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
-        for _ in range(40):
-            if console._console_skill_candidates:
-                break
-            await pilot.pause(0.05)
-        assert console._console_skill_candidates, "candidate snapshot never populated"
-
-        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        composer.load_draft("/code-review fix it")
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.2)
 
-        # The blocked first attempt must have cleared the staged marker name
-        # rather than leaving it consumed by whatever sends next.
-        assert console._console_pending_skill_marker_name is None
-
-        store = console._ensure_console_chat_store()
-        session_id = store.active_session_id
-        assert session_id is not None
-        assert not [
-            message
-            for message in store.messages_for_session(session_id)
-            if message.role is ConsoleMessageRole.TOOL
-        ]
-
-        composer.load_draft("just a normal message")
-        console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "accepted")
-
-        tool_rows = [
-            message.content
-            for message in store.messages_for_session(session_id)
-            if message.role is ConsoleMessageRole.TOOL
-        ]
-        assert tool_rows == []
+        expected = (
+            "Unknown command /code-review — available: "
+            "/prompt, /system, /skills, /prefill. Press Enter again to send as text."
+        )
+        assert expected in _console_message_contents(console, ConsoleMessageRole.SYSTEM)
+        submit_spy.assert_not_called()
+        assert skills.executions == []
+        assert composer.draft_text() == "/code-review fix it"
+        assert console._console_unknown_send_armed == "/code-review fix it"
 
 
 @pytest.mark.asyncio
-async def test_run_skill_prefix_matching_only_blocked_skills_shows_needs_review_hint():
-    """Review-mandated addition: a typed prefix that matches ONLY needs-review
-    skills must not silently open an (always-empty) picker or otherwise read
-    like the generic empty state -- it gets a distinguishing count hint."""
+async def test_run_resolved_console_skill_composes_dollar_command():
+    """The skill-picker submit path (`_run_resolved_console_skill`, the sole
+    remaining consumer of a resolved skill name) composes a `$name [args]`
+    draft, not `/name [args]` -- verified directly since the picker is no
+    longer reachable through any live `/skills` or bare-word composer
+    input (both were hard-removed above)."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.skills_scope_service = FakeSkillsScopeService(
+        available_skills=[_skill("code-review", "Reviews a diff.")]
+    )
+    gateway = CapturingGateway(chunks=("accepted",))
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        submit_spy = await _spy_submit_draft(console)
+
+        await console._run_resolved_console_skill("code-review", "fix it")
+        await _wait_for_text(console, pilot, "accepted")
+        submit_spy.assert_called_once_with("$code-review fix it")
+
+        submit_spy.reset_mock()
+        await console._run_resolved_console_skill("code-review", "")
+        await pilot.pause(0.2)
+        submit_spy.assert_called_once_with("$code-review")
+
+
+@pytest.mark.asyncio
+async def test_skills_command_named_run_form_shows_dollar_hint_for_blocked_prefix():
+    """Same static hint even when the typed name is a prefix matching only
+    needs-review skills -- `/skills <name>` no longer distinguishes any
+    resolution outcome, and never opens the (now-unreachable) picker."""
     app = _build_test_app()
     _configure_native_ready_console(app)
     app.skills_scope_service = FakeSkillsScopeService(
@@ -479,17 +363,17 @@ async def test_run_skill_prefix_matching_only_blocked_skills_shows_needs_review_
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.2)
 
-        expected = CONSOLE_SKILL_NEEDS_REVIEW_HINT_TEMPLATE.format(count=2)
+        expected = "Run skills by typing $review — /skills only lists them."
         assert expected in _console_message_contents(console, ConsoleMessageRole.SYSTEM)
         assert len(host.screen_stack) == baseline_depth, "no picker should have opened"
 
 
 @pytest.mark.asyncio
-async def test_bare_fallback_prefix_matching_only_blocked_skills_shows_needs_review_hint():
-    """Fold-in (Task 9 fix-wave review): a bare `/name` draft that the
-    fallback resolver leaves as KIND_UNKNOWN (its cached candidate snapshot
-    is trusted-only, so a needs-review-only match never gets claimed) must
-    surface the same distinguishing hint `/skills <name>` shows, not the
+async def test_bare_unknown_word_needs_review_prefix_shows_hint_not_unknown_command():
+    """The blocked-hint path itself STAYS (Task 4 brief): a bare `/name`
+    draft that matches no registered command reaches KIND_UNKNOWN directly
+    (there is no fallback resolver at all anymore), and a needs-review-only
+    match there still surfaces the distinguishing count hint instead of the
     generic "Unknown command" hint."""
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -516,7 +400,10 @@ async def test_bare_fallback_prefix_matching_only_blocked_skills_shows_needs_rev
 
 
 @pytest.mark.asyncio
-async def test_skills_command_ambiguous_prefix_opens_picker_prefilled():
+async def test_skills_command_named_run_form_shows_dollar_hint_for_ambiguous_prefix():
+    """Same static hint even when the typed name is an ambiguous prefix
+    (multiple trusted matches) -- `/skills <name>` never opens the picker
+    anymore, for any resolution outcome."""
     app = _build_test_app()
     _configure_native_ready_console(app)
     app.skills_scope_service = FakeSkillsScopeService(
@@ -537,17 +424,8 @@ async def test_skills_command_ambiguous_prefix_opens_picker_prefilled():
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.2)
 
-        assert len(host.screen_stack) == baseline_depth + 1, (
-            "the picker must have opened"
-        )
-
-        from tldw_chatbook.Widgets.Console.console_skill_picker_modal import (
-            FILTER_INPUT_ID,
-        )
-        from textual.widgets import Input
-
-        picker = host.screen_stack[-1]
-        filter_input = picker.query_one(f"#{FILTER_INPUT_ID}", Input)
-        assert filter_input.value == "code"
-        # The draft is left exactly as typed -- the picker is a detour.
+        expected = "Run skills by typing $code — /skills only lists them."
+        assert expected in _console_message_contents(console, ConsoleMessageRole.SYSTEM)
+        assert len(host.screen_stack) == baseline_depth, "no picker should have opened"
+        # The draft is left exactly as typed.
         assert composer.draft_text() == "/skills code"
