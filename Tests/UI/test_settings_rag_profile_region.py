@@ -1,0 +1,302 @@
+"""Screen-level coverage for the Settings > Library/RAG profile-manager region
+(Task 2 of SP3).
+
+Task-2 review Finding 1: ~450 new lines (profile picker + clone/rename/delete
++ set-active dirty-draft prompt + worker completion paths + first-paint
+read-only rendering) shipped with zero screen-level tests. This file plus the
+regression tests added to ``test_settings_rag_profile_adapter.py`` (Finding 3)
+close that gap.
+
+Two test styles are used, matching existing repo conventions:
+
+- Sync-constructed ``SettingsScreen(app)`` instances (never mounted/piloted),
+  the same pattern as
+  ``test_settings_console_background_workbench_raw_scope_unrelated_save_includes_fallback``
+  in ``test_settings_configuration_hub.py``. Any codepath that touches
+  Textual's ``self.app`` property (``.notify``/``.push_screen``) needs a
+  monkeypatched ``SettingsScreen.app`` -- see the ``fake_app`` fixture below;
+  an un-mounted widget's ``.app`` raises ``NoActiveAppError`` otherwise.
+- One full pilot test (``_build_test_app`` + ``DestinationHarness``) for the
+  first-paint read-only rendering, since composing widgets standalone
+  requires faking Textual's internal compose-stack bookkeeping, which is far
+  more fragile than just mounting the real screen.
+"""
+
+import pytest
+from textual.widgets import Button, Input, Select
+
+from Tests.UI.test_destination_shells import (
+    DestinationHarness,
+    _active_destination_screen,
+    _build_test_app,
+)
+from Tests.UI.test_settings_configuration_hub import (
+    _open_settings_category,
+    _wire_rag_profile_adapter,
+)
+from tldw_chatbook.RAG_Search.config_profiles import reset_profile_manager_cache
+from tldw_chatbook.UI.Screens.settings_config_models import (
+    SettingsCategoryId,
+    SettingsDraft,
+)
+from tldw_chatbook.UI.Screens.settings_screen import (
+    RagProfileSwitchConfirmModal,
+    SettingsScreen,
+)
+
+
+@pytest.fixture(autouse=True)
+def _reset_profile_manager_cache_after_test():
+    yield
+    reset_profile_manager_cache()
+
+
+class _FakeApp:
+    """Minimal stand-in for Textual's ``self.app`` -- records notify/push_screen
+    calls instead of requiring a running application context."""
+
+    def __init__(self):
+        self.notifications: list[tuple[str, str]] = []
+        self.pushed_screens: list[tuple[object, object]] = []
+
+    def notify(self, message, *, severity="information", **kwargs):
+        self.notifications.append((message, severity))
+
+    def push_screen(self, screen, callback=None):
+        self.pushed_screens.append((screen, callback))
+
+
+@pytest.fixture
+def fake_app(monkeypatch):
+    """Monkeypatch ``SettingsScreen.app`` (a class-level property override,
+    auto-reverted by pytest's monkeypatch) so un-mounted screens can exercise
+    ``self.app.notify``/``self.app.push_screen`` call sites."""
+    app = _FakeApp()
+    monkeypatch.setattr(SettingsScreen, "app", property(lambda self: app), raising=False)
+    return app
+
+
+def _dirty_library_rag_screen(app_instance) -> SettingsScreen:
+    screen = SettingsScreen(app_instance)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    draft = SettingsDraft(category=SettingsCategoryId.LIBRARY_RAG)
+    draft.set_value("default_top_k", 10, 12)
+    screen._settings_drafts[SettingsCategoryId.LIBRARY_RAG] = draft
+    return screen
+
+
+# --- Finding 1: dirty-prompt routing (Set-active while a draft is dirty) ---
+
+
+def _dirty_screen_with_switch_pushed(monkeypatch, tmp_path, fake_app):
+    """Wire an isolated adapter, build a dirty-draft screen, select a
+    different (non-active) profile, and click Set active -- returns the
+    screen, the modal's dismiss callback, and the target profile id."""
+    mgr, _profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    other = mgr.clone_profile("hybrid_basic", "Other RAG")
+    mgr.save_profile(other)
+
+    app = _build_test_app()
+    screen = _dirty_library_rag_screen(app)
+    monkeypatch.setattr(screen, "_library_rag_selected_profile_id", lambda: other.id)
+
+    button = Button(id="settings-library-rag-profile-set-active")
+    screen.handle_library_rag_profile_set_active(Button.Pressed(button))
+
+    assert len(fake_app.pushed_screens) == 1
+    modal, callback = fake_app.pushed_screens[0]
+    assert isinstance(modal, RagProfileSwitchConfirmModal)
+    return screen, callback, other.id
+
+
+def test_set_active_with_dirty_draft_pushes_confirm_modal(monkeypatch, tmp_path, fake_app):
+    screen, _callback, _other_id = _dirty_screen_with_switch_pushed(
+        monkeypatch, tmp_path, fake_app
+    )
+    # The push itself must not have side-effected the draft or dispatched
+    # anything -- the modal is the ONLY thing that happened.
+    assert SettingsCategoryId.LIBRARY_RAG in screen._settings_drafts
+    assert screen._rag_profile_pending_activate is None
+
+
+def test_confirm_modal_cancel_makes_no_dispatch_and_leaves_pending_clear(
+    monkeypatch, tmp_path, fake_app
+):
+    screen, callback, _other_id = _dirty_screen_with_switch_pushed(
+        monkeypatch, tmp_path, fake_app
+    )
+    dispatched: list[str] = []
+    screen._dispatch_rag_set_active = dispatched.append
+
+    callback("cancel")
+
+    assert dispatched == []
+    assert screen._rag_profile_pending_activate is None
+    # Draft is left untouched by Cancel.
+    assert SettingsCategoryId.LIBRARY_RAG in screen._settings_drafts
+
+
+def test_confirm_modal_discard_pops_draft_before_dispatching_set_active(
+    monkeypatch, tmp_path, fake_app
+):
+    screen, callback, other_id = _dirty_screen_with_switch_pushed(
+        monkeypatch, tmp_path, fake_app
+    )
+    calls: list[str] = []
+    draft_present_at_dispatch: list[bool] = []
+
+    def _spy_dispatch(profile_id):
+        calls.append(profile_id)
+        draft_present_at_dispatch.append(
+            SettingsCategoryId.LIBRARY_RAG in screen._settings_drafts
+        )
+
+    screen._dispatch_rag_set_active = _spy_dispatch
+
+    callback("discard")
+
+    assert calls == [other_id]
+    # Ordering: the draft must already be gone by the time dispatch runs.
+    assert draft_present_at_dispatch == [False]
+    assert SettingsCategoryId.LIBRARY_RAG not in screen._settings_drafts
+
+
+def test_confirm_modal_save_arms_pending_activate_and_routes_through_save_action(
+    monkeypatch, tmp_path, fake_app
+):
+    screen, callback, other_id = _dirty_screen_with_switch_pushed(
+        monkeypatch, tmp_path, fake_app
+    )
+    save_calls: list[dict] = []
+    screen.action_settings_save_category = lambda **kwargs: save_calls.append(kwargs)
+
+    callback("save")
+
+    assert screen._rag_profile_pending_activate == other_id
+    assert save_calls == [{"allow_text_entry_focus": True}]
+
+
+# --- Finding 2: `_rag_profile_pending_activate` must not leak past an
+# early return in the Save action's LIBRARY_RAG branch. ---
+
+
+def test_pending_activate_cleared_on_validation_failure(monkeypatch, tmp_path, fake_app):
+    """Regression for Finding 2: Set-active(dirty) -> Save -> validation
+    fails -> action_settings_save_category returns BEFORE the save worker
+    (the only prior clearing site, _apply_library_rag_save_result) ever
+    runs. Without the fix this pending id would silently fire a profile
+    switch on a later, unrelated successful save.
+    """
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    draft = SettingsDraft(category=SettingsCategoryId.LIBRARY_RAG)
+    draft.set_value("default_top_k", 10, 0)  # 0 fails validation (min 1)
+    screen._settings_drafts[SettingsCategoryId.LIBRARY_RAG] = draft
+    screen._rag_profile_pending_activate = "some-other-profile-id"
+
+    screen.action_settings_save_category(allow_text_entry_focus=True)
+
+    assert screen._rag_profile_pending_activate is None
+
+
+def test_pending_activate_cleared_when_no_unsaved_changes(monkeypatch, tmp_path, fake_app):
+    """Same leak, via the OTHER early return in the LIBRARY_RAG save branch."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    # No draft staged at all -> _category_has_unsaved_changes is False.
+    screen._rag_profile_pending_activate = "some-other-profile-id"
+
+    screen.action_settings_save_category(allow_text_entry_focus=True)
+
+    assert screen._rag_profile_pending_activate is None
+
+
+def test_pending_activate_survives_into_worker_dispatch_on_valid_save(
+    monkeypatch, tmp_path, fake_app
+):
+    """The capture-and-rearm fix must not break the legitimate path: a valid
+    save still carries the pending id through to the worker dispatch so
+    _apply_library_rag_save_result can fire the deferred switch."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = _dirty_library_rag_screen(app)  # valid dirty value (12)
+    screen._rag_profile_pending_activate = "target-profile-id"
+    worker_calls: list[object] = []
+    screen._settings_save_library_rag_worker = worker_calls.append
+
+    screen.action_settings_save_category(allow_text_entry_focus=True)
+
+    assert screen._rag_profile_pending_activate == "target-profile-id"
+    assert len(worker_calls) == 1
+
+
+# --- Worker completion path: `_rag_after_set_active` ---
+
+
+def test_after_set_active_success_clears_draft_and_notifies(monkeypatch, tmp_path, fake_app):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = _dirty_library_rag_screen(app)
+
+    screen._rag_after_set_active(True, "")
+
+    assert SettingsCategoryId.LIBRARY_RAG not in screen._settings_drafts
+    assert fake_app.notifications
+    assert fake_app.notifications[-1][1] == "information"
+
+
+def test_after_set_active_failure_syncs_profile_widgets_and_notifies_error(
+    monkeypatch, tmp_path, fake_app
+):
+    """Finding 4: a failed set-active must still resync the profile Select
+    (it may already show the user's failed target choice) back to the real
+    active profile, not just report the error."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    sync_calls: list[bool] = []
+    screen._sync_library_rag_profile_widgets = lambda: sync_calls.append(True)
+
+    screen._rag_after_set_active(False, "disk full")
+
+    assert sync_calls == [True]
+    assert fake_app.notifications[-1] == (
+        "Couldn't switch active profile: disk full",
+        "error",
+    )
+
+
+# --- First-paint read-only rendering (pilot: real compose/mount) ---
+
+
+@pytest.mark.asyncio
+async def test_library_rag_detail_renders_fields_disabled_for_readonly_active_profile(
+    monkeypatch, tmp_path
+):
+    """A built-in active profile (e.g. a brand-new install's default) must
+    render every editable field disabled from the very FIRST paint, not just
+    after a later set-active/clone/rename/delete resync."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path, active_id="hybrid_basic")
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        assert screen.query_one("#settings-library-rag-search-mode", Select).disabled
+        assert screen.query_one("#settings-library-rag-default-top-k", Input).disabled
+        assert screen.query_one("#settings-library-rag-fts-top-k", Input).disabled
+        assert screen.query_one("#settings-library-rag-vector-top-k", Input).disabled
+        assert screen.query_one("#settings-library-rag-hybrid-alpha", Input).disabled
+        assert screen.query_one("#settings-library-rag-score-threshold", Input).disabled
+        assert screen.query_one("#settings-library-rag-include-citations", Button).disabled
+        assert screen.query_one("#settings-library-rag-citation-style", Select).disabled
+        assert screen.query_one("#settings-library-rag-snippet-max-chars", Input).disabled
+        assert screen.query_one("#settings-library-rag-max-context-size", Input).disabled

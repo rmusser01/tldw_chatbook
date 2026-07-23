@@ -9470,6 +9470,10 @@ class SettingsScreen(BaseAppScreen):
         message = f"Couldn't switch active profile: {reason}"
         self._library_rag_profile_result = message
         self._set_static_text("#settings-library-rag-profile-result", message)
+        # TASK-2 review (Finding 4): the profile Select was already showing
+        # the user's (failed) target selection -- snap it back to the real
+        # active profile rather than leaving a stale value on screen.
+        self._sync_library_rag_profile_widgets()
         self.app.notify(message, severity="error")
 
     @on(Button.Pressed, "#settings-library-rag-profile-clone")
@@ -10361,6 +10365,17 @@ class SettingsScreen(BaseAppScreen):
             return
 
         if category is SettingsCategoryId.LIBRARY_RAG:
+            # TASK-2 review (Finding 2): a "Save" choice from
+            # RagProfileSwitchConfirmModal arms `_rag_profile_pending_activate`
+            # then calls back in here -- but `_apply_library_rag_save_result`
+            # (the only clearing site) only runs once the save worker
+            # dispatches below. Capture-and-clear up front so EVERY early
+            # return in this branch (no-unsaved-changes, validation failure)
+            # drops the stale pending id instead of leaking it into a later,
+            # unrelated successful save; re-arm it only right before the
+            # worker dispatch that will actually consume it.
+            pending_activate = self._rag_profile_pending_activate
+            self._rag_profile_pending_activate = None
             if not self._category_has_unsaved_changes(category):
                 self.app.notify("No Settings changes to save.", severity="information")
                 return
@@ -10378,6 +10393,7 @@ class SettingsScreen(BaseAppScreen):
             self._set_static_text(
                 "#settings-library-rag-save-result", self._library_rag_result
             )
+            self._rag_profile_pending_activate = pending_activate
             self._settings_save_library_rag_worker(values)
             return
 
