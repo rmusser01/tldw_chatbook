@@ -178,3 +178,56 @@ def test_rename_user_profile_refuses_builtin_without_raising(wired):
     ok, reason = rename_user_profile("hybrid_basic", "Nope")
     assert ok is False
     assert reason
+
+
+# --- Task-2 review Finding 3: the SP2a manager does raw file I/O, so
+# clone/rename/delete must convert OSError (not just ValueError) into
+# (False, reason) -- these wrappers run inside a thread @work with Textual's
+# default exit_on_error=True, so an uncaught OSError crashes the whole app. ---
+
+
+def test_clone_profile_as_converts_os_error_without_raising(wired, monkeypatch):
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import clone_profile_as
+    mgr, state = wired
+
+    def _raise(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(mgr, "clone_profile", _raise)
+
+    ok, reason = clone_profile_as("hybrid_basic", "My Copy")
+
+    assert ok is False
+    assert "disk full" in reason
+
+
+def test_rename_user_profile_converts_os_error_without_raising(wired, monkeypatch):
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import rename_user_profile
+    mgr, state = wired
+    user = _user_profile(mgr, state)
+
+    def _raise(*args, **kwargs):
+        raise PermissionError("no write access")
+
+    monkeypatch.setattr(mgr, "rename_profile", _raise)
+
+    ok, reason = rename_user_profile(user.id, "Renamed RAG")
+
+    assert ok is False
+    assert "no write access" in reason
+
+
+def test_delete_user_profile_converts_os_error_without_raising(wired, monkeypatch):
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import delete_user_profile
+    mgr, state = wired
+    user = _user_profile(mgr, state)
+
+    def _raise(*args, **kwargs):
+        raise OSError("device busy")
+
+    monkeypatch.setattr(mgr, "delete_profile", _raise)
+
+    ok, reason = delete_user_profile(user.id)
+
+    assert ok is False
+    assert "device busy" in reason
