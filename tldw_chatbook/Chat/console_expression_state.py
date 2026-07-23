@@ -43,10 +43,13 @@ def resolve_console_expression_state(store, active_session_id, *, react_enabled:
         messages = store.messages_for_session(active_session_id)
     except Exception:
         return "idle"
-    last_assistant = None
-    for message in messages:  # transcript order; keep the last assistant turn
+    # Scan from the end and stop at the first assistant turn: the active
+    # turn is at/near the tail, so this is O(1) amortized rather than a full
+    # forward walk of the transcript on every 0.2s Console tick. (The
+    # ``messages_for_session`` snapshot above is itself O(n), but that cost is
+    # pre-existing and shared with the controller's own streaming accessor,
+    # and only paid on active-streaming ticks.)
+    for message in reversed(messages):
         if getattr(message, "role", None) is ConsoleMessageRole.ASSISTANT:
-            last_assistant = message
-    if last_assistant is None:
-        return "idle"
-    return _STATUS_TO_STATE.get(getattr(last_assistant, "status", "complete"), "idle")
+            return _STATUS_TO_STATE.get(getattr(message, "status", "complete"), "idle")
+    return "idle"

@@ -129,6 +129,10 @@ def resolve_react_character_expressions(app_config: Mapping[str, Any]) -> bool:
     thinks/speaks (default True). Reads ``[chat.images].react_character_expressions``
     via the same both-shapes accessor as ``resolve_show_character_avatar``.
 
+    Args:
+        app_config: The application config mapping (the ``[chat.images]``
+            section is read; missing sections are tolerated).
+
     Returns:
         True unless explicitly disabled via ``react_character_expressions = false``.
     """

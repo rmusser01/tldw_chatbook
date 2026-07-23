@@ -4453,8 +4453,24 @@ UPDATE db_schema_version
     def set_character_expression_image(
         self, character_id: int, state_id: str, image: bytes, mime: str | None = None
     ) -> None:
-        """Upsert a per-state expression image for a character (state-agnostic
-        store; ``idle`` is never stored here -- it reuses character_cards.image)."""
+        """Upsert a per-state expression image for a character.
+
+        State-agnostic store; ``idle`` is never stored here -- it reuses
+        ``character_cards.image``. Existing rows for the same
+        ``(character_id, state_id)`` are overwritten and re-activated
+        (``deleted`` reset to 0).
+
+        Args:
+            character_id: Integer id of the owning character card.
+            state_id: One of ``_EXPRESSION_IMAGE_STATE_IDS``
+                (``thinking``/``speaking``/``error``).
+            image: Non-empty raw image bytes.
+            mime: Optional MIME type of the image.
+
+        Raises:
+            ValueError: If ``state_id`` is not a known expression state, or
+                ``image`` is not non-empty bytes.
+        """
         if state_id not in _EXPRESSION_IMAGE_STATE_IDS:
             raise ValueError(f"Unknown expression state_id: {state_id!r}")
         if not isinstance(image, (bytes, bytearray)) or not image:
@@ -4472,26 +4488,47 @@ UPDATE db_schema_version
             conn.execute(query, (character_id, state_id, bytes(image), mime))
 
     def get_character_expression_image(self, character_id: int, state_id: str) -> bytes | None:
-        """Return the active image bytes for (character, state), or None."""
-        cur = self.get_connection().execute(
+        """Return the active expression image bytes for a character state.
+
+        Args:
+            character_id: Integer id of the owning character card.
+            state_id: The expression state to look up.
+
+        Returns:
+            The image bytes, or ``None`` if no active (non-deleted) row exists.
+        """
+        cursor = self.execute_query(
             "SELECT image FROM character_expression_images "
             "WHERE character_id = ? AND state_id = ? AND deleted = 0",
             (character_id, state_id),
         )
-        row = cur.fetchone()
+        row = cursor.fetchone()
         return bytes(row[0]) if row is not None and row[0] is not None else None
 
     def list_character_expression_states(self, character_id: int) -> list[str]:
-        """Return the state_ids with an active image for a character."""
-        cur = self.get_connection().execute(
+        """Return the expression states that have an active image for a character.
+
+        Args:
+            character_id: Integer id of the owning character card.
+
+        Returns:
+            The ``state_id`` values with an active (non-deleted) image,
+            ordered alphabetically.
+        """
+        cursor = self.execute_query(
             "SELECT state_id FROM character_expression_images "
             "WHERE character_id = ? AND deleted = 0 ORDER BY state_id",
             (character_id,),
         )
-        return [row[0] for row in cur.fetchall()]
+        return [row[0] for row in cursor.fetchall()]
 
     def delete_character_expression_image(self, character_id: int, state_id: str) -> None:
-        """Soft-delete the (character, state) expression image."""
+        """Soft-delete a character's expression image for one state.
+
+        Args:
+            character_id: Integer id of the owning character card.
+            state_id: The expression state whose image to soft-delete.
+        """
         with self.transaction() as conn:
             conn.execute(
                 "UPDATE character_expression_images SET deleted = 1, "
