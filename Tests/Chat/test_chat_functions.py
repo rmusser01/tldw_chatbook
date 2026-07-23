@@ -181,6 +181,45 @@ def test_llama_cpp_default_endpoint_is_server_root():
     assert "/completion" not in api_url
 
 
+@pytest.mark.parametrize(
+    "configured_url",
+    [
+        "http://localhost:8080/completion",
+        "http://localhost:8080/v1",
+        "http://localhost:8080",
+    ],
+)
+def test_chat_with_llama_posts_to_v1_chat_completions_regardless_of_suffix(
+    monkeypatch, configured_url
+):
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local
+
+    captured = {}
+    response_data = {"choices": [{"message": {"content": "ok"}}]}
+    # chat_with_llama reads the MODULE-LEVEL ``settings`` dict
+    # (``settings.get("api_settings", {})``), not ``load_settings()`` — patch it
+    # the way Tests/LLM_Management/test_mlx_lm.py does.
+    monkeypatch.setattr(
+        LLM_API_Calls_Local,
+        "settings",
+        {"api_settings": {"llama_cpp": {"api_url": configured_url, "model": "test-model"}}},
+    )
+    monkeypatch.setattr(
+        LLM_API_Calls_Local.requests,
+        "Session",
+        lambda: _CapturedSession(captured, response_data),
+    )
+
+    LLM_API_Calls_Local.chat_with_llama(
+        input_data=[{"role": "user", "content": "hi"}],
+        api_key="",
+        temp=0.7,
+        streaming=False,
+    )
+
+    assert captured["url"] == "http://localhost:8080/v1/chat/completions"
+
+
 def create_base64_image():
     """Creates a dummy 1x1 png and returns its base64 string."""
     img_bytes = io.BytesIO()
