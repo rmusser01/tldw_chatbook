@@ -8,140 +8,172 @@ Supersedes: N/A
 ## Decision
 
 Existing linked Markdown/text files are the sole content authority for
-file-backed Notes. Chatbook will mutate them only through a hash-checked,
-journaled file coordinator that can preserve the atomically displaced target;
-keep a derived projection and local UUID metadata in the main database; and keep
-mutation safety plus opt-in self-contained recovery replicas/history in a
-separate `notes_recovery.db`.
+file-backed Notes. Their exact relative paths own identity on disk and their
+filenames own displayed titles. Chatbook edits the actual files, preserving
+opaque frontmatter and byte-style facts, so ordinary Git status, staging,
+committing, and pushing remain the user's workflow.
 
-File-backed Notes remain in Library's Local Notes owner beside, but visibly
-separate from, existing Database notes.
+SQLite supports that authority through two deliberately separate stores:
 
-Writable roots additionally require pinned-root, no-follow path traversal,
-release-tested database/filesystem durability barriers, and process-wide root/
-storage ownership gates. If the local platform/filesystem cannot provide those
-capabilities, the root remains read-only.
+1. The main Chatbook database gains dedicated `file_notes_storage`,
+   `note_file_roots`, `file_note_projections`, and `file_notes_fts` tables for
+   local UUIDs, navigation, derived editable bodies, search, and recovery-store
+   pairing.
+2. An independent, same-device `notes_recovery.db` holds the mutation journal,
+   mandatory operation-safety bytes, confirmed-deletion snapshots, and the
+   opt-in current replicas/checkpoints introduced for selected files and
+   folders.
+
+Existing `notes`, `notes_fts`, keyword, relation, Sync, MCP, export, and RAG
+tables, triggers, and write services remain Database-note-only. Intentional
+combined Library reads happen above separate Database-note and file-note
+repositories; the two sources do not share a generic write path.
+
+Delivery is split into four independently verifiable milestones:
+
+- **A:** cross-platform read-only root preview, isolated projection/search,
+  scalable tree, external-change monitoring, preview/export, and Console
+  handoff. Milestone A has no recovery-database prerequisite.
+- **B1:** journaled create/save/rename/move in existing directories, initially
+  writable only on verified local APFS roots on macOS.
+- **B2:** confirmed file deletion and its verified 30-day snapshot plus working
+  minimal restore, delivered together.
+- **B3:** opt-in file/folder protection, verified current replicas, coalesced
+  checkpoints, minimal history/restore, and independent enumerate/verify/export.
+
+Linux, Windows, network, cloud-synchronized, and otherwise unverified roots
+remain first-class read-only sources until separately approved native writable
+adapters pass the same safety and durability suite.
 
 ## Context
 
 Users may already have thousands of notes in a folder hierarchy managed by Git
 and other editors. Their required workflow is:
 
-1. open and edit those notes in Chatbook;
-2. see the real working-tree changes immediately;
-3. use ordinary Git commands to stage, commit, and push them.
+1. open and manage those notes in Chatbook;
+2. see Chatbook changes as ordinary working-tree changes;
+3. use normal Git tooling to stage, commit, and push.
 
-The legacy folder-sync design treats SQLite and disk as competing peers and
-uses direction/winner policy. That is unsuitable for a Git working tree:
-timestamp winners can choose incorrectly, moves and deletions are ambiguous,
-and writes can introduce noise or duplicate identity.
+The legacy folder-sync design treats SQLite and disk as competing peers. Its
+direction/winner policy, timestamp comparisons, and incomplete move/delete
+identity are unsuitable for making a Git working tree the canonical store.
 
-Chatbook still needs local UUIDs, metadata, FTS, links, optional RAG, Console
-handoff, crash recovery, and protected history. Those capabilities require
-SQLite, but not SQLite content authority.
+Chatbook still needs local identity, metadata, FTS, responsive navigation,
+Console handoff, mutation recovery, and optional selected-note history. Those
+capabilities require SQLite, but not SQLite content authority.
 
-SQLite and a filesystem cannot share one atomic transaction. Safe direct file
-editing therefore needs a durable operation journal, exact-byte safety copies,
-versioned expected raw hashes, atomic same-directory replacement that preserves
-the displaced object, result verification, explicit commit/fsync ordering, and
-startup reconciliation.
+SQLite and a filesystem cannot share one atomic transaction. Writable support
+therefore requires a durable operation journal, exact expected hashes,
+round-trip-verified recovery bytes before destructive action, atomic
+replacement that preserves the displaced target, explicit file/directory
+durability barriers, and startup classification. Python's portable filesystem
+APIs do not provide equivalent guarantees on every supported platform, so the
+first writable contract is intentionally narrower than the read-only contract.
 
-The user also wants recovery storage independent of the primary Notes
-projection for selected files/folders. A dedicated recovery database satisfies
-that requirement without writing Chatbook IDs or manifests into the repository.
-It is a same-device plaintext recovery replica, not an off-device disaster
-backup.
+## Required Boundaries
+
+- One process-wide file coordinator is the only file mutation authority.
+  Writable paths are traversed from a pinned root handle with no-follow
+  semantics; unsupported containment, replacement, permission, or durability
+  primitives fail closed. Nested mounts remain read-only and cross-device
+  mutation never falls back to copy/delete.
+- Every mutation checks a versioned SHA-256 raw hash immediately before writing,
+  journals intent and required bytes first, preserves an atomically displaced
+  target or delete quarantine, verifies the observed result, updates the main
+  projection idempotently, and marks the recovery operation complete last.
+- Confirmed Delete is absent until its verified snapshot and minimal Restore
+  are both usable.
+- `notes_recovery.db` is self-contained enough to enumerate, verify, and
+  exact-export retained content without opening the main database. It is
+  owner-only plaintext on the same device, not an off-device backup.
+- At B1 bootstrap, the main and recovery stores persist the same random
+  recovery-instance UUID plus their bound storage-instance identity. Once
+  paired, missing/mismatched storage fails closed and never silently initializes
+  an empty replacement. Recovery relocation/clone is an explicit future
+  administrative action.
+- Recovery uses a fixed 1 GiB live compressed-payload cap and a fixed 256 MiB
+  post-reservation free-space floor in the initial release. Guaranteed or
+  unresolved content is never silently evicted.
+- `watchdog` is a declared core dependency for near-real-time packaged
+  monitoring. A visible bounded polling fallback feeds the same hash-based
+  reconciliation path; watcher events and mtimes never decide authority.
+- A `LegacyRootOwnershipGate` fences every legacy sync engine mutation entry
+  point. Before file-root activation, every cooperative legacy pass holds a
+  cross-process shared OS root-mutation lease for its full lifetime. Activation
+  closes shared admission and holds that lease exclusively. Passive processes
+  run no legacy filesystem sync while it is held; the exclusive owner may admit
+  only a non-overlapping local legacy pass under its stronger ownership.
+- The coarse owner-only per-user OS lease lives in a fixed application runtime
+  namespace independent of configurable user-data/main-database/repository
+  paths and permits one active root across cooperative current Chatbook
+  processes and configured storage instances. The supported concurrency
+  contract is one current installation, one configured main database, one
+  active root, and one cooperative coordinator. Older/different tools are
+  external writers, not participants in an unprovable global version floor.
+- A mandatory pre-constructor bootstrap and interprocess schema-maintenance lock
+  guarantee that a verified SQLite online backup precedes the additive
+  main-schema migration. Backup/preflight failure leaves the healthy immediate
+  predecessor schema usable only in explicit Database-only compatibility mode;
+  no file workbench/table access is allowed. The recovery database is paired
+  independently before B1. There is no live database family rename, pair swap,
+  automatic downgrade, or core pair-backup/restore mechanism.
+- Library mounts a separate `FileNotesWorkbench` whose
+  `FileNotesSessionController` owns file-only navigator/editor state.
+  Database-source selections continue through the existing
+  `LibraryNotesCanvas` and handlers both with and without an active file root.
+- `Changed this session` is process-lifetime memory state. Only pending and
+  Attention operations are durable across restart.
+- Folder mutation, file templates, file keywords/links, file MCP/RAG, mixed
+  bulk export, Git controls, general recovery purge, configurable quotas,
+  additional writable platforms, and additional active roots are deferred.
 
 ## Alternatives Considered
 
 | Option | Why rejected |
 | --- | --- |
-| Continue equal-peer bidirectional folder sync | Ambiguous authority, timestamp winners, recurring conflicts, incomplete move/delete identity, and avoidable Git noise. |
-| Make SQLite canonical and export/import files | Chatbook edits would not be immediate working-tree changes, and external Git/editor changes would require a second authority loop. |
-| Use the filesystem without a database projection | Degrades Library FTS, metadata, stable local links, Console handoff, RAG invalidation, and large-tree responsiveness. |
-| Store stable UUIDs in frontmatter or a repository manifest | Alters source files for Chatbook bookkeeping and creates unwanted Git-visible metadata. |
-| Store history/recovery payloads in the main database | Does not provide independent recovery enumeration when the projection database is unavailable and couples recovery quota/corruption to Database notes. |
-| Infer external moves from inode or matching content hashes | Risks attaching metadata/history to the wrong file after reuse, copying, or ambiguous bulk operations. |
-| Add automatic Git staging/commit/push with file support | Expands stateful risk before file authority, conflict, deletion, and recovery behavior are proven. |
+| Continue equal-peer bidirectional folder sync | Retains ambiguous authority, timestamp winners, weak move/delete identity, and avoidable Git noise. |
+| Make SQLite canonical and import/export files | Chatbook edits would not be immediate working-tree changes, and external Git/editor changes would require a second authority loop. |
+| Use disk without a database projection | Loses responsive FTS, stable local references, cached navigation, and Console handoff for large trees. |
+| Put file rows in `notes` behind `storage_kind` | Existing direct CRUD, FTS, Sync, MCP, export, RAG, keyword, and relation paths assume every active `notes` row is Database-owned. Dedicated tables isolate ownership by construction. |
+| Store UUIDs in frontmatter or a repository manifest | Alters user repositories solely for Chatbook bookkeeping and creates Git-visible metadata noise. |
+| Store recovery bytes in the main database | Prevents independent recovery enumeration and couples recovery capacity/corruption to Database-note availability. |
+| Ship macOS, Linux, and Windows writes together | Portable APIs do not offer equivalent beneath-root, atomic-displacement, permission, and durability guarantees. Read-only support still provides immediate value everywhere. |
+| Stage and swap a main/recovery database pair | The recovery DB is new and main changes are additive. Pair swapping adds live-handle, sidecar, downgrade, and launcher coordination without protecting existing paired state. |
+| Add Git controls in the first release | Expands stateful risk before file authority, conflict, deletion, and recovery behavior are proven. |
 
 ## Consequences
 
-### Required boundaries
+### Benefits
 
-- File bytes and exact relative path own content and title; the main database is
-  a derived body/title projection.
-- `notes.storage_kind` distinguishes immutable `database` and `file` ownership;
-  `keywords.sync_eligible` keeps file-only keyword definitions local until
-  explicit Database-note promotion.
-- Local UUIDs are not portable and are never injected into source files.
-- One process-wide coordinator is the only file mutation and internal projection
-  authority.
-- Versioned SHA-256 raw hashes authorize mutations; unknown hash versions fail
-  closed.
-- Every mutation journals intent, durably commits and round-trip verifies bytes
-  whose only accessible copy could be displaced, and uses no-replace publication
-  or atomic exchange/replace-with-backup. Delete first renames to an
-  operation-owned quarantine. An unexpected displaced version is retained in
-  Attention rather than silently lost.
-- Writable paths are traversed from a pinned root handle without following
-  symlink/reparse substitutions. Newly created Chatbook files begin owner-only;
-  displaced/quarantined originals retain their verified source security facts
-  until they can be safely narrowed or restored. Writes are capability-gated
-  where permissions cannot be preserved without broadening.
-- Recovery barriers use a release-tested full-synchronous SQLite durability
-  profile. Files and affected directories are durably flushed. Normal operations
-  remain pending until the idempotent main binding/projection transition durably
-  commits, then complete in the recovery journal last; explicit recovery-only
-  restores record a deferred main rebuild.
-- Watcher/poll events are hints; current filesystem state and hashes determine
-  truth. Stale body search is suppressed when a file becomes unreadable. There
-  is no timestamp winner or automatic merge; ambiguous moves require explicit
-  reassociation.
-- A separate `notes_recovery.db` contains self-contained revision and operation
-  rows. Protected notes always have one verified current replica after a
-  completed Chatbook save.
-- Confirmed Chatbook deletion is enabled only with a verified exact snapshot,
-  30-day retention, and a working minimal restore path.
-- File-backed rows and disk are excluded from legacy sync ownership, Sync v2
-  triggers/envelopes, generic public DB update/delete paths, and MCP writes.
-- Database notes retain existing behavior and remain available if recovery
-  storage fails.
-- A global root registry serializes overlap/legacy ownership across processes
-  and profiles; kernel-held per-root leases elect one coordinator. A global
-  storage-maintenance lock fences pair migration/backup/restore.
-- First upgrade/activation also requires a continuously held, legacy-compatible
-  or platform-enforced cross-version exclusion because an older binary does not
-  honor new locks. The compatible version/launcher fence remains held for an
-  active root's lifetime. Pre-guard upgrades require true offline maintenance
-  plus a durable per-user version floor before activation. Pair migration/restore
-  closes every handle and swaps each SQLite database together with its WAL/SHM/
-  journal family under an external recovery marker.
-- The core rollout permits one linked active root; this is a release gate, not a
-  schema limitation.
+- The filesystem and Git remain the unambiguous source of truth.
+- Existing Database-note behavior is protected structurally instead of by
+  auditing every legacy caller for a discriminator.
+- Milestone A can deliver a useful cross-platform Notes UI before writable
+  filesystem guarantees are ready.
+- Selected recovery remains independently inspectable if the main projection
+  database is unavailable.
+- A separate workbench/controller prevents the file editor state machine from
+  further concentrating responsibility in `LibraryScreen`.
 
 ### Accepted trade-offs
 
 - A fresh Chatbook database or clone assigns new local UUIDs.
-- Ambiguous/missed external moves appear as Missing plus a new identity.
-- Exact frontmatter is opaque and cannot be edited as structured metadata in
-  Chatbook.
-- Recovery consumes local disk and is unencrypted; quota or corruption can make
-  file-backed commands read-only.
-- File and database state are repaired by journaling/reconciliation rather than
-  a nonexistent cross-resource transaction.
-- Platforms/filesystems without atomic displaced-target preservation,
-  beneath-root traversal, non-broadening permission handling, or the required
-  durability barriers remain read-only.
-- An uncooperative process may continue writing through an already-open
-  descriptor after Chatbook atomically displaces the file. Chatbook retains the
-  displaced object until stable bytes are captured, but cannot guarantee against
-  later writes through that foreign handle.
-- Symlinks, hardlink mutation, network/cloud mounts, ACL/xattr preservation, and
-  multi-host writing are outside guarantees.
-- Recursive folder mutation, additional linked roots, recovery-only in-place
-  restore, database-pair backup, and optional RAG are outside the core completion
-  gate.
-- Git operations remain external until separately approved.
+- Missed or ambiguous external moves appear as Missing plus a new identity
+  until explicitly reassociated.
+- Opaque frontmatter is preserved but not structurally edited.
+- Recovery consumes local plaintext disk and does not protect against loss of
+  the device.
+- Linux and Windows remain read-only in the first writable delivery.
+- One active root and one cooperative current installation are support limits,
+  not claims of multi-profile coordination.
+- Moving the configured main database or user-data directory after recovery
+  pairing can make file commands read-only until the exact paired recovery store
+  is restored; the first rollout does not auto-relocate it.
+- File/database consistency is repaired through journaling and reconciliation,
+  not a nonexistent cross-resource transaction.
+- Symlink and hardlink mutation, network/cloud write guarantees, ACL/xattr
+  preservation, multi-host writing, folder mutation, and Git operations remain
+  outside the initial guarantees.
 
 ## Links
 

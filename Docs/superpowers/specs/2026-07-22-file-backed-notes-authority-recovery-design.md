@@ -1,7 +1,7 @@
 # File-Backed Notes Authority and Recovery Design
 
 Date: 2026-07-22
-Status: User-approved design; hardening revision pending written-spec review
+Status: User-approved revised design; pending final written-spec review
 Backlog: [TASK-399](../../../backlog/tasks/task-399%20-%20File-backed-Notes-disk-authoritative-Library-management-and-local-recovery-replica.md)
 ADR: [ADR-021](../../../backlog/decisions/021-file-backed-notes-disk-authority-and-recovery.md)
 
@@ -15,16 +15,17 @@ translation, export, or a second synchronization step.
 
 SQLite has two supporting roles, neither of which competes with the files:
 
-1. The main Chatbook database holds a searchable, derived projection and durable
-   local metadata.
+1. Dedicated file-note tables in the main Chatbook database hold a searchable,
+   derived projection and durable local metadata. Existing Database-note tables
+   and triggers remain structurally unchanged.
 2. A separate `notes_recovery.db` holds the mutation journal, mandatory
    operation-safety copies, and opt-in recovery replicas/history for selected
    files and folders.
 
 The recovery database is independent of the main notes projection and contains
-enough information to list and restore protected notes if the main database is
-unavailable. It is still an unencrypted, same-device recovery copy. It is not an
-off-device or disaster backup.
+enough information to list, verify, and exact-export retained notes if the main
+database is unavailable. It is still an unencrypted, same-device recovery copy.
+It is not an off-device or disaster backup.
 
 The feature lives in the existing Library Notes surface. Wide terminals show a
 collapsible folder navigator beside the editor. Narrow terminals switch between
@@ -65,8 +66,8 @@ truth.
 - Write changes directly and safely to the Git working tree.
 - Reconcile external editor and Git changes near real time.
 - Preserve exact frontmatter bytes while editing only the body.
-- Keep stable local UUIDs for Chatbook metadata, links, RAG, Console handoff, and
-  recovery continuity across known moves.
+- Keep stable local UUIDs for file selection, local metadata, Console handoff,
+  recovery, and continuity across known moves.
 - Maintain a self-contained current recovery replica for user-selected files and
   folder prefixes.
 - Preserve exact bytes before every destructive Chatbook action and before every
@@ -97,9 +98,9 @@ truth.
 
 | Term | Meaning |
 | --- | --- |
-| **Database note** | Existing `notes` content whose `storage_kind` is `database`; SQLite owns its title and body. |
-| **File-backed note** | A supported regular file under a linked root whose `storage_kind` is `file`; disk owns its path, title, and bytes. |
-| **Projection** | The main-database title/body/search representation derived from a file. |
+| **Database note** | Existing content in the `notes` table; SQLite owns its title and body. |
+| **File-backed note** | A supported regular file under a linked root; disk owns its path, title, and bytes. It is represented only in dedicated file-note projection tables. |
+| **Projection** | The dedicated main-database title/body/search representation derived from a file. It is not a Database-note row. |
 | **Binding** | Durable association between a local note UUID and a root-relative path. |
 | **Protected note** | A file selected by a folder-prefix rule or file override for a continuously maintained recovery replica. |
 | **Current replica** | The one verified, exact current-byte copy retained for a protected note. |
@@ -120,7 +121,7 @@ For a file-backed note:
 - the file's exact bytes are canonical;
 - the exact root-relative path is its canonical locator;
 - the exact basename, including extension, is its displayed and projected title;
-- the main database stores the decoded editable body only;
+- the dedicated file projection stores the decoded editable body only;
 - frontmatter is not included in the projection, FTS, RAG, or Console body;
 - filesystem mtime is observation metadata, never a conflict winner or logical
   version.
@@ -131,9 +132,9 @@ because its projection is newer by timestamp.
 ### SQLite owns local identity and metadata
 
 Every file-backed note receives a random local UUID in SQLite. The UUID is used
-for local keywords, links, Console references, RAG invalidation, operation
-history, and recovery. It is not written into frontmatter, a sidecar, or a
-repository manifest.
+for selection, file-local metadata, Console references, operation recovery, and
+optional later integrations. It is not written into frontmatter, a sidecar, or
+a repository manifest.
 
 The UUID is preserved automatically only when identity evidence is explicit:
 
@@ -152,17 +153,43 @@ clone also assigns new UUIDs.
   mutations, exact export, delete, restore, and recovery verification.
 - `semantic_hash` uses a separately domain-tagged, length-delimited SHA-256 input
   containing the decoded editable body plus the filename-derived title. It
-  decides whether FTS and optional RAG work is necessary.
+  decides whether FTS and any later RAG work is necessary.
 
 Changing the algorithm or semantic input format requires a schema/version
 migration. Hash strings without a recognized version never authorize a
 mutation.
 
 A frontmatter-only or line-ending-only change can increment the local projection
-generation while leaving the semantic hash unchanged and avoiding an FTS/RAG
+generation while leaving the semantic hash unchanged and avoiding an FTS
 rebuild.
 
 ## Supported File Contract
+
+### Delivery and writable-platform contract
+
+The read-only file source, projection, tree, search, monitoring, preview, and
+export workflow is supported in packaged macOS, Linux, and Windows builds for
+ordinary local files that pass the read-safety checks below.
+
+The first writable release is deliberately narrower:
+
+- macOS on a local APFS volume is the only B1 writable target;
+- activation probes the actual root volume and required primitives rather than
+  trusting the operating-system label;
+- the platform adapter uses native `renameatx_np` exchange/exclusive operations,
+  pinned directory descriptors, no-follow opens/traversal, file and directory
+  flushes, and macOS full-fsync support where required;
+- Linux and Windows roots remain first-class read-only sources until a
+  separately approved native adapter passes the same displaced-target,
+  beneath-root, permission, crash, and durability suite;
+- network, cloud-synchronized, and otherwise unverified mounts remain
+  read-only on every platform.
+
+This scope keeps Chatbook itself cross-platform without pretending that Python's
+portable path APIs provide equivalent write guarantees. The capability probe
+reports the exact failed primitive and never silently falls back to a weaker
+write path. Broader writable-platform support is an expansion, not a gate for
+the first useful read-only release or the macOS writable release.
 
 The initial fixed, case-insensitive extension allowlist is:
 
@@ -190,6 +217,12 @@ An allowed-extension file that is oversized, unreadable, encoded differently,
 has malformed frontmatter, or has multiple hardlinks remains path-visible with a
 specific read-only reason. Symlinks and special files are reported in activation
 and diagnostics but are never followed or mutated.
+
+A nested mount beneath a linked root may remain path-visible and readable, but
+it is a separate write boundary. B1 mutation requires every traversed component,
+source, destination, and parent directory to remain on the pinned verified APFS
+volume. A cross-device create/move/replace is rejected rather than copied or
+weakened into a non-atomic fallback.
 
 Every bound path component must round-trip through the platform's native path
 API. A POSIX name represented only through surrogate escapes is diagnostic-only
@@ -246,27 +279,63 @@ streams, and network-filesystem atomicity are otherwise not promised.
 
 ## Data Model
 
-The design adds two narrow ownership columns and four logical tables. Exact DDL
-is assigned in the implementation plan, but these ownership and state fields
-are required.
+The main database gains isolated file-source tables. Existing `notes`,
+`notes_fts`, keyword, relation, and sync tables and their triggers are not
+modified for file ownership. Exact DDL is assigned in the implementation plan,
+but the following state is required.
+
+### Storage-instance identity
+
+The canonical configured main-database path is hashed with a fixed domain tag
+to form a stable, non-secret storage-instance ID. The owner-only
+`<user-data>/file_notes/<storage-instance-id>/` directory contains that
+instance's `notes_recovery.db`, pre-migration backup, diagnostics, and recovery
+bootstrap markers. Absolute main-database paths are not logged or used as
+filenames.
+
+The core rollout activates only one storage instance/root at a time under the
+coarse per-user root-mutation lease. The namespace prevents a custom main DB
+from silently sharing another DB's recovery history without introducing
+multi-profile coordination machinery.
+
+Path-derived placement is not recovery identity. At first B1 bootstrap Chatbook
+generates a random recovery-instance UUID and persists it in both the main
+file-notes storage row and a self-contained recovery-store identity row. A
+recoverable bootstrap marker handles a crash between those commits. After a
+pairing exists, an absent or mismatched recovery store fails closed: Chatbook
+never silently creates an empty replacement over evidence of prior B1/B2/B3
+state.
+
+Changing the configured user-data directory or moving/copying the main database
+can therefore require the corresponding recovery directory to be restored. The
+core rollout diagnoses the expected recovery-instance UUID and keeps file
+commands read-only. Explicit quiescent recovery-store relocation/clone is a
+later administrative capability, not an automatic path heuristic. Before B1
+has ever paired a store, the bootstrap may update A's recovery-unpaired storage
+binding to the newly derived namespace. After pairing, either a derived/stored
+storage-instance mismatch or a recovery UUID mismatch fails closed.
 
 ### Main Chatbook database
 
-#### `notes.storage_kind`
+#### `file_notes_storage`
 
-`notes.storage_kind` is non-null and has values `database` or `file`. Existing
-rows migrate to `database`. The value is immutable after insertion.
+One file-feature storage row records the derived storage-instance ID, nullable
+expected recovery-instance UUID, feature/migration state, and pairing/bootstrap
+generation. It contains no note content. Only the explicit
+`RecoveryStoreBootstrap` may establish first pairing; changing an established
+pair is deferred to the quiescent relocation/clone design.
 
-A file projection must be inserted with `storage_kind = file` in its first
-transaction; no trigger or service may briefly treat it as a Database note.
+#### Existing Database-note tables
 
-#### `keywords.sync_eligible`
+The `notes` table remains Database-note-only. Existing list, count, search,
+create, update, delete, export, RAG, MCP, keyword, relation, and Sync behavior
+continues without a new discriminator column or file-row branch. This is the
+primary zero-root and non-degradation boundary.
 
-`keywords.sync_eligible` is non-null boolean metadata. Existing and
-Database-note-created keywords default true. A keyword first created from a
-file-backed note starts false, so its definition remains local. Explicit reuse
-from a Database-note workflow atomically promotes it to true and emits the
-required sync upsert once. Promotion is one-way in this tranche.
+No file projection UUID is a `notes.id`, and no generic Database-note method can
+address a file projection. Any future shared keyword/link experience requires
+file-specific association tables and an explicit combined read model; it is not
+part of the core rollout.
 
 #### `note_file_roots`
 
@@ -281,15 +350,17 @@ Each root stores:
   generations/deadlines;
 - timestamps and diagnostic state.
 
-Roots with equal, parent, or child path overlap are rejected. An overlap with a
-legacy Database-note sync root is also rejected.
+The core schema is naturally keyed by root UUID, but the release permits one
+active root. An overlap with the configured legacy Database-note sync root is
+rejected.
 
-#### `note_file_bindings`
+#### `file_note_projections`
 
-Each binding stores:
+One row owns both the local binding and derived projection for a file:
 
 - note UUID and root UUID;
 - exact relative display path plus a filesystem-aware comparison key;
+- filename-derived title and decoded editable body;
 - raw and semantic hashes;
 - presence state;
 - observed size, mtime, mode bits, BOM/newline/final-newline facts;
@@ -304,7 +375,7 @@ determine a safe comparison policy or detects normalized collisions, that root
 cannot enter `read_write`. The exact display path is never replaced by the
 comparison key.
 
-Binding state, not `notes.deleted`, is authoritative:
+Projection presence state is authoritative:
 
 | State | Meaning and projection behavior |
 | --- | --- |
@@ -312,36 +383,47 @@ Binding state, not `notes.deleted`, is authoritative:
 | `missing` | This path is absent while the root is online. Hide it from Browse and search results, but retain the last projected body for diagnosis/recovery. |
 | `tombstoned` | Chatbook confirmed deletion. Clear the projected body after the deletion snapshot is committed and unlink is verified. |
 
-`notes.deleted` remains a compatibility/FTS visibility flag; it does not define
-file authority. It is false only for a `present`, body-index-eligible projection
-and true for `missing`, `tombstoned`, or body-ineligible cached projections.
-Path-only navigator results come from bindings, not stale Notes FTS. Reappearance
-at a `missing` path retains the UUID. Reuse of a `tombstoned` path creates a new
-UUID unless the user explicitly restores/reuses the tombstone.
+Path-only navigator results come from `file_note_projections`, not FTS.
+Reappearance at a `missing` path retains the UUID. Reuse of a `tombstoned` path
+creates a new UUID unless the user explicitly restores/reuses the tombstone.
 
 Offline is a root lifecycle/effective UI state, not a mass binding transition.
-When a root is Offline, its bindings keep their last `present`, `missing`, or
-`tombstoned` state and `notes.deleted` value. Browse may show their cached
-projection under an Offline banner, but no result claims freshness.
+When a root is Offline, its projections keep their last `present`, `missing`,
+or `tombstoned` state. Browse may show cached rows under an Offline banner, but
+no result claims freshness.
 
 Projection is idempotent on root, filesystem-aware path key, raw hash, and
-presence state. `notes.version` is a monotonic local projection generation, not
-an mtime-derived value. `notes.last_modified` records the Chatbook mutation or
-observation time; the filesystem mtime remains separate binding metadata.
-Each root also persists initial-body-index progress so indexing can resume after
-restart without making path search wait.
+presence state. Its generation is monotonic and local, never mtime-derived.
+Observation time and filesystem mtime remain distinct. Each root also persists
+initial-body-index progress so indexing can resume after restart without making
+path search wait.
 
 If a previously readable file becomes unreadable, oversized, malformed, or
 otherwise body-ineligible, reconciliation immediately suppresses its old body
-from FTS and optional RAG results while retaining the cached projection for
+from file FTS and optional later RAG results while retaining the cached row for
 diagnosis/recovery. The navigator continues to expose a path/title-only row with
 the exact read-only reason. It may not show a stale body snippet as current.
+
+#### `file_notes_fts`
+
+A dedicated external-content FTS5 table indexes the filename-derived title and
+editable body of present, body-eligible `file_note_projections`. Its triggers
+touch only file projection rows. Existing `notes_fts` and its triggers remain
+unchanged.
+
+Path search comes from indexed comparison/display-path columns on
+`file_note_projections` and is combined with file FTS by the file navigator
+repository. Intentional cross-source search unions file results with existing
+Database-note results above the two repositories; it never merges their write
+paths.
 
 ### Independent `notes_recovery.db`
 
 The recovery database has its own schema version, integrity checks, and
 owner-only files. It does not depend on joining the main database to enumerate
-or verify retained content.
+or verify retained content. Its `recovery_store_identity` row records the bound
+storage-instance ID, random recovery-instance UUID, and bootstrap generation
+expected by `file_notes_storage`.
 
 #### `note_file_revisions`
 
@@ -374,7 +456,7 @@ reference counting, deduplication layer, or separate activity table.
 The recovery schema enforces at most one live `current_replica` per note UUID,
 valid operation-to-revision references with deletion restricted while referenced,
 and atomic live-set garbage collection. An operation, Attention item, guaranteed
-deletion, or deferred rebuild can never be left pointing at a removed revision.
+deletion, or retained draft can never be left pointing at a removed revision.
 
 #### `note_file_operations`
 
@@ -396,26 +478,27 @@ pending -> complete
 pending -> attention -> complete
 ```
 
-`main_projection_state` is independently `pending`, `applied`, or
-`deferred_rebuild` (the last is only for the explicit recovery-only emergency
-flow).
+`main_projection_state` is independently `pending` or `applied`.
 
 Failure or `not_applied` is an outcome, not another state taxonomy. A completed
-operation may still reference a retained recovered draft. Only successfully
-committed working-tree-changing operations from the current app-session UUID
-appear in `Changed this session`; no-op saves and external changes do not.
+operation transfers any longer-lived retention obligation to its revision rows
+and is then eligible for deletion. `Changed this session` is an in-memory,
+process-lifetime ordered map populated only after a working-tree-changing
+operation completes. No-op saves, external changes, and rows recovered from a
+prior process do not appear there. Only pending and Attention operations must
+survive restart.
 
 ## Service Boundaries
 
 ### File mutation coordinator
 
 One process-wide coordinator is the only component allowed to mutate a linked
-file or project a file row internally. It provides explicit commands such as:
+file or project a file-note row internally. It provides explicit commands such
+as:
 
 - save body with expected path/raw hash and editor generation;
 - rename/move with expected source and destination absence/hash;
 - create at an explicit supported path whose parent already exists;
-- create one explicit child directory with collision-safe no-replace semantics;
 - confirmed delete with an exact confirmation token;
 - restore from a verified recovery revision;
 - reconcile one path or one root.
@@ -427,18 +510,54 @@ and reject symlink or reparse-point substitution in every component. Filesystem
 work, hashing, compression, SQLite work, and scans run outside the Textual UI
 thread.
 
-### Existing Notes services
+Existing `path_validation.py` helpers remain picker/discovery validation only.
+They never authorize a file mutation. The coordinator's narrow
+`PinnedRootFilesystem` platform module owns every beneath-root open, stat,
+publish, move, and delete operation.
 
-`NotesScopeService` remains the public routing boundary:
+### Projection and combined reads
 
-- Database-note calls retain current behavior.
-- File-backed reads can use the projection.
-- Generic save/delete calls on file rows fail closed and direct callers to an
-  explicit file command.
-- Only an internal projection method may update file-backed `notes` rows.
+`FileNotesRepository` owns `note_file_roots`, `file_note_projections`, and
+`file_notes_fts`. It exposes paged tree, path search, FTS search, detail, and
+internal idempotent projection commands. It has no public filesystem mutation
+method.
 
-`NotesInteropService` remains a Database-note compatibility adapter and gains no
-filesystem authority. `storage_kind` is not auto-converted in either direction.
+`LibraryNotesReadRepository` intentionally combines Database-note reads from
+`NotesScopeService` with file reads from `FileNotesRepository` for the Library
+navigator, explicit Console handoff, and other approved read-only consumers.
+Every result carries a source kind. It is a composition boundary, not a common
+write repository.
+
+### Existing Database Notes services
+
+`NotesScopeService`, `NotesInteropService`, the `notes` table, and their public
+CRUD remain Database-note-only. File reads reach them only through an explicit
+combined read consumer, and file writes never do. This makes legacy sync, Sync
+v2, MCP create/update/delete, generic export, and old direct database callers
+incapable of mutating a file projection by construction.
+
+### Library workbench boundary
+
+A separately mounted `FileNotesWorkbench` renders the file-source experience.
+A `FileNotesSessionController` owns only file-note state: the open file buffer
+and generation, cursor and selection, focus ID, scroll offsets, tree expansion,
+selected file UUID, navigator mode, search query/generation/results, save state,
+and Attention state. It never owns or reimplements a Database-note buffer or
+command.
+
+The Notes host routes every combined-navigator result by its explicit source
+kind. A File result opens the file workbench. A Database result delegates to the
+existing `LibraryNotesCanvas` and current Database-note handlers, including
+create, edit/autosave/conflict, keywords/links, template/import/export, and
+legacy sync. `LibraryScreen` coordinates that source-level switch and forwards
+high-level navigation events; it does not absorb the file coordinator or either
+editor state machine. With zero roots it mounts the existing Database canvas
+directly, apart from the specified Link and retained-Recovery actions.
+
+The workbench keeps the logical editor mounted through Navigator/Editor layout
+changes where Textual permits it and uses targeted widget updates rather than
+whole-screen recomposition. A dedicated navigator widget lazily mounts bounded
+child batches; it never renders a 5,000-row directory as 5,000 eager buttons.
 
 ## Mutation Protocol
 
@@ -458,8 +577,9 @@ file roots read-only.
 
 Before any filesystem mutation, the coordinator must:
 
-1. Hold the kernel coordinator lease and pinned root handle. Acquire the note
-   lock plus normalized source/destination path locks in deterministic order.
+1. Hold the exclusive root-mutation lease and pinned root handle. Acquire the
+   note lock plus normalized source/destination path locks in deterministic
+   order.
 2. Traverse from the root handle without following links and revalidate root
    identity, mode, containment, parent identity, file type/link count/security
    facts, expected source hash/state, and destination hash/absence.
@@ -469,8 +589,8 @@ Before any filesystem mutation, the coordinator must:
    bounded-decompress it, and verify codec, length, and raw hash before touching
    the working tree. A reused current replica qualifies only when its verified
    hash/length match the just-read source.
-5. Use collision-safe no-replace semantics for create, directory create, move,
-   and restore-to-empty. A replacement save/overwrite must atomically publish
+5. Use collision-safe no-replace semantics for create, move, and
+   restore-to-empty. A replacement save/overwrite must atomically publish
    the intended file while preserving the displaced target as an
    operation-owned file via exchange or replace-with-backup. Confirmed delete
    must first atomically rename the target to an operation-owned same-directory
@@ -680,20 +800,20 @@ The completion toast is explicit:
 Deleted from disk • recoverable until <date>
 ```
 
-Recursive folder deletion and bulk folder rename/move are deferred from the core
-rollout. Phase 3 may create an explicit child directory and remove a confirmed
-empty directory through journaled no-replace/identity-checked commands. Users
-organize notes by moving individual files into existing or newly created
-directories. No command recursively deletes descendants.
+All folder mutation is deferred. Core file create/move/restore requires an
+existing parent directory. Users create, rename, move, and remove folders with
+their normal filesystem tools; reconciliation reflects those changes. No
+Chatbook command recursively deletes descendants.
 
 ## Reconciliation and External Changes
 
 ### Watcher events are hints
 
-`watchdog` is the supported near-real-time event backend in packaged builds. If
-the observer cannot run, Chatbook uses a visible one-second metadata-polling
-fallback labeled `Monitoring via polling`. Both feed the same thread-safe,
-path-keyed bounded accumulator:
+`watchdog` is a declared core dependency and the supported near-real-time event
+backend in packaged builds. It may not remain an undeclared environment
+accident. If the observer cannot run, Chatbook uses a visible one-second
+metadata-polling fallback labeled `Monitoring via polling`. Both feed the same
+thread-safe, path-keyed bounded accumulator:
 
 - duplicate events coalesce;
 - a paired move enqueues source and destination;
@@ -818,7 +938,7 @@ in `Needs attention`.
 Target observation for a settled local edit is projection and FTS visibility
 within 2 seconds p95 on the fixed benchmark runner. Optional RAG may lag.
 
-## Recovery Replica, Retention, and Quota
+## Recovery Replica, Retention, and Capacity
 
 ### Protection selection
 
@@ -849,7 +969,7 @@ Changing protection previews affected file count, current logical bytes, and
 estimated capture/pruning impact. Disabling protection requires confirmation,
 stops future current-replica maintenance only after the operation barrier, and
 seals the latest verified current replica as an ordinary checkpoint with the
-normal 30-day/50-checkpoint limits. It is not silently deleted to free quota.
+normal 30-day/50-checkpoint limits. It is not silently deleted to free capacity.
 
 ### Retention
 
@@ -857,17 +977,14 @@ normal 30-day/50-checkpoint limits. It is not silently deleted to free quota.
 - Sealed checkpoints: retain at most 50 per note and none older than 30 days;
   both limits apply.
 - Confirmed deletion bytes: pinned for at least 30 days.
-- Tombstone metadata: retained beyond payload expiry until explicit purge or
-  root-forget policy permits removal.
+- Tombstone metadata: retained beyond payload expiry until root-forget policy
+  permits removal or a future explicit purge capability is approved.
 - Unresolved drafts/conflicts and incomplete operations: pinned until resolved
   or explicitly discarded.
 - After resolution, `conflict_disk`, `recovered_draft`, and bytes displaced by a
-  confirmed conflict/restore overwrite remain recoverable for 30 days unless a
-  separate explicit purge waives that retention. Their expiry is shown before
+  confirmed conflict/restore overwrite remain recoverable for 30 days. The core
+  release offers no early guarantee waiver. Their expiry is shown before
   resolution completes.
-- Completed emergency operations with `main_projection_state =
-  deferred_rebuild`, plus their required revisions: pinned until main rebuild
-  consumes them and marks the projection applied.
 - Temporary safety revisions: eligible for pruning after the operation completes
   and all stronger retention needs are satisfied.
 - Completed, non-Attention unprotected autosaves coalesce their payloads to at
@@ -878,33 +995,39 @@ normal 30-day/50-checkpoint limits. It is not silently deleted to free quota.
   protected equivalent is eligible only after its current replica/checkpoint
   satisfies the stronger retention rule.
 
-Completed operation metadata is bounded independently of payload retention. The
-current app session coalesces successful completed operations to at most the
-latest row per affected note UUID (or path when no UUID exists), so repeated
-autosaves cannot grow it without bound while `Changed this session` stays
-complete. Inactive-session completed rows are retained for at most seven days
-and capped at 10,000, oldest first. Pending/Attention and `deferred_rebuild`
-rows are never removed by this garbage collection.
+Completed operations are removed after their retained revisions own every
+remaining retention obligation and the in-memory session-change map records the
+result. Startup garbage collection removes crash-left completed rows after the
+same proof. Pending and Attention rows are never removed by ordinary garbage
+collection.
 
-### Quota
+### Fixed capacity policy
 
-The default quota is 1 GiB of live retained compressed payload. The UI shows
-that logical amount separately from physical `notes_recovery.db`, WAL, and SHM
-sizes, because pruning does not promise immediate file shrinkage.
+The first release uses a fixed 1 GiB cap for live retained compressed payload
+and requires at least 256 MiB of filesystem free space after the next reserved
+operation. These are release constants, not user-facing settings. A configurable
+quota is deferred until real usage demonstrates a need. The UI shows logical
+retained bytes separately from physical `notes_recovery.db`, WAL, and SHM sizes,
+because pruning does not promise immediate file shrinkage.
 
 Before a Chatbook mutation or editable-draft admission, the coordinator
 compresses or conservatively reserves the required payload, conflict headroom,
 and a free-space margin. Current replicas, guaranteed deletion/conflict
 retention, and unresolved operations are never silently evicted to make room.
-Lowering the quota below pinned/reserved content enters `Recovery over quota`
-and makes file-backed commands read-only until the user raises the quota,
-exports/purges eligible history, or explicitly changes protection.
+The protection preview refuses a selection that cannot fit. Reaching the cap or
+free-space floor later enters `Recovery capacity reached` and makes file-backed
+commands read-only until automatic or explicit eligible-history pruning
+succeeds. Stopping protection only makes its sealed checkpoint eligible for a
+separate pruning decision; it does not itself free capacity. Guaranteed
+deletion/conflict retention and unresolved drafts are never part of ordinary
+pruning.
 
 Every decompression is bounded by recorded codec/version, compressed length,
 expected raw length, and maximum supported file size, then verified by raw hash.
 Recovery-store corruption or failed validation preserves the suspect database
-for diagnosis and makes every linked root read-only until the store is repaired
-or replaced. Database notes remain usable.
+for diagnosis and makes every linked root read-only until the exact paired store
+is repaired or restored. Destructive recovery-store reset is not part of the
+core rollout. Database notes remain usable.
 
 ### Restore
 
@@ -935,23 +1058,15 @@ Minimal restore for confirmed deletion ships before destructive Delete is
 enabled. A broader History/Recovery browser can arrive later, but the product
 must never promise `recoverable until <date>` without a working restore path.
 
-### Recovery-only emergency flow
+### Independent recovery access
 
-If the main database is unavailable, a dedicated recovery-only screen opens
+If the main database is unavailable, a minimal recovery-only screen opens
 `notes_recovery.db` without joining the main projection. It can enumerate,
-verify, and export retained notes immediately. That read/export path is part of
-the Phase 4 recovery contract.
-
-The following in-place recovery-only restore is an optional Phase 5 child and
-does not gate the core workflow. It is never unattended: the user selects the
-destination root, Chatbook verifies it against the stored root fingerprint,
-acquires its coordinator lease, enters an explicit recovery `read_write` mode,
-and runs the same journal/CAS protocol. A nonmatching root is export/restore-as-
-new only. The operation remains self-contained in the recovery database; a
-repaired or newly created main database later rebuilds projection/bindings from
-the restored files. This emergency operation completes with
-`main_projection_state = deferred_rebuild`, and main rebuild explicitly consumes
-those rows. Absolute root paths are not required in recovery payloads.
+verify, and exact-export retained notes immediately. That read/export path is
+part of the selective-recovery milestone. It performs no in-place file mutation,
+does not create a deferred projection state, and does not require the main
+database. Recovery-only in-place restore is deferred until there is a concrete
+need and a separately reviewed destination-ownership design.
 
 ## Library Notes User Experience
 
@@ -963,9 +1078,11 @@ not become a new top-level route or scope.
 With zero active linked roots, the current Database Notes canvas remains the
 default without an empty Files group, file-only modes, split workbench, watcher,
 or file worker. A pristine installation adds only an unobtrusive `Link notes
-folder…` action. If Unlink/Forget left detached recovery, tombstones, drafts, or
-conflicts, the same canvas also shows `Manage detached recovery (N)` for Relink,
-Forget, export, resolution, and purge. It does not mount the file workbench.
+folder…` action. If unlinking leaves retained recovery, tombstones, drafts, or
+conflicts, the same canvas also shows `Recovery items (N)` for minimal
+relink/verify/export and required Attention resolution. Full detached-root
+management and general purge are deferred. The action does not mount the file
+workbench.
 This is the zero-configuration non-degradation contract, not merely a performance
 optimization.
 
@@ -974,8 +1091,11 @@ Browse mode has two explicit groups:
 - `Files on disk`
 - `Database notes`
 
-The existing local folder sync remains available only for Database notes and is
-labeled `Legacy folder sync (database notes)`. Existing generic `New note`
+The existing local folder sync remains Database-note-only and is labeled
+`Legacy folder sync (database notes)`. While a file root is active, an
+overlapping pass is rejected and passive secondary processes show legacy
+filesystem sync as paused; the exclusive lease-owning process may run a
+non-overlapping pass through the in-process gate. Existing generic `New note`
 creates a Database note. File creation is a separate explicit command at the
 current disk-tree location.
 
@@ -996,18 +1116,20 @@ external changes excluded`. `Needs attention` is durable across restarts.
 `Link notes folder…` opens the existing directory-selection vocabulary, then the
 memory-only preview. Confirmation shows the exact canonical root, supported/
 ignored/read-only counts, collisions, legacy overlap, write-safety capability,
-estimated indexing bytes, and estimated selected recovery bytes. Phase 2 offers
-`Link read-only` only. From Phase 3 onward, a fresh preview may offer `Link
-read/write` when every safety gate passes; an existing read-only root uses the
-same preview as an explicit `Upgrade to read/write` action. Activation then
-shows cancellable/resumable progress without blocking Database Notes.
+and estimated indexing bytes. Milestone A offers `Link read-only` only. From the
+B1 writable milestone onward, a fresh preview may offer `Link read/write` when
+every safety gate passes; an existing read-only root uses the same preview as an
+explicit `Upgrade to read/write` action. The B3 protection preview separately
+estimates selected recovery bytes. Activation shows cancellable/resumable
+progress without blocking Database Notes.
 
 Each linked root has labeled `Refresh`, `Manage`, and `Unlink` actions. `Manage`
 shows canonical path/identity, runtime mode, monitoring health, protection
-summary, quota contribution, and the concrete reason/remedy for any read-only
-state. It never exposes a vague disabled control.
+summary and retained-capacity contribution when those capabilities exist, and
+the concrete reason/remedy for any read-only state. It never exposes a vague
+disabled control.
 
-Phase 4 adds `Keep a Chatbook recovery copy` and `Stop keeping a recovery copy`
+The B3 selective-recovery milestone adds `Keep a Chatbook recovery copy` and `Stop keeping a recovery copy`
 to file/folder actions. The navigator and editor distinguish inherited folder
 protection from an explicit file override. A change previews affected count/
 bytes and resulting `Protected`, `Excluded`, or `Protection pending` states
@@ -1017,12 +1139,12 @@ before confirmation.
 
 Delivery and runtime capability are explicit:
 
-| Capability | Read-only files (Phase 2) | Journaled writing (Phase 3) | Continuous recovery (Phase 4) |
+| Capability | Read-only source (A) | Journaled writing (B1/B2) | Selective recovery (B3) |
 | --- | --- | --- | --- |
 | Browse, search, preview, copy/export, Console handoff | Enabled | Enabled | Enabled |
-| Create/save file, create folder, move/rename file, remove empty folder | Not shipped or disabled with reason | Enabled when root safety gates pass | Enabled when root safety gates pass |
-| Confirmed file delete plus minimal deletion restore | Not shipped | Enabled together after its recovery gate | Enabled |
-| Protection rules, recovery history, general restore/purge | Not shipped | Not shipped except deletion restore | Enabled |
+| Create/save/move/rename file in existing folders | Not shipped | Enabled in B1 when root safety gates pass | Enabled |
+| Confirmed file delete plus minimal deletion restore | Not shipped | Enabled together in B2 after its recovery gate | Enabled |
+| Protection rules, per-note history/restore, independent list/verify/export | Not shipped | Not shipped except deletion restore | Enabled |
 
 Before a capability ships, its controls are absent rather than decorative.
 After it ships, a root/note that cannot use it shows the stable disabled action
@@ -1091,9 +1213,13 @@ is never indexed. Tree children are loaded in deterministic batches of at most
 
 ### Editor and status
 
-The editor header shows an exact root/path breadcrumb plus text badges for source
-authority, runtime capability, monitoring, and recovery. File-backed notes do
-not show an independently editable title field; rename is a file action.
+The editor header has a two-line maximum. It always preserves the exact
+root/path identity through middle truncation plus focus/help disclosure, shows
+source authority, and shows only the highest-priority actionable state. Status
+priority is Attention, then offline/read-only, then save state, then monitoring/
+recovery. Lower-priority monitoring, protection, and capacity details live in
+`Status` or `Manage`; they do not become a badge wall. File-backed notes do not
+show an independently editable title field; rename is a file action.
 
 When opaque frontmatter exists, the header shows `Frontmatter preserved
 (hidden)`. Its action opens a read-only exact-source view and offers the
@@ -1133,18 +1259,18 @@ Save status vocabulary is exact:
 Disk-save state is separate from capability/recovery state. The latter includes
 `Disk • Read/write`, `Disk • Read-only: <reason>`, `Root offline`,
 `Protection pending`, `Recovery copy current`, `Recovery copy behind`,
-`Recovery over quota`, `Monitoring degraded`, and `Mixed newlines • autosave
+`Recovery capacity reached`, `Monitoring degraded`, and `Mixed newlines • autosave
 paused`. Every blocking badge links to or names the remedy; color is never the
 only carrier.
 
 Recovery UI is called `Chatbook recovery history`, not `backup` or `protected
 history`.
 
-The existing word count remains visible. Existing keyword and local-link
-editing remains available for both note kinds; those values are SQLite-owned
-metadata and never rewrite a file. Database-note sort options keep their current
-behavior, while file browsing is path-ordered and combined search is
-relevance-ordered.
+The existing word count remains visible. Database-note keyword and local-link
+editing remains unchanged. File-specific keywords/links are deferred rather
+than coupling file projections to Database-note sync relations. Database-note
+sort options keep their current behavior, while file browsing is path-ordered
+and combined search is relevance-ordered.
 
 ### Keyboard and focus contract
 
@@ -1184,16 +1310,17 @@ export names include a `disk` prefix so they cannot be mistaken for resolution.
 Database-note exports retain current normalized/frontmatter-injecting behavior.
 File-backed exact export never injects `note_id`, frontmatter, or metadata.
 
-Mixed bulk export namespaces file entries by root ID/label, exports exact saved
-bytes, exports Database notes in their existing normalized format, and includes
-a metadata manifest plus missing/conflict report.
+Mixed Database/file bulk export is deferred. Existing Database-note bulk export
+must not silently include file projections. File-source bulk export can be added
+later through the explicit combined read repository with exact-byte and
+missing/conflict reporting.
 
 ### Templates and import
 
-Creating from a template while browsing `Files on disk` proposes a safe filename
-under the current directory and stops on collision. It does not inject a UUID or
-frontmatter. The parent must already exist. This is a Phase 3 journaled create;
-Phase 2 template actions continue to create Database notes only.
+Existing template actions continue to create Database notes only. File creation
+in B1 starts as a blank file with an explicit safe filename in an existing
+directory. File-template creation is deferred; if added, it must use the same
+journaled no-replace create command and may not inject a UUID or frontmatter.
 
 The generic import action is labeled `Import into Database notes`. Selecting an
 already-supported file within a linked root opens its existing binding rather
@@ -1230,50 +1357,36 @@ For an unresolved conflict, handoff asks:
 
 Handoff does not resolve the conflict.
 
-## Search/RAG and MCP Boundaries
+## Search, RAG, and MCP Boundaries
 
 ### FTS and RAG
 
-FTS projection is required and eventual within the near-real-time target.
-Optional file-backed RAG is not auto-enabled:
+Dedicated file FTS projection is required and eventual within the near-real-time
+target. File RAG is outside A through B3 completion. A later design must preserve
+disk authority, suppress missing/deleted projections immediately, and ensure
+RAG lag or failure never blocks disk save or FTS; no RAG queue or schema is
+introduced by this rollout.
 
-- it indexes body only with filename/path metadata;
-- a path/filename generation change refreshes RAG metadata without re-embedding
-  an unchanged body;
-- the global queue is bounded and retains only the latest pending generation per
-  note;
-- queue overflow sets a dirty-sweep marker rather than growing without bound;
-- missing/deleted UUIDs are suppressed from results immediately even if physical
-  cleanup retries;
-- failures or lag never block disk save or FTS.
+### MCP
 
-### MCP v1
-
-MCP read/search may return file projections with freshness and binding state.
-MCP create remains `Database note` and says so explicitly. File-backed
-update/delete returns a structured unsupported response directing the caller to
-the interactive Library file commands. MCP never gains implicit filesystem
-write authority in this tranche.
+Existing MCP note resources, search, create, update, and delete remain
+Database-note-only. File projections do not leak into them through the `notes`
+table. A future explicit MCP read adapter may use the combined read repository
+and return file freshness/binding state. MCP filesystem writes remain outside
+this design.
 
 ## Sync and Association Isolation
 
 File-backed notes are local-only projections:
 
-- notes Sync v2/sync-log triggers run only for `storage_kind = database`;
-- Notes FTS triggers continue to index both note kinds, but their update trigger
-  rebuilds only when projected title, body, or visibility changes—not when only
-  `version`, observation time, raw hash, or frontmatter changes;
-- `NotesScopeService` does not enqueue Sync v2 for file rows;
-- remote inbound operations cannot update a file row or disk;
-- an inbound UUID collision is a sync conflict, not a file mutation;
-- legacy folder-sync timers, profiles, direct service calls, and UI actions are
-  rejected for any overlapping root, and every legacy pass/direct mutation call
-  holds a shared root-ownership token for its whole lifetime;
-- file-note memberships and links use internal local-only association methods
-  rather than the current generic sync-logging relation helper;
-- keyword sync triggers require `sync_eligible = true`;
-- a new keyword created only from file-note work starts ineligible and remains
-  local unless explicitly promoted/reused through a Database-note workflow.
+- existing notes Sync v2, sync-log, FTS, keyword, and relation triggers cannot
+  see `file_note_projections`;
+- `NotesScopeService` remains Database-note-only and never enqueues file
+  projections;
+- remote inbound operations have no table or service route to a file projection
+  or disk;
+- file-specific associations are not shipped in the core rollout;
+- legacy folder sync is rejected for an overlapping active file root.
 
 Legacy sync configuration detection includes its database roots, both TOML key
 aliases, timer state, `sync_profiles.json`, and per-note bindings. Disabling
@@ -1281,13 +1394,23 @@ legacy overlap does not touch its files. Version 1 performs no automatic legacy
 conversion and never reuses a legacy UUID that has pending or acknowledged Sync
 v2 identity.
 
-Activation uses a two-phase fence: under the registry lock it marks the candidate
-path `activation_pending`, causing new overlapping legacy token acquisition to
-fail; it releases the registry lock while awaiting/canceling all existing shared
-pass tokens; then it reacquires the lock, revalidates ownership/path identity,
-and reserves the root. It cannot inventory while the legacy engine still owns
-the same tree, and it never waits for a legacy pass while holding the registry
-mutex.
+A process-wide `LegacyRootOwnershipGate` is injected into
+`NotesSyncEngine.sync()` and every direct legacy mutation entry point.
+Library timers, `NotesSyncService`, and `AutoSyncManager` must route through that
+engine-level gate.
+
+The gate is backed by the same per-user cross-process root-mutation lease used by
+the file coordinator. Before a file root owns the lease, every cooperative
+current-version legacy pass acquires shared OS ownership before scanning and
+holds it for its complete mutation lifetime. File-root activation atomically
+closes new shared admission, waits for all current-process and other-process
+shared holders, and acquires exclusive OS ownership for the active root's
+lifetime. While that exclusive lease is held, secondary processes run no legacy
+filesystem mutation. The lease-owning process may admit a non-overlapping legacy
+pass under its already stronger exclusive ownership through the in-process
+canonical-root gate; an overlapping pass is always rejected. A UI-only or
+process-local overlap check is insufficient. Older tools that do not honor the
+lease remain external writers under the stated support boundary.
 
 ## Runtime Modes and Concurrency
 
@@ -1296,11 +1419,11 @@ The file coordinator has three same-version modes:
 | Mode | Behavior |
 | --- | --- |
 | `disabled` | Kill switch for activation, monitoring, and file commands. Existing projections are diagnostic and make no freshness claim. Startup still inspects incomplete operations without replaying them. |
-| `read_only` | Link, inventory, tree/search, monitor, inspect/export recovery, and reconcile external changes. No file mutation or restore into a linked root. |
+| `read_only` | Link, inventory, tree/search, monitor, reconcile external changes, and inspect/export recovery when available. No file mutation or restore into a linked root. |
 | `read_write` | Enables explicit coordinator mutations after all health, lease, and recovery gates pass. |
 
-`disabled` is not a schema downgrade. An older binary still rejects the migrated
-database.
+`disabled` is not a schema downgrade. A newly launched older binary still
+rejects the migrated main-database schema version.
 
 A mode-transition barrier rejects queued new saves, lets an already-started
 operation finish or enter recovery, preserves newer editor buffers, and only
@@ -1308,66 +1431,57 @@ then changes mode. After `disabled`, each affected root completes identity and
 hash reconciliation before it may claim freshness or return to `read_write`.
 Applying any retained draft still requires a final fresh disk hash.
 
-An owner-only global root-registry lock, stored outside repositories and shared
-across Chatbook profiles/database instances, serializes canonicalization,
-parent/equal/child overlap comparison, detached reservations, root registration,
-legacy whole-pass shared tokens/two-phase activation fences, and per-root lease
-acquisition. This prevents concurrent `/notes` and `/notes/subdir` activations
-from each passing a local check.
-
-One kernel-held OS coordinator lease per registered root elects the process
-allowed to activate, monitor, reconcile/project, or write it. Lockfile contents
-record a random owner nonce, process-start identity, and current `read_only` or
-`read_write` capability for diagnostics; PID/liveness text is never ownership
-proof. Kernel release plus root-identity and incomplete-operation checks governs
-stale recovery. Write permission is gated separately.
+One coarse owner-only per-user OS root-mutation lease, stored in a fixed
+application runtime namespace that is not derived from configurable user-data,
+main-database, or repository paths, permits shared legacy passes only when no
+file root owns it exclusively and permits one active file-notes root across
+cooperative current Chatbook processes and storage instances. This intentionally
+replaces a multi-profile durable root registry in the first release. Exclusive
+ownership elects the process allowed to activate, monitor, reconcile/project,
+or write the one root. Its diagnostic contents record a random owner nonce,
+process-start identity, canonical root, and current `read_only` or `read_write`
+capability; PID text is never ownership proof. Kernel release plus root-identity
+and incomplete-operation checks governs stale recovery. Write permission is
+gated separately.
 
 A second Chatbook process is passive read-only: it may inspect cached projection/
 recovery and exact-export a freshly hashed file, but it starts no second watcher/
-reconciler and issues no file commands. The core pilot permits one linked active
-root total. The schema remains multi-root capable, but additional roots are a
+reconciler, issues no file commands, and runs no legacy filesystem sync while
+the exclusive lease is held. The core pilot permits one linked active root
+total. The schema remains multi-root capable, but additional roots are a
 separately gated expansion. Multiple hosts and network mounts are outside
 write-safety guarantees.
 
-### Cross-version quiescence
+### Upgrade and process support boundary
 
-The immediately previous Chatbook binary does not necessarily honor the new
-registry or maintenance locks. Before the first pair migration and first root
-activation after upgrade, Chatbook must prove that no older Chatbook process,
-foreign main/recovery SQLite handle, or legacy-sync worker can still mutate the
-database family or candidate root.
+The core support contract is one current Chatbook installation, one configured
+main-database storage instance, one active file root, and one cooperative file
+coordinator. First activation tells the user to close other Chatbook processes
+and refuses while a detected current legacy pass or exclusive root-mutation
+lease is active.
 
-Proof must yield a continuously held exclusion token, not a point-in-time process
-scan. The supported automatic path uses a kernel instance/maintenance token
-already honored by the immediately previous compatibility release, or a
-platform-enforced per-user version/launcher fence. A migration token is acquired
-before source inspection and held until the migrated pair is published, reopened,
-and verified. Once any root is active, the compatible version/launcher exclusion
-is retained for that root's entire lease/lifetime; guard-aware older releases
-must refuse to start, while current-version passive processes may join under the
-defined lease rules.
+The additive migration introduces only isolated file tables and does not rewrite
+existing Database-note triggers or rows. An already-running pre-feature process
+therefore has no API or table knowledge with which to mutate a file projection.
+A newly launched older binary rejects the newer main schema. An old copy,
+different profile, editor, or Git tool that writes the root is treated as an
+external writer and is contained by the same raw-hash, displaced-target, and
+reconciliation protocol.
 
-Process/open-handle detection is diagnostic only. A direct upgrade from a
-pre-guard release, or a platform that cannot continuously exclude a new old
-binary, refuses in-app migration/first activation and requires a documented true
-offline maintenance procedure with every Chatbook process/service/launcher
-stopped before the maintenance command acquires exclusive database/root access.
-Before root activation, that procedure must also establish a durable per-user
-version floor by upgrading, removing, or launcher-disabling pre-guard Chatbook
-installations across profiles. If it cannot, activation remains unavailable. It
-never swaps a database family or claims root ownership on absence observed only
-at one instant. Once every launchable binary understands the new gates, normal
-kernel registry/maintenance/lease semantics apply; older guarded binaries refuse
-the active version floor and older binaries using the migrated database also
-reject its schema.
+Chatbook does not claim that it can enumerate or launcher-disable every arbitrary
+source checkout or virtual environment. Durable multi-profile registration,
+managed-launcher version floors, and simultaneous writable storage instances
+are deferred product capabilities, not hidden prerequisites for Notes.
 
 ### Startup operation recovery
 
-Every runtime mode, including `disabled`, opens the recovery journal far enough
-to inspect incomplete operations and completed emergency operations marked
-`deferred_rebuild`. Startup takes the coordinator lease when available,
-examines current root identity/containment plus source/destination paths and
-hashes, and never blindly replays a filesystem mutation.
+After `file_notes_storage` records a paired recovery store, every runtime mode,
+including `disabled`, opens and identity-checks that recovery journal far enough
+to inspect incomplete operations. Read-only A does not create or require a
+recovery journal before that pairing exists. Startup takes the exclusive
+root-mutation lease when available, examines current root identity/containment
+plus source/destination paths and hashes, and never blindly replays a filesystem
+mutation.
 
 Classification is action-specific:
 
@@ -1383,183 +1497,152 @@ Classification is action-specific:
 - rename/move: absent source plus intended destination means complete the
   binding move; intended source plus absent destination means `not_applied`;
   both paths present, both absent, or unexpected hashes mean Attention.
-- create-directory/remove-empty-directory: the exact expected directory
-  identity/absence completes the operation; the unchanged precondition is
-  `not_applied`; a nonempty, recreated, linked, or otherwise unexpected path is
-  never removed and enters Attention.
 
 Recovery metadata is repaired before main projection, and main projection is
-then rebuilt idempotently from the observed disk result. If
-`notes_recovery.db` cannot be opened and validated, every linked root is
-read-only and no restore is allowed; Database notes continue to operate.
+then rebuilt idempotently from the observed disk result. If the expected
+`notes_recovery.db` is absent, mismatched, or invalid, every linked root is
+read-only, no restore is allowed, and no empty replacement is auto-created;
+Database notes continue to operate.
 
 ## Migration and Activation
 
 ### Pre-migration safety
 
-The normal database constructor currently performs migrations, so file-backed
-schema migration needs an earlier bootstrap boundary:
+The first migration is additive and affects only the existing main database.
+`notes_recovery.db` is new and independent, so there is no database pair to
+stage, swap, or downgrade atomically.
 
-1. Satisfy cross-version quiescence; refuse while an older process/foreign handle
-   may retain either database family.
-2. Acquire a kernel-held global storage-maintenance/migration lock honored by
-   every process and database mutation path.
-3. Inspect the on-disk main and recovery schemas before ordinary DB construction
-   and stop all file-root activity.
-4. Run integrity checks on every existing source member. A source-integrity
-   failure blocks normal writable startup and opens only verified recovery/
-   read-only diagnostics.
-5. Create and validate SQLite online backups of every existing member in the
-   owner-only app data directory, then durably publish their pair manifest.
-6. Persist a migration-attempt marker containing source/target schema versions,
-   backup epoch, expected pair members, and swap progress.
-7. Build the target pair in private staging: migrate a main-database copy,
-   migrate or create the independently versioned recovery copy, and validate
-   schema, integrity, ownership permissions, pair compatibility, and that each
-   staged database is self-contained without live-name sidecars.
-8. Close every local SQLite connection. Under the external marker, quarantine
-   each live database file together with any `-wal`, `-shm`, or rollback-journal
-   sidecars; publish the staged databases with no stale live-name sidecar;
-   fsync each database and parent directory; reopen and verify the live pair;
-   then durably mark the attempt complete before deleting the quarantined family.
-9. On startup, an incomplete marker idempotently finishes the compatible swap or
-   restores the verified backup pair before any ordinary constructor or root
-   coordinator starts.
+A `ConfiguredMainDatabaseBootstrap` becomes the mandatory factory gate before
+every normal or lazy constructor of the configured disk-backed main database.
+Direct constructors require its schema-ready or explicit compatibility token;
+in-memory/test databases may use a separate test path. The bootstrap holds a
+storage-instance interprocess schema-maintenance lock in the same fixed per-user
+runtime namespace, keyed by the canonical main-database path, so alternate
+user-data settings cannot construct and auto-migrate the same database first.
 
-Migration adds the ownership columns/tables/indexes, gates note/keyword
-sync-log triggers as specified above, and makes the FTS update trigger
-content/visibility-conditional before any file projection can be inserted. It
-creates/version-controls `notes_recovery.db` independently within the pair state
-machine. It links no root and mutates no note file.
+1. Resolve the stable storage-instance namespace from the configured main
+   database path and acquire the schema-maintenance lock.
+2. Open a minimal SQLite bootstrap connection that cannot run migrations, read
+   the version, and run the existing main-database integrity check.
+3. Use SQLite's online backup API to create a verified pre-migration main
+   snapshot in the owner-only storage-instance directory; fsync the snapshot and
+   its directory before recording it as usable.
+4. Run the transactional schema migration in place. It creates
+   `file_notes_storage`, `note_file_roots`, `file_note_projections`, and
+   `file_notes_fts`, advances the main schema version, and leaves existing
+   `notes`, keyword, relation, FTS, and sync triggers unchanged.
+5. Reopen/verify the main schema and integrity, publish a schema-ready token,
+   then allow ordinary main-database constructors and file-source activation.
 
-The latest verified pre-migration backup pair is outside the 1 GiB recovery
-quota and is retained until explicit pruning. If backup, staging, verification,
-swap, or durability fails, startup never continues with a partially compatible
-pair. Compatibility mode is allowed only when the unchanged source main database
-passes integrity, its schema is the immediately previous supported version, and
-the failure concerns backup capacity/staging or migration availability. That
-mode keeps the file coordinator `disabled` while ordinary Database notes remain
-available. Source corruption or any other unknown/incompatible schema blocks
-normal writes.
+The migration never renames or replaces a live SQLite database file and never
+manipulates its WAL/SHM/rollback-journal sidecars. SQLite owns concurrency and
+rollback for the in-place transaction.
 
-Emergency downgrade is an explicit offline restore. Chatbook preserves the
-upgraded database pair first and warns that all post-backup Database-note and
-metadata changes may be lost. It uses the same closed-handle, database-family
-quarantine/publish/verify protocol, including WAL/SHM/rollback-journal sidecars.
+If integrity is healthy but the required backup/preflight fails, the bootstrap
+does not attempt migration. The new binary may open only the exact immediately
+preceding schema through an explicit `database_only_compatibility` token that
+disables all file-table/workbench access and leaves Database Notes usable.
+A rolled-back additive migration may use the same mode after integrity is
+rechecked. Other old, malformed, or newer schema versions still fail normally;
+compatibility mode is not an automatic downgrade.
+
+The recovery database is created and validated independently in the same
+storage-instance namespace before B1 first enables a write command.
+`RecoveryStoreBootstrap` runs under the exclusive root-mutation lease and is
+permitted only when `file_notes_storage` proves no recovery instance has ever
+been paired; a recoverable owner-only marker coordinates creation of
+`recovery_store_identity` and commitment of the expected UUID in the main row.
+After pairing, missing/mismatched storage is an Attention/read-only condition,
+never permission to initialize a fresh database. Recovery bootstrap failure does
+not roll back the additive main schema, block Database Notes, or block the
+read-only A milestone. It simply keeps all file mutations and protection
+disabled until the exact store is healthy. Later recovery-schema migrations and
+explicit store relocation require their own backup/design when they exist;
+speculative pair-migration machinery is not part of this rollout.
+
+The verified pre-migration main backup is outside the 1 GiB recovery capacity
+and retained for manual offline recovery until explicit administrative pruning.
+Automatic downgrade is not supported.
 
 ### Preview
 
 Root preview is ephemeral and memory-only:
 
-- no root/binding rows;
+- no root/projection rows;
 - no watcher or lease;
 - no recovery payload;
 - no index publication;
 - no file writes.
 
-It reports supported, ignored, read-only, inaccessible, special, and potential
-protection counts plus estimated initial indexing/recovery bytes.
+It reports supported, ignored, read-only, inaccessible, and special counts plus
+estimated initial indexing bytes. B3 adds a separate protection preview with
+selected file/folder counts and estimated recovery bytes.
 
 ### Confirmed activation
 
 Activation is crash-resumable:
 
-1. Prove the cross-version quiescence requirement below.
-2. Under the global root-registry lock, canonicalize/fingerprint the root, reject
-   registered/detached overlaps, and persist an `activation_pending` fence that
-   rejects new overlapping legacy shared tokens; then release the lock.
-3. Await/cancel and verify completion of every existing overlapping legacy pass
-   without holding the registry lock.
-4. Reacquire the registry lock, revalidate root identity/overlap/fence ownership,
-   persist the activation reservation, and acquire the exclusive root
-   coordinator lease with the requested `read_only`/`read_write` capability.
-5. Persist a durable root record in `activating`, then release the registry lock
-   while retaining the reservation and kernel root lease.
-6. Start bounded watcher/event capture.
-7. Inventory path metadata and classification.
-8. Drain captured events.
-9. If capture overflowed or root identity changed, discard the inventory and
+1. Close new cooperative legacy-pass admission, await current shared holders,
+   and acquire the per-user root-mutation lease exclusively.
+2. Canonicalize/fingerprint the root, reject a second active root and configured
+   legacy-sync overlap, and establish the requested runtime capability.
+3. Revalidate root identity and the in-process legacy ownership gate.
+4. Persist a durable root record in `activating` while retaining the lease.
+5. Start bounded watcher/event capture.
+6. Inventory path metadata and classification.
+7. Drain captured events.
+8. If capture overflowed or root identity changed, discard the inventory and
    rescan.
-10. Atomically publish roots/bindings/projections.
+9. Atomically publish the root and file projections.
 
 A crash leaves an explicit resume/discard activation state. Path navigation
 becomes available from the published metadata while body FTS proceeds
 incrementally. Source files remain unchanged.
 
-Only selected protected items show `Protection pending`; each becomes writable
-after its baseline replica verifies. Unprotected items become writable after
-root activation and per-operation recovery health gates pass.
+From B3 onward, selected protected items show `Protection pending`; each becomes
+writable after its baseline replica verifies. In B1/B2, and for unprotected
+items in B3, items become writable after root activation and per-operation
+recovery health gates pass.
 
-## Unlink, Forget, Purge, and Backup
+## Unlink, Forget, and Retained History
 
 ### Unlink
 
 Unlink crosses an operation barrier, stops monitoring, and releases the lease.
 It never touches source files or Git. The root becomes detached while retaining
 UUIDs, metadata, drafts/conflicts, and recovery bytes; those bytes still count
-toward quota. A detached root reserves its path overlap until relink or forget.
+toward the fixed capacity. A detached root does not reserve a global path after
+the exclusive root-mutation lease is released.
 
 Relink requires explicit confirmation plus root identity and inventory checks.
 A recreated directory at the same path does not silently inherit old UUIDs.
 
 ### Forget
 
-Forget removes root registration, bindings, projections, and note-specific
-associations. It does not delete shared keyword definitions or source files.
+Forget removes the root and file projections. It does not touch source files.
 Forget is blocked while pending/Attention operations or unresolved drafts exist;
 those must be resolved or separately discarded first. Self-contained deletion
 snapshots remain through their guaranteed expiry. Ordinary current replicas and
-checkpoints lose their protection pin and become eligible for quota pruning;
+checkpoints lose their protection pin and become eligible for capacity pruning;
 the confirmation reports those logical bytes and recommends Unlink when the user
 wants to retain them.
 
-### Purge
+### Minimal history controls
 
-Recovery purge is separate and requires typed confirmation showing scope, item
-count, and logical compressed bytes. Pending operations, unresolved conflicts,
-and drafts are excluded until resolved or explicitly discarded. Unexpired
-30-day deletion snapshots are excluded; waiving that guarantee is a distinct
-typed confirmation that changes the tombstone from `recoverable until <date>`
-to `recovery purged`. Purge is logical deletion; it promises neither secure
-erasure nor immediate SQLite/WAL shrinkage.
+Automatic garbage collection removes expired, superseded, and otherwise
+eligible revisions. A scoped explicit action may prune eligible ordinary
+checkpoints after showing item count and logical bytes. It cannot remove pending
+operations, unresolved drafts/conflicts, current protected replicas, or
+unexpired guaranteed deletion/conflict payloads. The core release does not
+offer guarantee waiver, general purge, pair backup, or pair restore.
 
-The recovery database is authoritative for guarantee/expiry state. Library
-validates that live state before displaying `recoverable until`; the main
-tombstone stores only a cache. A guarantee-waiver transaction marks the recovery
-state `purge_pending/recovery unavailable` before payload removal and
-`recovery purged` after its atomic live-set deletion. A failed main-cache update
-can never leave the UI promising bytes that recovery no longer retains.
-
-### Application-consistent DB backup
-
-A later optional recovery export can back up the two SQLite databases:
-
-1. acquire the global storage-maintenance lock honored by every Chatbook process,
-   making other instances passive read-only for the epoch;
-2. pause Database-note/metadata writes, file commands, reconciliation projection
-   and replica updates, and every other Chatbook database mutation;
-3. settle or classify operations while retaining watcher events;
-4. assign a shared backup epoch without asymmetrically mutating the live pair;
-5. use SQLite online backup for main and recovery databases into private staging;
-6. validate and fsync both staged databases;
-7. write and fsync the pair manifest plus staging directory last, then release
-   the maintenance lock.
-
-This is an application-consistent epoch, not a cross-database transaction.
-External file writers cannot be frozen. Source files and Git are excluded, so
-exact unprotected content still depends on the working tree/repository.
-
-Pair restore is offline only under the same global maintenance lock and
-cross-version quiescence proof. It validates epoch/pair, closes every SQLite
-handle, and uses a recoverable external staging marker. Each live database plus
-its WAL/SHM/rollback-journal sidecars is quarantined as one family; self-contained
-staged databases are published only at clean live names, fsynced, reopened, and
-verified before the quarantined family is removed. It never hot-swaps open
-databases or exposes a staged database beside stale sidecars.
+Application-consistent backup of the main and recovery databases is a later
+optional feature. Source files and Git would remain outside such a backup, so it
+would not replace the user's repository or an off-device backup.
 
 ## Security and Privacy
 
-- Main/recovery databases, WAL/SHM files, backups, manifests, and temporary
+- Main/recovery databases, WAL/SHM files, backups, lock metadata, and temporary
   recovery artifacts use owner-only app-directory permissions (POSIX 0700
   directories and 0600 files where supported, equivalent owner-only policy
   elsewhere).
@@ -1586,8 +1669,9 @@ databases or exposes a staged database beside stale sidecars.
 
 - With no linked root, Chatbook starts no file watcher, reconciliation worker,
   recovery writer, lease, or file scan.
-- Apart from the one-time guarded schema migration, existing Database Notes
-  behavior and the zero-root steady-state startup path remain unchanged.
+- Apart from the one-time additive isolated-table migration and specified
+  Link/Recovery actions, existing Database Notes behavior and the zero-root
+  steady-state startup path remain unchanged.
 - A cached 5,000-file root reaches interactive tree navigation without reading
   file bodies before first paint.
 - Tree rows carry metadata only and load children lazily in bounded batches,
@@ -1614,12 +1698,19 @@ pinned runner owns hard timing gates.
 
 ### Focused per-PR tests
 
-- Authority routing and immutable `storage_kind`.
+- Structural isolation: existing Database-note schema/triggers and CRUD behavior
+  remain unchanged, and file projections cannot leak into Database-note counts,
+  search, export, RAG, MCP, keyword, relation, or Sync paths.
 - Projection idempotency by root, normalized path, raw hash, and presence state.
+- Storage-instance namespacing, recovery-instance pairing/mismatch, no silent
+  rebootstrap after path/config relocation, and one coarse active-root lease.
+- Read-only capability on macOS/Linux/Windows plus APFS-specific writable
+  capability probing and fail-closed downgrade elsewhere.
 - Exact frontmatter/BOM/newline/final-newline/mode preservation, raw-hash-bound
   normalization acknowledgement, and deterministic new-file byte defaults.
 - Strict encoding, size, malformed-frontmatter, hardlink, symlink, unreadable,
-  unsafe-name/control rendering, and special-file classification.
+  unsafe-name/control rendering, nested-mount/cross-device mutation refusal, and
+  special-file classification.
 - Versioned hash vectors plus rejection of unknown hash versions.
 - Save no-op behavior and editor-generation races.
 - Every mutation outcome at each journal checkpoint, destination-path locking,
@@ -1627,116 +1718,114 @@ pinned runner owns hard timing gates.
   delete-quarantine recovery, and operation-linked artifact cleanup.
 - Recovery/full-synchronous commit barriers, post-commit safety-blob
   round-trip verification, per-action file/directory fsync, normal complete-last
-  ordering, and pinned recovery-only `deferred_rebuild` consumption.
+  ordering, and completed-operation pruning.
 - Expected-hash conflict, conflict-headroom failure, overwrite/discard safety,
   resolved-side retention, exact-export fallback, and durable Attention.
 - Missing/root-Offline/tombstone transitions, atomic-save versus genuine move,
   manual reassociation, and path-reuse identity.
 - Delete snapshot verification, 30-day pin, stale confirmation, quarantine, and
   minimal restore.
-- Protection inheritance/overrides, current replica invariant, quota, corrupt
+- Protection inheritance/overrides, current replica invariant, fixed capacity,
+  free-space floor, corrupt
   revision, bounded decompression, payload/operation garbage collection, and
   recovery failure.
 - Search rank/paging/dedup/latest-query cancellation/high-fanout batching,
-  stale-body suppression/path-only fallback, durable incremental FTS progress,
-  and path-only RAG metadata refresh.
-- Notes/keyword/relation trigger isolation plus Sync
-  v2/legacy/MCP/public-DB fail-closed boundaries.
-- Narrow/wide focus, resize, autosave, capability badges, root/protection flows,
-  conflict, preview, export, template, and explicit Console handoff truncation.
-- Exact zero-root Database Notes UI and runtime non-degradation.
+  stale-body suppression/path-only fallback, and durable incremental file-FTS
+  progress.
+- Cross-process shared/exclusive legacy ownership plus engine-level canonical
+  root tokens and Database/file repository boundaries.
+- Narrow/wide focus, resize, autosave, two-line status priority, root/protection
+  flows, conflict, preview, exact export, and explicit Console handoff
+  truncation.
+- Exact zero-root Database Notes UI/runtime non-degradation apart from the
+  specified Link/Recovery actions, plus active-root Database-source routing
+  parity for create, edit/autosave/conflict, keywords/links, template/import/
+  export, and legacy sync.
 
 Minimal test seams are:
 
 - one coordinator fault-checkpoint callback;
 - an injectable clock;
-- a fake watcher event source.
+- a fake watcher event source;
+- a coordinator command port for deterministic controller tests;
+- a navigator query repository for deterministic paging/cancellation tests.
 
 Integration tests continue to use real `pathlib`/file descriptors, SQLite, and
 temporary files rather than a broad fake filesystem abstraction.
 
 ### Nightly and release-blocking suites
 
-- Process termination at every journal/activation/migration/backup/pair-restore
-  boundary, proving complete bytes and recoverable intent after process crashes.
+- Process termination at every journal and activation boundary, proving complete
+  bytes and recoverable intent after process crashes.
 - Recovery COMMIT/fsync failures before file mutation, main-commit/recovery-
-  complete ordering, delete/purge guarantee waiver, revision-GC reference swap,
-  stale WAL/SHM/rollback-journal family handling, and pair migration/restore
-  rollback checkpoints.
+  complete ordering, deletion retention, and revision-GC reference swap.
 - Real watcher timing, duplicate/move/overflow storms, polling fallback, and Git
   checkout/bulk/conflict-marker reconciliation.
 - Deep and 5,000-sibling scale plus fixed-runner p95 benchmarks.
-- Two-process kernel-lease contention, global registry/maintenance contention,
-  PID reuse diagnostics, and stale-owner recovery.
-- Concurrent equal/parent/child root registration and running legacy-sync
-  shared-token drain/overlap fencing across profiles.
-- A deliberately held pre-upgrade database/root handle proves first migration/
-  activation refuses until cross-version quiescence is established.
-- A guarded older process/profile cannot launch while a root is active, and a
-  pre-guard installation without a durable version floor keeps activation
-  unavailable.
+- Two-process shared-legacy/exclusive-file lease contention, secondary-worker
+  refusal, PID reuse diagnostics, and stale-owner recovery.
+- Running legacy-sync shared-token drain and overlap fencing at every engine
+  entry point and across cooperative processes.
 - Root identity change and same-path directory recreation.
-- Migration backup failure, integrity failure, upgraded-pair rollback, and
-  older-binary rejection documentation.
-- Mode change during mutation, recovery corruption/full disk/over-quota, unlink,
-  relink, forget, purge, and occupied-destination restore.
-- POSIX mode-bit tests on POSIX; platform-appropriate expectations on Windows.
+- Mandatory pre-constructor ordering across every configured-main-DB entry
+  point; main-backup failure and additive-migration rollback enter verified
+  Database-only previous-schema compatibility; recovery bootstrap
+  crash/mismatch/failure never creates an empty replacement; and older-binary
+  rejection remains documented.
+- Mode change during mutation, recovery corruption/full disk/capacity, unlink,
+  relink, forget, eligible-history pruning, and occupied-destination restore.
+- APFS native exchange/exclusive/no-follow and durability tests on macOS;
+  packaged Linux/Windows tests prove the same roots remain explicitly read-only.
 
 Process crash tests do not claim to simulate power loss. Commit and directory-
-fsync ordering is fault-injected, while each supported local platform/filesystem
-durability profile also receives a release power-cut/reboot harness or documented
-equivalent validation. Network/cloud mounts remain outside release guarantees.
+fsync ordering is fault-injected, while each supported writable
+platform/filesystem durability profile also receives a release power-cut/reboot
+harness or documented equivalent validation. Network/cloud mounts remain
+outside release guarantees.
 
-The Git smoke matrix is intentionally small: status/diff, one local commit, one
-local push to a disposable remote, checkout/bulk reconciliation, and conflict
-markers. Chatbook-specific value does not justify automating broad pull/rebase
-matrices here.
+The Git smoke matrix is intentionally small: status/diff, one local commit,
+checkout/bulk reconciliation, and conflict markers. Push remains ordinary Git
+behavior outside Chatbook and does not justify a remote test matrix here.
 
 ## Rollout
 
-The architecture is multi-root capable, but delivery is phased so each safety
-boundary can be proven before broader automation:
+Delivery is phased so the realistic read-only A arrives before the desired
+writable B:
 
-1. **Migration, guards, and kill switch**
-   - legacy-compatible continuous exclusion precursor or true-offline upgrade
-     gate;
-   - pre-constructor verified backup;
-   - additive schema and trigger isolation;
-   - recovery DB bootstrap;
-   - modes and fail-closed service routing;
-   - zero-root non-degradation.
-2. **Read-only file sources**
-   - preview/activation/resume;
-   - one linked root;
-   - tree, dedicated search, external monitoring, unlink/relink;
-   - existing preview/export/Database-template/Console parity;
-   - no file mutation.
-3. **Journaled writing**
-   - save/create/rename/move, new directory/remove-empty-directory, and durable
-     conflict resolution;
-   - mandatory operation safety;
-   - atomic displaced-target/quarantine and one active root;
-   - exact confirmed-delete retention and minimal restore must land together
-     before Delete is enabled.
-4. **Opt-in continuous recovery**
-   - folder/file protection rules and current replicas;
-   - coalesced checkpoints, quota/history UI, general restore/purge, and
-     recovery-only enumerate/verify/export.
-5. **Optional backup/RAG and additional post-gate hardening**
-   - application-consistent database-pair backup;
-   - recovery-only in-place restore;
-   - optional file RAG and additional optimization/platform coverage after all
-     required 5,000-file and supported-platform release gates already pass.
-6. **Separately approved expansion**
-   - additional linked/writable roots;
-   - recursive folder delete or bulk folder rename/move;
-   - any Git stage/commit/push controls;
-   - any remote/portable file-note identity or synchronization.
+1. **A: isolated read-only file source**
+   - verified main backup and additive isolated projection/FTS migration;
+   - declared watcher dependency, preview/activation/resume, one active root,
+     external reconciliation, unlink/relink;
+   - separately mounted workbench, scalable tree/search, preview, exact
+     copy/export, and Console handoff;
+   - exact zero-root Database Notes behavior apart from the specified
+     Link/Recovery actions;
+   - no file mutation and no recovery DB prerequisite.
+2. **B1: journaled macOS/APFS editing**
+   - independently paired recovery DB bootstrap and fixed-capacity admission;
+   - blank create in an existing directory, body save, rename, and move;
+   - debounced autosave, mandatory operation safety, atomic displaced-target
+     preservation, durable conflicts, and startup classification;
+   - no Delete until B2.
+3. **B2: confirmed delete and minimal restore**
+   - verified deletion snapshot, quarantine protocol, 30-day guarantee, and
+     working per-note restore ship together.
+4. **B3: selected file/folder recovery**
+   - protection rules/current replicas, coalesced checkpoints, per-note
+     history/restore, fixed capacity controls, and independent
+     enumerate/verify/export.
+5. **Deferred expansions**
+   - Linux/Windows writable adapters, additional roots/storage instances,
+     multi-profile durable registry, recovery-store relocation/clone, folder
+     mutation, file templates,
+     file-specific keywords/links, file MCP/RAG, configurable quotas, guarantee
+     waiver/general purge, database-pair backup/restore, recovery-only in-place
+     restore, Git controls, and remote/portable file identity or synchronization.
 
-Implementation planning should decompose TASK-399 into atomic child tasks/PRs in
-this dependency order. No phase may expose an action whose recovery and
-fail-closed prerequisites belong only to a later phase. Optional Phase 5 and
-Phase 6 children do not gate completion of the core file-backed Notes outcome.
+TASK-399 is a roll-up tracker and is never implemented as one PR. Implementation
+planning must create atomic child tasks in this dependency order, each with its
+own acceptance criteria and ADR link. No milestone may expose an action whose
+recovery and fail-closed prerequisites belong only to a later milestone.
 
 ## Alternatives Considered
 
@@ -1753,8 +1842,17 @@ and external editors/Git would require a second import/export authority loop.
 
 ### Use disk only, without a projection
 
-Rejected. It would degrade Library FTS, metadata, links, Console handoff, RAG
-invalidation, and large-tree performance.
+Rejected. It would degrade Library FTS, local identity, Console handoff, and
+large-tree performance.
+
+### Put file projections in `notes` with a `storage_kind` discriminator
+
+Rejected after repository integration review. Existing Database-note CRUD, FTS,
+Sync, MCP, RAG, export, keyword, and relation callers assume every active
+`notes` row is Database-owned, and several bypass `NotesScopeService`. Gating
+every path would make zero-root non-degradation depend on a permanent,
+error-prone audit. Dedicated file projection/FTS tables provide isolation by
+construction; intentional combined reads happen above both repositories.
 
 ### Store UUIDs in frontmatter or a repository manifest
 
@@ -1765,7 +1863,22 @@ make Chatbook metadata part of repositories that currently contain only notes.
 
 Rejected. A separate recovery database better satisfies independent enumeration
 and recovery when the main projection is unavailable, and it isolates recovery
-quota/corruption from Database-note availability.
+capacity/corruption from Database-note availability.
+
+### Ship writable macOS, Linux, and Windows support together
+
+Rejected for the first writable release. Their beneath-root, atomic replacement,
+permission, and durability primitives are not equivalent through Python's
+portable APIs. APFS is the first tested write target; the same feature remains
+useful read-only elsewhere while later native adapters prove equal safety.
+
+### Stage and atomically swap a main/recovery database pair
+
+Rejected for the first migration. The recovery database is new, file tables are
+additive and isolated, and SQLite already provides transactional schema changes
+plus a consistent online backup API. Renaming live database families adds handle,
+sidecar, cross-volume, downgrade, and launcher coordination without protecting a
+state that exists yet.
 
 ### Add Git controls with the first file UI
 
