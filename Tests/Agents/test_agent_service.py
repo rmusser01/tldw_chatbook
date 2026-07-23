@@ -22,6 +22,7 @@ from tldw_chatbook.Agents.agent_models import (
 from tldw_chatbook.Agents.agent_service import (
     SUBAGENT_SYSTEM_PROMPT,
     AgentService,
+    _usage_total_tokens,
 )
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
@@ -1007,3 +1008,50 @@ def test_native_endpoint_with_no_schemas_omits_tools_kwarg(db):
     )
     assert outcome.status == RUN_DONE
     assert "tools" not in chat.calls[0]
+
+
+def test_usage_total_tokens_reads_total():
+    assert _usage_total_tokens({"usage": {"total_tokens": 150}}) == 150
+
+
+def test_usage_total_tokens_sums_prompt_and_completion():
+    assert _usage_total_tokens(
+        {"usage": {"prompt_tokens": 100, "completion_tokens": 50}}
+    ) == 150
+
+
+def test_usage_total_tokens_none_when_absent_or_malformed():
+    assert _usage_total_tokens({"choices": []}) is None
+    assert _usage_total_tokens("a string") is None
+    assert _usage_total_tokens({"usage": "bad"}) is None
+    assert _usage_total_tokens({"usage": {"prompt_tokens": 10}}) is None
+
+
+def _service_with_chat(db, chat_call):
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    return AgentService(db=db, registry=registry, chat_call=chat_call)
+
+
+def test_call_model_uses_real_provider_usage(db):
+    def chat(**kwargs):
+        return {
+            "choices": [{"message": {"content": "hello there"}}],
+            "usage": {"total_tokens": 150},
+        }
+    service = _service_with_chat(db, chat)
+    cfg = AgentConfig(model="gpt-4o", system_prompt="s", native_tools=False)
+    call_model = service._make_call_model(cfg, "openai", [])
+    turn = call_model([{"role": "user", "content": "hi"}], ())
+    assert turn.tokens == 150
+
+
+def test_call_model_estimates_when_no_usage(db):
+    def chat(**kwargs):
+        return {"choices": [{"message": {"content": "hello there world"}}]}
+    service = _service_with_chat(db, chat)
+    cfg = AgentConfig(model="gpt-4o", system_prompt="s", native_tools=False)
+    call_model = service._make_call_model(cfg, "openai", [])
+    turn = call_model([{"role": "user", "content": "count these tokens"}], ())
+    # No provider usage -> estimate of sent payload + response text, always > 0.
+    assert turn.tokens > 0

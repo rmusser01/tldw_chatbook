@@ -17,6 +17,7 @@ from typing import Callable, Protocol
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Internal_Prompts.catalog import CATALOG
+from tldw_chatbook.Utils.token_counter import count_tokens_messages, estimate_tokens
 
 from .agent_models import (
     AGENT_KIND_PRIMARY,
@@ -120,6 +121,32 @@ def _response_message(resp) -> dict:
     return message if isinstance(message, dict) else {}
 
 
+def _usage_total_tokens(resp) -> int | None:
+    """Prompt+completion tokens from a provider's OpenAI-shaped usage block,
+    or None when the provider didn't report usage.
+
+    Args:
+        resp: The provider response (dict when the provider reports usage).
+
+    Returns:
+        The total tokens for the call, or None to signal "estimate instead".
+    """
+    try:
+        usage = resp["usage"]
+    except (KeyError, TypeError):
+        return None
+    if not isinstance(usage, dict):
+        return None
+    total = usage.get("total_tokens")
+    if isinstance(total, int) and total > 0:
+        return total
+    prompt = usage.get("prompt_tokens")
+    completion = usage.get("completion_tokens")
+    if isinstance(prompt, int) and isinstance(completion, int):
+        return prompt + completion
+    return None
+
+
 class AgentService:
     """Run one agent turn (primary + any sub-agents) and persist it."""
 
@@ -210,8 +237,16 @@ class AgentService:
                 **call_kwargs,
             )
             text = _response_text(resp)
+            tokens = _usage_total_tokens(resp)
+            if tokens is None:
+                # Provider reported no usage -> estimate from sent payload +
+                # response text (native tool_calls JSON is not separately
+                # counted here; the prompt term dominates the per-turn total).
+                tokens = count_tokens_messages(payload, config.model) + estimate_tokens(
+                    text, config.model
+                )
             if not native:
-                return ModelTurn(text=text)
+                return ModelTurn(text=text, tokens=tokens)
             message = _response_message(resp)
             # Id-less entries get synthesized ids BEFORE parsing, and the
             # SAME normalized list feeds the assistant echo — the echo and
@@ -229,7 +264,10 @@ class AgentService:
                     "tool_calls": raw_calls,
                 }
             return ModelTurn(
-                text=text, tool_calls=tool_calls, assistant_message=assistant_message
+                text=text,
+                tool_calls=tool_calls,
+                assistant_message=assistant_message,
+                tokens=tokens,
             )
 
         return call_model
