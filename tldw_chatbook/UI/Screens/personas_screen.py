@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import re
 from datetime import datetime
@@ -513,6 +514,10 @@ class PersonasScreen(BaseAppScreen):
     def __init__(self, app_instance: Any, **kwargs: Any) -> None:
         super().__init__(app_instance, "personas", **kwargs)
         self.state = PersonasWorkbenchState()
+        # A selection + preview snapshot captured by save_state() before a
+        # navigation round-trip (task-434); consumed once by
+        # _apply_pending_restore() at the end of on_mount.
+        self._pending_restore: dict | None = None
         self._edit_mode: str = "view"
         self._guard_active: bool = False
         # Refuse-reentry flag for the import/export file dialogs. Cancelling
@@ -701,6 +706,89 @@ class PersonasScreen(BaseAppScreen):
                     inspector_handle.display = False
                 yield inspector_handle
 
+    # ===== State persistence (task-434) =====
+    #
+    # A Personas -> Console -> back round-trip pushes/pops this screen, and
+    # ``BaseAppScreen``'s default save_state/restore_state only round-trips
+    # ``self.state_data`` (empty for this screen). Capture the workbench
+    # selection (``PersonasWorkbenchState``) and the ephemeral preview
+    # (greeting + turns, which live outside ``self.state``) so both survive.
+
+    def save_state(self) -> dict:
+        """Snapshot the workbench selection and preview for a later restore."""
+        state = dict(super().save_state() or {})
+        state["personas_workbench"] = dataclasses.asdict(self.state)
+        preview = getattr(self, "preview", None)
+        if preview is not None:
+            greeting = ""
+            try:
+                greeting = self.query_one(PersonasPreviewPane).greeting_text
+            except QueryError:
+                # Tolerate a save requested before/around the pane's lifetime.
+                pass
+            state["personas_preview"] = {
+                "greeting": greeting,
+                "history": [dict(m) for m in preview.history],
+                "seeded_for": preview.seeded_for,
+            }
+        return state
+
+    def restore_state(self, state: dict) -> None:
+        """Seed ``self.state`` and stash the deferred re-selection payload.
+
+        Runs before this (fresh) screen mounts, so it only seeds state here;
+        the actual re-selection is applied by ``_apply_pending_restore`` once
+        the screen (and its widgets) exist.
+        """
+        super().restore_state(state)
+        if not isinstance(state, dict):
+            self._pending_restore = None
+            return
+        wb = state.get("personas_workbench")
+        if isinstance(wb, dict):
+            names = {f.name for f in dataclasses.fields(PersonasWorkbenchState)}
+            self.state = PersonasWorkbenchState(
+                **{k: v for k, v in wb.items() if k in names}
+            )
+        self._pending_restore = (
+            {
+                "kind": self.state.selected_entity_kind,
+                "id": self.state.selected_entity_id,
+                "name": self.state.selected_entity_name,
+                "preview": state.get("personas_preview"),
+            }
+            if self.state.selected_entity_id
+            else None
+        )
+
+    async def _apply_pending_restore(self) -> None:
+        """Re-apply a selection saved before a navigation round-trip (task-434)."""
+        pending = getattr(self, "_pending_restore", None)
+        self._pending_restore = None
+        if not pending or not pending.get("id"):
+            return
+        kind = pending.get("kind")
+        entity_id = str(pending["id"])
+        name = str(pending.get("name") or "")
+        try:
+            if kind == "character":
+                await self._select_character(
+                    entity_id, name, restore_preview=pending.get("preview")
+                )
+            elif kind == "persona_profile":
+                await self._select_profile(entity_id, name)
+            elif kind == "dictionary":
+                await self._select_dictionary(entity_id, name)
+            elif kind == "lore":
+                await self._select_lore_entry(entity_id, name)
+        except Exception:
+            # A stale/deleted entity must degrade to the blank center, not crash.
+            logger.opt(exception=True).warning(
+                f"Could not restore Personas selection {kind}/{entity_id}; "
+                "showing blank center."
+            )
+            self._show_center(None)
+
     async def on_mount(self) -> None:
         super().on_mount()
         loading_manager = getattr(self, "loading_manager", None)
@@ -714,6 +802,7 @@ class PersonasScreen(BaseAppScreen):
         self._show_center(None)
         await self.character_handler.refresh_character_list()
         self._sync_title_and_console_actions()
+        await self._apply_pending_restore()
 
     async def on_unmount(self) -> None:
         super().on_unmount()
@@ -1635,7 +1724,9 @@ class PersonasScreen(BaseAppScreen):
         # Prompts are not wired here: prompt management is retired from
         # Personas and lives entirely inside Library (Task 7).
 
-    async def _select_character(self, entity_id: str, entity_name: str) -> None:
+    async def _select_character(
+        self, entity_id: str, entity_name: str, *, restore_preview: dict | None = None
+    ) -> None:
         self.state.select_entity(
             entity_kind="character",
             entity_id=entity_id,
@@ -1656,18 +1747,28 @@ class PersonasScreen(BaseAppScreen):
         self.conversations.reset()
         await inspector.show_conversations_loading()
         self.conversations.load_conversations(entity_id)
-        # Seed the ephemeral preview with the character's greeting. The list
-        # rows are id/name-only summaries and load_character only SCHEDULES a
-        # thread worker, so the full record (with first_message) is usually
-        # not available yet here. Instant path: when the handler already holds
-        # this character's full card (re-selection), seed now; otherwise clear
-        # the preview and let the CharacterMessage.Loaded handler seed it.
-        record = self._full_character_record(entity_id)
-        await self.preview.reset_for_character(
-            character_id=entity_id,
-            character_name=entity_name,
-            record=record,
-        )
+        if restore_preview is not None:
+            # A navigation round-trip (task-434): rebuild the saved preview
+            # transcript instead of reseeding just the greeting.
+            await self.preview.restore_conversation(
+                greeting=str(restore_preview.get("greeting") or ""),
+                history=list(restore_preview.get("history") or []),
+                seeded_for=entity_id,
+            )
+        else:
+            # Seed the ephemeral preview with the character's greeting. The
+            # list rows are id/name-only summaries and load_character only
+            # SCHEDULES a thread worker, so the full record (with
+            # first_message) is usually not available yet here. Instant
+            # path: when the handler already holds this character's full
+            # card (re-selection), seed now; otherwise clear the preview and
+            # let the CharacterMessage.Loaded handler seed it.
+            record = self._full_character_record(entity_id)
+            await self.preview.reset_for_character(
+                character_id=entity_id,
+                character_name=entity_name,
+                record=record,
+            )
         await self._refresh_character_dictionaries()
         await self._refresh_character_worldbooks()
 
