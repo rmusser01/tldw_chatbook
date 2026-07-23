@@ -15,6 +15,7 @@ from textual.widgets import Button, Input, Static
 
 from ...Utils.input_validation import validate_text_input
 from .personas_pane_messages import (
+    PreviewConfigureProviderRequested,
     PreviewOpenInConsoleRequested,
     PreviewReplyRequested,
     PreviewResetRequested,
@@ -50,6 +51,12 @@ class PersonasPreviewPane(Vertical):
     PersonasPreviewPane #personas-preview-status {
         height: 1;
         min-height: 1;
+    }
+
+    PersonasPreviewPane #personas-preview-provider {
+        height: auto;
+        min-height: 1;
+        color: $text-muted;
     }
 
     PersonasPreviewPane #personas-preview-transcript {
@@ -94,6 +101,10 @@ class PersonasPreviewPane(Vertical):
             classes="console-action-subdued",
         )
         with Vertical(id="personas-preview-body"):
+            # Provider/model readout: which provider will answer a test reply.
+            # Kept at the top of the body so it is the first thing seen when
+            # the preview expands.
+            yield Static("", id="personas-preview-provider")
             yield VerticalScroll(id="personas-preview-transcript")
             # The status line is a status region adjacent to the input, kept
             # BELOW the transcript so provider/error messages never render
@@ -115,6 +126,13 @@ class PersonasPreviewPane(Vertical):
                     "Open in Console",
                     id="personas-preview-open-console",
                     classes="console-action-subdued",
+                )
+                yield Button(
+                    "Configure",
+                    id="personas-preview-configure",
+                    classes="console-action-subdued",
+                    tooltip="Open Settings > Providers & Models to change which "
+                    "provider answers character chats.",
                 )
 
     def on_mount(self) -> None:
@@ -218,6 +236,14 @@ class PersonasPreviewPane(Vertical):
         """Update the readable status line."""
         self.query_one("#personas-preview-status", Static).update(str(text or ""))
 
+    def set_provider_readout(self, text: str) -> None:
+        """Update the provider/model readout line above the transcript.
+
+        Args:
+            text: Provider/model status text to display.
+        """
+        self.query_one("#personas-preview-provider", Static).update(str(text or ""))
+
     def transcript_text(self) -> str:
         """The visible transcript as plain text, one line per message."""
         return "\n".join(self._lines)
@@ -311,6 +337,11 @@ class PersonasPreviewPane(Vertical):
     def _handle_open_console(self, event: Button.Pressed) -> None:
         event.stop()
         self.post_message(PreviewOpenInConsoleRequested())
+
+    @on(Button.Pressed, "#personas-preview-configure")
+    def _handle_configure(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(PreviewConfigureProviderRequested())
 
 
 __all__ = ["PersonasPreviewPane"]

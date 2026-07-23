@@ -184,6 +184,44 @@ class TestWorkbenchSelectionRestore:
 class TestPreviewRestore:
     """AC#2: the preview conversation (greeting + turns) survives the round-trip."""
 
+    async def test_restore_refreshes_provider_readout_without_character_load(
+        self, mock_app_instance, stub_characters
+    ):
+        """Restoring preview state also restores its provider affordances.
+
+        ``stub_characters`` deliberately makes ``load_character`` a no-op, so
+        this covers the valid navigation-restore path where no later
+        ``CharacterMessage.Loaded`` event repaints the readout.
+        """
+        from textual.widgets import Static
+
+        mock_app_instance.app_config = {
+            "character_defaults": {
+                "provider": "anthropic",
+                "model": "claude-3-haiku",
+            },
+            "chat_defaults": {"provider": "llama_cpp", "model": "local.gguf"},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await screen._select_character("char-1", "Elara")
+            await pilot.pause()
+            saved = screen.save_state()
+
+        app2 = _RestoringPersonasTestApp(mock_app_instance, saved)
+        async with app2.run_test() as pilot2:
+            screen2 = await _mounted(pilot2)
+            readout = str(
+                screen2.query_one("#personas-preview-provider", Static).renderable
+            )
+
+            assert readout == (
+                "Provider: Anthropic / claude-3-haiku"
+                " - Console default if unavailable: llama.cpp"
+            )
+            assert screen2.preview._readout_nav_provider == "anthropic"
+
     async def test_save_restore_preserves_preview_greeting_and_turns(
         self, mock_app_instance, stub_characters
     ):
