@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-07-23
-Related Tasks: [TASK-488](../tasks/task-488%20-%20Harden-private-artifact-permissions-and-diagnostics.md), [TASK-489](../tasks/task-489%20-%20Make-config-persistence-use-one-effective-path-boundary.md), [TASK-490](../tasks/task-490%20-%20Remove-private-payloads-from-persistent-logs-and-tool-history.md), [TASK-491](../tasks/task-491%20-%20Contain-legacy-Notes-sync-paths-and-preserve-file-modes.md)
+Related Tasks: [TASK-488](../tasks/task-488%20-%20Establish-private-path-boundary-and-harden-config-bootstrap.md), [TASK-489](../tasks/task-489%20-%20Apply-private-storage-boundary-to-every-SQLite-owner-and-backup.md), [TASK-490](../tasks/task-490%20-%20Harden-persistent-log-and-tool-cache-file-lifecycles.md), [TASK-491](../tasks/task-491%20-%20Make-config-persistence-use-one-effective-path-and-live-runtime-boundary.md), [TASK-492](../tasks/task-492%20-%20Remove-private-payloads-from-persistent-diagnostics-and-tool-history.md), [TASK-493](../tasks/task-493%20-%20Contain-legacy-Notes-sync-paths-and-preserve-file-modes.md), [TASK-494](../tasks/task-494%20-%20Complete-metadata-only-boundary-across-remaining-production-diagnostics.md)
 Supersedes: N/A
 
 ## Decision
@@ -127,5 +127,7 @@ return.
 ## Links
 
 - [Design specification](../../Docs/superpowers/specs/2026-07-23-local-privacy-containment-design.md)
+- [ADR-004: Settings Storage Defaults Restart Boundary](004-settings-storage-defaults-restart-boundary.md)
+- [ADR-006: Provider-Aware Generation Settings](006-provider-aware-generation-settings.md)
 - [ADR-012: Provider Credential Settings Boundary](012-provider-credential-settings-boundary.md)
 - [ADR-021: File-Backed Notes Disk Authority and Recovery Replica](021-file-backed-notes-disk-authority-and-recovery.md)
