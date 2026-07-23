@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-21 09:38'
-updated_date: '2026-07-23 05:04'
+updated_date: '2026-07-23 05:20'
 labels:
   - roleplay
   - ux
@@ -32,6 +32,7 @@ Filed from the RP/character-card UX review (Docs/superpowers/qa/rp-ux-review-202
 - [x] #4 Fallback and primary preview selections preserve configured endpoint, streaming, and generation defaults.
 - [x] #5 Resolution failures retain safe structured provider/model/selection context, and changed test helpers satisfy the repository class-naming rule.
 - [x] #6 The default CI test environment installs the existing Markdown dependency required to collect subscription prompt tests on every matrix job.
+- [x] #7 The rebased integration suite validates retrieval-admin access using the RAG service's fingerprinted backing collection name.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -44,6 +45,7 @@ Filed from the RP/character-card UX review (Docs/superpowers/qa/rp-ux-review-202
 5. Rename the private test gateway helper to satisfy the PascalCase review rule.
 6. Run focused tests, the full affected Roleplay test pair, static checks, and git diff hygiene; update implementation notes and acceptance criteria.
 7. Reproduce the rebased dev matrix collection failure, align requirements-test.txt with the already-declared Markdown dependency imported by subscription prompt tests, and rerun the full GitHub matrix.
+8. Reproduce the remaining RAG admin integration failure, update its stale literal collection-name expectation to the service's fingerprinted backing collection, and rerun the affected test and matrix.
 
 ADR required: no
 ADR path: backlog/decisions/006-provider-aware-generation-settings.md (existing for the Roleplay settings change); N/A for the test-manifest correction
@@ -66,4 +68,6 @@ Verification: TDD red run produced the three expected failures (missing structur
 Files: tldw_chatbook/UI/Persona_Modules/personas_preview_controller.py, Tests/UI/test_personas_workbench.py, and this TASK-425 record.
 
 Rebase CI follow-up: the refreshed matrix reproduced the current dev baseline failure on every job during collection: Tests/Internal_Prompts/test_subscriptions_migration.py imports Subscriptions.briefing_generator, whose existing top-level markdown import was not installed by requirements-test.txt. Recent dev run 29952753854 failed for the same reason across unit/integration platforms, and no overlapping PR existed. Added markdown to requirements-test.txt, matching the already-declared subscriptions extra without changing runtime ownership. The focused subscription prompt suite passes 14/14 locally; the next pushed SHA reruns the full matrix. Local pip check still reports pre-existing textual-web/textual and uvloop version conflicts in the shared developer venv; those packages and constraints are unrelated to this PR and are not changed.
+
+The first fully collected matrix exposed a second rebased-dev baseline issue in the RAG admin integration test: the service correctly created a fingerprinted collection (for example, default__1da81a3efa62), while the test still queried the configured base name default. The integration proof now follows the RAG service's effective backing collection name for admin list/detail/export assertions, matching the existing fingerprint-isolation contract without changing production behavior. The exact failing test passed after the correction, the complete local RAG admin test module passes 11/11, Ruff passes the changed test, and git diff --check remains clean.
 <!-- SECTION:NOTES:END -->
