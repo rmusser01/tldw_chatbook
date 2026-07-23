@@ -362,3 +362,40 @@ def test_open_private_binary_fails_closed_when_posix_guards_are_unavailable(
     assert caught.value.result.status is PrivatePathStatus.OPERATION_FAILED
     assert caught.value.result.reason == "required_posix_guards_unavailable"
     assert stat.S_IMODE(target.stat().st_mode) == 0o644
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX capability contract")
+@pytest.mark.parametrize("missing_capability", ["_NONBLOCK", "_NOCTTY"])
+def test_open_private_binary_fails_before_traversal_when_leaf_guard_is_unavailable(
+    tmp_path,
+    monkeypatch,
+    missing_capability,
+):
+    target = tmp_path / "config.toml"
+    content = b"private"
+    target.write_bytes(content)
+    target.chmod(0o644)
+    monkeypatch.setattr(
+        private_paths,
+        missing_capability,
+        0,
+        raising=False,
+    )
+
+    def fail_if_traversed(*args, **kwargs):
+        pytest.fail("target traversal occurred without required leaf guards")
+
+    monkeypatch.setattr(
+        private_paths,
+        "_open_verified_parent",
+        fail_if_traversed,
+    )
+
+    with pytest.raises(PrivatePathError) as caught:
+        with open_private_binary(target):
+            pass
+
+    assert caught.value.result.status is PrivatePathStatus.OPERATION_FAILED
+    assert caught.value.result.reason == "required_posix_guards_unavailable"
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644
+    assert target.read_bytes() == content

@@ -21,9 +21,9 @@ _PRIVATE_FILE_MODE = 0o600
 _PRIVATE_DIRECTORY_MODE = 0o700
 _DIRECTORY_OPEN_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
-_PRIVATE_FILE_OPEN_FLAGS = (
-    os.O_RDONLY | _NOFOLLOW | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOCTTY", 0)
-)
+_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
+_NOCTTY = getattr(os, "O_NOCTTY", 0)
+_PRIVATE_FILE_OPEN_FLAGS = os.O_RDONLY | _NOFOLLOW | _NONBLOCK | _NOCTTY
 _WINDOWS_PLATFORM = os.name == "nt"
 
 
@@ -87,6 +87,8 @@ def _posix_guards_available() -> bool:
     return (
         os.name == "posix"
         and _NOFOLLOW != 0
+        and _NONBLOCK != 0
+        and _NOCTTY != 0
         and getattr(os, "O_DIRECTORY", 0) != 0
         and required_dir_fd.issubset(os.supports_dir_fd)
         and os.stat in os.supports_follow_symlinks
