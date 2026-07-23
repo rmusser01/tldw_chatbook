@@ -5,6 +5,7 @@ Docs/superpowers/specs/2026-07-21-rag-index-isolation-design.md.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -126,6 +127,14 @@ def maybe_adopt_legacy_collection(config: RAGConfig) -> None:
     their custom name instead. They must re-index.
     """
     if not _is_persistent_chroma(config):
+        return
+    # A legacy collection cannot exist before Chroma has created its database.
+    # Avoid constructing a migration-only PersistentClient for fresh profiles:
+    # older Chroma releases keep that client's SQLite handle open for the
+    # process lifetime, which prevents temporary directories from being
+    # removed on Windows.
+    persist_directory = Path(config.vector_store.persist_directory)
+    if not (persist_directory / "chroma.sqlite3").is_file():
         return
     # Race-safety here (see adopt_legacy_collection's docstring) assumes the
     # race is between two concurrent first-runs of the SAME active config
