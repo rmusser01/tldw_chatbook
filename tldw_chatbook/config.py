@@ -766,6 +766,7 @@ def load_settings(force_reload: bool = False) -> Dict:
     final_chat_defaults_cli = get_toml_section("chat_defaults")
     final_character_defaults_cli = get_toml_section("character_defaults")
     final_notes_settings_cli = get_toml_section("notes")
+    final_image_generation_settings_cli = get_toml_section("image_generation")
     final_console_settings_cli = copy.deepcopy(get_toml_section("console"))
     if not isinstance(final_console_settings_cli, dict):
         final_console_settings_cli = {}
@@ -900,6 +901,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         "character_defaults": final_character_defaults_cli,
         "notes": final_notes_settings_cli,  # For notes auto-save settings
         "console": final_console_settings_cli,  # For Console behavior settings
+        "image_generation": final_image_generation_settings_cli,  # For Image_Generation/config.py loader
         # Single User
         "SINGLE_USER_FIXED_ID": single_user_fixed_id,
         # Auth
@@ -2753,6 +2755,68 @@ kitty = "regular"
 wezterm = "regular"
 iterm2 = "regular"
 default = "pixels"
+
+[image_generation]
+default_backend = "swarmui"          # local SwarmUI instance is the friendliest zero-key default
+enabled_backends = ["swarmui"]
+max_width = 1024
+max_height = 1024
+max_pixels = 1048576
+max_steps = 50
+max_prompt_length = 1000
+inline_max_bytes = 4000000
+
+[image_generation.stable_diffusion_cpp]
+binary_path = ""                      # local `sd` CLI; empty = backend unusable
+diffusion_model_path = ""             # OR model_path
+model_path = ""
+vae_path = ""
+lora_paths = []
+device = "auto"
+default_steps = 25
+default_cfg_scale = 7.5
+default_sampler = "euler_a"
+timeout_seconds = 120
+allowed_extra_params = []
+
+[image_generation.swarmui]
+base_url = "http://127.0.0.1:7801"
+default_model = ""
+timeout_seconds = 120
+allowed_extra_params = []
+# swarm_token: secret, resolved via env/keyring precedence, not stored plaintext here
+
+[image_generation.openrouter]
+base_url = "https://openrouter.ai/api/v1"
+default_model = "openai/gpt-image-1"
+timeout_seconds = 120
+allowed_extra_params = []
+api_key = "<API_KEY_HERE>"
+
+[image_generation.novita]
+base_url = "https://api.novita.ai"
+default_model = "sd_xl_base_1.0.safetensors"
+timeout_seconds = 180
+poll_interval_seconds = 2
+allowed_extra_params = []
+api_key = "<API_KEY_HERE>"
+
+[image_generation.together]
+base_url = "https://api.together.xyz/v1"
+default_model = "black-forest-labs/FLUX.1-schnell-Free"
+timeout_seconds = 120
+allowed_extra_params = []
+api_key = "<API_KEY_HERE>"
+
+[image_generation.modelstudio]
+base_url = ""                         # region-derived if empty
+default_model = "qwen-image"
+region = "sg"                         # sg|cn|us
+mode = "auto"                         # sync|async|auto
+poll_interval_seconds = 2
+timeout_seconds = 180
+allowed_extra_params = []
+api_key = "<API_KEY_HERE>"
 
 [character_defaults]
 # Default settings specifically for the 'Character' tab
