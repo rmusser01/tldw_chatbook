@@ -1,11 +1,11 @@
 ---
 id: TASK-426
 title: Roleplay preview shows provider and model readout with a Settings deep-link
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-21 09:38'
-updated_date: '2026-07-23 13:46'
+updated_date: '2026-07-23 13:56'
 labels:
   - roleplay
   - ux
@@ -45,13 +45,13 @@ Reason: This is corrective normalization, documentation, and UI verification wit
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Stacked on task-425. Added a provider/model readout line at the top of the preview pane body (#personas-preview-provider) plus a Configure button in the toolbar.
+Rebased the task-426 feature directly onto current dev after task-425 merged, so PR #746 now contains only the provider/model preview readout, Settings deep-link, and review remediation. Preserved the final task-425 readiness gateway shape while resolving the stacked-branch conflict.
 
-Readout (PersonasPreviewController.provider_readout): computed synchronously from config — no readiness probe — mirroring 425's resolution order. Shows the character_defaults provider/model that replies try first and, when chat_defaults names a distinct provider, the Console-default fallback target ('- Console default if unavailable: <provider>'). With no character provider it shows the chat default as '(Console default)'. Recomputed on every seed (reset + handle_character_loaded), so config changes reflect on the next selection (AC #3). After a real reply resolves in _run_reply, the readout is repainted with the provider/model that actually answered (free — we already resolved), so it reflects the fallback rather than intent (AC #1). Provider keys → display names via PROVIDER_DISPLAY_NAMES.
+Review remediation: normalized provider and model values with strip() before resolution, so whitespace-only character defaults fall back to the Console defaults and the Settings deep-link carries the normalized provider key. Added Google-style Args documentation to PersonasPreviewPane.set_provider_readout(). Added a regression test that failed before the normalization fix and now verifies both the exact Console-default readout and navigation provider.
 
-Configure (AC #2): pane posts PreviewConfigureProviderRequested → screen → controller.open_provider_settings() posts NavigateToScreen('settings', {category: PROVIDERS_MODELS, provider: <char provider>}). Settings' own unsaved-changes guard may suppress the provider preselect (pre-existing), but navigation to Providers & Models is reliable.
+Verification: Tests/UI/test_personas_workbench.py + Tests/UI/test_personas_preview.py = 196 passed; Ruff passed on all changed test/controller/widget files; mypy passed for personas_preview_controller.py; compileall and git diff --check passed; Backlog Guard found no duplicate IDs across 593 task files.
 
-Tests: 5 new cases in test_personas_workbench.py (readout content for char+fallback / same-provider / no-char-provider; Configure navigation context; post-send resolved readout). Full test_personas_workbench + test_personas_preview = 195 passed. Live-verified in the real TUI: readout renders 'Provider: Anthropic / claude-3-haiku - Console default if unavailable: llama.cpp', flips post-send to 'Provider: llama.cpp / local-gemma.gguf (Console default)', and Configure lands on Settings > Providers & Models.
+ADR required: no. Existing boundaries remain governed by backlog/decisions/004-personas-destination-native-workbench.md, 006-provider-aware-generation-settings.md, 007-personas-workbench-route-consolidation.md, and 012-provider-credential-settings-boundary.md.
 
-Files: personas_preview_controller.py, personas_preview_pane.py, personas_pane_messages.py, personas_screen.py, Tests/UI/test_personas_workbench.py.
+Modified files: personas_preview_controller.py, personas_preview_pane.py, personas_pane_messages.py, personas_screen.py, Tests/UI/test_personas_workbench.py, and this task record.
 <!-- SECTION:NOTES:END -->

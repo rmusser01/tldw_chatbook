@@ -3043,6 +3043,24 @@ class TestPreviewIntegration:
             assert "local.gguf" in text
             assert "Console default" in text
 
+    async def test_provider_readout_normalizes_whitespace_defaults(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Whitespace-only character defaults fall through to trimmed chat defaults."""
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "   ", "model": " ignored "},
+            "chat_defaults": {
+                "provider": "  llama_cpp  ",
+                "model": "  local.gguf  ",
+            },
+        }
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            text = await self._readout_text(screen)
+            assert text == "Provider: llama.cpp / local.gguf (Console default)"
+            assert screen.preview._readout_nav_provider == "llama_cpp"
+
     async def test_configure_button_navigates_to_settings_providers(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
@@ -3094,7 +3112,7 @@ class TestPreviewIntegration:
             "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
             "chat_defaults": {"provider": "llama_cpp", "model": "local.gguf"},
         }
-        fake = _ReadinessMapPreviewGateway(ready_providers={"llama_cpp"})
+        fake = ReadinessMapPreviewGateway(ready_providers={"llama_cpp"})
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)

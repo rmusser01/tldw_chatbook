@@ -16,8 +16,8 @@ from textual.css.query import QueryError
 from ...Character_Chat.Character_Chat_Lib import replace_placeholders
 from ...Chat.console_chat_models import ConsoleProviderSelection
 from ...Chat.console_provider_gateway import ConsoleProviderGateway
-from ...Chat.provider_catalog import PROVIDER_DISPLAY_NAMES
 from ...Chat.console_session_settings import build_default_console_session_settings
+from ...Chat.provider_catalog import PROVIDER_DISPLAY_NAMES
 from ...Widgets.Persona_Widgets.personas_character_editor_widget import (
     PersonasCharacterEditorWidget,
 )
@@ -150,7 +150,7 @@ class PersonasPreviewController:
     @staticmethod
     def _provider_label(provider_key: str) -> str:
         """Human-readable display name for a provider config key."""
-        key = str(provider_key or "")
+        key = str(provider_key or "").strip()
         if not key:
             return ""
         return PROVIDER_DISPLAY_NAMES.get(
@@ -173,10 +173,10 @@ class PersonasPreviewController:
         config = getattr(self.screen.app_instance, "app_config", {}) or {}
         char = config.get("character_defaults", {}) or {}
         chat = config.get("chat_defaults", {}) or {}
-        char_provider = str(char.get("provider") or "")
-        char_model = str(char.get("model") or "")
-        chat_provider = str(chat.get("provider") or "")
-        chat_model = str(chat.get("model") or "")
+        char_provider = str(char.get("provider") or "").strip()
+        char_model = str(char.get("model") or "").strip()
+        chat_provider = str(chat.get("provider") or "").strip()
+        chat_model = str(chat.get("model") or "").strip()
         if not char_provider:
             if chat_provider:
                 text = (

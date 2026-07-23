@@ -237,7 +237,11 @@ class PersonasPreviewPane(Vertical):
         self.query_one("#personas-preview-status", Static).update(str(text or ""))
 
     def set_provider_readout(self, text: str) -> None:
-        """Update the provider/model readout line above the transcript."""
+        """Update the provider/model readout line above the transcript.
+
+        Args:
+            text: Provider/model status text to display.
+        """
         self.query_one("#personas-preview-provider", Static).update(str(text or ""))
 
     def transcript_text(self) -> str:
