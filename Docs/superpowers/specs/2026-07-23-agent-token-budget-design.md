@@ -31,6 +31,14 @@ runtime's non-streaming calls, so it can be tracked cheaply.
    byte-identical until a consumer opts in (mirroring how `max_model_turns` is
    unreachable at defaults).
 
+**`max_total_tokens` is cumulative *spend*, not a context-window size.** Because
+the growing prompt (system + accumulated history) is re-sent on every provider
+call, the per-run total is `Σ(prompt_i + completion_i)` across turns — the real
+billed token spend. An 8-turn run over a 50k-token history accumulates ~400k+
+tokens. A consumer setting this must size it as a spend ceiling (hundreds of
+thousands), not as a window (`8192` would trip almost immediately). This is the
+same semantics real provider `usage` reports per call.
+
 ## Architecture
 
 The agent loop `run_agent_loop` (`agent_runtime.py`) is a **pure function**
@@ -104,6 +112,17 @@ if tokens is None:
 `count_tokens_messages`'s string-content assumption holds; no multimodal
 flattening is needed here.)
 
+**Documented estimate-fallback limitation.** On a *native tool-call* turn from a
+provider that reports *no* usage, `_response_text(resp)` (= `message["content"]`)
+is often empty — the model returns `tool_calls` with null content — so the
+completion estimate is ~0 and the turn's tool-call JSON isn't counted. This is a
+narrow fallback-of-a-fallback (usage-less provider AND native tools); the prompt
+term (the full re-sent history) dominates each turn's total, so the under-count
+is small and errs toward letting the loop run slightly longer, never toward a
+false stop. Providers that do native tool-calling generally report usage (the
+accurate path). Left as a documented limitation rather than serializing
+`tool_calls` into the estimate.
+
 ### Unit C — `RunBudget.max_total_tokens` + accumulation + terminal stop
 
 **`agent_models.py`:**
@@ -119,21 +138,30 @@ flattening is needed here.)
 
 **`agent_runtime.py` `run_agent_loop`:**
 - Initialize `total_tokens = 0` beside `model_turns = 0`.
+- Add a local `_outcome` helper closure next to the existing `add()` closure, so
+  every one of the loop's **8** terminal returns reports the current spend
+  without threading the field into each site by hand (miss-a-site risk):
+  ```python
+  def _outcome(status: str, **kw) -> RunOutcome:
+      return RunOutcome(status, steps, subagents_spawned=spawned,
+                        total_tokens=total_tokens, **kw)
+  ```
+  It only *reads* the enclosing `steps`/`spawned`/`total_tokens` (no `nonlocal`
+  needed, same as `add()`), so each return reflects state at call time. Convert
+  the loop's `return RunOutcome(STATUS, steps, subagents_spawned=spawned, …)`
+  sites to `return _outcome(STATUS, …)` — the `RUN_DONE` site keeps its
+  `final_text=turn.text`.
 - After each model turn (`turn = deps.call_model(...)`; `model_turns += 1`),
   add `total_tokens += turn.tokens`.
-- Add a top-of-loop check alongside the step/model-turn/wall-clock checks:
+- Add a top-of-loop check immediately after the existing wall-clock check:
   ```python
   if budget.max_total_tokens and total_tokens >= budget.max_total_tokens:
       add(STEP_ERROR, summary="token budget exhausted")
-      return RunOutcome(RUN_STUCK, steps, subagents_spawned=spawned,
-                        total_tokens=total_tokens)
+      return _outcome(RUN_STUCK)
   ```
   The `budget.max_total_tokens and …` guard makes `0` a true "unlimited"
-  sentinel that never trips.
-- **Thread `total_tokens=total_tokens` into every `RunOutcome(...)` return** in
-  the loop (done, stuck, cancelled, other caps, loop-detection), so the spend
-  is always reported. Checking at the *top* (before the next call) means a run
-  that produces its final answer on the turn it crosses the budget still
+  sentinel that never trips. Checking at the *top* (before the next call) means
+  a run that produces its final answer on the turn it crosses the budget still
   returns `RUN_DONE` — the budget stops the loop from making *more* calls, it
   does not retroactively fail a completed answer (AC#2/#3).
 
