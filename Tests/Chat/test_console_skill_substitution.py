@@ -96,7 +96,7 @@ async def test_inline_substitutes_final_user_message_only():
         {"role": "assistant", "content": "ok"},
         {"role": "user", "content": "$code-review fix it"},
     ]
-    out, refuse = await controller._apply_skill_substitution(msgs)
+    out, refuse, notes = await controller._apply_skill_substitution(msgs)
     assert refuse is None
     assert out[-1] == {"role": "user", "content": "RENDERED[fix it]"}
     assert out[1] == {"role": "user", "content": "earlier"}  # history preserved
@@ -110,7 +110,7 @@ async def test_fork_drops_history_keeps_system():
         {"role": "user", "content": "earlier"},
         {"role": "user", "content": "$code-review go"},
     ]
-    out, refuse = await controller._apply_skill_substitution(msgs)
+    out, refuse, notes = await controller._apply_skill_substitution(msgs)
     assert refuse is None
     assert out == [
         {"role": "system", "content": "sys"},
@@ -122,7 +122,7 @@ async def test_fork_drops_history_keeps_system():
 async def test_non_skill_final_message_unchanged():
     controller, _store = _controller(_Skills("inline"))
     msgs = [{"role": "user", "content": "just a question"}]
-    out, refuse = await controller._apply_skill_substitution(msgs)
+    out, refuse, notes = await controller._apply_skill_substitution(msgs)
     assert out == msgs and refuse is None
 
 
@@ -130,7 +130,7 @@ async def test_non_skill_final_message_unchanged():
 async def test_edited_skill_refuses_at_build():
     controller, _store = _controller(_Skills(raise_trust=True))
     msgs = [{"role": "user", "content": "$code-review go"}]
-    out, refuse = await controller._apply_skill_substitution(msgs)
+    out, refuse, notes = await controller._apply_skill_substitution(msgs)
     assert out == msgs
     assert refuse == (
         'Skill "code-review" isn\'t trusted (skill_modified) — '
@@ -145,7 +145,7 @@ async def test_no_skills_service_is_a_noop():
         store=store, provider_gateway=object(), provider="llama_cpp", model="m"
     )
     msgs = [{"role": "user", "content": "$code-review go"}]
-    out, refuse = await controller._apply_skill_substitution(msgs)
+    out, refuse, notes = await controller._apply_skill_substitution(msgs)
     assert out == msgs and refuse is None
 
 
@@ -345,7 +345,70 @@ async def test_leading_slash_no_longer_invokes():
     skills = _Skills("inline")
     controller, _store = _controller(skills)
     messages = [{"role": "user", "content": "/code-review look at this"}]
-    out, refuse = await controller._apply_skill_substitution(messages)
+    out, refuse, notes = await controller._apply_skill_substitution(messages)
     assert out == messages
     assert refuse is None
     assert skills.executions == []
+
+
+# ---------------------------------------------------------------------------
+# Embedded `$skill-name` mentions (Task 3): argless splice at the mention's
+# position, preserving surrounding prose; non-aborting "skipped skill" notes.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_embedded_mention_splices_preserving_prose():
+    skills = _Skills("inline")
+    controller, _store = _controller(skills)
+    messages = [{"role": "user", "content": "summarize, $code-review it, then list"}]
+    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    assert refuse is None and notes == ()
+    content = out[0]["content"]
+    assert content.startswith("summarize, RENDERED[")
+    assert content.endswith(" it, then list")
+    assert "$code-review" not in content
+    # embedded is ARGLESS
+    assert skills.executions == [("code-review", "")]
+
+
+@pytest.mark.asyncio
+async def test_embedded_fork_mention_left_literal():
+    skills = _Skills("fork")
+    controller, _store = _controller(skills)
+    messages = [{"role": "user", "content": "please $code-review this"}]
+    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    assert out == messages          # untouched
+    assert refuse is None and notes == ()
+
+
+@pytest.mark.asyncio
+async def test_embedded_untrusted_left_literal_with_note():
+    skills = _Skills(raise_trust=True)
+    controller, _store = _controller(skills)
+    messages = [{"role": "user", "content": "please $code-review this"}]
+    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    assert out == messages          # prose never lost
+    assert refuse is None           # embedded never aborts
+    assert len(notes) == 1 and "code-review" in notes[0]
+
+
+@pytest.mark.asyncio
+async def test_leading_resolved_mention_does_not_scan_args():
+    skills = _Skills("inline")
+    controller, _store = _controller(skills)
+    messages = [{"role": "user", "content": "$code-review also $code-review"}]
+    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    # Leading form: ONE execution with the rest as args; no embedded pass.
+    assert skills.executions == [("code-review", "also $code-review")]
+
+
+@pytest.mark.asyncio
+async def test_leading_unresolved_falls_through_to_embedded():
+    skills = _Skills("inline")
+    controller, _store = _controller(skills)
+    messages = [{"role": "user", "content": "$notaskill but $code-review works"}]
+    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    content = out[0]["content"]
+    assert content.startswith("$notaskill but RENDERED[")
+    assert skills.executions == [("code-review", "")]

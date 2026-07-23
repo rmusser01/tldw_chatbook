@@ -37,9 +37,11 @@ from tldw_chatbook.Chat.console_history_budget import (
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_skill_resolver import (
     MENTION_SIGIL,
+    SKILL_MENTION_SKIPPED_NOTE,
     SKILL_UNTRUSTED_REFUSE,
     SkillCommandCandidate,
     cap_skill_args,
+    find_embedded_mentions,
     resolve_skill_command,
 )
 from loguru import logger
@@ -463,7 +465,7 @@ class ConsoleChatController:
             self.store.clear_pending_attachments(session.id)
         try:
             provider_messages = self._provider_messages_for_session(session.id)
-            provider_messages, refuse = await self._apply_skill_substitution(
+            provider_messages, refuse, skill_notes = await self._apply_skill_substitution(
                 provider_messages
             )
             if refuse is not None:
@@ -472,6 +474,12 @@ class ConsoleChatController:
                 # refused command never enters the next send's provider context.
                 self.store.mark_message_send_blocked(echoed_user.id)
                 return self._block(session.id, refuse)
+            for note in skill_notes:
+                # An embedded skipped-skill note is never an abort: append the
+                # same system-row copy `_block` would, then let the turn proceed.
+                self.store.append_message(
+                    session.id, role=ConsoleMessageRole.SYSTEM, content=note
+                )
             provider_messages = await self._apply_chat_dictionaries(
                 provider_messages, session.id
             )
@@ -1141,11 +1149,17 @@ class ConsoleChatController:
             before_message_id=message_id,
         )
         self._ensure_user_continuation_instruction(provider_messages)
-        provider_messages, refuse = await self._apply_skill_substitution(
+        provider_messages, refuse, skill_notes = await self._apply_skill_substitution(
             provider_messages
         )
         if refuse is not None:
             return self._block(session_id, refuse)
+        for note in skill_notes:
+            # An embedded skipped-skill note is never an abort: append the
+            # same system-row copy `_block` would, then let the turn proceed.
+            self.store.append_message(
+                session_id, role=ConsoleMessageRole.SYSTEM, content=note
+            )
         provider_messages = await self._apply_chat_dictionaries(
             provider_messages, session_id
         )
@@ -1199,11 +1213,17 @@ class ConsoleChatController:
                 session_id,
                 "Nothing to continue before the first message.",
             )
-        provider_messages, refuse = await self._apply_skill_substitution(
+        provider_messages, refuse, skill_notes = await self._apply_skill_substitution(
             provider_messages
         )
         if refuse is not None:
             return self._block(session_id, refuse)
+        for note in skill_notes:
+            # An embedded skipped-skill note is never an abort: append the
+            # same system-row copy `_block` would, then let the turn proceed.
+            self.store.append_message(
+                session_id, role=ConsoleMessageRole.SYSTEM, content=note
+            )
         provider_messages = await self._apply_chat_dictionaries(
             provider_messages, session_id
         )
@@ -1263,11 +1283,17 @@ class ConsoleChatController:
                 session_id,
                 "Nothing to regenerate before the first message.",
             )
-        provider_messages, refuse = await self._apply_skill_substitution(
+        provider_messages, refuse, skill_notes = await self._apply_skill_substitution(
             provider_messages
         )
         if refuse is not None:
             return self._block(session_id, refuse)
+        for note in skill_notes:
+            # An embedded skipped-skill note is never an abort: append the
+            # same system-row copy `_block` would, then let the turn proceed.
+            self.store.append_message(
+                session_id, role=ConsoleMessageRole.SYSTEM, content=note
+            )
         provider_messages = await self._apply_chat_dictionaries(
             provider_messages, session_id
         )
@@ -1727,22 +1753,45 @@ class ConsoleChatController:
 
     async def _apply_skill_substitution(
         self, provider_messages: list[dict[str, Any]]
-    ) -> tuple[list[dict[str, Any]], str | None]:
-        """Render-fresh the triggering turn's skill command at payload build time.
+    ) -> tuple[list[dict[str, Any]], str | None, tuple[str, ...]]:
+        """Render-fresh the triggering turn's skill mention(s) at payload build time.
 
         Spec: "Invocation semantics" §5 (the substitution rule) -- one rule
         for fresh sends AND retry/regenerate/continue. Only the FINAL
         ``role == "user"`` message in ``provider_messages`` (the turn
         actually driving this send) is ever a substitution candidate; every
-        earlier message -- including an earlier raw skill command sitting
+        earlier message -- including an earlier raw skill mention sitting
         in history -- is left untouched, so the persisted transcript always
-        keeps the literal text the user typed (the raw command is what gets
+        keeps the literal text the user typed (the raw mention is what gets
         submitted and stored; only the ephemeral provider payload for this
         turn is ever rendered). Re-resolves against a FRESH candidate
         snapshot and re-verifies trust through ``execute_skill`` on every
         call (never a cached snapshot), so a retry issued after a skill was
-        edited (now untrusted) refuses instead of silently re-running a
-        stale render.
+        edited (now untrusted) refuses/skips instead of silently re-running
+        a stale render.
+
+        Two independent forms, tried in order:
+
+        Leading form -- the message starts with `MENTION_SIGIL` and the
+        leading word resolves to a known skill: the REST of the message is
+        passed as that skill's args (`cap_skill_args`). A resolved leading
+        mention is never also scanned for embedded mentions -- its args are
+        opaque payload, not further mentions to expand.
+
+        Embedded form -- tried whenever the leading form doesn't apply (no
+        leading `MENTION_SIGIL`, or the leading word doesn't resolve): every
+        `$skill-name` mention anywhere in the message (case-sensitive,
+        code-span-masked, document order -- `find_embedded_mentions`) is
+        looked up ARGLESS (`execute_skill(name, mode="local", args="")`,
+        once per unique name, right-to-left splice so earlier spans stay
+        valid) and spliced in place at the mention's exact span, preserving
+        all surrounding prose. Only an ``execution_mode == "inline"`` result
+        splices; anything else (e.g. ``fork``, which has no "in place"
+        meaning for an embedded mention) silently leaves that mention's
+        literal `$name` text untouched. A trust-blocked mention
+        (`SkillTrustBlockedError`) also leaves the literal text untouched
+        but records a `SKILL_MENTION_SKIPPED_NOTE` for the caller to surface
+        as a non-aborting system row.
 
         Args:
             provider_messages: The fully-built payload about to be sent to
@@ -1750,24 +1799,28 @@ class ConsoleChatController:
                 message and any synthesized continuation instruction).
 
         Returns:
-            ``(provider_messages, None)`` unchanged when there is no skills
-            service configured, substitution is disabled, there is no final
-            user message, or that message's content does not resolve to a
-            known skill command (not a string, doesn't start with
-            `MENTION_SIGIL`, or `resolve_skill_command` doesn't return
-            ``"resolved"``). ``(new_messages, None)`` when a skill resolves
-            and renders: ``inline`` replaces just the final message in
-            place (history preserved); ``fork`` drops every message before
-            it except a leading ``role == "system"`` message (clean context
-            = session system prompt + rendered turn only). ``(provider_
-            messages, refuse_copy)`` -- the ORIGINAL, unmodified messages,
-            paired with `SKILL_UNTRUSTED_REFUSE` copy -- when the resolved
-            skill is no longer trusted (`SkillTrustBlockedError` at
-            execute-time); the caller must append `refuse_copy` as a system
-            row and abort the turn without sending.
+            ``(provider_messages, None, ())`` unchanged when there is no
+            skills service configured, substitution is disabled, there is
+            no final user message, that message's content isn't a string,
+            or neither form applies. ``(new_messages, None, notes)`` when
+            the leading form resolves and renders (``notes`` always empty
+            for the leading form) or when the embedded pass splices one or
+            more mentions (``notes`` carries one `SKILL_MENTION_SKIPPED_
+            NOTE` per unique trust-blocked mention name, in document
+            order); ``inline`` replaces just the final message in place
+            (history preserved); leading-form ``fork`` drops every message
+            before it except a leading ``role == "system"`` message (clean
+            context = session system prompt + rendered turn only).
+            ``(provider_messages, refuse_copy, ())`` -- the ORIGINAL,
+            unmodified messages, paired with `SKILL_UNTRUSTED_REFUSE` copy
+            -- when a LEADING resolved skill is no longer trusted
+            (`SkillTrustBlockedError` at execute-time); the caller must
+            append `refuse_copy` as a system row and abort the turn without
+            sending. An embedded mention never refuses/aborts -- it
+            degrades to a literal-plus-note instead, and the send proceeds.
         """
         if self._skills_service is None or not self._skill_substitution_enabled:
-            return provider_messages, None
+            return provider_messages, None, ()
 
         final_index: int | None = None
         for index in range(len(provider_messages) - 1, -1, -1):
@@ -1775,53 +1828,112 @@ class ConsoleChatController:
                 final_index = index
                 break
         if final_index is None:
-            return provider_messages, None
+            return provider_messages, None, ()
 
         content = provider_messages[final_index].get("content")
-        if not isinstance(content, str) or not content.startswith(MENTION_SIGIL):
-            return provider_messages, None
-
-        word, rest = _split_skill_command_word(content)
-        name = word[len(MENTION_SIGIL) :]
-        if not name:
-            return provider_messages, None
+        if not isinstance(content, str):
+            return provider_messages, None, ()
 
         context = await self._skills_service.get_context(mode="local")
         candidates = self._skill_candidates_from_context(context)
-        resolution = resolve_skill_command(name, rest, candidates)
-        if resolution.kind != "resolved":
-            return provider_messages, None
 
-        args = cap_skill_args(rest)
-        try:
-            result = await self._skills_service.execute_skill(
-                resolution.name, mode="local", args=args
-            )
-        except SkillTrustBlockedError as exc:
-            refuse = SKILL_UNTRUSTED_REFUSE.format(
-                name=resolution.name, reason=exc.reason_code
-            )
-            return provider_messages, refuse
+        # --- Leading form: message starts with a resolvable $skill-name.
+        if content.startswith(MENTION_SIGIL):
+            word, rest = _split_skill_command_word(content)
+            name = word[len(MENTION_SIGIL) :]
+            if name:
+                resolution = resolve_skill_command(name, rest, candidates)
+                if resolution.kind == "resolved":
+                    args = cap_skill_args(rest)
+                    try:
+                        result = await self._skills_service.execute_skill(
+                            resolution.name, mode="local", args=args
+                        )
+                    except SkillTrustBlockedError as exc:
+                        refuse = SKILL_UNTRUSTED_REFUSE.format(
+                            name=resolution.name, reason=exc.reason_code
+                        )
+                        return provider_messages, refuse, ()
 
-        rendered = (
-            result.get("rendered_prompt", "") if isinstance(result, Mapping) else ""
-        )
-        rendered_message = {"role": ConsoleMessageRole.USER.value, "content": rendered}
-        execution_mode = (
-            result.get("execution_mode") if isinstance(result, Mapping) else None
-        )
-        if execution_mode == "fork":
-            leading = (
-                [provider_messages[0]]
-                if provider_messages
-                and provider_messages[0].get("role") == ConsoleMessageRole.SYSTEM.value
-                else []
+                    rendered = (
+                        result.get("rendered_prompt", "")
+                        if isinstance(result, Mapping)
+                        else ""
+                    )
+                    rendered_message = {
+                        "role": ConsoleMessageRole.USER.value,
+                        "content": rendered,
+                    }
+                    execution_mode = (
+                        result.get("execution_mode")
+                        if isinstance(result, Mapping)
+                        else None
+                    )
+                    if execution_mode == "fork":
+                        leading = (
+                            [provider_messages[0]]
+                            if provider_messages
+                            and provider_messages[0].get("role")
+                            == ConsoleMessageRole.SYSTEM.value
+                            else []
+                        )
+                        return leading + [rendered_message], None, ()
+
+                    new_messages = list(provider_messages)
+                    new_messages[final_index] = rendered_message
+                    return new_messages, None, ()
+
+        # --- Embedded pass: no leading mention, or the leading word didn't
+        # resolve to a known skill.
+        names = frozenset(candidate.name for candidate in candidates)
+        mentions = find_embedded_mentions(content, names)
+        if not mentions:
+            return provider_messages, None, ()
+
+        rendered_by_name: dict[str, str | None] = {}
+        notes: list[str] = []
+        for mention in mentions:
+            if mention.name in rendered_by_name:
+                continue
+            try:
+                result = await self._skills_service.execute_skill(
+                    mention.name, mode="local", args=""
+                )
+            except SkillTrustBlockedError:
+                rendered_by_name[mention.name] = None
+                notes.append(SKILL_MENTION_SKIPPED_NOTE.format(name=mention.name))
+                continue
+            execution_mode = (
+                result.get("execution_mode") if isinstance(result, Mapping) else None
             )
-            return leading + [rendered_message], None
+            rendered = (
+                result.get("rendered_prompt", "")
+                if isinstance(result, Mapping)
+                else ""
+            )
+            # Fork (or anything non-inline) cannot splice in place: leave
+            # the mention literal, no note (this is not a trust failure).
+            rendered_by_name[mention.name] = (
+                rendered if execution_mode == "inline" else None
+            )
+
+        new_content = content
+        for mention in reversed(mentions):
+            body = rendered_by_name.get(mention.name)
+            if body is None:
+                continue
+            new_content = (
+                new_content[: mention.start] + body + new_content[mention.end :]
+            )
+        if new_content == content:
+            return provider_messages, None, tuple(notes)
 
         new_messages = list(provider_messages)
-        new_messages[final_index] = rendered_message
-        return new_messages, None
+        new_messages[final_index] = {
+            "role": ConsoleMessageRole.USER.value,
+            "content": new_content,
+        }
+        return new_messages, None, tuple(notes)
 
     async def _apply_world_info(
         self, provider_messages: list[dict[str, Any]], session_id: str

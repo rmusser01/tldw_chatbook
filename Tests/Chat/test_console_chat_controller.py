@@ -420,7 +420,7 @@ async def test_skill_refuse_after_optimistic_echo_marks_row_blocked():
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
 
     async def _refuse(messages):
-        return messages, "Refused: untrusted skill."
+        return messages, "Refused: untrusted skill.", ()
 
     controller._apply_skill_substitution = _refuse
 
