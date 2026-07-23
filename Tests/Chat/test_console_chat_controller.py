@@ -2409,6 +2409,13 @@ async def test_build_context_snapshot_isolates_assembly_errors():
 
 
 def test_annotate_skill_commands_multimodal_text_part():
+    """Fix 4 (Qodo PR #801 fix wave): a multimodal (list-content) draft must
+    NEVER be annotated, even when its text part starts with a `$name`
+    mention. `_apply_skill_substitution` early-returns on non-str content at
+    send time (replacing list content would drop attachments), so
+    annotating a list-content draft here promised a substitution the actual
+    send never performed -- a dishonest preview. List content now passes
+    through unchanged."""
     messages = [
         {
             "role": "user",
@@ -2421,11 +2428,8 @@ def test_annotate_skill_commands_multimodal_text_part():
 
     annotated = ConsoleChatController._annotate_skill_commands(messages)
 
-    text_part = annotated[0]["content"][0]
-    assert text_part["type"] == "text"
-    assert text_part["text"].startswith("$search tools")
-    assert "Skill command not resolved in preview" in text_part["text"]
-    assert annotated[0]["content"][1] == messages[0]["content"][1]
+    assert annotated[0]["content"] == messages[0]["content"]
+    assert "Skill command not resolved in preview" not in str(annotated[0]["content"])
 
 
 def test_annotate_skill_commands_ignores_leading_whitespace():

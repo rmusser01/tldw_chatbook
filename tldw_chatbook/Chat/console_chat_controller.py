@@ -1526,6 +1526,16 @@ class ConsoleChatController:
         elsewhere in the draft are intentionally not flagged -- this only
         covers the leading form, mirroring `_apply_skill_substitution`'s
         own "leading form tried first" precedence.
+
+        Only STRING content is ever annotated. A multimodal (list-content)
+        draft -- e.g. a text part plus an image attachment -- is left
+        completely unchanged, even when its text part starts with a
+        `$name` mention: `_apply_skill_substitution` early-returns on
+        non-str content at send time (replacing list content outright would
+        drop the attachments), so this preview never actually substitutes a
+        multimodal draft's skill mention. Annotating it here would promise
+        a substitution the send never performs -- a dishonest preview
+        (Qodo fix 4, PR #801 review).
         """
         result = copy.deepcopy(messages)
         if not synthetic_turn_added or not result or result[-1].get("role") != "user":
@@ -1539,26 +1549,7 @@ class ConsoleChatController:
 
         if isinstance(content, str) and content.lstrip().startswith(MENTION_SIGIL):
             result[-1]["content"] = f"{content}\n\n{annotation}"
-            return result
 
-        if isinstance(content, list):
-            new_parts: list[Any] = []
-            annotated = False
-            for part in content:
-                text = part.get("text") if isinstance(part, dict) else None
-                if (
-                    not annotated
-                    and isinstance(part, dict)
-                    and part.get("type") == "text"
-                    and isinstance(text, str)
-                    and text.lstrip().startswith(MENTION_SIGIL)
-                ):
-                    new_parts.append({**part, "text": f"{text}\n\n{annotation}"})
-                    annotated = True
-                else:
-                    new_parts.append(part)
-            if annotated:
-                result[-1]["content"] = new_parts
         return result
 
     def _build_tools_info_for_snapshot(self) -> dict[str, Any]:
@@ -1781,28 +1772,40 @@ class ConsoleChatController:
         edited (now untrusted) refuses/skips instead of silently re-running
         a stale render.
 
+        Both forms are DETECTED against trusted candidates UNION
+        user-invocable blocked (needs-review) skills -- a blocked skill must
+        still be found (leading refuses, embedded degrades to literal +
+        note) rather than silently staying plain, sigil-prefixed text with
+        no signal at all. `execute_skill` remains the sole trust authority;
+        detection here never grants execution.
+
         Two independent forms, tried in order:
 
-        Leading form -- the message starts with `MENTION_SIGIL` and the
-        leading word resolves to a known skill: the REST of the message is
-        passed as that skill's args (`cap_skill_args`). A resolved leading
-        mention is never also scanned for embedded mentions -- its args are
-        opaque payload, not further mentions to expand.
+        Leading form -- the message, with leading whitespace stripped
+        (mirroring `_annotate_skill_commands`'s own preview `lstrip()`
+        assumption -- a resolved leading mention replaces the whole message
+        either way, so the leading whitespace simply disappears), starts
+        with `MENTION_SIGIL` and the leading word resolves to a known
+        skill: the REST of the (stripped) message is passed as that skill's
+        args (`cap_skill_args`). A resolved leading mention is never also
+        scanned for embedded mentions -- its args are opaque payload, not
+        further mentions to expand.
 
         Embedded form -- tried whenever the leading form doesn't apply (no
-        leading `MENTION_SIGIL`, or the leading word doesn't resolve): every
-        `$skill-name` mention anywhere in the message (case-sensitive,
-        code-span-masked, document order -- `find_embedded_mentions`) is
-        looked up ARGLESS (`execute_skill(name, mode="local", args="")`,
-        once per unique name, right-to-left splice so earlier spans stay
-        valid) and spliced in place at the mention's exact span, preserving
-        all surrounding prose. Only an ``execution_mode == "inline"`` result
-        splices; anything else (e.g. ``fork``, which has no "in place"
-        meaning for an embedded mention) silently leaves that mention's
-        literal `$name` text untouched. A trust-blocked mention
-        (`SkillTrustBlockedError`) also leaves the literal text untouched
-        but records a `SKILL_MENTION_SKIPPED_NOTE` for the caller to surface
-        as a non-aborting system row.
+        leading `MENTION_SIGIL`, or the leading word doesn't resolve):
+        scans the ORIGINAL (unstripped) message. Every `$skill-name`
+        mention anywhere in the message (case-sensitive, code-span-masked,
+        document order -- `find_embedded_mentions`) is looked up ARGLESS
+        (`execute_skill(name, mode="local", args="")`, once per unique
+        name, right-to-left splice so earlier spans stay valid) and spliced
+        in place at the mention's exact span, preserving all surrounding
+        prose. Only an ``execution_mode == "inline"`` result splices;
+        anything else (e.g. ``fork``, which has no "in place" meaning for
+        an embedded mention) silently leaves that mention's literal `$name`
+        text untouched. A trust-blocked mention (`SkillTrustBlockedError`)
+        also leaves the literal text untouched but records a
+        `SKILL_MENTION_SKIPPED_NOTE` for the caller to surface as a
+        non-aborting system row.
 
         Args:
             provider_messages: The fully-built payload about to be sent to
@@ -1851,13 +1854,32 @@ class ConsoleChatController:
 
         context = await self._skills_service.get_context(mode="local")
         candidates = self._skill_candidates_from_context(context)
+        # DETECTION population = trusted candidates UNION user-invocable
+        # blocked (needs-review) skills. A blocked skill must still be
+        # DETECTED -- leading refuses, embedded degrades to literal + note
+        # -- rather than silently staying plain, sigil-prefixed text with no
+        # signal at all. `execute_skill` (not this resolution step) remains
+        # the sole authority on whether a resolved name may actually run:
+        # a name that resolves here to a blocked skill hits
+        # `SkillTrustBlockedError` at the `execute_skill` call below/in the
+        # embedded loop, which already drives the refuse/skip-with-note
+        # paths.
+        detection_candidates = candidates + self._skill_blocked_candidates_from_context(
+            context
+        )
 
         # --- Leading form: message starts with a resolvable $skill-name.
-        if content.startswith(MENTION_SIGIL):
-            word, rest = _split_skill_command_word(content)
+        # Leading whitespace is tolerated (stripped before the sigil check
+        # and the word/rest split) to match `_annotate_skill_commands`'s own
+        # `lstrip()` assumption in the preview -- a resolved leading mention
+        # replaces the ENTIRE message on both the inline-replace and fork
+        # paths, so the leading whitespace simply disappears either way.
+        stripped_content = content.lstrip()
+        if stripped_content.startswith(MENTION_SIGIL):
+            word, rest = _split_skill_command_word(stripped_content)
             name = word[len(MENTION_SIGIL) :]
             if name:
-                resolution = resolve_skill_command(name, rest, candidates)
+                resolution = resolve_skill_command(name, rest, detection_candidates)
                 if resolution.kind == "resolved":
                     args = cap_skill_args(rest)
                     try:
@@ -1899,8 +1921,13 @@ class ConsoleChatController:
                     return new_messages, None, ()
 
         # --- Embedded pass: no leading mention, or the leading word didn't
-        # resolve to a known skill.
-        names = frozenset(candidate.name for candidate in candidates)
+        # resolve to a known skill. Scans the ORIGINAL (unstripped) content
+        # -- the leading-whitespace tolerance above only applies to the
+        # leading form. `names` is the same detection population (trusted
+        # UNION user-invocable blocked) so a blocked mention is found and
+        # routed through the trust-blocked-note path below instead of
+        # staying invisible.
+        names = frozenset(candidate.name for candidate in detection_candidates)
         mentions = find_embedded_mentions(content, names)
         if not mentions:
             return provider_messages, None, ()
@@ -2145,6 +2172,37 @@ class ConsoleChatController:
             and item.get("name")
             and item.get("user_invocable", True)
             and not item.get("trust_blocked", False)
+        )
+
+    @staticmethod
+    def _skill_blocked_candidates_from_context(
+        context: Any,
+    ) -> tuple[SkillCommandCandidate, ...]:
+        """Build the user-invocable, trust-BLOCKED (needs-review) skill
+        candidate population.
+
+        Companion to `_skill_candidates_from_context`: unioned with it in
+        `_apply_skill_substitution` to widen the DETECTION population (never
+        the executable one) so a `$blocked-name` mention resolves a name
+        instead of silently staying literal, sigil-prefixed text with no
+        refusal or note at all. `execute_skill` remains the sole authority
+        on whether a resolved name may actually run -- candidates built here
+        are never executed directly by this method's caller. A blocked
+        skill flagged ``user_invocable: False`` is excluded, mirroring
+        `_skill_candidates_from_context`'s own filter discipline.
+        """
+        blocked = (
+            context.get("blocked_skills") if isinstance(context, Mapping) else None
+        )
+        return tuple(
+            SkillCommandCandidate(
+                name=str(item.get("name")),
+                description=str(item.get("description") or ""),
+            )
+            for item in (blocked or [])
+            if isinstance(item, Mapping)
+            and item.get("name")
+            and item.get("user_invocable", True)
         )
 
     @staticmethod

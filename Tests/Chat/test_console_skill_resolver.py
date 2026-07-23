@@ -139,3 +139,24 @@ def test_unclosed_fence_masks_to_eof():
     mentions = find_embedded_mentions(text, _NAMES)
     assert [m.name for m in mentions] == ["code-review"]
     assert not any(m.name == "path" for m in mentions)
+
+
+def test_multi_backtick_span_masks_correctly():
+    """Qodo fix 3 (PR #801 review, SECURITY): a code span delimited by a
+    multi-backtick run (CommonMark: an opening backtick run pairs with the
+    NEXT run of exactly equal length) must mask its whole span. The old
+    greedy single-tick pairing mispaired the two adjacent backticks of each
+    2-backtick run as its own EMPTY span, leaving the span's contents --
+    including a live $path mention -- unmasked and eligible to expand."""
+    text = "use `` $path `` here"
+    assert find_embedded_mentions(text, frozenset({"path"})) == ()
+
+
+def test_mixed_unmatched_backtick_runs_masks_entire_line():
+    """Backtick runs of unequal length that can never pair up must mask the
+    whole line even when the line's TOTAL backtick count is even (so the
+    old `% 2 == 1` odd-count fail-safe alone would have missed this case).
+    Three runs of length 2, 3, and 1 (six backticks total) share no equal
+    lengths, so every run is unmatched."""
+    text = "before `` x ``` y ` $path after"
+    assert find_embedded_mentions(text, frozenset({"path"})) == ()

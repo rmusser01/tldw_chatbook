@@ -18,12 +18,18 @@ from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedErr
 
 class _Skills:
     def __init__(
-        self, mode="inline", raise_trust=False, raise_trust_for=(), extra_skills=()
+        self,
+        mode="inline",
+        raise_trust=False,
+        raise_trust_for=(),
+        extra_skills=(),
+        blocked_skills=(),
     ):
         self._mode = mode
         self._raise = raise_trust
         self._raise_for = frozenset(raise_trust_for)
         self._extra_skills = tuple(extra_skills)
+        self._blocked_skills = tuple(blocked_skills)
         self.executions = []
         self.get_context_calls = 0
 
@@ -39,7 +45,7 @@ class _Skills:
                 }
                 for name in ("code-review", *self._extra_skills)
             ],
-            "blocked_skills": [],
+            "blocked_skills": [dict(entry) for entry in self._blocked_skills],
         }
 
     async def execute_skill(self, name, *, mode="local", args=None):
@@ -470,3 +476,85 @@ async def test_mixed_spliced_and_blocked_mentions():
     assert content == "run RENDERED[] then $danger-zone please"
     assert len(notes) == 1 and "danger-zone" in notes[0]
     assert skills.executions == [("code-review", ""), ("danger-zone", "")]
+
+
+# ---------------------------------------------------------------------------
+# Qodo fix 1 (PR #801 review): a skill sitting in `blocked_skills` (trust
+# needs-review) must be DETECTED -- leading refuses, embedded degrades to
+# literal + note -- instead of silently staying literal with no signal at
+# all, per spec. Detection is scoped to trusted candidates UNION
+# user-invocable blocked skills; `execute_skill` remains the sole authority
+# on whether a resolved name may actually run.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_leading_blocked_skill_mention_refuses():
+    skills = _Skills(
+        raise_trust_for={"blocked-name"},
+        blocked_skills=({"name": "blocked-name", "user_invocable": True},),
+    )
+    controller, _store = _controller(skills)
+    messages = [{"role": "user", "content": "$blocked-name args here"}]
+    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    assert out == messages
+    assert refuse == (
+        'Skill "blocked-name" isn\'t trusted (skill_modified) — '
+        "review and approve it in Library ▸ Skills before running it."
+    )
+    assert notes == ()
+    assert skills.executions == [("blocked-name", "args here")]
+
+
+@pytest.mark.asyncio
+async def test_embedded_blocked_skill_mention_literal_with_note():
+    skills = _Skills(
+        raise_trust_for={"blocked-name"},
+        blocked_skills=({"name": "blocked-name", "user_invocable": True},),
+    )
+    controller, _store = _controller(skills)
+    messages = [{"role": "user", "content": "please $blocked-name this"}]
+    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    assert out == messages  # literal text untouched
+    assert refuse is None  # embedded never aborts
+    assert len(notes) == 1 and "blocked-name" in notes[0]
+
+
+@pytest.mark.asyncio
+async def test_non_user_invocable_blocked_skill_never_detected():
+    """A `user_invocable: False` blocked skill must never be detected --
+    blocked or not -- mirroring the existing trusted-candidate filter's
+    discipline. It stays literal with no note and the skills service is
+    never even asked to execute it."""
+    skills = _Skills(
+        raise_trust_for={"blocked-name"},
+        blocked_skills=({"name": "blocked-name", "user_invocable": False},),
+    )
+    controller, _store = _controller(skills)
+    messages = [{"role": "user", "content": "please $blocked-name this"}]
+    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    assert out == messages
+    assert refuse is None
+    assert notes == ()
+    assert skills.executions == []
+
+
+# ---------------------------------------------------------------------------
+# Qodo fix 2 (PR #801 review): the leading form must tolerate leading
+# whitespace -- the preview annotator's `_annotate_skill_commands` already
+# `lstrip()`s before checking for the sigil, so an indented draft that
+# demoted to the embedded ARGLESS form here silently contradicted what the
+# preview promised.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_leading_form_tolerates_leading_whitespace():
+    skills = _Skills("inline")
+    controller, _store = _controller(skills)
+    messages = [{"role": "user", "content": "  $code-review fix it"}]
+    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    assert refuse is None
+    # Leading form (args-bearing), not embedded-ARGLESS.
+    assert skills.executions == [("code-review", "fix it")]
+    assert out[-1] == {"role": "user", "content": "RENDERED[fix it]"}
