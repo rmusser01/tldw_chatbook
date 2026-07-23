@@ -136,13 +136,21 @@ def test_delete_subtree_removes_descendants():
 
 def test_restore_persisted_session_registers_tree_and_supports_append():
     store = ConsoleChatStore()
-    m1 = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="restored-u")
-    m2 = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="restored-a")
+    m1 = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER, content="restored-u", persisted_message_id="p1"
+    )
+    m2 = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="restored-a",
+        persisted_message_id="p2",
+        parent_message_id="p1",
+    )
     session = store.restore_persisted_session(
         title="Resumed",
         workspace_id=None,
         persisted_conversation_id="conv-1",
-        messages=[m1, m2],
+        all_nodes=[m1, m2],
+        active_leaf_persisted_id="p2",
     )
     # restored nodes are resolvable via the tree (id lookups use _nodes_by_session)
     assert store.get_message(m2.id).content == "restored-a"
@@ -230,7 +238,8 @@ def test_set_active_leaf_write_through_persists_pointer():
         title="R",
         workspace_id=None,
         persisted_conversation_id="conv-9",
-        messages=[],
+        all_nodes=[],
+        active_leaf_persisted_id=None,
     )
     u = store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
     # simulate a durably-persisted node so the write-through has a leaf id
@@ -250,3 +259,69 @@ def test_set_active_leaf_no_write_through_without_persisted_conversation():
     store.set_active_leaf(session.id, u.id)
     # no persisted conversation id => nothing written through
     assert db.calls == []
+
+
+def test_deferred_active_leaf_pointer_written_on_append_after_swipe():
+    """Carried-forward (Task 8): appending onto a swiped-back branch must
+    advance the DURABLE active-leaf pointer, not just the in-memory one.
+
+    Flow: U1 -> A1, regenerate A1 -> A1', swipe back to A1, then continue with
+    U2 + A2 on the A1 branch. Without writing the pointer through when the
+    active-leaf message gets its persisted id, the DB pointer would be left at
+    A1 (from the swipe) and a resume-walk would DROP the U2/A2 continuation.
+    """
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.create_session(title="Branch")
+        sid = session.id
+
+        # U1 -> A1 (assistant streams then completes)
+        store.append_message(sid, role=ConsoleMessageRole.USER, content="u1", persist=True)
+        a1 = store.append_message(
+            sid, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+        )
+        store.append_stream_chunk(a1.id, "a1")
+        store.mark_message_complete(a1.id)
+
+        conversation_id = session.persisted_conversation_id
+        assert conversation_id is not None
+        a1_pid = store.get_message(a1.id).persisted_message_id
+        assert a1_pid is not None
+        # the active-leaf message's pointer was written through on persist
+        assert db.get_conversation_active_leaf(conversation_id) == a1_pid
+
+        # regenerate A1 -> A1' (a persisted sibling), which advances the leaf
+        a1_prime = store.create_sibling(
+            a1.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+        )
+        store.append_stream_chunk(a1_prime.id, "a1-prime")
+        store.mark_message_complete(a1_prime.id)
+        a1_prime_pid = store.get_message(a1_prime.id).persisted_message_id
+        assert db.get_conversation_active_leaf(conversation_id) == a1_prime_pid
+
+        # swipe back to the older sibling A1 -> pointer follows
+        store.set_active_leaf(sid, a1.id)
+        assert db.get_conversation_active_leaf(conversation_id) == a1_pid
+
+        # continue the A1 branch: U2 (persists immediately) then A2 (deferred)
+        u2 = store.append_message(
+            sid, role=ConsoleMessageRole.USER, content="u2", persist=True
+        )
+        u2_pid = store.get_message(u2.id).persisted_message_id
+        assert db.get_conversation_active_leaf(conversation_id) == u2_pid
+
+        a2 = store.append_message(
+            sid, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+        )
+        store.append_stream_chunk(a2.id, "a2")
+        store.mark_message_complete(a2.id)
+        a2_pid = store.get_message(a2.id).persisted_message_id
+        assert a2_pid is not None
+        # the durable pointer now resolves to A2, so a resume walk includes U2/A2
+        assert db.get_conversation_active_leaf(conversation_id) == a2_pid
+    finally:
+        db.close_connection()

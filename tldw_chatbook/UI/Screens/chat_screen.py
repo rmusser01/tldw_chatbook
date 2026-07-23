@@ -3898,7 +3898,12 @@ class ChatScreen(BaseAppScreen):
 
     @staticmethod
     def _iter_console_tree_messages(nodes: Any) -> list[dict[str, Any]]:
-        """Return persisted conversation tree messages in visible transcript order."""
+        """Return the ``children[-1]`` (latest-branch) path through the tree.
+
+        No longer the resume path (Task 8 loads the full tree; see
+        ``_console_messages_from_conversation_tree``); retained as the
+        most-recent-branch leaf resolver and still directly unit-tested.
+        """
         ordered: list[dict[str, Any]] = []
 
         def _visit(node: Any) -> None:
@@ -3934,49 +3939,78 @@ class ChatScreen(BaseAppScreen):
         self,
         tree: dict[str, Any],
     ) -> list[ConsoleChatMessage]:
-        """Build native Console messages from a persisted conversation tree."""
+        """Build native Console messages from a persisted conversation tree.
+
+        Task 8: flattens the ENTIRE tree (every node, all branches -- not just
+        the ``children[-1]`` latest branch), each message carrying its
+        ``persisted_message_id`` and persisted ``parent_message_id`` so the
+        store can reconnect the full tree and pick the active branch from the
+        stored active-leaf pointer.
+
+        Parenthood is taken from the tree's own NESTING (the id of the node we
+        recursed from), not the row's ``parent_message_id`` field: the real DB
+        tree sets both consistently, but a node's structural position is the
+        authoritative source and stays correct even for trees whose rows omit
+        the field. A truly-empty node (no content and no image) is dropped but
+        transparent to parenthood -- its children re-parent to the nearest kept
+        ancestor -- so a skipped row never orphans a branch.
+        """
         messages: list[ConsoleChatMessage] = []
-        for row in self._iter_console_tree_messages(tree.get("root_threads")):
-            content = str(row.get("content") or "")
-            raw_image = row.get("image_data")
+
+        def _walk(node: Any, parent_persisted_id: str | None) -> None:
+            if not isinstance(node, dict):
+                return
+            content = str(node.get("content") or "")
+            raw_image = node.get("image_data")
             image_data = (
                 bytes(raw_image) if isinstance(raw_image, (bytes, bytearray)) else None
             )
-            raw_mime = row.get("image_mime_type")
+            raw_mime = node.get("image_mime_type")
             image_mime_type = str(raw_mime) if raw_mime else None
-            if not content and image_data is None:
-                continue
-            persisted_message_id = row.get("id")
-            # The tree only carries the legacy position-0 columns; positions
-            # >= 1 (multi-attachment table rows) are batch-fetched below,
-            # once for the whole resumed list.
-            attachments: tuple[MessageAttachment, ...] = (
-                (
-                    MessageAttachment(
-                        data=image_data,
-                        mime_type=image_mime_type or "",
-                        display_name="",
-                        position=0,
-                    ),
+            raw_id = node.get("id")
+            node_persisted_id = str(raw_id) if raw_id is not None else None
+            kept = bool(content) or image_data is not None
+            if kept:
+                # The tree only carries the legacy position-0 columns; positions
+                # >= 1 (multi-attachment table rows) are batch-fetched below,
+                # once for the whole resumed list.
+                attachments: tuple[MessageAttachment, ...] = (
+                    (
+                        MessageAttachment(
+                            data=image_data,
+                            mime_type=image_mime_type or "",
+                            display_name="",
+                            position=0,
+                        ),
+                    )
+                    if image_data is not None
+                    else ()
                 )
-                if image_data is not None
-                else ()
-            )
-            messages.append(
-                ConsoleChatMessage(
-                    role=self._console_message_role_from_persisted(row),
-                    content=content,
-                    status="complete",
-                    persisted_message_id=(
-                        str(persisted_message_id)
-                        if persisted_message_id is not None
-                        else None
-                    ),
-                    image_data=image_data,
-                    image_mime_type=image_mime_type,
-                    attachments=attachments,
+                messages.append(
+                    ConsoleChatMessage(
+                        role=self._console_message_role_from_persisted(node),
+                        content=content,
+                        status="complete",
+                        persisted_message_id=node_persisted_id,
+                        parent_message_id=parent_persisted_id,
+                        image_data=image_data,
+                        image_mime_type=image_mime_type,
+                        attachments=attachments,
+                    )
                 )
-            )
+            # Children re-parent to this node when kept, else pass the nearest
+            # kept ancestor straight through (a dropped empty row is invisible
+            # to the tree linkage).
+            child_parent_id = node_persisted_id if kept else parent_persisted_id
+            children = node.get("children")
+            if isinstance(children, list):
+                for child in children:
+                    _walk(child, child_parent_id)
+
+        root_threads = tree.get("root_threads")
+        if isinstance(root_threads, list):
+            for root in root_threads:
+                _walk(root, None)
         self._batch_fetch_console_resume_attachments(messages)
         return messages
 
@@ -4149,7 +4183,12 @@ class ChatScreen(BaseAppScreen):
             return False
 
         try:
-            maybe_tree = get_conversation_tree(target, mode="local")
+            # Task 8: raise the depth/root caps well past the service defaults
+            # (50) so a long or branchy conversation's full tree -- every
+            # branch, not just the latest -- is loaded intact, not truncated.
+            maybe_tree = get_conversation_tree(
+                target, mode="local", depth_cap=10_000, root_limit=10_000
+            )
             tree = await maybe_tree if inspect.isawaitable(maybe_tree) else maybe_tree
         except Exception:
             logger.exception(
@@ -4196,14 +4235,32 @@ class ChatScreen(BaseAppScreen):
         title = str(conversation.get("title") or "Saved conversation").strip()
         if not title:
             title = "Saved conversation"
-        messages = self._console_messages_from_conversation_tree(tree)
-        messages = self._inject_resume_agent_markers(messages, target)
+        # Task 8: load the WHOLE persisted tree (every branch), then reconstruct
+        # the active branch from the stored active-leaf pointer. Loading all
+        # branches (not just the latest) is what makes off-path siblings
+        # navigable (swipe) right after resume.
+        all_nodes = self._console_messages_from_conversation_tree(tree)
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        active_leaf_id = getattr(db, "get_conversation_active_leaf", lambda _c: None)(
+            target
+        )
         session = store.restore_persisted_session(
             title=title,
             workspace_id=workspace_id,
             persisted_conversation_id=target,
-            messages=messages,
+            all_nodes=all_nodes,
+            active_leaf_persisted_id=active_leaf_id,
             settings=self._console_session_settings_for_resume(conversation),
+        )
+        # Re-derive display-only agent TOOL markers from AgentRunsDB and overlay
+        # them onto the restored active-path VIEW (markers are never tree nodes;
+        # the next tree mutation's recompute rebuilds the view from live nodes
+        # and drops them, matching how live markers are ephemeral in Phase A).
+        store.apply_resume_marker_overlay(
+            session.id,
+            self._inject_resume_agent_markers(
+                store.messages_for_session(session.id), target
+            ),
         )
         # TASK-427: the plain-provider gate (task-3) keys off the active
         # session's ``character_id`` -- restore it from the persisted

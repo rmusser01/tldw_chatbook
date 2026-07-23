@@ -5985,7 +5985,14 @@ async def test_console_workspace_conversation_row_resumes_persisted_conversation
         assert "Resume state: restored from persisted-chat-1" in inspector_text
         assert "Workspace: Default" in inspector_text
         assert app.chat_conversation_scope_service.calls == [
-            {"conversation_id": "persisted-chat-1", "mode": "local"}
+            {
+                "conversation_id": "persisted-chat-1",
+                "mode": "local",
+                # Task 8: resume loads the full tree with raised caps so a long
+                # or branchy conversation is not truncated.
+                "depth_cap": 10_000,
+                "root_limit": 10_000,
+            }
         ]
 
 

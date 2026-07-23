@@ -295,17 +295,34 @@ class ConsoleChatStore:
         title: str,
         workspace_id: str | None,
         persisted_conversation_id: str,
-        messages: Iterable[ConsoleChatMessage],
+        all_nodes: Iterable[ConsoleChatMessage],
+        active_leaf_persisted_id: str | None = None,
         settings: ConsoleSessionSettings | None = None,
     ) -> ConsoleChatSession:
         """Create and activate a native session from persisted conversation data.
+
+        Task 8: a restored conversation arrives as the WHOLE persisted tree --
+        every branch, on- and off-path -- so off-path siblings are navigable
+        (swipe) immediately after resume. ``all_nodes`` is the flattened node
+        set (pre-order, every node), each carrying its own
+        ``persisted_message_id`` and its persisted ``parent_message_id``; the
+        full in-memory tree is rebuilt from those links and the active-path
+        VIEW is derived from ``active_leaf_persisted_id`` (falling back to the
+        most-recent-child leaf, repairing the durable pointer, when the pointer
+        is missing or dangling).
 
         Args:
             title: Display title for the restored Console session.
             workspace_id: Workspace scope recorded on the persisted conversation,
                 or ``None`` to use the current store workspace context.
             persisted_conversation_id: Durable Chat conversation identifier.
-            messages: Native Console messages reconstructed from persisted data.
+            all_nodes: Every native Console node reconstructed from the
+                persisted conversation tree (all branches), each carrying its
+                ``persisted_message_id`` and persisted ``parent_message_id``.
+            active_leaf_persisted_id: Persisted id of the stored active-leaf
+                pointer, or ``None``. Selects which branch is the active-path
+                view; ``None``/missing/dangling falls back to the most-recent
+                leaf and repairs the durable pointer.
             settings: Optional provider/model settings snapshot for the session.
 
         Returns:
@@ -317,14 +334,44 @@ class ConsoleChatStore:
             settings=settings,
         )
         session.persisted_conversation_id = str(persisted_conversation_id)
-        # Task 3: a restored conversation still arrives as a flat active-path
-        # list (the full off-path-tree reconstruction from persisted parent ids
-        # + the active-leaf pointer lands in Task 8). Register it as a linear
-        # tree chain so id lookups (``_message_or_raise`` now resolves from
-        # ``_nodes_by_session``) and append-after-resume keep working, and the
-        # active-path view is materialized by the single writer.
-        self._ingest_linear_messages(session.id, messages)
+        self._ingest_full_tree(
+            session.id,
+            all_nodes,
+            active_leaf_persisted_id=active_leaf_persisted_id,
+        )
         return session
+
+    def apply_resume_marker_overlay(
+        self, session_id: str, messages: Sequence[ConsoleChatMessage]
+    ) -> None:
+        """Overlay resume-derived, display-only TOOL markers onto the view.
+
+        The active-path VIEW (``_messages_by_session``) is normally the
+        single-writer output of ``_recompute_active_path`` (tree nodes only).
+        On resume, agent TOOL markers are re-derived from ``AgentRunsDB`` (they
+        are ``persist=False`` and never tree nodes) and interleaved into the
+        rendered transcript for display; this installs that interleaved list as
+        the current view. Real (non-marker) rows are re-resolved to their LIVE
+        tree nodes so a later render still observes them; TOOL markers are the
+        given snapshots and are registered in the session index so
+        ``close_session`` sweeps them.
+
+        The overlay is transient by design: the next ``_recompute_active_path``
+        (any tree mutation -- send, swipe, delete) rebuilds the view from live
+        tree nodes and drops the markers, exactly as live markers are ephemeral
+        in Phase A. When ``messages`` carries no markers (no agent runs) this is
+        equivalent to the freshly recomputed view.
+        """
+        self._session_or_raise(session_id)
+        nodes = self._nodes_by_session.get(session_id, {})
+        overlay: list[ConsoleChatMessage] = []
+        for message in messages:
+            if message.role is ConsoleMessageRole.TOOL:
+                self._message_session_index.setdefault(message.id, session_id)
+                overlay.append(message)
+            else:
+                overlay.append(nodes.get(message.id, message))
+        self._messages_by_session[session_id] = overlay
 
     def switch_session(self, session_id: str) -> ConsoleChatSession:
         """Activate an existing session."""
@@ -1614,6 +1661,17 @@ class ConsoleChatStore:
             create_kwargs["image_mime_type"] = message.image_mime_type
         message.persisted_message_id = self.persistence.create_message(**create_kwargs)
         self._pending_persistence_message_ids.discard(message.id)
+        # Carried-forward (Task 8): when this newly persisted message IS the
+        # session's active leaf, write the durable active-leaf pointer through
+        # NOW that it owns a persisted id. ``append_message`` advances the
+        # in-memory leaf but (unlike ``set_active_leaf``/``create_sibling``)
+        # never writes the DB pointer; without this, sending a new message on a
+        # swiped-back branch leaves the pointer at the pre-swipe leaf, so a
+        # later resume walks the wrong branch and drops the continuation. Also
+        # covers the deferred path (``_persist_pending_message_if_ready`` ->
+        # here) where the id only exists once streamed content arrives.
+        if message.id == self._active_leaf_by_session.get(session_id):
+            self._persist_active_leaf(session_id, message.id)
         self._enqueue_sync_v2_message_if_ready(message)
 
     def _persist_existing_message(
@@ -1863,6 +1921,77 @@ class ConsoleChatStore:
             parent_native_id = restored.id
         self._active_leaf_by_session[session_id] = parent_native_id
         self._recompute_active_path(session_id)
+
+    def _ingest_full_tree(
+        self,
+        session_id: str,
+        all_nodes: Iterable[ConsoleChatMessage],
+        *,
+        active_leaf_persisted_id: str | None,
+    ) -> None:
+        """Rebuild the FULL conversation tree (all branches) from persisted nodes.
+
+        Task 8 resume path. ``all_nodes`` is the flattened persisted tree in
+        pre-order (every node, siblings in the DB's timestamp order); each node
+        carries its own ``persisted_message_id`` and its persisted
+        ``parent_message_id``. The tree is reconnected by mapping persisted ids
+        to fresh native ids, so off-path siblings load as navigable nodes -- the
+        whole point of Task 8. The active-path VIEW is then derived from the
+        stored active-leaf pointer, falling back to the most-recent-child leaf
+        (``children[-1]`` walk) and repairing the durable pointer when the
+        pointer is ``None``, unknown, or dangling.
+
+        TOOL markers (display-only, never tree nodes) are not expected in
+        ``all_nodes`` -- resume re-derives them from ``AgentRunsDB`` and overlays
+        them onto the view afterward -- but any that slip in are registered in
+        the session index only, mirroring ``_ingest_linear_messages``.
+        """
+        registered: list[ConsoleChatMessage] = []
+        persisted_to_native: dict[str, str] = {}
+        for node in all_nodes:
+            restored = replace(node)
+            if restored.role is ConsoleMessageRole.TOOL:
+                self._message_session_index[restored.id] = session_id
+                continue
+            registered.append(restored)
+            if restored.persisted_message_id is not None:
+                # Last write wins on a (malformed) duplicate persisted id; the
+                # tree is still internally consistent, just under-linked.
+                persisted_to_native[restored.persisted_message_id] = restored.id
+        for restored in registered:
+            native_parent = persisted_to_native.get(restored.parent_message_id)
+            self._register_tree_node(
+                session_id, restored, parent_native_id=native_parent
+            )
+        # Resolve the active leaf from the stored pointer; fall back to the
+        # most-recent leaf when it is missing/unknown/dangling, and repair the
+        # durable pointer so the next resume is exact.
+        leaf_native: str | None = None
+        if active_leaf_persisted_id is not None:
+            leaf_native = persisted_to_native.get(active_leaf_persisted_id)
+        used_fallback = leaf_native is None
+        if used_fallback:
+            leaf_native = self._most_recent_leaf_native(session_id)
+        self._active_leaf_by_session[session_id] = leaf_native
+        self._recompute_active_path(session_id)
+        if used_fallback and leaf_native is not None:
+            # Map the fallback leaf back to its persisted id and write it
+            # through (``_persist_active_leaf`` no-ops without a durable seam).
+            self._persist_active_leaf(session_id, leaf_native)
+
+    def _most_recent_leaf_native(self, session_id: str) -> str | None:
+        """Return the deepest ``children[-1]`` leaf under the most-recent root.
+
+        The fallback leaf resolver when a session has no usable active-leaf
+        pointer. Roots (and children) are ordered oldest-first, so the last
+        root and each step's last child track the most recently created branch
+        -- the same branch the pre-pointer ``children[-1]`` resume walk showed.
+        Returns ``None`` when the session has no tree nodes.
+        """
+        roots = self._children_by_parent.get(session_id, {}).get(None, [])
+        if not roots:
+            return None
+        return self._leaf_under(roots[-1])
 
     def _recompute_active_path(self, session_id: str) -> None:
         """Rebuild the active-path VIEW for a session from live tree nodes.
