@@ -30,6 +30,7 @@ from .agent_models import (
     AgentStep,
     ModelTurn,
     RunOutcome,
+    SkillFileBindings,
     ToolCall,
     ToolResult,
     clamp_child_budget,
@@ -44,6 +45,7 @@ from .native_tools import (
 from .tool_catalog import (
     FIND_TOOLS_SCHEMA,
     LOAD_TOOLS_SCHEMA,
+    SKILL_FILE_TOOL_SCHEMA,
     SPAWN_TOOL_SCHEMA,
     ToolCatalogRegistry,
     initial_disclosure,
@@ -167,6 +169,7 @@ class AgentService:
         clock: Callable[[], float] = time.monotonic,
         on_step: Callable[[AgentStep, str], None] | None = None,
         skill_runner: SkillRunner | None = None,
+        skill_file_bindings: SkillFileBindings | None = None,
         review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None,
         review_state_scope: Callable[[], "contextlib.AbstractContextManager"]
         | None = None,
@@ -177,6 +180,13 @@ class AgentService:
         self.clock = clock
         self._on_step = on_step
         self.skill_runner = skill_runner
+        # task-3 (skills-foundation): per-run authorization + reader for the
+        # skill_file runtime tool. `None` (the default, and every caller
+        # before this task) means the run is never wired for skill_file at
+        # all -- its schema is never pinned into runtime_schemas and a call
+        # by that name falls through to normal unknown-tool handling (see
+        # LoopDeps.read_skill_file's own docstring).
+        self.skill_file_bindings = skill_file_bindings
         # P5 Task 4: generic pre-dispatch batch-review hook, threaded
         # straight into every LoopDeps this service builds (mirrors how
         # should_cancel flows through run_turn/_run_one). MCP-specific
@@ -342,6 +352,11 @@ class AgentService:
             runtime_schemas.append(SPAWN_TOOL_SCHEMA)
         if offer_find_load:
             runtime_schemas.extend([FIND_TOOLS_SCHEMA, LOAD_TOOLS_SCHEMA])
+        if (
+            self.skill_file_bindings is not None
+            and self.skill_file_bindings.authorized
+        ):
+            runtime_schemas.append(SKILL_FILE_TOOL_SCHEMA)
 
         def find_tools(query: str):
             # Q7(b): never surface a disallowed tool through find_tools,
@@ -544,6 +559,28 @@ class AgentService:
                 )
             return builtin_invoke_tool(call)
 
+        # task-3 (skills-foundation): reader closure for the skill_file
+        # runtime tool, built beside invoke_tool. Authorization is enforced
+        # HERE (against self.skill_file_bindings.authorized), never in the
+        # loop and never via config.allowed_tools -- see SkillFileBindings'
+        # own docstring. The bindings-None guard below is defensive (the
+        # LoopDeps wiring already gates this closure out entirely when no
+        # bindings were passed to this service at all).
+        def read_skill_file_tool(skill_name: str, path: str) -> ToolResult:
+            bindings = self.skill_file_bindings
+            if bindings is None or skill_name not in bindings.authorized:
+                return ToolResult(
+                    ok=False,
+                    error=f"skill_file: '{skill_name}' is not active in this run",
+                )
+            if bindings.reader is None:
+                return ToolResult(ok=False, error="skill_file: no reader configured")
+            try:
+                out = bindings.reader(skill_name, path)
+            except Exception as exc:  # SkillTrustBlockedError, ValueError, OSError
+                return ToolResult(ok=False, error=f"skill_file: {exc}")
+            return ToolResult(ok=True, content=str(out.get("content", "")))
+
         deps = LoopDeps(
             call_model=self._make_call_model(config, api_endpoint, runtime_schemas),
             invoke_tool=invoke_tool,
@@ -558,6 +595,9 @@ class AgentService:
                 else (lambda s: None)
             ),
             review_tool_calls=self.review_tool_calls,
+            read_skill_file=(
+                read_skill_file_tool if self.skill_file_bindings is not None else None
+            ),
         )
         try:
             outcome = run_agent_loop(config, messages, active, deps)

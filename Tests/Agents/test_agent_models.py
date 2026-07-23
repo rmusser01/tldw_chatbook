@@ -48,7 +48,12 @@ def test_run_status_values_and_terminal_set():
 
 def test_runtime_tool_names():
     assert SPAWN_TOOL_NAME == "spawn_subagent"
-    assert RUNTIME_TOOL_NAMES == {"spawn_subagent", "find_tools", "load_tools"}
+    assert RUNTIME_TOOL_NAMES == {
+        "spawn_subagent",
+        "find_tools",
+        "load_tools",
+        "skill_file",
+    }
     assert DIRECT_DISCLOSE_THRESHOLD == 8 and LOOP_DETECTION_N == 3
 
 
