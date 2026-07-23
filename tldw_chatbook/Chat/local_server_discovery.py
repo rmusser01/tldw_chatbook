@@ -176,12 +176,16 @@ def build_local_server_candidates(
         if normalized in seen_urls:
             return
         seen_urls.add(normalized)
-        ordered.append(LocalServerCandidate(provider_key=provider_key, base_url=normalized))
+        ordered.append(
+            LocalServerCandidate(provider_key=provider_key, base_url=normalized)
+        )
 
     _add("llama_cpp", DEFAULT_LLAMACPP_DISCOVERY_URL)
     _add("ollama", DEFAULT_OLLAMA_DISCOVERY_URL)
 
-    api_settings = app_config.get("api_settings", {}) if isinstance(app_config, Mapping) else {}
+    api_settings = (
+        app_config.get("api_settings", {}) if isinstance(app_config, Mapping) else {}
+    )
     if not isinstance(api_settings, Mapping):
         return tuple(ordered)
     for provider_key in LOCAL_DISCOVERY_PROVIDER_KEYS:
@@ -323,7 +327,9 @@ async def probe_models_endpoint(
         return LocalModelProbeResult(
             ok=False,
             base_url=str(base_url or "").strip(),
-            detail=f"No models endpoint at {display}." if display else "Enter a base URL first.",
+            detail=f"No models endpoint at {display}."
+            if display
+            else "Enter a base URL first.",
         )
     display = endpoint_display(normalized)
     owns_client = http_client is None

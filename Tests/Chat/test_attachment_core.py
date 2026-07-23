@@ -6,7 +6,6 @@ from PIL import Image as PILImage
 from tldw_chatbook.Chat import attachment_core
 from tldw_chatbook.Chat.attachment_core import (
     DEFAULT_MAX_HISTORY_IMAGES,
-    PendingAttachment,
     image_content_parts,
     max_history_images,
     process_attachment_path,
@@ -146,9 +145,7 @@ def test_process_attachment_bytes_rejects_corrupt_and_oversized(monkeypatch):
 
     monkeypatch.setattr(attachment_core, "max_image_bytes", lambda: 4)
     with _pytest.raises(ValueError, match="too large"):
-        asyncio.run(
-            process_attachment_bytes(b"12345678", display_name="big.png")
-        )
+        asyncio.run(process_attachment_bytes(b"12345678", display_name="big.png"))
 
 
 def test_image_url_part_and_content_parts_agree():

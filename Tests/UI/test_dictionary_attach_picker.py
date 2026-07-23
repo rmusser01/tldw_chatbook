@@ -4,7 +4,9 @@ import pytest
 from textual.app import App
 from textual.widgets import Input, ListView
 
-from tldw_chatbook.Widgets.Persona_Widgets.dictionary_attach_picker import DictionaryAttachPicker
+from tldw_chatbook.Widgets.Persona_Widgets.dictionary_attach_picker import (
+    DictionaryAttachPicker,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -35,7 +37,7 @@ async def test_picker_returns_selected_string_id():
         await pilot.pause()
         await pilot.click("#dict-attach-confirm")
         await pilot.pause()
-    assert app.result == "conv-uuid-b"          # string id, not int
+    assert app.result == "conv-uuid-b"  # string id, not int
 
 
 async def test_picker_search_filters():

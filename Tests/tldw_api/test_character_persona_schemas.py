@@ -27,7 +27,9 @@ from tldw_chatbook.tldw_api.character_persona_schemas import (
 
 class TestCharacterPersonaSchemas:
     def test_character_response_parses_integer_character_id(self):
-        response = CharacterResponse.model_validate({"id": 7, "name": "Ada", "version": 2})
+        response = CharacterResponse.model_validate(
+            {"id": 7, "name": "Ada", "version": 2}
+        )
 
         assert response.id == 7
         assert response.name == "Ada"
@@ -61,7 +63,9 @@ class TestCharacterPersonaSchemas:
             PersonaExemplarCreate(persona_id="persona-1", content="hello")
 
     def test_persona_profile_create_accepts_string_ids(self):
-        profile = PersonaProfileCreate(id="persona-1", name="Guide", character_card_id=12)
+        profile = PersonaProfileCreate(
+            id="persona-1", name="Guide", character_card_id=12
+        )
 
         assert profile.id == "persona-1"
         assert profile.character_card_id == 12
@@ -139,7 +143,9 @@ class TestCharacterPersonaSchemas:
         assert request.persona_memory_mode == "read_write"
 
     def test_character_chat_session_create_requires_assistant_identity(self):
-        with pytest.raises(ValidationError, match="Provide either character_id or assistant_kind"):
+        with pytest.raises(
+            ValidationError, match="Provide either character_id or assistant_kind"
+        ):
             CharacterChatSessionCreate()
 
     def test_character_chat_session_update_normalizes_state_and_settings_payload(self):
@@ -151,7 +157,9 @@ class TestCharacterPersonaSchemas:
             "title": "Evening Chat 2",
             "state": "resolved",
         }
-        assert settings.model_dump(mode="json") == {"settings": {"authorNote": "Stay concise."}}
+        assert settings.model_dump(mode="json") == {
+            "settings": {"authorNote": "Stay concise."}
+        }
 
     def test_preset_create_requires_section_fields(self):
         with pytest.raises(ValidationError):

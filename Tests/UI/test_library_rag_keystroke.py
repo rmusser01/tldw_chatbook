@@ -65,13 +65,19 @@ async def test_query_edit_never_touches_results_or_history_widgets(monkeypatch):
         screen.query_one("#library-row-browse-search").press()
         await _wait_for_selector(screen, pilot, "#library-rag-query-input")
 
-        results_calls = _spy(monkeypatch, screen, "_refresh_library_rag_results_widgets")
+        results_calls = _spy(
+            monkeypatch, screen, "_refresh_library_rag_results_widgets"
+        )
         history_calls = _spy(monkeypatch, screen, "_refresh_library_rag_history_widget")
-        status_calls = _spy(monkeypatch, screen, "_refresh_library_rag_query_status_widgets")
+        status_calls = _spy(
+            monkeypatch, screen, "_refresh_library_rag_query_status_widgets"
+        )
 
         query_input = screen.query_one("#library-rag-query-input", Input)
         query_input.value = "policy question"
-        await screen.update_library_rag_query(Input.Changed(query_input, query_input.value))
+        await screen.update_library_rag_query(
+            Input.Changed(query_input, query_input.value)
+        )
 
         assert results_calls == []
         assert history_calls == []
@@ -109,7 +115,9 @@ async def test_query_edit_leaves_landed_results_visible_and_in_sync(monkeypatch)
 
         query_input = screen.query_one("#library-rag-query-input", Input)
         query_input.value = "first query"
-        await screen.update_library_rag_query(Input.Changed(query_input, query_input.value))
+        await screen.update_library_rag_query(
+            Input.Changed(query_input, query_input.value)
+        )
         await _wait_for_library_rag_query_ready(screen, pilot, "first query")
 
         screen.query_one("#library-rag-run-query", Button).press()
@@ -119,7 +127,9 @@ async def test_query_edit_leaves_landed_results_visible_and_in_sync(monkeypatch)
         assert len(landed_results) == 1
         result_widget_before = screen.query_one("#library-rag-result-0")
 
-        results_calls = _spy(monkeypatch, screen, "_refresh_library_rag_results_widgets")
+        results_calls = _spy(
+            monkeypatch, screen, "_refresh_library_rag_results_widgets"
+        )
         history_calls = _spy(monkeypatch, screen, "_refresh_library_rag_history_widget")
 
         # Type more text WITHOUT submitting -- results/history must not be
@@ -146,7 +156,11 @@ async def test_query_edit_unsticks_run_gate_after_prior_search_settles(monkeypat
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     service = _StaticLibraryRagSearchService(
-        {"results": [{"document_title": "Result A", "snippet": "s", "source_id": "id-1"}]}
+        {
+            "results": [
+                {"document_title": "Result A", "snippet": "s", "source_id": "id-1"}
+            ]
+        }
     )
     app.library_rag_search_service = service
     host = LibraryHarness(app)
@@ -160,7 +174,9 @@ async def test_query_edit_unsticks_run_gate_after_prior_search_settles(monkeypat
 
         query_input = screen.query_one("#library-rag-query-input", Input)
         query_input.value = "first query"
-        await screen.update_library_rag_query(Input.Changed(query_input, query_input.value))
+        await screen.update_library_rag_query(
+            Input.Changed(query_input, query_input.value)
+        )
         await _wait_for_library_rag_query_ready(screen, pilot, "first query")
 
         screen.query_one("#library-rag-run-query", Button).press()
@@ -168,7 +184,9 @@ async def test_query_edit_unsticks_run_gate_after_prior_search_settles(monkeypat
         assert screen._library_rag_retrieval_status == "ready"
 
         query_input.value = "second query"
-        await screen.update_library_rag_query(Input.Changed(query_input, query_input.value))
+        await screen.update_library_rag_query(
+            Input.Changed(query_input, query_input.value)
+        )
         await pilot.pause()
 
         run_button = screen.query_one("#library-rag-run-query", Button)
@@ -199,13 +217,19 @@ async def test_input_submitted_still_runs_the_full_refresh(monkeypatch):
 
         query_input = screen.query_one("#library-rag-query-input", Input)
         query_input.value = "policy question"
-        await screen.update_library_rag_query(Input.Changed(query_input, query_input.value))
+        await screen.update_library_rag_query(
+            Input.Changed(query_input, query_input.value)
+        )
         await _wait_for_library_rag_query_ready(screen, pilot, "policy question")
 
-        results_calls = _spy(monkeypatch, screen, "_refresh_library_rag_results_widgets")
+        results_calls = _spy(
+            monkeypatch, screen, "_refresh_library_rag_results_widgets"
+        )
         history_calls = _spy(monkeypatch, screen, "_refresh_library_rag_history_widget")
 
-        await screen.submit_library_rag_query(Input.Submitted(query_input, query_input.value))
+        await screen.submit_library_rag_query(
+            Input.Submitted(query_input, query_input.value)
+        )
         await _wait_for_selector(screen, pilot, "#library-rag-result-0")
 
         assert results_calls  # the full refresh path still rebuilds results...

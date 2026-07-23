@@ -51,7 +51,9 @@ async def test_local_research_search_service_lists_local_engines_and_launches_we
             },
         )
     ]
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "research.search.providers.list.local",
         "research.search.providers.launch.local",
     ]
@@ -70,8 +72,12 @@ async def test_local_research_search_service_rejects_non_local_engine_before_dis
 
 @pytest.mark.asyncio
 async def test_local_research_search_service_lists_and_launches_local_paper_search_providers():
-    arxiv_runner = Mock(return_value={"items": [{"id": "2401.00001"}], "total_results": 1})
-    semantic_runner = Mock(return_value={"items": [{"paperId": "abc"}], "total_results": 1})
+    arxiv_runner = Mock(
+        return_value={"items": [{"id": "2401.00001"}], "total_results": 1}
+    )
+    semantic_runner = Mock(
+        return_value={"items": [{"paperId": "abc"}], "total_results": 1}
+    )
     policy = Mock()
     service = LocalResearchSearchService(
         websearch_runner=Mock(return_value={}),
@@ -104,7 +110,9 @@ async def test_local_research_search_service_lists_and_launches_local_paper_sear
         "page": 1,
         "results_per_page": 10,
     }
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "research.search.providers.list.local",
         "research.search.providers.launch.local",
         "research.search.providers.launch.local",

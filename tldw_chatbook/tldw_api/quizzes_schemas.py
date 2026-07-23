@@ -5,7 +5,9 @@ from typing import Any, Literal, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field
 
 
-QuestionType = Literal["multiple_choice", "multi_select", "matching", "true_false", "fill_blank"]
+QuestionType = Literal[
+    "multiple_choice", "multi_select", "matching", "true_false", "fill_blank"
+]
 AnswerValue = Union[int, str, list[int], dict[str, str]]
 
 

@@ -52,7 +52,9 @@ def normalize_prompt_result(source: str, result: Any) -> Any:
     if isinstance(result, dict):
         if isinstance(result.get("items"), list):
             normalized = dict(result)
-            normalized["items"] = [normalize_prompt_record(source, item) for item in result["items"]]
+            normalized["items"] = [
+                normalize_prompt_record(source, item) for item in result["items"]
+            ]
             return normalized
         return normalize_prompt_record(source, result)
     return result
@@ -80,13 +82,18 @@ def normalize_prompt_version_result(source: str, result: Any) -> Any:
     if isinstance(result, dict):
         if isinstance(result.get("items"), list):
             normalized = dict(result)
-            normalized["items"] = [normalize_prompt_version_record(source, item) for item in result["items"]]
+            normalized["items"] = [
+                normalize_prompt_version_record(source, item)
+                for item in result["items"]
+            ]
             return normalized
         return normalize_prompt_version_record(source, result)
     return result
 
 
-def normalize_chatbook_record(source: str, record_type: str, record: Any) -> dict[str, Any]:
+def normalize_chatbook_record(
+    source: str, record_type: str, record: Any
+) -> dict[str, Any]:
     normalized = _as_dict(record)
     identifier = _record_identifier(normalized, "unsaved")
     normalized.setdefault("source", source)
@@ -101,7 +108,10 @@ def normalize_chatbook_result(source: str, record_type: str, result: Any) -> Any
     if isinstance(result, dict):
         if isinstance(result.get("items"), list):
             normalized = dict(result)
-            normalized["items"] = [normalize_chatbook_record(source, record_type, item) for item in result["items"]]
+            normalized["items"] = [
+                normalize_chatbook_record(source, record_type, item)
+                for item in result["items"]
+            ]
             return normalized
         return normalize_chatbook_record(source, record_type, result)
     return result

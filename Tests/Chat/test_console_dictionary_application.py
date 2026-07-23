@@ -12,6 +12,7 @@ class _Gateway:
         class _R:
             ready = True
             visible_copy = ""
+
         return _R()
 
     async def stream_chat(self, _resolution, _messages):
@@ -59,7 +60,10 @@ async def test_substitutes_final_user_string(warden_applier=_warden):
 async def test_substitutes_text_part_of_parts_list_leaving_images():
     controller, store = _controller(_warden)
     session = _session_with_conv(store)
-    image_part = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
+    image_part = {
+        "type": "image_url",
+        "image_url": {"url": "data:image/png;base64,AAAA"},
+    }
     messages = [
         {
             "role": ConsoleMessageRole.USER.value,
@@ -76,7 +80,9 @@ async def test_substitutes_text_part_of_parts_list_leaving_images():
 async def test_skips_skill_command_message():
     controller, store = _controller(_warden)
     session = _session_with_conv(store)
-    messages = [{"role": ConsoleMessageRole.USER.value, "content": "/Warden do a thing"}]
+    messages = [
+        {"role": ConsoleMessageRole.USER.value, "content": "/Warden do a thing"}
+    ]
     out = await controller._apply_chat_dictionaries(messages, session.id)
     assert out[-1]["content"] == "/Warden do a thing"
 

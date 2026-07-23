@@ -24,7 +24,9 @@ from tldw_chatbook.Widgets.Console.console_setup_modal import (
 _BLOCKED_CARD_STATE = ConsoleSetupCardState(
     mode="card",
     steps=(
-        ConsoleSetupStep(state="active", label="Connect a provider (API key or local server)"),
+        ConsoleSetupStep(
+            state="active", label="Connect a provider (API key or local server)"
+        ),
         ConsoleSetupStep(state="pending", label="Pick a model"),
         ConsoleSetupStep(state="pending", label="Send your first message"),
     ),
@@ -170,7 +172,9 @@ async def test_blocked_card_runs_discovery_once_and_offers_detected_server() -> 
 
 
 @pytest.mark.asyncio
-async def test_pressing_detected_server_saves_config_and_unlocks_card(monkeypatch) -> None:
+async def test_pressing_detected_server_saves_config_and_unlocks_card(
+    monkeypatch,
+) -> None:
     app = _blocked_console_app((_DETECTED_SERVER,))
     saved_sections: list[dict] = []
 

@@ -5,6 +5,7 @@ safe with any deterministic hash. This canonical form exists for cross-client pa
 (chat.message dedupe, restore/preview local-inventory comparison): all chatbook
 clients must hash identical payloads to identical digests.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -25,5 +26,7 @@ def canonical_payload_hash(payload: Mapping[str, Any]) -> str:
     Returns:
         Versioned SHA-256 digest string in ``sha256:<hex>`` format.
     """
-    encoded = json.dumps(dict(payload), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    encoded = json.dumps(dict(payload), sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"

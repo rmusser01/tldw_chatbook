@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
+
 if TYPE_CHECKING:
     from ..tldw_api import (
         TLDWAPIClient,
@@ -63,13 +64,17 @@ class ServerVoiceAssistantService:
             return self.client
         if self.client_provider is not None:
             return self.client_provider.build_client()
-        raise ValueError("TLDW API client is required for server Voice Assistant operations.")
+        raise ValueError(
+            "TLDW API client is required for server Voice Assistant operations."
+        )
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -78,11 +83,14 @@ class ServerVoiceAssistantService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
                     user_message=getattr(decision, "user_message", None)
                     or "Server Voice Assistant action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @classmethod
@@ -145,7 +153,11 @@ class ServerVoiceAssistantService:
             self._command_request(request_data)
         )
         payload = self._dump(response)
-        session_id = payload.get("session_id", "unknown") if isinstance(payload, dict) else "unknown"
+        session_id = (
+            payload.get("session_id", "unknown")
+            if isinstance(payload, dict)
+            else "unknown"
+        )
         return self._normalize(payload, record_id=f"server:voice_command:{session_id}")
 
     async def list_commands(
@@ -169,12 +181,18 @@ class ServerVoiceAssistantService:
             self._command_definition(request_data)
         )
         payload = self._dump(response)
-        command_id = payload.get("id", "unknown") if isinstance(payload, dict) else "unknown"
+        command_id = (
+            payload.get("id", "unknown") if isinstance(payload, dict) else "unknown"
+        )
         return self._normalize(payload, record_id=f"server:voice_command:{command_id}")
 
-    async def get_command(self, command_id: str, *, persona_id: str | None = None) -> dict[str, Any]:
+    async def get_command(
+        self, command_id: str, *, persona_id: str | None = None
+    ) -> dict[str, Any]:
         self._enforce("voice_assistant.commands.detail.server")
-        response = await self._require_client().get_voice_command(command_id, persona_id=persona_id)
+        response = await self._require_client().get_voice_command(
+            command_id, persona_id=persona_id
+        )
         return self._normalize(response, record_id=f"server:voice_command:{command_id}")
 
     async def update_command(
@@ -207,24 +225,48 @@ class ServerVoiceAssistantService:
         )
         return self._normalize(response, record_id=f"server:voice_command:{command_id}")
 
-    async def validate_command(self, command_id: str, *, persona_id: str | None = None) -> dict[str, Any]:
+    async def validate_command(
+        self, command_id: str, *, persona_id: str | None = None
+    ) -> dict[str, Any]:
         self._enforce("voice_assistant.commands.preview.server")
-        response = await self._require_client().validate_voice_command(command_id, persona_id=persona_id)
-        return self._normalize(response, record_id=f"server:voice_command_validation:{command_id}")
+        response = await self._require_client().validate_voice_command(
+            command_id, persona_id=persona_id
+        )
+        return self._normalize(
+            response, record_id=f"server:voice_command_validation:{command_id}"
+        )
 
-    async def get_command_usage(self, command_id: str, *, days: int = 30) -> dict[str, Any]:
+    async def get_command_usage(
+        self, command_id: str, *, days: int = 30
+    ) -> dict[str, Any]:
         self._enforce("voice_assistant.commands.observe.server")
-        response = await self._require_client().get_voice_command_usage(command_id, days=days)
-        return self._normalize(response, record_id=f"server:voice_command_usage:{command_id}")
+        response = await self._require_client().get_voice_command_usage(
+            command_id, days=days
+        )
+        return self._normalize(
+            response, record_id=f"server:voice_command_usage:{command_id}"
+        )
 
-    async def delete_command(self, command_id: str, *, persona_id: str | None = None) -> dict[str, Any]:
+    async def delete_command(
+        self, command_id: str, *, persona_id: str | None = None
+    ) -> dict[str, Any]:
         self._enforce("voice_assistant.commands.delete.server")
-        await self._require_client().delete_voice_command(command_id, persona_id=persona_id)
-        return {"backend": "server", "record_id": f"server:voice_command:{command_id}", "deleted": True}
+        await self._require_client().delete_voice_command(
+            command_id, persona_id=persona_id
+        )
+        return {
+            "backend": "server",
+            "record_id": f"server:voice_command:{command_id}",
+            "deleted": True,
+        }
 
-    async def list_sessions(self, *, active_only: bool = True, limit: int = 100) -> dict[str, Any]:
+    async def list_sessions(
+        self, *, active_only: bool = True, limit: int = 100
+    ) -> dict[str, Any]:
         self._enforce("voice_assistant.sessions.list.server")
-        response = await self._require_client().list_voice_sessions(active_only=active_only, limit=limit)
+        response = await self._require_client().list_voice_sessions(
+            active_only=active_only, limit=limit
+        )
         return self._normalize(response, record_id="server:voice_sessions")
 
     async def get_session(self, session_id: str) -> dict[str, Any]:
@@ -235,7 +277,11 @@ class ServerVoiceAssistantService:
     async def delete_session(self, session_id: str) -> dict[str, Any]:
         self._enforce("voice_assistant.sessions.delete.server")
         await self._require_client().delete_voice_session(session_id)
-        return {"backend": "server", "record_id": f"server:voice_session:{session_id}", "deleted": True}
+        return {
+            "backend": "server",
+            "record_id": f"server:voice_session:{session_id}",
+            "deleted": True,
+        }
 
     async def get_analytics(self, *, days: int = 7) -> dict[str, Any]:
         self._enforce("voice_assistant.analytics.observe.server")
@@ -248,5 +294,9 @@ class ServerVoiceAssistantService:
             self._dry_run_request(request_data)
         )
         payload = self._dump(response)
-        phrase = payload.get("phrase", "unknown") if isinstance(payload, dict) else "unknown"
-        return self._normalize(payload, record_id=f"server:voice_command_dry_run:{phrase}")
+        phrase = (
+            payload.get("phrase", "unknown") if isinstance(payload, dict) else "unknown"
+        )
+        return self._normalize(
+            payload, record_id=f"server:voice_command_dry_run:{phrase}"
+        )

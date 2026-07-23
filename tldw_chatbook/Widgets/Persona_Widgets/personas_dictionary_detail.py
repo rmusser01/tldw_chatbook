@@ -180,8 +180,12 @@ class PersonasDictionaryDetailWidget(Vertical):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._entries: list[dict] = []
-        self._loaded_settings: dict | None = None  # last-loaded settings snapshot; dirty = value diff
-        self._last_dirty_sent: bool = False  # last dirty state posted via DictionarySettingsEdited
+        self._loaded_settings: dict | None = (
+            None  # last-loaded settings snapshot; dirty = value diff
+        )
+        self._last_dirty_sent: bool = (
+            False  # last dirty state posted via DictionarySettingsEdited
+        )
         self._validation_findings: list = []  # index-aligned with the validation OptionList's options
         self._attachment_rows: list[dict] = []
 
@@ -200,21 +204,67 @@ class PersonasDictionaryDetailWidget(Vertical):
                     yield DataTable(id="personas-dict-entries-table", cursor_type="row")
                     yield Static("", id="personas-dict-entry-error", markup=False)
                     with Horizontal(classes="personas-dict-form-row"):
-                        yield Input(placeholder="Pattern", id="personas-dict-entry-pattern")
-                        yield Switch(value=False, id="personas-dict-entry-regex", tooltip="Regex pattern")
-                        yield Input(placeholder="Probability %", id="personas-dict-entry-probability", value="100")
+                        yield Input(
+                            placeholder="Pattern", id="personas-dict-entry-pattern"
+                        )
+                        yield Switch(
+                            value=False,
+                            id="personas-dict-entry-regex",
+                            tooltip="Regex pattern",
+                        )
+                        yield Input(
+                            placeholder="Probability %",
+                            id="personas-dict-entry-probability",
+                            value="100",
+                        )
                         yield Input(placeholder="Group", id="personas-dict-entry-group")
-                        yield Input(placeholder="Max repl.", id="personas-dict-entry-max-repl", value="1")
-                        yield Switch(value=True, id="personas-dict-entry-enabled", tooltip="Entry enabled")
-                        yield Switch(value=False, id="personas-dict-entry-case", tooltip="Case-sensitive (literal keys)")
-                        yield Input(placeholder="Priority", id="personas-dict-entry-priority", value="0")
+                        yield Input(
+                            placeholder="Max repl.",
+                            id="personas-dict-entry-max-repl",
+                            value="1",
+                        )
+                        yield Switch(
+                            value=True,
+                            id="personas-dict-entry-enabled",
+                            tooltip="Entry enabled",
+                        )
+                        yield Switch(
+                            value=False,
+                            id="personas-dict-entry-case",
+                            tooltip="Case-sensitive (literal keys)",
+                        )
+                        yield Input(
+                            placeholder="Priority",
+                            id="personas-dict-entry-priority",
+                            value="0",
+                        )
                     yield TextArea(id="personas-dict-entry-replacement")
                     with Horizontal(classes="personas-dict-form-row"):
-                        yield Button("Add", id="personas-dict-entry-add", classes="console-action-secondary")
-                        yield Button("Update", id="personas-dict-entry-update", classes="console-action-secondary")
-                        yield Button("Delete", id="personas-dict-entry-delete", classes="console-action-secondary")
-                        yield Button("Move up", id="personas-dict-entry-up", classes="console-action-secondary")
-                        yield Button("Move down", id="personas-dict-entry-down", classes="console-action-secondary")
+                        yield Button(
+                            "Add",
+                            id="personas-dict-entry-add",
+                            classes="console-action-secondary",
+                        )
+                        yield Button(
+                            "Update",
+                            id="personas-dict-entry-update",
+                            classes="console-action-secondary",
+                        )
+                        yield Button(
+                            "Delete",
+                            id="personas-dict-entry-delete",
+                            classes="console-action-secondary",
+                        )
+                        yield Button(
+                            "Move up",
+                            id="personas-dict-entry-up",
+                            classes="console-action-secondary",
+                        )
+                        yield Button(
+                            "Move down",
+                            id="personas-dict-entry-down",
+                            classes="console-action-secondary",
+                        )
                     yield OptionList(id="personas-dict-validation")
             with TabPane("Settings", id="personas-dict-tab-settings"):
                 yield Input(placeholder="Name", id="personas-dict-name")
@@ -225,29 +275,70 @@ class PersonasDictionaryDetailWidget(Vertical):
                     value="sorted_evenly",
                     allow_blank=False,
                 )
-                yield Input(placeholder="Token budget", id="personas-dict-max-tokens", value="1000")
+                yield Input(
+                    placeholder="Token budget",
+                    id="personas-dict-max-tokens",
+                    value="1000",
+                )
                 with Horizontal(classes="personas-dict-form-row"):
                     yield Static("Enabled", markup=False)
                     yield Switch(value=True, id="personas-dict-enabled")
-                yield Button("Save settings", id="personas-dict-settings-save", classes="console-action-secondary")
+                yield Button(
+                    "Save settings",
+                    id="personas-dict-settings-save",
+                    classes="console-action-secondary",
+                )
                 with Horizontal(classes="personas-dict-form-row"):
-                    yield Button("Export JSON", id="personas-dict-export-json", classes="console-action-secondary")
-                    yield Button("Export Markdown", id="personas-dict-export-md", classes="console-action-secondary")
-                yield Static("Exports read the last saved state.", id="personas-dict-export-note", markup=False, classes="destination-purpose")
+                    yield Button(
+                        "Export JSON",
+                        id="personas-dict-export-json",
+                        classes="console-action-secondary",
+                    )
+                    yield Button(
+                        "Export Markdown",
+                        id="personas-dict-export-md",
+                        classes="console-action-secondary",
+                    )
+                yield Static(
+                    "Exports read the last saved state.",
+                    id="personas-dict-export-note",
+                    markup=False,
+                    classes="destination-purpose",
+                )
             with TabPane("Stats", id="personas-dict-tab-stats"):
                 yield Static("", id="personas-dict-stats-body", markup=False)
             with TabPane("Versions", id="personas-dict-tab-versions"):
                 yield DataTable(id="personas-dict-versions-table", cursor_type="row")
                 with Horizontal(classes="personas-dict-form-row"):
-                    yield Button("View", id="personas-dict-version-view", classes="console-action-secondary")
-                    yield Button("Revert…", id="personas-dict-version-revert", classes="console-action-secondary")
+                    yield Button(
+                        "View",
+                        id="personas-dict-version-view",
+                        classes="console-action-secondary",
+                    )
+                    yield Button(
+                        "Revert…",
+                        id="personas-dict-version-revert",
+                        classes="console-action-secondary",
+                    )
                 yield Static("", id="personas-dict-version-snapshot", markup=False)
             with TabPane("Attachments", id="personas-dict-tab-attachments"):
-                yield Static("Not attached to any conversation yet.", id="personas-dict-attachments-empty", markup=False)
+                yield Static(
+                    "Not attached to any conversation yet.",
+                    id="personas-dict-attachments-empty",
+                    markup=False,
+                )
                 yield DataTable(id="personas-dict-attachments-table", cursor_type="row")
                 with Horizontal(classes="personas-dict-form-row"):
-                    yield Button("Attach to conversation…", id="personas-dict-attach-add", classes="console-action-secondary")
-                    yield Button("Detach", id="personas-dict-attach-detach", classes="console-action-secondary")
+                    yield Button(
+                        "Attach to conversation…",
+                        id="personas-dict-attach-add",
+                        classes="console-action-secondary",
+                    )
+                    yield Button(
+                        "Detach",
+                        id="personas-dict-attach-detach",
+                        classes="console-action-secondary",
+                    )
         yield Static("", id="personas-dict-status", markup=False)
 
     def on_mount(self) -> None:
@@ -260,7 +351,9 @@ class PersonasDictionaryDetailWidget(Vertical):
         table.add_columns("pattern", "replacement", "type", "prob %", "group", "pri")
         versions_table = self.query_one("#personas-dict-versions-table", DataTable)
         versions_table.add_columns("rev", "action", "name", "created")
-        self.query_one("#personas-dict-attachments-table", DataTable).add_columns("conversation", "id")
+        self.query_one("#personas-dict-attachments-table", DataTable).add_columns(
+            "conversation", "id"
+        )
 
     # ----- public API -----
 
@@ -274,12 +367,18 @@ class PersonasDictionaryDetailWidget(Vertical):
         Returns:
             None.
         """
-        self.query_one("#personas-dict-name", Input).value = str(record.get("name") or "")
-        self.query_one("#personas-dict-description", TextArea).text = str(record.get("description") or "")
+        self.query_one("#personas-dict-name", Input).value = str(
+            record.get("name") or ""
+        )
+        self.query_one("#personas-dict-description", TextArea).text = str(
+            record.get("description") or ""
+        )
         strategy = str(record.get("strategy") or "sorted_evenly")
         if strategy in STRATEGIES:
             self.query_one("#personas-dict-strategy", Select).value = strategy
-        self.query_one("#personas-dict-max-tokens", Input).value = str(record.get("max_tokens") or 1000)
+        self.query_one("#personas-dict-max-tokens", Input).value = str(
+            record.get("max_tokens") or 1000
+        )
         self.query_one("#personas-dict-enabled", Switch).value = bool(
             record.get("enabled", record.get("is_active", True))
         )
@@ -339,7 +438,9 @@ class PersonasDictionaryDetailWidget(Vertical):
         if any(priorities):
             lines.append(f"Priority: {min(priorities)}..{max(priorities)}")
         if stats is not None:
-            lines.append(f"Dictionary enabled: {'yes' if stats.get('enabled', True) else 'no'}")
+            lines.append(
+                f"Dictionary enabled: {'yes' if stats.get('enabled', True) else 'no'}"
+            )
         self.query_one("#personas-dict-stats-body", Static).update("\n".join(lines))
 
     def load_versions(self, summaries: list[dict]) -> None:
@@ -376,7 +477,9 @@ class PersonasDictionaryDetailWidget(Vertical):
         ]
         if snapshot.get("description"):
             lines.append(f"description: {str(snapshot.get('description'))[:80]}")
-        self.query_one("#personas-dict-version-snapshot", Static).update("\n".join(lines))
+        self.query_one("#personas-dict-version-snapshot", Static).update(
+            "\n".join(lines)
+        )
 
     def _selected_revision(self) -> int | None:
         table = self.query_one("#personas-dict-versions-table", DataTable)
@@ -412,7 +515,9 @@ class PersonasDictionaryDetailWidget(Vertical):
         if table.row_count == 0 or table.cursor_row is None or table.cursor_row < 0:
             return None
         try:
-            return str(table.coordinate_to_cell_key((table.cursor_row, 0)).row_key.value)
+            return str(
+                table.coordinate_to_cell_key((table.cursor_row, 0)).row_key.value
+            )
         except Exception:
             return None
 
@@ -431,16 +536,24 @@ class PersonasDictionaryDetailWidget(Vertical):
         try:
             findings = validate_entries(self._entries)
         except Exception:
-            logger.opt(exception=True).warning("Dictionary validation failed; panel left empty.")
+            logger.opt(exception=True).warning(
+                "Dictionary validation failed; panel left empty."
+            )
             self._validation_findings = []
             return
         self._validation_findings = findings
         for finding in findings:
             pattern = next(
-                (str(e.get("pattern") or "") for e in self._entries if str(e.get("id")) == str(finding.entry_id)),
+                (
+                    str(e.get("pattern") or "")
+                    for e in self._entries
+                    if str(e.get("id")) == str(finding.entry_id)
+                ),
                 "",
             )
-            panel.add_option(Option(Text(f"[{finding.code}] {pattern} — {finding.message}")))
+            panel.add_option(
+                Option(Text(f"[{finding.code}] {pattern} — {finding.message}"))
+            )
 
     def apply_enabled(self, enabled: bool) -> None:
         """Reflect an externally-toggled enabled flag without touching other fields.
@@ -468,7 +581,9 @@ class PersonasDictionaryDetailWidget(Vertical):
         self._validation_findings = []
         self._attachment_rows = []
         self.query_one("#personas-dict-entries-table", DataTable).clear()
-        attachments_table = self.query_one("#personas-dict-attachments-table", DataTable)
+        attachments_table = self.query_one(
+            "#personas-dict-attachments-table", DataTable
+        )
         attachments_table.clear()
         attachments_table.display = False
         self.query_one("#personas-dict-attachments-empty", Static).display = True
@@ -510,7 +625,10 @@ class PersonasDictionaryDetailWidget(Vertical):
         if not pattern:
             error.update("A pattern is required (an empty pattern can never fire).")
             return None
-        raw_prob = self.query_one("#personas-dict-entry-probability", Input).value.strip() or "100"
+        raw_prob = (
+            self.query_one("#personas-dict-entry-probability", Input).value.strip()
+            or "100"
+        )
         try:
             prob_pct = int(raw_prob)
             if not 0 <= prob_pct <= 100:
@@ -518,7 +636,9 @@ class PersonasDictionaryDetailWidget(Vertical):
         except ValueError:
             error.update("Probability must be a whole number 0-100.")
             return None
-        raw_max = self.query_one("#personas-dict-entry-max-repl", Input).value.strip() or "1"
+        raw_max = (
+            self.query_one("#personas-dict-entry-max-repl", Input).value.strip() or "1"
+        )
         try:
             max_repl = int(raw_max)
             if max_repl < 1:
@@ -526,7 +646,9 @@ class PersonasDictionaryDetailWidget(Vertical):
         except ValueError:
             error.update("Max replacements must be a positive whole number.")
             return None
-        raw_priority = self.query_one("#personas-dict-entry-priority", Input).value.strip() or "0"
+        raw_priority = (
+            self.query_one("#personas-dict-entry-priority", Input).value.strip() or "0"
+        )
         try:
             priority = int(raw_priority)
         except ValueError:
@@ -536,18 +658,28 @@ class PersonasDictionaryDetailWidget(Vertical):
         group = self.query_one("#personas-dict-entry-group", Input).value.strip()
         return {
             "pattern": pattern,
-            "replacement": self.query_one("#personas-dict-entry-replacement", TextArea).text,
-            "type": "regex" if self.query_one("#personas-dict-entry-regex", Switch).value else "literal",
+            "replacement": self.query_one(
+                "#personas-dict-entry-replacement", TextArea
+            ).text,
+            "type": "regex"
+            if self.query_one("#personas-dict-entry-regex", Switch).value
+            else "literal",
             "probability": prob_pct / 100,
             "group": group or None,
             "max_replacements": max_repl,
-            "enabled": bool(self.query_one("#personas-dict-entry-enabled", Switch).value),
-            "case_sensitive": bool(self.query_one("#personas-dict-entry-case", Switch).value),
+            "enabled": bool(
+                self.query_one("#personas-dict-entry-enabled", Switch).value
+            ),
+            "case_sensitive": bool(
+                self.query_one("#personas-dict-entry-case", Switch).value
+            ),
             "priority": priority,
         }
 
     def settings_payload(self) -> dict:
-        raw_tokens = self.query_one("#personas-dict-max-tokens", Input).value.strip() or "1000"
+        raw_tokens = (
+            self.query_one("#personas-dict-max-tokens", Input).value.strip() or "1000"
+        )
         try:
             max_tokens = max(1, int(raw_tokens))
         except ValueError:
@@ -570,17 +702,33 @@ class PersonasDictionaryDetailWidget(Vertical):
         entry = next((e for e in self._entries if str(e.get("id")) == entry_id), None)
         if entry is None:
             return
-        self.query_one("#personas-dict-entry-pattern", Input).value = str(entry.get("pattern") or "")
-        self.query_one("#personas-dict-entry-replacement", TextArea).text = str(entry.get("replacement") or "")
-        self.query_one("#personas-dict-entry-regex", Switch).value = entry.get("type") == "regex"
+        self.query_one("#personas-dict-entry-pattern", Input).value = str(
+            entry.get("pattern") or ""
+        )
+        self.query_one("#personas-dict-entry-replacement", TextArea).text = str(
+            entry.get("replacement") or ""
+        )
+        self.query_one("#personas-dict-entry-regex", Switch).value = (
+            entry.get("type") == "regex"
+        )
         self.query_one("#personas-dict-entry-probability", Input).value = str(
             _prob_pct(entry.get("probability"))
         )
-        self.query_one("#personas-dict-entry-group", Input).value = str(entry.get("group") or "")
-        self.query_one("#personas-dict-entry-max-repl", Input).value = str(entry.get("max_replacements") or 1)
-        self.query_one("#personas-dict-entry-enabled", Switch).value = bool(entry.get("enabled", True))
-        self.query_one("#personas-dict-entry-case", Switch).value = bool(entry.get("case_sensitive", False))
-        self.query_one("#personas-dict-entry-priority", Input).value = str(int(entry.get("priority") or 0))
+        self.query_one("#personas-dict-entry-group", Input).value = str(
+            entry.get("group") or ""
+        )
+        self.query_one("#personas-dict-entry-max-repl", Input).value = str(
+            entry.get("max_replacements") or 1
+        )
+        self.query_one("#personas-dict-entry-enabled", Switch).value = bool(
+            entry.get("enabled", True)
+        )
+        self.query_one("#personas-dict-entry-case", Switch).value = bool(
+            entry.get("case_sensitive", False)
+        )
+        self.query_one("#personas-dict-entry-priority", Input).value = str(
+            int(entry.get("priority") or 0)
+        )
 
     @on(DataTable.RowSelected, "#personas-dict-entries-table")
     def _row_selected(self, event: DataTable.RowSelected) -> None:
@@ -623,7 +771,9 @@ class PersonasDictionaryDetailWidget(Vertical):
         event.stop()
         entry_id = self.selected_entry_id
         if entry_id is None:
-            self.query_one("#personas-dict-entry-error", Static).update("Select an entry row first.")
+            self.query_one("#personas-dict-entry-error", Static).update(
+                "Select an entry row first."
+            )
             return
         payload = self.form_payload()
         if payload is not None:
@@ -634,7 +784,9 @@ class PersonasDictionaryDetailWidget(Vertical):
         event.stop()
         entry_id = self.selected_entry_id
         if entry_id is None:
-            self.query_one("#personas-dict-entry-error", Static).update("Select an entry row first.")
+            self.query_one("#personas-dict-entry-error", Static).update(
+                "Select an entry row first."
+            )
             return
         self.post_message(DictionaryEntryDeleteRequested(entry_id))
 
@@ -642,7 +794,9 @@ class PersonasDictionaryDetailWidget(Vertical):
         entry_id = self.selected_entry_id
         ids = self.entry_ids_in_order()
         if entry_id is None or entry_id not in ids:
-            self.query_one("#personas-dict-entry-error", Static).update("Select an entry row first.")
+            self.query_one("#personas-dict-entry-error", Static).update(
+                "Select an entry row first."
+            )
             return
         index = ids.index(entry_id)
         target = index + offset

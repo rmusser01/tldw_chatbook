@@ -52,8 +52,14 @@ class CCPPersonaHandler:
         """Resolve the active chat identifier for chat-scoped execution helpers."""
         candidates = (
             chat_id,
-            getattr(getattr(self.window, "state", None), "selected_conversation_id", None),
-            getattr(getattr(self.window, "conversation_handler", None), "current_conversation_id", None),
+            getattr(
+                getattr(self.window, "state", None), "selected_conversation_id", None
+            ),
+            getattr(
+                getattr(self.window, "conversation_handler", None),
+                "current_conversation_id",
+                None,
+            ),
         )
         for candidate in candidates:
             if candidate not in {None, ""}:
@@ -72,16 +78,16 @@ class CCPPersonaHandler:
         normalized["name"] = str(normalized.get("name", "") or "")
         normalized["mode"] = normalized.get("mode") or "session_scoped"
         normalized["system_prompt"] = str(
-            normalized.get("system_prompt")
-            or normalized.get("description")
-            or ""
+            normalized.get("system_prompt") or normalized.get("description") or ""
         )
         return normalized
 
     def _normalize_persona_list(self, payload: Any) -> List[Dict[str, Any]]:
         """Normalize persona collection responses across local and server backends."""
         items = payload.get("items", []) if isinstance(payload, dict) else payload
-        normalized_items = [self._normalize_persona_record(item) for item in list(items or [])]
+        normalized_items = [
+            self._normalize_persona_record(item) for item in list(items or [])
+        ]
         return [item for item in normalized_items if item.get("id")]
 
     def _load_editor(self, persona_data: Dict[str, Any]) -> None:
@@ -91,7 +97,9 @@ class CCPPersonaHandler:
             if hasattr(editor, "load_persona"):
                 editor.load_persona(persona_data)
         except Exception:
-            logger.opt(exception=True).debug("Persona editor widget unavailable during load")
+            logger.opt(exception=True).debug(
+                "Persona editor widget unavailable during load"
+            )
 
     async def refresh_persona_list(
         self, *, raise_on_unavailable: bool = False
@@ -115,7 +123,9 @@ class CCPPersonaHandler:
         """
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         if service is None or not hasattr(service, "list_persona_profiles"):
-            logger.debug("Persona scope service unavailable; returning empty persona list")
+            logger.debug(
+                "Persona scope service unavailable; returning empty persona list"
+            )
             if raise_on_unavailable:
                 raise RuntimeError("Persona profile service is unavailable.")
             self.persona_list = []
@@ -147,7 +157,9 @@ class CCPPersonaHandler:
         """Load a persona profile by identifier via the mode-aware scope service."""
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         if service is None or not hasattr(service, "get_persona_profile"):
-            logger.warning("Persona scope service unavailable; cannot load persona {}", persona_id)
+            logger.warning(
+                "Persona scope service unavailable; cannot load persona {}", persona_id
+            )
             self._notify("Persona profiles are not available in the current backend.")
             return
 
@@ -157,7 +169,9 @@ class CCPPersonaHandler:
                 mode=self._current_mode(),
             )
         except ValueError as exc:
-            logger.warning("Persona {} unavailable in current mode: {}", persona_id, exc)
+            logger.warning(
+                "Persona {} unavailable in current mode: {}", persona_id, exc
+            )
             self._notify(str(exc))
             return
         except Exception:
@@ -265,7 +279,9 @@ class CCPPersonaHandler:
         normalized = self._normalize_persona_record(result)
         if not normalized:
             normalized = self._normalize_persona_record(persona_data)
-            normalized.setdefault("id", self.current_persona_id or str(persona_data.get("id", "") or ""))
+            normalized.setdefault(
+                "id", self.current_persona_id or str(persona_data.get("id", "") or "")
+            )
 
         self.current_persona_id = normalized.get("id") or self.current_persona_id
         self.current_persona_data = normalized
@@ -285,7 +301,9 @@ class CCPPersonaHandler:
         """List server chat greetings for the active CCP conversation."""
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         if service is None or not hasattr(service, "list_chat_greetings"):
-            self._notify("Chat greeting execution support is not available in the current backend.")
+            self._notify(
+                "Chat greeting execution support is not available in the current backend."
+            )
             return {}
 
         try:
@@ -294,7 +312,9 @@ class CCPPersonaHandler:
                 mode=self._current_mode(),
             )
         except ValueError as exc:
-            logger.warning("Chat greetings unavailable in {} mode: {}", self._current_mode(), exc)
+            logger.warning(
+                "Chat greetings unavailable in {} mode: {}", self._current_mode(), exc
+            )
             self._notify(str(exc))
             return {}
         except Exception:
@@ -302,11 +322,15 @@ class CCPPersonaHandler:
             self._notify("Failed to load chat greetings.", severity="error")
             return {}
 
-    async def select_chat_greeting(self, index: int, chat_id: str | None = None) -> Dict[str, Any]:
+    async def select_chat_greeting(
+        self, index: int, chat_id: str | None = None
+    ) -> Dict[str, Any]:
         """Select a greeting for the active CCP conversation."""
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         if service is None or not hasattr(service, "select_chat_greeting"):
-            self._notify("Chat greeting execution support is not available in the current backend.")
+            self._notify(
+                "Chat greeting execution support is not available in the current backend."
+            )
             return {}
 
         try:
@@ -316,7 +340,11 @@ class CCPPersonaHandler:
                 mode=self._current_mode(),
             )
         except ValueError as exc:
-            logger.warning("Chat greeting selection unavailable in {} mode: {}", self._current_mode(), exc)
+            logger.warning(
+                "Chat greeting selection unavailable in {} mode: {}",
+                self._current_mode(),
+                exc,
+            )
             self._notify(str(exc))
             return {}
         except Exception:
@@ -328,13 +356,17 @@ class CCPPersonaHandler:
         """List server chat prompt presets available to CCP execution."""
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         if service is None or not hasattr(service, "list_chat_presets"):
-            self._notify("Chat preset execution support is not available in the current backend.")
+            self._notify(
+                "Chat preset execution support is not available in the current backend."
+            )
             return {}
 
         try:
             return await service.list_chat_presets(mode=self._current_mode())
         except ValueError as exc:
-            logger.warning("Chat presets unavailable in {} mode: {}", self._current_mode(), exc)
+            logger.warning(
+                "Chat presets unavailable in {} mode: {}", self._current_mode(), exc
+            )
             self._notify(str(exc))
             return {}
         except Exception:
@@ -346,13 +378,21 @@ class CCPPersonaHandler:
         """Create a server chat prompt preset through the shared scope service."""
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         if service is None or not hasattr(service, "create_chat_preset"):
-            self._notify("Chat preset execution support is not available in the current backend.")
+            self._notify(
+                "Chat preset execution support is not available in the current backend."
+            )
             return {}
 
         try:
-            return await service.create_chat_preset(request_data, mode=self._current_mode())
+            return await service.create_chat_preset(
+                request_data, mode=self._current_mode()
+            )
         except ValueError as exc:
-            logger.warning("Chat preset creation unavailable in {} mode: {}", self._current_mode(), exc)
+            logger.warning(
+                "Chat preset creation unavailable in {} mode: {}",
+                self._current_mode(),
+                exc,
+            )
             self._notify(str(exc))
             return {}
         except Exception:
@@ -360,11 +400,15 @@ class CCPPersonaHandler:
             self._notify("Failed to create chat preset.", severity="error")
             return {}
 
-    async def update_chat_preset(self, preset_id: str, request_data: Any) -> Dict[str, Any]:
+    async def update_chat_preset(
+        self, preset_id: str, request_data: Any
+    ) -> Dict[str, Any]:
         """Update a server chat prompt preset through the shared scope service."""
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         if service is None or not hasattr(service, "update_chat_preset"):
-            self._notify("Chat preset execution support is not available in the current backend.")
+            self._notify(
+                "Chat preset execution support is not available in the current backend."
+            )
             return {}
 
         try:
@@ -374,7 +418,11 @@ class CCPPersonaHandler:
                 mode=self._current_mode(),
             )
         except ValueError as exc:
-            logger.warning("Chat preset update unavailable in {} mode: {}", self._current_mode(), exc)
+            logger.warning(
+                "Chat preset update unavailable in {} mode: {}",
+                self._current_mode(),
+                exc,
+            )
             self._notify(str(exc))
             return {}
         except Exception:
@@ -386,13 +434,21 @@ class CCPPersonaHandler:
         """Delete a server chat prompt preset through the shared scope service."""
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         if service is None or not hasattr(service, "delete_chat_preset"):
-            self._notify("Chat preset execution support is not available in the current backend.")
+            self._notify(
+                "Chat preset execution support is not available in the current backend."
+            )
             return {}
 
         try:
-            return await service.delete_chat_preset(preset_id, mode=self._current_mode())
+            return await service.delete_chat_preset(
+                preset_id, mode=self._current_mode()
+            )
         except ValueError as exc:
-            logger.warning("Chat preset delete unavailable in {} mode: {}", self._current_mode(), exc)
+            logger.warning(
+                "Chat preset delete unavailable in {} mode: {}",
+                self._current_mode(),
+                exc,
+            )
             self._notify(str(exc))
             return {}
         except Exception:

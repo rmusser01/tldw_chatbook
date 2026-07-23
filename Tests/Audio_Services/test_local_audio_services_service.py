@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from tldw_chatbook.Audio_Services_Interop.local_audio_services_service import LocalAudioServicesService
+from tldw_chatbook.Audio_Services_Interop.local_audio_services_service import (
+    LocalAudioServicesService,
+)
 
 
 @pytest.mark.asyncio
@@ -68,7 +70,9 @@ async def test_local_audio_service_generates_speech_and_persists_history(tmp_pat
     assert detail["text"] == "Hello from local Chatbook."
     assert detail["content"] == b"local-audio"
 
-    reloaded = LocalAudioServicesService(history_store_path=tmp_path / "audio-history.json")
+    reloaded = LocalAudioServicesService(
+        history_store_path=tmp_path / "audio-history.json"
+    )
     reloaded_detail = await reloaded.get_tts_history_entry(1)
     assert reloaded_detail["content"] == b"local-audio"
     assert reloaded_detail["text"] == "Hello from local Chatbook."
@@ -83,14 +87,21 @@ async def test_local_audio_service_updates_and_deletes_history_entries(tmp_path)
         tts_audio_generator=fake_generator,
         history_store_path=tmp_path / "audio-history.json",
     )
-    await service.create_audio_speech({"model": "kokoro", "input": "One", "response_format": "mp3"})
+    await service.create_audio_speech(
+        {"model": "kokoro", "input": "One", "response_format": "mp3"}
+    )
 
     updated = await service.update_tts_history_favorite(1, {"favorite": True})
     assert updated["favorite"] is True
 
     deleted = await service.delete_tts_history_entry(1)
     assert deleted == {"id": 1, "deleted": True}
-    assert await service.list_tts_history() == {"items": [], "limit": 50, "offset": 0, "total": 0}
+    assert await service.list_tts_history() == {
+        "items": [],
+        "limit": 50,
+        "offset": 0,
+        "total": 0,
+    }
 
 
 @pytest.mark.asyncio

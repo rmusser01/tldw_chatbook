@@ -77,13 +77,19 @@ def _history_item() -> dict:
 
 
 @pytest.mark.asyncio
-async def test_audio_routes_wire_speech_jobs_history_and_transcription(monkeypatch, tmp_path):
+async def test_audio_routes_wire_speech_jobs_history_and_transcription(
+    monkeypatch, tmp_path
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
             {
                 "status": "healthy",
-                "providers": {"total": 1, "available": 1, "details": {"kokoro": {"status": "enabled"}}},
+                "providers": {
+                    "total": 1,
+                    "available": 1,
+                    "details": {"kokoro": {"status": "enabled"}},
+                },
                 "capabilities": {"kokoro": {"formats": ["mp3"]}},
                 "timestamp": "2026-04-25T12:00:00Z",
             },
@@ -94,7 +100,11 @@ async def test_audio_routes_wire_speech_jobs_history_and_transcription(monkeypat
                 "warm": False,
                 "timestamp": "2026-04-25T12:00:00Z",
             },
-            {"providers": {"kokoro": {"available": True}}, "voices": {"kokoro": [{"id": "af_heart"}]}, "timestamp": "2026-04-25T12:00:00Z"},
+            {
+                "providers": {"kokoro": {"available": True}},
+                "voices": {"kokoro": [{"id": "af_heart"}]},
+                "timestamp": "2026-04-25T12:00:00Z",
+            },
             {"kokoro": [{"id": "af_heart", "name": "Heart"}]},
             {"job_id": 12, "status": "queued"},
             {
@@ -110,14 +120,48 @@ async def test_audio_routes_wire_speech_jobs_history_and_transcription(monkeypat
                     }
                 ],
             },
-            {"id": 9, "uuid": "job-uuid", "domain": "audio", "queue": "default", "job_type": "audio_download", "status": "queued"},
+            {
+                "id": 9,
+                "uuid": "job-uuid",
+                "domain": "audio",
+                "queue": "default",
+                "job_type": "audio_download",
+                "status": "queued",
+            },
             _job(),
-            {"items": [_history_item()], "total": 1, "limit": 10, "offset": 0, "next_cursor": None},
-            {**_history_item(), "text": "Hello world", "text_length": 11, "generation_time_ms": 300, "params_json": {}, "segments_json": None, "artifact_ids": [44], "error_message": None},
+            {
+                "items": [_history_item()],
+                "total": 1,
+                "limit": 10,
+                "offset": 0,
+                "next_cursor": None,
+            },
+            {
+                **_history_item(),
+                "text": "Hello world",
+                "text_length": 11,
+                "generation_time_ms": 300,
+                "params_json": {},
+                "segments_json": None,
+                "artifact_ids": [44],
+                "error_message": None,
+            },
             {"id": 3, "favorite": True},
             {},
-            {"text": "Transcript", "language": "en", "duration": 1.5, "words": None, "segments": []},
-            {"text": "Translated", "language": "en", "duration": 1.5, "words": None, "segments": []},
+            {
+                "text": "Transcript",
+                "language": "en",
+                "duration": 1.5,
+                "words": None,
+                "segments": [],
+            },
+            {
+                "text": "Translated",
+                "language": "en",
+                "duration": 1.5,
+                "words": None,
+                "segments": [],
+            },
         ]
     )
     monkeypatch.setattr(client, "_request", mocked)
@@ -144,24 +188,36 @@ async def test_audio_routes_wire_speech_jobs_history_and_transcription(monkeypat
     providers = await client.list_tts_providers()
     voices = await client.list_tts_voices(provider="kokoro")
     speech = await client.create_audio_speech(
-        OpenAISpeechRequest(model="kokoro", input="Hello", voice="af_heart", stream=False)
+        OpenAISpeechRequest(
+            model="kokoro", input="Hello", voice="af_heart", stream=False
+        )
     )
     speech_job = await client.create_audio_speech_job(
-        OpenAISpeechRequest(model="kokoro", input="Long text", voice="af_heart", stream=False)
+        OpenAISpeechRequest(
+            model="kokoro", input="Long text", voice="af_heart", stream=False
+        )
     )
     speech_artifacts = await client.list_audio_speech_job_artifacts(12)
     submitted = await client.submit_audio_job(
-        SubmitAudioJobRequest(url="https://example.com/audio.mp3", perform_analysis=True)
+        SubmitAudioJobRequest(
+            url="https://example.com/audio.mp3", perform_analysis=True
+        )
     )
     job = await client.get_audio_job(9)
     events = [event async for event in client.stream_audio_job_progress(9, after_id=7)]
-    history = await client.list_tts_history(favorite=True, provider="kokoro", include_total=True, limit=10)
+    history = await client.list_tts_history(
+        favorite=True, provider="kokoro", include_total=True, limit=10
+    )
     detail = await client.get_tts_history_entry(3)
-    favorite = await client.update_tts_history_favorite(3, TTSHistoryFavoriteUpdate(favorite=True))
+    favorite = await client.update_tts_history_favorite(
+        3, TTSHistoryFavoriteUpdate(favorite=True)
+    )
     delete_response = await client.delete_tts_history_entry(3)
     transcription = await client.create_audio_transcription(
         str(audio_file),
-        AudioTranscriptionRequest(model="whisper-1", language="en", response_format="json"),
+        AudioTranscriptionRequest(
+            model="whisper-1", language="en", response_format="json"
+        ),
     )
     translation = await client.create_audio_translation(
         str(audio_file),
@@ -169,8 +225,14 @@ async def test_audio_routes_wire_speech_jobs_history_and_transcription(monkeypat
     )
 
     assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/audio/health")
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/audio/transcriptions/health")
-    assert mocked.await_args_list[1].kwargs["params"] == {"model": "whisper-1", "warm": "false"}
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/audio/transcriptions/health",
+    )
+    assert mocked.await_args_list[1].kwargs["params"] == {
+        "model": "whisper-1",
+        "warm": "false",
+    }
     assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/audio/providers")
     assert mocked.await_args_list[3].args[:2] == ("GET", "/api/v1/audio/voices/catalog")
     assert mocked.await_args_list[3].kwargs["params"] == {"provider": "kokoro"}
@@ -178,7 +240,10 @@ async def test_audio_routes_wire_speech_jobs_history_and_transcription(monkeypat
     assert binary.await_args.kwargs["json_data"]["model"] == "kokoro"
     assert binary.await_args.kwargs["json_data"]["stream"] is False
     assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/audio/speech/jobs")
-    assert mocked.await_args_list[5].args[:2] == ("GET", "/api/v1/audio/speech/jobs/12/artifacts")
+    assert mocked.await_args_list[5].args[:2] == (
+        "GET",
+        "/api/v1/audio/speech/jobs/12/artifacts",
+    )
     assert mocked.await_args_list[6].args[:2] == ("POST", "/api/v1/audio/jobs/submit")
     assert mocked.await_args_list[6].kwargs["json_data"]["perform_analysis"] is True
     assert mocked.await_args_list[7].args[:2] == ("GET", "/api/v1/audio/jobs/9")
@@ -194,7 +259,10 @@ async def test_audio_routes_wire_speech_jobs_history_and_transcription(monkeypat
     assert mocked.await_args_list[10].args[:2] == ("PATCH", "/api/v1/audio/history/3")
     assert mocked.await_args_list[10].kwargs["json_data"] == {"favorite": True}
     assert mocked.await_args_list[11].args[:2] == ("DELETE", "/api/v1/audio/history/3")
-    assert mocked.await_args_list[12].args[:2] == ("POST", "/api/v1/audio/transcriptions")
+    assert mocked.await_args_list[12].args[:2] == (
+        "POST",
+        "/api/v1/audio/transcriptions",
+    )
     assert mocked.await_args_list[12].kwargs["data"] == {
         "model": "whisper-1",
         "language": "en",
@@ -271,7 +339,11 @@ async def test_audio_streaming_rest_routes_and_speech_chat_are_typed(monkeypatch
                 "output_audio": "bXAz",
                 "output_audio_mime_type": "audio/mpeg",
                 "timing": {"stt_ms": 10.0, "llm_ms": 20.0, "tts_ms": 30.0},
-                "token_usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+                "token_usage": {
+                    "prompt_tokens": 2,
+                    "completion_tokens": 3,
+                    "total_tokens": 5,
+                },
                 "metadata": {"trace_id": "trace-1"},
                 "action_result": None,
             },
@@ -330,8 +402,18 @@ async def test_audio_tokenizer_and_custom_voice_routes(monkeypatch, tmp_path):
                 "tokenizer_model": "qwen3",
                 "duration_seconds": 1.0,
             },
-            {"voice_id": "voice-1", "name": "Narrator", "provider": "vibevoice", "status": "ready"},
-            {"voice_id": "voice-1", "provider": "neutts", "cached": False, "ref_codes_len": 128},
+            {
+                "voice_id": "voice-1",
+                "name": "Narrator",
+                "provider": "vibevoice",
+                "status": "ready",
+            },
+            {
+                "voice_id": "voice-1",
+                "provider": "neutts",
+                "cached": False,
+                "ref_codes_len": 128,
+            },
             {"voices": [{"voice_id": "voice-1", "name": "Narrator"}], "count": 1},
             {"voice_id": "voice-1", "name": "Narrator", "provider": "vibevoice"},
             {"message": "Voice deleted successfully", "voice_id": "voice-1"},
@@ -359,7 +441,9 @@ async def test_audio_tokenizer_and_custom_voice_routes(monkeypatch, tmp_path):
     tokenizer_file.write_bytes(b"RIF2")
 
     encoded = await client.encode_audio_tokenizer(
-        AudioTokenizerEncodeRequest(audio_base64="UklGRg==", tokenizer_model="qwen3", token_format="list")
+        AudioTokenizerEncodeRequest(
+            audio_base64="UklGRg==", tokenizer_model="qwen3", token_format="list"
+        )
     )
     encoded_file = await client.encode_audio_tokenizer_file(
         str(tokenizer_file),
@@ -368,7 +452,9 @@ async def test_audio_tokenizer_and_custom_voice_routes(monkeypatch, tmp_path):
         sample_rate=24000,
     )
     decoded = await client.decode_audio_tokenizer(
-        AudioTokenizerDecodeRequest(tokens=[1, 2, 3], tokenizer_model="qwen3", response_format="wav")
+        AudioTokenizerDecodeRequest(
+            tokens=[1, 2, 3], tokenizer_model="qwen3", response_format="wav"
+        )
     )
     uploaded = await client.upload_custom_voice(
         str(voice_file),
@@ -378,20 +464,28 @@ async def test_audio_tokenizer_and_custom_voice_routes(monkeypatch, tmp_path):
         reference_text="hello",
     )
     voice_encoded = await client.encode_custom_voice_reference(
-        VoiceEncodeRequest(voice_id="voice-1", provider="neutts", reference_text="hello", force=True)
+        VoiceEncodeRequest(
+            voice_id="voice-1", provider="neutts", reference_text="hello", force=True
+        )
     )
     voices = await client.list_custom_voices()
     voice = await client.get_custom_voice("voice-1")
     preview = await client.preview_custom_voice("voice-1", text="Preview")
     deleted = await client.delete_custom_voice("voice-1")
 
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/audio/tokenizer/encode")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/audio/tokenizer/encode",
+    )
     assert mocked.await_args_list[0].kwargs["json_data"] == {
         "audio_base64": "UklGRg==",
         "tokenizer_model": "qwen3",
         "token_format": "list",
     }
-    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/audio/tokenizer/encode")
+    assert mocked.await_args_list[1].args[:2] == (
+        "POST",
+        "/api/v1/audio/tokenizer/encode",
+    )
     assert mocked.await_args_list[1].kwargs["data"] == {
         "tokenizer_model": "qwen3",
         "token_format": "base64",
@@ -409,14 +503,23 @@ async def test_audio_tokenizer_and_custom_voice_routes(monkeypatch, tmp_path):
     assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/audio/voices/encode")
     assert mocked.await_args_list[4].args[:2] == ("GET", "/api/v1/audio/voices")
     assert mocked.await_args_list[5].args[:2] == ("GET", "/api/v1/audio/voices/voice-1")
-    assert mocked.await_args_list[6].args[:2] == ("DELETE", "/api/v1/audio/voices/voice-1")
-    assert binary.await_args_list[0].args[:2] == ("POST", "/api/v1/audio/tokenizer/decode")
+    assert mocked.await_args_list[6].args[:2] == (
+        "DELETE",
+        "/api/v1/audio/voices/voice-1",
+    )
+    assert binary.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/audio/tokenizer/decode",
+    )
     assert binary.await_args_list[0].kwargs["json_data"] == {
         "tokens": [1, 2, 3],
         "tokenizer_model": "qwen3",
         "response_format": "wav",
     }
-    assert binary.await_args_list[1].args[:2] == ("POST", "/api/v1/audio/voices/voice-1/preview")
+    assert binary.await_args_list[1].args[:2] == (
+        "POST",
+        "/api/v1/audio/voices/voice-1/preview",
+    )
     assert binary.await_args_list[1].kwargs["data"] == {"text": "Preview"}
     assert isinstance(encoded, AudioTokenizerEncodeResponse)
     assert encoded.tokens == [1, 2, 3]

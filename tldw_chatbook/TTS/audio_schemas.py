@@ -90,6 +90,7 @@ class OpenAISpeechRequest(BaseModel):
         description="Additional provider-specific parameters (e.g., temperature, num_candidates for Chatterbox)",
     )
 
+
 #
 # End of audio_schemas.py
 #######################################################################################################################

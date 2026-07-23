@@ -18,7 +18,9 @@ def test_library_rail_defaults():
 
 
 def test_coerce_reads_fields_and_defaults_missing():
-    coerced = coerce_library_rail_preferences({"details_open": "true", "ingest_open": "off"})
+    coerced = coerce_library_rail_preferences(
+        {"details_open": "true", "ingest_open": "off"}
+    )
     assert coerced.details_open is True
     assert coerced.ingest_open is False
     assert coerced.browse_open is True

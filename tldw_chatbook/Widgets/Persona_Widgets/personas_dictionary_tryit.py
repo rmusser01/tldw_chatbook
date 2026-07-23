@@ -177,7 +177,10 @@ class PersonasDictionaryTryItWidget(Vertical):
         try:
             fired = sorted(
                 (r for r in records if r.get("status") == "fired"),
-                key=lambda r: (r.get("applied_order") is None, r.get("applied_order") or 0),
+                key=lambda r: (
+                    r.get("applied_order") is None,
+                    r.get("applied_order") or 0,
+                ),
             )
             fired_text = Text()
             for record in fired:
@@ -196,7 +199,9 @@ class PersonasDictionaryTryItWidget(Vertical):
             )
             miss_text = Text()
             for record in misses:
-                reason = _SKIP_REASON_COPY.get(str(record.get("status")), str(record.get("status")))
+                reason = _SKIP_REASON_COPY.get(
+                    str(record.get("status")), str(record.get("status"))
+                )
                 miss_text.append(f"{record.get('pattern')} — {reason}\n", style="dim")
             nearmiss_area.update(miss_text)
         except Exception:

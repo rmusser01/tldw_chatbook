@@ -42,7 +42,13 @@ class KanbanScopeService:
 
     operations = KANBAN_OPERATION_SPECS
 
-    def __init__(self, *, local_service: Any = None, server_service: Any = None, policy_enforcer: Any = None):
+    def __init__(
+        self,
+        *,
+        local_service: Any = None,
+        server_service: Any = None,
+        policy_enforcer: Any = None,
+    ):
         self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
@@ -51,7 +57,9 @@ class KanbanScopeService:
         if name not in self.operations:
             raise AttributeError(name)
 
-        async def _bound_operation(*args: Any, mode: KanbanBackend | str | None = None, **kwargs: Any) -> Any:
+        async def _bound_operation(
+            *args: Any, mode: KanbanBackend | str | None = None, **kwargs: Any
+        ) -> Any:
             return await self.invoke(name, *args, mode=mode, **kwargs)
 
         return _bound_operation
@@ -83,7 +91,7 @@ class KanbanScopeService:
     @staticmethod
     def _source_action_id(action_id: str, mode: KanbanBackend) -> str:
         if mode == KanbanBackend.LOCAL and action_id.endswith(".server"):
-            return f"{action_id[:-len('.server')]}.local"
+            return f"{action_id[: -len('.server')]}.local"
         return action_id
 
     @staticmethod
@@ -97,7 +105,9 @@ class KanbanScopeService:
         if hasattr(payload, "model_dump"):
             return payload.model_dump(mode="python", by_alias=True)
         if isinstance(payload, dict):
-            return {key: KanbanScopeService._dump(value) for key, value in payload.items()}
+            return {
+                key: KanbanScopeService._dump(value) for key, value in payload.items()
+            }
         if isinstance(payload, list):
             return [KanbanScopeService._dump(item) for item in payload]
         return payload
@@ -128,7 +138,9 @@ class KanbanScopeService:
         normalized_mode = self._normalize_mode(mode)
         service = self._require_service(normalized_mode)
         self._enforce_policy(self._source_action_id(spec.action_id, normalized_mode))
-        result = await self._maybe_await(getattr(service, operation_name)(*args, **kwargs))
+        result = await self._maybe_await(
+            getattr(service, operation_name)(*args, **kwargs)
+        )
         normalized = ServerKanbanService._normalize_response(
             self._dump(result),
             kind=spec.kind,
@@ -141,7 +153,10 @@ class KanbanScopeService:
         if isinstance(payload, list):
             return [cls._rewrite_backend(item, backend) for item in payload]
         if isinstance(payload, dict):
-            record = {key: cls._rewrite_backend(value, backend) for key, value in payload.items()}
+            record = {
+                key: cls._rewrite_backend(value, backend)
+                for key, value in payload.items()
+            }
             if record.get("backend") == "server":
                 record["backend"] = backend
             return record

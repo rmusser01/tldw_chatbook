@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 
@@ -101,7 +101,9 @@ class ConsoleWorkspaceContext:
     def allowed_sources(self) -> list[ConsoleStagedSource]:
         """Return staged sources available to the active workspace."""
         blocked = {source.source_id for source in self.blocked_sources}
-        return [source for source in self.staged_sources if source.source_id not in blocked]
+        return [
+            source for source in self.staged_sources if source.source_id not in blocked
+        ]
 
     @property
     def has_policy_blocks(self) -> bool:
@@ -141,7 +143,9 @@ class ConsoleProviderSelection:
     #: Not used for readiness resolution; carried through so the controller
     #: can build provider messages from a single selection snapshot.
     system_prompt: str | None = None
-    workspace_context: ConsoleWorkspaceContext = field(default_factory=ConsoleWorkspaceContext)
+    workspace_context: ConsoleWorkspaceContext = field(
+        default_factory=ConsoleWorkspaceContext
+    )
 
 
 @dataclass(frozen=True)
@@ -157,7 +161,9 @@ class ConsoleRunState:
         return cls(ConsoleRunStatus.BLOCKED, visible_copy)
 
     @classmethod
-    def retrying(cls, visible_copy: str = "Retrying failed response") -> "ConsoleRunState":
+    def retrying(
+        cls, visible_copy: str = "Retrying failed response"
+    ) -> "ConsoleRunState":
         """Build a retrying run state."""
         return cls(ConsoleRunStatus.RETRYING, visible_copy)
 
@@ -255,3 +261,18 @@ class ConsoleVariantSet:
     def can_go_next(self) -> bool:
         """Return whether a next variant exists."""
         return self.selected_index < len(self.variants) - 1
+
+
+@dataclass(frozen=True)
+class ConsoleContextSnapshot:
+    """Independent snapshot of current transcript and next-send provider payload.
+
+    ``frozen=True`` prevents reassigning the snapshot's top-level fields.
+    ``independent`` means the snapshot is safe from store mutation: the
+    ``current_messages`` and ``next_send_payload`` structures are copied at
+    creation time, so mutating them does not change the underlying store.
+    It does *not* promise deep immutability of nested values.
+    """
+
+    current_messages: list[ConsoleChatMessage]
+    next_send_payload: dict[str, Any]

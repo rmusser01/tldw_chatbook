@@ -63,7 +63,9 @@ class ServerOutputsService:
         limit: int = 50,
         offset: int = 0,
     ) -> dict[str, Any]:
-        result = await self._require_client().list_output_templates(q=q, limit=limit, offset=offset)
+        result = await self._require_client().list_output_templates(
+            q=q, limit=limit, offset=offset
+        )
         return self._as_dict(result)
 
     async def create_output_template(self, **payload: Any) -> dict[str, Any]:
@@ -75,24 +77,38 @@ class ServerOutputsService:
         result = await self._require_client().get_output_template(int(template_id))
         return self._as_dict(result)
 
-    async def update_output_template(self, template_id: int, **payload: Any) -> dict[str, Any]:
+    async def update_output_template(
+        self, template_id: int, **payload: Any
+    ) -> dict[str, Any]:
         request_data = OutputTemplateUpdateRequest(**payload)
-        result = await self._require_client().update_output_template(int(template_id), request_data)
+        result = await self._require_client().update_output_template(
+            int(template_id), request_data
+        )
         return self._as_dict(result)
 
     async def delete_output_template(self, template_id: int) -> dict[str, Any]:
-        return self._as_dict(await self._require_client().delete_output_template(int(template_id)))
+        return self._as_dict(
+            await self._require_client().delete_output_template(int(template_id))
+        )
 
-    async def preview_output_template(self, template_id: int, **payload: Any) -> dict[str, Any]:
-        request_data = OutputTemplatePreviewRequest(template_id=int(template_id), **payload)
-        result = await self._require_client().preview_output_template(int(template_id), request_data)
+    async def preview_output_template(
+        self, template_id: int, **payload: Any
+    ) -> dict[str, Any]:
+        request_data = OutputTemplatePreviewRequest(
+            template_id=int(template_id), **payload
+        )
+        result = await self._require_client().preview_output_template(
+            int(template_id), request_data
+        )
         return self._as_dict(result)
 
     async def list_outputs(self, **payload: Any) -> dict[str, Any]:
         result = await self._require_client().list_outputs(**payload)
         return self._as_dict(result)
 
-    async def list_deleted_outputs(self, *, page: int = 1, size: int = 50) -> dict[str, Any]:
+    async def list_deleted_outputs(
+        self, *, page: int = 1, size: int = 50
+    ) -> dict[str, Any]:
         result = await self._require_client().list_deleted_outputs(page=page, size=size)
         return self._as_dict(result)
 
@@ -107,10 +123,14 @@ class ServerOutputsService:
 
     async def update_output(self, output_id: int, **payload: Any) -> dict[str, Any]:
         request_data = OutputUpdateRequest(**payload)
-        result = await self._require_client().update_output(int(output_id), request_data)
+        result = await self._require_client().update_output(
+            int(output_id), request_data
+        )
         return self._as_dict(result)
 
-    async def delete_output(self, output_id: int, *, hard: bool = False, delete_file: bool = False) -> dict[str, Any]:
+    async def delete_output(
+        self, output_id: int, *, hard: bool = False, delete_file: bool = False
+    ) -> dict[str, Any]:
         return self._as_dict(
             await self._require_client().delete_output(
                 int(output_id),
@@ -122,8 +142,12 @@ class ServerOutputsService:
     async def download_output(self, output_id: int) -> bytes:
         return await self._require_client().download_output(int(output_id))
 
-    async def download_output_by_name(self, title: str, *, format: str | None = None) -> bytes:
-        return await self._require_client().download_output_by_name(str(title), format=format)
+    async def download_output_by_name(
+        self, title: str, *, format: str | None = None
+    ) -> bytes:
+        return await self._require_client().download_output_by_name(
+            str(title), format=format
+        )
 
     async def purge_outputs(self, **payload: Any) -> dict[str, Any]:
         request_data = OutputsPurgeRequest(**payload)

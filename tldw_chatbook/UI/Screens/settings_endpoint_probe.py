@@ -116,7 +116,9 @@ async def probe_settings_endpoint(
     try:
         response = await client.get(url, timeout=timeout)
     except httpx.TimeoutException:
-        return SettingsEndpointProbeOutcome(reachable=False, summary="unreachable: timeout")
+        return SettingsEndpointProbeOutcome(
+            reachable=False, summary="unreachable: timeout"
+        )
     except httpx.ConnectError:
         return SettingsEndpointProbeOutcome(
             reachable=False,

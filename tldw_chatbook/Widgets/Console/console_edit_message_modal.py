@@ -2,11 +2,31 @@
 
 from __future__ import annotations
 
-from textual import on
+from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static, TextArea
+
+
+class _EditMessageTextArea(TextArea):
+    """TextArea that ignores keys typed before the modal appeared.
+
+    TASK-360: the edit action dispatches through a Button.Pressed hop and an
+    async modal push; keys pressed in that gap (e.g. a retry `e` because
+    nothing visibly happened) used to land here as text and silently corrupt
+    the draft. A key whose event time predates the modal's mount was aimed
+    at whatever the user was looking at then — never at this textarea.
+    """
+
+    opened_at: float | None = None
+
+    async def _on_key(self, event: events.Key) -> None:
+        if self.opened_at is not None and event.time < self.opened_at:
+            event.stop()
+            event.prevent_default()
+            return
+        await super()._on_key(event)
 
 
 class ConsoleEditMessageModal(ModalScreen[str | None]):
@@ -71,14 +91,19 @@ class ConsoleEditMessageModal(ModalScreen[str | None]):
                 id="console-edit-message-context",
                 markup=False,
             )
-            yield TextArea(self._content, id="console-edit-message-body")
+            yield _EditMessageTextArea(self._content, id="console-edit-message-body")
             yield Static("", id="console-edit-message-error", markup=False)
             with Horizontal(id="console-edit-message-actions"):
                 yield Button("Cancel", id="console-edit-message-cancel")
                 yield Button("Save", id="console-edit-message-save", variant="primary")
 
-    def on_mount(self) -> None:
-        self.query_one("#console-edit-message-body", TextArea).focus()
+    def on_mount(self, event: events.Mount) -> None:
+        # Event time shares the clock domain of Key.time — the stale-key
+        # guard compares against it (TASK-360).
+        self._opened_at = event.time
+        area = self.query_one("#console-edit-message-body", _EditMessageTextArea)
+        area.opened_at = event.time
+        area.focus()
 
     def action_dismiss(self) -> None:
         self.dismiss(None)

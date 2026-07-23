@@ -55,7 +55,9 @@ class DestinationWorkbench(Horizontal):
 
     def compose(self) -> ComposeResult:
         for pane in self.panes:
-            with Vertical(id=pane.id, classes=f"destination-workbench-pane {pane.classes}".strip()):
+            with Vertical(
+                id=pane.id, classes=f"destination-workbench-pane {pane.classes}".strip()
+            ):
                 yield Static(pane.title, classes="destination-pane-title")
                 content = pane.content
                 if isinstance(content, Widget):

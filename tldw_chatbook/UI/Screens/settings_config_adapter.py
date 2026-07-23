@@ -113,6 +113,8 @@ class SettingsConfigAdapter:
             return SettingsValidationResult(False, redact_secret_text(str(exc)))
 
         if not isinstance(parsed, dict):
-            return SettingsValidationResult(False, "top-level TOML value must be a table")
+            return SettingsValidationResult(
+                False, "top-level TOML value must be a table"
+            )
 
         return SettingsValidationResult(True, "Config file TOML is valid")

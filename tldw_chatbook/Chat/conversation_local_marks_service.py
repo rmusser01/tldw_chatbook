@@ -49,7 +49,9 @@ class ConversationLocalMarksService:
 
     @classmethod
     def _mark_type(cls, mark_type: str | None) -> str:
-        normalized = cls.STARRED if mark_type is None else str(mark_type).strip().lower()
+        normalized = (
+            cls.STARRED if mark_type is None else str(mark_type).strip().lower()
+        )
         if not normalized or normalized not in cls._ALLOWED_MARK_TYPES:
             raise ValueError(f"Unsupported conversation mark_type: {mark_type!r}")
         return normalized

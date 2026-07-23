@@ -40,7 +40,9 @@ def test_chunking_template_response_parses_uuid_and_timestamps():
             "uuid": "b9012f62-fd66-4b43-bdb7-ab2bdb36fb37",
             "name": "demo",
             "description": "Demo template",
-            "template_json": {"chunking": {"method": "words", "config": {"max_size": 200}}},
+            "template_json": {
+                "chunking": {"method": "words", "config": {"max_size": 200}}
+            },
             "is_builtin": False,
             "tags": ["demo"],
             "created_at": "2026-04-20T00:00:00Z",

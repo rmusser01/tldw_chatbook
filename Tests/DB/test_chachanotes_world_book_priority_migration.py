@@ -23,8 +23,12 @@ def test_world_book_entries_priority_migrate_v20_to_v21(tmp_path):
         "SELECT version FROM db_schema_version WHERE schema_name = ?",
         (migrated._SCHEMA_NAME,),
     ).fetchone()
-    assert version["version"] == migrated._CURRENT_SCHEMA_VERSION == 21
-    cols = {r[1] for r in mconn.execute("PRAGMA table_info(world_book_entries)").fetchall()}
+    # A simulated-V20 DB migrates all the way to the current version (which keeps
+    # advancing as later migrations are added), not a hardcoded 21.
+    assert version["version"] == migrated._CURRENT_SCHEMA_VERSION
+    cols = {
+        r[1] for r in mconn.execute("PRAGMA table_info(world_book_entries)").fetchall()
+    }
     assert "priority" in cols
     create_sql = mconn.execute(
         "SELECT sql FROM sqlite_master WHERE name = 'world_book_entries_sync_create'"
@@ -39,7 +43,9 @@ def test_world_book_entries_priority_migrate_v20_to_v21(tmp_path):
 def test_fresh_db_has_priority_column_and_triggers(tmp_path):
     db = CharactersRAGDB(str(tmp_path / "fresh.sqlite"), client_id="test-client")
     conn = db.get_connection()
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(world_book_entries)").fetchall()}
+    cols = {
+        r[1] for r in conn.execute("PRAGMA table_info(world_book_entries)").fetchall()
+    }
     assert "priority" in cols
     create_sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE name = 'world_book_entries_sync_create'"

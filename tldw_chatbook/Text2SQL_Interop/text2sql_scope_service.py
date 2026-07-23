@@ -53,7 +53,9 @@ class Text2SQLScopeService:
 
     def _require_server_service(self, mode: Text2SQLBackend) -> Any:
         if mode == Text2SQLBackend.LOCAL:
-            raise ValueError("Text2SQL is server-only; Chatbook local database internals are not a query target.")
+            raise ValueError(
+                "Text2SQL is server-only; Chatbook local database internals are not a query target."
+            )
         if self.server_service is None:
             raise ValueError("Text2SQL backend is unavailable.")
         return self.server_service
@@ -96,7 +98,9 @@ class Text2SQLScopeService:
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == Text2SQLBackend.LOCAL:
-            raise ValueError("Text2SQL targets are server-only; Chatbook local database internals are not query targets.")
+            raise ValueError(
+                "Text2SQL targets are server-only; Chatbook local database internals are not query targets."
+            )
         self._enforce_policy("text2sql.targets.list.server")
         return [
             {

@@ -35,8 +35,11 @@ async def test_add_mode_posts_create_with_exact_payload():
         action, payload = app.posted[-1]
         assert action == "external_server.create"
         assert payload == {
-            "server_id": "web-search", "name": "Web Search", "transport": "http",
-            "config": {"url": "https://mcp.example/api"}, "enabled": True,
+            "server_id": "web-search",
+            "name": "Web Search",
+            "transport": "http",
+            "config": {"url": "https://mcp.example/api"},
+            "enabled": True,
         }
         assert "owner_scope_type" not in payload and "owner_scope_id" not in payload
 
@@ -52,7 +55,11 @@ async def test_edit_mode_posts_update_with_name_and_enabled_only():
         await pilot.pause()
         action, payload = app.posted[-1]
         assert action == "external_server.update"
-        assert payload == {"server_id": "web-search", "name": "Search", "enabled": False}
+        assert payload == {
+            "server_id": "web-search",
+            "name": "Search",
+            "enabled": False,
+        }
 
 
 @pytest.mark.asyncio
@@ -70,9 +77,12 @@ async def test_slot_create_posts_five_fields():
         action, payload = app.posted[-1]
         assert action == "external_server.slot.create"
         assert payload == {
-            "server_id": "web-search", "slot_name": "token_readonly",
-            "display_name": "Read-only token", "secret_kind": "bearer_token",
-            "privilege_class": "read", "is_required": True,
+            "server_id": "web-search",
+            "slot_name": "token_readonly",
+            "display_name": "Read-only token",
+            "secret_kind": "bearer_token",
+            "privilege_class": "read",
+            "is_required": True,
         }
 
 
@@ -89,8 +99,11 @@ async def test_slot_secret_set_posts_and_clears_input():
         await pilot.pause()
         action, payload = app.posted[-1]
         assert action == "external_server.slot.secret.set"
-        assert payload == {"server_id": "web-search", "slot_name": "token_readonly",
-                           "secret": "sk-value"}
+        assert payload == {
+            "server_id": "web-search",
+            "slot_name": "token_readonly",
+            "secret": "sk-value",
+        }
         assert secret_input.value == ""
 
 

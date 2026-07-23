@@ -6,7 +6,9 @@ import inspect
 from enum import Enum
 from typing import Any
 
-from tldw_chatbook.runtime_policy.server_credentials import SERVER_CREDENTIAL_BEARER_TOKEN
+from tldw_chatbook.runtime_policy.server_credentials import (
+    SERVER_CREDENTIAL_BEARER_TOKEN,
+)
 
 
 class AuthAccountBackend(str, Enum):
@@ -59,7 +61,9 @@ class AuthAccountScopeService:
         self.policy_enforcer = policy_enforcer
         self.server_context_provider = server_context_provider
 
-    def _normalize_mode(self, mode: AuthAccountBackend | str | None) -> AuthAccountBackend:
+    def _normalize_mode(
+        self, mode: AuthAccountBackend | str | None
+    ) -> AuthAccountBackend:
         if mode is None:
             return AuthAccountBackend.SERVER
         if isinstance(mode, AuthAccountBackend):
@@ -90,7 +94,9 @@ class AuthAccountScopeService:
         self.policy_enforcer.require_allowed(action_id=action_id)
 
     @staticmethod
-    def _with_backend(mode: AuthAccountBackend, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def _with_backend(
+        mode: AuthAccountBackend, kind: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         record = dict(payload or {})
         record.setdefault("backend", mode.value)
         record.setdefault("record_id", f"{mode.value}:auth:{kind}")
@@ -121,7 +127,9 @@ class AuthAccountScopeService:
         self._set_effective_bearer_token(access_token)
 
     def clear_login_tokens(self) -> None:
-        clear = getattr(self.server_context_provider, "clear_active_server_auth_tokens", None)
+        clear = getattr(
+            self.server_context_provider, "clear_active_server_auth_tokens", None
+        )
         if callable(clear):
             clear()
         self._delete_effective_bearer_token()
@@ -129,7 +137,9 @@ class AuthAccountScopeService:
     def _set_effective_bearer_token(self, access_token: str | None) -> None:
         if not access_token:
             return
-        credential_store, active_server_id = self._resolve_provider_credential_store_context()
+        credential_store, active_server_id = (
+            self._resolve_provider_credential_store_context()
+        )
         if credential_store is None or not active_server_id:
             return
         credential_store.set_secret(
@@ -139,7 +149,9 @@ class AuthAccountScopeService:
         )
 
     def _delete_effective_bearer_token(self) -> None:
-        credential_store, active_server_id = self._resolve_provider_credential_store_context()
+        credential_store, active_server_id = (
+            self._resolve_provider_credential_store_context()
+        )
         if credential_store is None or not active_server_id:
             return
         credential_store.delete_secret(
@@ -147,7 +159,9 @@ class AuthAccountScopeService:
             SERVER_CREDENTIAL_BEARER_TOKEN,
         )
 
-    def _resolve_provider_credential_store_context(self) -> tuple[Any | None, str | None]:
+    def _resolve_provider_credential_store_context(
+        self,
+    ) -> tuple[Any | None, str | None]:
         provider = self.server_context_provider
         if provider is None:
             return None, None
@@ -178,15 +192,23 @@ class AuthAccountScopeService:
         return credential_store, None
 
     def _has_durable_credential_storage(self) -> bool:
-        credential_store, active_server_id = self._resolve_provider_credential_store_context()
+        credential_store, active_server_id = (
+            self._resolve_provider_credential_store_context()
+        )
         if credential_store is None or not active_server_id:
             return False
-        return callable(getattr(self.server_context_provider, "store_auth_tokens", None)) and callable(
-            getattr(self.server_context_provider, "clear_active_server_auth_tokens", None)
+        return callable(
+            getattr(self.server_context_provider, "store_auth_tokens", None)
+        ) and callable(
+            getattr(
+                self.server_context_provider, "clear_active_server_auth_tokens", None
+            )
         )
 
     @staticmethod
-    def _normalize_session(mode: AuthAccountBackend, payload: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_session(
+        mode: AuthAccountBackend, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         record = dict(payload or {})
         record.setdefault("backend", mode.value)
         session_id = record.get("id") or record.get("session_id")
@@ -195,7 +217,9 @@ class AuthAccountScopeService:
         return record
 
     @staticmethod
-    def _normalize_provider_key(mode: AuthAccountBackend, payload: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_provider_key(
+        mode: AuthAccountBackend, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         record = dict(payload or {})
         record.setdefault("backend", mode.value)
         provider = record.get("provider")
@@ -204,7 +228,9 @@ class AuthAccountScopeService:
         return record
 
     @staticmethod
-    def _normalize_storage_file(mode: AuthAccountBackend, payload: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_storage_file(
+        mode: AuthAccountBackend, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         record = dict(payload or {})
         record.setdefault("backend", mode.value)
         file_id = record.get("id") or record.get("file_id") or record.get("uuid")
@@ -242,7 +268,9 @@ class AuthAccountScopeService:
         normalized_mode = self._normalize_mode(mode)
         service = self._require_server_service(normalized_mode)
         self._enforce_policy(action_id)
-        result = await self._maybe_await(getattr(service, method_name)(**(kwargs or {})))
+        result = await self._maybe_await(
+            getattr(service, method_name)(**(kwargs or {}))
+        )
         return normalized_mode, result
 
     async def login(
@@ -260,7 +288,11 @@ class AuthAccountScopeService:
             kwargs={
                 "username": username,
                 "password": password,
-                **({"set_bearer_token": set_bearer_token} if not set_bearer_token else {}),
+                **(
+                    {"set_bearer_token": set_bearer_token}
+                    if not set_bearer_token
+                    else {}
+                ),
             },
         )
         self._store_auth_tokens(result)
@@ -279,7 +311,11 @@ class AuthAccountScopeService:
             method_name="refresh_auth_token",
             kwargs={
                 "request_data": request_data,
-                **({"set_bearer_token": set_bearer_token} if not set_bearer_token else {}),
+                **(
+                    {"set_bearer_token": set_bearer_token}
+                    if not set_bearer_token
+                    else {}
+                ),
             },
         )
         self._store_auth_tokens(result)
@@ -298,21 +334,29 @@ class AuthAccountScopeService:
             method_name="logout",
             kwargs={
                 "all_devices": all_devices,
-                **({"clear_bearer_token": clear_bearer_token} if not clear_bearer_token else {}),
+                **(
+                    {"clear_bearer_token": clear_bearer_token}
+                    if not clear_bearer_token
+                    else {}
+                ),
             },
         )
         if clear_bearer_token:
             self._clear_active_server_auth_tokens()
         return self._with_backend(normalized_mode, "identity_logout", result)
 
-    async def list_auth_sessions(self, *, mode: AuthAccountBackend | str | None = None) -> list[dict[str, Any]]:
+    async def list_auth_sessions(
+        self, *, mode: AuthAccountBackend | str | None = None
+    ) -> list[dict[str, Any]]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="auth.sessions.list.server",
             method_name="list_auth_sessions",
         )
         return [
-            self._normalize_session(normalized_mode, item) if isinstance(item, dict) else item
+            self._normalize_session(normalized_mode, item)
+            if isinstance(item, dict)
+            else item
             for item in list(result or [])
         ]
 
@@ -330,7 +374,9 @@ class AuthAccountScopeService:
         )
         return self._with_backend(normalized_mode, "session_revoke", result)
 
-    async def revoke_all_auth_sessions(self, *, mode: AuthAccountBackend | str | None = None) -> dict[str, Any]:
+    async def revoke_all_auth_sessions(
+        self, *, mode: AuthAccountBackend | str | None = None
+    ) -> dict[str, Any]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="auth.sessions.delete.server",
@@ -441,7 +487,9 @@ class AuthAccountScopeService:
         )
         return self._with_backend(normalized_mode, "security_reset", result)
 
-    async def verify_email(self, *, mode: AuthAccountBackend | str | None = None, token: str) -> dict[str, Any]:
+    async def verify_email(
+        self, *, mode: AuthAccountBackend | str | None = None, token: str
+    ) -> dict[str, Any]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="auth.security.update.server",
@@ -450,7 +498,9 @@ class AuthAccountScopeService:
         )
         return self._with_backend(normalized_mode, "email_verify", result)
 
-    async def resend_verification(self, *, mode: AuthAccountBackend | str | None = None, email: str) -> dict[str, Any]:
+    async def resend_verification(
+        self, *, mode: AuthAccountBackend | str | None = None, email: str
+    ) -> dict[str, Any]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="auth.security.launch.server",
@@ -459,7 +509,9 @@ class AuthAccountScopeService:
         )
         return self._with_backend(normalized_mode, "email_resend", result)
 
-    async def request_magic_link(self, *, mode: AuthAccountBackend | str | None = None, email: str) -> dict[str, Any]:
+    async def request_magic_link(
+        self, *, mode: AuthAccountBackend | str | None = None, email: str
+    ) -> dict[str, Any]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="auth.security.launch.server",
@@ -481,13 +533,19 @@ class AuthAccountScopeService:
             method_name="verify_magic_link",
             kwargs={
                 "token": token,
-                **({"set_bearer_token": set_bearer_token} if not set_bearer_token else {}),
+                **(
+                    {"set_bearer_token": set_bearer_token}
+                    if not set_bearer_token
+                    else {}
+                ),
             },
         )
         self._store_auth_tokens(result)
         return self._with_backend(normalized_mode, "identity", result)
 
-    async def setup_mfa(self, *, mode: AuthAccountBackend | str | None = None) -> dict[str, Any]:
+    async def setup_mfa(
+        self, *, mode: AuthAccountBackend | str | None = None
+    ) -> dict[str, Any]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="auth.security.launch.server",
@@ -495,7 +553,9 @@ class AuthAccountScopeService:
         )
         return self._with_backend(normalized_mode, "mfa_setup", result)
 
-    async def verify_mfa_setup(self, *, mode: AuthAccountBackend | str | None = None, token: str) -> dict[str, Any]:
+    async def verify_mfa_setup(
+        self, *, mode: AuthAccountBackend | str | None = None, token: str
+    ) -> dict[str, Any]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="auth.security.update.server",
@@ -504,7 +564,9 @@ class AuthAccountScopeService:
         )
         return self._with_backend(normalized_mode, "mfa_verify", result)
 
-    async def disable_mfa(self, *, mode: AuthAccountBackend | str | None = None, password: str) -> dict[str, Any]:
+    async def disable_mfa(
+        self, *, mode: AuthAccountBackend | str | None = None, password: str
+    ) -> dict[str, Any]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="auth.security.update.server",
@@ -528,19 +590,28 @@ class AuthAccountScopeService:
             kwargs={
                 "session_token": session_token,
                 "mfa_token": mfa_token,
-                **({"set_bearer_token": set_bearer_token} if not set_bearer_token else {}),
+                **(
+                    {"set_bearer_token": set_bearer_token}
+                    if not set_bearer_token
+                    else {}
+                ),
             },
         )
         self._store_auth_tokens(result)
         return self._with_backend(normalized_mode, "identity", result)
 
-    async def list_user_api_keys(self, *, mode: AuthAccountBackend | str | None = None) -> list[dict[str, Any]]:
+    async def list_user_api_keys(
+        self, *, mode: AuthAccountBackend | str | None = None
+    ) -> list[dict[str, Any]]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="auth.api_keys.list.server",
             method_name="list_user_api_keys",
         )
-        return [self._with_backend(normalized_mode, "api_key", item) for item in list(result or [])]
+        return [
+            self._with_backend(normalized_mode, "api_key", item)
+            for item in list(result or [])
+        ]
 
     async def create_user_api_key(
         self,
@@ -614,7 +685,9 @@ class AuthAccountScopeService:
         )
         return self._normalize_provider_key(normalized_mode, result)
 
-    async def list_user_provider_keys(self, *, mode: AuthAccountBackend | str | None = None) -> dict[str, Any]:
+    async def list_user_provider_keys(
+        self, *, mode: AuthAccountBackend | str | None = None
+    ) -> dict[str, Any]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="auth.provider_keys.list.server",
@@ -623,7 +696,9 @@ class AuthAccountScopeService:
         record = self._with_backend(normalized_mode, "provider_keys", result)
         if isinstance(record.get("items"), list):
             record["items"] = [
-                self._normalize_provider_key(normalized_mode, item) if isinstance(item, dict) else item
+                self._normalize_provider_key(normalized_mode, item)
+                if isinstance(item, dict)
+                else item
                 for item in record["items"]
             ]
         return record
@@ -642,7 +717,9 @@ class AuthAccountScopeService:
         )
         return self._normalize_provider_key(normalized_mode, result)
 
-    async def get_openai_oauth_status(self, *, mode: AuthAccountBackend | str | None = None) -> dict[str, Any]:
+    async def get_openai_oauth_status(
+        self, *, mode: AuthAccountBackend | str | None = None
+    ) -> dict[str, Any]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="auth.provider_keys.detail.server",
@@ -650,7 +727,9 @@ class AuthAccountScopeService:
         )
         return self._normalize_provider_key(normalized_mode, result)
 
-    async def get_user_storage_quota(self, *, mode: AuthAccountBackend | str | None = None) -> dict[str, Any]:
+    async def get_user_storage_quota(
+        self, *, mode: AuthAccountBackend | str | None = None
+    ) -> dict[str, Any]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="auth.storage.detail.server",
@@ -687,7 +766,9 @@ class AuthAccountScopeService:
         record = self._with_backend(normalized_mode, "storage_files", result)
         if isinstance(record.get("items"), list):
             record["items"] = [
-                self._normalize_storage_file(normalized_mode, item) if isinstance(item, dict) else item
+                self._normalize_storage_file(normalized_mode, item)
+                if isinstance(item, dict)
+                else item
                 for item in record["items"]
             ]
         return record

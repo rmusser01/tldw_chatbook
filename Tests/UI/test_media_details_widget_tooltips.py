@@ -16,7 +16,7 @@ async def test_media_details_content_search_controls_have_descriptive_tooltips()
 
     app = MediaDetailsApp()
 
-    async with app.run_test() as pilot:
+    async with app.run_test():
         expected_tooltips = {
             "content-search-button-all-media": "Search within the selected media content.",
             "content-search-prev-all-media": "Jump to the previous content search match.",

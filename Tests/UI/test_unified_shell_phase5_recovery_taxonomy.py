@@ -32,8 +32,12 @@ PHASE_5_OPTIONAL_DEPENDENCY_RECOVERY = Path(
 PHASE_5_CLOSEOUT = Path(
     "Docs/superpowers/qa/unified-shell/phase-5/2026-05-05-phase-5-capability-recovery-closeout.md"
 )
-PHASE_5_PARENT_TASK = Path("backlog/tasks/task-6 - Phase-5-Capability-And-Recovery-System.md")
-PHASE_5_TAXONOMY_TASK = Path("backlog/tasks/task-6.1 - Phase-5.1-Create-shared-recovery-taxonomy.md")
+PHASE_5_PARENT_TASK = Path(
+    "backlog/tasks/task-6 - Phase-5-Capability-And-Recovery-System.md"
+)
+PHASE_5_TAXONOMY_TASK = Path(
+    "backlog/tasks/task-6.1 - Phase-5.1-Create-shared-recovery-taxonomy.md"
+)
 PHASE_5_DESTINATION_RECOVERY_TASK = Path(
     "backlog/tasks/task-6.2 - Phase-5.2-Apply-recovery-taxonomy-to-shell-destination-blockers.md"
 )
@@ -209,7 +213,10 @@ def test_phase_five_optional_dependency_recovery_helper_builds_required_fields()
 
     assert recovery_state.status_label == "Dependency missing"
     assert recovery_state.unavailable_what == "Search/RAG queries"
-    assert recovery_state.why == "Missing optional dependencies: torch, sentence-transformers."
+    assert (
+        recovery_state.why
+        == "Missing optional dependencies: torch, sentence-transformers."
+    )
     assert recovery_state.next_action == (
         'Install with pip install -e ".[embeddings_rag]" for source checkouts or '
         'pip install "tldw_chatbook[embeddings_rag]" for packaged installs, then restart.'
@@ -218,9 +225,14 @@ def test_phase_five_optional_dependency_recovery_helper_builds_required_fields()
     assert recovery_state.authority_owner == "optional dependency"
     assert recovery_state.stable_selector == "search-rag-dependency-missing"
     assert "Unavailable: Search/RAG queries." in recovery_state.visible_copy
-    assert "Why: Missing optional dependencies: torch, sentence-transformers." in recovery_state.visible_copy
+    assert (
+        "Why: Missing optional dependencies: torch, sentence-transformers."
+        in recovery_state.visible_copy
+    )
     assert 'pip install -e ".[embeddings_rag]"' in recovery_state.disabled_tooltip
-    assert 'pip install "tldw_chatbook[embeddings_rag]"' in recovery_state.disabled_tooltip
+    assert (
+        'pip install "tldw_chatbook[embeddings_rag]"' in recovery_state.disabled_tooltip
+    )
 
 
 def test_search_rag_window_imports_without_screens_recovery_cycle():

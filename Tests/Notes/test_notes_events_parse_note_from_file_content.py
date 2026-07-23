@@ -1,6 +1,7 @@
 """Unit coverage for ``notes_events._parse_note_from_file_content`` --
 the file-import parser shared by the standalone Notes screen's Import
 button and the Library canvas's "Import note" action (L2b.2 task 4)."""
+
 from pathlib import Path
 
 from tldw_chatbook.Event_Handlers.notes_events import _parse_note_from_file_content

@@ -9,7 +9,9 @@ from tldw_chatbook.tldw_api import (
 
 
 @pytest.mark.asyncio
-async def test_document_intelligence_client_routes_outline_figures_references_and_insights(monkeypatch):
+async def test_document_intelligence_client_routes_outline_figures_references_and_insights(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
@@ -22,13 +24,23 @@ async def test_document_intelligence_client_routes_outline_figures_references_an
             {
                 "media_id": 7,
                 "has_figures": True,
-                "figures": [{"id": "fig_1", "page": 1, "width": 640, "height": 480, "format": "png"}],
+                "figures": [
+                    {
+                        "id": "fig_1",
+                        "page": 1,
+                        "width": 640,
+                        "height": 480,
+                        "format": "png",
+                    }
+                ],
                 "total_count": 1,
             },
             {
                 "media_id": 7,
                 "has_references": True,
-                "references": [{"raw_text": "Smith 2020", "title": "A Paper", "year": 2020}],
+                "references": [
+                    {"raw_text": "Smith 2020", "title": "A Paper", "year": 2020}
+                ],
                 "enrichment_source": "semantic_scholar",
                 "enriched_count": 1,
                 "total_detected": 1,
@@ -40,7 +52,13 @@ async def test_document_intelligence_client_routes_outline_figures_references_an
             },
             {
                 "media_id": 7,
-                "insights": [{"category": "summary", "title": "Short summary", "content": "Useful document."}],
+                "insights": [
+                    {
+                        "category": "summary",
+                        "title": "Short summary",
+                        "content": "Useful document.",
+                    }
+                ],
                 "model_used": "test-model",
                 "cached": False,
             },

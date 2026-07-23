@@ -9,7 +9,11 @@ from tldw_chatbook.UX_Interop.server_parity_contracts import (
     SourceSelectorStateContract,
 )
 from tldw_chatbook.runtime_policy.registry import get_capability_entry
-from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError, RuntimeSourceState
+from tldw_chatbook.runtime_policy.types import (
+    PolicyDecision,
+    PolicyDeniedError,
+    RuntimeSourceState,
+)
 
 USE_IN_CHAT_UNAVAILABLE_RECOVERY = (
     "Use in Chat is unavailable because the Chat handoff surface is not mounted. "
@@ -27,7 +31,9 @@ def build_handoff_policy_blocking_message(
     if not action_id:
         return ""
 
-    runtime_state = getattr(getattr(app_instance, "runtime_policy", None), "state", None)
+    runtime_state = getattr(
+        getattr(app_instance, "runtime_policy", None), "state", None
+    )
     policy_engine = getattr(app_instance, "ui_policy_engine", None)
     evaluate = getattr(policy_engine, "evaluate", None) if policy_engine else None
     if not isinstance(runtime_state, RuntimeSourceState) or not callable(evaluate):
@@ -82,7 +88,9 @@ def _required_source_for_action(action_id: str) -> str | None:
     return None
 
 
-def _recovery_for_policy_decision(*, reason_code: str | None, required_source: str | None) -> str:
+def _recovery_for_policy_decision(
+    *, reason_code: str | None, required_source: str | None
+) -> str:
     if reason_code == "wrong_source" and required_source in {"local", "server"}:
         return f"Switch Source to {required_source.title()}, then try again."
     if reason_code == "server_not_configured":
@@ -94,5 +102,7 @@ def _recovery_for_policy_decision(*, reason_code: str | None, required_source: s
     if reason_code == "server_session_invalid":
         return "Sign in again or refresh the server session, then try again."
     if reason_code == "capability_disabled":
-        return "Enable the required capability or use a supported source, then try again."
+        return (
+            "Enable the required capability or use a supported source, then try again."
+        )
     return "Refresh runtime policy, switch to a supported source, or retry after the source is available."

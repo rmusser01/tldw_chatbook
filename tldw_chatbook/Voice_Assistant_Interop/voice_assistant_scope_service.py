@@ -65,7 +65,9 @@ class VoiceAssistantScopeService:
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
 
-    def _normalize_mode(self, mode: VoiceAssistantBackend | str | None) -> VoiceAssistantBackend:
+    def _normalize_mode(
+        self, mode: VoiceAssistantBackend | str | None
+    ) -> VoiceAssistantBackend:
         if mode is None:
             return VoiceAssistantBackend.SERVER
         if isinstance(mode, VoiceAssistantBackend):
@@ -77,7 +79,9 @@ class VoiceAssistantScopeService:
 
     def _require_server_service(self, mode: VoiceAssistantBackend) -> Any:
         if mode == VoiceAssistantBackend.LOCAL:
-            raise ValueError("Voice Assistant server REST operations are server-only; switch to server mode.")
+            raise ValueError(
+                "Voice Assistant server REST operations are server-only; switch to server mode."
+            )
         if self.server_service is None:
             raise ValueError("Server Voice Assistant backend is unavailable.")
         return self.server_service
@@ -103,7 +107,10 @@ class VoiceAssistantScopeService:
             return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
         report: list[dict[str, Any]] = []
         for item in _SERVER_UNSUPPORTED_CAPABILITIES:
-            if item["operation_id"] == "voice_assistant.websocket.server" and self._has_websocket_sessions_adapter():
+            if (
+                item["operation_id"] == "voice_assistant.websocket.server"
+                and self._has_websocket_sessions_adapter()
+            ):
                 continue
             report.append(dict(item))
         return report
@@ -120,7 +127,10 @@ class VoiceAssistantScopeService:
             "stream_voice_assistant_websocket",
             "stream_voice_session_websocket",
         )
-        return any(callable(getattr(service, method_name, None)) for method_name in websocket_methods)
+        return any(
+            callable(getattr(service, method_name, None))
+            for method_name in websocket_methods
+        )
 
     async def _call(
         self,
@@ -134,7 +144,9 @@ class VoiceAssistantScopeService:
         normalized_mode = self._normalize_mode(mode)
         service = self._require_server_service(normalized_mode)
         self._enforce_policy(action_id)
-        return await self._maybe_await(getattr(service, method_name)(*args, **(kwargs or {})))
+        return await self._maybe_await(
+            getattr(service, method_name)(*args, **(kwargs or {}))
+        )
 
     async def process_command(
         self,

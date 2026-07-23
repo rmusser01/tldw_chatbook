@@ -4,16 +4,28 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 
 EVIDENCE_SNIPPET_CHAR_LIMIT = 4_000
 EXACT_SECRET_METADATA_KEYS = frozenset({"token"})
 TOKEN_SECRET_SUFFIXES = ("_token",)
-SUBSTRING_SECRET_METADATA_KEYS = frozenset({"credential", "secret", "api_key", "password"})
+SUBSTRING_SECRET_METADATA_KEYS = frozenset(
+    {"credential", "secret", "api_key", "password"}
+)
 
 EVIDENCE_STATUSES = frozenset({"available", "blocked", "missing", "stale", "unknown"})
-CITATION_STATUSES = frozenset({"validated", "blocked", "unknown", "stale", "missing", "uncited"})
+CITATION_STATUSES = frozenset(
+    {"validated", "blocked", "unknown", "stale", "missing", "uncited"}
+)
 
 
 class EvidenceReference(BaseModel):
@@ -53,7 +65,14 @@ class EvidenceReference(BaseModel):
     snippet_truncated: bool = False
     original_snippet_char_count: int | None = None
 
-    @field_validator("evidence_id", "source_id", "source_type", "title", "authority_label", mode="before")
+    @field_validator(
+        "evidence_id",
+        "source_id",
+        "source_type",
+        "title",
+        "authority_label",
+        mode="before",
+    )
     @classmethod
     def _normalize_required_text(cls, value: Any, info: ValidationInfo) -> str:
         """Normalize and validate required text fields.
@@ -160,7 +179,9 @@ class EvidenceReference(BaseModel):
             if self.original_snippet_char_count is not None
             else len(self.snippet)
         )
-        truncated = self.snippet_truncated or len(self.snippet) > EVIDENCE_SNIPPET_CHAR_LIMIT
+        truncated = (
+            self.snippet_truncated or len(self.snippet) > EVIDENCE_SNIPPET_CHAR_LIMIT
+        )
         snippet = self.snippet[:EVIDENCE_SNIPPET_CHAR_LIMIT]
         object.__setattr__(self, "snippet", snippet)
         object.__setattr__(self, "snippet_truncated", truncated)
@@ -350,7 +371,11 @@ class EvidenceBundle(BaseModel):
             Tuple of references whose status is ``available``.
         """
 
-        return tuple(reference for reference in self.references if reference.status == "available")
+        return tuple(
+            reference
+            for reference in self.references
+            if reference.status == "available"
+        )
 
     def reference_by_id(self, evidence_id: str) -> EvidenceReference | None:
         """Return one reference by stable citation label.
@@ -401,7 +426,11 @@ class EvidenceBundle(BaseModel):
             ValueError: If required fields or statuses are invalid.
         """
 
-        references = payload.get("references") if isinstance(payload.get("references"), list) else []
+        references = (
+            payload.get("references")
+            if isinstance(payload.get("references"), list)
+            else []
+        )
         return cls(
             bundle_id=payload.get("bundle_id"),
             query=_payload_value(payload, "query", default=""),
@@ -624,7 +653,11 @@ def _metadata_payload(value: Any) -> Any:
             if item is not None and not _is_secret_metadata_key(str(key))
         }
     if isinstance(value, set):
-        return [_metadata_payload(item) for item in sorted(value, key=str) if item is not None]
+        return [
+            _metadata_payload(item)
+            for item in sorted(value, key=str)
+            if item is not None
+        ]
     if isinstance(value, (list, tuple)):
         return [_metadata_payload(item) for item in value if item is not None]
     if isinstance(value, (str, int, float, bool)):
@@ -637,5 +670,7 @@ def _is_secret_metadata_key(key: str) -> bool:
     return (
         normalized in EXACT_SECRET_METADATA_KEYS
         or normalized.endswith(TOKEN_SECRET_SUFFIXES)
-        or any(secret_key in normalized for secret_key in SUBSTRING_SECRET_METADATA_KEYS)
+        or any(
+            secret_key in normalized for secret_key in SUBSTRING_SECRET_METADATA_KEYS
+        )
     )

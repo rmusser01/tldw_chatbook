@@ -83,7 +83,9 @@ def test_console_workspace_state_allows_default_conversation_in_fallback_state(
     assert state.recovery_copy == "Workspace switching: locked"
 
 
-def test_console_workspace_state_reports_active_workspace_and_runtime(tmp_path: Path) -> None:
+def test_console_workspace_state_reports_active_workspace_and_runtime(
+    tmp_path: Path,
+) -> None:
     service = _registry(tmp_path)
     service.create_workspace(
         workspace_id="ws-a",
@@ -144,7 +146,9 @@ def test_console_workspace_state_enables_switching_with_multiple_workspaces(
     assert state.recovery_copy == ""
 
 
-def test_safe_workspaces_treats_missing_registry_as_empty_without_warning(monkeypatch) -> None:
+def test_safe_workspaces_treats_missing_registry_as_empty_without_warning(
+    monkeypatch,
+) -> None:
     warnings: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
     class FakeLogger:
@@ -157,7 +161,9 @@ def test_safe_workspaces_treats_missing_registry_as_empty_without_warning(monkey
     assert warnings == []
 
 
-def test_console_workspace_state_maps_workspace_sync_status_before_promotion(tmp_path: Path) -> None:
+def test_console_workspace_state_maps_workspace_sync_status_before_promotion(
+    tmp_path: Path,
+) -> None:
     expected_labels = {
         WorkspaceSyncStatus.NOT_CONFIGURED: "Sync: not configured",
         WorkspaceSyncStatus.SYNCING: "Sync: syncing",
@@ -360,7 +366,9 @@ def test_console_workspace_state_exposes_handoff_transfer_policy_rows(
     assert "not portable" in rows_by_id["artifact-1"].detail
 
 
-def test_console_workspace_state_preserves_handoff_rows_from_membership_iterator() -> None:
+def test_console_workspace_state_preserves_handoff_rows_from_membership_iterator() -> (
+    None
+):
     class GeneratorMembershipRegistry:
         def list_workspace_memberships(self, workspace_id: str):
             assert workspace_id == "ws-a"
@@ -414,7 +422,9 @@ def test_console_workspace_state_exposes_acp_task_run_handoff_readiness_and_audi
 
     assert state.acp_handoff_label == "ACP task/run: failed"
     assert state.acp_handoff_detail == "ACP runtime package failed preflight."
-    assert state.acp_handoff_audit == "Audit: no secrets copied; source references only."
+    assert (
+        state.acp_handoff_audit == "Audit: no secrets copied; source references only."
+    )
 
 
 def test_console_workspace_state_normalizes_acp_handoff_ready_and_blocked_states(
@@ -532,7 +542,10 @@ def test_library_workspace_depth_state_preserves_visibility_but_blocks_cross_wor
     assert "1 blocked" in state.handoff_label
     assert "Copy or link" in state.context_handoff_tooltip
     assert [row.title for row in state.source_rows] == ["Research Note", "Transcript A"]
-    assert [row.workspace_label for row in state.source_rows] == ["Workspace B", "Workspace A"]
+    assert [row.workspace_label for row in state.source_rows] == [
+        "Workspace B",
+        "Workspace A",
+    ]
     assert [row.visible for row in state.source_rows] == [True, True]
     assert state.source_rows[0].active_context_eligible is False
     assert state.source_rows[0].context_label == "Console/RAG: blocked"

@@ -57,7 +57,11 @@ def test_dry_run_eligible_domain_requires_review_before_writes() -> None:
         domain="workspaces",
         surface_label="Workspaces",
         readiness=readiness,
-        latest_mirror_report={"dry_run": True, "write_enabled": False, "mapped_count": 3},
+        latest_mirror_report={
+            "dry_run": True,
+            "write_enabled": False,
+            "mapped_count": 3,
+        },
         source_authority="local",
         workspace_id="workspace-a",
     )
@@ -123,7 +127,9 @@ def test_conflict_count_can_be_supplied_without_materializing_reports() -> None:
 
 
 def test_rollback_required_profile_blocks_writes_after_error() -> None:
-    registry = SyncEligibilityRegistry([SyncDomainEligibility(domain="notes", sync_eligible=True)])
+    registry = SyncEligibilityRegistry(
+        [SyncDomainEligibility(domain="notes", sync_eligible=True)]
+    )
     readiness = build_sync_readiness_report(
         domain="notes",
         server_profile_id="server-a",
@@ -150,7 +156,9 @@ def test_rollback_required_profile_blocks_writes_after_error() -> None:
 
 
 def test_last_error_without_rollback_flag_requires_attention_not_rollback() -> None:
-    registry = SyncEligibilityRegistry([SyncDomainEligibility(domain="notes", sync_eligible=True)])
+    registry = SyncEligibilityRegistry(
+        [SyncDomainEligibility(domain="notes", sync_eligible=True)]
+    )
     readiness = build_sync_readiness_report(
         domain="notes",
         server_profile_id="server-a",
@@ -196,7 +204,10 @@ def test_write_enabled_readiness_is_clamped_until_review_gates_exist() -> None:
     assert state.sync_label == "Sync: review gated"
     assert state.review_label == "Review: required before writes"
     assert state.mutation_allowed is False
-    assert state.primary_recovery == "Writes stay blocked until review, conflict, and rollback gates are ready."
+    assert (
+        state.primary_recovery
+        == "Writes stay blocked until review, conflict, and rollback gates are ready."
+    )
 
 
 def test_none_readiness_falls_back_to_unavailable() -> None:

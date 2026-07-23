@@ -37,7 +37,7 @@ class EvalsScreen(BaseAppScreen):
         Binding("6", "evals_open('models')", "Models", show=False),
     ]
 
-    def __init__(self, app_instance: 'TldwCli', **kwargs):
+    def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(app_instance, "evals", **kwargs)
 
     def compose_content(self) -> ComposeResult:

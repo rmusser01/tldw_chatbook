@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
+
 if TYPE_CHECKING:
     from ..tldw_api import TLDWAPIClient
 
@@ -61,7 +62,9 @@ class ServerSharingService:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -70,10 +73,14 @@ class ServerSharingService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
-                    user_message=getattr(decision, "user_message", None) or "Server sharing action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
+                    user_message=getattr(decision, "user_message", None)
+                    or "Server sharing action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @staticmethod
@@ -124,13 +131,17 @@ class ServerSharingService:
         self._enforce("sharing.links.inspect.server")
         return self._dump(await self._require_client().preview_public_share(token))
 
-    async def verify_public_link_password(self, token: str, *, password: str) -> dict[str, Any]:
+    async def verify_public_link_password(
+        self, token: str, *, password: str
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import VerifyPasswordRequest
 
         self._enforce("sharing.links.launch.server")
         request = VerifyPasswordRequest(password=password)
-        return self._dump(await self._require_client().verify_public_share_password(token, request))
+        return self._dump(
+            await self._require_client().verify_public_share_password(token, request)
+        )
 
     async def import_public_link(self, token: str) -> dict[str, Any]:
         self._enforce("sharing.links.launch.server")
@@ -175,7 +186,9 @@ class ServerSharingService:
             access_level=access_level,  # type: ignore[arg-type]
             allow_clone=allow_clone,
         )
-        return self._dump(await self._require_client().share_workspace(workspace_id, request))
+        return self._dump(
+            await self._require_client().share_workspace(workspace_id, request)
+        )
 
     async def list_workspace_shares(
         self,
@@ -220,21 +233,33 @@ class ServerSharingService:
         self._enforce("sharing.links.inspect.server")
         return self._dump(await self._require_client().get_shared_workspace(share_id))
 
-    async def clone_shared_workspace(self, share_id: int, *, new_name: str | None = None) -> dict[str, Any]:
+    async def clone_shared_workspace(
+        self, share_id: int, *, new_name: str | None = None
+    ) -> dict[str, Any]:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import CloneWorkspaceRequest
 
         self._enforce("sharing.links.launch.server")
         request = CloneWorkspaceRequest(new_name=new_name)
-        return self._dump(await self._require_client().clone_shared_workspace(share_id, request))
+        return self._dump(
+            await self._require_client().clone_shared_workspace(share_id, request)
+        )
 
-    async def list_shared_workspace_sources(self, share_id: int) -> list[dict[str, Any]]:
+    async def list_shared_workspace_sources(
+        self, share_id: int
+    ) -> list[dict[str, Any]]:
         self._enforce("sharing.links.inspect.server")
-        return self._dump_list(await self._require_client().list_shared_workspace_sources(share_id))
+        return self._dump_list(
+            await self._require_client().list_shared_workspace_sources(share_id)
+        )
 
-    async def get_shared_workspace_media(self, share_id: int, media_id: int) -> dict[str, Any]:
+    async def get_shared_workspace_media(
+        self, share_id: int, media_id: int
+    ) -> dict[str, Any]:
         self._enforce("sharing.links.inspect.server")
-        return self._dump(await self._require_client().get_shared_workspace_media(share_id, media_id))
+        return self._dump(
+            await self._require_client().get_shared_workspace_media(share_id, media_id)
+        )
 
     async def chat_with_shared_workspace(
         self,
@@ -255,4 +280,6 @@ class ServerSharingService:
             api_name=api_name,
             system_message=system_message,
         )
-        return await self._require_client().chat_with_shared_workspace(share_id, request)
+        return await self._require_client().chat_with_shared_workspace(
+            share_id, request
+        )

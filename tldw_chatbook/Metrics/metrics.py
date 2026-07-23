@@ -19,35 +19,54 @@ of time series, overwhelming your Prometheus server.
 - DO NOT use labels for: user IDs, session IDs, trace IDs, URLs, or any
   unbounded unique identifier.
 """
+
 #
 # Imports
 import functools
 import threading
 import time
 import logging
-import psutil#
+import psutil  #
+
 # Third-party Imports
 try:
     from prometheus_client import Counter, Histogram, Gauge, start_http_server
+
     PROMETHEUS_AVAILABLE = True
 except ImportError:
     PROMETHEUS_AVAILABLE = False
+
     # Create dummy classes to prevent errors when prometheus_client is not installed
     class Counter:
-        def __init__(self, *args, **kwargs): pass
-        def inc(self, *args, **kwargs): pass
-        def labels(self, **kwargs): return self
-    
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def inc(self, *args, **kwargs):
+            pass
+
+        def labels(self, **kwargs):
+            return self
+
     class Histogram:
-        def __init__(self, *args, **kwargs): pass
-        def observe(self, *args, **kwargs): pass
-        def labels(self, **kwargs): return self
-    
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def observe(self, *args, **kwargs):
+            pass
+
+        def labels(self, **kwargs):
+            return self
+
     class Gauge:
-        def __init__(self, *args, **kwargs): pass
-        def set(self, *args, **kwargs): pass
-        def labels(self, **kwargs): return self
-    
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def set(self, *args, **kwargs):
+            pass
+
+        def labels(self, **kwargs):
+            return self
+
     def start_http_server(*args, **kwargs):
         logging.warning("Prometheus client not installed. Metrics server not started.")
 #
@@ -80,11 +99,11 @@ def _get_or_create_metric(metric_type, name, documentation, label_keys=None):
         if registry_key in _metrics_registry:
             return _metrics_registry[registry_key]
 
-        if metric_type == 'counter':
+        if metric_type == "counter":
             metric = Counter(name, documentation, label_keys)
-        elif metric_type == 'histogram':
+        elif metric_type == "histogram":
             metric = Histogram(name, documentation, label_keys)
-        elif metric_type == 'gauge':
+        elif metric_type == "gauge":
             metric = Gauge(name, documentation, label_keys)
         else:
             raise ValueError(f"Unsupported metric type: {metric_type}")
@@ -99,12 +118,16 @@ def log_counter(metric_name, value=1, labels=None, documentation=""):
     Documentation is only used during the initial creation of the metric.
     """
     if not PROMETHEUS_AVAILABLE:
-        logging.debug(f"Prometheus not available. Would have logged counter: {metric_name}")
+        logging.debug(
+            f"Prometheus not available. Would have logged counter: {metric_name}"
+        )
         return
     try:
         label_keys = list(labels.keys()) if labels else []
         eff_labels = labels or {}
-        counter = _get_or_create_metric('counter', metric_name, documentation, label_keys)
+        counter = _get_or_create_metric(
+            "counter", metric_name, documentation, label_keys
+        )
         if label_keys:
             counter.labels(**eff_labels).inc(value)
         else:
@@ -119,12 +142,16 @@ def log_histogram(metric_name, value, labels=None, documentation=""):
     Documentation is only used during the initial creation of the metric.
     """
     if not PROMETHEUS_AVAILABLE:
-        logging.debug(f"Prometheus not available. Would have logged histogram: {metric_name} = {value}")
+        logging.debug(
+            f"Prometheus not available. Would have logged histogram: {metric_name} = {value}"
+        )
         return
     try:
         label_keys = list(labels.keys()) if labels else []
         eff_labels = labels or {}
-        histogram = _get_or_create_metric('histogram', metric_name, documentation, label_keys)
+        histogram = _get_or_create_metric(
+            "histogram", metric_name, documentation, label_keys
+        )
         if label_keys:
             histogram.labels(**eff_labels).observe(value)
         else:
@@ -140,12 +167,14 @@ def log_gauge(metric_name, value, labels=None, documentation=""):
     Documentation is only used during the initial creation of the metric.
     """
     if not PROMETHEUS_AVAILABLE:
-        logging.debug(f"Prometheus not available. Would have logged gauge: {metric_name} = {value}")
+        logging.debug(
+            f"Prometheus not available. Would have logged gauge: {metric_name} = {value}"
+        )
         return
     try:
         label_keys = list(labels.keys()) if labels else []
         eff_labels = labels or {}
-        gauge = _get_or_create_metric('gauge', metric_name, documentation, label_keys)
+        gauge = _get_or_create_metric("gauge", metric_name, documentation, label_keys)
         if label_keys:
             gauge.labels(**eff_labels).set(value)
         else:
@@ -179,13 +208,13 @@ def timeit(metric_name=None, documentation="Execution time of a function."):
                     metric_name=f"{base_name}_duration_seconds",
                     value=elapsed,
                     labels=common_labels,
-                    documentation=documentation
+                    documentation=documentation,
                 )
 
                 log_counter(
                     metric_name=f"{base_name}_calls_total",
                     labels=common_labels,
-                    documentation=f"Total calls to {func.__name__}"
+                    documentation=f"Total calls to {func.__name__}",
                 )
 
         return wrapper
@@ -196,27 +225,29 @@ def timeit(metric_name=None, documentation="Execution time of a function."):
 def log_resource_usage(labels=None):
     """Logs current CPU and Memory usage of the process as gauges."""
     process = psutil.Process()
-    memory_mb = process.memory_info().rss / (1024 ** 2)
+    memory_mb = process.memory_info().rss / (1024**2)
     cpu_percent = process.cpu_percent(interval=None)  # Non-blocking
 
     log_gauge(
         "process_memory_mb",
         memory_mb,
         labels=labels,
-        documentation="Current memory usage of the process in Megabytes."
+        documentation="Current memory usage of the process in Megabytes.",
     )
     log_gauge(
         "process_cpu_percent",
         cpu_percent,
         labels=labels,
-        documentation="Current CPU usage of the process as a percentage."
+        documentation="Current CPU usage of the process as a percentage.",
     )
 
 
 def init_metrics_server(port=8000):
     """Starts the Prometheus HTTP server in a separate thread."""
     if not PROMETHEUS_AVAILABLE:
-        logging.warning("Prometheus client not installed. Metrics server cannot be started.")
+        logging.warning(
+            "Prometheus client not installed. Metrics server cannot be started."
+        )
         return
     start_http_server(port)
     logging.info(f"Prometheus metrics server started on port {port}")

@@ -4,21 +4,28 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from textual.widgets import Button, Checkbox, Input, ListView, Select, Static
+from textual.widgets import Button, Checkbox, DataTable, Input, ListView, Select, Static
 
-from Tests.textual_test_utils import widget_pilot
 from tldw_chatbook.DB.search_history_db import SearchHistoryDB
+from tldw_chatbook.RAG_Search.ingestion_indexing import (
+    ITEM_TYPE_CONVERSATION,
+    ITEM_TYPE_MEDIA,
+    ITEM_TYPE_NOTE,
+)
 from tldw_chatbook.UI.SearchRAGWindow import (
     SearchHistoryDropdown,
     SearchRAGWindow,
     SearchResult,
     SavedSearchesPanel,
 )
-from tldw_chatbook.UI.Views.RAGSearch import search_rag_window as search_rag_window_module
+from tldw_chatbook.UI.Views.RAGSearch import (
+    search_rag_window as search_rag_window_module,
+)
 
 
 def _text(widget: Static) -> str:
@@ -44,7 +51,12 @@ def temp_user_data_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def search_rag_test_env(temp_user_data_dir: Path):
-    """Patch Search/RAG persistence and optional dependency state for tests."""
+    """Patch Search/RAG persistence and optional dependency state for tests.
+
+    Also stubs the shared-RAG-service pre-resolution seam used by the Start
+    Indexing worker so tests never construct a real embeddings runtime as a
+    side effect of pressing the button.
+    """
     with patch.dict(
         search_rag_window_module.DEPENDENCIES_AVAILABLE,
         {"embeddings_rag": True},
@@ -58,7 +70,15 @@ def search_rag_test_env(temp_user_data_dir: Path):
                 "tldw_chatbook.UI.Views.RAGSearch.saved_searches_panel.get_user_data_dir",
                 return_value=temp_user_data_dir,
             ):
-                yield
+                with patch(
+                    "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.semantic_indexing_available",
+                    return_value=True,
+                ):
+                    with patch(
+                        "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_shared_rag_service",
+                        return_value=MagicMock(name="shared_rag_service"),
+                    ):
+                        yield
 
 
 @pytest.mark.ui
@@ -90,7 +110,9 @@ class TestSearchRAGWindow:
     ) -> None:
         """Collection loading should be safe to run off the Textual UI thread."""
         window = SearchRAGWindow(mock_app_instance, id="test-search-window")
-        window.query_one = MagicMock(side_effect=AssertionError("UI touched during load"))
+        window.query_one = MagicMock(
+            side_effect=AssertionError("UI touched during load")
+        )
 
         with patch(
             "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_available_profiles",
@@ -124,14 +146,18 @@ class TestSearchRAGWindow:
             "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_available_profiles",
             return_value=[],
         ):
-            async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            async with await widget_pilot(
+                SearchRAGWindow, app_instance=mock_app_instance
+            ) as pilot:
                 window = pilot.app.test_widget
 
                 await window._apply_available_collections(["default"])
                 await pilot.pause()
 
                 assert window.available_collections == ["default"]
-                assert len(window.query_one("#collections-list", ListView).children) == 1
+                assert (
+                    len(window.query_one("#collections-list", ListView).children) == 1
+                )
                 assert window.query_one("#collection-select", Select) is not None
 
     @pytest.mark.asyncio
@@ -142,7 +168,9 @@ class TestSearchRAGWindow:
         widget_pilot,
     ) -> None:
         """The mounted window should expose the current search-first layout."""
-        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            SearchRAGWindow, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
 
             assert window.query_one("#search-query-input", Input)
@@ -165,7 +193,9 @@ class TestSearchRAGWindow:
         widget_pilot,
     ) -> None:
         """First-run Search should explain modes, collection scope, and Chat handoff."""
-        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            SearchRAGWindow, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
 
             empty_state = window.query_one("#search-empty-state", Static)
@@ -185,7 +215,9 @@ class TestSearchRAGWindow:
         widget_pilot,
     ) -> None:
         """The primary Search action should be visible without opening advanced controls."""
-        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            SearchRAGWindow, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
 
             search_input = window.query_one("#search-query-input", Input)
@@ -194,7 +226,10 @@ class TestSearchRAGWindow:
             assert search_input.display is True
             assert search_button.display is True
             assert search_button.disabled is False
-            assert search_button.region.y + search_button.region.height <= pilot.app.size.height
+            assert (
+                search_button.region.y + search_button.region.height
+                <= pilot.app.size.height
+            )
 
             await pilot.click("#search-button")
 
@@ -211,7 +246,9 @@ class TestSearchRAGWindow:
             {"embeddings_rag": False},
             clear=False,
         ):
-            async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            async with await widget_pilot(
+                SearchRAGWindow, app_instance=mock_app_instance
+            ) as pilot:
                 window = pilot.app.test_widget
 
                 search_input = window.query_one("#search-query-input", Input)
@@ -238,12 +275,16 @@ class TestSearchRAGWindow:
         web_search_available: bool,
     ) -> None:
         """Search config should mirror the live control values and reactive state."""
-        with patch.object(search_rag_window_module, "WEB_SEARCH_AVAILABLE", web_search_available):
+        with patch.object(
+            search_rag_window_module, "WEB_SEARCH_AVAILABLE", web_search_available
+        ):
             with patch(
                 "tldw_chatbook.UI.Views.RAGSearch.search_event_handlers.WEB_SEARCH_AVAILABLE",
                 web_search_available,
             ):
-                async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+                async with await widget_pilot(
+                    SearchRAGWindow, app_instance=mock_app_instance
+                ) as pilot:
                     window = pilot.app.test_widget
 
                     window.query_one("#search-mode-select", Select).value = "hybrid"
@@ -285,7 +326,9 @@ class TestSearchRAGWindow:
         widget_pilot,
     ) -> None:
         """The focus shortcut should move focus to the search box."""
-        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            SearchRAGWindow, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
             search_input = window.query_one("#search-query-input", Input)
 
@@ -302,7 +345,9 @@ class TestSearchRAGWindow:
         widget_pilot,
     ) -> None:
         """Result rendering should paginate using the current 10-item page size."""
-        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            SearchRAGWindow, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
 
             window.search_results = [
@@ -335,12 +380,18 @@ class TestSearchRAGWindow:
         widget_pilot,
     ) -> None:
         """Zero-result searches should leave a recovery path instead of a blank pane."""
-        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            SearchRAGWindow, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
 
             window.search_results = []
             window.total_results = 0
-            window.last_search_config = {"query": "missing topic", "mode": "hybrid", "collection": "all"}
+            window.last_search_config = {
+                "query": "missing topic",
+                "mode": "hybrid",
+                "collection": "all",
+            }
 
             await window._display_results()
             await pilot.pause()
@@ -362,7 +413,9 @@ class TestSearchRAGWindow:
         widget_pilot,
     ) -> None:
         """Recording a search should persist history instead of silently logging an error."""
-        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            SearchRAGWindow, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
             window.last_search_time = 0.42
 
@@ -393,7 +446,9 @@ class TestSearchRAGWindow:
         widget_pilot,
     ) -> None:
         """Loading a saved search should repopulate the search controls for reuse."""
-        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+        async with await widget_pilot(
+            SearchRAGWindow, app_instance=mock_app_instance
+        ) as pilot:
             window = pilot.app.test_widget
             saved_panel = window.query_one("#saved-searches-panel", SavedSearchesPanel)
             saved_panel.save_search(
@@ -446,7 +501,9 @@ class TestSemanticHonestStates:
         assert sources == {"media": True, "conversations": False, "notes": True}
         # Missing filters default to searching everything
         assert window._sources_from_config({}) == {
-            "media": True, "conversations": True, "notes": True,
+            "media": True,
+            "conversations": True,
+            "notes": True,
         }
 
     @pytest.mark.asyncio
@@ -466,7 +523,9 @@ class TestSemanticHonestStates:
         window = SearchRAGWindow(mock_app_instance, id="test-search-window")
         captured = {}
 
-        async def fake_hybrid(app, query, sources, top_k=10, diagnostics=None, **kwargs):
+        async def fake_hybrid(
+            app, query, sources, top_k=10, diagnostics=None, **kwargs
+        ):
             captured["app"] = app
             captured["query"] = query
             captured["sources"] = sources
@@ -475,19 +534,33 @@ class TestSemanticHonestStates:
                 diagnostics[SEMANTIC_DIAGNOSTICS_KEY] = {
                     "status": SEMANTIC_STATUS_UNAVAILABLE,
                     "reason": SEMANTIC_REASON_DEPS_MISSING,
-                    "message": SEMANTIC_UNAVAILABLE_MESSAGES[SEMANTIC_REASON_DEPS_MISSING],
+                    "message": SEMANTIC_UNAVAILABLE_MESSAGES[
+                        SEMANTIC_REASON_DEPS_MISSING
+                    ],
                 }
-            return ([{"id": "1", "title": "Doc", "content": "x", "source": "media"}], "ctx")
+            return (
+                [{"id": "1", "title": "Doc", "content": "x", "source": "media"}],
+                "ctx",
+            )
 
-        with patch.object(search_rag_window_module, "perform_hybrid_rag_search", fake_hybrid):
+        with patch.object(
+            search_rag_window_module, "perform_hybrid_rag_search", fake_hybrid
+        ):
             results = await window._perform_hybrid_search(
                 "query",
-                {"top_k": 7, "filters": {"media": True, "conversations": False, "notes": False}},
+                {
+                    "top_k": 7,
+                    "filters": {"media": True, "conversations": False, "notes": False},
+                },
             )
 
         assert captured["app"] is mock_app_instance
         assert captured["query"] == "query"
-        assert captured["sources"] == {"media": True, "conversations": False, "notes": False}
+        assert captured["sources"] == {
+            "media": True,
+            "conversations": False,
+            "notes": False,
+        }
         assert captured["top_k"] == 7
         assert [r["id"] for r in results] == ["1"]
         semantic_state = window.last_search_diagnostics[SEMANTIC_DIAGNOSTICS_KEY]
@@ -502,9 +575,14 @@ class TestSemanticHonestStates:
         window = SearchRAGWindow(mock_app_instance, id="test-search-window")
 
         async def fake_full(app, query, sources, top_k=10, diagnostics=None, **kwargs):
-            return ([{"id": "v1", "title": "Vec", "content": "y", "source": "media"}], "ctx")
+            return (
+                [{"id": "v1", "title": "Vec", "content": "y", "source": "media"}],
+                "ctx",
+            )
 
-        with patch.object(search_rag_window_module, "perform_full_rag_pipeline", fake_full):
+        with patch.object(
+            search_rag_window_module, "perform_full_rag_pipeline", fake_full
+        ):
             results = await window._perform_contextual_search("query", {"top_k": 3})
 
         assert [r["id"] for r in results] == ["v1"]
@@ -576,7 +654,9 @@ class TestSearchHistoryDropdown:
         db.record_search("java programming", "plain", [], 80)
         db.record_search("python tutorials", "hybrid", [], 95)
 
-        async with await widget_pilot(SearchHistoryDropdown, search_history_db=db) as pilot:
+        async with await widget_pilot(
+            SearchHistoryDropdown, search_history_db=db
+        ) as pilot:
             dropdown = pilot.app.test_widget
 
             await dropdown.show_history("python")
@@ -643,11 +723,17 @@ class TestSavedSearchesPanel:
                 delete_button = panel.query_one("#delete-saved-search", Button)
 
                 assert load_button.disabled is True
-                assert "Select a saved search before loading it" in str(load_button.tooltip)
+                assert "Select a saved search before loading it" in str(
+                    load_button.tooltip
+                )
                 assert delete_button.disabled is True
-                assert "Select a saved search before deleting it" in str(delete_button.tooltip)
+                assert "Select a saved search before deleting it" in str(
+                    delete_button.tooltip
+                )
 
-                panel.save_search("Agent UX Search", {"query": "agent UX", "mode": "plain"})
+                panel.save_search(
+                    "Agent UX Search", {"query": "agent UX", "mode": "plain"}
+                )
                 await pilot.pause()
 
                 saved_list = panel.query_one("#saved-searches-list", ListView)
@@ -667,7 +753,9 @@ class TestSavedSearchesPanel:
                 assert "Agent UX Search" not in panel.saved_searches
                 assert panel.selected_search_name is None
                 assert load_button.disabled is True
-                assert "Select a saved search before loading it" in str(load_button.tooltip)
+                assert "Select a saved search before loading it" in str(
+                    load_button.tooltip
+                )
 
 
 @pytest.mark.ui
@@ -675,7 +763,9 @@ class TestSearchResult:
     """Search result card rendering."""
 
     @pytest.mark.asyncio
-    async def test_result_item_displays_title_preview_and_score(self, widget_pilot) -> None:
+    async def test_result_item_displays_title_preview_and_score(
+        self, widget_pilot
+    ) -> None:
         """A result card should render current title, preview, and score affordances."""
         result_data = {
             "title": "Test Title",
@@ -685,7 +775,9 @@ class TestSearchResult:
             "metadata": {"author": "Ada", "topic": "UX"},
         }
 
-        async with await widget_pilot(SearchResult, result=result_data, index=0) as pilot:
+        async with await widget_pilot(
+            SearchResult, result=result_data, index=0
+        ) as pilot:
             result_widget = pilot.app.test_widget
 
             title = result_widget.query_one(".result-title-enhanced", Static)
@@ -695,3 +787,502 @@ class TestSearchResult:
             assert "Test Title" in _text(title)
             assert "preview content" in _text(preview).lower()
             assert "95.0%" == _text(score)
+
+
+def _notify_messages(mock_app: MagicMock) -> list[str]:
+    """Return the text of every notification sent to the mock app."""
+    return [str(call.args[0]) for call in mock_app.notify.call_args_list if call.args]
+
+
+async def _wait_for_indexing_cycle(pilot) -> None:
+    """Let a Start Indexing press run its worker plus the follow-up stats refresh."""
+    await pilot.pause()
+    await pilot.app.workers.wait_for_complete()
+    await pilot.pause()
+    # Completion schedules the stats-refresh worker; let it finish too.
+    await pilot.app.workers.wait_for_complete()
+    await pilot.pause()
+
+
+def _ok_summary(**overrides) -> dict:
+    summary = {"status": "ok", "indexed": 0, "skipped": 0, "failed": 0, "errors": [], "by_type": {}}
+    summary.update(overrides)
+    return summary
+
+
+@pytest.mark.ui
+class TestIndexingControls:
+    """Task-251: the Maintenance-tab indexing controls trigger real indexing."""
+
+    @pytest.mark.asyncio
+    async def test_missing_embeddings_dependency_disables_indexing_controls_with_recovery(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """Without embeddings deps the indexing controls are disabled with honest recovery copy."""
+        with patch.dict(
+            search_rag_window_module.DEPENDENCIES_AVAILABLE,
+            {"embeddings_rag": False},
+            clear=False,
+        ):
+            async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+                window = pilot.app.test_widget
+
+                start_button = window.query_one("#start-indexing", Button)
+                source_select = window.query_one("#index-source-select", Select)
+
+                assert start_button.disabled is True
+                tooltip = str(start_button.tooltip)
+                assert "Missing optional dependencies: embeddings_rag" in tooltip
+                assert 'pip install "tldw_chatbook[embeddings_rag]"' in tooltip
+                assert source_select.disabled is True
+                assert "embeddings_rag" in str(source_select.tooltip)
+
+    @pytest.mark.asyncio
+    async def test_start_indexing_runs_backfill_for_selected_source_and_refreshes_stats(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """Pressing Start Indexing runs the real backfill path and re-reads real stats."""
+        calls: list[dict] = []
+
+        async def fake_backfill(**kwargs):
+            calls.append(kwargs)
+            return _ok_summary(indexed=3, skipped=1)
+
+        rag_service = MagicMock()
+        rag_service.vector_store.get_collection_stats.return_value = {
+            "name": "tldw_rag",
+            "count": 42,
+        }
+        mock_app_instance._rag_service = None
+
+        with patch.object(search_rag_window_module, "backfill_semantic_index", fake_backfill):
+            with patch.object(
+                search_rag_window_module, "peek_shared_rag_service", return_value=None
+            ):
+                async with await widget_pilot(
+                    SearchRAGWindow, app_instance=mock_app_instance
+                ) as pilot:
+                    window = pilot.app.test_widget
+                    await pilot.app.workers.wait_for_complete()
+                    await pilot.pause()
+
+                    # Before any runtime exists, stats honestly say so.
+                    table = window.query_one("#index-stats-table", DataTable)
+                    assert table.row_count == 1
+                    assert any(
+                        "not initialized" in str(cell) for cell in table.get_row_at(0)
+                    )
+
+                    # Once a runtime exists, completion re-reads real stats from it.
+                    mock_app_instance._rag_service = rag_service
+                    window.query_one("#index-source-select", Select).value = "notes"
+                    await pilot.pause()
+
+                    window.query_one("#start-indexing", Button).press()
+                    await _wait_for_indexing_cycle(pilot)
+
+                    assert len(calls) == 1
+                    assert calls[0]["item_types"] == (ITEM_TYPE_NOTE,)
+                    assert calls[0]["chachanotes_db"] is mock_app_instance.chachanotes_db
+                    assert calls[0]["media_db"] is None
+
+                    assert window.query_one("#start-indexing", Button).disabled is False
+                    messages = _notify_messages(mock_app_instance)
+                    assert any(
+                        "Indexing complete" in message and "3" in message
+                        for message in messages
+                    )
+
+                    row = [str(cell) for cell in table.get_row_at(0)]
+                    assert "tldw_rag" in row
+                    assert "42" in row
+
+    @pytest.mark.asyncio
+    async def test_index_source_select_maps_to_backfill_item_types(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """Every source option maps onto the real backfill item-type contract."""
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
+            select = window.query_one("#index-source-select", Select)
+
+            expectations = {
+                "media": (ITEM_TYPE_MEDIA,),
+                "conversations": (ITEM_TYPE_CONVERSATION,),
+                "notes": (ITEM_TYPE_NOTE,),
+                "all": (ITEM_TYPE_MEDIA, ITEM_TYPE_NOTE, ITEM_TYPE_CONVERSATION),
+            }
+            for value, expected in expectations.items():
+                select.value = value
+                await pilot.pause()
+                assert window._selected_index_item_types() == expected
+
+    @pytest.mark.asyncio
+    async def test_start_indexing_is_single_flight(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """A second activation during a run cannot start a second backfill."""
+        gate = threading.Event()
+        started = threading.Event()
+        calls: list[dict] = []
+
+        async def gated_backfill(**kwargs):
+            calls.append(kwargs)
+            started.set()
+            gate.wait(timeout=5)
+            return _ok_summary()
+
+        with patch.object(search_rag_window_module, "backfill_semantic_index", gated_backfill):
+            async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+                window = pilot.app.test_widget
+
+                window.query_one("#start-indexing", Button).press()
+                await pilot.pause()
+                assert started.wait(timeout=5) is True
+
+                # While the run is in flight the button is disabled...
+                start_button = window.query_one("#start-indexing", Button)
+                assert start_button.disabled is True
+                # ...and even a programmatic re-activation is refused honestly.
+                window._start_indexing_run()
+                messages = _notify_messages(mock_app_instance)
+                assert any("already running" in message for message in messages)
+
+                gate.set()
+                await _wait_for_indexing_cycle(pilot)
+
+                assert len(calls) == 1
+                assert window.query_one("#start-indexing", Button).disabled is False
+
+    @pytest.mark.asyncio
+    async def test_backfill_failures_surface_last_error(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """Failed items produce an honest warning carrying the last error."""
+
+        async def failing_backfill(**kwargs):
+            return _ok_summary(
+                status="partial", indexed=1, failed=2, errors=["media 3: boom"]
+            )
+
+        with patch.object(search_rag_window_module, "backfill_semantic_index", failing_backfill):
+            async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+                window = pilot.app.test_widget
+
+                window.query_one("#start-indexing", Button).press()
+                await _wait_for_indexing_cycle(pilot)
+
+                messages = _notify_messages(mock_app_instance)
+                assert any("boom" in message for message in messages)
+                assert window.query_one("#start-indexing", Button).disabled is False
+
+    @pytest.mark.asyncio
+    async def test_backfill_unavailable_status_notifies_recovery(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """An unavailable backfill (deps/kill switch) reports why instead of silence."""
+
+        async def unavailable_backfill(**kwargs):
+            return _ok_summary(status="unavailable")
+
+        with patch.object(
+            search_rag_window_module, "backfill_semantic_index", unavailable_backfill
+        ):
+            async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+                window = pilot.app.test_widget
+
+                window.query_one("#start-indexing", Button).press()
+                await _wait_for_indexing_cycle(pilot)
+
+                messages = _notify_messages(mock_app_instance)
+                assert any("did not run" in message for message in messages)
+                assert any("embeddings" in message for message in messages)
+
+    @pytest.mark.asyncio
+    async def test_service_preresolution_failure_short_circuits_before_backfill(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """A failed shared-service pre-resolution never enters the backfill loop.
+
+        The worker resolves the shared RAG service OUTSIDE its transient
+        asyncio.run loop (PR #700 review); when that fails, the run reports
+        service-unavailable honestly instead of retrying construction inside
+        the loop.
+        """
+        backfill = MagicMock()
+        with patch.object(search_rag_window_module, "backfill_semantic_index", backfill):
+            with patch.object(
+                search_rag_window_module, "get_shared_rag_service", return_value=None
+            ):
+                async with await widget_pilot(
+                    SearchRAGWindow, app_instance=mock_app_instance
+                ) as pilot:
+                    window = pilot.app.test_widget
+
+                    window.query_one("#start-indexing", Button).press()
+                    await _wait_for_indexing_cycle(pilot)
+
+                    backfill.assert_not_called()
+                    messages = _notify_messages(mock_app_instance)
+                    assert any(
+                        "RAG service could not be created" in message
+                        for message in messages
+                    )
+                    assert window._indexing_in_flight is False
+                    assert window.query_one("#start-indexing", Button).disabled is False
+
+    @pytest.mark.asyncio
+    async def test_backfill_crash_is_caught_and_reported(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """A raising backfill never kills the app; it notifies and re-enables the button."""
+
+        async def crashing_backfill(**kwargs):
+            raise RuntimeError("kapow")
+
+        with patch.object(search_rag_window_module, "backfill_semantic_index", crashing_backfill):
+            async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+                window = pilot.app.test_widget
+
+                window.query_one("#start-indexing", Button).press()
+                await _wait_for_indexing_cycle(pilot)
+
+                messages = _notify_messages(mock_app_instance)
+                assert any("kapow" in message for message in messages)
+                assert window._indexing_in_flight is False
+                assert window.query_one("#start-indexing", Button).disabled is False
+
+    @pytest.mark.asyncio
+    async def test_start_indexing_without_source_databases_reports_honestly(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """No reachable source database means an honest error, not a fake run."""
+        mock_app_instance.media_db = None
+        mock_app_instance.chachanotes_db = None
+
+        with patch.object(
+            search_rag_window_module, "backfill_semantic_index", MagicMock()
+        ) as backfill:
+            async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+                window = pilot.app.test_widget
+
+                window.query_one("#start-indexing", Button).press()
+                await pilot.pause()
+
+                backfill.assert_not_called()
+                messages = _notify_messages(mock_app_instance)
+                assert any("no source database" in message for message in messages)
+
+    @pytest.mark.asyncio
+    async def test_apply_index_stats_renders_honest_states(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """The stats table shows real counts and honest not-ready/error states."""
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            table = window.query_one("#index-stats-table", DataTable)
+
+            def row_text() -> str:
+                return " ".join(str(cell) for cell in table.get_row_at(0))
+
+            window._apply_index_stats(None)
+            assert table.row_count == 1
+            assert "not initialized" in row_text()
+
+            window._apply_index_stats({"name": "tldw_rag", "error": "stats exploded"})
+            assert table.row_count == 1
+            assert "stats exploded" in row_text()
+
+            window._apply_index_stats({"name": "tldw_rag", "count": 7})
+            assert table.row_count == 1
+            assert "tldw_rag" in row_text()
+            assert "7" in row_text()
+
+            window._apply_index_stats({"name": "tldw_rag", "count": 0})
+            assert "empty" in row_text()
+
+            # Untrustworthy counts are never displayed as real numbers.
+            window._apply_index_stats({"name": "tldw_rag", "count": "7"})
+            assert "unavailable" in row_text()
+
+
+@pytest.mark.ui
+class TestWiredSearchChromeControls:
+    """Task-251: previously dead chrome either acts for real or is gone."""
+
+    @pytest.mark.asyncio
+    async def test_dead_placeholder_controls_are_removed(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """Placeholder controls with no cheap real backing are no longer rendered."""
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
+
+            assert not window.query("#create-collection")
+            assert not window.query("#delete-collection")
+            assert not window.query("#refresh-results")
+            assert not window.query("#indexing-progress")
+
+    @pytest.mark.asyncio
+    async def test_mixin_on_handlers_are_dispatched_for_real_presses(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """Guard the mixin @on registration mechanism with a real button press.
+
+        SearchEventHandlersMixin only gets its @on handlers dispatched because
+        it is created through Textual's message-pump metaclass (derived via
+        type(Container), task-251). If a Textual upgrade changes the
+        registration mechanism, this public-behavior test fails loudly:
+        pressing Search with an empty query must run handle_search and notify.
+        """
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
+            window.query_one("#search-query-input", Input).value = ""
+
+            window.query_one("#search-button", Button).press()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert any(
+                "Please enter a search query" in message
+                for message in _notify_messages(mock_app_instance)
+            )
+
+    @pytest.mark.asyncio
+    async def test_pagination_buttons_page_through_results(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """Previous/Next actually navigate result pages."""
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
+
+            window.search_results = [
+                {"title": f"Result {index}", "content": "c", "source": "media", "score": 0.5}
+                for index in range(12)
+            ]
+            window.total_results = 12
+            await window._display_results()
+            await pilot.pause()
+
+            window.query_one("#next-page", Button).press()
+            await pilot.pause()
+
+            assert window.current_page == 2
+            assert "Page 2 of 2" in _text(window.query_one("#page-info", Static))
+            assert len(window.query_one("#results-list-enhanced").children) == 2
+
+            window.query_one("#prev-page", Button).press()
+            await pilot.pause()
+
+            assert window.current_page == 1
+            assert "Page 1 of 2" in _text(window.query_one("#page-info", Static))
+
+    @pytest.mark.asyncio
+    async def test_export_results_button_uses_export_action(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """The results-header Export button triggers the real export action."""
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
+            window.search_results = []
+
+            window.query_one("#export-results", Button).press()
+            await pilot.pause()
+
+            assert any(
+                "No results to export" in message
+                for message in _notify_messages(mock_app_instance)
+            )
+
+    @pytest.mark.asyncio
+    async def test_refresh_history_controls_honor_selected_range(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """History refresh reloads through the DB honoring the selected time range."""
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
+            window.search_history_db = MagicMock()
+            window.search_history_db.get_search_history.return_value = []
+
+            window.query_one("#history-range-select", Select).value = "7"
+            await pilot.pause()
+            window.query_one("#refresh-history", Button).press()
+            await pilot.pause()
+
+            assert (
+                window.search_history_db.get_search_history.call_args.kwargs["days_back"] == 7
+            )
+
+            window.query_one("#history-range-select", Select).value = "all"
+            await pilot.pause()
+
+            assert (
+                window.search_history_db.get_search_history.call_args.kwargs["days_back"] is None
+            )
+
+    @pytest.mark.asyncio
+    async def test_refresh_collections_button_triggers_real_refresh(
+        self,
+        mock_app_instance: MagicMock,
+        search_rag_test_env,
+        widget_pilot,
+    ) -> None:
+        """The Maintenance refresh button reloads collections and index stats."""
+        async with await widget_pilot(SearchRAGWindow, app_instance=mock_app_instance) as pilot:
+            window = pilot.app.test_widget
+            window._refresh_collections_list = MagicMock()
+            window._refresh_index_stats = MagicMock()
+
+            window.query_one("#refresh-collections", Button).press()
+            await pilot.pause()
+
+            window._refresh_collections_list.assert_called_once()
+            window._refresh_index_stats.assert_called_once()

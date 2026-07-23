@@ -26,6 +26,7 @@ still behave correctly (construct with ``client=None`` via their
 object, and either succeed end-to-end or fail exactly the way they always
 did when no client/client_provider is configured).
 """
+
 from __future__ import annotations
 
 import os
@@ -90,8 +91,10 @@ def test_app_import_schema_submodule_set_is_within_allowlist(tmp_path):
     )
     import json
 
-    line = next(l for l in result.stdout.splitlines() if l.startswith("LOADED_JSON:"))
-    loaded = set(json.loads(line[len("LOADED_JSON:"):]))
+    line = next(
+        line for line in result.stdout.splitlines() if line.startswith("LOADED_JSON:")
+    )
+    loaded = set(json.loads(line[len("LOADED_JSON:") :]))
     extra = loaded - ALLOWED_SCHEMA_SUBMODULES
     assert not extra, (
         f"tldw_api submodules loaded by `import tldw_chatbook.app` beyond the "

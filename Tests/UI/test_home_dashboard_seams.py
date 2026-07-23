@@ -22,7 +22,9 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
-from tldw_chatbook.Home.active_work_adapter import LocalNotificationHomeActiveWorkAdapter
+from tldw_chatbook.Home.active_work_adapter import (
+    LocalNotificationHomeActiveWorkAdapter,
+)
 from tldw_chatbook.Home.dashboard_state import (
     HomeAction,
     HomeCanvasState,
@@ -64,7 +66,9 @@ class _CountingNotificationService:
 
 
 def _adapter(notification_service):
-    return LocalNotificationHomeActiveWorkAdapter(notification_service=notification_service)
+    return LocalNotificationHomeActiveWorkAdapter(
+        notification_service=notification_service
+    )
 
 
 def test_active_work_cache_hits_within_ttl():
@@ -208,14 +212,18 @@ def _row(row_id, section_id, *, title="Item", glyph="●", age="", source="Src")
 
 def _triage(rows_by_section, *, selected_row_id="", details_lines=("Line",)):
     sections = tuple(
-        HomeRailSectionState(section_id, section_id.title(), len(rows), tuple(rows), "empty")
+        HomeRailSectionState(
+            section_id, section_id.title(), len(rows), tuple(rows), "empty"
+        )
         for section_id, rows in rows_by_section.items()
     )
     canvas = HomeCanvasState(
         title="Canvas",
         lines=("line",),
         actions=(),
-        next_action=HomeAction(action_id="a", label="A", target_route="chat", reason="r"),
+        next_action=HomeAction(
+            action_id="a", label="A", target_route="chat", reason="r"
+        ),
         next_action_is_canvas=False,
     )
     return HomeTriageState(
@@ -288,7 +296,9 @@ async def test_home_rail_details_only_change_patches_without_recompose():
         rail = app.query_one("#home-rail", HomeRail)
         calls = _spy_recompose(rail)
 
-        triage_b = _triage(rows, selected_row_id="row-a", details_lines=("Status: busy",))
+        triage_b = _triage(
+            rows, selected_row_id="row-a", details_lines=("Status: busy",)
+        )
         rail.sync_state(triage_b, prefs)
         await pilot.pause()
 
@@ -302,7 +312,10 @@ async def test_home_rail_structural_change_still_recomposes():
     prefs = HomeRailPreferences()
     rows_a = {"attention": [_row("row-a", "attention")], "running": [], "recent": []}
     rows_b = {
-        "attention": [_row("row-a", "attention"), _row("row-c", "attention", title="Gamma")],
+        "attention": [
+            _row("row-a", "attention"),
+            _row("row-c", "attention", title="Gamma"),
+        ],
         "running": [],
         "recent": [],
     }
@@ -342,7 +355,9 @@ def _canvas_state(lines, *, title="Canvas", primary_control_id=""):
         title=title,
         lines=lines,
         actions=(),
-        next_action=HomeAction(action_id="a", label="A", target_route="chat", reason="r"),
+        next_action=HomeAction(
+            action_id="a", label="A", target_route="chat", reason="r"
+        ),
         next_action_is_canvas=False,
         primary_control_id=primary_control_id,
     )

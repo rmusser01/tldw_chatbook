@@ -37,7 +37,9 @@ assumed from the spec):
 import json
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.Character_Chat.local_chat_dictionary_service import LocalChatDictionaryService
+from tldw_chatbook.Character_Chat.local_chat_dictionary_service import (
+    LocalChatDictionaryService,
+)
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
     export_character_card_to_json,
     import_character_card_from_json_string,
@@ -62,11 +64,17 @@ def test_embedded_chat_dictionaries_survive_export_import(tmp_path):
     service.attach_to_character(dict_id, char_id)
 
     exported = export_character_card_to_json(db, char_id, include_image=False)
-    assert exported is not None, "export must succeed for a character with all required V2 fields"
+    assert exported is not None, (
+        "export must succeed for a character with all required V2 fields"
+    )
     payload = exported if isinstance(exported, str) else json.dumps(exported)
     imported = import_character_card_from_json_string(payload)
-    assert imported is not None, "import must succeed on the card this export just produced"
+    assert imported is not None, (
+        "import must succeed on the card this export just produced"
+    )
 
     ext = (imported or {}).get("extensions") or {}
     names = [b.get("name") for b in (ext.get("chat_dictionaries") or [])]
-    assert "Slang" in names, "embedded chat_dictionaries must ride inside extensions across export/import"
+    assert "Slang" in names, (
+        "embedded chat_dictionaries must ride inside extensions across export/import"
+    )

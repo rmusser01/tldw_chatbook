@@ -15,7 +15,7 @@ from .ingest_utils import (
     CHARACTER_FILE_FILTERS,
     MAX_NOTE_PREVIEWS,
     NOTE_FILE_FILTERS,
-    _truncate_text
+    _truncate_text,
 )
 
 # Import character ingestion functions
@@ -25,7 +25,7 @@ from .character_ingest_events import (
     _handle_character_file_selected_callback,
     handle_ingest_characters_select_file_button_pressed,
     handle_ingest_characters_clear_files_button_pressed,
-    handle_ingest_characters_import_now_button_pressed
+    handle_ingest_characters_import_now_button_pressed,
 )
 
 # Import prompt ingestion functions
@@ -35,7 +35,7 @@ from .prompt_ingest_events import (
     _handle_prompt_file_selected_callback,
     handle_ingest_prompts_select_file_button_pressed,
     handle_ingest_prompts_clear_files_button_pressed,
-    handle_ingest_prompts_import_now_button_pressed
+    handle_ingest_prompts_import_now_button_pressed,
 )
 
 # Import note ingestion functions
@@ -45,7 +45,7 @@ from .note_ingest_events import (
     _handle_note_file_selected_callback,
     handle_ingest_notes_select_file_button_pressed,
     handle_ingest_notes_clear_files_button_pressed,
-    handle_ingest_notes_import_now_button_pressed
+    handle_ingest_notes_import_now_button_pressed,
 )
 
 # Import TLDW API functions
@@ -61,13 +61,13 @@ from .tldw_api_events import (
     _collect_plaintext_specific_data,
     _collect_xml_specific_data,
     _collect_mediawiki_specific_data,
-    handle_tldw_api_submit_button_pressed
+    handle_tldw_api_submit_button_pressed,
 )
 
 # Import worker handlers
 from .media_ingest_workers import (
     handle_tldw_api_worker_failure,
-    handle_tldw_api_worker_success
+    handle_tldw_api_worker_success,
 )
 
 # Import local ingestion handlers
@@ -76,7 +76,7 @@ from .local_ingest_events import (
     handle_local_pdf_ebook_submit_button_pressed,
     handle_local_audio_video_submit_button_pressed,
     handle_local_document_submit_button_pressed,
-    handle_local_plaintext_submit_button_pressed
+    handle_local_plaintext_submit_button_pressed,
 )
 
 # --- Button Handler Map ---
@@ -125,57 +125,57 @@ INGEST_BUTTON_HANDLERS = {
 # Export all symbols for backward compatibility
 __all__ = [
     # Constants
-    'MAX_PROMPT_PREVIEWS',
-    'PROMPT_FILE_FILTERS',
-    'MAX_CHARACTER_PREVIEWS',
-    'CHARACTER_FILE_FILTERS',
-    'MAX_NOTE_PREVIEWS',
-    'NOTE_FILE_FILTERS',
+    "MAX_PROMPT_PREVIEWS",
+    "PROMPT_FILE_FILTERS",
+    "MAX_CHARACTER_PREVIEWS",
+    "CHARACTER_FILE_FILTERS",
+    "MAX_NOTE_PREVIEWS",
+    "NOTE_FILE_FILTERS",
     # Utilities
-    '_truncate_text',
+    "_truncate_text",
     # Character functions
-    '_update_character_preview_display',
-    '_parse_single_character_file_for_preview',
-    '_handle_character_file_selected_callback',
-    'handle_ingest_characters_select_file_button_pressed',
-    'handle_ingest_characters_clear_files_button_pressed',
-    'handle_ingest_characters_import_now_button_pressed',
+    "_update_character_preview_display",
+    "_parse_single_character_file_for_preview",
+    "_handle_character_file_selected_callback",
+    "handle_ingest_characters_select_file_button_pressed",
+    "handle_ingest_characters_clear_files_button_pressed",
+    "handle_ingest_characters_import_now_button_pressed",
     # Prompt functions
-    '_update_prompt_preview_display',
-    '_parse_single_prompt_file_for_preview',
-    '_handle_prompt_file_selected_callback',
-    'handle_ingest_prompts_select_file_button_pressed',
-    'handle_ingest_prompts_clear_files_button_pressed',
-    'handle_ingest_prompts_import_now_button_pressed',
+    "_update_prompt_preview_display",
+    "_parse_single_prompt_file_for_preview",
+    "_handle_prompt_file_selected_callback",
+    "handle_ingest_prompts_select_file_button_pressed",
+    "handle_ingest_prompts_clear_files_button_pressed",
+    "handle_ingest_prompts_import_now_button_pressed",
     # Note functions
-    '_update_note_preview_display',
-    '_parse_single_note_file_for_preview',
-    '_handle_note_file_selected_callback',
-    'handle_ingest_notes_select_file_button_pressed',
-    'handle_ingest_notes_clear_files_button_pressed',
-    'handle_ingest_notes_import_now_button_pressed',
+    "_update_note_preview_display",
+    "_parse_single_note_file_for_preview",
+    "_handle_note_file_selected_callback",
+    "handle_ingest_notes_select_file_button_pressed",
+    "handle_ingest_notes_clear_files_button_pressed",
+    "handle_ingest_notes_import_now_button_pressed",
     # TLDW API functions
-    'handle_tldw_api_auth_method_changed',
-    'handle_tldw_api_media_type_changed',
-    '_collect_common_form_data',
-    '_collect_video_specific_data',
-    '_collect_audio_specific_data',
-    '_collect_pdf_specific_data',
-    '_collect_ebook_specific_data',
-    '_collect_document_specific_data',
-    '_collect_plaintext_specific_data',
-    '_collect_xml_specific_data',
-    '_collect_mediawiki_specific_data',
-    'handle_tldw_api_submit_button_pressed',
+    "handle_tldw_api_auth_method_changed",
+    "handle_tldw_api_media_type_changed",
+    "_collect_common_form_data",
+    "_collect_video_specific_data",
+    "_collect_audio_specific_data",
+    "_collect_pdf_specific_data",
+    "_collect_ebook_specific_data",
+    "_collect_document_specific_data",
+    "_collect_plaintext_specific_data",
+    "_collect_xml_specific_data",
+    "_collect_mediawiki_specific_data",
+    "handle_tldw_api_submit_button_pressed",
     # Worker handlers
-    'handle_tldw_api_worker_failure',
-    'handle_tldw_api_worker_success',
+    "handle_tldw_api_worker_failure",
+    "handle_tldw_api_worker_success",
     # Local ingestion handlers
-    'handle_ingest_local_web_button_pressed',
-    'handle_local_pdf_ebook_submit_button_pressed',
-    'handle_local_audio_video_submit_button_pressed',
-    'handle_local_document_submit_button_pressed',
-    'handle_local_plaintext_submit_button_pressed',
+    "handle_ingest_local_web_button_pressed",
+    "handle_local_pdf_ebook_submit_button_pressed",
+    "handle_local_audio_video_submit_button_pressed",
+    "handle_local_document_submit_button_pressed",
+    "handle_local_plaintext_submit_button_pressed",
     # Main export
-    'INGEST_BUTTON_HANDLERS'
+    "INGEST_BUTTON_HANDLERS",
 ]

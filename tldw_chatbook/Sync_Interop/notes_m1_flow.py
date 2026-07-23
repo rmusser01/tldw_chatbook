@@ -1,16 +1,19 @@
 """Focused notes.note push/pull/apply flow against an M1 Sync v2 server."""
+
 from __future__ import annotations
 
 from typing import Any, TYPE_CHECKING
 
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
+
 if TYPE_CHECKING:
     from tldw_chatbook.tldw_api import SyncV2Envelope
 
 
-
 class NotesM1SyncFlow:
-    def __init__(self, *, client, builder, mirror, local_store, dataset_id: str, device_id: str) -> None:
+    def __init__(
+        self, *, client, builder, mirror, local_store, dataset_id: str, device_id: str
+    ) -> None:
         self.client = client
         self.builder = builder
         self.mirror = mirror
@@ -26,7 +29,9 @@ class NotesM1SyncFlow:
         for env in envelopes:
             self._client_sequence += 1
             env.client_sequence = self._client_sequence
-        request = SyncV2PushRequest(dataset_id=self.dataset_id, device_id=self.device_id, envelopes=envelopes)
+        request = SyncV2PushRequest(
+            dataset_id=self.dataset_id, device_id=self.device_id, envelopes=envelopes
+        )
         response = await self.client.push_sync_v2_envelopes(request)
         payload_hashes = {env.client_envelope_id: env.payload_hash for env in envelopes}
         mirror_errors = 0
@@ -48,9 +53,16 @@ class NotesM1SyncFlow:
 
     async def pull(self, *, cursor: int) -> dict[str, Any]:
         response = await self.client.pull_sync_v2_envelopes(
-            dataset_id=self.dataset_id, device_id=self.device_id, cursor=str(cursor), domains=["notes.note"],
+            dataset_id=self.dataset_id,
+            device_id=self.device_id,
+            cursor=str(cursor),
+            domains=["notes.note"],
         )
-        applier = SyncEnvelopeApplier(local_store=self.local_store, notes_mirror=self.mirror, dataset_id=self.dataset_id)
+        applier = SyncEnvelopeApplier(
+            local_store=self.local_store,
+            notes_mirror=self.mirror,
+            dataset_id=self.dataset_id,
+        )
         applied = noop = conflicts = 0
         for env in response.envelopes:
             status = applier.apply(env).get("status")
@@ -68,8 +80,12 @@ class NotesM1SyncFlow:
             "has_more": response.has_more,
         }
 
-    def _record_acknowledgement(self, acknowledgement: Any, payload_hashes: dict[str, str]) -> bool:
-        object_id = getattr(acknowledgement, "object_id", None) or getattr(acknowledgement, "entity_id", None)
+    def _record_acknowledgement(
+        self, acknowledgement: Any, payload_hashes: dict[str, str]
+    ) -> bool:
+        object_id = getattr(acknowledgement, "object_id", None) or getattr(
+            acknowledgement, "entity_id", None
+        )
         if object_id is None:
             return False
 
@@ -79,10 +95,20 @@ class NotesM1SyncFlow:
         if server_cursor is None:
             server_cursor = getattr(acknowledgement, "server_sequence", None)
 
-        payload_hash = payload_hashes.get(getattr(acknowledgement, "client_envelope_id", ""))
+        payload_hash = payload_hashes.get(
+            getattr(acknowledgement, "client_envelope_id", "")
+        )
         if existing is not None and (object_revision is None or server_cursor is None):
-            object_revision = existing.object_revision if object_revision is None else max(existing.object_revision, object_revision)
-            server_cursor = existing.server_cursor if server_cursor is None else max(existing.server_cursor, server_cursor)
+            object_revision = (
+                existing.object_revision
+                if object_revision is None
+                else max(existing.object_revision, object_revision)
+            )
+            server_cursor = (
+                existing.server_cursor
+                if server_cursor is None
+                else max(existing.server_cursor, server_cursor)
+            )
             payload_hash = existing.object_hash
         elif payload_hash is None or object_revision is None or server_cursor is None:
             return False

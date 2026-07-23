@@ -3,7 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from tldw_chatbook.MCP.unified_context_store import UnifiedMCPContextStore
-from tldw_chatbook.MCP.unified_control_models import ServerAccessContext, UnifiedMCPContext
+from tldw_chatbook.MCP.unified_control_models import (
+    ServerAccessContext,
+    UnifiedMCPContext,
+)
 
 
 def test_unified_mcp_context_partitions_per_server_state(tmp_path):
@@ -84,7 +87,9 @@ def test_unified_mcp_context_store_tolerates_bad_panel_metadata_shape(tmp_path):
     assert restored.per_server_state["server-a"].panel_records[0].metadata == {}
 
 
-def test_unified_mcp_context_store_keeps_destination_local_state_separate_from_runtime_policy(tmp_path):
+def test_unified_mcp_context_store_keeps_destination_local_state_separate_from_runtime_policy(
+    tmp_path,
+):
     store = UnifiedMCPContextStore(tmp_path / "unified_mcp_context.json")
     context = UnifiedMCPContext(
         selected_source="server",

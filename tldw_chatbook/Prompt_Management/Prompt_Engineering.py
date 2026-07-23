@@ -2,7 +2,9 @@
 # Description: Library for generating prompts
 #
 # Imports
+import logging
 import re
+
 #
 # External Imports
 #
@@ -17,10 +19,11 @@ from tldw_Server_API.app.core.Chat.Chat_Functions import chat_api_call
 
 ################################## Meta Prompt Engineering Functions ##############################################
 
+
 # Function to generate prompt using metaprompt
 def generate_prompt(api_endpoint, api_key, task, variables_str, temperature):
     # Convert variables into a list from comma-separated input
-    variables = [v.strip() for v in variables_str.split(',') if v.strip()]
+    [v.strip() for v in variables_str.split(",") if v.strip()]
 
     # Construct the metaprompt by embedding the task and variables into the defined structure
     metaprompt = f"""Today you will be writing instructions to an eager, helpful, but inexperienced and unworldly AI assistant who needs careful instruction and examples to understand how best to behave. I will explain a task to you. You will write instructions that will direct the assistant on how best to accomplish the task consistently, accurately, and correctly. Here are some examples of tasks and instructions.
@@ -495,9 +498,18 @@ def generate_prompt(api_endpoint, api_key, task, variables_str, temperature):
 
     # Call chat API to generate the prompt
     messages_payload = [{"role": "user", "content": metaprompt}]
-    response = chat_api_call(api_endpoint=api_endpoint, messages_payload=messages_payload, api_key=api_key,
-                             temp=temperature, streaming=False, minp=None, maxp=None, model=None)
+    response = chat_api_call(
+        api_endpoint=api_endpoint,
+        messages_payload=messages_payload,
+        api_key=api_key,
+        temp=temperature,
+        streaming=False,
+        minp=None,
+        maxp=None,
+        model=None,
+    )
     return response
+
 
 def extract_between_tags(tag: str, string: str, strip: bool = False) -> list[str]:
     ext_list = re.findall(f"<{tag}>(.+?)</{tag}>", string, re.DOTALL)
@@ -505,52 +517,73 @@ def extract_between_tags(tag: str, string: str, strip: bool = False) -> list[str
         ext_list = [e.strip() for e in ext_list]
     return ext_list
 
+
 def remove_empty_tags(text):
-    return re.sub(r'\n<(\w+)>\s*</\1>\n', '', text, flags=re.DOTALL)
+    return re.sub(r"\n<(\w+)>\s*</\1>\n", "", text, flags=re.DOTALL)
+
 
 def strip_last_sentence(text):
-    sentences = text.split('. ')
+    sentences = text.split(". ")
     if sentences[-1].startswith("Let me know"):
         sentences = sentences[:-1]
-        result = '. '.join(sentences)
-        if result and not result.endswith('.'):
-            result += '.'
+        result = ". ".join(sentences)
+        if result and not result.endswith("."):
+            result += "."
         return result
     else:
         return text
+
 
 # Function to extract the refined prompt and handle floating variables
 def extract_prompt(metaprompt_response):
     # Extract prompt from metaprompt response
     between_tags = extract_between_tags("Instructions", metaprompt_response)[0]
-    return between_tags[:1000] + strip_last_sentence(remove_empty_tags(between_tags[1000:].strip()).strip())
+    return between_tags[:1000] + strip_last_sentence(
+        remove_empty_tags(between_tags[1000:].strip()).strip()
+    )
 
 
 # Function to test the generated prompt with variable values
-def test_generated_prompt(api_endpoint, api_key, generated_prompt, variable_values_str, temperature):
+def test_generated_prompt(
+    api_endpoint, api_key, generated_prompt, variable_values_str, temperature
+):
     # Extract variable names from the prompt (they appear as {$variable_name})
-    variable_names = re.findall(r'\{\$([^}]+)\}', generated_prompt)
-    
+    variable_names = re.findall(r"\{\$([^}]+)\}", generated_prompt)
+
     # Parse the provided values
-    provided_values = [v.strip() for v in variable_values_str.split(',') if v.strip()]
-    
+    provided_values = [v.strip() for v in variable_values_str.split(",") if v.strip()]
+
     # Create a dictionary mapping variable placeholders to their values
     if len(variable_names) != len(provided_values):
-        logging.warning(f"Number of variables ({len(variable_names)}) doesn't match number of values ({len(provided_values)})")
-    
+        logging.warning(
+            f"Number of variables ({len(variable_names)}) doesn't match number of values ({len(provided_values)})"
+        )
+
     # Replace variables in the generated prompt with actual values
     prompt_with_values = generated_prompt
     for i, var_name in enumerate(variable_names):
         if i < len(provided_values):
             # Replace the full placeholder {$variable_name} with the value
             placeholder = f"{{${var_name}}}"
-            prompt_with_values = prompt_with_values.replace(placeholder, provided_values[i])
+            prompt_with_values = prompt_with_values.replace(
+                placeholder, provided_values[i]
+            )
 
     # Send the filled-in prompt to the chat API
     messages_payload = [{"role": "user", "content": prompt_with_values}]
-    response = chat_api_call(api_endpoint=api_endpoint, messages_payload=messages_payload, api_key=api_key, 
-                             temp=temperature, system_message=None, streaming=False, minp=None, maxp=None, model=None)
+    response = chat_api_call(
+        api_endpoint=api_endpoint,
+        messages_payload=messages_payload,
+        api_key=api_key,
+        temp=temperature,
+        system_message=None,
+        streaming=False,
+        minp=None,
+        maxp=None,
+        model=None,
+    )
     return response
+
 
 #
 # End of Function Definitions

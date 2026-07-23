@@ -97,7 +97,9 @@ _SERVER_UNSUPPORTED_CAPABILITIES: list[dict[str, Any]] = []
 class CharacterPersonaScopeService:
     """Route character and persona catalog reads to the selected backend."""
 
-    def __init__(self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None):
+    def __init__(
+        self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None
+    ):
         self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
@@ -105,7 +107,9 @@ class CharacterPersonaScopeService:
     def _normalize_mode(self, mode: str | None) -> str:
         normalized_mode = "local" if mode is None else str(mode).strip().lower()
         if normalized_mode not in {"local", "server"}:
-            raise ValueError(f"Invalid character/persona mode: {mode!r}. Expected 'local' or 'server'.")
+            raise ValueError(
+                f"Invalid character/persona mode: {mode!r}. Expected 'local' or 'server'."
+            )
         return normalized_mode
 
     def _backend(self, mode: str | None):
@@ -175,9 +179,14 @@ class CharacterPersonaScopeService:
 
     @staticmethod
     def _backend_supports(backend: Any, method_names: tuple[str, ...]) -> bool:
-        return all(callable(getattr(backend, method_name, None)) for method_name in method_names)
+        return all(
+            callable(getattr(backend, method_name, None))
+            for method_name in method_names
+        )
 
-    def list_unsupported_capabilities(self, *, mode: str | None = None) -> list[dict[str, Any]]:
+    def list_unsupported_capabilities(
+        self, *, mode: str | None = None
+    ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == "local":
             reports = [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
@@ -327,7 +336,9 @@ class CharacterPersonaScopeService:
             missing_message=missing_message,
         )
 
-    async def list_characters(self, mode: str = "local", limit: int = 100, offset: int = 0) -> Any:
+    async def list_characters(
+        self, mode: str = "local", limit: int = 100, offset: int = 0
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._persona_action_id(normalized_mode, "list"))
         backend = self._backend(normalized_mode)
@@ -336,12 +347,18 @@ class CharacterPersonaScopeService:
                 raise ValueError(
                     "Local character backend does not provide list_characters() or list_character_cards()."
                 )
-            return await self._maybe_await(backend.list_character_cards(limit=limit, offset=offset))
+            return await self._maybe_await(
+                backend.list_character_cards(limit=limit, offset=offset)
+            )
         if not hasattr(backend, "list_characters"):
             raise ValueError("Character backend does not provide list_characters().")
-        return await self._maybe_await(backend.list_characters(limit=limit, offset=offset))
+        return await self._maybe_await(
+            backend.list_characters(limit=limit, offset=offset)
+        )
 
-    async def search_characters(self, query: str, mode: str = "local", limit: int = 10) -> Any:
+    async def search_characters(
+        self, query: str, mode: str = "local", limit: int = 10
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._persona_action_id(normalized_mode, "list"))
         backend = self._backend(normalized_mode)
@@ -414,7 +431,9 @@ class CharacterPersonaScopeService:
             missing_message=missing_message,
         )
 
-    async def delete_character(self, character_id: int, expected_version: int, mode: str = "local") -> Any:
+    async def delete_character(
+        self, character_id: int, expected_version: int, mode: str = "local"
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._persona_action_id(normalized_mode, "delete"))
         backend = self._backend(normalized_mode)
@@ -431,7 +450,9 @@ class CharacterPersonaScopeService:
             missing_message=missing_message,
         )
 
-    async def restore_character(self, character_id: int, expected_version: int, mode: str = "local") -> Any:
+    async def restore_character(
+        self, character_id: int, expected_version: int, mode: str = "local"
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._persona_action_id(normalized_mode, "update"))
         backend = self._backend(normalized_mode)
@@ -448,7 +469,9 @@ class CharacterPersonaScopeService:
             missing_message=missing_message,
         )
 
-    async def list_character_world_books(self, mode: str = "local", **kwargs: Any) -> Any:
+    async def list_character_world_books(
+        self, mode: str = "local", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._world_book_action_id(normalized_mode, "list"))
         backend = self._backend(normalized_mode)
@@ -459,7 +482,9 @@ class CharacterPersonaScopeService:
             **kwargs,
         )
 
-    async def get_character_world_book(self, world_book_id: int, mode: str = "local", **kwargs: Any) -> Any:
+    async def get_character_world_book(
+        self, world_book_id: int, mode: str = "local", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._world_book_action_id(normalized_mode, "detail"))
         backend = self._backend(normalized_mode)
@@ -471,7 +496,9 @@ class CharacterPersonaScopeService:
             **kwargs,
         )
 
-    async def create_character_world_book(self, request_data: Any, mode: str = "local", **kwargs: Any) -> Any:
+    async def create_character_world_book(
+        self, request_data: Any, mode: str = "local", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._world_book_action_id(normalized_mode, "create"))
         backend = self._backend(normalized_mode)
@@ -502,7 +529,9 @@ class CharacterPersonaScopeService:
             **kwargs,
         )
 
-    async def delete_character_world_book(self, world_book_id: int, mode: str = "local", **kwargs: Any) -> Any:
+    async def delete_character_world_book(
+        self, world_book_id: int, mode: str = "local", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._world_book_action_id(normalized_mode, "delete"))
         backend = self._backend(normalized_mode)
@@ -531,9 +560,13 @@ class CharacterPersonaScopeService:
             **kwargs,
         )
 
-    async def get_character_world_book_entry(self, entry_id: int, mode: str = "local", **kwargs: Any) -> Any:
+    async def get_character_world_book_entry(
+        self, entry_id: int, mode: str = "local", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._world_book_entry_action_id(normalized_mode, "detail"))
+        self._enforce_policy(
+            self._world_book_entry_action_id(normalized_mode, "detail")
+        )
         backend = self._backend(normalized_mode)
         return await self._invoke_backend_method(
             backend,
@@ -551,7 +584,9 @@ class CharacterPersonaScopeService:
         **kwargs: Any,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._world_book_entry_action_id(normalized_mode, "create"))
+        self._enforce_policy(
+            self._world_book_entry_action_id(normalized_mode, "create")
+        )
         backend = self._backend(normalized_mode)
         return await self._invoke_backend_method(
             backend,
@@ -570,7 +605,9 @@ class CharacterPersonaScopeService:
         **kwargs: Any,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._world_book_entry_action_id(normalized_mode, "update"))
+        self._enforce_policy(
+            self._world_book_entry_action_id(normalized_mode, "update")
+        )
         backend = self._backend(normalized_mode)
         return await self._invoke_backend_method(
             backend,
@@ -581,9 +618,13 @@ class CharacterPersonaScopeService:
             **kwargs,
         )
 
-    async def delete_character_world_book_entry(self, entry_id: int, mode: str = "local", **kwargs: Any) -> Any:
+    async def delete_character_world_book_entry(
+        self, entry_id: int, mode: str = "local", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._world_book_entry_action_id(normalized_mode, "delete"))
+        self._enforce_policy(
+            self._world_book_entry_action_id(normalized_mode, "delete")
+        )
         backend = self._backend(normalized_mode)
         return await self._invoke_backend_method(
             backend,
@@ -607,7 +648,9 @@ class CharacterPersonaScopeService:
         if normalized_mode == "local" and not hasattr(backend, "list_persona_profiles"):
             raise ValueError("Local persona profiles are not available yet.")
         if not hasattr(backend, "list_persona_profiles"):
-            raise ValueError("Character/persona backend does not provide list_persona_profiles().")
+            raise ValueError(
+                "Character/persona backend does not provide list_persona_profiles()."
+            )
         return await self._maybe_await(
             backend.list_persona_profiles(
                 active_only=active_only,
@@ -633,7 +676,9 @@ class CharacterPersonaScopeService:
             missing_message=missing_message,
         )
 
-    async def create_persona_profile(self, request_data: Any, mode: str = "local") -> Any:
+    async def create_persona_profile(
+        self, request_data: Any, mode: str = "local"
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._persona_action_id(normalized_mode, "create"))
         backend = self._backend(normalized_mode)
@@ -753,7 +798,9 @@ class CharacterPersonaScopeService:
             missing_message=missing_message,
         )
 
-    async def get_persona_exemplar(self, persona_id: str, exemplar_id: str, mode: str = "local") -> Any:
+    async def get_persona_exemplar(
+        self, persona_id: str, exemplar_id: str, mode: str = "local"
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._persona_action_id(normalized_mode, "detail"))
         backend = self._backend(normalized_mode)
@@ -770,7 +817,9 @@ class CharacterPersonaScopeService:
             missing_message=missing_message,
         )
 
-    async def create_persona_exemplar(self, persona_id: str, request_data: Any, mode: str = "local") -> Any:
+    async def create_persona_exemplar(
+        self, persona_id: str, request_data: Any, mode: str = "local"
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._persona_action_id(normalized_mode, "create"))
         backend = self._backend(normalized_mode)
@@ -787,7 +836,9 @@ class CharacterPersonaScopeService:
             missing_message=missing_message,
         )
 
-    async def import_persona_exemplars(self, persona_id: str, request_data: Any, mode: str = "local") -> Any:
+    async def import_persona_exemplars(
+        self, persona_id: str, request_data: Any, mode: str = "local"
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._persona_action_id(normalized_mode, "create"))
         backend = self._backend(normalized_mode)
@@ -852,7 +903,9 @@ class CharacterPersonaScopeService:
             missing_message=missing_message,
         )
 
-    async def delete_persona_exemplar(self, persona_id: str, exemplar_id: str, mode: str = "local") -> Any:
+    async def delete_persona_exemplar(
+        self, persona_id: str, exemplar_id: str, mode: str = "local"
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._persona_action_id(normalized_mode, "delete"))
         backend = self._backend(normalized_mode)
@@ -869,7 +922,9 @@ class CharacterPersonaScopeService:
             missing_message=missing_message,
         )
 
-    async def get_character_exemplar(self, character_id: int, exemplar_id: str, mode: str = "local") -> Any:
+    async def get_character_exemplar(
+        self, character_id: int, exemplar_id: str, mode: str = "local"
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._persona_action_id(normalized_mode, "detail"))
         backend = self._backend(normalized_mode)
@@ -886,7 +941,9 @@ class CharacterPersonaScopeService:
             missing_message=missing_message,
         )
 
-    async def create_character_exemplar(self, character_id: int, request_data: Any, mode: str = "local") -> Any:
+    async def create_character_exemplar(
+        self, character_id: int, request_data: Any, mode: str = "local"
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._persona_action_id(normalized_mode, "create"))
         backend = self._backend(normalized_mode)
@@ -927,7 +984,9 @@ class CharacterPersonaScopeService:
             missing_message=missing_message,
         )
 
-    async def delete_character_exemplar(self, character_id: int, exemplar_id: str, mode: str = "local") -> Any:
+    async def delete_character_exemplar(
+        self, character_id: int, exemplar_id: str, mode: str = "local"
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._persona_action_id(normalized_mode, "delete"))
         backend = self._backend(normalized_mode)
@@ -944,7 +1003,9 @@ class CharacterPersonaScopeService:
             missing_message=missing_message,
         )
 
-    async def search_character_exemplars(self, character_id: int, request_data: Any, mode: str = "local") -> Any:
+    async def search_character_exemplars(
+        self, character_id: int, request_data: Any, mode: str = "local"
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._persona_action_id(normalized_mode, "list"))
         backend = self._backend(normalized_mode)
@@ -999,7 +1060,9 @@ class CharacterPersonaScopeService:
             missing_message=missing_message,
         )
 
-    async def select_chat_greeting(self, chat_id: str, index: int, mode: str = "local") -> Any:
+    async def select_chat_greeting(
+        self, chat_id: str, index: int, mode: str = "local"
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._greeting_action_id(normalized_mode, "update"))
         backend = self._backend(normalized_mode)
@@ -1047,7 +1110,9 @@ class CharacterPersonaScopeService:
             missing_message=missing_message,
         )
 
-    async def update_chat_preset(self, preset_id: str, request_data: Any, mode: str = "local") -> Any:
+    async def update_chat_preset(
+        self, preset_id: str, request_data: Any, mode: str = "local"
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._preset_action_id(normalized_mode, "update"))
         backend = self._backend(normalized_mode)
@@ -1080,7 +1145,9 @@ class CharacterPersonaScopeService:
             missing_message=missing_message,
         )
 
-    async def create_character_chat_session(self, request_data: Any, mode: str = "local", **kwargs: Any) -> Any:
+    async def create_character_chat_session(
+        self, request_data: Any, mode: str = "local", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._session_action_id(normalized_mode, "create"))
         backend = self._backend(normalized_mode)
@@ -1097,7 +1164,9 @@ class CharacterPersonaScopeService:
             **kwargs,
         )
 
-    async def list_character_chat_sessions(self, mode: str = "local", **kwargs: Any) -> Any:
+    async def list_character_chat_sessions(
+        self, mode: str = "local", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._session_action_id(normalized_mode, "list"))
         backend = self._backend(normalized_mode)
@@ -1113,7 +1182,9 @@ class CharacterPersonaScopeService:
             **kwargs,
         )
 
-    async def get_character_chat_session(self, chat_id: str, mode: str = "local", **kwargs: Any) -> Any:
+    async def get_character_chat_session(
+        self, chat_id: str, mode: str = "local", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._session_action_id(normalized_mode, "detail"))
         backend = self._backend(normalized_mode)
@@ -1154,7 +1225,9 @@ class CharacterPersonaScopeService:
             **kwargs,
         )
 
-    async def delete_character_chat_session(self, chat_id: str, mode: str = "local", **kwargs: Any) -> Any:
+    async def delete_character_chat_session(
+        self, chat_id: str, mode: str = "local", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._session_action_id(normalized_mode, "delete"))
         backend = self._backend(normalized_mode)
@@ -1171,7 +1244,9 @@ class CharacterPersonaScopeService:
             **kwargs,
         )
 
-    async def restore_character_chat_session(self, chat_id: str, mode: str = "local", **kwargs: Any) -> Any:
+    async def restore_character_chat_session(
+        self, chat_id: str, mode: str = "local", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._session_action_id(normalized_mode, "restore"))
         backend = self._backend(normalized_mode)
@@ -1188,7 +1263,9 @@ class CharacterPersonaScopeService:
             **kwargs,
         )
 
-    async def list_character_messages(self, chat_id: str, mode: str = "local", **kwargs: Any) -> Any:
+    async def list_character_messages(
+        self, chat_id: str, mode: str = "local", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._message_action_id(normalized_mode, "list"))
         backend = self._backend(normalized_mode)
@@ -1205,7 +1282,9 @@ class CharacterPersonaScopeService:
             **kwargs,
         )
 
-    async def get_character_message(self, message_id: str, mode: str = "local", **kwargs: Any) -> Any:
+    async def get_character_message(
+        self, message_id: str, mode: str = "local", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._message_action_id(normalized_mode, "detail"))
         backend = self._backend(normalized_mode)
@@ -1270,7 +1349,9 @@ class CharacterPersonaScopeService:
             **kwargs,
         )
 
-    async def delete_character_message(self, message_id: str, mode: str = "local", **kwargs: Any) -> Any:
+    async def delete_character_message(
+        self, message_id: str, mode: str = "local", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._message_action_id(normalized_mode, "delete"))
         backend = self._backend(normalized_mode)
@@ -1287,10 +1368,14 @@ class CharacterPersonaScopeService:
             **kwargs,
         )
 
-    async def list_character_chat_messages(self, chat_id: str, mode: str = "local", **kwargs: Any) -> Any:
+    async def list_character_chat_messages(
+        self, chat_id: str, mode: str = "local", **kwargs: Any
+    ) -> Any:
         return await self.list_character_messages(chat_id, mode=mode, **kwargs)
 
-    async def get_character_chat_message(self, message_id: str, mode: str = "local", **kwargs: Any) -> Any:
+    async def get_character_chat_message(
+        self, message_id: str, mode: str = "local", **kwargs: Any
+    ) -> Any:
         return await self.get_character_message(message_id, mode=mode, **kwargs)
 
     async def create_character_chat_message(
@@ -1300,7 +1385,9 @@ class CharacterPersonaScopeService:
         mode: str = "local",
         **kwargs: Any,
     ) -> Any:
-        return await self.create_character_message(chat_id, request_data, mode=mode, **kwargs)
+        return await self.create_character_message(
+            chat_id, request_data, mode=mode, **kwargs
+        )
 
     async def update_character_chat_message(
         self,
@@ -1309,9 +1396,13 @@ class CharacterPersonaScopeService:
         mode: str = "local",
         **kwargs: Any,
     ) -> Any:
-        return await self.update_character_message(message_id, request_data, mode=mode, **kwargs)
+        return await self.update_character_message(
+            message_id, request_data, mode=mode, **kwargs
+        )
 
-    async def delete_character_chat_message(self, message_id: str, mode: str = "local", **kwargs: Any) -> Any:
+    async def delete_character_chat_message(
+        self, message_id: str, mode: str = "local", **kwargs: Any
+    ) -> Any:
         return await self.delete_character_message(message_id, mode=mode, **kwargs)
 
     async def search_character_messages(
@@ -1347,7 +1438,9 @@ class CharacterPersonaScopeService:
     ) -> Any:
         return await self.search_character_messages(chat_id, query, mode=mode, **kwargs)
 
-    async def get_chat_settings(self, chat_id: str, mode: str = "local", **kwargs: Any) -> Any:
+    async def get_chat_settings(
+        self, chat_id: str, mode: str = "local", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._session_action_id(normalized_mode, "detail"))
         backend = self._backend(normalized_mode)
@@ -1364,7 +1457,9 @@ class CharacterPersonaScopeService:
             **kwargs,
         )
 
-    async def update_chat_settings(self, chat_id: str, request_data: Any, mode: str = "local", **kwargs: Any) -> Any:
+    async def update_chat_settings(
+        self, chat_id: str, request_data: Any, mode: str = "local", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._session_action_id(normalized_mode, "update"))
         backend = self._backend(normalized_mode)
@@ -1382,7 +1477,9 @@ class CharacterPersonaScopeService:
             **kwargs,
         )
 
-    async def get_character_chat_settings(self, chat_id: str, mode: str = "local", **kwargs: Any) -> Any:
+    async def get_character_chat_settings(
+        self, chat_id: str, mode: str = "local", **kwargs: Any
+    ) -> Any:
         return await self.get_chat_settings(chat_id, mode=mode, **kwargs)
 
     async def update_character_chat_settings(
@@ -1392,9 +1489,13 @@ class CharacterPersonaScopeService:
         mode: str = "local",
         **kwargs: Any,
     ) -> Any:
-        return await self.update_chat_settings(chat_id, request_data, mode=mode, **kwargs)
+        return await self.update_chat_settings(
+            chat_id, request_data, mode=mode, **kwargs
+        )
 
-    async def export_chat_history(self, chat_id: str, mode: str = "local", **kwargs: Any) -> Any:
+    async def export_chat_history(
+        self, chat_id: str, mode: str = "local", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._session_action_id(normalized_mode, "export"))
         backend = self._backend(normalized_mode)
@@ -1427,7 +1528,9 @@ class CharacterPersonaScopeService:
             missing_message=missing_message,
         )
 
-    async def export_lorebook_diagnostics(self, chat_id: str, mode: str = "local", **kwargs: Any) -> Any:
+    async def export_lorebook_diagnostics(
+        self, chat_id: str, mode: str = "local", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._session_action_id(normalized_mode, "observe"))
         backend = self._backend(normalized_mode)
@@ -1444,7 +1547,9 @@ class CharacterPersonaScopeService:
             **kwargs,
         )
 
-    async def list_character_memories(self, character_id: str, mode: str = "local", **kwargs: Any) -> Any:
+    async def list_character_memories(
+        self, character_id: str, mode: str = "local", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._memory_action_id(normalized_mode, "list"))
         backend = self._backend(normalized_mode)

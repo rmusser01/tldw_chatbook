@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from tldw_chatbook.Chat.console_provider_support import resolve_console_provider_identity
+from tldw_chatbook.Chat.console_provider_support import (
+    resolve_console_provider_identity,
+)
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
     ProviderModelListKeyResolution,

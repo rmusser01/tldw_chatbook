@@ -31,7 +31,9 @@ class WritingController:
         self.current_projects = list(projects or [])
         return self.current_projects
 
-    async def load_project_structure(self, source: str, project_id: str) -> Mapping[str, Any]:
+    async def load_project_structure(
+        self, source: str, project_id: str
+    ) -> Mapping[str, Any]:
         service = self._require_scope_service()
         structure = await self._maybe_await(
             service.get_project_structure(project_id, mode=source)
@@ -95,7 +97,9 @@ class WritingController:
 
     async def create_project(self, source: str, payload: Mapping[str, Any]) -> Any:
         service = self._require_scope_service()
-        return await self._maybe_await(service.create_project(mode=source, **dict(payload)))
+        return await self._maybe_await(
+            service.create_project(mode=source, **dict(payload))
+        )
 
     async def create_child(
         self,
@@ -118,7 +122,9 @@ class WritingController:
                 service.create_chapter(
                     parent_context["project_id"],
                     mode=source,
-                    manuscript_id=parent_context.get("id") if parent_kind == "manuscript" else None,
+                    manuscript_id=parent_context.get("id")
+                    if parent_kind == "manuscript"
+                    else None,
                     **dict(payload),
                 )
             )
@@ -302,9 +308,7 @@ class WritingController:
         project_id: str | None,
     ) -> list[Any]:
         service = self._require_scope_service()
-        entries = await self._maybe_await(
-            service.list_trash(project_id, mode=source)
-        )
+        entries = await self._maybe_await(service.list_trash(project_id, mode=source))
         return list(entries or [])
 
     async def restore_deleted(

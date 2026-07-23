@@ -40,7 +40,9 @@ class ServerWebClipperService:
             return self.client
         if self.client_provider is not None:
             return self.client_provider.build_client()
-        raise ValueError("TLDW API client is required for server Web Clipper operations.")
+        raise ValueError(
+            "TLDW API client is required for server Web Clipper operations."
+        )
 
     @staticmethod
     def _as_dict(value: Any) -> dict[str, Any]:
@@ -63,5 +65,7 @@ class ServerWebClipperService:
 
     async def persist_enrichment(self, target_clip_id: str, **payload: Any) -> Any:
         request_data = WebClipperEnrichmentPayload(**payload)
-        result = await self._require_client().persist_web_clip_enrichment(str(target_clip_id), request_data)
+        result = await self._require_client().persist_web_clip_enrichment(
+            str(target_clip_id), request_data
+        )
         return self._as_dict(result)

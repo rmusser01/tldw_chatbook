@@ -4,7 +4,9 @@ from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
 from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget
 
 
-def test_update_target_status_preserves_existing_projection_on_invalid_status_update(tmp_path):
+def test_update_target_status_preserves_existing_projection_on_invalid_status_update(
+    tmp_path,
+):
     store = ConfiguredServerTargetStore(tmp_path / "server_targets.json")
     target = ConfiguredServerTarget(
         server_id="server-a",

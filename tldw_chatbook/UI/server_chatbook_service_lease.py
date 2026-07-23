@@ -57,7 +57,9 @@ def server_chatbook_service_lease(
     return ServerChatbookServiceLease(service=service, close_owner=provider)
 
 
-async def close_server_chatbook_service_lease(lease: ServerChatbookServiceLease) -> None:
+async def close_server_chatbook_service_lease(
+    lease: ServerChatbookServiceLease,
+) -> None:
     close_owner = lease.close_owner
     if close_owner is None:
         return

@@ -44,7 +44,9 @@ class SubscriptionBackendController:
             await self._maybe_await(self.window.load_new_items())
         else:
             self.window.scheduler_worker = None
-            self.window._render_local_only_state(tab_id="review", message="Local-only in this slice.")
+            self.window._render_local_only_state(
+                tab_id="review", message="Local-only in this slice."
+            )
 
         await self._load_watch_items(runtime_backend=normalized_backend)
         await self._refresh_control_plane(runtime_backend=normalized_backend)
@@ -81,7 +83,10 @@ class SubscriptionBackendController:
             )
         )
 
-        if runtime_backend == "server" and self.notification_dispatch_service is not None:
+        if (
+            runtime_backend == "server"
+            and self.notification_dispatch_service is not None
+        ):
             self.notification_dispatch_service.dispatch(
                 app=self.app_instance,
                 category="watchlists",
@@ -116,7 +121,9 @@ class SubscriptionBackendController:
         if self.scope_service is None:
             raise ValueError("Watchlist scope service is unavailable.")
 
-        is_update = payload.get("id") not in (None, "") or payload.get("source_id") not in (None, "")
+        is_update = payload.get("id") not in (None, "") or payload.get(
+            "source_id"
+        ) not in (None, "")
         result = await self._maybe_await(
             self.scope_service.save_watch_item(
                 runtime_backend=runtime_backend,
@@ -125,9 +132,20 @@ class SubscriptionBackendController:
         )
 
         if self.notification_dispatch_service is not None:
-            entity_kind = str(result.get("entity_kind") or ("watchlist_source" if runtime_backend == "server" else "subscription"))
+            entity_kind = str(
+                result.get("entity_kind")
+                or (
+                    "watchlist_source"
+                    if runtime_backend == "server"
+                    else "subscription"
+                )
+            )
             action = "updated" if is_update else "created"
-            noun = "Watchlist source" if entity_kind == "watchlist_source" else "Subscription"
+            noun = (
+                "Watchlist source"
+                if entity_kind == "watchlist_source"
+                else "Subscription"
+            )
             self.notification_dispatch_service.dispatch(
                 app=self.app_instance,
                 category="watchlists",
@@ -156,12 +174,18 @@ class SubscriptionBackendController:
     async def _refresh_control_plane(self, *, runtime_backend: str) -> None:
         if runtime_backend != "server":
             message = "Server watchlist jobs are remote-only here. Use the local subscriptions scheduler for offline watchlist operations."
-            self.window._render_local_only_state(tab_id="watchlist-jobs", message=message)
+            self.window._render_local_only_state(
+                tab_id="watchlist-jobs", message=message
+            )
             self.window._clear_local_only_state(tab_id="watchlist-runs")
             self.window._clear_local_only_state(tab_id="watchlist-alert-rules")
             reminder_message = "Server reminders and notification feed are remote-only. Use the local Notifications inbox for offline client-owned notifications."
-            self.window._render_local_only_state(tab_id="server-reminders", message=reminder_message)
-            self.window._render_local_only_state(tab_id="server-feed", message=reminder_message)
+            self.window._render_local_only_state(
+                tab_id="server-reminders", message=reminder_message
+            )
+            self.window._render_local_only_state(
+                tab_id="server-feed", message=reminder_message
+            )
             await self.window._render_watchlist_jobs([])
             await self.load_watchlist_runs()
             await self.load_watchlist_alert_rules()
@@ -196,7 +220,9 @@ class SubscriptionBackendController:
         if self.scope_service is None:
             raise ValueError("Watchlist scope service is unavailable.")
         result = await self._maybe_await(
-            self.scope_service.save_job(runtime_backend=self.window._runtime_backend(), payload=payload)
+            self.scope_service.save_job(
+                runtime_backend=self.window._runtime_backend(), payload=payload
+            )
         )
         return dict(result)
 
@@ -204,7 +230,9 @@ class SubscriptionBackendController:
         if self.scope_service is None:
             raise ValueError("Watchlist scope service is unavailable.")
         result = await self._maybe_await(
-            self.scope_service.delete_job(runtime_backend=self.window._runtime_backend(), job_id=job_id)
+            self.scope_service.delete_job(
+                runtime_backend=self.window._runtime_backend(), job_id=job_id
+            )
         )
         return dict(result)
 
@@ -212,7 +240,9 @@ class SubscriptionBackendController:
         if self.scope_service is None:
             raise ValueError("Watchlist scope service is unavailable.")
         result = await self._maybe_await(
-            self.scope_service.restore_job(runtime_backend=self.window._runtime_backend(), job_id=job_id)
+            self.scope_service.restore_job(
+                runtime_backend=self.window._runtime_backend(), job_id=job_id
+            )
         )
         return dict(result)
 
@@ -220,7 +250,9 @@ class SubscriptionBackendController:
         if self.scope_service is None:
             raise ValueError("Watchlist scope service is unavailable.")
         result = await self._maybe_await(
-            self.scope_service.trigger_job(runtime_backend=self.window._runtime_backend(), job_id=job_id)
+            self.scope_service.trigger_job(
+                runtime_backend=self.window._runtime_backend(), job_id=job_id
+            )
         )
         return dict(result)
 
@@ -238,7 +270,9 @@ class SubscriptionBackendController:
         if self.scope_service is None:
             raise ValueError("Watchlist scope service is unavailable.")
         result = await self._maybe_await(
-            self.scope_service.get_run_detail(runtime_backend=self.window._runtime_backend(), run_id=run_id)
+            self.scope_service.get_run_detail(
+                runtime_backend=self.window._runtime_backend(), run_id=run_id
+            )
         )
         return dict(result)
 
@@ -246,7 +280,9 @@ class SubscriptionBackendController:
         if self.scope_service is None:
             raise ValueError("Watchlist scope service is unavailable.")
         result = await self._maybe_await(
-            self.scope_service.cancel_run(runtime_backend=self.window._runtime_backend(), run_id=run_id)
+            self.scope_service.cancel_run(
+                runtime_backend=self.window._runtime_backend(), run_id=run_id
+            )
         )
         return dict(result)
 
@@ -254,17 +290,23 @@ class SubscriptionBackendController:
         if self.scope_service is None:
             return {"items": [], "total": 0}
         payload = await self._maybe_await(
-            self.scope_service.list_alert_rules(runtime_backend=self.window._runtime_backend())
+            self.scope_service.list_alert_rules(
+                runtime_backend=self.window._runtime_backend()
+            )
         )
         items = [dict(item) for item in list((payload or {}).get("items") or [])]
         await self.window._render_watchlist_alert_rules(items)
         return dict(payload or {"items": [], "total": 0})
 
-    async def save_watchlist_alert_rule(self, payload: dict[str, Any]) -> dict[str, Any]:
+    async def save_watchlist_alert_rule(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         if self.scope_service is None:
             raise ValueError("Watchlist scope service is unavailable.")
         result = await self._maybe_await(
-            self.scope_service.save_alert_rule(runtime_backend=self.window._runtime_backend(), payload=payload)
+            self.scope_service.save_alert_rule(
+                runtime_backend=self.window._runtime_backend(), payload=payload
+            )
         )
         return dict(result)
 
@@ -272,7 +314,9 @@ class SubscriptionBackendController:
         if self.scope_service is None:
             raise ValueError("Watchlist scope service is unavailable.")
         result = await self._maybe_await(
-            self.scope_service.delete_alert_rule(runtime_backend=self.window._runtime_backend(), rule_id=rule_id)
+            self.scope_service.delete_alert_rule(
+                runtime_backend=self.window._runtime_backend(), rule_id=rule_id
+            )
         )
         return dict(result)
 
@@ -280,7 +324,9 @@ class SubscriptionBackendController:
         if self.server_notifications_scope_service is None:
             return {"items": [], "total": 0}
         payload = await self._maybe_await(
-            self.server_notifications_scope_service.list_reminders(runtime_backend=self.window._runtime_backend())
+            self.server_notifications_scope_service.list_reminders(
+                runtime_backend=self.window._runtime_backend()
+            )
         )
         items = [dict(item) for item in list((payload or {}).get("items") or [])]
         await self.window._render_server_reminders(items)
@@ -312,13 +358,17 @@ class SubscriptionBackendController:
         if self.server_notifications_scope_service is None:
             return {"items": [], "total": 0}
         payload = await self._maybe_await(
-            self.server_notifications_scope_service.list_feed(runtime_backend=self.window._runtime_backend())
+            self.server_notifications_scope_service.list_feed(
+                runtime_backend=self.window._runtime_backend()
+            )
         )
         items = [dict(item) for item in list((payload or {}).get("items") or [])]
         await self.window._render_server_feed(items)
         return dict(payload or {"items": [], "total": 0})
 
-    async def mark_server_notification_read(self, notification_id: str) -> dict[str, Any]:
+    async def mark_server_notification_read(
+        self, notification_id: str
+    ) -> dict[str, Any]:
         if self.server_notifications_scope_service is None:
             raise ValueError("Server notification scope service is unavailable.")
         result = await self._maybe_await(
@@ -340,7 +390,9 @@ class SubscriptionBackendController:
         )
         return dict(result)
 
-    async def snooze_server_notification(self, notification_id: str, *, minutes: int = 30) -> dict[str, Any]:
+    async def snooze_server_notification(
+        self, notification_id: str, *, minutes: int = 30
+    ) -> dict[str, Any]:
         if self.server_notifications_scope_service is None:
             raise ValueError("Server notification scope service is unavailable.")
         result = await self._maybe_await(
@@ -352,7 +404,9 @@ class SubscriptionBackendController:
         )
         return dict(result)
 
-    async def cancel_server_notification_snooze(self, notification_id: str) -> dict[str, Any]:
+    async def cancel_server_notification_snooze(
+        self, notification_id: str
+    ) -> dict[str, Any]:
         if self.server_notifications_scope_service is None:
             raise ValueError("Server notification scope service is unavailable.")
         result = await self._maybe_await(

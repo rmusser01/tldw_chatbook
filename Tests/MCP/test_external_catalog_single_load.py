@@ -7,7 +7,6 @@ per-profile snapshot loads (or a signature drift) fails here.
 
 from pathlib import Path
 
-import pytest
 
 from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
 from tldw_chatbook.MCP.local_store import LocalExternalMCPProfile, LocalMCPStore

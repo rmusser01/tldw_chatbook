@@ -3,12 +3,13 @@
 #
 # Imports
 from typing import Optional, Callable
+
 #
 # 3rd-Party Imports
 from textual.app import ComposeResult
-from textual.containers import Vertical, Horizontal, Container
-from textual.screen import ModalScreen
+from textual.containers import Horizontal, Container
 from textual.widgets import Button, Label, Static
+
 #
 # Local Imports
 from .confirmation_dialog import ConfirmationDialog
@@ -17,14 +18,15 @@ from .confirmation_dialog import ConfirmationDialog
 #
 # Classes:
 
+
 class DeleteConfirmationDialog(ConfirmationDialog):
     """
     Specialized confirmation dialog for delete operations.
-    
-    Provides consistent UI/UX for all delete confirmations with 
+
+    Provides consistent UI/UX for all delete confirmations with
     appropriate warnings based on the type of item being deleted.
     """
-    
+
     # CSS for additional styling
     DEFAULT_CSS = """
     DeleteConfirmationDialog {
@@ -85,7 +87,7 @@ class DeleteConfirmationDialog(ConfirmationDialog):
         background: $primary;
     }
     """
-    
+
     def __init__(
         self,
         item_type: str,
@@ -94,11 +96,11 @@ class DeleteConfirmationDialog(ConfirmationDialog):
         permanent: bool = False,
         confirm_callback: Optional[Callable] = None,
         cancel_callback: Optional[Callable] = None,
-        **kwargs
+        **kwargs,
     ):
         """
         Initialize the delete confirmation dialog.
-        
+
         Args:
             item_type: Type of item being deleted (e.g., "Character", "Conversation")
             item_name: Name/identifier of the item being deleted
@@ -109,17 +111,17 @@ class DeleteConfirmationDialog(ConfirmationDialog):
         """
         # Generate appropriate messages based on item type
         title = f"Delete {item_type}?"
-        
+
         # Build the main message
         if item_name:
             message = f'Are you sure you want to delete the {item_type.lower()} "{item_name}"?'
         else:
             message = f"Are you sure you want to delete this {item_type.lower()}?"
-        
+
         # Add permanent deletion warning if applicable
         if permanent:
             message += "\n\nThis action cannot be undone!"
-        
+
         # Initialize parent with generated messages
         super().__init__(
             title=title,
@@ -128,40 +130,42 @@ class DeleteConfirmationDialog(ConfirmationDialog):
             cancel_label="Cancel",
             confirm_callback=confirm_callback,
             cancel_callback=cancel_callback,
-            **kwargs
+            **kwargs,
         )
-        
+
         self.item_type = item_type
         self.item_name = item_name
         self.additional_warning = additional_warning
         self.permanent = permanent
-    
+
     def compose(self) -> ComposeResult:
         """Compose the dialog UI with additional warning if provided."""
         with Container():
             yield Static(self.title, classes="dialog-title")
             yield Label(self.message, classes="dialog-message")
-            
+
             # Add item details if name is provided
             if self.item_name:
-                yield Static(f"{self.item_type}: {self.item_name}", classes="item-details")
-            
+                yield Static(
+                    f"{self.item_type}: {self.item_name}", classes="item-details"
+                )
+
             # Add additional warning if provided
             if self.additional_warning:
                 yield Label(self.additional_warning, classes="warning-message")
-            
+
             with Horizontal(classes="button-container"):
                 yield Button(
                     self.cancel_label,
                     id="cancel-button",
                     classes="cancel-button",
-                    variant="primary"
+                    variant="primary",
                 )
                 yield Button(
                     self.confirm_label,
                     id="confirm-button",
                     classes="confirm-button",
-                    variant="error"
+                    variant="error",
                 )
 
 
@@ -169,17 +173,17 @@ def create_delete_confirmation(
     item_type: str,
     item_name: str = "",
     additional_warning: str = "",
-    permanent: bool = False
+    permanent: bool = False,
 ) -> DeleteConfirmationDialog:
     """
     Factory function to create delete confirmation dialogs with appropriate warnings.
-    
+
     Args:
         item_type: Type of item being deleted
         item_name: Name/identifier of the item
         additional_warning: Optional additional warning
         permanent: Whether this is permanent deletion
-        
+
     Returns:
         Configured DeleteConfirmationDialog instance
     """
@@ -195,19 +199,20 @@ def create_delete_confirmation(
         "Collection": "All embeddings in this collection will be permanently deleted.",
         "Template": "This template will no longer be available for creating new items.",
         "Transcription": "The transcription history for this item will be removed.",
-        "Model": "This will uninstall the model from your system."
+        "Model": "This will uninstall the model from your system.",
     }
-    
+
     # Use provided warning or default based on item type
     if not additional_warning and item_type in default_warnings:
         additional_warning = default_warnings[item_type]
-    
+
     return DeleteConfirmationDialog(
         item_type=item_type,
         item_name=item_name,
         additional_warning=additional_warning,
-        permanent=permanent
+        permanent=permanent,
     )
+
 
 #
 # End of delete_confirmation_dialog.py

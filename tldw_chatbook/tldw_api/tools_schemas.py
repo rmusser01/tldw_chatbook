@@ -10,7 +10,9 @@ class ToolInfo(BaseModel):
     description: str | None = None
     module: str | None = None
     inputSchema: dict[str, Any] | None = None
-    canExecute: bool = Field(False, description="Whether current user can execute this tool")
+    canExecute: bool = Field(
+        False, description="Whether current user can execute this tool"
+    )
 
 
 class ToolListResponse(BaseModel):

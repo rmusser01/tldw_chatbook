@@ -41,7 +41,9 @@ from typing import Any
 from loguru import logger
 
 from tldw_chatbook.MCP.hub_tool_catalog import (
-    HubTool, builtin_tools_from_inventory, local_tools_from_record,
+    HubTool,
+    builtin_tools_from_inventory,
+    local_tools_from_record,
 )
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.MCP.redaction import redact_mapping
@@ -131,7 +133,8 @@ class MCPToolProvider:
         *,
         service: Any,
         main_loop: asyncio.AbstractEventLoop,
-        approval_callback: Callable[[list[MCPPendingCall]], dict[str, str]] | None = None,
+        approval_callback: Callable[[list[MCPPendingCall]], dict[str, str]]
+        | None = None,
     ) -> None:
         """Build an uncomposed provider; call `compose_catalog()` before use.
 
@@ -203,24 +206,28 @@ class MCPToolProvider:
             try:
                 inventory = get_inventory()
             except Exception as exc:  # noqa: BLE001 -- never abort composition
-                logger.warning(f"MCPToolProvider: built-in inventory read failed: {exc}")
+                logger.warning(
+                    f"MCPToolProvider: built-in inventory read failed: {exc}"
+                )
                 inventory = None
             if isinstance(inventory, Mapping):
                 hub_tools.extend(builtin_tools_from_inventory(inventory))
 
         effective = self._service.effective_tool_states(hub_tools)
         eligible = [
-            tool for tool in hub_tools
-            if effective.get((tool.server_key, tool.name), _FAIL_CLOSED_STATE).state != "deny"
+            tool
+            for tool in hub_tools
+            if effective.get((tool.server_key, tool.name), _FAIL_CLOSED_STATE).state
+            != "deny"
         ]
 
         # Distinct servers (not tools) among the eligible, non-denied set
         # that are currently disconnected -- matches T6's "N servers
         # enabled, not connected" inspector affordance. Built-in tools are
         # never stale, so they never contribute here.
-        self._not_connected_count = len({
-            tool.server_key for tool in eligible if tool.stale
-        })
+        self._not_connected_count = len(
+            {tool.server_key for tool in eligible if tool.stale}
+        )
 
         names = [llm_tool_name(tool.server_key, tool.name) for tool in eligible]
         deduped_names = dedupe_names(names)
@@ -229,10 +236,14 @@ class MCPToolProvider:
         entry_by_llm_name: dict[str, tuple[HubTool, EffectiveToolState]] = {}
         for tool, llm_name in zip(eligible, deduped_names):
             state = effective.get((tool.server_key, tool.name), _FAIL_CLOSED_STATE)
-            catalog.append(ToolCatalogEntry(
-                id=llm_name, name=llm_name,
-                one_line_description=tool.description, source=SOURCE,
-            ))
+            catalog.append(
+                ToolCatalogEntry(
+                    id=llm_name,
+                    name=llm_name,
+                    one_line_description=tool.description,
+                    source=SOURCE,
+                )
+            )
             entry_by_llm_name[llm_name] = (tool, state)
 
         self._catalog = catalog
@@ -277,11 +288,18 @@ class MCPToolProvider:
         if entry is None:
             raise KeyError(f"Unknown MCP tool id: {tool_id}")
         tool, _state = entry
-        parameters = tool.input_schema if tool.input_schema is not None else {
-            "type": "object", "properties": {},
-        }
+        parameters = (
+            tool.input_schema
+            if tool.input_schema is not None
+            else {
+                "type": "object",
+                "properties": {},
+            }
+        )
         return ToolSchema(
-            id=tool_id, name=tool_id, description=tool.description,
+            id=tool_id,
+            name=tool_id,
+            description=tool.description,
             parameters=parameters,
         )
 
@@ -402,8 +420,11 @@ class MCPToolProvider:
         if self._is_session_approved_safe(tool):
             return None
         return MCPPendingCall(
-            llm_name=llm_name, server_key=tool.server_key, tool_name=tool.name,
-            server_label=tool.server_label, arguments=dict(args or {}),
+            llm_name=llm_name,
+            server_key=tool.server_key,
+            tool_name=tool.name,
+            server_label=tool.server_label,
+            arguments=dict(args or {}),
             reason=_pending_reason(state),
         )
 
@@ -438,7 +459,9 @@ class MCPToolProvider:
         """
         entry = self._entry_by_llm_name.get(tool_id)
         if entry is None:
-            return ToolResult(ok=False, error=f"Unknown MCP tool: {tool_id}"[:_MAX_ERROR_CHARS])
+            return ToolResult(
+                ok=False, error=f"Unknown MCP tool: {tool_id}"[:_MAX_ERROR_CHARS]
+            )
         tool, _cached_state = entry
         call_args = dict(args or {})
 
@@ -481,8 +504,11 @@ class MCPToolProvider:
             return ToolResult(ok=False, error=DENY_REFUSAL)
 
         pending = MCPPendingCall(
-            llm_name=tool_id, server_key=tool.server_key, tool_name=tool.name,
-            server_label=tool.server_label, arguments=call_args,
+            llm_name=tool_id,
+            server_key=tool.server_key,
+            tool_name=tool.name,
+            server_label=tool.server_label,
+            arguments=call_args,
             reason=_pending_reason(state),
         )
         try:
@@ -508,7 +534,9 @@ class MCPToolProvider:
         try:
             return bool(getter())
         except Exception as exc:  # noqa: BLE001 -- a read failure must not block execution
-            logger.warning(f"MCPToolProvider: get_kill_switch failed during invoke: {exc}")
+            logger.warning(
+                f"MCPToolProvider: get_kill_switch failed during invoke: {exc}"
+            )
             return False
 
     def _is_session_approved_safe(self, tool: HubTool) -> bool:
@@ -547,14 +575,17 @@ class MCPToolProvider:
         if verdict == "approve_session":
             self._safe_side_effect(
                 lambda: self._service.approve_for_session(tool.server_key, tool.name),
-                tool, what="approve_for_session",
+                tool,
+                what="approve_for_session",
             )
             return self._execute(tool, args, decision="approved")
         if verdict == "always_allow":
             self._safe_side_effect(
                 lambda: self._service.set_tool_state(
-                    tool.server_key, tool.name, "allow", tool=tool),
-                tool, what="set_tool_state",
+                    tool.server_key, tool.name, "allow", tool=tool
+                ),
+                tool,
+                what="set_tool_state",
             )
             return self._execute(tool, args, decision="approved")
         if verdict == "timeout":
@@ -564,7 +595,9 @@ class MCPToolProvider:
         self._record_decision_safe(tool, decision="denied")
         return ToolResult(ok=False, error=DENY_REFUSAL)
 
-    def _safe_side_effect(self, fn: Callable[[], None], tool: HubTool, *, what: str) -> None:
+    def _safe_side_effect(
+        self, fn: Callable[[], None], tool: HubTool, *, what: str
+    ) -> None:
         try:
             fn()
         except Exception as exc:  # noqa: BLE001 -- a persistence failure must not block execution
@@ -572,10 +605,16 @@ class MCPToolProvider:
                 f"MCPToolProvider: {what} failed for {tool.server_key}/{tool.name}: {exc}"
             )
 
-    def _record_decision_safe(self, tool: HubTool, *, decision: str, error: str | None = None) -> None:
+    def _record_decision_safe(
+        self, tool: HubTool, *, decision: str, error: str | None = None
+    ) -> None:
         try:
             self._service.record_tool_decision(
-                tool.server_key, tool.name, decision=decision, initiator="agent", error=error,
+                tool.server_key,
+                tool.name,
+                decision=decision,
+                initiator="agent",
+                error=error,
             )
         except Exception as exc:  # noqa: BLE001 -- best-effort audit trail only
             logger.warning(
@@ -613,8 +652,11 @@ class MCPToolProvider:
             timeout = self._service._tool_call_timeout() + _RESULT_WAIT_SLACK_SECONDS
             future = asyncio.run_coroutine_threadsafe(
                 self._service.execute_hub_tool(
-                    tool.server_key, tool.name, args,
-                    initiator="agent", decision=decision,
+                    tool.server_key,
+                    tool.name,
+                    args,
+                    initiator="agent",
+                    decision=decision,
                 ),
                 self._main_loop,
             )
@@ -653,11 +695,14 @@ class MCPToolProvider:
             #     have reached its own inner timeout clock yet);
             #   - the future was cancelled before completing
             #     (`concurrent.futures.CancelledError`).
-            if (future is None
-                    or isinstance(exc, concurrent.futures.TimeoutError)
-                    or isinstance(exc, concurrent.futures.CancelledError)):
+            if (
+                future is None
+                or isinstance(exc, concurrent.futures.TimeoutError)
+                or isinstance(exc, concurrent.futures.CancelledError)
+            ):
                 self._record_decision_safe(
-                    tool, decision=decision,
+                    tool,
+                    decision=decision,
                     error=f"bridge execution failed: {(str(exc) or repr(exc))[:200]}",
                 )
             return ToolResult(ok=False, error=error)

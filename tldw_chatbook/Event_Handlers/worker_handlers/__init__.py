@@ -12,10 +12,10 @@ from .ai_generation_handler import AIGenerationHandler
 from .misc_worker_handler import MiscWorkerHandler
 
 __all__ = [
-    'BaseWorkerHandler',
-    'WorkerHandlerRegistry',
-    'ChatWorkerHandler',
-    'ServerWorkerHandler',
-    'AIGenerationHandler',
-    'MiscWorkerHandler',
+    "BaseWorkerHandler",
+    "WorkerHandlerRegistry",
+    "ChatWorkerHandler",
+    "ServerWorkerHandler",
+    "AIGenerationHandler",
+    "MiscWorkerHandler",
 ]

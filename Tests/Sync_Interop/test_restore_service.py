@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key, wrap_dataset_key_for_recovery
+from tldw_chatbook.Sync_Interop.crypto import (
+    generate_dataset_key,
+    wrap_dataset_key_for_recovery,
+)
 from tldw_chatbook.Sync_Interop.envelope_builder import SyncEnvelopeBuilder
 from tldw_chatbook.Sync_Interop.restore_service import SyncRestoreService
 from tldw_chatbook.tldw_api import SyncV2Envelope
@@ -70,7 +73,17 @@ class FakeRestoreServer:
         page_size=None,
         include_own_changes=False,
     ):
-        self.calls.append(("pull", dataset_id, device_id, cursor, domains, page_size, include_own_changes))
+        self.calls.append(
+            (
+                "pull",
+                dataset_id,
+                device_id,
+                cursor,
+                domains,
+                page_size,
+                include_own_changes,
+            )
+        )
         return {
             "dataset_id": self.response_dataset_id or dataset_id,
             "envelopes": self.envelopes,
@@ -103,7 +116,9 @@ class RecordingLocalStore:
     def get_note_content_hash(self, note_id: str) -> str | None:
         return self.note_hashes.get(note_id)
 
-    def upsert_note_content(self, note_id: str, payload: dict, payload_hash: str) -> None:
+    def upsert_note_content(
+        self, note_id: str, payload: dict, payload_hash: str
+    ) -> None:
         self.note_content[note_id] = payload
         self.note_hashes[note_id] = payload_hash
 
@@ -121,7 +136,9 @@ async def test_restore_service_previews_locked_and_recoverable_datasets():
         dataset_keys={"local-key-dataset": generate_dataset_key()},
     )
 
-    preview = await service.preview_restore(dataset_ids=["locked-dataset"], domains=["notes"])
+    preview = await service.preview_restore(
+        dataset_ids=["locked-dataset"], domains=["notes"]
+    )
 
     assert preview["devices"] == [{"device_id": "device-1", "display_name": "Laptop"}]
     assert preview["datasets"][0]["dataset_id"] == "locked-dataset"
@@ -134,7 +151,9 @@ async def test_restore_service_previews_locked_and_recoverable_datasets():
 
 async def test_restore_selection_filters_pull_and_decrypts_before_local_apply():
     dataset_key = generate_dataset_key()
-    builder = SyncEnvelopeBuilder(dataset_id="recoverable-dataset", device_id="device-1", dataset_key=dataset_key)
+    builder = SyncEnvelopeBuilder(
+        dataset_id="recoverable-dataset", device_id="device-1", dataset_key=dataset_key
+    )
     envelope = builder.build_note_upsert(
         note_id="note-1",
         title="Restored",
@@ -156,15 +175,28 @@ async def test_restore_selection_filters_pull_and_decrypts_before_local_apply():
         page_size=25,
     )
 
-    assert server.calls[-1] == ("pull", "recoverable-dataset", "device-1", None, ["notes"], 25, True)
+    assert server.calls[-1] == (
+        "pull",
+        "recoverable-dataset",
+        "device-1",
+        None,
+        ["notes"],
+        25,
+        True,
+    )
     assert result["applied"] == 1
-    assert store.note_content["note-1"] == {"body": "private restored body", "title": "Restored"}
+    assert store.note_content["note-1"] == {
+        "body": "private restored body",
+        "title": "Restored",
+    }
     assert store.note_metadata["note-1"] == {"status": "active"}
 
 
 async def test_restore_selection_rejects_wrong_dataset_pull_before_apply():
     dataset_key = generate_dataset_key()
-    builder = SyncEnvelopeBuilder(dataset_id="recoverable-dataset", device_id="device-1", dataset_key=dataset_key)
+    builder = SyncEnvelopeBuilder(
+        dataset_id="recoverable-dataset", device_id="device-1", dataset_key=dataset_key
+    )
     envelope = builder.build_note_metadata_update(note_id="note-1", status="archived")
     store = RecordingLocalStore()
     server = FakeRestoreServer(
@@ -185,12 +217,22 @@ async def test_restore_selection_rejects_wrong_dataset_pull_before_apply():
         )
 
     assert store.note_metadata == {}
-    assert server.calls[-1] == ("pull", "recoverable-dataset", "device-1", None, ["notes"], None, True)
+    assert server.calls[-1] == (
+        "pull",
+        "recoverable-dataset",
+        "device-1",
+        None,
+        ["notes"],
+        None,
+        True,
+    )
 
 
 async def test_restore_selection_rejects_out_of_scope_pull_domain_before_apply():
     dataset_key = generate_dataset_key()
-    builder = SyncEnvelopeBuilder(dataset_id="recoverable-dataset", device_id="device-1", dataset_key=dataset_key)
+    builder = SyncEnvelopeBuilder(
+        dataset_id="recoverable-dataset", device_id="device-1", dataset_key=dataset_key
+    )
     envelope = builder.build_chat_message(
         conversation_id="conversation-1",
         message_id="message-1",
@@ -214,12 +256,22 @@ async def test_restore_selection_rejects_out_of_scope_pull_domain_before_apply()
 
     assert store.note_content == {}
     assert store.note_metadata == {}
-    assert server.calls[-1] == ("pull", "recoverable-dataset", "device-1", None, ["notes"], None, True)
+    assert server.calls[-1] == (
+        "pull",
+        "recoverable-dataset",
+        "device-1",
+        None,
+        ["notes"],
+        None,
+        True,
+    )
 
 
 async def test_restore_selection_rejects_duplicate_pull_envelope_ids_before_apply():
     dataset_key = generate_dataset_key()
-    builder = SyncEnvelopeBuilder(dataset_id="recoverable-dataset", device_id="device-1", dataset_key=dataset_key)
+    builder = SyncEnvelopeBuilder(
+        dataset_id="recoverable-dataset", device_id="device-1", dataset_key=dataset_key
+    )
     envelope = builder.build_note_metadata_update(note_id="note-1", status="archived")
     store = RecordingLocalStore()
     server = FakeRestoreServer(
@@ -242,12 +294,22 @@ async def test_restore_selection_rejects_duplicate_pull_envelope_ids_before_appl
         )
 
     assert store.note_metadata == {}
-    assert server.calls[-1] == ("pull", "recoverable-dataset", "device-1", None, ["notes"], None, True)
+    assert server.calls[-1] == (
+        "pull",
+        "recoverable-dataset",
+        "device-1",
+        None,
+        ["notes"],
+        None,
+        True,
+    )
 
 
 async def test_restore_selection_rejects_has_more_pull_without_next_cursor_before_apply():
     dataset_key = generate_dataset_key()
-    builder = SyncEnvelopeBuilder(dataset_id="recoverable-dataset", device_id="device-1", dataset_key=dataset_key)
+    builder = SyncEnvelopeBuilder(
+        dataset_id="recoverable-dataset", device_id="device-1", dataset_key=dataset_key
+    )
     envelope = builder.build_note_metadata_update(note_id="note-1", status="archived")
     store = RecordingLocalStore()
     server = FakeRestoreServer(
@@ -269,12 +331,22 @@ async def test_restore_selection_rejects_has_more_pull_without_next_cursor_befor
         )
 
     assert store.note_metadata == {}
-    assert server.calls[-1] == ("pull", "recoverable-dataset", "device-1", None, ["notes"], None, True)
+    assert server.calls[-1] == (
+        "pull",
+        "recoverable-dataset",
+        "device-1",
+        None,
+        ["notes"],
+        None,
+        True,
+    )
 
 
 async def test_restore_selection_rejects_nonempty_pull_without_next_cursor_before_apply():
     dataset_key = generate_dataset_key()
-    builder = SyncEnvelopeBuilder(dataset_id="recoverable-dataset", device_id="device-1", dataset_key=dataset_key)
+    builder = SyncEnvelopeBuilder(
+        dataset_id="recoverable-dataset", device_id="device-1", dataset_key=dataset_key
+    )
     envelope = builder.build_note_metadata_update(note_id="note-1", status="archived")
     store = RecordingLocalStore()
     server = FakeRestoreServer(
@@ -296,7 +368,15 @@ async def test_restore_selection_rejects_nonempty_pull_without_next_cursor_befor
         )
 
     assert store.note_metadata == {}
-    assert server.calls[-1] == ("pull", "recoverable-dataset", "device-1", None, ["notes"], None, True)
+    assert server.calls[-1] == (
+        "pull",
+        "recoverable-dataset",
+        "device-1",
+        None,
+        ["notes"],
+        None,
+        True,
+    )
 
 
 async def test_restore_selection_recovers_dataset_key_with_recovery_secret():
@@ -306,7 +386,9 @@ async def test_restore_selection_recovers_dataset_key_with_recovery_secret():
         recovery_secret="correct horse battery staple",
         recovery_hint="laptop",
     )
-    builder = SyncEnvelopeBuilder(dataset_id="recoverable-dataset", device_id="device-1", dataset_key=dataset_key)
+    builder = SyncEnvelopeBuilder(
+        dataset_id="recoverable-dataset", device_id="device-1", dataset_key=dataset_key
+    )
     envelope = builder.build_note_upsert(
         note_id="note-1",
         title="Restored",
@@ -342,9 +424,20 @@ async def test_restore_selection_recovers_dataset_key_with_recovery_secret():
         None,
         "dataset_recovery",
     )
-    assert server.calls[1] == ("pull", "recoverable-dataset", "device-1", None, ["notes"], None, True)
+    assert server.calls[1] == (
+        "pull",
+        "recoverable-dataset",
+        "device-1",
+        None,
+        ["notes"],
+        None,
+        True,
+    )
     assert result["applied"] == 1
-    assert store.note_content["note-1"] == {"body": "private restored body", "title": "Restored"}
+    assert store.note_content["note-1"] == {
+        "body": "private restored body",
+        "title": "Restored",
+    }
     assert "correct horse battery staple" not in str(result)
     assert "wrapped_key_blob" not in str(result)
     assert "kdf_metadata" not in str(result)
@@ -421,7 +514,10 @@ async def test_restore_selection_tries_later_recovery_bundle_when_first_fails():
         True,
     )
     assert result["applied"] == 1
-    assert store.note_content["note-1"] == {"body": "private restored body", "title": "Restored"}
+    assert store.note_content["note-1"] == {
+        "body": "private restored body",
+        "title": "Restored",
+    }
 
 
 async def test_restore_selection_surfaces_adapter_rejections():
@@ -502,7 +598,9 @@ async def test_restore_selection_recovery_failure_does_not_pull_or_apply():
             recovery_secret="wrong secret",
         )
 
-    assert server.calls == [("recovery_bundles", "recoverable-dataset", None, "dataset_recovery")]
+    assert server.calls == [
+        ("recovery_bundles", "recoverable-dataset", None, "dataset_recovery")
+    ]
     assert store.note_content == {}
     assert store.note_metadata == {}
 
@@ -520,7 +618,9 @@ async def test_restore_service_keeps_unresolved_conflicts_visible():
             }
         ]
     )
-    service = SyncRestoreService(server_service=server, local_store=RecordingLocalStore())
+    service = SyncRestoreService(
+        server_service=server, local_store=RecordingLocalStore()
+    )
 
     conflicts = await service.list_conflicts(dataset_id="dataset-1")
 

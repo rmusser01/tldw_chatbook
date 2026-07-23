@@ -17,22 +17,20 @@ _SCREEN_EXPORTS = {
     "EvalsScreen": ".evals_screen",
     "ToolsSettingsScreen": ".tools_settings_screen",
     "LLMScreen": ".llm_screen",
-    "CustomizeScreen": ".customize_screen",
     "LogsScreen": ".logs_screen",
     "StatsScreen": ".stats_screen",
 }
 
 __all__ = [
-    'ChatScreen',
-    'MediaIngestScreen',
-    'MediaScreen',
-    'SearchScreen',
-    'EvalsScreen',
-    'ToolsSettingsScreen',
-    'LLMScreen',
-    'CustomizeScreen',
-    'LogsScreen',
-    'StatsScreen',
+    "ChatScreen",
+    "MediaIngestScreen",
+    "MediaScreen",
+    "SearchScreen",
+    "EvalsScreen",
+    "ToolsSettingsScreen",
+    "LLMScreen",
+    "LogsScreen",
+    "StatsScreen",
 ]
 
 

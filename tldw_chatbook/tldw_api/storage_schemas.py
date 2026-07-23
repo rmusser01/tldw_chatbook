@@ -6,8 +6,12 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-FileCategory = Literal["tts_audio", "stt_audio", "image", "voice_clone", "mindmap", "spreadsheet"]
-SourceFeature = Literal["tts", "stt", "image_gen", "voice_studio", "mindmap", "data_tables", "export"]
+FileCategory = Literal[
+    "tts_audio", "stt_audio", "image", "voice_clone", "mindmap", "spreadsheet"
+]
+SourceFeature = Literal[
+    "tts", "stt", "image_gen", "voice_studio", "mindmap", "data_tables", "export"
+]
 RetentionPolicy = Literal["user_default", "permanent", "transient", "custom"]
 
 

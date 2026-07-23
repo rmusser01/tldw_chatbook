@@ -67,13 +67,20 @@ class LibraryMediaCanvas(Vertical):
         # Also portable to the conversations canvas state, which has no
         # ``.count`` field.
         rendered_count = len(self.canvas.rows)
-        export_btn = Button("Export…", id="library-media-export",
-                            classes="library-canvas-action", compact=True)
+        export_btn = Button(
+            "Export…",
+            id="library-media-export",
+            classes="library-canvas-action",
+            compact=True,
+        )
         export_btn.display = not select_mode
         yield export_btn
-        select_btn = Button("Done" if select_mode else "Select",
-                            id="library-media-select-toggle",
-                            classes="library-canvas-action", compact=True)
+        select_btn = Button(
+            "Done" if select_mode else "Select",
+            id="library-media-select-toggle",
+            classes="library-canvas-action",
+            compact=True,
+        )
         # Disable only when there's nothing to select AND we're not already in
         # select mode -- in select mode the button is "Done" and must always be
         # pressable so the user can exit even if the rows dropped to zero
@@ -84,16 +91,29 @@ class LibraryMediaCanvas(Vertical):
             action_row = Horizontal(classes="ds-toolbar")
             action_row.styles.height = "auto"
             with action_row:
-                yield Static(f"{self.canvas.selected_count} selected",
-                             id="library-media-selected-count", markup=False)
-                yield Button(f"Select all {rendered_count} shown",
-                             id="library-media-select-all",
-                             classes="library-canvas-action", compact=True)
-                yield Button("Clear", id="library-media-select-clear",
-                             classes="library-canvas-action", compact=True)
-                export_selected = Button("Export selected",
-                                         id="library-media-export-selected",
-                                         classes="library-canvas-action", compact=True)
+                yield Static(
+                    f"{self.canvas.selected_count} selected",
+                    id="library-media-selected-count",
+                    markup=False,
+                )
+                yield Button(
+                    f"Select all {rendered_count} shown",
+                    id="library-media-select-all",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
+                    "Clear",
+                    id="library-media-select-clear",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                export_selected = Button(
+                    "Export selected",
+                    id="library-media-export-selected",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
                 export_selected.disabled = self.canvas.selected_count == 0
                 yield export_selected
 
@@ -120,9 +140,7 @@ class LibraryMediaCanvas(Vertical):
                 # ``.plain`` and Textual 8's ``str(Content)`` return
                 # rendered text), so the raw remainder is stashed here at
                 # the single point of truth.
-                label_rest = (
-                    f" {_visible_row_title(row.title)}\n    {row.secondary}"
-                )
+                label_rest = f" {_visible_row_title(row.title)}\n    {row.secondary}"
                 button = Button(
                     f"{marker}{label_rest}",
                     id=f"library-media-row-{index}",

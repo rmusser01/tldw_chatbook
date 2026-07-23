@@ -36,7 +36,9 @@ def test_reminder_task_create_request_requires_schedule_specific_fields():
         ReminderTaskCreateRequest(title="Broken", schedule_kind="one_time")
 
     with pytest.raises(ValidationError):
-        ReminderTaskCreateRequest(title="Broken", schedule_kind="recurring", cron="0 9 * * *")
+        ReminderTaskCreateRequest(
+            title="Broken", schedule_kind="recurring", cron="0 9 * * *"
+        )
 
 
 def test_notification_and_reminder_responses_match_server_payload_shape():

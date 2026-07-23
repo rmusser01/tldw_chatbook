@@ -4,7 +4,9 @@ from tldw_chatbook.Prompt_Management.prompt_scope_service import (
     ServerPromptService as ScopedServerPromptService,
     build_prompt_scope_service,
 )
-from tldw_chatbook.Prompt_Management.prompt_chatbook_scope_service import PromptChatbookScopeService
+from tldw_chatbook.Prompt_Management.prompt_chatbook_scope_service import (
+    PromptChatbookScopeService,
+)
 from tldw_chatbook.Prompt_Management.server_prompt_service import ServerPromptService
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
@@ -16,11 +18,21 @@ class FakePromptBackend:
 
     async def list_prompts(self, *, include_deleted=False, limit=100, offset=0):
         self.calls.append(("list_prompts", include_deleted, limit, offset))
-        return [{"id": f"{self.source}-prompt-1", "name": "Prompt", "prompt_format": "legacy"}]
+        return [
+            {
+                "id": f"{self.source}-prompt-1",
+                "name": "Prompt",
+                "prompt_format": "legacy",
+            }
+        ]
 
     async def create_prompt(self, **kwargs):
         self.calls.append(("create_prompt", kwargs))
-        return {"id": f"{self.source}-prompt-1", "name": kwargs["name"], "prompt_format": kwargs["prompt_format"]}
+        return {
+            "id": f"{self.source}-prompt-1",
+            "name": kwargs["name"],
+            "prompt_format": kwargs["prompt_format"],
+        }
 
     async def preview_prompt(self, **kwargs):
         self.calls.append(("preview_prompt", kwargs))
@@ -108,7 +120,11 @@ class FakePromptBackend:
 
     async def list_prompt_collections(self, **kwargs):
         self.calls.append(("list_prompt_collections", kwargs))
-        return {"collections": [{"collection_id": f"{self.source}-collection-1", "name": "Pack"}]}
+        return {
+            "collections": [
+                {"collection_id": f"{self.source}-collection-1", "name": "Pack"}
+            ]
+        }
 
     async def get_prompt_collection(self, collection_id):
         self.calls.append(("get_prompt_collection", collection_id))
@@ -267,7 +283,9 @@ async def test_server_prompt_service_prefers_direct_client_over_provider():
 
 
 @pytest.mark.asyncio
-async def test_build_prompt_scope_service_uses_injected_server_service_without_from_config(monkeypatch):
+async def test_build_prompt_scope_service_uses_injected_server_service_without_from_config(
+    monkeypatch,
+):
     class FakeScopedServerPrompts:
         def __init__(self):
             self.calls = []
@@ -284,7 +302,9 @@ async def test_build_prompt_scope_service_uses_injected_server_service_without_f
     server_prompts = FakeScopedServerPrompts()
 
     def fail_from_config(_app_config):
-        raise AssertionError("from_config should not be used for injected server services")
+        raise AssertionError(
+            "from_config should not be used for injected server services"
+        )
 
     monkeypatch.setattr(ScopedServerPromptService, "from_config", fail_from_config)
     scope = build_prompt_scope_service(
@@ -311,7 +331,9 @@ async def test_build_prompt_scope_service_uses_injected_server_service_without_f
 
 
 @pytest.mark.asyncio
-async def test_build_prompt_scope_service_uses_provider_backed_server_service_without_from_config(monkeypatch):
+async def test_build_prompt_scope_service_uses_provider_backed_server_service_without_from_config(
+    monkeypatch,
+):
     class FakeClient:
         async def list_prompts(self, **kwargs):
             return {
@@ -322,7 +344,9 @@ async def test_build_prompt_scope_service_uses_provider_backed_server_service_wi
             }
 
     def fail_from_config(_app_config):
-        raise AssertionError("from_config should not be used when a client provider is supplied")
+        raise AssertionError(
+            "from_config should not be used when a client provider is supplied"
+        )
 
     provider = FakeClientProvider(FakeClient())
     monkeypatch.setattr(ScopedServerPromptService, "from_config", fail_from_config)
@@ -355,7 +379,9 @@ async def test_prompt_chatbook_scope_service_routes_prompts_and_policy_actions()
         prompt_definition={"blocks": []},
     )
     preview = await scope.preview_prompt(mode="server", name="Structured")
-    updated = await scope.update_prompt(mode="server", prompt_id="server-prompt-1", name="Updated")
+    updated = await scope.update_prompt(
+        mode="server", prompt_id="server-prompt-1", name="Updated"
+    )
     deleted = await scope.delete_prompt(mode="local", prompt_id="local-prompt-1")
 
     assert local_list[0]["record_id"] == "local:prompt:local-prompt-1"
@@ -384,7 +410,9 @@ async def test_prompt_chatbook_scope_service_routes_chatbooks_and_policy_actions
         policy_enforcer=policy,
     )
 
-    preview = await scope.preview_chatbook(mode="server", chatbook_file_path="/tmp/demo.chatbook.zip")
+    preview = await scope.preview_chatbook(
+        mode="server", chatbook_file_path="/tmp/demo.chatbook.zip"
+    )
     export = await scope.export_chatbook(mode="server", request_data={"name": "Pack"})
     continued = await scope.continue_chatbook_export(
         mode="server",
@@ -431,11 +459,21 @@ async def test_prompt_chatbook_scope_service_routes_chatbook_job_management():
 
     export_jobs = await scope.list_export_jobs(mode="server", limit=25, offset=5)
     import_jobs = await scope.list_import_jobs(mode="server", limit=10, offset=2)
-    downloaded = await scope.download_export(mode="server", job_id="server-export-1", token="signed", exp=12345)
-    cancelled_export = await scope.cancel_export_job(mode="server", job_id="server-export-1")
-    cancelled_import = await scope.cancel_import_job(mode="server", job_id="server-import-1")
-    removed_export = await scope.remove_export_job(mode="server", job_id="server-export-1")
-    removed_import = await scope.remove_import_job(mode="server", job_id="server-import-1")
+    downloaded = await scope.download_export(
+        mode="server", job_id="server-export-1", token="signed", exp=12345
+    )
+    cancelled_export = await scope.cancel_export_job(
+        mode="server", job_id="server-export-1"
+    )
+    cancelled_import = await scope.cancel_import_job(
+        mode="server", job_id="server-import-1"
+    )
+    removed_export = await scope.remove_export_job(
+        mode="server", job_id="server-export-1"
+    )
+    removed_import = await scope.remove_import_job(
+        mode="server", job_id="server-import-1"
+    )
 
     assert export_jobs["items"][0]["record_id"] == "server:chatbook_job:server-export-1"
     assert import_jobs["items"][0]["record_id"] == "server:chatbook_job:server-import-1"
@@ -469,8 +507,12 @@ async def test_prompt_chatbook_scope_service_routes_server_prompt_version_contro
         policy_enforcer=policy,
     )
 
-    versions = await scope.list_prompt_versions(mode="server", prompt_id="server-prompt-1")
-    restored = await scope.restore_prompt_version(mode="server", prompt_id="server-prompt-1", version=2)
+    versions = await scope.list_prompt_versions(
+        mode="server", prompt_id="server-prompt-1"
+    )
+    restored = await scope.restore_prompt_version(
+        mode="server", prompt_id="server-prompt-1", version=2
+    )
 
     assert versions[0]["record_type"] == "prompt_version"
     assert versions[0]["record_id"] == "server:prompt_version:2"
@@ -497,8 +539,12 @@ async def test_prompt_chatbook_scope_service_routes_local_prompt_version_control
         policy_enforcer=policy,
     )
 
-    versions = await scope.list_prompt_versions(mode="local", prompt_id="local-prompt-1")
-    restored = await scope.restore_prompt_version(mode="local", prompt_id="local-prompt-1", version=2)
+    versions = await scope.list_prompt_versions(
+        mode="local", prompt_id="local-prompt-1"
+    )
+    restored = await scope.restore_prompt_version(
+        mode="local", prompt_id="local-prompt-1", version=2
+    )
 
     assert versions[0]["record_id"] == "local:prompt_version:2"
     assert restored["record_id"] == "local:prompt:local-prompt-1"
@@ -525,24 +571,44 @@ async def test_prompt_chatbook_scope_service_routes_server_prompt_utility_surfac
     )
 
     health = await scope.get_prompts_health(mode="server")
-    sync_log = await scope.get_prompt_sync_log(mode="server", since_change_id=5, limit=25)
+    sync_log = await scope.get_prompt_sync_log(
+        mode="server", since_change_id=5, limit=25
+    )
     searched = await scope.search_prompts(mode="server", search_query="rag")
     keyword = await scope.create_prompt_keyword(mode="server", keyword_text="Drafting")
     keywords = await scope.list_prompt_keywords(mode="server")
-    deleted_keyword = await scope.delete_prompt_keyword(mode="server", keyword_text="Drafting")
+    deleted_keyword = await scope.delete_prompt_keyword(
+        mode="server", keyword_text="Drafting"
+    )
     exported = await scope.export_prompts(mode="server", export_format="markdown")
     keyword_export = await scope.export_prompt_keywords(mode="server")
-    imported = await scope.import_prompts(mode="server", payload={"prompts": [{"name": "Draft", "content": "Body"}]})
-    variables = await scope.extract_prompt_template_variables(mode="server", template="Hello {{name}}")
-    rendered = await scope.render_prompt_template(mode="server", template="Hello {{name}}", variables={"name": "Ada"})
-    converted = await scope.convert_prompt(mode="server", payload={"system_prompt": "S", "user_prompt": "U"})
+    imported = await scope.import_prompts(
+        mode="server", payload={"prompts": [{"name": "Draft", "content": "Body"}]}
+    )
+    variables = await scope.extract_prompt_template_variables(
+        mode="server", template="Hello {{name}}"
+    )
+    rendered = await scope.render_prompt_template(
+        mode="server", template="Hello {{name}}", variables={"name": "Ada"}
+    )
+    converted = await scope.convert_prompt(
+        mode="server", payload={"system_prompt": "S", "user_prompt": "U"}
+    )
     bulk_deleted = await scope.bulk_delete_prompts(mode="server", prompt_ids=[1])
-    bulk_keywords = await scope.bulk_update_prompt_keywords(mode="server", prompt_ids=[1], keywords=["drafting"])
+    bulk_keywords = await scope.bulk_update_prompt_keywords(
+        mode="server", prompt_ids=[1], keywords=["drafting"]
+    )
     usage = await scope.record_prompt_usage(mode="server", prompt_identifier="prompt-1")
-    collection = await scope.create_prompt_collection(mode="server", name="Pack", prompt_ids=[1])
+    collection = await scope.create_prompt_collection(
+        mode="server", name="Pack", prompt_ids=[1]
+    )
     collections = await scope.list_prompt_collections(mode="server", limit=25)
-    fetched_collection = await scope.get_prompt_collection(mode="server", collection_id=7)
-    updated_collection = await scope.update_prompt_collection(mode="server", collection_id=7, name="Updated")
+    fetched_collection = await scope.get_prompt_collection(
+        mode="server", collection_id=7
+    )
+    updated_collection = await scope.update_prompt_collection(
+        mode="server", collection_id=7, name="Updated"
+    )
 
     assert health["status"] == "healthy"
     assert sync_log == {"changes": []}
@@ -673,7 +739,9 @@ async def test_prompt_chatbook_scope_service_routes_local_chatbook_record_crud_w
     listed = await scope.list_chatbooks(mode="local", q="pack")
     fetched = await scope.get_chatbook(mode="local", chatbook_id="local-chatbook-1")
     created = await scope.create_chatbook(mode="local", name="Created")
-    updated = await scope.update_chatbook(mode="local", chatbook_id="local-chatbook-2", name="Updated")
+    updated = await scope.update_chatbook(
+        mode="local", chatbook_id="local-chatbook-2", name="Updated"
+    )
     deleted = await scope.delete_chatbook(mode="local", chatbook_id="local-chatbook-2")
 
     assert listed[0]["record_id"] == "local:chatbook:local-chatbook-1"

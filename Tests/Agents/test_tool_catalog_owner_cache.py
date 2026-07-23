@@ -17,6 +17,7 @@ through, still paid a full per-provider sweep on every single call. The
 fix folds a name -> id map into the SAME cache build as the owner map, so
 both lookups share one `list_catalog()` sweep per provider per run.
 """
+
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 from tldw_chatbook.Agents.agent_models import ToolCatalogEntry, ToolSchema, ToolResult
 
@@ -27,7 +28,11 @@ class _CountingProvider:
 
     def list_catalog(self):
         self.list_calls += 1
-        return [ToolCatalogEntry(id="p:foo", name="foo", one_line_description="d", source="p")]
+        return [
+            ToolCatalogEntry(
+                id="p:foo", name="foo", one_line_description="d", source="p"
+            )
+        ]
 
     def load_schema(self, tool_id):
         return ToolSchema(id=tool_id, name="foo", description="d", parameters={})
@@ -72,8 +77,11 @@ class _NamedCountingProvider:
 
     def list_catalog(self):
         self.list_calls += 1
-        return [ToolCatalogEntry(id=self._tool_id, name=self._name,
-                                 one_line_description="d", source="p")]
+        return [
+            ToolCatalogEntry(
+                id=self._tool_id, name=self._name, one_line_description="d", source="p"
+            )
+        ]
 
     def load_schema(self, tool_id):
         return ToolSchema(id=tool_id, name=self._name, description="d", parameters={})

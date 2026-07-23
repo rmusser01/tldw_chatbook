@@ -17,7 +17,9 @@ from tldw_chatbook.MCP.readiness import (
 )
 
 
-def _snap(state: ReadinessState, reasons: tuple[ReasonCode, ...] = ()) -> ReadinessSnapshot:
+def _snap(
+    state: ReadinessState, reasons: tuple[ReasonCode, ...] = ()
+) -> ReadinessSnapshot:
     return ReadinessSnapshot(
         server_key="local:demo",
         label="demo",

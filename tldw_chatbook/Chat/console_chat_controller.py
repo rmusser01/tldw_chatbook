@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import re
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
@@ -16,16 +18,22 @@ from tldw_chatbook.Chat.attachment_core import (
 )
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
+    ConsoleContextSnapshot,
     ConsoleMessageRole,
     ConsoleProviderSelection,
     ConsoleRunState,
     ConsoleRunStatus,
+    ConsoleStagedSource,
     MessageAttachment,
     derive_console_session_title,
     is_default_console_session_title,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.Chat.console_command_grammar import COMMAND_PREFIX
+from tldw_chatbook.Chat.console_history_budget import (
+    DEFAULT_RESPONSE_RESERVATION,
+    bound_messages_to_window,
+)
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_skill_resolver import (
     SKILL_UNTRUSTED_REFUSE,
@@ -39,6 +47,9 @@ from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
+from tldw_chatbook.Chat.provider_failures import (  # noqa: F401  (re-export: tests and callers import describe_stream_failure from here)
+    describe_stream_failure,
+)
 from tldw_chatbook.model_capabilities import is_vision_capable
 
 if TYPE_CHECKING:
@@ -61,6 +72,39 @@ _MCP_APPROVAL_POLL_SECONDS = 1.0
 
 MAX_CONSOLE_DRAFT_LENGTH = 100_000
 CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
+
+
+def _normalize_world_info_history(
+    messages: "list[dict[str, Any]]",
+) -> "list[dict[str, Any]]":
+    """Flatten messages to ``{"role","content": str}`` for world-info scanning.
+
+    ``WorldInfoProcessor.process_messages`` types content as ``str``; native
+    provider messages may carry multimodal list content, so extract the text
+    parts (joined) and drop images before scanning. System messages are
+    skipped entirely -- world-info should scan only the user/assistant
+    conversation, matching the legacy path; keywords in the system prompt
+    must not spuriously activate entries.
+    """
+    out: list[dict[str, Any]] = []
+    for message in messages:
+        if message.get("role") == ConsoleMessageRole.SYSTEM.value:
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            text = "\n".join(
+                part["text"]
+                for part in content
+                if isinstance(part, dict)
+                and part.get("type") == "text"
+                and isinstance(part.get("text"), str)
+            )
+        else:
+            text = ""
+        out.append({"role": message.get("role", ""), "content": text})
+    return out
 
 
 def build_mcp_review_hook(
@@ -165,41 +209,6 @@ def build_mcp_review_hook(
     return review_tool_calls
 
 
-def describe_stream_failure(exc: BaseException) -> str:
-    """Return user-facing copy classifying a provider stream failure.
-
-    ``str(exc)`` alone can be empty (observed live as ``"Provider stream
-    failed: "`` rendering ``"[failed]"``), so the failure class is always
-    included in user terms: timeout vs connection vs HTTP status.
-
-    Args:
-        exc: The exception raised by the provider stream.
-
-    Returns:
-        A short, user-readable failure description that is never empty.
-    """
-    detail = str(exc).strip()
-    response = getattr(exc, "response", None)
-    status_code = getattr(response, "status_code", None) or getattr(exc, "status_code", None)
-    exc_name = type(exc).__name__
-    lowered_name = exc_name.lower()
-
-    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)) or "timeout" in lowered_name:
-        summary = "request timed out waiting for the provider"
-    elif isinstance(exc, ConnectionRefusedError) or "connectrefused" in lowered_name.replace("_", ""):
-        summary = "connection refused - is the provider server running?"
-    elif isinstance(exc, ConnectionError) or "connect" in lowered_name:
-        summary = "could not connect to the provider"
-    elif status_code is not None:
-        summary = f"provider returned HTTP {status_code}"
-    else:
-        summary = f"{exc_name} error"
-
-    if detail and detail.lower() != summary.lower():
-        return f"{summary} ({detail})"
-    return summary
-
-
 def _split_skill_command_word(text: str) -> tuple[str, str]:
     """Split a ``/word rest`` string into its leading token and the remainder.
 
@@ -268,6 +277,7 @@ class ConsoleChatController:
         skills_service: Any | None = None,
         skill_substitution_enabled: bool = True,
         chat_dictionary_applier: "Callable[[str | None, str], str] | None" = None,
+        world_info_applier: "Callable[[str | None, str, list], str] | None" = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -295,6 +305,7 @@ class ConsoleChatController:
         self._skills_service = skills_service
         self._skill_substitution_enabled = skill_substitution_enabled
         self._chat_dictionary_applier = chat_dictionary_applier
+        self._world_info_applier = world_info_applier
         self.run_state = ConsoleRunState()
         self.run_state_history: list[ConsoleRunStatus] = [self.run_state.status]
         #: Optional owner hook invoked once a submit is accepted (user message
@@ -313,6 +324,10 @@ class ConsoleChatController:
         #: ``_stop_requested``, which the run's own ``finally`` block
         #: resets as soon as the coroutine side is done (task-227).
         self._active_cancel_event: threading.Event | None = None
+        #: The composed MCP provider for the current agent run, captured
+        #: on the main loop in ``_run_agent_reply`` so ``build_context_snapshot``
+        #: can read tool metadata later without recomposing.
+        self._mcp_provider: Any | None = None
 
         # -- MCP batch-approval bridge (task-5) ------------------------------
         #: Textual App-like object exposing ``call_from_thread`` -- assigned
@@ -376,12 +391,22 @@ class ConsoleChatController:
         if self.store.workspace_context.has_policy_blocks:
             return self._block(session.id, self.store.workspace_context.recovery_copy)
 
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."))
-        resolution = await self.provider_gateway.resolve_for_send(self._provider_selection())
-        if not getattr(resolution, "ready", False):
-            visible_copy = self._blocked_visible_copy(getattr(resolution, "visible_copy", ""))
-            return self._block(session.id, visible_copy)
-
+        # TASK-457(a): echo the USER message BEFORE resolving the provider, so a
+        # slow/cold readiness probe no longer leaves the transcript blank while
+        # the composer clears — the message reads as "sent", not lost. On a
+        # not-ready provider the row persists next to the honest block-row below
+        # (the message is no longer silently dropped) and the draft is kept (the
+        # composer clears only on the accepted path via
+        # `_notify_submission_accepted`), so the user can re-attempt. Staged
+        # attachments are embedded on the row here but only CLEARED on the
+        # success path below, so a blocked attempt leaves them staged for retry.
+        #
+        # Auto-title BEFORE the append: a persisting append creates the durable
+        # conversation from `session.title` (persist_session_if_needed) and sets
+        # `persisted_conversation_id`, after which `_maybe_auto_title_session`
+        # early-returns. Titling first means the conversation is created as the
+        # derived title (e.g. "hello") instead of the default "Chat 1", so the
+        # workspace rail shows it immediately after persistence.
         self._maybe_auto_title_session(session, clean_draft)
         staged_attachments = tuple(
             MessageAttachment(
@@ -392,20 +417,67 @@ class ConsoleChatController:
             )
             for index, pending in enumerate(attachment_mode_pendings)
         )
-        self.store.append_message(
+        echoed_user = self.store.append_message(
             session.id,
             role=ConsoleMessageRole.USER,
             content=clean_draft,
             attachments=staged_attachments,
             persist=self.store.persistence is not None,
         )
+
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
+        )
+        try:
+            resolution = await self.provider_gateway.resolve_for_send(
+                self._provider_selection()
+            )
+        except BaseException:
+            # A readiness probe that raises or is cancelled AFTER the optimistic
+            # USER echo must still fail that row — otherwise a never-sent USER
+            # message leaks into the NEXT send's provider context (`skip_failed`
+            # only drops "failed" rows). Fail it, then re-raise so the caller
+            # still sees the probe failure.
+            self.store.mark_message_send_blocked(echoed_user.id)
+            raise
+        if not getattr(resolution, "ready", False):
+            visible_copy = self._blocked_visible_copy(
+                getattr(resolution, "visible_copy", "")
+            )
+            # The echoed row stays visible but never reached a provider — fail it
+            # so it is excluded from the NEXT send's provider context
+            # (`skip_failed`) and reads honestly as unsent rather than polluting
+            # the history.
+            self.store.mark_message_send_blocked(echoed_user.id)
+            return self._block(session.id, visible_copy)
+
         if pendings:
             self.store.clear_pending_attachments(session.id)
-        provider_messages = self._provider_messages_for_session(session.id)
-        provider_messages, refuse = await self._apply_skill_substitution(provider_messages)
-        if refuse is not None:
-            return self._block(session.id, refuse)
-        provider_messages = await self._apply_chat_dictionaries(provider_messages, session.id)
+        try:
+            provider_messages = self._provider_messages_for_session(session.id)
+            provider_messages, refuse = await self._apply_skill_substitution(
+                provider_messages
+            )
+            if refuse is not None:
+                # A substitution refusal is a block outcome like any other
+                # (provider not ready, probe raise): fail the echoed row so the
+                # refused command never enters the next send's provider context.
+                self.store.mark_message_send_blocked(echoed_user.id)
+                return self._block(session.id, refuse)
+            provider_messages = await self._apply_chat_dictionaries(
+                provider_messages, session.id
+            )
+            provider_messages = await self._apply_world_info(
+                provider_messages, session.id
+            )
+            prefill, prefill_from_one_shot = self._resolve_submit_prefill(session.id)
+        except BaseException:
+            # Any failure between the optimistic echo and the confirmed turn
+            # (dictionary/world-info application, prefill resolution) must also
+            # fail the echoed row, or a never-sent message leaks into the next
+            # send's provider context (`skip_failed` only drops "failed" rows).
+            self.store.mark_message_send_blocked(echoed_user.id)
+            raise
         # The accepted-hook fires only once the turn is confirmed to
         # actually proceed (Qodo finding 3, PR #636 bot review): it used to
         # fire right after the USER row was appended, BEFORE this skill
@@ -431,6 +503,8 @@ class ConsoleChatController:
             resolution=resolution,
             provider_messages=provider_messages,
             assistant_message_id=assistant.id,
+            prefill=prefill,
+            prefill_from_one_shot=prefill_from_one_shot,
         )
 
     def new_session(
@@ -448,7 +522,9 @@ class ConsoleChatController:
         self._clear_terminal_run_state()
         return session
 
-    def _maybe_auto_title_session(self, session: ConsoleChatSession, draft: str) -> None:
+    def _maybe_auto_title_session(
+        self, session: ConsoleChatSession, draft: str
+    ) -> None:
         """Title a default-named session from its first accepted message."""
         if session.persisted_conversation_id is not None:
             return
@@ -456,7 +532,7 @@ class ConsoleChatController:
             return
         derived = derive_console_session_title(draft)
         if derived:
-            self.store.rename_session(session.id, derived)
+            self.store.rename_session(session.id, derived)  # (session, persisted) — auto-title best-effort
 
     def update_provider_selection(self, selection: ConsoleProviderSelection) -> None:
         """Sync controller provider settings from a Console selection."""
@@ -690,7 +766,8 @@ class ConsoleChatController:
                     for name in unique_names:
                         decisions.setdefault(name, "deny")
                     self._record_cancelled_approval_decisions(
-                        cancelled_names, call_by_name,
+                        cancelled_names,
+                        call_by_name,
                     )
                     break
                 if time.monotonic() >= deadline:
@@ -757,8 +834,10 @@ class ConsoleChatController:
                 continue
             try:
                 record(
-                    call.server_key, call.tool_name,
-                    decision="denied", initiator="agent",
+                    call.server_key,
+                    call.tool_name,
+                    decision="denied",
+                    initiator="agent",
                     error="run stopped while approval pending",
                 )
             except Exception:  # noqa: BLE001 -- best-effort audit trail only
@@ -778,14 +857,22 @@ class ConsoleChatController:
             except Exception:  # noqa: BLE001 -- fail open to the documented default
                 pass
         try:
-            return float(get_cli_setting("mcp", "approval_timeout_seconds", _DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS))
+            return float(
+                get_cli_setting(
+                    "mcp",
+                    "approval_timeout_seconds",
+                    _DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS,
+                )
+            )
         except (TypeError, ValueError):
             return _DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS
 
     # -- MCP provider registration (task-6) ----------------------------------
 
     def _publish_mcp_inspector_counts(
-        self, tool_count: int | None, not_connected_count: int | None,
+        self,
+        tool_count: int | None,
+        not_connected_count: int | None,
     ) -> None:
         """Publish this run's MCP catalog counts for the inspector's "MCP" row.
 
@@ -818,7 +905,9 @@ class ConsoleChatController:
 
     async def _compose_mcp_provider(
         self,
-    ) -> tuple[MCPToolProvider | None, Callable[[list["ToolCall"]], dict[str, str]] | None]:
+    ) -> tuple[
+        MCPToolProvider | None, Callable[[list["ToolCall"]], dict[str, str]] | None
+    ]:
         """Build + compose THIS run's MCPToolProvider on the running main loop.
 
         MUST be awaited from an async caller with the real Textual main
@@ -855,7 +944,8 @@ class ConsoleChatController:
             kill_switch = service.get_kill_switch()
         except Exception:  # noqa: BLE001 -- fail closed to "no MCP this run"
             logger.opt(exception=True).warning(
-                "ConsoleChatController: get_kill_switch failed; skipping MCP this run")
+                "ConsoleChatController: get_kill_switch failed; skipping MCP this run"
+            )
             self._publish_mcp_inspector_counts(None, None)
             return None, None
         if kill_switch:
@@ -870,7 +960,8 @@ class ConsoleChatController:
             await provider.compose_catalog()
         except Exception:  # noqa: BLE001 -- a composition failure must not abort the send
             logger.opt(exception=True).warning(
-                "ConsoleChatController: MCP compose_catalog failed; skipping MCP this run")
+                "ConsoleChatController: MCP compose_catalog failed; skipping MCP this run"
+            )
             self._publish_mcp_inspector_counts(None, None)
             return None, None
         catalog = provider.list_catalog()
@@ -916,8 +1007,17 @@ class ConsoleChatController:
         if approval_event is not None:
             approval_event.set()
 
-    def stop_active_run(self) -> bool:
-        """Request the active stream to stop at the next safe boundary."""
+    def stop_active_run(self, *, record_user_stop: bool = True) -> bool:
+        """Request the active stream to stop at the next safe boundary.
+
+        Args:
+            record_user_stop: Append the explicit "stopped by user"
+                transcript record (TASK-337 AC3). ``shutdown`` passes
+                ``False`` — a teardown stop is not a user action.
+
+        Returns:
+            True when an active run was found and stopped.
+        """
         if self.run_state.status is not ConsoleRunStatus.STREAMING:
             assistant_message_id = self._active_streaming_assistant_message_id()
             if assistant_message_id is None:
@@ -934,7 +1034,23 @@ class ConsoleChatController:
             assistant_message_id,
             visible_copy="Response stopped.",
         )
-        if self._active_stream_task is not None and self._active_stream_task is not asyncio.current_task():
+        if record_user_stop:
+            # TASK-337 AC3: a durable, explicit record — the run-state chip
+            # copy is transient and the review found nothing else marked
+            # the interruption.
+            try:
+                session_id = self.store.session_id_for_message(assistant_message_id)
+                self.store.append_message(
+                    session_id,
+                    role=ConsoleMessageRole.SYSTEM,
+                    content="Response stopped by user.",
+                )
+            except KeyError:
+                pass
+        if (
+            self._active_stream_task is not None
+            and self._active_stream_task is not asyncio.current_task()
+        ):
             self._active_stream_task.cancel()
         return True
 
@@ -943,7 +1059,7 @@ class ConsoleChatController:
         task = self._active_stream_task
         if task is None:
             return
-        if not self.stop_active_run():
+        if not self.stop_active_run(record_user_stop=False):
             self._signal_stop()
             if task is not asyncio.current_task():
                 task.cancel()
@@ -973,7 +1089,10 @@ class ConsoleChatController:
         except KeyError:
             return None
         for message in reversed(messages):
-            if message.role is ConsoleMessageRole.ASSISTANT and message.status == "streaming":
+            if (
+                message.role is ConsoleMessageRole.ASSISTANT
+                and message.status == "streaming"
+            ):
                 return message.id
         return None
 
@@ -996,9 +1115,13 @@ class ConsoleChatController:
             return self._block(session_id, "Only failed messages can be retried.")
 
         self._set_run_state(ConsoleRunState.retrying("Retrying failed response."))
-        resolution = await self.provider_gateway.resolve_for_send(self._provider_selection())
+        resolution = await self.provider_gateway.resolve_for_send(
+            self._provider_selection()
+        )
         if not getattr(resolution, "ready", False):
-            visible_copy = self._blocked_visible_copy(getattr(resolution, "visible_copy", ""))
+            visible_copy = self._blocked_visible_copy(
+                getattr(resolution, "visible_copy", "")
+            )
             return self._block(session_id, visible_copy)
 
         provider_messages = self._provider_messages_for_session(
@@ -1006,15 +1129,24 @@ class ConsoleChatController:
             before_message_id=message_id,
         )
         self._ensure_user_continuation_instruction(provider_messages)
-        provider_messages, refuse = await self._apply_skill_substitution(provider_messages)
+        provider_messages, refuse = await self._apply_skill_substitution(
+            provider_messages
+        )
         if refuse is not None:
             return self._block(session_id, refuse)
-        provider_messages = await self._apply_chat_dictionaries(provider_messages, session_id)
+        provider_messages = await self._apply_chat_dictionaries(
+            provider_messages, session_id
+        )
+        provider_messages = await self._apply_world_info(
+            provider_messages, session_id
+        )
+        prefill = self._pinned_prefill_for_session(session_id)
         return await self._stream_assistant_response(
             resolution=resolution,
             provider_messages=provider_messages,
             assistant_message_id=message_id,
             prepare_retry=True,
+            prefill=prefill,
         )
 
     async def continue_from_message(self, message_id: str) -> ConsoleSubmitResult:
@@ -1028,22 +1160,44 @@ class ConsoleChatController:
             return ConsoleSubmitResult(False, False, "No active Console session.")
         message_session_id = self.store.session_id_for_message(message_id)
         if message_session_id != session_id:
-            visible_copy = "Open the original session before continuing from this message."
+            visible_copy = (
+                "Open the original session before continuing from this message."
+            )
             self._set_run_state(ConsoleRunState.blocked(visible_copy))
             return ConsoleSubmitResult(False, False, visible_copy)
 
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."))
-        resolution = await self.provider_gateway.resolve_for_send(self._provider_selection())
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
+        )
+        resolution = await self.provider_gateway.resolve_for_send(
+            self._provider_selection()
+        )
         if not getattr(resolution, "ready", False):
-            visible_copy = self._blocked_visible_copy(getattr(resolution, "visible_copy", ""))
+            visible_copy = self._blocked_visible_copy(
+                getattr(resolution, "visible_copy", "")
+            )
             return self._block(session_id, visible_copy)
 
-        provider_messages = self._provider_messages_through_message(session_id, message_id)
+        provider_messages = self._provider_messages_through_message(
+            session_id, message_id
+        )
         self._ensure_user_continuation_instruction(provider_messages)
-        provider_messages, refuse = await self._apply_skill_substitution(provider_messages)
+        if not self._has_user_turn(provider_messages):
+            return self._block(
+                session_id,
+                "Nothing to continue before the first message.",
+            )
+        provider_messages, refuse = await self._apply_skill_substitution(
+            provider_messages
+        )
         if refuse is not None:
             return self._block(session_id, refuse)
-        provider_messages = await self._apply_chat_dictionaries(provider_messages, session_id)
+        provider_messages = await self._apply_chat_dictionaries(
+            provider_messages, session_id
+        )
+        provider_messages = await self._apply_world_info(
+            provider_messages, session_id
+        )
         assistant = self.store.append_message(
             session_id,
             role=ConsoleMessageRole.ASSISTANT,
@@ -1067,16 +1221,24 @@ class ConsoleChatController:
             return ConsoleSubmitResult(False, False, "No active Console session.")
         message = self.store.get_message(message_id)
         if message.role is not ConsoleMessageRole.ASSISTANT:
-            return self._block(session_id, "Only assistant messages can be regenerated.")
+            return self._block(
+                session_id, "Only assistant messages can be regenerated."
+            )
         if self.store.session_id_for_message(message_id) != session_id:
             visible_copy = "Open the original session before regenerating this message."
             self._set_run_state(ConsoleRunState.blocked(visible_copy))
             return ConsoleSubmitResult(False, False, visible_copy)
 
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."))
-        resolution = await self.provider_gateway.resolve_for_send(self._provider_selection())
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
+        )
+        resolution = await self.provider_gateway.resolve_for_send(
+            self._provider_selection()
+        )
         if not getattr(resolution, "ready", False):
-            visible_copy = self._blocked_visible_copy(getattr(resolution, "visible_copy", ""))
+            visible_copy = self._blocked_visible_copy(
+                getattr(resolution, "visible_copy", "")
+            )
             return self._block(session_id, visible_copy)
 
         provider_messages = self._provider_messages_for_session(
@@ -1084,16 +1246,385 @@ class ConsoleChatController:
             before_message_id=message_id,
         )
         self._ensure_user_continuation_instruction(provider_messages)
-        provider_messages, refuse = await self._apply_skill_substitution(provider_messages)
+        if not self._has_user_turn(provider_messages):
+            return self._block(
+                session_id,
+                "Nothing to regenerate before the first message.",
+            )
+        provider_messages, refuse = await self._apply_skill_substitution(
+            provider_messages
+        )
         if refuse is not None:
             return self._block(session_id, refuse)
-        provider_messages = await self._apply_chat_dictionaries(provider_messages, session_id)
+        provider_messages = await self._apply_chat_dictionaries(
+            provider_messages, session_id
+        )
+        provider_messages = await self._apply_world_info(
+            provider_messages, session_id
+        )
+        prefill = self._pinned_prefill_for_session(session_id)
         return await self._stream_assistant_response(
             resolution=resolution,
             provider_messages=provider_messages,
             assistant_message_id=message_id,
             variant_mode=True,
+            prefill=prefill,
         )
+
+    async def build_context_snapshot(
+        self,
+        draft: str,
+        attachments: Iterable[MessageAttachment] | None = None,
+        staged_sources: Iterable[ConsoleStagedSource] | None = None,
+    ) -> ConsoleContextSnapshot:
+        """Return a read-only snapshot of the current transcript and the assembled next-send payload.
+
+        Skills with side effects are NOT executed; only chat dictionaries are applied.
+
+        Args:
+            draft: The current composer draft text to include as a synthetic user turn.
+            attachments: Pending attachments to include with the synthetic user turn.
+            staged_sources: Staged workspace sources to include in the payload.
+
+        Returns:
+            A ``ConsoleContextSnapshot`` containing a deep-copied transcript and the
+            redacted next-send provider payload. If assembly fails, the payload may
+            contain an ``"error"`` key with a human-readable message.
+        """
+        session_id = self.store.active_session_id
+        if not session_id:
+            return ConsoleContextSnapshot(current_messages=[], next_send_payload={})
+
+        current_messages = list(self.store.messages_for_session(session_id))
+        staged_sources_list = [
+            {"source_id": s.source_id, "label": s.label, "type": s.source_type}
+            for s in (staged_sources or ())
+        ]
+
+        provider_messages: list[dict[str, Any]] = []
+
+        try:
+            # Build the next-send payload as submit_draft would, but do not persist.
+            provider_messages = self._provider_messages_for_session(session_id)
+
+            # Append a synthetic user turn for the draft so the preview matches what would be sent.
+            attachment_tuple = tuple(attachments or ())
+            synthetic_turn_added = bool(draft.strip() or attachment_tuple)
+            if synthetic_turn_added:
+                synthetic_user = self._provider_message_payloads(
+                    [
+                        ConsoleChatMessage(
+                            role=ConsoleMessageRole.USER,
+                            content=draft,
+                            attachments=attachment_tuple,
+                        )
+                    ],
+                    skip_failed=True,
+                )
+                provider_messages.extend(synthetic_user)
+
+            # Do NOT call _apply_skill_substitution because it may execute skills with side effects.
+            # Instead, annotate the final user message if a synthetic turn was appended and it
+            # starts with a skill command. Historical turns have already been resolved at send time
+            # and must not be annotated.
+            provider_messages = self._annotate_skill_commands(
+                provider_messages, synthetic_turn_added=synthetic_turn_added
+            )
+
+            # Chat dictionaries are safe to apply (string replacements only).
+            provider_messages = await self._apply_chat_dictionaries(provider_messages, session_id)
+
+            # task-401: mirror the send path's response prefill exactly --
+            # same resolution (one-shot wins over pinned) and same trailing
+            # assistant turn -- WITHOUT consuming the one-shot (this is a
+            # read-only preview). Placed after dictionaries to match
+            # `_stream_assistant_response`'s ordering (dictionaries never
+            # rewrite prefill text).
+            prefill, prefill_from_one_shot = self._resolve_submit_prefill(session_id)
+            if prefill:
+                provider_messages = [
+                    *provider_messages,
+                    {
+                        "role": ConsoleMessageRole.ASSISTANT.value,
+                        "content": prefill,
+                    },
+                ]
+
+            # Replace image data with placeholders for the preview, including historical images.
+            provider_messages = self._replace_image_data_with_placeholders(provider_messages)
+
+            # Gather native tool schemas and MCP note.
+            tools_info = self._build_tools_info_for_snapshot()
+
+            # Redact secrets before returning.
+            redacted_messages = self._redact_secrets(provider_messages)
+            redacted_system = self._redact_secrets(self._leading_system_message())
+
+            # Deep-copy messages so the snapshot is independent of the store.
+            copied_messages = copy.deepcopy(current_messages)
+
+            next_send_payload: dict[str, Any] = {
+                "model": self.model or self.configured_model,
+                "messages": redacted_messages,
+                # `system` is intentionally duplicated from the leading system
+                # message in `messages` so the preview viewer can show the
+                # effective system prompt at a glance without scanning the
+                # message list.  It is the same redacted value.
+                "system": redacted_system,
+                "staged_sources": staged_sources_list,
+                "tools": tools_info,
+            }
+            if prefill:
+                # Text mirrors the redacted trailing assistant turn so the
+                # indicator can never leak what the messages list redacted.
+                next_send_payload["response_prefill"] = {
+                    "source": "one-shot" if prefill_from_one_shot else "pinned",
+                    "text": redacted_messages[-1]["content"]
+                    if redacted_messages
+                    else prefill,
+                    "agent_loop_bypassed": True,
+                }
+            return ConsoleContextSnapshot(
+                current_messages=copied_messages,
+                next_send_payload=next_send_payload,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Failed to build context snapshot: session_id={session_id} "
+                "draft_length={draft_length} attachments={attachments_count} "
+                "staged_sources={staged_sources_count}",
+                session_id=session_id,
+                draft_length=len(draft),
+                attachments_count=len(tuple(attachments or ())),
+                staged_sources_count=len(tuple(staged_sources or ())),
+            )
+            # Preserve whatever was assembled before the failure so the viewer
+            # still sees the transcript-derived payload and effective system
+            # prompt rather than an empty placeholder.
+            degraded_messages = self._replace_image_data_with_placeholders(
+                self._redact_secrets(provider_messages)
+            )
+            degraded_system = self._redact_secrets(self._leading_system_message())
+            return ConsoleContextSnapshot(
+                current_messages=copy.deepcopy(current_messages),
+                next_send_payload={
+                    "model": self.model or self.configured_model,
+                    "messages": degraded_messages,
+                    "system": degraded_system,
+                    "staged_sources": staged_sources_list,
+                    "tools": {
+                        "native_schemas": [],
+                        "mcp_note": None,
+                        "preview_note": "Preview unavailable due to an internal error.",
+                    },
+                    "error": f"Failed to build context snapshot: {exc}",
+                },
+            )
+
+    @staticmethod
+    def _replace_image_data_with_placeholders(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        result = copy.deepcopy(messages)
+
+        def _is_data_url(value: Any) -> bool:
+            return isinstance(value, str) and value.startswith("data:")
+
+        def _redact_image_url_value(value: Any) -> Any:
+            """Redact an image URL value while preserving its original shape."""
+            if isinstance(value, dict) and _is_data_url(value.get("url")):
+                return {**value, "url": "[image: data redacted for preview]"}
+            if isinstance(value, str) and _is_data_url(value):
+                return "[image: data redacted for preview]"
+            return value
+
+        def _redact_image_source(source: dict[str, Any]) -> dict[str, Any]:
+            """Redact base64 or data-URL content inside an image source dict."""
+            if not isinstance(source, dict):
+                return source
+            redacted = {**source}
+            if _is_data_url(redacted.get("data")) or redacted.get("type") == "base64":
+                redacted["data"] = "[image: data redacted for preview]"
+            if _is_data_url(redacted.get("url")):
+                redacted["url"] = "[image: data redacted for preview]"
+            return redacted
+
+        for message in result:
+            content = message.get("content")
+            if isinstance(content, list):
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    if part.get("type") == "image_url":
+                        part["image_url"] = _redact_image_url_value(part.get("image_url"))
+                    if part.get("type") == "image":
+                        # Anthropic-style image parts use a ``source`` dict with
+                        # base64 data; preserve the surrounding structure.
+                        if isinstance(part.get("source"), dict):
+                            part["source"] = _redact_image_source(part["source"])
+                        if "image" in part:
+                            part["image"] = _redact_image_url_value(part["image"])
+            elif isinstance(content, str):
+                # Some providers may inline image data URLs directly in a string
+                # content body; redact them so they never leak into the preview.
+                message["content"] = re.sub(
+                    r"data:[^\s\"'<>]+",
+                    "[image: data redacted for preview]",
+                    content,
+                )
+        return result
+
+    @staticmethod
+    def _annotate_skill_commands(
+        messages: list[dict[str, Any]],
+        *,
+        synthetic_turn_added: bool = True,
+    ) -> list[dict[str, Any]]:
+        result = copy.deepcopy(messages)
+        if not synthetic_turn_added or not result or result[-1].get("role") != "user":
+            return result
+
+        content = result[-1].get("content", "")
+        annotation = (
+            "[Skill command not resolved in preview; "
+            "actual substitution happens at send time.]"
+        )
+
+        if isinstance(content, str) and content.lstrip().startswith("/"):
+            result[-1]["content"] = f"{content}\n\n{annotation}"
+            return result
+
+        if isinstance(content, list):
+            new_parts: list[Any] = []
+            annotated = False
+            for part in content:
+                text = part.get("text") if isinstance(part, dict) else None
+                if (
+                    not annotated
+                    and isinstance(part, dict)
+                    and part.get("type") == "text"
+                    and isinstance(text, str)
+                    and text.lstrip().startswith("/")
+                ):
+                    new_parts.append({**part, "text": f"{text}\n\n{annotation}"})
+                    annotated = True
+                else:
+                    new_parts.append(part)
+            if annotated:
+                result[-1]["content"] = new_parts
+        return result
+
+    def _build_tools_info_for_snapshot(self) -> dict[str, Any]:
+        """Return native tool schemas and preview notes for the snapshot."""
+        tools: list[dict[str, Any]] = []
+        if self._agent_bridge is not None:
+            # Native tools only; live MCP catalog composition is out of scope.
+            tools = self._agent_bridge.native_tool_schemas()
+        mcp_note: str | None = None
+        if self._mcp_provider:
+            mcp_note = (
+                "MCP tools are configured but live catalog composition is not shown in this preview."
+            )
+        if tools:
+            preview_note = (
+                "This preview shows only builtin native tools. "
+                "The live run may add skills/MCP tools."
+            )
+        else:
+            preview_note = "No native tools are configured for preview."
+        return {
+            "native_schemas": tools,
+            "mcp_note": mcp_note,
+            "preview_note": preview_note,
+        }
+
+    _SECRET_REDACTION_KEYS = {"api_key", "apikey", "token", "password", "secret", "bearer"}
+    _SECRET_REDACTION_KEYS_NORMALIZED = {
+        k.replace("-", "").replace("_", "") for k in _SECRET_REDACTION_KEYS
+    }
+    _SECRET_REDACTION_PATTERN = re.compile(
+        r"(?P<open_quote>[\"']?)"
+        r"(?P<key>"
+        + "|".join(re.escape(k) for k in _SECRET_REDACTION_KEYS)
+        + r")"
+        r"(?P=open_quote)"
+        r"(?P<sep>\s*[:=]\s*)"
+        r"(?P<value>"
+        + r'"(?:\\.|[^"\\])*"'
+        + r"|'(?:\\.|[^'\\])*'"
+        + r"|[^\s,;}\]\)\"']+"
+        + r")",
+        re.IGNORECASE,
+    )
+
+    @staticmethod
+    def _redact_secrets(payload: Any) -> Any:
+        """Return a deep-copied payload with likely secret values replaced.
+
+        Redaction is best-effort and intended for preview/export convenience
+        only. Do not rely on it for security-sensitive export or disclosure
+        scenarios.
+        """
+        redacted = copy.deepcopy(payload)
+
+        def _redact_string(value: str) -> str:
+            def _replace_value(match: re.Match[str]) -> str:
+                matched_value = match.group("value")
+                if matched_value.startswith('"'):
+                    redacted_value = '"[redacted]"'
+                elif matched_value.startswith("'"):
+                    redacted_value = "'[redacted]'"
+                else:
+                    redacted_value = "[redacted]"
+                open_quote = match.group("open_quote")
+                key = match.group("key")
+                sep = match.group("sep")
+                return f"{open_quote}{key}{open_quote}{sep}{redacted_value}"
+
+            return ConsoleChatController._SECRET_REDACTION_PATTERN.sub(_replace_value, value)
+
+        def _matches_secret_key(key: str) -> bool:
+            """Return True when ``key`` matches or ends with a secret word.
+
+            Matches exact keys such as ``api_key``, suffixed keys such as
+            ``my_api_key``, and hyphenated/camelCase variants such as
+            ``x-api-key`` or ``apiKey``.
+            """
+            lowered = key.lower()
+            normalized = lowered.replace("-", "").replace("_", "")
+            if normalized in ConsoleChatController._SECRET_REDACTION_KEYS_NORMALIZED:
+                return True
+            for secret in ConsoleChatController._SECRET_REDACTION_KEYS:
+                if lowered.endswith(f"_{secret}"):
+                    return True
+                normalized_secret = secret.replace("-", "").replace("_", "")
+                if normalized.endswith(normalized_secret):
+                    return True
+            return False
+
+        def _redact_obj(obj: Any, under_secret: bool = False) -> Any:
+            if isinstance(obj, dict):
+                result = {}
+                for key, value in obj.items():
+                    key_is_secret = _matches_secret_key(key)
+                    if key_is_secret and isinstance(value, str):
+                        result[key] = "[redacted]"
+                    elif key_is_secret:
+                        # Structured values under a secret key are recursively
+                        # redacted so nested strings do not leak.
+                        result[key] = _redact_obj(value, under_secret=True)
+                    elif under_secret and isinstance(value, str):
+                        result[key] = "[redacted]"
+                    else:
+                        result[key] = _redact_obj(value, under_secret=under_secret)
+                return result
+            if isinstance(obj, list):
+                return [_redact_obj(item, under_secret=under_secret) for item in obj]
+            if isinstance(obj, str):
+                if under_secret:
+                    return "[redacted]"
+                return _redact_string(obj)
+            return obj
+
+        return _redact_obj(redacted)
 
     def _provider_selection(self) -> ConsoleProviderSelection:
         return ConsoleProviderSelection(
@@ -1128,8 +1659,59 @@ class ConsoleChatController:
             and provider_messages[-1].get("role") == ConsoleMessageRole.ASSISTANT.value
         ):
             provider_messages.append(
-                {"role": ConsoleMessageRole.USER.value, "content": CONSOLE_CONTINUE_INSTRUCTION}
+                {
+                    "role": ConsoleMessageRole.USER.value,
+                    "content": CONSOLE_CONTINUE_INSTRUCTION,
+                }
             )
+
+    @staticmethod
+    def _has_user_turn(provider_messages: list[dict[str, Any]]) -> bool:
+        return any(
+            m.get("role") == ConsoleMessageRole.USER.value for m in provider_messages
+        )
+
+    def _pinned_prefill_for_session(self, session_id: str) -> str | None:
+        """Return the session's pinned response prefill, if any."""
+        settings = self.store.session_settings(session_id)
+        pinned = getattr(settings, "pinned_prefill", None) if settings else None
+        return pinned or None
+
+    def _resolve_submit_prefill(self, session_id: str) -> tuple[str | None, bool]:
+        """Return ``(prefill, from_one_shot)`` for a normal send.
+
+        One-shot wins over pinned for the send it is armed for; pinned
+        resumes afterward (the one-shot is only cleared on a complete or
+        stopped outcome — see ``_consume_one_shot_prefill``).
+        """
+        one_shot = self.store.session_one_shot_prefill(session_id)
+        if one_shot:
+            return one_shot, True
+        return self._pinned_prefill_for_session(session_id), False
+
+    def _consume_one_shot_prefill(
+        self, assistant_message_id: str, used_prefill: str | None
+    ) -> None:
+        """Clear the armed one-shot after a send that used it terminated
+        ``complete`` or ``stopped``. Blocked and failed sends never call
+        this, so retry reproduces the original intent (spec §2).
+
+        Compare-and-clear: ``used_prefill`` is the exact one-shot text this
+        send consumed (or ``None`` if this send did not use a one-shot at
+        all, in which case this is a no-op). The session's armed one-shot
+        slot is only cleared when it still holds that same text. If a
+        ``/prefill`` re-armed a *different* one-shot while this send was
+        streaming, that newer one-shot must survive the in-flight send's
+        completion untouched.
+        """
+        if used_prefill is None:
+            return
+        try:
+            session_id = self.store.session_id_for_message(assistant_message_id)
+        except KeyError:
+            return
+        if self.store.session_one_shot_prefill(session_id) == used_prefill:
+            self.store.set_session_one_shot_prefill(session_id, None)
 
     async def _apply_skill_substitution(
         self, provider_messages: list[dict[str, Any]]
@@ -1204,12 +1786,18 @@ class ConsoleChatController:
                 resolution.name, mode="local", args=args
             )
         except SkillTrustBlockedError as exc:
-            refuse = SKILL_UNTRUSTED_REFUSE.format(name=resolution.name, reason=exc.reason_code)
+            refuse = SKILL_UNTRUSTED_REFUSE.format(
+                name=resolution.name, reason=exc.reason_code
+            )
             return provider_messages, refuse
 
-        rendered = result.get("rendered_prompt", "") if isinstance(result, Mapping) else ""
+        rendered = (
+            result.get("rendered_prompt", "") if isinstance(result, Mapping) else ""
+        )
         rendered_message = {"role": ConsoleMessageRole.USER.value, "content": rendered}
-        execution_mode = result.get("execution_mode") if isinstance(result, Mapping) else None
+        execution_mode = (
+            result.get("execution_mode") if isinstance(result, Mapping) else None
+        )
         if execution_mode == "fork":
             leading = (
                 [provider_messages[0]]
@@ -1222,6 +1810,99 @@ class ConsoleChatController:
         new_messages = list(provider_messages)
         new_messages[final_index] = rendered_message
         return new_messages, None
+
+    async def _apply_world_info(
+        self, provider_messages: list[dict[str, Any]], session_id: str
+    ) -> list[dict[str, Any]]:
+        """Inject conversation world-info into the final user message of the
+        ephemeral provider payload (never the stored transcript).
+
+        Runs AFTER `_apply_chat_dictionaries` so world-info matches the
+        dict-substituted text the model will see. Conversation-only (the bound
+        applier passes `char_data=None`). Offloaded via `asyncio.to_thread`;
+        any failure returns the payload unchanged; `CancelledError` re-raised.
+        """
+        applier = self._world_info_applier
+        if applier is None:
+            return provider_messages
+
+        session = next((s for s in self.store.sessions() if s.id == session_id), None)
+        conversation_id = (
+            session.persisted_conversation_id if session is not None else None
+        )
+        if not conversation_id:
+            return provider_messages
+
+        final_index: int | None = None
+        for index in range(len(provider_messages) - 1, -1, -1):
+            if provider_messages[index].get("role") == ConsoleMessageRole.USER.value:
+                final_index = index
+                break
+        if final_index is None:
+            return provider_messages
+
+        message = provider_messages[final_index]
+        content = message.get("content")
+        if isinstance(content, str) and content.startswith(COMMAND_PREFIX):
+            return provider_messages
+
+        history = _normalize_world_info_history(provider_messages[:final_index])
+
+        try:
+            if isinstance(content, str):
+                injected: Any = await asyncio.to_thread(
+                    applier, conversation_id, content, history
+                )
+                if injected == content:
+                    return provider_messages
+                new_content = injected
+            elif isinstance(content, list):
+                combined = "\n".join(
+                    part["text"]
+                    for part in content
+                    if isinstance(part, dict)
+                    and part.get("type") == "text"
+                    and isinstance(part.get("text"), str)
+                )
+                if not combined:
+                    return provider_messages
+                injected = await asyncio.to_thread(
+                    applier, conversation_id, combined, history
+                )
+                if injected == combined:
+                    return provider_messages
+                prefix, _, suffix = injected.partition(combined)
+                text_indices = [
+                    i
+                    for i, part in enumerate(content)
+                    if isinstance(part, dict)
+                    and part.get("type") == "text"
+                    and isinstance(part.get("text"), str)
+                ]
+                first_idx = text_indices[0]
+                last_idx = text_indices[-1]
+                new_parts: list[Any] = []
+                for i, part in enumerate(content):
+                    if i == first_idx or i == last_idx:
+                        new_text = part["text"]
+                        if i == first_idx:
+                            new_text = prefix + new_text
+                        if i == last_idx:
+                            new_text = new_text + suffix
+                        new_parts.append({**part, "text": new_text})
+                    else:
+                        new_parts.append(part)
+                new_content = new_parts
+            else:
+                return provider_messages
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return provider_messages
+
+        new_messages = list(provider_messages)
+        new_messages[final_index] = {**message, "content": new_content}
+        return new_messages
 
     async def _apply_chat_dictionaries(
         self, provider_messages: list[dict[str, Any]], session_id: str
@@ -1242,7 +1923,9 @@ class ConsoleChatController:
             return provider_messages
 
         session = next((s for s in self.store.sessions() if s.id == session_id), None)
-        conversation_id = session.persisted_conversation_id if session is not None else None
+        conversation_id = (
+            session.persisted_conversation_id if session is not None else None
+        )
         if not conversation_id:
             return provider_messages
 
@@ -1261,7 +1944,9 @@ class ConsoleChatController:
 
         try:
             if isinstance(content, str):
-                new_content: Any = await asyncio.to_thread(applier, conversation_id, content)
+                new_content: Any = await asyncio.to_thread(
+                    applier, conversation_id, content
+                )
                 if new_content == content:
                     return provider_messages
             elif isinstance(content, list):
@@ -1273,7 +1958,9 @@ class ConsoleChatController:
                         and part.get("type") == "text"
                         and isinstance(part.get("text"), str)
                     ):
-                        new_text = await asyncio.to_thread(applier, conversation_id, part["text"])
+                        new_text = await asyncio.to_thread(
+                            applier, conversation_id, part["text"]
+                        )
                         if new_text != part["text"]:
                             changed = True
                             new_parts.append({**part, "text": new_text})
@@ -1306,7 +1993,9 @@ class ConsoleChatController:
         and `console_skill_resolver` deliberately stays unaware of trust/
         context shape (see its own module docstring).
         """
-        available = context.get("available_skills") if isinstance(context, Mapping) else None
+        available = (
+            context.get("available_skills") if isinstance(context, Mapping) else None
+        )
         return tuple(
             SkillCommandCandidate(
                 name=str(item.get("name")),
@@ -1320,7 +2009,9 @@ class ConsoleChatController:
         )
 
     @staticmethod
-    def _validated_draft(draft: str, *, allow_empty: bool = False) -> tuple[str, str | None]:
+    def _validated_draft(
+        draft: str, *, allow_empty: bool = False
+    ) -> tuple[str, str | None]:
         raw_draft = str(draft or "")
         if not raw_draft.strip():
             if allow_empty:
@@ -1372,6 +2063,30 @@ class ConsoleChatController:
             # must never abort an already-accepted provider run.
             pass
 
+    _IMAGE_REJECTION_RECOVERY_HINT = (
+        " This conversation includes an image attachment; if the model can't "
+        "accept images, remove that message (select it and use Delete) or "
+        "switch to a vision-capable model."
+    )
+
+    def _session_history_carries_images(self, session_id: str) -> bool:
+        """Return whether any message in the session carries an image.
+
+        TASK-335: history re-sends attachments on every turn, so a provider
+        that rejects images fails ALL later sends in the conversation with
+        the same opaque status — the failure copy names the likely cause.
+        """
+        try:
+            messages = self.store.messages_for_session(session_id)
+        except KeyError:
+            return False
+        for message in messages:
+            if getattr(message, "attachments", None):
+                return True
+            if getattr(message, "image_data", None) is not None:
+                return True
+        return False
+
     def _append_failure_system_row(self, session_id: str, visible_copy: str) -> None:
         """Append a transcript-only system row describing a provider failure."""
         try:
@@ -1385,6 +2100,21 @@ class ConsoleChatController:
             # still carries the failure for the control surfaces.
             pass
 
+    def _append_history_trimmed_note(self, session_id: str, dropped: int) -> None:
+        """Append a transcript-only system row noting history was trimmed."""
+        try:
+            self.store.append_message(
+                session_id,
+                role=ConsoleMessageRole.SYSTEM,
+                content=(
+                    "Earlier messages were trimmed to fit the model's context "
+                    f"window ({dropped} dropped)."
+                ),
+            )
+        except KeyError:
+            # Session vanished mid-send; the dispatched payload was still bounded.
+            pass
+
     async def _stream_assistant_response(
         self,
         *,
@@ -1393,8 +2123,47 @@ class ConsoleChatController:
         assistant_message_id: str,
         prepare_retry: bool = False,
         variant_mode: bool = False,
+        prefill: str | None = None,
+        prefill_from_one_shot: bool = False,
     ) -> ConsoleSubmitResult:
-        if self._agent_runtime_enabled and self._agent_bridge is not None:
+        try:
+            owner_id = self.store.session_id_for_message(assistant_message_id)
+        except KeyError:
+            return self._session_closed_result()
+        owner = next(
+            (s for s in self.store.sessions() if s.id == owner_id), None
+        )
+        # task-427: a character session always takes the plain-provider
+        # path, even with the global agent runtime enabled and a bridge
+        # present. Keyed on the message's OWNING session (looked up here,
+        # not the controller's active session) so a session switch racing
+        # this send can't flip which branch a still-in-flight message uses.
+        force_plain = owner is not None and owner.character_id is not None
+        # task-322: bound the dispatched history by real tokens before the
+        # agent-vs-direct branch below, so both paths send a windowed payload.
+        # Budget against the captured `resolution` -- the same model/provider/
+        # max_tokens the dispatch below actually sends -- not the controller's
+        # mutable self.* fields, which a provider/model switch racing the awaits
+        # between resolve_for_send and here could have changed underneath us.
+        bound = bound_messages_to_window(
+            provider_messages,
+            model=getattr(resolution, "model", None) or "",
+            provider=getattr(resolution, "provider", "") or "",
+            response_reservation=(
+                getattr(resolution, "max_tokens", None) or DEFAULT_RESPONSE_RESERVATION
+            ),
+        )
+        provider_messages = bound.messages
+        if bound.dropped_count:
+            # Reuse the guarded owner_id resolved above; the note helper
+            # swallows a store-close race that happens during the append.
+            self._append_history_trimmed_note(owner_id, bound.dropped_count)
+        if (
+            self._agent_runtime_enabled
+            and self._agent_bridge is not None
+            and not prefill
+            and not force_plain
+        ):
             return await self._run_agent_reply(
                 resolution=resolution,
                 provider_messages=provider_messages,
@@ -1402,16 +2171,34 @@ class ConsoleChatController:
                 prepare_retry=prepare_retry,
                 variant_mode=variant_mode,
             )
+        one_shot_used = prefill if prefill_from_one_shot else None
+        if prefill:
+            provider_messages = [
+                *provider_messages,
+                {
+                    "role": ConsoleMessageRole.ASSISTANT.value,
+                    "content": prefill,
+                },
+            ]
         self._active_assistant_message_id = assistant_message_id
         self._active_stream_task = asyncio.current_task()
         self._stop_requested = False
         if variant_mode:
             self.store.begin_variant_stream(assistant_message_id)
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response."))
+        if prefill and not prepare_retry:
+            try:
+                self.store.append_stream_chunk(assistant_message_id, prefill)
+            except KeyError:
+                return self._session_closed_result()
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response.")
+        )
         retry_prepared = False
         emitted_content = False
         try:
-            async for chunk in self.provider_gateway.stream_chat(resolution, provider_messages):
+            async for chunk in self.provider_gateway.stream_chat(
+                resolution, provider_messages
+            ):
                 if not chunk:
                     continue
                 if self._stop_requested:
@@ -1424,10 +2211,20 @@ class ConsoleChatController:
                         )
                     except KeyError:
                         return self._session_closed_result()
+                    self._consume_one_shot_prefill(
+                        assistant_message_id, one_shot_used
+                    )
                     return ConsoleSubmitResult(True, True, stopped.content)
                 if prepare_retry and not retry_prepared:
                     self.store.prepare_message_retry(assistant_message_id)
                     retry_prepared = True
+                    if prefill:
+                        try:
+                            self.store.append_stream_chunk(
+                                assistant_message_id, prefill
+                            )
+                        except KeyError:
+                            return self._session_closed_result()
                 try:
                     self.store.append_stream_chunk(assistant_message_id, chunk)
                 except KeyError:
@@ -1444,6 +2241,9 @@ class ConsoleChatController:
                     )
                 except KeyError:
                     return self._session_closed_result()
+                self._consume_one_shot_prefill(
+                    assistant_message_id, one_shot_used
+                )
                 return ConsoleSubmitResult(True, True, stopped.content)
             if not emitted_content:
                 try:
@@ -1472,6 +2272,7 @@ class ConsoleChatController:
             self._set_run_state(
                 ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete.")
             )
+            self._consume_one_shot_prefill(assistant_message_id, one_shot_used)
             return ConsoleSubmitResult(True, True, completed.content)
         except asyncio.CancelledError:
             if self._stop_requested:
@@ -1484,6 +2285,9 @@ class ConsoleChatController:
                     )
                 except KeyError:
                     return self._session_closed_result()
+                self._consume_one_shot_prefill(
+                    assistant_message_id, one_shot_used
+                )
                 return ConsoleSubmitResult(True, True, stopped.content)
             raise
         except Exception as exc:
@@ -1522,9 +2326,16 @@ class ConsoleChatController:
         variant_mode: bool,
     ) -> ConsoleSubmitResult:
         """Run the agent loop as the reply engine, streaming into the target row."""
+        logger.info(
+            "console agent reply start",
+            assistant_message_id=assistant_message_id,
+            variant_mode=variant_mode,
+            prepare_retry=prepare_retry,
+        )
         self._active_assistant_message_id = assistant_message_id
         self._active_stream_task = asyncio.current_task()
         self._stop_requested = False
+        self._mcp_provider = None
         # A fresh per-run Event, captured by `should_cancel` below by
         # closure (not read off `self` each time) -- see
         # `_active_cancel_event`'s docstring for why this, rather than
@@ -1532,7 +2343,9 @@ class ConsoleChatController:
         # thread observe a Stop correctly (task-227).
         cancel_event = threading.Event()
         self._active_cancel_event = cancel_event
-        self._set_run_state(ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running."))
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running.")
+        )
         try:
             session_id = self.store.session_id_for_message(assistant_message_id)
         except KeyError:
@@ -1546,7 +2359,10 @@ class ConsoleChatController:
         # agent config carries it (composed with the operating prompt).
         session_system_prompt = ""
         agent_messages = list(provider_messages)
-        if agent_messages and agent_messages[0].get("role") == ConsoleMessageRole.SYSTEM.value:
+        if (
+            agent_messages
+            and agent_messages[0].get("role") == ConsoleMessageRole.SYSTEM.value
+        ):
             session_system_prompt = str(agent_messages[0].get("content", ""))
             agent_messages = agent_messages[1:]
 
@@ -1574,6 +2390,7 @@ class ConsoleChatController:
         # on, or nothing composed) leaves the bridge's MCP-free path
         # byte-identical to before this task.
         mcp_provider, mcp_review_hook = await self._compose_mcp_provider()
+        self._mcp_provider = mcp_provider
 
         # Swap site: the agent loop runs synchronously on a worker thread via
         # asyncio.to_thread, so Stop is cooperative-only -- `should_cancel` is
@@ -1602,7 +2419,8 @@ class ConsoleChatController:
             if self._stop_requested:
                 try:
                     stopped = self._mark_stream_stopped(
-                        assistant_message_id, visible_copy="Response stopped.")
+                        assistant_message_id, visible_copy="Response stopped."
+                    )
                 except KeyError:
                     return self._session_closed_result()
                 return ConsoleSubmitResult(True, True, stopped.content)
@@ -1624,6 +2442,12 @@ class ConsoleChatController:
             # preserves whatever partial content already streamed
             # otherwise).
             visible_copy = f"Agent run failed: {describe_stream_failure(exc)}"
+            if (
+                getattr(getattr(exc, "response", None), "status_code", None)
+                is not None
+                and self._session_history_carries_images(session_id)
+            ):
+                visible_copy += self._IMAGE_REJECTION_RECOVERY_HINT
             try:
                 self.store.mark_message_failed(assistant_message_id)
             except KeyError:
@@ -1642,14 +2466,24 @@ class ConsoleChatController:
                 # to, forever, regardless of this attribute now pointing
                 # elsewhere (or nowhere) for the NEXT run (task-227).
                 self._active_cancel_event = None
+            logger.info(
+                "console agent reply end",
+                assistant_message_id=assistant_message_id,
+                run_status=self.run_state.status.value,
+                run_copy=self.run_state.visible_copy,
+            )
 
         # Captured here, before `_finalize_agent_reply` runs: this run's own
         # cancel_event is the authority on whether IT was stopped,
         # independent of what status `mark_message_stopped` may have left
         # the message at (task-227 AC3 follow-up -- see the guard below).
         return self._finalize_agent_reply(
-            assistant_message_id, session_id, outcome, variant_mode=variant_mode,
-            cancel_event=cancel_event)
+            assistant_message_id,
+            session_id,
+            outcome,
+            variant_mode=variant_mode,
+            cancel_event=cancel_event,
+        )
 
     def _agent_conversation_id(self, session_id: str) -> str:
         """Return the durable id the run store is keyed by (persisted id when set)."""
@@ -1659,15 +2493,17 @@ class ConsoleChatController:
         return session_id
 
     def _finalize_agent_reply(
-        self, assistant_message_id: str, session_id: str, outcome: Any,
-        *, variant_mode: bool, cancel_event: threading.Event | None = None,
+        self,
+        assistant_message_id: str,
+        session_id: str,
+        outcome: Any,
+        *,
+        variant_mode: bool,
+        cancel_event: threading.Event | None = None,
     ) -> ConsoleSubmitResult:
         from tldw_chatbook.Agents.agent_models import RUN_CANCELLED, RUN_DONE
 
-        try:
-            current = self.store.get_message(assistant_message_id)
-        except KeyError:
-            return self._session_closed_result()
+        current = self._ensure_assistant_placeholder(assistant_message_id, session_id)
         # task-227 LOW-2 (+ AC3 follow-up): a Stop can land in the
         # ultra-narrow window after asyncio.to_thread returns an outcome
         # but before this method runs. `current.status == "stopped"` alone
@@ -1690,49 +2526,161 @@ class ConsoleChatController:
         # prior status for a regenerate, "stopped" for a plain send) and
         # the variant base (already popped), so this is a benign no-op
         # read-back, never an error, in either case.
-        if current.status == "stopped" or (cancel_event is not None and cancel_event.is_set()):
+        stopped_now = (
+            (current is not None and current.status == "stopped")
+            or (cancel_event is not None and cancel_event.is_set())
+        )
+        if stopped_now:
             self._set_run_state(
                 ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped.")
             )
-            return ConsoleSubmitResult(True, True, current.content)
+            return ConsoleSubmitResult(True, True, current.content if current is not None else "")
 
         if outcome.status == RUN_CANCELLED:
-            try:
-                stopped = self._mark_stream_stopped(
-                    assistant_message_id, visible_copy="Response stopped.")
-            except KeyError:
-                return self._session_closed_result()
-            return ConsoleSubmitResult(True, True, stopped.content)
+            return self._finalize_agent_cancelled(
+                assistant_message_id, session_id, variant_mode=variant_mode)
 
         if outcome.status != RUN_DONE:
-            # RUN_ERROR/RUN_STUCK (and any other non-done outcome) are
-            # failures, never a silent "complete" (Plan-B Task 6 Critical
-            # 2): a failing regenerate must not clobber a good prior
-            # answer with a fake "[agent error]" variant, and a failed
-            # message must stay retryable and excluded from model context
-            # (skip_failed=True). `mark_message_failed` carries the Task-1
-            # variant-restore semantics on its own -- for a regenerate it
-            # restores the pre-regenerate base content + status untouched;
-            # for a plain send/retry it keeps whatever partial prose had
-            # already streamed, matching legacy failure behavior.
-            visible_copy = self._agent_failure_visible_copy(outcome)
-            try:
-                failed = self.store.mark_message_failed(assistant_message_id)
-            except KeyError:
-                return self._session_closed_result()
+            return self._finalize_agent_failure(
+                assistant_message_id, session_id, outcome, variant_mode=variant_mode)
+
+        return self._finalize_agent_success(
+            assistant_message_id, session_id, outcome, variant_mode=variant_mode)
+
+    def _ensure_assistant_placeholder(
+        self, assistant_message_id: str, session_id: str,
+    ) -> ConsoleChatMessage | None:
+        """Return the assistant placeholder message if it still exists.
+
+        ``KeyError`` means the session/placeholder was closed/removed mid-run;
+        ``None`` is returned so callers can recover by appending a fresh
+        assistant message instead of aborting the whole turn.
+        """
+        try:
+            return self.store.get_message(assistant_message_id)
+        except KeyError:
+            return None
+
+    def _find_runtime_written_assistant(
+        self, session_id: str,
+    ) -> ConsoleChatMessage | None:
+        """Return the most recent assistant message in ``session_id``, if any."""
+        try:
+            messages = self.store.messages_for_session(session_id)
+        except KeyError:
+            return None
+        for message in reversed(messages):
+            if message.role is ConsoleMessageRole.ASSISTANT:
+                return message
+        return None
+
+    def _complete_agent_message(
+        self, assistant_message_id: str, variant_mode: bool, outcome: Any,
+    ) -> ConsoleChatMessage:
+        """Finalize a placeholder, applying the empty-final-text fallback.
+
+        The fallback text is streamed into the placeholder so the store's
+        existing persistence/validation paths stay unchanged.
+        """
+        if not getattr(outcome, "final_text", ""):
+            self.store.append_stream_chunk(assistant_message_id, "No response was generated.")
+        if variant_mode:
+            return self.store.finalize_variant_stream(assistant_message_id)
+        return self.store.mark_message_complete(assistant_message_id)
+
+    def _finalize_agent_cancelled(
+        self, assistant_message_id: str, session_id: str, *, variant_mode: bool,
+    ) -> ConsoleSubmitResult:
+        """Handle a ``RUN_CANCELLED`` outcome: the placeholder becomes ``failed``.
+
+        Per the agent turn-control spec, a runtime-reported cancellation is a
+        terminal failure, not a user-initiated stop. If the placeholder has
+        vanished, append a failed assistant message carrying the visible copy.
+        """
+        visible_copy = "Response stopped/cancelled."
+        placeholder = self._ensure_assistant_placeholder(assistant_message_id, session_id)
+        if placeholder is not None:
+            failed = self.store.mark_message_failed(assistant_message_id)
+        else:
+            failed = self._append_failed_assistant(session_id, visible_copy)
+        self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
+        return ConsoleSubmitResult(True, True, failed.content)
+
+    def _finalize_agent_failure(
+        self, assistant_message_id: str, session_id: str, outcome: Any,
+        *, variant_mode: bool,
+    ) -> ConsoleSubmitResult:
+        """Handle ``RUN_ERROR``, ``RUN_STUCK``, or any unknown non-done outcome.
+
+        A present placeholder is marked ``failed`` and a system row explains
+        the failure (preserving the existing failure UX). If the placeholder
+        is missing, the runtime may have already written an assistant message
+        (e.g. streamed partial content before the error); use it when
+        possible, otherwise append a new failed assistant message.
+        """
+        visible_copy = self._agent_failure_visible_copy(outcome)
+        if "provider returned HTTP" in visible_copy and (
+            self._session_history_carries_images(session_id)
+        ):
+            visible_copy += self._IMAGE_REJECTION_RECOVERY_HINT
+        placeholder = self._ensure_assistant_placeholder(assistant_message_id, session_id)
+        if placeholder is not None:
+            failed = self.store.mark_message_failed(assistant_message_id)
             self._append_failure_system_row(session_id, visible_copy)
             self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
             return ConsoleSubmitResult(True, True, failed.content)
 
-        try:
-            if variant_mode:
-                completed = self.store.finalize_variant_stream(assistant_message_id)
-            else:
-                completed = self.store.mark_message_complete(assistant_message_id)
-        except KeyError:
-            return self._session_closed_result()
+        runtime_written = self._find_runtime_written_assistant(session_id)
+        if runtime_written is not None and runtime_written.status in {"pending", "streaming"}:
+            self.store.append_stream_chunk(runtime_written.id, f"\n\n{visible_copy}")
+            failed = self.store.mark_message_failed(runtime_written.id)
+        else:
+            failed = self._append_failed_assistant(session_id, visible_copy)
+        self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
+        return ConsoleSubmitResult(True, True, failed.content)
+
+    def _finalize_agent_success(
+        self, assistant_message_id: str, session_id: str, outcome: Any,
+        *, variant_mode: bool,
+    ) -> ConsoleSubmitResult:
+        """Handle ``RUN_DONE``: complete the placeholder (or a runtime-written one).
+
+        An empty ``final_text`` is replaced with the fallback copy ``No
+        response was generated.``. If the placeholder is missing, the runtime
+        may have streamed content into an assistant row already; complete it
+        when possible, otherwise append a new assistant message.
+        """
+        placeholder = self._ensure_assistant_placeholder(assistant_message_id, session_id)
+        if placeholder is not None:
+            completed = self._complete_agent_message(assistant_message_id, variant_mode, outcome)
+            self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
+            return ConsoleSubmitResult(True, True, completed.content)
+
+        runtime_written = self._find_runtime_written_assistant(session_id)
+        if runtime_written is not None and runtime_written.status in {"pending", "streaming"}:
+            completed = self._complete_agent_message(runtime_written.id, variant_mode=False, outcome=outcome)
+            self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
+            return ConsoleSubmitResult(True, True, completed.content)
+
+        final_text = getattr(outcome, "final_text", "") or "No response was generated."
+        completed = self.store.append_message(
+            session_id, role=ConsoleMessageRole.ASSISTANT, content=final_text)
         self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
         return ConsoleSubmitResult(True, True, completed.content)
+
+    def _append_failed_assistant(
+        self, session_id: str, visible_copy: str,
+    ) -> ConsoleChatMessage:
+        """Append a failed assistant message carrying ``visible_copy``.
+
+        The store's terminal-status validation only accepts pending/streaming
+        assistant messages, so the message is created empty, the copy is
+        streamed in, and then it is marked failed.
+        """
+        message = self.store.append_message(
+            session_id, role=ConsoleMessageRole.ASSISTANT, content="")
+        self.store.append_stream_chunk(message.id, visible_copy)
+        return self.store.mark_message_failed(message.id)
 
     @staticmethod
     def _agent_failure_visible_copy(outcome: Any) -> str:
@@ -1749,7 +2697,9 @@ class ConsoleChatController:
 
         reason = ""
         for step in reversed(getattr(outcome, "steps", None) or []):
-            if getattr(step, "kind", None) == STEP_ERROR and getattr(step, "summary", ""):
+            if getattr(step, "kind", None) == STEP_ERROR and getattr(
+                step, "summary", ""
+            ):
                 reason = step.summary
                 break
         if outcome.status == RUN_STUCK:
@@ -1824,7 +2774,17 @@ class ConsoleChatController:
                 break
             if message.role is not ConsoleMessageRole.USER:
                 continue
-            usable = [attachment for attachment in message.attachments if attachment.data is not None]
+            if skip_failed and message.status == "failed":
+                # A send-blocked echo keeps its attachment data but is dropped
+                # from the emitted payload below (skip_failed); it must not
+                # reserve image budget a real message would then lose (TASK-457
+                # code-review finding 2).
+                continue
+            usable = [
+                attachment
+                for attachment in message.attachments
+                if attachment.data is not None
+            ]
             if not usable:
                 continue
             take = min(len(usable), budget)
@@ -1832,11 +2792,22 @@ class ConsoleChatController:
             budget -= take
 
         payloads: list[dict[str, Any]] = []
+        seen_user = False
         for message in session_messages:
-            if message.role not in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}:
+            if message.role not in {
+                ConsoleMessageRole.USER,
+                ConsoleMessageRole.ASSISTANT,
+            }:
                 continue
             if skip_failed and message.status == "failed":
                 continue
+            # A seeded character greeting is a display-only assistant turn:
+            # keep it out of the provider payload so strict providers (Anthropic,
+            # Gemini) never see an assistant-first message array (task-427).
+            if not seen_user and message.role is ConsoleMessageRole.ASSISTANT:
+                continue
+            if message.role is ConsoleMessageRole.USER:
+                seen_user = True
             text = (
                 message.variants.current.content
                 if use_variant_content and message.variants is not None
@@ -1848,7 +2819,9 @@ class ConsoleChatController:
                 # order up to the reserved count (oldest-attached first),
                 # not in reservation order.
                 usable = [
-                    attachment for attachment in message.attachments if attachment.data is not None
+                    attachment
+                    for attachment in message.attachments
+                    if attachment.data is not None
                 ]
                 parts: list[dict[str, Any]] = []
                 if text:
@@ -1865,7 +2838,9 @@ class ConsoleChatController:
                     # uses (see ``pending.mime_type or "image/png"`` above
                     # and ``ConsoleChatStore.append_message``).
                     parts.append(
-                        image_url_part(attachment.data, attachment.mime_type or "image/png")
+                        image_url_part(
+                            attachment.data, attachment.mime_type or "image/png"
+                        )
                     )
                 payloads.append({"role": message.role.value, "content": parts})
                 continue
@@ -1944,7 +2919,10 @@ class ConsoleChatController:
         if self._active_assistant_message_id is None:
             return False
         try:
-            return self.store.session_id_for_message(self._active_assistant_message_id) == session_id
+            return (
+                self.store.session_id_for_message(self._active_assistant_message_id)
+                == session_id
+            )
         except KeyError:
             return False
 

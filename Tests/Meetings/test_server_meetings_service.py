@@ -25,60 +25,139 @@ class FakeMeetingsClient:
 
     async def create_meeting_session(self, request_data):
         self.calls.append(("create_meeting_session", request_data))
-        return {"id": "meeting-1", "title": request_data.title, "meeting_type": request_data.meeting_type, "status": "scheduled", "source_type": "upload"}
+        return {
+            "id": "meeting-1",
+            "title": request_data.title,
+            "meeting_type": request_data.meeting_type,
+            "status": "scheduled",
+            "source_type": "upload",
+        }
 
     async def list_meeting_sessions(self, **kwargs):
         self.calls.append(("list_meeting_sessions", kwargs))
-        return [{"id": "meeting-1", "title": "Weekly Sync", "meeting_type": "standup", "status": "scheduled", "source_type": "upload"}]
+        return [
+            {
+                "id": "meeting-1",
+                "title": "Weekly Sync",
+                "meeting_type": "standup",
+                "status": "scheduled",
+                "source_type": "upload",
+            }
+        ]
 
     async def get_meeting_session(self, session_id):
         self.calls.append(("get_meeting_session", session_id))
-        return {"id": session_id, "title": "Weekly Sync", "meeting_type": "standup", "status": "scheduled", "source_type": "upload"}
+        return {
+            "id": session_id,
+            "title": "Weekly Sync",
+            "meeting_type": "standup",
+            "status": "scheduled",
+            "source_type": "upload",
+        }
 
     async def update_meeting_session_status(self, session_id, request_data):
         self.calls.append(("update_meeting_session_status", session_id, request_data))
-        return {"id": session_id, "title": "Weekly Sync", "meeting_type": "standup", "status": request_data.status, "source_type": "upload"}
+        return {
+            "id": session_id,
+            "title": "Weekly Sync",
+            "meeting_type": "standup",
+            "status": request_data.status,
+            "source_type": "upload",
+        }
 
     async def create_meeting_template(self, request_data):
         self.calls.append(("create_meeting_template", request_data))
-        return {"id": "template-1", "name": request_data.name, "scope": request_data.scope, "schema_json": request_data.template_schema}
+        return {
+            "id": "template-1",
+            "name": request_data.name,
+            "scope": request_data.scope,
+            "schema_json": request_data.template_schema,
+        }
 
     async def list_meeting_templates(self, **kwargs):
         self.calls.append(("list_meeting_templates", kwargs))
-        return [{"id": "template-1", "name": "Default", "scope": "personal", "schema_json": {"sections": ["summary"]}}]
+        return [
+            {
+                "id": "template-1",
+                "name": "Default",
+                "scope": "personal",
+                "schema_json": {"sections": ["summary"]},
+            }
+        ]
 
     async def get_meeting_template(self, template_id):
         self.calls.append(("get_meeting_template", template_id))
-        return {"id": template_id, "name": "Default", "scope": "personal", "schema_json": {"sections": ["summary"]}}
+        return {
+            "id": template_id,
+            "name": "Default",
+            "scope": "personal",
+            "schema_json": {"sections": ["summary"]},
+        }
 
     async def create_meeting_artifact(self, session_id, request_data):
         self.calls.append(("create_meeting_artifact", session_id, request_data))
-        return {"id": "artifact-summary", "session_id": session_id, "kind": request_data.kind, "format": request_data.format, "payload_json": request_data.payload_json}
+        return {
+            "id": "artifact-summary",
+            "session_id": session_id,
+            "kind": request_data.kind,
+            "format": request_data.format,
+            "payload_json": request_data.payload_json,
+        }
 
     async def list_meeting_artifacts(self, session_id):
         self.calls.append(("list_meeting_artifacts", session_id))
-        return [{"id": "artifact-summary", "session_id": session_id, "kind": "summary", "format": "json", "payload_json": {"text": "Summary"}}]
+        return [
+            {
+                "id": "artifact-summary",
+                "session_id": session_id,
+                "kind": "summary",
+                "format": "json",
+                "payload_json": {"text": "Summary"},
+            }
+        ]
 
     async def finalize_meeting_session(self, session_id, request_data):
         self.calls.append(("finalize_meeting_session", session_id, request_data))
         return {
             "session_id": session_id,
             "artifacts": [
-                {"id": "artifact-summary", "session_id": session_id, "kind": "summary", "format": "json", "payload_json": {"text": "Summary"}}
+                {
+                    "id": "artifact-summary",
+                    "session_id": session_id,
+                    "kind": "summary",
+                    "format": "json",
+                    "payload_json": {"text": "Summary"},
+                }
             ],
         }
 
     async def share_meeting_session_to_slack(self, session_id, request_data):
         self.calls.append(("share_meeting_session_to_slack", session_id, request_data))
-        return {"dispatch_id": 11, "session_id": session_id, "integration_type": "slack", "status": "queued"}
+        return {
+            "dispatch_id": 11,
+            "session_id": session_id,
+            "integration_type": "slack",
+            "status": "queued",
+        }
 
     async def share_meeting_session_to_webhook(self, session_id, request_data):
-        self.calls.append(("share_meeting_session_to_webhook", session_id, request_data))
-        return {"dispatch_id": 12, "session_id": session_id, "integration_type": "webhook", "status": "queued"}
+        self.calls.append(
+            ("share_meeting_session_to_webhook", session_id, request_data)
+        )
+        return {
+            "dispatch_id": 12,
+            "session_id": session_id,
+            "integration_type": "webhook",
+            "status": "queued",
+        }
 
     async def stream_meeting_session_events(self, session_id):
         self.calls.append(("stream_meeting_session_events", session_id))
-        yield {"type": "session.status", "session_id": session_id, "data": {"status": "live"}}
+        yield {
+            "type": "session.status",
+            "session_id": session_id,
+            "data": {"status": "live"},
+        }
         yield {"type": "stream.complete", "session_id": session_id}
 
 
@@ -189,7 +268,9 @@ async def test_server_meetings_service_re_resolves_provider_without_service_loca
 
 
 @pytest.mark.asyncio
-async def test_server_meetings_service_from_config_returns_provider_backed_service(monkeypatch):
+async def test_server_meetings_service_from_config_returns_provider_backed_service(
+    monkeypatch,
+):
     provider = FakeClientProvider(FakeMeetingsClient())
     build_provider_calls = []
 
@@ -197,7 +278,9 @@ async def test_server_meetings_service_from_config_returns_provider_backed_servi
         build_provider_calls.append(app_config)
         return provider
 
-    monkeypatch.setattr(meetings_module, "build_runtime_api_client_provider_from_config", build_provider)
+    monkeypatch.setattr(
+        meetings_module, "build_runtime_api_client_provider_from_config", build_provider
+    )
 
     config = {"tldw_api": {"base_url": "https://example.com"}}
     service = ServerMeetingsService.from_config(config)
@@ -234,11 +317,15 @@ async def test_server_meetings_service_routes_sessions_templates_artifacts_shari
     template = await service.create_meeting_template(
         MeetingTemplateCreate(name="Default", schema_json={"sections": ["summary"]})
     )
-    templates = await service.list_meeting_templates(scope="personal", include_disabled=True)
+    templates = await service.list_meeting_templates(
+        scope="personal", include_disabled=True
+    )
     loaded_template = await service.get_meeting_template("template-1")
     artifact = await service.create_meeting_artifact(
         "meeting-1",
-        MeetingArtifactCreate(kind="summary", format="json", payload_json={"text": "Summary"}),
+        MeetingArtifactCreate(
+            kind="summary", format="json", payload_json={"text": "Summary"}
+        ),
     )
     artifacts = await service.list_meeting_artifacts("meeting-1")
     finalized = await service.finalize_meeting_session(
@@ -253,7 +340,9 @@ async def test_server_meetings_service_routes_sessions_templates_artifacts_shari
         "meeting-1",
         MeetingShareRequest(webhook_url="https://example.test/webhook"),
     )
-    events = [event async for event in service.stream_meeting_session_events("meeting-1")]
+    events = [
+        event async for event in service.stream_meeting_session_events("meeting-1")
+    ]
 
     assert health["record_id"] == "server:meetings:health"
     assert created["record_id"] == "server:meeting_session:meeting-1"
@@ -266,7 +355,10 @@ async def test_server_meetings_service_routes_sessions_templates_artifacts_shari
     assert artifact["record_id"] == "server:meeting_artifact:artifact-summary"
     assert artifacts[0]["record_id"] == "server:meeting_artifact:artifact-summary"
     assert finalized["record_id"] == "server:meeting_session:meeting-1"
-    assert finalized["artifacts"][0]["record_id"] == "server:meeting_artifact:artifact-summary"
+    assert (
+        finalized["artifacts"][0]["record_id"]
+        == "server:meeting_artifact:artifact-summary"
+    )
     assert slack["record_id"] == "server:meeting_share:11"
     assert webhook["record_id"] == "server:meeting_share:12"
     assert events[-1]["type"] == "stream.complete"
@@ -291,7 +383,9 @@ async def test_server_meetings_service_routes_sessions_templates_artifacts_shari
 @pytest.mark.asyncio
 async def test_server_meetings_service_denies_before_dispatch():
     client = FakeMeetingsClient()
-    service = ServerMeetingsService(client, policy_enforcer=FakePolicyEnforcer("authority_denied"))
+    service = ServerMeetingsService(
+        client, policy_enforcer=FakePolicyEnforcer("authority_denied")
+    )
 
     with pytest.raises(PolicyDeniedError):
         await service.list_meeting_sessions()

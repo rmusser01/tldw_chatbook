@@ -49,7 +49,9 @@ def _create_workspace_chat(
     workspace_id: str = "ws-attach",
 ) -> str:
     """Persist a conversation exactly the way Console does for a workspace session."""
-    persistence = ChatPersistenceService(db, workspace_registry=_StaticWorkspaceRegistry())
+    persistence = ChatPersistenceService(
+        db, workspace_registry=_StaticWorkspaceRegistry()
+    )
     return persistence.create_conversation(
         assistant_kind="generic",
         assistant_id="console",
@@ -65,7 +67,9 @@ def _stub_screen(db: CharactersRAGDB) -> Any:
     return types.SimpleNamespace(app_instance=types.SimpleNamespace(chachanotes_db=db))
 
 
-def test_attach_picker_lists_both_global_and_workspace_conversations(db: CharactersRAGDB) -> None:
+def test_attach_picker_lists_both_global_and_workspace_conversations(
+    db: CharactersRAGDB,
+) -> None:
     global_id = db.add_conversation({"title": "Global conversation"})
     workspace_id = _create_workspace_chat(db, title="Workspace conversation")
 
@@ -74,12 +78,16 @@ def test_attach_picker_lists_both_global_and_workspace_conversations(db: Charact
 
     by_id = {row["conversation_id"]: row for row in rows}
     assert global_id in by_id
-    assert workspace_id in by_id, "workspace-scoped conversation missing from attach picker"
+    assert workspace_id in by_id, (
+        "workspace-scoped conversation missing from attach picker"
+    )
     assert by_id[global_id]["title"] == "Global conversation"
     assert by_id[workspace_id]["title"] == "Workspace conversation"
 
 
-def test_attach_picker_rows_are_string_ids_with_expected_shape(db: CharactersRAGDB) -> None:
+def test_attach_picker_rows_are_string_ids_with_expected_shape(
+    db: CharactersRAGDB,
+) -> None:
     conversation_id = _create_workspace_chat(db)
 
     stub = _stub_screen(db)

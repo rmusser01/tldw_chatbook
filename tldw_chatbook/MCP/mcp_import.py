@@ -36,10 +36,13 @@ class ImportCandidate:
 def _literal_is_storable(profile_id: str, command: str, key: str, value: str) -> bool:
     """Authoritative check: round-trip the store's own validation."""
     try:
-        LocalExternalMCPProfile.from_input_dict({
-            "profile_id": profile_id or "candidate", "command": command or "cmd",
-            "env_literals": {key: value},
-        })
+        LocalExternalMCPProfile.from_input_dict(
+            {
+                "profile_id": profile_id or "candidate",
+                "command": command or "cmd",
+                "env_literals": {key: value},
+            }
+        )
     except ValueError:
         return False
     return True
@@ -66,7 +69,9 @@ def parse_mcp_servers_json(
         raise ValueError(f"Not valid JSON: {exc}") from None
     servers = data.get("mcpServers") if isinstance(data, dict) else None
     if not isinstance(servers, dict) or not servers:
-        raise ValueError('Expected a top-level "mcpServers" object with at least one entry.')
+        raise ValueError(
+            'Expected a top-level "mcpServers" object with at least one entry.'
+        )
     candidates: list[ImportCandidate] = []
     for name, entry in servers.items():
         if not isinstance(entry, dict):
@@ -80,7 +85,9 @@ def parse_mcp_servers_json(
             value = str(raw_value)
             if _PLACEHOLDER_RE.match(value.strip()):
                 candidate.env_placeholders[str(key)] = value.strip()
-            elif _literal_is_storable(candidate.profile_id, candidate.command, str(key), value):
+            elif _literal_is_storable(
+                candidate.profile_id, candidate.command, str(key), value
+            ):
                 candidate.env_literals[str(key)] = value
             else:
                 candidate.env_placeholders[str(key)] = f"${key}"
@@ -90,6 +97,7 @@ def parse_mcp_servers_json(
                 )
         if candidate.profile_id in existing_ids:
             candidate.warnings.append(
-                f"{candidate.profile_id}: will overwrite the existing profile.")
+                f"{candidate.profile_id}: will overwrite the existing profile."
+            )
         candidates.append(candidate)
     return candidates

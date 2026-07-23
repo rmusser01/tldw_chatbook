@@ -99,9 +99,7 @@ def test_validate_appearance_defaults_accepts_valid_values():
 
 
 def test_validate_appearance_defaults_accepts_web_runtime_minimum_font_size():
-    result = validate_appearance_defaults(
-        SettingsAppearanceDefaults(font_size=6)
-    )
+    result = validate_appearance_defaults(SettingsAppearanceDefaults(font_size=6))
 
     assert result.valid is True
 
@@ -119,7 +117,9 @@ def test_validate_appearance_defaults_rejects_invalid_values():
     )
 
     for overrides, expected_message in invalid_values:
-        values = SettingsAppearanceDefaults(**{**SettingsAppearanceDefaults().__dict__, **overrides})
+        values = SettingsAppearanceDefaults(
+            **{**SettingsAppearanceDefaults().__dict__, **overrides}
+        )
         result = validate_appearance_defaults(values)
 
         assert result.valid is False

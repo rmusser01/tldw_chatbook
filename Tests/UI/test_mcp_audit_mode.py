@@ -9,7 +9,9 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, DataTable, Input, Select
 
 import tldw_chatbook
-from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
+from tldw_chatbook.MCP.readiness import HubAction
+from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode, remediation_actions
+from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
 
 _CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
 _AGENTIC_TERMINAL_TCSS = _CSS_ROOT / "components" / "_agentic_terminal.tcss"
@@ -191,7 +193,10 @@ async def test_duration_column_uses_shared_formatter():
         )
         await pilot.pause()
         table = app.query_one("#mcp-audit-table", DataTable)
-        durations = {_row_texts(table, i)[1].split("::")[-1]: _row_texts(table, i)[4] for i in range(3)}
+        durations = {
+            _row_texts(table, i)[1].split("::")[-1]: _row_texts(table, i)[4]
+            for i in range(3)
+        }
         assert durations["ms"] == "850ms"
         assert durations["secs"] == "2.5s"
         assert durations["mins"] == "1m 30s"
@@ -205,22 +210,85 @@ async def test_outcome_column_variants():
         await canvas.update_entries(
             [
                 _entry(tool_name="ok_call", decision="allowed", ok=True),
-                _entry(tool_name="failed_call", decision="approved", ok=False, error="boom"),
-                _entry(tool_name="blocked_call", decision="denied", ok=False, duration_ms=0),
-                _entry(tool_name="timeout_call", decision="denied-timeout", ok=False, duration_ms=0),
-                _entry(tool_name="downgraded_call", decision="downgraded", ok=False, duration_ms=0),
+                _entry(
+                    tool_name="failed_call", decision="approved", ok=False, error="boom"
+                ),
+                _entry(
+                    tool_name="blocked_call", decision="denied", ok=False, duration_ms=0
+                ),
+                _entry(
+                    tool_name="timeout_call",
+                    decision="denied-timeout",
+                    ok=False,
+                    duration_ms=0,
+                ),
+                _entry(
+                    tool_name="downgraded_call",
+                    decision="downgraded",
+                    ok=False,
+                    duration_ms=0,
+                ),
             ]
         )
         await pilot.pause()
         table = app.query_one("#mcp-audit-table", DataTable)
         outcomes = {
-            _row_texts(table, i)[1].split("::")[-1]: _row_texts(table, i)[5] for i in range(table.row_count)
+            _row_texts(table, i)[1].split("::")[-1]: _row_texts(table, i)[5]
+            for i in range(table.row_count)
         }
         assert outcomes["ok_call"] == "OK"
         assert outcomes["failed_call"] == "Failed"
         assert outcomes["blocked_call"] == "Blocked"
         assert outcomes["timeout_call"] == "Blocked"
         assert outcomes["downgraded_call"] == "Downgraded"
+
+
+@pytest.mark.asyncio
+async def test_decision_and_outcome_columns_carry_semantic_color():
+    """Task 1 (MCP Hub Phase 6): Decision and Outcome are each colored by
+    their OWN `state_text()` kind -- allowed/approved -> ready, denied/
+    denied-timeout -> error, downgraded -> warning (Decision); OK -> ready,
+    Failed/Blocked -> error, Downgraded -> warning (Outcome, keyed on
+    `_outcome_text()`'s own rendered vocabulary, one step down the pipeline
+    from the raw `decision` field)."""
+    app = AuditModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPAuditMode)
+        await canvas.update_entries(
+            [
+                _entry(tool_name="ok_call", decision="allowed", ok=True),
+                _entry(tool_name="approved_call", decision="approved", ok=True),
+                _entry(tool_name="blocked_call", decision="denied", ok=False, duration_ms=0),
+                _entry(tool_name="downgraded_call", decision="downgraded", ok=False, duration_ms=0),
+            ]
+        )
+        await pilot.pause()
+        table = app.query_one("#mcp-audit-table", DataTable)
+        rows_by_tool = {
+            _row_texts(table, i)[1].split("::")[-1]: i for i in range(table.row_count)
+        }
+
+        # Decision column (index 3).
+        assert table.get_cell_at((rows_by_tool["ok_call"], 3)).style == state_text(
+            "allowed", "ready"
+        ).style
+        assert table.get_cell_at((rows_by_tool["blocked_call"], 3)).style == state_text(
+            "denied", "error"
+        ).style
+        assert table.get_cell_at((rows_by_tool["downgraded_call"], 3)).style == state_text(
+            "downgraded", "warning"
+        ).style
+
+        # Outcome column (index 5).
+        assert table.get_cell_at((rows_by_tool["ok_call"], 5)).style == state_text(
+            "OK", "ready"
+        ).style
+        assert table.get_cell_at((rows_by_tool["blocked_call"], 5)).style == state_text(
+            "Blocked", "error"
+        ).style
+        assert table.get_cell_at((rows_by_tool["downgraded_call"], 5)).style == state_text(
+            "Downgraded", "warning"
+        ).style
 
 
 @pytest.mark.asyncio
@@ -409,12 +477,22 @@ async def test_filters_combine_with_and_semantics():
 @pytest.mark.asyncio
 async def test_select_options_cover_full_decision_and_initiator_vocabulary():
     app = AuditModeApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         decision_select = app.query_one("#mcp-audit-filter-decision", Select)
         initiator_select = app.query_one("#mcp-audit-filter-initiator", Select)
-        decision_values = {value for _, value in decision_select._options if value is not Select.NULL}
-        initiator_values = {value for _, value in initiator_select._options if value is not Select.NULL}
-        assert decision_values == {"allowed", "approved", "denied", "denied-timeout", "downgraded"}
+        decision_values = {
+            value for _, value in decision_select._options if value is not Select.NULL
+        }
+        initiator_values = {
+            value for _, value in initiator_select._options if value is not Select.NULL
+        }
+        assert decision_values == {
+            "allowed",
+            "approved",
+            "denied",
+            "denied-timeout",
+            "downgraded",
+        }
         assert initiator_values == {"test", "agent", "system"}
         assert decision_select.value is Select.NULL
         assert initiator_select.value is Select.NULL
@@ -521,8 +599,12 @@ async def test_table_and_filter_bar_have_nonzero_geometry_with_bundled_css():
         await pilot.pause()
 
         table = app.query_one("#mcp-audit-table", DataTable)
-        assert table.size.width > 0, "audit table collapsed to zero width under bundled CSS"
-        assert table.size.height > 0, "audit table collapsed to zero height under bundled CSS"
+        assert table.size.width > 0, (
+            "audit table collapsed to zero width under bundled CSS"
+        )
+        assert table.size.height > 0, (
+            "audit table collapsed to zero height under bundled CSS"
+        )
         # T9: `height: auto; max-height: 70%;` (bundle-pinned below) must
         # make the table hug its own row count instead of ballooning to
         # fill the whole canvas the way a bare `height: 1fr` DataTable does
@@ -535,8 +617,12 @@ async def test_table_and_filter_bar_have_nonzero_geometry_with_bundled_css():
         )
 
         text_input = app.query_one("#mcp-audit-filter-text", Input)
-        assert text_input.size.width > 0, "filter text Input collapsed to zero width under bundled CSS"
-        assert text_input.size.height > 0, "filter text Input collapsed to zero height under bundled CSS"
+        assert text_input.size.width > 0, (
+            "filter text Input collapsed to zero width under bundled CSS"
+        )
+        assert text_input.size.height > 0, (
+            "filter text Input collapsed to zero height under bundled CSS"
+        )
 
         decision_select = app.query_one("#mcp-audit-filter-decision", Select)
         assert decision_select.size.width > 0, (
@@ -611,7 +697,9 @@ def test_filter_decision_select_width_rule_pinned_in_bundle_source_and_bundle() 
     )
 
 
-def test_filter_initiator_select_width_rule_pinned_in_bundle_source_and_bundle() -> None:
+def test_filter_initiator_select_width_rule_pinned_in_bundle_source_and_bundle() -> (
+    None
+):
     """T9: same fix, same rationale, as the decision Select above.
     Checks DEFAULT_CSS, bundle-source, and bundle to prevent silent drift."""
     _assert_rule_pinned_in_default_css_bundle_source_and_bundle(
@@ -701,8 +789,16 @@ async def test_findings_render_from_a_fake_payload():
         canvas = app.query_one(MCPAuditMode)
         await canvas.update_findings(
             [
-                _finding(severity="high", finding_type="orphaned_path_scope", message="Needs review"),
-                _finding(severity="low", finding_type="stale_binding", message="Check binding"),
+                _finding(
+                    severity="high",
+                    finding_type="orphaned_path_scope",
+                    message="Needs review",
+                ),
+                _finding(
+                    severity="low",
+                    finding_type="stale_binding",
+                    message="Check binding",
+                ),
             ],
             source="server",
         )
@@ -714,6 +810,34 @@ async def test_findings_render_from_a_fake_payload():
         assert _row_texts(table, 0) == ["high", "orphaned_path_scope", "Needs review"]
         assert _row_texts(table, 1) == ["low", "stale_binding", "Check binding"]
         assert app.query_one("#mcp-audit-findings-empty").display is False
+
+
+@pytest.mark.asyncio
+async def test_findings_severity_column_carries_semantic_color():
+    """Task 1 (MCP Hub Phase 6): critical/high -> error, medium -> warning,
+    low/info -> info -- case-insensitive (the wire-derived `severity`
+    field's casing isn't pinned down by any schema here yet)."""
+    app = AuditModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPAuditMode)
+        await canvas.update_findings(
+            [
+                _finding(severity="critical", message="a"),
+                _finding(severity="High", message="b"),
+                _finding(severity="medium", message="c"),
+                _finding(severity="low", message="d"),
+                _finding(severity="info", message="e"),
+            ],
+            source="server",
+        )
+        await pilot.pause()
+
+        table = app.query_one("#mcp-audit-findings-table", DataTable)
+        assert table.get_cell_at((0, 0)).style == state_text("critical", "error").style
+        assert table.get_cell_at((1, 0)).style == state_text("High", "error").style
+        assert table.get_cell_at((2, 0)).style == state_text("medium", "warning").style
+        assert table.get_cell_at((3, 0)).style == state_text("low", "info").style
+        assert table.get_cell_at((4, 0)).style == state_text("info", "info").style
 
 
 @pytest.mark.asyncio
@@ -744,6 +868,97 @@ async def test_findings_row_keys_are_stable_synthetic_index():
         second_key, _ = table.coordinate_to_cell_key((1, 0))
         assert first_key.value == "0"
         assert second_key.value == "1"
+
+
+# -- Task 2 (MCP Hub Phase 6): remediation_actions() heuristic mapping ------
+#
+# Findings carry no machine-actionable remediation code -- only free-text
+# `finding_type`/`message`. `remediation_actions()` is a pure function, so
+# these are plain unit tests against the dict shape, no App/pilot needed.
+
+
+@pytest.mark.parametrize(
+    "finding_type,message",
+    [
+        ("discovery_stale", ""),
+        ("", "Tool discovery has not run recently."),
+        ("catalog_expired", ""),
+        ("", "The tool catalog looks stale."),
+        ("STALE_BINDING", ""),  # case-insensitive
+    ],
+)
+def test_remediation_actions_maps_discovery_stale_catalog_keywords(finding_type, message):
+    finding = {"finding_type": finding_type, "message": message}
+    assert remediation_actions(finding) == (
+        HubAction.REFRESH_DISCOVERY,
+        HubAction.VIEW_DETAILS,
+    )
+
+
+@pytest.mark.parametrize(
+    "finding_type,message",
+    [
+        ("auth_expired", ""),
+        ("", "Missing authentication for this connection."),
+        ("credential_missing", ""),
+        ("", "The stored credential is invalid."),
+        ("", "Access token has expired."),
+    ],
+)
+def test_remediation_actions_maps_auth_credential_token_keywords(finding_type, message):
+    finding = {"finding_type": finding_type, "message": message}
+    assert remediation_actions(finding) == (
+        HubAction.OPEN_CREDENTIALS,
+        HubAction.VIEW_DETAILS,
+    )
+
+
+@pytest.mark.parametrize(
+    "finding_type,message",
+    [
+        ("permission_drift", ""),
+        ("", "This tool's permission no longer matches policy."),
+        ("policy_violation", ""),
+        ("", "Violates the workspace policy."),
+    ],
+)
+def test_remediation_actions_maps_permission_policy_keywords(finding_type, message):
+    finding = {"finding_type": finding_type, "message": message}
+    assert remediation_actions(finding) == (
+        HubAction.VIEW_DETAILS,
+        HubAction.OPEN_AUDIT,
+    )
+
+
+def test_remediation_actions_defaults_to_view_details_for_unrecognized_finding():
+    finding = _finding(finding_type="orphaned_path_scope", message="Needs review")
+    assert remediation_actions(finding) == (HubAction.VIEW_DETAILS,)
+
+
+def test_remediation_actions_defaults_for_finding_with_no_recognizable_fields():
+    """Defensive: missing finding_type/message entirely must not raise."""
+    assert remediation_actions({}) == (HubAction.VIEW_DETAILS,)
+
+
+def test_remediation_actions_first_matching_bucket_wins_on_overlap():
+    """A finding whose text matches more than one bucket resolves to the
+    EARLIER bucket in `_REMEDIATION_KEYWORDS`'s own order -- here both
+    "stale" (bucket 1) and "policy" (bucket 3) appear, so bucket 1 wins."""
+    finding = {"finding_type": "stale_binding", "message": "Also touches policy."}
+    assert remediation_actions(finding) == (
+        HubAction.REFRESH_DISCOVERY,
+        HubAction.VIEW_DETAILS,
+    )
+
+
+def test_remediation_actions_reads_type_alias_when_finding_type_absent():
+    """`_finding_field()`'s own `finding_type`/`type` alias precedent --
+    mirrored here since findings have no fixed wire schema."""
+    finding = {"type": "catalog_expired", "message": ""}
+    assert remediation_actions(finding) == (
+        HubAction.REFRESH_DISCOVERY,
+        HubAction.VIEW_DETAILS,
+    )
 
 
 @pytest.mark.asyncio
@@ -852,7 +1067,9 @@ async def test_server_source_zero_findings_shows_distinct_empty_copy():
 
         await canvas.update_findings(None, source="server")
         await pilot.pause()
-        failure_message = str(app.query_one("#mcp-audit-findings-empty-message").renderable)
+        failure_message = str(
+            app.query_one("#mcp-audit-findings-empty-message").renderable
+        )
         assert failure_message != message
 
 
@@ -933,8 +1150,12 @@ async def test_subview_strip_and_findings_table_have_nonzero_geometry_with_bundl
         )
 
         table = app.query_one("#mcp-audit-findings-table", DataTable)
-        assert table.size.width > 0, "findings table collapsed to zero width under bundled CSS"
-        assert table.size.height > 0, "findings table collapsed to zero height under bundled CSS"
+        assert table.size.width > 0, (
+            "findings table collapsed to zero width under bundled CSS"
+        )
+        assert table.size.height > 0, (
+            "findings table collapsed to zero height under bundled CSS"
+        )
         # T9: same `height: auto; max-height: 70%;` hugging discipline as
         # the Executions table above -- header + 3 rows, generous slack.
         assert table.size.height <= 6, (

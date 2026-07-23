@@ -36,7 +36,9 @@ class FakeCatalogService:
     async def list_model_metadata(self, **kwargs):
         self.calls.append(("list_model_metadata", kwargs))
         return {
-            "models": [{"id": "openai/gpt-4.1", "name": "gpt-4.1", "provider": "openai"}],
+            "models": [
+                {"id": "openai/gpt-4.1", "name": "gpt-4.1", "provider": "openai"}
+            ],
             "total": 1,
         }
 
@@ -145,7 +147,9 @@ async def test_llm_provider_catalog_scope_service_routes_local_and_server_catalo
     local_health = await scope.get_health(mode="local")
     server_health = await scope.get_health(mode="server")
     providers = await scope.list_providers(mode="server", include_deprecated=True)
-    provider = await scope.get_provider(mode="server", provider_name="openai", include_deprecated=True)
+    provider = await scope.get_provider(
+        mode="server", provider_name="openai", include_deprecated=True
+    )
     metadata = await scope.list_model_metadata(mode="server", model_type="chat")
     models = await scope.list_models(mode="server", model_type="chat")
     model = await scope.get_model_metadata(mode="server", model_id="openai/gpt-4.1")
@@ -274,7 +278,9 @@ async def test_llm_provider_catalog_scope_service_routes_server_provider_configu
     deleted = await scope.delete_user_provider_key(mode="server", provider="openai")
 
     assert listing["record_id"] == "server:llm_provider_configurations:list"
-    assert listing["items"][0]["record_id"] == "server:llm_provider_configuration:openai"
+    assert (
+        listing["items"][0]["record_id"] == "server:llm_provider_configuration:openai"
+    )
     assert upserted["record_id"] == "server:llm_provider_configuration:openai"
     assert tested["record_id"] == "server:llm_provider_configuration:openai"
     assert deleted["record_id"] == "server:llm_provider_configuration:openai"
@@ -302,7 +308,9 @@ async def test_llm_provider_catalog_scope_service_routes_local_model_discovery_a
         server_service=server,
         policy_enforcer=policy,
     )
-    staged_settings = {"api_settings": {"custom": {"api_base_url": "http://127.0.0.1:9099/v1"}}}
+    staged_settings = {
+        "api_settings": {"custom": {"api_base_url": "http://127.0.0.1:9099/v1"}}
+    }
 
     local_result = await scope.discover_models(
         mode="local",
@@ -340,7 +348,9 @@ async def test_llm_provider_catalog_scope_service_routes_local_discovered_model_
         server_service=server,
         policy_enforcer=policy,
     )
-    staged_settings = {"api_settings": {"custom": {"api_base_url": "http://127.0.0.1:9099/v1"}}}
+    staged_settings = {
+        "api_settings": {"custom": {"api_base_url": "http://127.0.0.1:9099/v1"}}
+    }
 
     discovered = await scope.list_discovered_models(
         mode="local",
@@ -363,12 +373,18 @@ async def test_llm_provider_catalog_scope_service_routes_local_discovered_model_
     assert [entry.model_id for entry in merged] == ["runtime-a"]
     assert persisted.status == "saved"
     assert local.calls[-4:] == [
-        ("list_discovered_models", {"provider": "Custom", "staged_settings": staged_settings}),
+        (
+            "list_discovered_models",
+            {"provider": "Custom", "staged_settings": staged_settings},
+        ),
         (
             "merge_saved_and_discovered_models",
             {"provider": "Custom", "staged_settings": staged_settings},
         ),
-        ("persist_discovered_models_to_settings", {"provider": "Custom", "model_ids": ["runtime-a"]}),
+        (
+            "persist_discovered_models_to_settings",
+            {"provider": "Custom", "model_ids": ["runtime-a"]},
+        ),
         ("clear_discovered_models", {"provider": "Custom"}),
     ]
     assert server.calls == []
@@ -391,7 +407,9 @@ async def test_llm_provider_catalog_scope_service_reports_server_discovery_cache
     )
 
     discovered = await scope.list_discovered_models(mode="server", provider="Custom")
-    merged = await scope.merge_saved_and_discovered_models(mode="server", provider="Custom")
+    merged = await scope.merge_saved_and_discovered_models(
+        mode="server", provider="Custom"
+    )
     persisted = await scope.persist_discovered_models_to_settings(
         mode="server",
         provider="Custom",

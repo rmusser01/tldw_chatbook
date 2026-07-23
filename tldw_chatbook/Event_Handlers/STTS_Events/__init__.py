@@ -3,12 +3,12 @@ from .stts_events import (
     STTSEventHandler,
     STTSPlaygroundGenerateEvent,
     STTSSettingsSaveEvent,
-    STTSAudioBookGenerateEvent
+    STTSAudioBookGenerateEvent,
 )
 
 __all__ = [
     "STTSEventHandler",
-    "STTSPlaygroundGenerateEvent", 
+    "STTSPlaygroundGenerateEvent",
     "STTSSettingsSaveEvent",
-    "STTSAudioBookGenerateEvent"
+    "STTSAudioBookGenerateEvent",
 ]

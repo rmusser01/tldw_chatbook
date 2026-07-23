@@ -1,12 +1,18 @@
 """TOOL transcript rows carry a dim role class, pinned in source + bundle."""
+
 from pathlib import Path
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscriptMessage
 
 
 def test_tool_message_row_has_tool_class():
-    msg = ConsoleChatMessage(role=ConsoleMessageRole.TOOL, content="called calculator -> 42")
+    msg = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL, content="called calculator -> 42"
+    )
     row = ConsoleTranscriptMessage(msg)
     assert "console-transcript-message-tool" in row.classes
     assert "console-transcript-message" in row.classes

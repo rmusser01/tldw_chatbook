@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import textwrap
 from typing import Any, Literal
 
@@ -37,6 +37,20 @@ class _DraftSegment:
     text: str
     collapse_state: _CollapseState = "literal"
     label: str | None = None
+
+
+@dataclass
+class ConsoleDraftStash:
+    """A draft captured synchronously at the send keypress (TASK-340).
+
+    Holds the composer's real segment objects so paste provenance and
+    collapse state survive a restore, plus the canonical text the send
+    path uses as its payload.
+    """
+
+    segments: list[_DraftSegment]
+    text: str
+    has_paste: bool
 
 
 @dataclass(frozen=True)
@@ -100,6 +114,10 @@ class ConsoleComposerBar(Horizontal):
         # every mutation. Collapsed/confirm paste tokens are single units for
         # caret movement and deletion.
         self._cursor_index = 0
+        # TASK-339: bumped by every user-edit entry point (typing/deletes);
+        # programmatic load/clear/restore leave it untouched so callers can
+        # detect "the user typed since X".
+        self._user_edit_serial = 0
         self._run_active = False
         self._send_blocked = False
         self._setup_blocked_reason = ""
@@ -225,7 +243,9 @@ class ConsoleComposerBar(Horizontal):
                 return self.query_one("#console-command-input", Input).value
             except NoMatches:
                 return ""
-        return "".join(self._segment_display_text(segment) for segment in self._segments)
+        return "".join(
+            self._segment_display_text(segment) for segment in self._segments
+        )
 
     @staticmethod
     def _segment_display_text(segment: _DraftSegment) -> str:
@@ -282,7 +302,9 @@ class ConsoleComposerBar(Horizontal):
     def _sync_hidden_input(self) -> None:
         """Keep the hidden compatibility input aligned with canonical payload."""
         try:
-            self.query_one("#console-command-input", Input).value = self._canonical_draft_text()
+            self.query_one(
+                "#console-command-input", Input
+            ).value = self._canonical_draft_text()
         except NoMatches:
             return
 
@@ -350,7 +372,9 @@ class ConsoleComposerBar(Horizontal):
         if send_blocked and setup_blocked_reason:
             send_button.tooltip = setup_blocked_reason
         elif send_blocked:
-            send_button.tooltip = "Wait for the active Console run to finish before sending."
+            send_button.tooltip = (
+                "Wait for the active Console run to finish before sending."
+            )
         elif has_draft:
             send_button.tooltip = "Send the active Console session draft."
         else:
@@ -380,7 +404,9 @@ class ConsoleComposerBar(Horizontal):
 
         attach_button.disabled = False
         attach_button.variant = "default"
-        attach_button.tooltip = "Attach files or context through the active Console session."
+        attach_button.tooltip = (
+            "Attach files or context through the active Console session."
+        )
         attach_button.set_class(True, "console-action-secondary")
         attach_button.set_class(False, "console-action-disabled")
         attach_button.set_class(False, "console-action-subdued")
@@ -448,17 +474,14 @@ class ConsoleComposerBar(Horizontal):
                 continue
 
             line_offset = 0
-            wrapped_segments = (
-                textwrap.wrap(
-                    line,
-                    width=width,
-                    break_long_words=True,
-                    break_on_hyphens=False,
-                    drop_whitespace=False,
-                    replace_whitespace=False,
-                )
-                or [""]
-            )
+            wrapped_segments = textwrap.wrap(
+                line,
+                width=width,
+                break_long_words=True,
+                break_on_hyphens=False,
+                drop_whitespace=False,
+                replace_whitespace=False,
+            ) or [""]
             for wrapped_segment in wrapped_segments:
                 start = source_offset + line_offset
                 end = start + len(wrapped_segment)
@@ -471,7 +494,10 @@ class ConsoleComposerBar(Horizontal):
     @classmethod
     def _visible_draft_lines(cls, text: str, width: int) -> list[str]:
         """Return the bounded visible draft lines, biased toward the caret end."""
-        return [line_slice.text for line_slice in cls._visible_draft_line_slices(text, width)]
+        return [
+            line_slice.text
+            for line_slice in cls._visible_draft_line_slices(text, width)
+        ]
 
     @staticmethod
     def _row_index_for_source_offset(
@@ -510,7 +536,9 @@ class ConsoleComposerBar(Horizontal):
                 max(caret_row - (cls.MAX_DRAFT_ROWS - 1), 0),
                 len(line_slices) - cls.MAX_DRAFT_ROWS,
             )
-        visible_slices = list(line_slices[first_visible : first_visible + cls.MAX_DRAFT_ROWS])
+        visible_slices = list(
+            line_slices[first_visible : first_visible + cls.MAX_DRAFT_ROWS]
+        )
         first_slice = visible_slices[0]
         first_line_stripped = first_slice.text.lstrip()
         if first_line_stripped:
@@ -585,7 +613,9 @@ class ConsoleComposerBar(Horizontal):
                     if cursor_index is None
                     else max(0, min(cursor_index, len(text)))
                 )
-                render_text = f"{text[:caret_position]}{caret_cell}{text[caret_position:]}"
+                render_text = (
+                    f"{text[:caret_position]}{caret_cell}{text[caret_position:]}"
+                )
                 if style_ranges:
                     style_ranges = cls._shift_style_ranges_for_caret(
                         style_ranges,
@@ -604,7 +634,9 @@ class ConsoleComposerBar(Horizontal):
                 output_offset = 0
                 for line_index, line_slice in enumerate(line_slices):
                     source_to_output_offset = (
-                        output_offset + line_slice.synthetic_prefix_columns - line_slice.start
+                        output_offset
+                        + line_slice.synthetic_prefix_columns
+                        - line_slice.start
                     )
                     for style_start, style_end, style in style_ranges:
                         span_start = max(style_start, line_slice.start)
@@ -652,7 +684,10 @@ class ConsoleComposerBar(Horizontal):
         measured_text = f"{text} " if reserve_trailing_cell else text
         return max(
             cls.MIN_DRAFT_ROWS,
-            min(cls.MAX_DRAFT_ROWS, len(cls._wrap_draft_line_slices(measured_text, width))),
+            min(
+                cls.MAX_DRAFT_ROWS,
+                len(cls._wrap_draft_line_slices(measured_text, width)),
+            ),
         )
 
     def _draft_render_width(self) -> int:
@@ -703,7 +738,9 @@ class ConsoleComposerBar(Horizontal):
                 right_index < len(self._segments)
                 and self._segments[right_index].collapse_state == "literal"
             ):
-                self._segments[right_index].text = text + self._segments[right_index].text
+                self._segments[right_index].text = (
+                    text + self._segments[right_index].text
+                )
             else:
                 self._segments.insert(right_index, _DraftSegment(text))
             self._cursor_index += len(text)
@@ -901,6 +938,64 @@ class ConsoleComposerBar(Horizontal):
         self._sync_interaction_classes()
         self._sync_current_action_state()
 
+    def stash_draft_for_send(self) -> ConsoleDraftStash | None:
+        """Capture and clear the draft synchronously at the send keypress.
+
+        Keystrokes processed after this call land in a fresh, empty draft —
+        they can never fold into the captured send payload (TASK-340). A
+        rejected send hands the stash back via ``restore_stashed_draft``.
+
+        Returns:
+            The captured stash, or ``None`` when the draft is empty (an
+            image-only send has nothing to capture or restore).
+        """
+        text = self.draft_text()
+        if not text:
+            return None
+        if not self._segments_initialized:
+            self._segments = [_DraftSegment(text)]
+            self._segments_initialized = True
+        stash = ConsoleDraftStash(
+            # Copies, not the live objects: segments are mutable, and a
+            # restored draft keeps being edited — the stash must stay a
+            # faithful snapshot of the keypress moment.
+            segments=[replace(segment) for segment in self._segments],
+            text=text,
+            has_paste=self.has_paste_segments(),
+        )
+        self.clear_draft()
+        return stash
+
+    def restore_stashed_draft(self, stash: ConsoleDraftStash | None) -> None:
+        """Put a stashed draft back, ahead of anything typed since the stash.
+
+        The stashed segments are prepended so a rejected send reads exactly
+        as before the keypress, with later keystrokes appended after it;
+        paste provenance and collapse state come back untouched.
+
+        Args:
+            stash: The capture returned by ``stash_draft_for_send``, or
+                ``None`` (image-only send — nothing to restore).
+        """
+        if stash is None or not stash.segments:
+            return
+        self._draft_selection_all = False
+        if not self._segments_initialized:
+            existing = self.draft_text()
+            self._segments = [_DraftSegment(existing)] if existing else []
+            self._segments_initialized = True
+        self._segments = list(stash.segments) + self._segments
+        self._cursor_index = len(self._canonical_draft_text())
+        self._sync_hidden_input()
+        self._refresh_visible_draft()
+        self._sync_interaction_classes()
+        self._sync_current_action_state()
+
+    @property
+    def edit_serial(self) -> int:
+        """Monotonic count of user-originated draft edits (TASK-339)."""
+        return self._user_edit_serial
+
     def clear_draft(self) -> None:
         """Clear the native Console draft without falling back to stale input."""
         self._draft_selection_all = False
@@ -945,6 +1040,7 @@ class ConsoleComposerBar(Horizontal):
         Args:
             text: Typed text to insert without paste-collapse transformation.
         """
+        self._user_edit_serial += 1
         if not text:
             self._sync_interaction_classes()
             self._sync_current_action_state()
@@ -992,7 +1088,9 @@ class ConsoleComposerBar(Horizontal):
             and len(text) > self.paste_collapse_threshold
         )
         if should_collapse:
-            self._insert_segment_at_cursor(_DraftSegment(text, collapse_state="collapsed"))
+            self._insert_segment_at_cursor(
+                _DraftSegment(text, collapse_state="collapsed")
+            )
         else:
             self._insert_literal_at_cursor(text)
         self._sync_hidden_input()
@@ -1013,6 +1111,7 @@ class ConsoleComposerBar(Horizontal):
         Args:
             text: Text to insert as if it had just been pasted.
         """
+        self._user_edit_serial += 1
         self.insert_pasted_text(text)
 
     def insert_file_segment(self, text: str, label: str) -> None:
@@ -1056,6 +1155,7 @@ class ConsoleComposerBar(Horizontal):
 
     def delete_left(self) -> None:
         """Delete the character (or paste token) immediately left of the caret."""
+        self._user_edit_serial += 1
         if self._draft_selection_all:
             self.clear_draft()
             return
@@ -1087,12 +1187,15 @@ class ConsoleComposerBar(Horizontal):
 
     def delete_right(self) -> None:
         """Delete the character (or paste token) immediately right of the caret."""
+        self._user_edit_serial += 1
         if self._draft_selection_all:
             self.clear_draft()
             return
         self._ensure_editable_segments()
         self._clamp_cursor()
-        if not self._segments or self._cursor_index >= len(self._canonical_draft_text()):
+        if not self._segments or self._cursor_index >= len(
+            self._canonical_draft_text()
+        ):
             self._sync_interaction_classes()
             self._sync_current_action_state()
             return
@@ -1129,6 +1232,7 @@ class ConsoleComposerBar(Horizontal):
         Returns:
             True when text (or a full-draft selection) was deleted.
         """
+        self._user_edit_serial += 1
         if self._draft_selection_all:
             self.clear_draft()
             return True
@@ -1153,7 +1257,9 @@ class ConsoleComposerBar(Horizontal):
         # the caret, then delete one word -- where a collapsed paste token
         # counts as a single opaque word and is never split.
         start = cursor
-        while start > 0 and canonical[start - 1].isspace() and not inside_token(start - 1):
+        while (
+            start > 0 and canonical[start - 1].isspace() and not inside_token(start - 1)
+        ):
             start -= 1
         if start > 0 and inside_token(start - 1):
             start = min(
@@ -1162,7 +1268,11 @@ class ConsoleComposerBar(Horizontal):
                 if token_start <= start - 1 < token_end
             )
         else:
-            while start > 0 and not canonical[start - 1].isspace() and not inside_token(start - 1):
+            while (
+                start > 0
+                and not canonical[start - 1].isspace()
+                and not inside_token(start - 1)
+            ):
                 start -= 1
         if start == cursor:
             return False
@@ -1371,7 +1481,9 @@ class ConsoleComposerBar(Horizontal):
 
         return False
 
-    def _display_index_at(self, click_x: int, click_y: int, *, padding_left: int = 0) -> int | None:
+    def _display_index_at(
+        self, click_x: int, click_y: int, *, padding_left: int = 0
+    ) -> int | None:
         """Map visible-draft coordinates to an unwrapped display-string offset.
 
         While the composer is focused the rendered draft carries a reserved
@@ -1384,8 +1496,12 @@ class ConsoleComposerBar(Horizontal):
         display_text = self._display_draft_text()
         caret_position: int | None = None
         if self.has_focus_within and self._segments_initialized and display_text:
-            caret_position = max(0, min(self._cursor_display_index(), len(display_text)))
-            render_text = f"{display_text[:caret_position]} {display_text[caret_position:]}"
+            caret_position = max(
+                0, min(self._cursor_display_index(), len(display_text))
+            )
+            render_text = (
+                f"{display_text[:caret_position]} {display_text[caret_position:]}"
+            )
         else:
             render_text = display_text
         visible_slices = self._visible_draft_line_slices(
@@ -1428,7 +1544,9 @@ class ConsoleComposerBar(Horizontal):
         padding_left: int = 0,
     ) -> _DraftSegment | None:
         """Return the collapsed paste segment targeted by display coordinates."""
-        display_index = self._display_index_at(click_x, click_y, padding_left=padding_left)
+        display_index = self._display_index_at(
+            click_x, click_y, padding_left=padding_left
+        )
         if display_index is None:
             return None
         for display_range in self._segment_display_ranges():
@@ -1525,7 +1643,9 @@ class ConsoleComposerBar(Horizontal):
         """
         return self._visible_draft_screen_hit(screen_x, screen_y) is not None
 
-    def activate_visible_draft_screen_position(self, screen_x: int, screen_y: int) -> bool:
+    def activate_visible_draft_screen_position(
+        self, screen_x: int, screen_y: int
+    ) -> bool:
         """Activate the draft surface from absolute screen coordinates.
 
         Args:
@@ -1567,14 +1687,19 @@ class ConsoleComposerBar(Horizontal):
             True when the click advanced a token, reset a pending prompt, or
             positioned the caret.
         """
-        if self._target_unfurl_segment_at(click_x, click_y, padding_left=padding_left) is not None:
+        if (
+            self._target_unfurl_segment_at(click_x, click_y, padding_left=padding_left)
+            is not None
+        ):
             return self._advance_targeted_paste_segment(
                 click_x,
                 click_y,
                 padding_left=padding_left,
             )
         changed = bool(self._reset_pending_unfurl_state())
-        display_index = self._display_index_at(click_x, click_y, padding_left=padding_left)
+        display_index = self._display_index_at(
+            click_x, click_y, padding_left=padding_left
+        )
         if display_index is not None:
             self.position_cursor_from_display_index(display_index)
             return True
@@ -1659,11 +1784,15 @@ class ConsoleComposerBar(Horizontal):
         else:
             title = getattr(session_data, "title", None) or "Untitled session"
             backend = getattr(session_data, "runtime_backend", None) or "local"
-            assistant = getattr(session_data, "assistant_id", None) or getattr(
-                session_data,
-                "character_name",
-                None,
-            ) or "General"
+            assistant = (
+                getattr(session_data, "assistant_id", None)
+                or getattr(
+                    session_data,
+                    "character_name",
+                    None,
+                )
+                or "General"
+            )
             workspace = getattr(session_data, "workspace_id", None) or "global"
             status = (
                 f"Active session: {title} | Backend: {backend} | "
@@ -1717,7 +1846,9 @@ class ConsoleComposerBar(Horizontal):
             )
 
     def compose(self) -> ComposeResult:
-        title = Static("Composer:", id="console-composer-title", classes="destination-section")
+        title = Static(
+            "Composer:", id="console-composer-title", classes="destination-section"
+        )
         title.styles.width = 10
         title.styles.min_width = 10
         yield title
@@ -1791,7 +1922,9 @@ class ConsoleComposerBar(Horizontal):
         disabled_reason.styles.text_overflow = "ellipsis"
         disabled_reason.styles.text_wrap = "nowrap"
         yield disabled_reason
-        actions = Horizontal(id="console-composer-actions", classes="console-composer-actions")
+        actions = Horizontal(
+            id="console-composer-actions", classes="console-composer-actions"
+        )
         actions.styles.width = 37
         actions.styles.min_width = 37
         actions.styles.max_width = 37

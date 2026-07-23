@@ -1,7 +1,9 @@
 from types import SimpleNamespace
 
 from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
-from tldw_chatbook.Notifications.notification_dispatch_service import NotificationDispatchService
+from tldw_chatbook.Notifications.notification_dispatch_service import (
+    NotificationDispatchService,
+)
 from tldw_chatbook.Study_Interop.local_quiz_service import LocalQuizService
 
 
@@ -11,7 +13,12 @@ class FakeDB:
 
     def list_quizzes(self, *, q=None, limit=100, offset=0):
         self.calls.append(("list_quizzes", q, limit, offset))
-        return {"items": [{"id": "quiz-local-1", "name": "Renal Review", "total_questions": 1}], "count": 1}
+        return {
+            "items": [
+                {"id": "quiz-local-1", "name": "Renal Review", "total_questions": 1}
+            ],
+            "count": 1,
+        }
 
     def count_quizzes(self):
         self.calls.append(("count_quizzes",))
@@ -23,10 +30,19 @@ class FakeDB:
 
     def get_quiz(self, quiz_id):
         self.calls.append(("get_quiz", quiz_id))
-        return {"id": quiz_id, "name": "Renal Review", "description": "Kidney basics", "total_questions": 1}
+        return {
+            "id": quiz_id,
+            "name": "Renal Review",
+            "description": "Kidney basics",
+            "total_questions": 1,
+        }
 
-    def list_questions(self, quiz_id, *, q=None, include_answers=False, limit=100, offset=0):
-        self.calls.append(("list_questions", quiz_id, q, include_answers, limit, offset))
+    def list_questions(
+        self, quiz_id, *, q=None, include_answers=False, limit=100, offset=0
+    ):
+        self.calls.append(
+            ("list_questions", quiz_id, q, include_answers, limit, offset)
+        )
         return {
             "items": [
                 {
@@ -51,7 +67,9 @@ class FakeDB:
         return True
 
     def delete_question(self, question_id, *, expected_version=None, hard_delete=False):
-        self.calls.append(("delete_question", question_id, expected_version, hard_delete))
+        self.calls.append(
+            ("delete_question", question_id, expected_version, hard_delete)
+        )
         return True
 
     def get_question(self, question_id):
@@ -99,7 +117,14 @@ class FakeDB:
             "score": 2,
             "total_possible": 2,
             "time_spent_seconds": 2,
-            "answers": [{"question_id": "question-local-1", "user_answer": "Paris", "is_correct": True, "points_awarded": 2}],
+            "answers": [
+                {
+                    "question_id": "question-local-1",
+                    "user_answer": "Paris",
+                    "is_correct": True,
+                    "points_awarded": 2,
+                }
+            ],
         }
 
     def list_attempts(self, *, quiz_id=None, limit=100, offset=0):
@@ -120,8 +145,12 @@ class FakeDB:
             "count": 1,
         }
 
-    def get_attempt(self, attempt_id, *, include_questions=False, include_answers=False):
-        self.calls.append(("get_attempt", attempt_id, include_questions, include_answers))
+    def get_attempt(
+        self, attempt_id, *, include_questions=False, include_answers=False
+    ):
+        self.calls.append(
+            ("get_attempt", attempt_id, include_questions, include_answers)
+        )
         return {
             "id": attempt_id,
             "quiz_id": "quiz-local-1",
@@ -140,13 +169,27 @@ def test_local_quiz_service_lists_and_creates_quizzes():
     service = LocalQuizService(db=db)
 
     listed = service.list_quizzes(q="renal", limit=5, offset=1)
-    created = service.create_quiz(name="Renal Review", description="Kidney basics", time_limit_seconds=300, passing_score=70)
+    created = service.create_quiz(
+        name="Renal Review",
+        description="Kidney basics",
+        time_limit_seconds=300,
+        passing_score=70,
+    )
 
     assert listed["items"][0]["name"] == "Renal Review"
     assert created["id"] == "quiz-local-1"
     assert db.calls == [
         ("list_quizzes", "renal", 5, 1),
-        ("create_quiz", {"name": "Renal Review", "description": "Kidney basics", "workspace_id": None, "time_limit_seconds": 300, "passing_score": 70}),
+        (
+            "create_quiz",
+            {
+                "name": "Renal Review",
+                "description": "Kidney basics",
+                "workspace_id": None,
+                "time_limit_seconds": 300,
+                "passing_score": 70,
+            },
+        ),
         ("get_quiz", "quiz-local-1"),
     ]
 
@@ -165,7 +208,9 @@ def test_local_quiz_service_normalizes_blank_question_search_to_list_query():
     db = FakeDB()
     service = LocalQuizService(db=db)
 
-    listed = service.list_questions("quiz-local-1", q="   ", include_answers=False, limit=7, offset=3)
+    listed = service.list_questions(
+        "quiz-local-1", q="   ", include_answers=False, limit=7, offset=3
+    )
 
     assert listed["items"][0]["quiz_id"] == "quiz-local-1"
     assert db.calls == [("list_questions", "quiz-local-1", None, False, 7, 3)]
@@ -186,10 +231,18 @@ def test_local_quiz_service_creates_questions_and_records_attempts():
     started = service.start_attempt("quiz-local-1")
     submitted = service.submit_attempt(
         "attempt-local-1",
-        answers=[{"question_id": "question-local-1", "user_answer": "Paris", "time_spent_ms": 1200}],
+        answers=[
+            {
+                "question_id": "question-local-1",
+                "user_answer": "Paris",
+                "time_spent_ms": 1200,
+            }
+        ],
     )
     attempts = service.list_attempts(quiz_id="quiz-local-1", limit=5, offset=1)
-    loaded = service.get_attempt("attempt-local-1", include_questions=True, include_answers=True)
+    loaded = service.get_attempt(
+        "attempt-local-1", include_questions=True, include_answers=True
+    )
 
     assert created_question["id"] == "question-local-1"
     assert started["id"] == "attempt-local-1"
@@ -223,7 +276,9 @@ def test_local_quiz_service_dispatches_quiz_lifecycle_notifications(tmp_path):
     rows = notifications_db.list_notifications(limit=10, category="study")
     actions = {row["payload"]["action"] for row in rows}
     assert submitted["score"] == 2
-    assert {"quiz_created", "quiz_question_created", "quiz_attempt_completed"}.issubset(actions)
+    assert {"quiz_created", "quiz_question_created", "quiz_attempt_completed"}.issubset(
+        actions
+    )
     assert all(row["source_backend"] == "local" for row in rows)
 
 

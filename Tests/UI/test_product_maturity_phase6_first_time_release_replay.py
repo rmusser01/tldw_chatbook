@@ -23,8 +23,12 @@ EVIDENCE = Path(
 )
 QA_README = Path("Docs/superpowers/qa/product-maturity/phase-6/README.md")
 TRACKER = Path("Docs/superpowers/trackers/product-maturity-roadmap.md")
-TASK = Path("backlog/tasks/task-13.2 - Phase-6.2-Full-first-time-user-release-replay.md")
-TOP_LEVEL_DESTINATION_IDS = tuple(destination.destination_id for destination in SHELL_DESTINATION_ORDER)
+TASK = Path(
+    "backlog/tasks/task-13.2 - Phase-6.2-Full-first-time-user-release-replay.md"
+)
+TOP_LEVEL_DESTINATION_IDS = tuple(
+    destination.destination_id for destination in SHELL_DESTINATION_ORDER
+)
 LOCAL_PATH_PREFIXES = (
     "/Users/",
     "/home/",
@@ -41,7 +45,9 @@ def _text(path: Path) -> str:
 
 def _assert_no_local_path_prefixes(text: str) -> None:
     leaked_prefixes = [prefix for prefix in LOCAL_PATH_PREFIXES if prefix in text]
-    assert not leaked_prefixes, f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
+    assert not leaked_prefixes, (
+        f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
+    )
 
 
 def _screen_text(app) -> str:
@@ -130,13 +136,18 @@ async def test_release_first_time_replay_exposes_home_console_library_and_setup(
                 pilot,
                 # Nav strip + docked hint mount a tick after the screen swap;
                 # wait for the full chrome before asserting/clicking.
-                lambda: app.current_tab == "home"
-                and app.screen.__class__.__name__ == "HomeScreen"
-                and len(app.screen.query(".nav-button")) == len(TOP_LEVEL_DESTINATION_IDS)
-                and len(app.screen.query("#nav-overflow-hint")) == 1,
+                lambda: (
+                    app.current_tab == "home"
+                    and app.screen.__class__.__name__ == "HomeScreen"
+                    and len(app.screen.query(".nav-button"))
+                    == len(TOP_LEVEL_DESTINATION_IDS)
+                    and len(app.screen.query("#nav-overflow-hint")) == 1
+                ),
             )
 
-            nav_buttons = list(app.screen.query(MainNavigationBar).first().query(Button))
+            nav_buttons = list(
+                app.screen.query(MainNavigationBar).first().query(Button)
+            )
             nav = [(button.id, str(button.label).strip()) for button in nav_buttons]
             for expected_nav in (
                 ("nav-home", "1 Home"),
@@ -179,7 +190,8 @@ async def test_release_first_time_replay_exposes_home_console_library_and_setup(
                 await _wait_until(
                     pilot,
                     lambda current_tab=current_tab, screen_name=screen_name: (
-                        app.current_tab == current_tab and app.screen.__class__.__name__ == screen_name
+                        app.current_tab == current_tab
+                        and app.screen.__class__.__name__ == screen_name
                     ),
                 )
                 # Some destinations (Settings categories) populate a beat
@@ -193,4 +205,3 @@ async def test_release_first_time_replay_exposes_home_console_library_and_setup(
                 screen_text = _screen_text(app)
                 for copy in required_copy:
                     assert copy in screen_text
-

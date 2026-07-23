@@ -32,13 +32,19 @@ def _reject(message: str) -> None:
 
 def _require_non_empty_string(value: Any, *, field_name: str, index: int) -> str:
     if not isinstance(value, str) or not value.strip():
-        _reject(f"Unsupported capability report item {index} has invalid {field_name!r}.")
+        _reject(
+            f"Unsupported capability report item {index} has invalid {field_name!r}."
+        )
     return value
 
 
-def _normalize_affected_action_ids(value: Any, *, index: int, registry: Mapping[str, Any]) -> list[str]:
+def _normalize_affected_action_ids(
+    value: Any, *, index: int, registry: Mapping[str, Any]
+) -> list[str]:
     if isinstance(value, (str, bytes)) or not isinstance(value, Iterable):
-        _reject(f"Unsupported capability report item {index} has invalid 'affected_action_ids'.")
+        _reject(
+            f"Unsupported capability report item {index} has invalid 'affected_action_ids'."
+        )
 
     action_ids: list[str] = []
     for action_index, action_id in enumerate(value):
@@ -84,14 +90,26 @@ def validate_unsupported_capability_report(
                 f"{sorted(missing_keys)}"
             )
 
-        operation_id = _require_non_empty_string(item["operation_id"], field_name="operation_id", index=index)
-        source = _require_non_empty_string(item["source"], field_name="source", index=index)
+        operation_id = _require_non_empty_string(
+            item["operation_id"], field_name="operation_id", index=index
+        )
+        source = _require_non_empty_string(
+            item["source"], field_name="source", index=index
+        )
         if source not in _ALLOWED_SOURCES:
-            _reject(f"Unsupported capability report item {index} has unsupported source: {source}")
+            _reject(
+                f"Unsupported capability report item {index} has unsupported source: {source}"
+            )
         if item["supported"] is not False:
-            _reject(f"Unsupported capability report item {index} must set supported=False.")
-        _require_non_empty_string(item["reason_code"], field_name="reason_code", index=index)
-        _require_non_empty_string(item["user_message"], field_name="user_message", index=index)
+            _reject(
+                f"Unsupported capability report item {index} must set supported=False."
+            )
+        _require_non_empty_string(
+            item["reason_code"], field_name="reason_code", index=index
+        )
+        _require_non_empty_string(
+            item["user_message"], field_name="user_message", index=index
+        )
 
         normalized_item = deepcopy(dict(item))
         normalized_item["operation_id"] = operation_id
@@ -119,7 +137,9 @@ def collect_unsupported_capability_reports(
     collected: list[dict[str, Any]] = []
     for report_scope, report in reports_by_scope.items():
         if not isinstance(report_scope, str) or not report_scope.strip():
-            _reject("Unsupported capability report collection contains an invalid scope label.")
+            _reject(
+                "Unsupported capability report collection contains an invalid scope label."
+            )
         for item in validate_unsupported_capability_report(report, registry=registry):
             record = dict(item)
             record["report_scope"] = report_scope

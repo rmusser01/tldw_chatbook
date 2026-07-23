@@ -29,7 +29,10 @@ from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter, ImportSt
 from tldw_chatbook.Chatbooks.chatbook_models import ContentType
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
-from tldw_chatbook.Library.library_export_scope import ExportScope, resolve_export_selections
+from tldw_chatbook.Library.library_export_scope import (
+    ExportScope,
+    resolve_export_selections,
+)
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 # Pinned transcript text -- the round-trip assertion below checks this
@@ -72,7 +75,9 @@ def _seed_source_dbs(tmp_path: Path) -> dict:
     chachanotes_db.add_message(
         {"conversation_id": conv_id, "sender": "user", "content": "Hello there"}
     )
-    note_id = chachanotes_db.add_note(title="Roundtrip Note", content="Roundtrip note content")
+    note_id = chachanotes_db.add_note(
+        title="Roundtrip Note", content="Roundtrip note content"
+    )
 
     media_id, _msg, _status = media_db.add_media_with_keywords(
         url="https://example.com/roundtrip-media",
@@ -102,7 +107,9 @@ def test_library_export_roundtrip_everything_scope_through_real_service_and_impo
     seeded = _seed_source_dbs(tmp_path)
 
     scope = ExportScope(kind="everything")
-    selections = resolve_export_selections(scope, seeded["media_db"], seeded["chachanotes_db"])
+    selections = resolve_export_selections(
+        scope, seeded["media_db"], seeded["chachanotes_db"]
+    )
     assert ContentType.MEDIA in selections
     assert ContentType.CONVERSATION in selections
     assert ContentType.NOTE in selections
@@ -182,7 +189,9 @@ def test_library_export_roundtrip_everything_scope_through_real_service_and_impo
         "Media": str(import_dir / "Client_Media_DB.db"),
         "Prompts": str(import_dir / "Prompts_DB.db"),
     }
-    import_chachanotes_db = CharactersRAGDB(import_db_paths["ChaChaNotes"], "f4-roundtrip-import")
+    import_chachanotes_db = CharactersRAGDB(
+        import_db_paths["ChaChaNotes"], "f4-roundtrip-import"
+    )
     import_media_db = MediaDatabase(import_db_paths["Media"], "f4-roundtrip-import")
 
     importer = ChatbookImporter(import_db_paths)
@@ -203,7 +212,9 @@ def test_library_export_roundtrip_everything_scope_through_real_service_and_impo
     imported_chars = import_chachanotes_db.list_character_cards()
     assert any(char["name"] == "Roundtrip Assistant" for char in imported_chars)
 
-    imported_media = import_media_db.get_media_by_url("https://example.com/roundtrip-media")
+    imported_media = import_media_db.get_media_by_url(
+        "https://example.com/roundtrip-media"
+    )
     assert imported_media is not None
     assert imported_media["content"] == _MEDIA_TRANSCRIPT
     # The media type must survive the export -> import round-trip too.
@@ -220,7 +231,9 @@ def test_library_export_roundtrip_conversations_only_scope_excludes_media_and_no
     seeded = _seed_source_dbs(tmp_path)
 
     scope = ExportScope(kind="conversations")
-    selections = resolve_export_selections(scope, seeded["media_db"], seeded["chachanotes_db"])
+    selections = resolve_export_selections(
+        scope, seeded["media_db"], seeded["chachanotes_db"]
+    )
     assert ContentType.CONVERSATION in selections
     assert ContentType.MEDIA not in selections
     assert ContentType.NOTE not in selections
@@ -234,7 +247,9 @@ def test_library_export_roundtrip_conversations_only_scope_excludes_media_and_no
     )
     assert payload["include_media"] is False
 
-    service = LocalChatbookService(seeded["db_paths"], registry_path=tmp_path / "chatbooks.json")
+    service = LocalChatbookService(
+        seeded["db_paths"], registry_path=tmp_path / "chatbooks.json"
+    )
     outcome = LibraryScreen._run_library_export_via_service(
         service, payload, name="Conversations Only", description=""
     )
@@ -268,7 +283,9 @@ def test_library_export_roundtrip_unwritable_destination_fails_with_no_registry_
     destination_dir.mkdir()  # A directory, already suffixed .zip.
 
     scope = ExportScope(kind="notes")
-    selections = resolve_export_selections(scope, seeded["media_db"], seeded["chachanotes_db"])
+    selections = resolve_export_selections(
+        scope, seeded["media_db"], seeded["chachanotes_db"]
+    )
     payload = LibraryScreen._build_library_export_payload(
         name="Should Fail",
         description="",

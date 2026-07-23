@@ -53,7 +53,9 @@ class NotificationPresentationStore:
         self._records: dict[str, NotificationPresentationState] = {}
 
     def get(self, event_key: str) -> NotificationPresentationState:
-        return self._records.get(event_key) or NotificationPresentationState(event_key=event_key)
+        return self._records.get(event_key) or NotificationPresentationState(
+            event_key=event_key
+        )
 
     def _save(
         self,
@@ -73,8 +75,11 @@ class NotificationPresentationStore:
             local_delivery_state=local_delivery_state or current.local_delivery_state,
             server_read_state=server_read_state or current.server_read_state,
             server_dismiss_state=server_dismiss_state or current.server_dismiss_state,
-            server_reminder_state=server_reminder_state or current.server_reminder_state,
-            presented_at=presented_at if presented_at is not None else current.presented_at,
+            server_reminder_state=server_reminder_state
+            or current.server_reminder_state,
+            presented_at=presented_at
+            if presented_at is not None
+            else current.presented_at,
             delivery_error=None
             if clear_delivery_error
             else delivery_error

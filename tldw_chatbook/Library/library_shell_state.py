@@ -264,11 +264,7 @@ def build_library_shell_state(
                 else ""
             ),
             count_emphasis=(
-                (
-                    "bright"
-                    if state.flashcards_due_count > 0
-                    else "dim"
-                )
+                ("bright" if state.flashcards_due_count > 0 else "dim")
                 if state.flashcards_due_count is not None
                 else ""
             ),
@@ -317,7 +313,9 @@ def build_library_shell_state(
     sections = (
         LibraryRailSectionState(section_id="browse", title="Browse", rows=browse_rows),
         LibraryRailSectionState(section_id="create", title="Create", rows=create_rows),
-        LibraryRailSectionState(section_id="ingest", title="Import / Export", rows=ingest_rows),
+        LibraryRailSectionState(
+            section_id="ingest", title="Import / Export", rows=ingest_rows
+        ),
     )
 
     # Build header line

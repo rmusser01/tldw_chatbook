@@ -16,7 +16,9 @@ class FakeClient:
         self.workspace_calls = []
         self.graph_calls = []
 
-    async def search_server_notes(self, *, query=None, limit=10, offset=0, include_keywords=True):
+    async def search_server_notes(
+        self, *, query=None, limit=10, offset=0, include_keywords=True
+    ):
         self.search_calls.append(
             {
                 "query": query,
@@ -186,7 +188,9 @@ async def test_service_prefers_direct_client_over_provider():
     direct_client = FakeClient()
     provider_client = FakeClient()
     provider = FakeClientProvider(provider_client)
-    service = ServerNotesWorkspaceService(client=direct_client, client_provider=provider)
+    service = ServerNotesWorkspaceService(
+        client=direct_client, client_provider=provider
+    )
 
     await service.search_server_notes(query="remote")
 
@@ -243,7 +247,9 @@ async def test_service_from_config_uses_shared_provider_lazily(monkeypatch):
         build_client,
     )
 
-    service = ServerNotesWorkspaceService.from_config({"tldw_api": {"base_url": "https://example.com"}})
+    service = ServerNotesWorkspaceService.from_config(
+        {"tldw_api": {"base_url": "https://example.com"}}
+    )
 
     assert isinstance(service, ServerNotesWorkspaceService)
     assert service.client is None
@@ -254,7 +260,9 @@ async def test_service_from_config_uses_shared_provider_lazily(monkeypatch):
 
     assert result["items"][0]["title"] == "Remote"
     assert service.client is None
-    build_client.assert_called_once_with({"tldw_api": {"base_url": "https://example.com"}})
+    build_client.assert_called_once_with(
+        {"tldw_api": {"base_url": "https://example.com"}}
+    )
 
 
 @pytest.mark.asyncio
@@ -525,8 +533,12 @@ async def test_service_delegates_notes_graph_operations_to_server_client():
     client = FakeClient()
     service = ServerNotesWorkspaceService(client=client)
 
-    graph = await service.get_notes_graph(center_note_id="note:123", edge_types=["manual"])
-    neighbors = await service.get_note_neighbors("note:123", edge_types=["manual", "backlink"])
+    graph = await service.get_notes_graph(
+        center_note_id="note:123", edge_types=["manual"]
+    )
+    neighbors = await service.get_note_neighbors(
+        "note:123", edge_types=["manual", "backlink"]
+    )
     created = await service.create_note_link(
         "note:123",
         to_note_id="note:456",
@@ -541,7 +553,11 @@ async def test_service_delegates_notes_graph_operations_to_server_client():
     assert created["status"] == "created"
     assert deleted["deleted"] is True
     assert client.graph_calls[0][0] == "graph"
-    assert client.graph_calls[1] == ("neighbors", "note:123", {"edge_types": ["manual", "backlink"]})
+    assert client.graph_calls[1] == (
+        "neighbors",
+        "note:123",
+        {"edge_types": ["manual", "backlink"]},
+    )
     assert client.graph_calls[2][0:2] == ("create_link", "note:123")
     assert client.graph_calls[3] == ("delete_link", "e:1")
 

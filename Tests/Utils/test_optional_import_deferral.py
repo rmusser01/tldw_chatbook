@@ -42,6 +42,7 @@ This file has two kinds of coverage:
     actually used, plus one graceful-absence (simulated missing dependency)
     case.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -68,7 +69,9 @@ DEFERRED_MODULES = (
 )
 
 
-def _run_isolated_python(tmp_path: Path, code: str) -> "subprocess.CompletedProcess[str]":
+def _run_isolated_python(
+    tmp_path: Path, code: str
+) -> "subprocess.CompletedProcess[str]":
     """Run a Python snippet in a fresh interpreter with isolated config/data
     dirs -- NEVER the real `~/.config/tldw_cli`.
 
@@ -143,7 +146,9 @@ def test_app_import_does_not_load_any_deferred_module(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("module_name", DEFERRED_MODULES)
-def test_app_import_does_not_load_module_individually(tmp_path: Path, module_name: str) -> None:
+def test_app_import_does_not_load_module_individually(
+    tmp_path: Path, module_name: str
+) -> None:
     """Per-module variant of the guard above, so a regression in any single
     chain produces an obviously-scoped failure message.
 
@@ -195,7 +200,9 @@ def test_tools_dunder_all_names_all_resolve() -> None:
             getattr(Tools, name)
         except Exception as exc:  # pragma: no cover - failure path
             failed.append((name, repr(exc)))
-    assert not failed, f"{len(failed)} of {len(Tools.__all__)} names failed to resolve: {failed}"
+    assert not failed, (
+        f"{len(failed)} of {len(Tools.__all__)} names failed to resolve: {failed}"
+    )
 
 
 def test_tools_unknown_attribute_raises_attribute_error() -> None:
@@ -206,7 +213,9 @@ def test_tools_unknown_attribute_raises_attribute_error() -> None:
         getattr(Tools, "NoSuchToolNameXYZ")
 
 
-def test_scrape_article_degrades_gracefully_when_playwright_import_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_scrape_article_degrades_gracefully_when_playwright_import_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Graceful-absence case: simulate a broken/partial playwright install
     (module directory present so `find_spec` succeeds, but the real import
     raises) via `builtins.__import__`, matching the existing
@@ -243,7 +252,9 @@ def test_scrape_article_degrades_gracefully_when_playwright_import_fails(monkeyp
 # --- 4. Functional smoke: PDF/document processors (dispatch-time import) ----
 
 
-def test_parse_local_file_for_ingest_processes_plaintext_without_optional_deps(tmp_path: Path) -> None:
+def test_parse_local_file_for_ingest_processes_plaintext_without_optional_deps(
+    tmp_path: Path,
+) -> None:
     """The plaintext dispatch branch needs none of the five deferred
     per-format processors (process_pdf/process_document/process_ebook/
     LocalAudioProcessor/LocalVideoProcessor) -- it must work standalone.
@@ -258,7 +269,9 @@ def test_parse_local_file_for_ingest_processes_plaintext_without_optional_deps(t
     Args:
         tmp_path: pytest fixture; holds the small .txt fixture file.
     """
-    from tldw_chatbook.Local_Ingestion.local_file_ingestion import parse_local_file_for_ingest
+    from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
+        parse_local_file_for_ingest,
+    )
 
     source = tmp_path / "note.txt"
     source.write_text("Deferred-import smoke test content.", encoding="utf-8")
@@ -268,7 +281,9 @@ def test_parse_local_file_for_ingest_processes_plaintext_without_optional_deps(t
     assert payload["content"] == "Deferred-import smoke test content."
 
 
-def test_parse_local_file_for_ingest_pdf_branch_still_resolves_process_pdf(tmp_path: Path) -> None:
+def test_parse_local_file_for_ingest_pdf_branch_still_resolves_process_pdf(
+    tmp_path: Path,
+) -> None:
     """The pdf dispatch branch must still resolve and call the real
     `process_pdf` via `_ensure_process_pdf()` when a `.pdf` file is routed
     to it -- proving the deferral didn't break the wiring, without needing
@@ -282,7 +297,9 @@ def test_parse_local_file_for_ingest_pdf_branch_still_resolves_process_pdf(tmp_p
     import tldw_chatbook.Local_Ingestion.local_file_ingestion as lfi
 
     source = tmp_path / "doc.pdf"
-    source.write_bytes(b"%PDF-1.4 stub bytes, never actually parsed (process_pdf is mocked).")
+    source.write_bytes(
+        b"%PDF-1.4 stub bytes, never actually parsed (process_pdf is mocked)."
+    )
 
     calls = []
 
@@ -308,7 +325,9 @@ def test_parse_local_file_for_ingest_pdf_branch_still_resolves_process_pdf(tmp_p
     original = lfi.process_pdf
     lfi.process_pdf = _fake_process_pdf
     try:
-        payload = lfi.parse_local_file_for_ingest(str(source), {"perform_analysis": False})
+        payload = lfi.parse_local_file_for_ingest(
+            str(source), {"perform_analysis": False}
+        )
     finally:
         lfi.process_pdf = original
 

@@ -9,7 +9,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from .research_normalizers import ResearchRecord, ResearchRecordList, normalize_research_record
+from .research_normalizers import (
+    ResearchRecord,
+    ResearchRecordList,
+    normalize_research_record,
+)
 
 
 class LocalResearchService:
@@ -29,7 +33,9 @@ class LocalResearchService:
         except TypeError:
             self.db = db_path
             self.db_path = None
-        self.notification_dispatcher = notification_dispatcher or notification_dispatch_service
+        self.notification_dispatcher = (
+            notification_dispatcher or notification_dispatch_service
+        )
         self.notification_app = notification_app
         if self.db_path is not None:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -67,7 +73,9 @@ class LocalResearchService:
         return ResearchRecord(payload)
 
     @staticmethod
-    def _as_local_artifact(record: dict[str, Any], *, run_id: str | None = None) -> ResearchRecord:
+    def _as_local_artifact(
+        record: dict[str, Any], *, run_id: str | None = None
+    ) -> ResearchRecord:
         payload = dict(record)
         if run_id is not None:
             payload.setdefault("run_id", run_id)
@@ -79,7 +87,9 @@ class LocalResearchService:
         )
         return ResearchRecord(payload)
 
-    def _dispatch_external_run_notification(self, run: dict[str, Any], *, event: str) -> None:
+    def _dispatch_external_run_notification(
+        self, run: dict[str, Any], *, event: str
+    ) -> None:
         dispatcher = self.notification_dispatcher
         dispatch = getattr(dispatcher, "dispatch", None)
         if not callable(dispatch):
@@ -94,7 +104,12 @@ class LocalResearchService:
             app=self.notification_app,
             category="research",
             title=f"Local research session {event}",
-            message=str(run.get("query") or run.get("progress_message") or run.get("id") or "Research session updated"),
+            message=str(
+                run.get("query")
+                or run.get("progress_message")
+                or run.get("id")
+                or "Research session updated"
+            ),
             severity=severity,
             source_backend="local",
             source_entity_kind="research_run",
@@ -109,7 +124,9 @@ class LocalResearchService:
 
     @staticmethod
     def _check_version(row: dict[str, Any], expected_version: int | None) -> None:
-        if expected_version is not None and int(row["version"]) != int(expected_version):
+        if expected_version is not None and int(row["version"]) != int(
+            expected_version
+        ):
             raise ValueError("version conflict")
 
     @staticmethod
@@ -196,7 +213,13 @@ class LocalResearchService:
             raise ValueError(f"{label} not found")
         return row
 
-    def _record_event(self, conn: sqlite3.Connection, run_id: str, event: str, data: dict[str, Any] | None = None) -> None:
+    def _record_event(
+        self,
+        conn: sqlite3.Connection,
+        run_id: str,
+        event: str,
+        data: dict[str, Any] | None = None,
+    ) -> None:
         conn.execute(
             """
             INSERT INTO research_run_events (run_id, event, data_json, created_at)
@@ -229,7 +252,9 @@ class LocalResearchService:
             )
         return self._require_one(table, item_id, label)
 
-    def _soft_delete(self, table: str, item_id: str, label: str, expected_version: int | None) -> bool:
+    def _soft_delete(
+        self, table: str, item_id: str, label: str, expected_version: int | None
+    ) -> bool:
         row = self._require_one(table, item_id, label)
         self._check_version(row, expected_version)
         with self._connect() as conn:
@@ -252,7 +277,9 @@ class LocalResearchService:
             ("chat_handoff_json", "chat_handoff"),
             ("follow_up_json", "follow_up"),
         ):
-            payload[target_key] = LocalResearchService._load_json(payload.pop(source_key, None))
+            payload[target_key] = LocalResearchService._load_json(
+                payload.pop(source_key, None)
+            )
         return normalize_research_record("local", "run", payload)
 
     @staticmethod
@@ -276,7 +303,9 @@ class LocalResearchService:
             "created_at": row["created_at"],
         }
 
-    def create_session(self, *, title: str, query: str, notes: str | None = None, **kwargs: Any) -> dict[str, Any]:
+    def create_session(
+        self, *, title: str, query: str, notes: str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         session_id = kwargs.get("id") or self._new_id()
         now = self._now()
         with self._connect() as conn:
@@ -296,9 +325,13 @@ class LocalResearchService:
                     now,
                 ),
             )
-        return self._normalize_session(self._require_one("research_sessions", session_id, "research session"))
+        return self._normalize_session(
+            self._require_one("research_sessions", session_id, "research session")
+        )
 
-    def list_sessions(self, *, limit: int = 100, offset: int = 0, status: str | None = None) -> list[dict[str, Any]]:
+    def list_sessions(
+        self, *, limit: int = 100, offset: int = 0, status: str | None = None
+    ) -> list[dict[str, Any]]:
         sql = "SELECT * FROM research_sessions WHERE deleted = 0"
         params: list[Any] = []
         if status:
@@ -321,7 +354,11 @@ class LocalResearchService:
         expected_version: int | None = None,
         **fields: Any,
     ) -> dict[str, Any]:
-        allowed = {key: value for key, value in fields.items() if key in {"title", "query", "status", "notes"}}
+        allowed = {
+            key: value
+            for key, value in fields.items()
+            if key in {"title", "query", "status", "notes"}
+        }
         row = self._update_row(
             table="research_sessions",
             item_id=session_id,
@@ -331,8 +368,12 @@ class LocalResearchService:
         )
         return self._normalize_session(row)
 
-    def delete_session(self, session_id: str, *, expected_version: int | None = None) -> bool:
-        return self._soft_delete("research_sessions", session_id, "research session", expected_version)
+    def delete_session(
+        self, session_id: str, *, expected_version: int | None = None
+    ) -> bool:
+        return self._soft_delete(
+            "research_sessions", session_id, "research session", expected_version
+        )
 
     def create_run(
         self,
@@ -390,7 +431,11 @@ class LocalResearchService:
         follow_up: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        session = self._require_one("research_sessions", session_id, "research session") if session_id else None
+        session = (
+            self._require_one("research_sessions", session_id, "research session")
+            if session_id
+            else None
+        )
         run_query = query or (session["query"] if session else None)
         if not run_query:
             raise ValueError("query is required")
@@ -426,7 +471,9 @@ class LocalResearchService:
                 ),
             )
             self._record_event(conn, run_id, "created")
-        return self._normalize_run(self._require_one("research_runs", run_id, "research run"))
+        return self._normalize_run(
+            self._require_one("research_runs", run_id, "research run")
+        )
 
     def list_runs(
         self,
@@ -469,7 +516,9 @@ class LocalResearchService:
     def delete_run(self, run_id: str, *, expected_version: int | None = None) -> bool:
         if self._uses_external_db:
             current = self.db.get_run(run_id)
-            if expected_version is not None and int(current.get("version", 1)) != int(expected_version):
+            if expected_version is not None and int(current.get("version", 1)) != int(
+                expected_version
+            ):
                 raise ValueError("version conflict")
             with self.db.transaction() as conn:
                 conn.execute(
@@ -477,9 +526,13 @@ class LocalResearchService:
                     (self._now(), run_id),
                 )
             return True
-        return self._soft_delete("research_runs", run_id, "research run", expected_version)
+        return self._soft_delete(
+            "research_runs", run_id, "research run", expected_version
+        )
 
-    def _update_run_state(self, run_id: str, event: str, **fields: Any) -> dict[str, Any]:
+    def _update_run_state(
+        self, run_id: str, event: str, **fields: Any
+    ) -> dict[str, Any]:
         row = self._require_one("research_runs", run_id, "research run")
         updates = dict(fields)
         updates["updated_at"] = self._now()
@@ -491,30 +544,42 @@ class LocalResearchService:
                 (*updates.values(), run_id),
             )
             self._record_event(conn, run_id, event)
-        updated = self._normalize_run(self._require_one("research_runs", run_id, "research run"))
+        updated = self._normalize_run(
+            self._require_one("research_runs", run_id, "research run")
+        )
         self._dispatch_terminal_run_notification(updated)
         return updated
 
     def pause_run(self, run_id: str) -> dict[str, Any]:
         if self._uses_external_db:
-            return self._as_local_run(self.db.update_run_state(run_id, control_state="paused"))
+            return self._as_local_run(
+                self.db.update_run_state(run_id, control_state="paused")
+            )
         return self._update_run_state(run_id, "paused", control_state="paused")
 
     def resume_run(self, run_id: str) -> dict[str, Any]:
         if self._uses_external_db:
-            return self._as_local_run(self.db.update_run_state(run_id, control_state="running"))
+            return self._as_local_run(
+                self.db.update_run_state(run_id, control_state="running")
+            )
         return self._update_run_state(run_id, "resumed", control_state="running")
 
     def cancel_run(self, run_id: str) -> dict[str, Any]:
         if self._uses_external_db:
             record = self._as_local_run(
-                self.db.update_run_state(run_id, status="cancelled", control_state="cancelled")
+                self.db.update_run_state(
+                    run_id, status="cancelled", control_state="cancelled"
+                )
             )
             self._dispatch_external_run_notification(record, event="cancelled")
             return record
-        return self._update_run_state(run_id, "cancelled", status="cancelled", control_state="cancelled")
+        return self._update_run_state(
+            run_id, "cancelled", status="cancelled", control_state="cancelled"
+        )
 
-    def complete_run(self, run_id: str, *, progress_message: str | None = None) -> dict[str, Any]:
+    def complete_run(
+        self, run_id: str, *, progress_message: str | None = None
+    ) -> dict[str, Any]:
         if self._uses_external_db:
             record = self._as_local_run(
                 self.db.update_run_state(
@@ -577,7 +642,12 @@ class LocalResearchService:
             app=self.notification_app,
             category="research",
             title=f"Research run {status}",
-            message=str(run.get("query") or run.get("progress_message") or run.get("id") or "Research run updated"),
+            message=str(
+                run.get("query")
+                or run.get("progress_message")
+                or run.get("id")
+                or "Research run updated"
+            ),
             severity=severity,
             source_backend="local",
             source_entity_kind="research_run",
@@ -611,7 +681,9 @@ class LocalResearchService:
             )
         self._require_one("research_runs", run_id, "research run")
         content_text = content if isinstance(content, str) else None
-        content_json = None if isinstance(content, str) else json.dumps(content, sort_keys=True)
+        content_json = (
+            None if isinstance(content, str) else json.dumps(content, sort_keys=True)
+        )
         now = self._now()
         with self._connect() as conn:
             conn.execute(
@@ -627,13 +699,17 @@ class LocalResearchService:
                 """,
                 (run_id, artifact_name, content_type, content_json, content_text, now),
             )
-            self._record_event(conn, run_id, "artifact_saved", {"artifact_name": artifact_name})
+            self._record_event(
+                conn, run_id, "artifact_saved", {"artifact_name": artifact_name}
+            )
         return self.get_artifact(run_id, artifact_name)
 
     def get_artifact(self, run_id: str, artifact_name: str) -> dict[str, Any] | None:
         if self._uses_external_db:
             try:
-                return self._as_local_artifact(self.db.get_artifact(run_id, artifact_name), run_id=run_id)
+                return self._as_local_artifact(
+                    self.db.get_artifact(run_id, artifact_name), run_id=run_id
+                )
             except KeyError:
                 return None
         self._require_one("research_runs", run_id, "research run")
@@ -655,7 +731,9 @@ class LocalResearchService:
                     {
                         "run_id": run_id,
                         "artifact_name": name,
-                        "content_type": "application/json" if not isinstance(content, str) else "text/plain",
+                        "content_type": "application/json"
+                        if not isinstance(content, str)
+                        else "text/plain",
                         "content": content,
                     },
                     run_id=run_id,
@@ -682,9 +760,13 @@ class LocalResearchService:
             raise ValueError("research run not found")
         return {"run": run, "artifacts": self.list_artifacts(run_id)}
 
-    def list_run_events(self, run_id: str, *, after_id: int = 0) -> Iterable[dict[str, Any]]:
+    def list_run_events(
+        self, run_id: str, *, after_id: int = 0
+    ) -> Iterable[dict[str, Any]]:
         if self._uses_external_db:
-            return self._awaitable_list(self._external_run_events(run_id, after_id=after_id))
+            return self._awaitable_list(
+                self._external_run_events(run_id, after_id=after_id)
+            )
         self._require_one("research_runs", run_id, "research run")
         with self._connect() as conn:
             rows = conn.execute(
@@ -697,7 +779,9 @@ class LocalResearchService:
             ).fetchall()
         return [self._normalize_event(dict(row)) for row in rows]
 
-    def _external_run_events(self, run_id: str, *, after_id: int = 0) -> list[ResearchRecord]:
+    def _external_run_events(
+        self, run_id: str, *, after_id: int = 0
+    ) -> list[ResearchRecord]:
         run = self._as_local_run(self.db.get_run(run_id))
         events: list[ResearchRecord] = [
             ResearchRecord(

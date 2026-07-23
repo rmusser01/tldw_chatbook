@@ -12,11 +12,23 @@ class FakeResearchService:
 
     async def create_session(self, **kwargs):
         self.calls.append(("create_session", kwargs))
-        return {"id": f"{self.source}-session-1", "title": kwargs["title"], "query": kwargs["query"], "version": 1}
+        return {
+            "id": f"{self.source}-session-1",
+            "title": kwargs["title"],
+            "query": kwargs["query"],
+            "version": 1,
+        }
 
     async def list_sessions(self, *, limit=100, offset=0, status=None):
         self.calls.append(("list_sessions", limit, offset, status))
-        return [{"id": f"{self.source}-session-1", "title": "Research", "query": "MCP", "version": 1}]
+        return [
+            {
+                "id": f"{self.source}-session-1",
+                "title": "Research",
+                "query": "MCP",
+                "version": 1,
+            }
+        ]
 
     async def get_session(self, session_id):
         self.calls.append(("get_session", session_id))
@@ -24,7 +36,12 @@ class FakeResearchService:
 
     async def update_session(self, session_id, *, expected_version=None, **kwargs):
         self.calls.append(("update_session", session_id, expected_version, kwargs))
-        return {"id": session_id, "title": kwargs["title"], "query": "MCP", "version": 2}
+        return {
+            "id": session_id,
+            "title": kwargs["title"],
+            "query": "MCP",
+            "version": 2,
+        }
 
     async def delete_session(self, session_id, *, expected_version=None):
         self.calls.append(("delete_session", session_id, expected_version))
@@ -32,7 +49,12 @@ class FakeResearchService:
 
     async def launch_run(self, **kwargs):
         self.calls.append(("launch_run", kwargs))
-        return {"id": f"{self.source}-run-1", "query": kwargs["query"], "status": "running", "version": 1}
+        return {
+            "id": f"{self.source}-run-1",
+            "query": kwargs["query"],
+            "status": "running",
+            "version": 1,
+        }
 
     async def get_run(self, run_id):
         self.calls.append(("get_run", run_id))
@@ -40,7 +62,14 @@ class FakeResearchService:
 
     async def list_runs(self, *, limit=100, offset=0, session_id=None, status=None):
         self.calls.append(("list_runs", limit, offset, session_id, status))
-        return [{"id": f"{self.source}-run-1", "query": "MCP", "status": "running", "version": 1}]
+        return [
+            {
+                "id": f"{self.source}-run-1",
+                "query": "MCP",
+                "status": "running",
+                "version": 1,
+            }
+        ]
 
     async def pause_run(self, run_id):
         self.calls.append(("pause_run", run_id))
@@ -58,12 +87,22 @@ class FakeResearchService:
         self.calls.append(("get_bundle", run_id))
         return {
             "run": {"id": run_id, "query": "MCP", "status": "completed"},
-            "artifacts": [{"run_id": run_id, "artifact_name": "summary", "content_type": "text/markdown"}],
+            "artifacts": [
+                {
+                    "run_id": run_id,
+                    "artifact_name": "summary",
+                    "content_type": "text/markdown",
+                }
+            ],
         }
 
     async def get_artifact(self, run_id, artifact_name):
         self.calls.append(("get_artifact", run_id, artifact_name))
-        return {"run_id": run_id, "artifact_name": artifact_name, "content_type": "text/markdown"}
+        return {
+            "run_id": run_id,
+            "artifact_name": artifact_name,
+            "content_type": "text/markdown",
+        }
 
 
 class LimitOnlyServerResearchService:
@@ -72,7 +111,9 @@ class LimitOnlyServerResearchService:
 
     async def list_runs(self, *, limit=100):
         self.calls.append(("list_runs", limit))
-        return [{"id": "server-run-1", "query": "MCP", "status": "running", "version": 1}]
+        return [
+            {"id": "server-run-1", "query": "MCP", "status": "running", "version": 1}
+        ]
 
 
 class FakePolicyEnforcer:
@@ -106,17 +147,35 @@ class FakeSyncScopeService:
     ("method_name", "kwargs", "action_id"),
     [
         ("list_sessions", {}, "research.sessions.list.server"),
-        ("create_session", {"title": "Research", "query": "MCP"}, "research.sessions.create.server"),
-        ("get_session", {"session_id": "server-session-1"}, "research.sessions.detail.server"),
+        (
+            "create_session",
+            {"title": "Research", "query": "MCP"},
+            "research.sessions.create.server",
+        ),
+        (
+            "get_session",
+            {"session_id": "server-session-1"},
+            "research.sessions.detail.server",
+        ),
         (
             "update_session",
-            {"session_id": "server-session-1", "title": "Updated", "expected_version": 1},
+            {
+                "session_id": "server-session-1",
+                "title": "Updated",
+                "expected_version": 1,
+            },
             "research.sessions.update.server",
         ),
-        ("delete_session", {"session_id": "server-session-1", "expected_version": 1}, "research.sessions.delete.server"),
+        (
+            "delete_session",
+            {"session_id": "server-session-1", "expected_version": 1},
+            "research.sessions.delete.server",
+        ),
     ],
 )
-async def test_research_scope_service_blocks_server_session_crud_as_unsupported(method_name, kwargs, action_id):
+async def test_research_scope_service_blocks_server_session_crud_as_unsupported(
+    method_name, kwargs, action_id
+):
     server = object()
     policy = FakePolicyEnforcer()
     scope = ResearchScopeService(
@@ -125,7 +184,9 @@ async def test_research_scope_service_blocks_server_session_crud_as_unsupported(
         policy_enforcer=policy,
     )
 
-    with pytest.raises(NotImplementedError, match="does not expose separate research session CRUD"):
+    with pytest.raises(
+        NotImplementedError, match="does not expose separate research session CRUD"
+    ):
         await getattr(scope, method_name)(mode="server", **kwargs)
 
     assert policy.calls == [action_id]
@@ -141,7 +202,9 @@ async def test_research_scope_service_rejects_unsupported_server_run_list_filter
         policy_enforcer=policy,
     )
 
-    with pytest.raises(NotImplementedError, match="does not support filtered research run lists"):
+    with pytest.raises(
+        NotImplementedError, match="does not support filtered research run lists"
+    ):
         await scope.list_runs(mode="server", status="completed")
 
     assert server.calls == []
@@ -203,7 +266,9 @@ async def test_research_scope_service_routes_server_filtered_runs_and_delete_whe
         status="running",
         offset=5,
     )
-    deleted = await scope.delete_run(mode="server", run_id="server-run-1", expected_version=1)
+    deleted = await scope.delete_run(
+        mode="server", run_id="server-run-1", expected_version=1
+    )
 
     assert runs[0]["record_id"] == "server:research_run:server-run-1"
     assert deleted is True
@@ -220,9 +285,13 @@ async def test_research_scope_service_routes_sessions_runs_and_policy_actions():
     local = FakeResearchService("local")
     server = FakeResearchService("server")
     policy = FakePolicyEnforcer()
-    scope = ResearchScopeService(local_service=local, server_service=server, policy_enforcer=policy)
+    scope = ResearchScopeService(
+        local_service=local, server_service=server, policy_enforcer=policy
+    )
 
-    local_session = await scope.create_session(mode="local", title="Research", query="MCP")
+    local_session = await scope.create_session(
+        mode="local", title="Research", query="MCP"
+    )
     local_sessions = await scope.list_sessions(mode="local")
     server_run = await scope.launch_run(mode="server", query="MCP")
     server_run_detail = await scope.get_run(mode="server", run_id=server_run["id"])
@@ -262,12 +331,22 @@ async def test_research_scope_service_denies_blocked_actions_before_dispatch():
 async def test_research_scope_service_routes_update_and_delete_actions():
     local = FakeResearchService("local")
     policy = FakePolicyEnforcer()
-    scope = ResearchScopeService(local_service=local, server_service=FakeResearchService("server"), policy_enforcer=policy)
+    scope = ResearchScopeService(
+        local_service=local,
+        server_service=FakeResearchService("server"),
+        policy_enforcer=policy,
+    )
 
-    session = await scope.update_session(mode="local", session_id="local-session-1", title="Updated", expected_version=1)
-    deleted_session = await scope.delete_session(mode="local", session_id="local-session-1", expected_version=2)
+    session = await scope.update_session(
+        mode="local", session_id="local-session-1", title="Updated", expected_version=1
+    )
+    deleted_session = await scope.delete_session(
+        mode="local", session_id="local-session-1", expected_version=2
+    )
     runs = await scope.list_runs(mode="local", session_id="local-session-1")
-    deleted_run = await scope.delete_run(mode="local", run_id="local-run-1", expected_version=1)
+    deleted_run = await scope.delete_run(
+        mode="local", run_id="local-run-1", expected_version=1
+    )
 
     assert session["version"] == 2
     assert deleted_session is True
@@ -284,9 +363,13 @@ async def test_research_scope_service_routes_update_and_delete_actions():
 @pytest.mark.asyncio
 async def test_research_scope_service_can_launch_local_run_from_session_query(tmp_path):
     local = LocalResearchService(tmp_path / "research.db")
-    scope = ResearchScopeService(local_service=local, server_service=FakeResearchService("server"))
+    scope = ResearchScopeService(
+        local_service=local, server_service=FakeResearchService("server")
+    )
 
-    session = await scope.create_session(mode="local", title="Research", query="Inherited query")
+    session = await scope.create_session(
+        mode="local", title="Research", query="Inherited query"
+    )
     run = await scope.launch_run(mode="local", session_id=session["id"])
 
     assert run["query"] == "Inherited query"
@@ -305,12 +388,17 @@ async def test_research_scope_service_normalizes_bundle_artifact_and_event_recor
 
     events = await scope.observe_run_events(mode="server", run_id="server-run-1")
     bundle = await scope.get_bundle(mode="server", run_id="server-run-1")
-    artifact = await scope.get_artifact(mode="server", run_id="server-run-1", artifact_name="summary")
+    artifact = await scope.get_artifact(
+        mode="server", run_id="server-run-1", artifact_name="summary"
+    )
 
     assert events[0]["record_id"] == "server:research_run_event:server-run-1:1"
     assert bundle["backend"] == "server"
     assert bundle["run"]["record_id"] == "server:research_run:server-run-1"
-    assert bundle["artifacts"][0]["record_id"] == "server:research_artifact:server-run-1:summary"
+    assert (
+        bundle["artifacts"][0]["record_id"]
+        == "server:research_artifact:server-run-1:summary"
+    )
     assert artifact["record_id"] == "server:research_artifact:server-run-1:summary"
     assert policy.calls == [
         "research.runs.observe.server",
@@ -364,7 +452,7 @@ def test_research_scope_service_reports_known_unsupported_server_capabilities():
             "reason_code": "server_contract_missing",
             "user_message": "The current server API does not support research run deletion.",
             "affected_action_ids": ["research.runs.delete.server"],
-        }
+        },
     ]
 
     capable_scope = ResearchScopeService(

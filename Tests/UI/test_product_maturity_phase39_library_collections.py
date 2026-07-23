@@ -83,7 +83,9 @@ class FakeLibraryCollectionsService:
 
     def delete_collection(self, collection_id):
         before = len(self.records)
-        self.records = [record for record in self.records if record.collection_id != collection_id]
+        self.records = [
+            record for record in self.records if record.collection_id != collection_id
+        ]
         self.deleted.append(collection_id)
         return len(self.records) != before
 
@@ -168,11 +170,15 @@ async def _wait_for_text(screen, pilot, expected: str, *, timeout: float = 2.0) 
             await pilot.pause()
             return
         await pilot.pause(0.01)
-    raise AssertionError(f"Timed out waiting for text {expected!r}: {_visible_text(screen)}")
+    raise AssertionError(
+        f"Timed out waiting for text {expected!r}: {_visible_text(screen)}"
+    )
 
 
 @pytest.mark.asyncio
-async def test_library_collections_mode_mounts_panel_and_defers_scoped_actions() -> None:
+async def test_library_collections_mode_mounts_panel_and_defers_scoped_actions() -> (
+    None
+):
     app = _build_test_app()
     _seed_library_sources(app)
     app.library_collections_service = FakeLibraryCollectionsService(
@@ -198,9 +204,9 @@ async def test_library_collections_mode_mounts_panel_and_defers_scoped_actions()
         screen.query_one("#library-row-browse-collections", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-panel")
 
-        assert screen.query_one("#library-collections-panel").parent is screen.query_one(
-            "#library-canvas"
-        )
+        assert screen.query_one(
+            "#library-collections-panel"
+        ).parent is screen.query_one("#library-canvas")
         assert len(screen.query("#library-rag-run-query")) == 0
         assert "Sync: sync-unavailable" in _visible_text(screen)
         assert "Updated 2026-05-08 04:05 UTC" in _visible_text(screen)
@@ -210,16 +216,20 @@ async def test_library_collections_mode_mounts_panel_and_defers_scoped_actions()
         # screen-global actions rather than collection-scoped ones); the
         # collections panel's own deferred-actions copy is the surviving
         # surface for "collection item actions stay blocked".
-        assert "Blocked later: item reader, Search/RAG, Study, Console handoff, server sync" in (
-            _visible_text(screen)
+        assert (
+            "Blocked later: item reader, Search/RAG, Study, Console handoff, server sync"
+            in (_visible_text(screen))
         )
-        assert "Next: collection item adapters are required before item-level actions unlock." in (
-            _visible_text(screen)
+        assert (
+            "Next: collection item adapters are required before item-level actions unlock."
+            in (_visible_text(screen))
         )
 
 
 @pytest.mark.asyncio
-async def test_library_collections_surfaces_sync_dry_run_report_without_write_sync(tmp_path) -> None:
+async def test_library_collections_surfaces_sync_dry_run_report_without_write_sync(
+    tmp_path,
+) -> None:
     app = _build_test_app()
     _activate_server_sync_scope(app)
     _seed_library_sources(app)
@@ -284,12 +294,17 @@ async def test_library_collections_surfaces_sync_dry_run_report_without_write_sy
         )
         assert "Selected: Research" in detail_text
         assert "Write Sync Safety" in detail_text
-        assert "Review these labels before any future server write promotion." in detail_text
+        assert (
+            "Review these labels before any future server write promotion."
+            in detail_text
+        )
         assert "No Collection selected." not in detail_text
 
 
 @pytest.mark.asyncio
-async def test_library_collections_surfaces_sync_profile_summary_without_write_sync() -> None:
+async def test_library_collections_surfaces_sync_profile_summary_without_write_sync() -> (
+    None
+):
     app = _build_test_app()
     _seed_library_sources(app)
     app.runtime_policy = SimpleNamespace(
@@ -358,7 +373,9 @@ async def test_library_collections_surfaces_sync_profile_summary_without_write_s
 
 
 @pytest.mark.asyncio
-async def test_library_collections_does_not_load_sync_profile_summary_in_local_mode() -> None:
+async def test_library_collections_does_not_load_sync_profile_summary_in_local_mode() -> (
+    None
+):
     app = _build_test_app()
     _seed_library_sources(app)
     app.runtime_policy = SimpleNamespace(
@@ -400,7 +417,9 @@ async def test_library_collections_does_not_load_sync_profile_summary_in_local_m
 
 
 @pytest.mark.asyncio
-async def test_library_collections_validates_sync_profile_scope_before_summary_load() -> None:
+async def test_library_collections_validates_sync_profile_scope_before_summary_load() -> (
+    None
+):
     app = _build_test_app()
     _seed_library_sources(app)
     app.runtime_policy = SimpleNamespace(
@@ -442,7 +461,9 @@ async def test_library_collections_validates_sync_profile_scope_before_summary_l
 
 
 @pytest.mark.asyncio
-async def test_library_collections_scopes_sync_conflicts_to_selected_collection(tmp_path) -> None:
+async def test_library_collections_scopes_sync_conflicts_to_selected_collection(
+    tmp_path,
+) -> None:
     app = _build_test_app()
     _activate_server_sync_scope(app)
     _seed_library_sources(app)
@@ -528,7 +549,9 @@ async def test_library_collections_scopes_sync_conflicts_to_selected_collection(
 
 
 @pytest.mark.asyncio
-async def test_library_collections_ignores_sync_state_from_other_scope(tmp_path) -> None:
+async def test_library_collections_ignores_sync_state_from_other_scope(
+    tmp_path,
+) -> None:
     app = _build_test_app()
     _activate_server_sync_scope(app)
     _seed_library_sources(app)
@@ -595,10 +618,15 @@ async def test_library_collections_create_rename_and_delete_workflow() -> None:
 
         screen.query_one("#library-row-browse-collections", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-panel")
-        assert "Create a local Collection record to start reviewing saved content." in _visible_text(screen)
+        assert (
+            "Create a local Collection record to start reviewing saved content."
+            in _visible_text(screen)
+        )
 
         screen.query_one("#library-collection-name-input", Input).value = "Research"
-        screen.query_one("#library-collection-description-input", Input).value = "Policy sources"
+        screen.query_one(
+            "#library-collection-description-input", Input
+        ).value = "Policy sources"
         await pilot.pause()
         screen.query_one("#library-create-collection", Button).press()
         await _wait_for_text(screen, pilot, "Research")
@@ -608,8 +636,12 @@ async def test_library_collections_create_rename_and_delete_workflow() -> None:
         assert "Sync: dry-run only" in _visible_text(screen)
         assert "Updated 2026-05-08 04:01 UTC" in _visible_text(screen)
 
-        screen.query_one("#library-collection-name-input", Input).value = "Briefing Queue"
-        screen.query_one("#library-collection-description-input", Input).value = "Updated"
+        screen.query_one(
+            "#library-collection-name-input", Input
+        ).value = "Briefing Queue"
+        screen.query_one(
+            "#library-collection-description-input", Input
+        ).value = "Updated"
         await pilot.pause()
         screen.query_one("#library-rename-collection", Button).press()
         await _wait_for_text(screen, pilot, "Briefing Queue")
@@ -657,7 +689,9 @@ async def test_library_collection_form_input_keeps_focus_and_updates_actions() -
 
 
 @pytest.mark.asyncio
-async def test_library_collections_delete_failure_keeps_selection_and_warns_user() -> None:
+async def test_library_collections_delete_failure_keeps_selection_and_warns_user() -> (
+    None
+):
     app = _build_test_app()
     _seed_library_sources(app)
     service = DeleteFailsLibraryCollectionsService(

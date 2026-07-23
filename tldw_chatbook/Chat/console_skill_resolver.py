@@ -115,7 +115,9 @@ def resolve_skill_command(
             return SkillResolution(kind="resolved", name=candidate.name)
 
     prefix_matches = tuple(
-        candidate.name for candidate in candidates if candidate.name.lower().startswith(word_lower)
+        candidate.name
+        for candidate in candidates
+        if candidate.name.lower().startswith(word_lower)
     )
     if len(prefix_matches) == 1:
         return SkillResolution(kind="resolved", name=prefix_matches[0])
@@ -189,7 +191,9 @@ def make_skill_fallback_resolver(
         candidates = candidates_getter()
         resolution = resolve_skill_command(word, rest, candidates)
         if resolution.kind in ("resolved", "ambiguous"):
-            return CommandParse(kind=KIND_FALLBACK, name=word, args=cap_skill_args(rest))
+            return CommandParse(
+                kind=KIND_FALLBACK, name=word, args=cap_skill_args(rest)
+            )
         return None
 
     return resolver

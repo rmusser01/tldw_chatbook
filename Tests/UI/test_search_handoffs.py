@@ -316,10 +316,14 @@ def test_library_rag_console_payload_target_prefix_matches_source_authority():
 
     assert local_payload["source_authority"] == "local"
     assert local_payload["target_id"].startswith("local:library-rag:")
-    assert local_payload["target_id"].startswith(f"{local_payload['source_authority']}:")
+    assert local_payload["target_id"].startswith(
+        f"{local_payload['source_authority']}:"
+    )
     assert server_payload["source_authority"] == "server"
     assert server_payload["target_id"].startswith("server:library-rag:")
-    assert server_payload["target_id"].startswith(f"{server_payload['source_authority']}:")
+    assert server_payload["target_id"].startswith(
+        f"{server_payload['source_authority']}:"
+    )
 
 
 def test_library_rag_console_payload_helper_documents_contract():
@@ -354,7 +358,9 @@ def test_search_rag_window_use_in_chat_unavailable_explains_recovery(tmp_path):
 
 def test_search_rag_window_use_in_chat_policy_block_explains_recovery(tmp_path):
     app = _search_app(runtime_backend="server")
-    app.runtime_policy = SimpleNamespace(state=RuntimeSourceState(active_source="local"))
+    app.runtime_policy = SimpleNamespace(
+        state=RuntimeSourceState(active_source="local")
+    )
     app.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
     with patch(
         "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
@@ -405,7 +411,11 @@ async def test_search_rag_window_web_search_runs_bing_call_in_thread(tmp_path):
                 }
             ],
         ),
-        patch.object(search_rag_window.asyncio, "to_thread", AsyncMock(return_value={"raw": "bing"})) as to_thread,
+        patch.object(
+            search_rag_window.asyncio,
+            "to_thread",
+            AsyncMock(return_value={"raw": "bing"}),
+        ) as to_thread,
     ):
         results = await window._perform_web_search("agent handoff")
 

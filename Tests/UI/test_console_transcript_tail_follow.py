@@ -11,7 +11,10 @@ even from a scrolled-up position.
 import pytest
 from textual.app import App, ComposeResult
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 
@@ -29,7 +32,9 @@ class TailFollowHarness(App):
         yield ConsoleTranscript(id="console-native-transcript")
 
 
-def _msg(i: int, role: ConsoleMessageRole = ConsoleMessageRole.ASSISTANT) -> ConsoleChatMessage:
+def _msg(
+    i: int, role: ConsoleMessageRole = ConsoleMessageRole.ASSISTANT
+) -> ConsoleChatMessage:
     return ConsoleChatMessage(
         role=role,
         content="\n".join(f"line {i}.{j}" for j in range(4)),
@@ -103,6 +108,10 @@ async def test_new_user_message_reanchors_from_scrolled_up_position():
         await pilot.pause()
 
         history = history + [_msg(13, ConsoleMessageRole.USER)]
+        # TASK-336: the screen stamps a follow intent at every send/resume/
+        # switch site; a user scroll AFTER the intent wins instead of being
+        # yanked. Mirror the production choreography here.
+        transcript.note_follow_intent()
         transcript.set_messages(history)
         await transcript.refresh_messages()
         await pilot.pause()
@@ -137,6 +146,7 @@ async def test_send_with_assistant_placeholder_still_reanchors():
             _msg(13, ConsoleMessageRole.USER),
             _msg(14, ConsoleMessageRole.ASSISTANT),
         ]
+        transcript.note_follow_intent()
         transcript.set_messages(history)
         await transcript.refresh_messages()
         await pilot.pause()

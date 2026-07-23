@@ -3,6 +3,7 @@
 (nothing dispatched the file_operations worker group). These assert that a
 successful import invokes the success callback and a catastrophic worker
 failure invokes the failure callback and re-raises."""
+
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -19,8 +20,10 @@ class BoomList:
     """Truthy (passes the trigger's `if not …` guard) but raises on iteration,
     so `import_worker_char` fails at the loop -- the only way to exercise the
     catastrophic-failure path, since the worker swallows per-file errors."""
+
     def __bool__(self):
         return True
+
     def __iter__(self):
         raise RuntimeError("boom")
 
@@ -47,9 +50,11 @@ def _make_mock_app(*, selected) -> Mock:
     app.query_one = Mock(side_effect=query_one_side_effect)
 
     captured = {}
+
     def run_worker_side_effect(worker_callable, **kwargs):
         captured["callable"] = worker_callable
         return Mock()
+
     app.run_worker = Mock(side_effect=run_worker_side_effect)
     app._captured_worker = captured
     app._status_area = status_area
@@ -61,11 +66,19 @@ async def test_successful_character_import_invokes_success_callback():
     """A successful character import dispatches on_import_success_char, which
     writes the results summary and sets the chat filter-populated flag."""
     app = _make_mock_app(selected=[Path("c.png")])
-    with patch("tldw_chatbook.Event_Handlers.character_ingest_events.ccl.import_and_save_character_from_file",
-               return_value=123), \
-         patch("tldw_chatbook.Event_Handlers.character_ingest_events.ccl.load_character_card_from_file",
-               return_value={"name": "TestChar"}):
-        await handle_ingest_characters_import_now_button_pressed(app, Button.Pressed(Mock(spec=Button)))
+    with (
+        patch(
+            "tldw_chatbook.Event_Handlers.character_ingest_events.ccl.import_and_save_character_from_file",
+            return_value=123,
+        ),
+        patch(
+            "tldw_chatbook.Event_Handlers.character_ingest_events.ccl.load_character_card_from_file",
+            return_value={"name": "TestChar"},
+        ),
+    ):
+        await handle_ingest_characters_import_now_button_pressed(
+            app, Button.Pressed(Mock(spec=Button))
+        )
         await app._captured_worker["callable"]()
 
     # success callback writes the summary (the LAST load_text call) and sets the flag
@@ -78,7 +91,9 @@ async def test_failed_character_import_invokes_failure_callback_and_reraises():
     """A catastrophic character import failure dispatches on_import_failure_char
     (an error-severity toast) and re-raises so Textual records the worker error."""
     app = _make_mock_app(selected=BoomList())
-    await handle_ingest_characters_import_now_button_pressed(app, Button.Pressed(Mock(spec=Button)))
+    await handle_ingest_characters_import_now_button_pressed(
+        app, Button.Pressed(Mock(spec=Button))
+    )
     with pytest.raises(RuntimeError):
         await app._captured_worker["callable"]()
 

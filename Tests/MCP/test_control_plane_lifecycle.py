@@ -6,12 +6,19 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.MCP.local_store import LocalMCPStore
-from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+from tldw_chatbook.MCP.unified_control_plane_service import (
+    UnifiedMCPControlPlaneService,
+)
 
 
 class FakeLocalService:
-    def __init__(self, store: LocalMCPStore, *, connect_delay: float = 0.0,
-                 connect_error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        store: LocalMCPStore,
+        *,
+        connect_delay: float = 0.0,
+        connect_error: Exception | None = None,
+    ) -> None:
         self.store = store
         self.connect_delay = connect_delay
         self.connect_error = connect_error
@@ -19,8 +26,14 @@ class FakeLocalService:
 
     def get_external_servers(self):
         return [
-            {"profile_id": "docs", "command": "python", "args": [],
-             "env_placeholders": {}, "discovery_snapshot": None, "is_connected": False}
+            {
+                "profile_id": "docs",
+                "command": "python",
+                "args": [],
+                "env_placeholders": {},
+                "discovery_snapshot": None,
+                "is_connected": False,
+            }
         ]
 
     async def run_action(self, name, payload):  # matches control-plane delegation
@@ -40,7 +53,12 @@ class FakeLocalService:
             await asyncio.sleep(self.connect_delay)
         if self.connect_error:
             raise self.connect_error
-        return {"server_id": profile_id, "tools": [{"name": "a"}], "resources": [], "prompts": []}
+        return {
+            "server_id": profile_id,
+            "tools": [{"name": "a"}],
+            "resources": [],
+            "prompts": [],
+        }
 
     async def disconnect_profile(self, profile_id):
         self.calls.append(("disconnect", profile_id))
@@ -48,14 +66,22 @@ class FakeLocalService:
 
     async def test_external_profile(self, profile_id):
         self.calls.append(("test", profile_id))
-        return {"ok": True, "profile_id": profile_id, "tools": 1, "resources": 0, "prompts": 0}
+        return {
+            "ok": True,
+            "profile_id": profile_id,
+            "tools": 1,
+            "resources": 0,
+            "prompts": 0,
+        }
 
     async def refresh_external_profile(self, profile_id):
         self.calls.append(("refresh", profile_id))
         return {"server_id": profile_id, "tools": [], "resources": [], "prompts": []}
 
 
-def _service(tmp_path: Path, **fake_kwargs) -> tuple[UnifiedMCPControlPlaneService, FakeLocalService, LocalMCPStore]:
+def _service(
+    tmp_path: Path, **fake_kwargs
+) -> tuple[UnifiedMCPControlPlaneService, FakeLocalService, LocalMCPStore]:
     store = LocalMCPStore(tmp_path / "store.json")
     fake = FakeLocalService(store, **fake_kwargs)
     service = UnifiedMCPControlPlaneService(
@@ -76,7 +102,9 @@ async def test_connect_success_records_ok(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_connect_failure_records_error_and_reraises(tmp_path):
-    service, fake, store = _service(tmp_path, connect_error=RuntimeError("spawn failed"))
+    service, fake, store = _service(
+        tmp_path, connect_error=RuntimeError("spawn failed")
+    )
     with pytest.raises(RuntimeError, match="spawn failed"):
         await service.connect_local_profile("docs")
     record = store.get_profile_runtime_state("docs")
@@ -119,7 +147,9 @@ class _RaisingStore(LocalMCPStore):
         raise OSError("disk full")
 
 
-def _service_with_raising_store(tmp_path: Path, **fake_kwargs) -> tuple[UnifiedMCPControlPlaneService, FakeLocalService, LocalMCPStore]:
+def _service_with_raising_store(
+    tmp_path: Path, **fake_kwargs
+) -> tuple[UnifiedMCPControlPlaneService, FakeLocalService, LocalMCPStore]:
     store = _RaisingStore(tmp_path / "store.json")
     fake = FakeLocalService(store, **fake_kwargs)
     service = UnifiedMCPControlPlaneService(
@@ -139,6 +169,7 @@ async def test_record_failure_does_not_mask_success_result(tmp_path):
 @pytest.mark.asyncio
 async def test_record_failure_does_not_mask_original_error(tmp_path):
     service, fake, store = _service_with_raising_store(
-        tmp_path, connect_error=RuntimeError("spawn failed"))
+        tmp_path, connect_error=RuntimeError("spawn failed")
+    )
     with pytest.raises(RuntimeError, match="spawn failed"):
         await service.connect_local_profile("docs")

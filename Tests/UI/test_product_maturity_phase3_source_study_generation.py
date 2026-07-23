@@ -36,7 +36,9 @@ PHASE_3_README = Path("Docs/superpowers/qa/product-maturity/phase-3/README.md")
 PHASE_3_4_EVIDENCE = Path(
     "Docs/superpowers/qa/product-maturity/phase-3/2026-05-07-phase-3-4-source-study-generation.md"
 )
-TASK_10 = Path("backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md")
+TASK_10 = Path(
+    "backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md"
+)
 TASK_10_4 = Path(
     "backlog/tasks/task-10.4 - Product-Maturity-Phase-3.4-Source-Selected-Study-Generation.md"
 )
@@ -89,7 +91,9 @@ async def _wait_for_source_generation_call(
         if any(call[0] == "create_study_pack_job" for call in service.calls):
             return
         await pilot.pause(0.01)
-    raise AssertionError(f"Timed out waiting for study pack generation call: {service.calls}")
+    raise AssertionError(
+        f"Timed out waiting for study pack generation call: {service.calls}"
+    )
 
 
 async def _wait_for_service_call(
@@ -168,8 +172,12 @@ async def test_server_study_dashboard_launches_source_selected_study_pack_job() 
         material_summary="Local Library source snapshot staged for Study.",
         material_titles=("Research Note", "Transcript A"),
         source_items=(
-            StudySourceItem(source_type="note", source_id="note-1", label="Research Note"),
-            StudySourceItem(source_type="media", source_id="media-1", label="Transcript A"),
+            StudySourceItem(
+                source_type="note", source_id="note-1", label="Research Note"
+            ),
+            StudySourceItem(
+                source_type="media", source_id="media-1", label="Transcript A"
+            ),
         ),
     )
     app = StudyDashboardTestApp(app_instance)
@@ -195,15 +203,29 @@ async def test_server_study_dashboard_launches_source_selected_study_pack_job() 
         "Local Library Sources",
         None,
         [
-            {"source_type": "note", "source_id": "note-1", "label": "Research Note", "locator": {}},
-            {"source_type": "media", "source_id": "media-1", "label": "Transcript A", "locator": {}},
+            {
+                "source_type": "note",
+                "source_id": "note-1",
+                "label": "Research Note",
+                "locator": {},
+            },
+            {
+                "source_type": "media",
+                "source_id": "media-1",
+                "label": "Transcript A",
+                "locator": {},
+            },
         ],
     ) in service.calls
-    app_instance.notify.assert_called_with("Study pack generation queued.", severity="information")
+    app_instance.notify.assert_called_with(
+        "Study pack generation queued.", severity="information"
+    )
 
 
 @pytest.mark.asyncio
-async def test_server_study_dashboard_observes_completed_source_pack_for_reuse() -> None:
+async def test_server_study_dashboard_observes_completed_source_pack_for_reuse() -> (
+    None
+):
     service = RecordingSourceStudyService()
     service.study_pack_job_statuses = [
         {
@@ -228,7 +250,11 @@ async def test_server_study_dashboard_observes_completed_source_pack_for_reuse()
         material_source=MATERIAL_SOURCE_LIBRARY,
         material_title=MATERIAL_TITLE_LIBRARY_SOURCES,
         material_titles=("Research Note",),
-        source_items=(StudySourceItem(source_type="note", source_id="note-1", label="Research Note"),),
+        source_items=(
+            StudySourceItem(
+                source_type="note", source_id="note-1", label="Research Note"
+            ),
+        ),
     )
     app = StudyDashboardTestApp(app_instance)
 
@@ -258,7 +284,9 @@ async def test_server_study_dashboard_observes_completed_source_pack_for_reuse()
 
 
 @pytest.mark.asyncio
-async def test_server_study_dashboard_keeps_failed_source_pack_generation_recoverable() -> None:
+async def test_server_study_dashboard_keeps_failed_source_pack_generation_recoverable() -> (
+    None
+):
     service = RecordingSourceStudyService()
     service.study_pack_job_statuses = [
         {
@@ -275,7 +303,11 @@ async def test_server_study_dashboard_keeps_failed_source_pack_generation_recove
         material_source=MATERIAL_SOURCE_LIBRARY,
         material_title=MATERIAL_TITLE_LIBRARY_SOURCES,
         material_titles=("Research Note",),
-        source_items=(StudySourceItem(source_type="note", source_id="note-1", label="Research Note"),),
+        source_items=(
+            StudySourceItem(
+                source_type="note", source_id="note-1", label="Research Note"
+            ),
+        ),
     )
     app = StudyDashboardTestApp(app_instance)
 
@@ -300,14 +332,18 @@ async def test_server_study_dashboard_keeps_failed_source_pack_generation_recove
         for call in app_instance.notify.call_args_list
         if call.kwargs.get("severity") == "error"
     ]
-    assert any("Embedding service unavailable" in message for message in error_notifications)
+    assert any(
+        "Embedding service unavailable" in message for message in error_notifications
+    )
     assert all("<b>" not in message for message in error_notifications)
     assert all("javascript:" not in message for message in error_notifications)
     assert all("onerror=" not in message for message in error_notifications)
 
 
 @pytest.mark.asyncio
-async def test_local_study_dashboard_explains_source_generation_server_requirement() -> None:
+async def test_local_study_dashboard_explains_source_generation_server_requirement() -> (
+    None
+):
     service = RecordingSourceStudyService()
     app_instance = _build_app_instance()
     app_instance.study_scope_service = service
@@ -316,7 +352,11 @@ async def test_local_study_dashboard_explains_source_generation_server_requireme
         material_title=MATERIAL_TITLE_LIBRARY_SOURCES,
         material_summary="Local Library source snapshot staged for Study.",
         material_titles=("Research Note",),
-        source_items=(StudySourceItem(source_type="note", source_id="note-1", label="Research Note"),),
+        source_items=(
+            StudySourceItem(
+                source_type="note", source_id="note-1", label="Research Note"
+            ),
+        ),
     )
     app = StudyDashboardTestApp(app_instance)
 
@@ -330,5 +370,3 @@ async def test_local_study_dashboard_explains_source_generation_server_requireme
         assert "server mode" in _static_text(status).lower()
 
     assert not any(call[0] == "create_study_pack_job" for call in service.calls)
-
-

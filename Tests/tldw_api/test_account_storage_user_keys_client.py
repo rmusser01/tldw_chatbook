@@ -64,7 +64,9 @@ def _file_payload(file_id: int = 7) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_account_security_routes_wire_password_magic_mfa_api_keys_and_quota(monkeypatch):
+async def test_account_security_routes_wire_password_magic_mfa_api_keys_and_quota(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
@@ -72,13 +74,32 @@ async def test_account_security_routes_wire_password_magic_mfa_api_keys_and_quot
             {"message": "If the email exists, a reset link has been sent"},
             {"message": "Password has been reset successfully"},
             {"message": "Email verified successfully"},
-            {"message": "If the account exists and needs verification, an email has been sent"},
+            {
+                "message": "If the account exists and needs verification, an email has been sent"
+            },
             {"message": "If the account exists, a sign-in link has been sent"},
-            {"access_token": "access-1", "refresh_token": "refresh-1", "token_type": "bearer", "expires_in": 1800},
-            {"secret": "totp-secret", "qr_code": "data:image/png;base64,abc", "backup_codes": ["code-1"]},
-            {"message": "MFA has been enabled successfully", "backup_codes": ["code-1"]},
+            {
+                "access_token": "access-1",
+                "refresh_token": "refresh-1",
+                "token_type": "bearer",
+                "expires_in": 1800,
+            },
+            {
+                "secret": "totp-secret",
+                "qr_code": "data:image/png;base64,abc",
+                "backup_codes": ["code-1"],
+            },
+            {
+                "message": "MFA has been enabled successfully",
+                "backup_codes": ["code-1"],
+            },
             {"message": "MFA has been disabled"},
-            {"access_token": "access-2", "refresh_token": "refresh-2", "token_type": "bearer", "expires_in": 1800},
+            {
+                "access_token": "access-2",
+                "refresh_token": "refresh-2",
+                "token_type": "bearer",
+                "expires_in": 1800,
+            },
             [
                 {
                     "id": 5,
@@ -133,10 +154,16 @@ async def test_account_security_routes_wire_password_magic_mfa_api_keys_and_quot
     monkeypatch.setattr(client, "_request", mocked)
 
     changed = await client.change_password(
-        PasswordChangeRequest(current_password="OldPass123!", new_password="NewPass456!")
+        PasswordChangeRequest(
+            current_password="OldPass123!", new_password="NewPass456!"
+        )
     )
-    forgot = await client.request_password_reset(PasswordResetRequest(email="ada@example.com"))
-    reset = await client.reset_password(PasswordResetConfirm(token="reset-token", new_password="NewPass456!"))
+    forgot = await client.request_password_reset(
+        PasswordResetRequest(email="ada@example.com")
+    )
+    reset = await client.reset_password(
+        PasswordResetConfirm(token="reset-token", new_password="NewPass456!")
+    )
     verified = await client.verify_email("verify-token")
     resent = await client.resend_verification("ada@example.com")
     magic_requested = await client.request_magic_link("ada@example.com")
@@ -144,30 +171,51 @@ async def test_account_security_routes_wire_password_magic_mfa_api_keys_and_quot
     mfa_setup = await client.setup_mfa()
     mfa_verified = await client.verify_mfa_setup("123456")
     mfa_disabled = await client.disable_mfa("NewPass456!")
-    mfa_token = await client.complete_mfa_login(session_token="mfa-session", mfa_token="654321")
+    mfa_token = await client.complete_mfa_login(
+        session_token="mfa-session", mfa_token="654321"
+    )
     keys = await client.list_user_api_keys()
     created_key = await client.create_user_api_key(
         APIKeyCreateRequest(name="desktop", scope=["read"], expires_in_days=30)
     )
-    virtual_key = await client.create_virtual_api_key(name="temporary", allowed_paths=["/api/v1/notes/*"])
-    rotated_key = await client.rotate_user_api_key(6, APIKeyRotateRequest(expires_in_days=90))
+    virtual_key = await client.create_virtual_api_key(
+        name="temporary", allowed_paths=["/api/v1/notes/*"]
+    )
+    rotated_key = await client.rotate_user_api_key(
+        6, APIKeyRotateRequest(expires_in_days=90)
+    )
     revoked_key = await client.revoke_user_api_key(6)
     quota = await client.get_user_storage_quota()
     recalculated = await client.recalculate_user_storage_quota()
 
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/users/change-password")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/users/change-password",
+    )
     assert mocked.await_args_list[0].kwargs["json_data"] == {
         "current_password": "OldPass123!",
         "new_password": "NewPass456!",
     }
-    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/auth/forgot-password")
+    assert mocked.await_args_list[1].args[:2] == (
+        "POST",
+        "/api/v1/auth/forgot-password",
+    )
     assert mocked.await_args_list[1].kwargs["json_data"] == {"email": "ada@example.com"}
     assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/auth/reset-password")
     assert mocked.await_args_list[3].args[:2] == ("GET", "/api/v1/auth/verify-email")
     assert mocked.await_args_list[3].kwargs["params"] == {"token": "verify-token"}
-    assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/auth/resend-verification")
-    assert mocked.await_args_list[5].args[:2] == ("POST", "/api/v1/auth/magic-link/request")
-    assert mocked.await_args_list[6].args[:2] == ("POST", "/api/v1/auth/magic-link/verify")
+    assert mocked.await_args_list[4].args[:2] == (
+        "POST",
+        "/api/v1/auth/resend-verification",
+    )
+    assert mocked.await_args_list[5].args[:2] == (
+        "POST",
+        "/api/v1/auth/magic-link/request",
+    )
+    assert mocked.await_args_list[6].args[:2] == (
+        "POST",
+        "/api/v1/auth/magic-link/verify",
+    )
     assert mocked.await_args_list[7].args[:2] == ("POST", "/api/v1/auth/mfa/setup")
     assert mocked.await_args_list[8].args[:2] == ("POST", "/api/v1/auth/mfa/verify")
     assert mocked.await_args_list[8].kwargs["json_data"] == {"token": "123456"}
@@ -180,11 +228,20 @@ async def test_account_security_routes_wire_password_magic_mfa_api_keys_and_quot
     }
     assert mocked.await_args_list[11].args[:2] == ("GET", "/api/v1/users/api-keys")
     assert mocked.await_args_list[12].args[:2] == ("POST", "/api/v1/users/api-keys")
-    assert mocked.await_args_list[13].args[:2] == ("POST", "/api/v1/users/api-keys/virtual")
-    assert mocked.await_args_list[14].args[:2] == ("POST", "/api/v1/users/api-keys/6/rotate")
+    assert mocked.await_args_list[13].args[:2] == (
+        "POST",
+        "/api/v1/users/api-keys/virtual",
+    )
+    assert mocked.await_args_list[14].args[:2] == (
+        "POST",
+        "/api/v1/users/api-keys/6/rotate",
+    )
     assert mocked.await_args_list[15].args[:2] == ("DELETE", "/api/v1/users/api-keys/6")
     assert mocked.await_args_list[16].args[:2] == ("GET", "/api/v1/users/storage")
-    assert mocked.await_args_list[17].args[:2] == ("POST", "/api/v1/users/storage/recalculate")
+    assert mocked.await_args_list[17].args[:2] == (
+        "POST",
+        "/api/v1/users/storage/recalculate",
+    )
     assert isinstance(changed, MessageResponse)
     assert isinstance(forgot, MessageResponse)
     assert isinstance(reset, MessageResponse)
@@ -207,11 +264,18 @@ async def test_account_security_routes_wire_password_magic_mfa_api_keys_and_quot
 
 
 @pytest.mark.asyncio
-async def test_user_provider_key_routes_wire_byok_and_openai_oauth_controls(monkeypatch):
+async def test_user_provider_key_routes_wire_byok_and_openai_oauth_controls(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
-            {"provider": "openai", "status": "stored", "key_hint": "sk-...1234", "updated_at": "2026-04-25T12:00:00Z"},
+            {
+                "provider": "openai",
+                "status": "stored",
+                "key_hint": "sk-...1234",
+                "updated_at": "2026-04-25T12:00:00Z",
+            },
             {
                 "items": [
                     {
@@ -230,9 +294,22 @@ async def test_user_provider_key_routes_wire_byok_and_openai_oauth_controls(monk
                 "auth_session_id": "session-1",
                 "expires_at": "2026-04-25T12:10:00Z",
             },
-            {"provider": "openai", "connected": True, "auth_source": "oauth", "scope": "model.request"},
-            {"provider": "openai", "status": "refreshed", "updated_at": "2026-04-25T12:05:00Z"},
-            {"provider": "openai", "auth_source": "api_key", "updated_at": "2026-04-25T12:06:00Z"},
+            {
+                "provider": "openai",
+                "connected": True,
+                "auth_source": "oauth",
+                "scope": "model.request",
+            },
+            {
+                "provider": "openai",
+                "status": "refreshed",
+                "updated_at": "2026-04-25T12:05:00Z",
+            },
+            {
+                "provider": "openai",
+                "auth_source": "api_key",
+                "updated_at": "2026-04-25T12:06:00Z",
+            },
             {},
             {},
         ]
@@ -248,9 +325,13 @@ async def test_user_provider_key_routes_wire_byok_and_openai_oauth_controls(monk
         )
     )
     listed = await client.list_user_provider_keys()
-    tested = await client.test_user_provider_key(ProviderKeyTestRequest(provider="openai", model="gpt-4o-mini"))
+    tested = await client.test_user_provider_key(
+        ProviderKeyTestRequest(provider="openai", model="gpt-4o-mini")
+    )
     authz = await client.authorize_openai_oauth(
-        OpenAIOAuthAuthorizeRequest(credential_fields={"project_id": "proj_123"}, return_path="/settings")
+        OpenAIOAuthAuthorizeRequest(
+            credential_fields={"project_id": "proj_123"}, return_path="/settings"
+        )
     )
     status = await client.get_openai_oauth_status()
     refreshed = await client.refresh_openai_oauth()
@@ -269,11 +350,26 @@ async def test_user_provider_key_routes_wire_byok_and_openai_oauth_controls(monk
     }
     assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/users/keys")
     assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/users/keys/test")
-    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/users/keys/openai/oauth/authorize")
-    assert mocked.await_args_list[4].args[:2] == ("GET", "/api/v1/users/keys/openai/oauth/status")
-    assert mocked.await_args_list[5].args[:2] == ("POST", "/api/v1/users/keys/openai/oauth/refresh")
-    assert mocked.await_args_list[6].args[:2] == ("POST", "/api/v1/users/keys/openai/source")
-    assert mocked.await_args_list[7].args[:2] == ("DELETE", "/api/v1/users/keys/openai/oauth")
+    assert mocked.await_args_list[3].args[:2] == (
+        "POST",
+        "/api/v1/users/keys/openai/oauth/authorize",
+    )
+    assert mocked.await_args_list[4].args[:2] == (
+        "GET",
+        "/api/v1/users/keys/openai/oauth/status",
+    )
+    assert mocked.await_args_list[5].args[:2] == (
+        "POST",
+        "/api/v1/users/keys/openai/oauth/refresh",
+    )
+    assert mocked.await_args_list[6].args[:2] == (
+        "POST",
+        "/api/v1/users/keys/openai/source",
+    )
+    assert mocked.await_args_list[7].args[:2] == (
+        "DELETE",
+        "/api/v1/users/keys/openai/oauth",
+    )
     assert mocked.await_args_list[8].args[:2] == ("DELETE", "/api/v1/users/keys/openai")
     assert isinstance(stored, UserProviderKeyResponse)
     assert isinstance(listed, UserProviderKeysResponse)
@@ -294,18 +390,43 @@ async def test_non_admin_storage_routes_wire_file_folder_usage_and_trash(monkeyp
         side_effect=[
             {"files": [file_payload], "total": 1, "offset": 0, "limit": 50},
             {"file": file_payload},
-            {"file": {**file_payload, "folder_tag": "archive", "tags": ["daily", "archive"]}},
+            {
+                "file": {
+                    **file_payload,
+                    "folder_tag": "archive",
+                    "tags": ["daily", "archive"],
+                }
+            },
             {"success": True, "file_id": 7, "hard_delete": False},
             {"deleted_count": 2, "file_ids": [7, 8]},
             {"moved_count": 2, "file_ids": [7, 8], "folder_tag": "archive"},
-            {"folders": [{"folder_tag": "archive", "file_count": 2, "total_bytes": 256, "total_mb": 0.0}]},
-            {"success": True, "folder_tag": "archive", "message": "Folder created (virtual)"},
+            {
+                "folders": [
+                    {
+                        "folder_tag": "archive",
+                        "file_count": 2,
+                        "total_bytes": 256,
+                        "total_mb": 0.0,
+                    }
+                ]
+            },
+            {
+                "success": True,
+                "folder_tag": "archive",
+                "message": "Folder created (virtual)",
+            },
             {"files": [file_payload], "total": 1, "offset": 0, "limit": 20},
             {
                 "usage": {
                     "total_bytes": 128,
                     "total_mb": 0.1,
-                    "by_category": {"spreadsheet": {"file_count": 1, "total_bytes": 128, "total_mb": 0.1}},
+                    "by_category": {
+                        "spreadsheet": {
+                            "file_count": 1,
+                            "total_bytes": 128,
+                            "total_mb": 0.1,
+                        }
+                    },
                     "trash_bytes": 0,
                     "trash_mb": 0.0,
                 },
@@ -318,30 +439,54 @@ async def test_non_admin_storage_routes_wire_file_folder_usage_and_trash(monkeyp
             },
             {
                 "user_id": 1,
-                "by_category": {"spreadsheet": {"file_count": 1, "total_bytes": 128, "total_mb": 0.1}},
-                "by_folder": [{"folder_tag": "archive", "file_count": 1, "total_bytes": 128, "total_mb": 0.1}],
+                "by_category": {
+                    "spreadsheet": {
+                        "file_count": 1,
+                        "total_bytes": 128,
+                        "total_mb": 0.1,
+                    }
+                },
+                "by_folder": [
+                    {
+                        "folder_tag": "archive",
+                        "file_count": 1,
+                        "total_bytes": 128,
+                        "total_mb": 0.1,
+                    }
+                ],
                 "total_bytes": 128,
                 "total_mb": 0.1,
                 "quota_mb": 5120,
                 "available_mb": 5119.9,
                 "usage_percentage": 0.1,
             },
-            {"files": [{**file_payload, "is_deleted": True}], "total": 1, "offset": 0, "limit": 50},
+            {
+                "files": [{**file_payload, "is_deleted": True}],
+                "total": 1,
+                "offset": 0,
+                "limit": 50,
+            },
             {"success": True, "file": file_payload},
             {"success": True, "file_id": 7},
         ]
     )
     monkeypatch.setattr(client, "_request", mocked)
 
-    files = await client.list_storage_files(file_category="spreadsheet", source_feature="data_tables")
+    files = await client.list_storage_files(
+        file_category="spreadsheet", source_feature="data_tables"
+    )
     one_file = await client.get_storage_file(7)
     updated = await client.update_storage_file(
         7,
         GeneratedFileUpdate(folder_tag="archive", tags=["daily", "archive"]),
     )
     deleted = await client.delete_storage_file(7)
-    bulk_deleted = await client.bulk_delete_storage_files(BulkDeleteRequest(file_ids=[7, 8]))
-    bulk_moved = await client.bulk_move_storage_files(BulkMoveRequest(file_ids=[7, 8], folder_tag="archive"))
+    bulk_deleted = await client.bulk_delete_storage_files(
+        BulkDeleteRequest(file_ids=[7, 8])
+    )
+    bulk_moved = await client.bulk_move_storage_files(
+        BulkMoveRequest(file_ids=[7, 8], folder_tag="archive")
+    )
     folders = await client.list_storage_folders()
     created_folder = await client.create_storage_folder("archive")
     least_accessed = await client.list_least_accessed_storage_files(limit=20)
@@ -361,18 +506,36 @@ async def test_non_admin_storage_routes_wire_file_folder_usage_and_trash(monkeyp
     }
     assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/storage/files/7")
     assert mocked.await_args_list[2].args[:2] == ("PATCH", "/api/v1/storage/files/7")
-    assert mocked.await_args_list[2].kwargs["json_data"] == {"folder_tag": "archive", "tags": ["daily", "archive"]}
+    assert mocked.await_args_list[2].kwargs["json_data"] == {
+        "folder_tag": "archive",
+        "tags": ["daily", "archive"],
+    }
     assert mocked.await_args_list[3].args[:2] == ("DELETE", "/api/v1/storage/files/7")
     assert mocked.await_args_list[3].kwargs["params"] == {"hard_delete": "false"}
-    assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/storage/files/bulk-delete")
-    assert mocked.await_args_list[5].args[:2] == ("POST", "/api/v1/storage/files/bulk-move")
+    assert mocked.await_args_list[4].args[:2] == (
+        "POST",
+        "/api/v1/storage/files/bulk-delete",
+    )
+    assert mocked.await_args_list[5].args[:2] == (
+        "POST",
+        "/api/v1/storage/files/bulk-move",
+    )
     assert mocked.await_args_list[6].args[:2] == ("GET", "/api/v1/storage/folders")
     assert mocked.await_args_list[7].args[:2] == ("POST", "/api/v1/storage/folders")
-    assert mocked.await_args_list[8].args[:2] == ("GET", "/api/v1/storage/files/least-accessed")
+    assert mocked.await_args_list[8].args[:2] == (
+        "GET",
+        "/api/v1/storage/files/least-accessed",
+    )
     assert mocked.await_args_list[9].args[:2] == ("GET", "/api/v1/storage/usage")
-    assert mocked.await_args_list[10].args[:2] == ("GET", "/api/v1/storage/usage/breakdown")
+    assert mocked.await_args_list[10].args[:2] == (
+        "GET",
+        "/api/v1/storage/usage/breakdown",
+    )
     assert mocked.await_args_list[11].args[:2] == ("GET", "/api/v1/storage/trash")
-    assert mocked.await_args_list[12].args[:2] == ("POST", "/api/v1/storage/trash/restore/7")
+    assert mocked.await_args_list[12].args[:2] == (
+        "POST",
+        "/api/v1/storage/trash/restore/7",
+    )
     assert mocked.await_args_list[13].args[:2] == ("DELETE", "/api/v1/storage/trash/7")
     assert isinstance(files, GeneratedFilesListResponse)
     assert isinstance(one_file, GeneratedFileResponse)

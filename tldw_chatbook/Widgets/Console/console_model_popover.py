@@ -17,6 +17,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_console_provider_options,
 )
 from tldw_chatbook.Utils.input_validation import validate_text_input
+from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
 
 CONSOLE_POPOVER_OPEN_FULL_SETTINGS = "open-full-settings"
 
@@ -115,8 +116,14 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
                 id="console-popover-model",
                 allow_blank=True,
             )
+            yield ModelSearchPicker(
+                id="console-popover-model-search",
+                provider_select_id="#console-popover-provider",
+            )
             yield Input(
-                value="" if self._settings.temperature is None else str(self._settings.temperature),
+                value=""
+                if self._settings.temperature is None
+                else str(self._settings.temperature),
                 placeholder="Temperature",
                 id="console-popover-temperature",
             )
@@ -126,8 +133,12 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
                 compact=True,
             )
             with Horizontal(id="console-popover-actions"):
-                yield Button("Full settings…", id="console-popover-full-settings", compact=True)
-                yield Button("Apply", id="console-popover-apply", variant="primary", compact=True)
+                yield Button(
+                    "Full settings…", id="console-popover-full-settings", compact=True
+                )
+                yield Button(
+                    "Apply", id="console-popover-apply", variant="primary", compact=True
+                )
 
     @on(Select.Changed, "#console-popover-provider")
     def _provider_changed(self, event: Select.Changed) -> None:
@@ -146,6 +157,22 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
         ]
         model_select = self.query_one("#console-popover-model", Select)
         model_select.set_options(options)
+
+    @on(ModelSearchPicker.ModelSelected)
+    def _model_search_selected(self, event: ModelSearchPicker.ModelSelected) -> None:
+        """Insert a picked model as a transient option and select it (ADR-020)."""
+        event.stop()
+        model_id = event.model_id.strip()
+        if not model_id:
+            return
+        provider = str(self.query_one("#console-popover-provider", Select).value)
+        model_select = self.query_one("#console-popover-model", Select)
+        options = [
+            (option.label, option.value)
+            for option in build_console_model_options(provider, self._providers_models, model_id)
+        ]
+        model_select.set_options(options)
+        model_select.value = model_id
 
     @on(Button.Pressed, "#console-popover-streaming")
     def _toggle_streaming(self, event: Button.Pressed) -> None:
@@ -185,7 +212,9 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
         event.stop()
         provider_value = self.query_one("#console-popover-provider", Select).value
         model_value = self.query_one("#console-popover-model", Select).value
-        temperature_text = self.query_one("#console-popover-temperature", Input).value.strip()
+        temperature_text = self.query_one(
+            "#console-popover-temperature", Input
+        ).value.strip()
         if not temperature_text:
             temperature = None
         else:

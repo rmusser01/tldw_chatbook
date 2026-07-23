@@ -10,23 +10,23 @@ from .confluence_main import (
     scrape_confluence_page,
     scrape_confluence_space,
     scrape_confluence_search,
-    scrape_confluence_with_config
+    scrape_confluence_with_config,
 )
 from .confluence_utils import (
     convert_confluence_to_markdown,
     extract_confluence_metadata,
-    parse_confluence_url
+    parse_confluence_url,
 )
 
 __all__ = [
-    'ConfluenceAuth',
-    'ConfluenceScraper',
-    'ConfluenceCrawler',
-    'scrape_confluence_page',
-    'scrape_confluence_space',
-    'scrape_confluence_search',
-    'scrape_confluence_with_config',
-    'convert_confluence_to_markdown',
-    'extract_confluence_metadata',
-    'parse_confluence_url'
+    "ConfluenceAuth",
+    "ConfluenceScraper",
+    "ConfluenceCrawler",
+    "scrape_confluence_page",
+    "scrape_confluence_space",
+    "scrape_confluence_search",
+    "scrape_confluence_with_config",
+    "convert_confluence_to_markdown",
+    "extract_confluence_metadata",
+    "parse_confluence_url",
 ]

@@ -72,7 +72,8 @@ async def test_companion_client_wraps_rest_routes(monkeypatch):
             {"items": [ACTIVITY_ITEM], "total": 1, "limit": 25, "offset": 5},
             ACTIVITY_ITEM,
             {"items": [KNOWLEDGE_ITEM], "total": 1},
-            KNOWLEDGE_ITEM | {"evidence_events": [ACTIVITY_ITEM], "evidence_goals": [GOAL_ITEM]},
+            KNOWLEDGE_ITEM
+            | {"evidence_events": [ACTIVITY_ITEM], "evidence_goals": [GOAL_ITEM]},
             {
                 "id": "reflection-1",
                 "title": "Daily Reflection",
@@ -108,7 +109,12 @@ async def test_companion_client_wraps_rest_routes(monkeypatch):
             GOAL_ITEM,
             GOAL_ITEM | {"title": "Read weekly"},
             {"status": "purged", "scope": "knowledge", "deleted_counts": {"cards": 1}},
-            {"status": "queued", "scope": "reflections", "job_id": 42, "job_uuid": "job-uuid"},
+            {
+                "status": "queued",
+                "scope": "reflections",
+                "job_id": 42,
+                "job_uuid": "job-uuid",
+            },
         ]
     )
     monkeypatch.setattr(client, "_request", mocked)
@@ -139,7 +145,9 @@ async def test_companion_client_wraps_rest_routes(monkeypatch):
         CompanionGoalUpdate(title="Read weekly"),
     )
     purged = await client.purge_companion_data(CompanionPurgeRequest(scope="knowledge"))
-    rebuilt = await client.rebuild_companion_data(CompanionRebuildRequest(scope="reflections"))
+    rebuilt = await client.rebuild_companion_data(
+        CompanionRebuildRequest(scope="reflections")
+    )
 
     assert isinstance(created_activity, CompanionActivityItem)
     assert isinstance(created_check_in, CompanionActivityItem)

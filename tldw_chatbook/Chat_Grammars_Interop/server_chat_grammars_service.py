@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
+
 if TYPE_CHECKING:
     from ..tldw_api import TLDWAPIClient
 
@@ -55,13 +56,17 @@ class ServerChatGrammarsService:
             return self.client
         if self.client_provider is not None:
             return self.client_provider.build_client()
-        raise ValueError("TLDW API client is required for server chat grammar operations.")
+        raise ValueError(
+            "TLDW API client is required for server chat grammar operations."
+        )
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -70,11 +75,14 @@ class ServerChatGrammarsService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
                     user_message=getattr(decision, "user_message", None)
                     or "Server chat grammar action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @staticmethod
@@ -96,7 +104,9 @@ class ServerChatGrammarsService:
         from ..tldw_api import ChatGrammarCreate
 
         self._enforce("chat.grammars.create.server")
-        request = ChatGrammarCreate(name=name, description=description, grammar_text=grammar_text)
+        request = ChatGrammarCreate(
+            name=name, description=description, grammar_text=grammar_text
+        )
         return self._dump(await self._require_client().create_chat_grammar(request))
 
     async def list_grammars(
@@ -115,9 +125,15 @@ class ServerChatGrammarsService:
             )
         )
 
-    async def get_grammar(self, grammar_id: str, *, include_archived: bool = False) -> dict[str, Any]:
+    async def get_grammar(
+        self, grammar_id: str, *, include_archived: bool = False
+    ) -> dict[str, Any]:
         self._enforce("chat.grammars.detail.server")
-        return self._dump(await self._require_client().get_chat_grammar(grammar_id, include_archived=include_archived))
+        return self._dump(
+            await self._require_client().get_chat_grammar(
+                grammar_id, include_archived=include_archived
+            )
+        )
 
     async def update_grammar(
         self,
@@ -146,8 +162,16 @@ class ServerChatGrammarsService:
             last_validated_at=last_validated_at,
             is_archived=is_archived,
         )
-        return self._dump(await self._require_client().update_chat_grammar(grammar_id, request))
+        return self._dump(
+            await self._require_client().update_chat_grammar(grammar_id, request)
+        )
 
-    async def delete_grammar(self, grammar_id: str, *, hard_delete: bool = False) -> bool:
+    async def delete_grammar(
+        self, grammar_id: str, *, hard_delete: bool = False
+    ) -> bool:
         self._enforce("chat.grammars.delete.server")
-        return bool(await self._require_client().delete_chat_grammar(grammar_id, hard_delete=hard_delete))
+        return bool(
+            await self._require_client().delete_chat_grammar(
+                grammar_id, hard_delete=hard_delete
+            )
+        )

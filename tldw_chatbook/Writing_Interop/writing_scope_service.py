@@ -41,7 +41,9 @@ class WritingBackend(str, Enum):
 class WritingScopeService:
     """Route writing operations to local or server backends with policy enforcement."""
 
-    def __init__(self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None):
+    def __init__(
+        self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None
+    ):
         self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
@@ -111,7 +113,11 @@ class WritingScopeService:
         if normalized_mode == WritingBackend.SERVER:
             if action == "reparent" and entity_kind == "scene":
                 reason = REASON_SCENE_REPARENT
-            elif action in {"create", "move"} and entity_kind == "scene" and parent_kind == "manuscript":
+            elif (
+                action in {"create", "move"}
+                and entity_kind == "scene"
+                and parent_kind == "manuscript"
+            ):
                 reason = REASON_DIRECT_MANUSCRIPT_SCENE
         capability_metadata = {
             "mode": normalized_mode.value,
@@ -126,7 +132,9 @@ class WritingScopeService:
             metadata=capability_metadata,
         )
 
-    def _require_method(self, service: Any, method_name: str, mode: WritingBackend) -> Any:
+    def _require_method(
+        self, service: Any, method_name: str, mode: WritingBackend
+    ) -> Any:
         method = getattr(service, method_name, None)
         if callable(method):
             return method
@@ -145,7 +153,9 @@ class WritingScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("projects", "list", normalized_mode))
         result = await self._maybe_await(
-            self._service_for_mode(normalized_mode).list_projects(limit=limit, offset=offset, status=status)
+            self._service_for_mode(normalized_mode).list_projects(
+                limit=limit, offset=offset, status=status
+            )
         )
         return self._normalize_result(normalized_mode, "project", result)
 
@@ -159,7 +169,9 @@ class WritingScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("projects", "create", normalized_mode))
         result = await self._maybe_await(
-            self._service_for_mode(normalized_mode).create_project(title=title, **kwargs)
+            self._service_for_mode(normalized_mode).create_project(
+                title=title, **kwargs
+            )
         )
         return self._normalize_result(normalized_mode, "project", result)
 
@@ -237,7 +249,9 @@ class WritingScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("manuscripts", "create", normalized_mode))
         result = await self._maybe_await(
-            self._service_for_mode(normalized_mode).create_manuscript(project_id, title=title, **kwargs)
+            self._service_for_mode(normalized_mode).create_manuscript(
+                project_id, title=title, **kwargs
+            )
         )
         return self._normalize_result(normalized_mode, "manuscript", result)
 
@@ -497,7 +511,9 @@ class WritingScopeService:
         self._enforce_policy(self._action_id("characters", "create", normalized_mode))
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(
-            self._require_method(service, "create_character", normalized_mode)(project_id, name=name, **kwargs)
+            self._require_method(service, "create_character", normalized_mode)(
+                project_id, name=name, **kwargs
+            )
         )
         return self._normalize_result(normalized_mode, "character", result)
 
@@ -531,7 +547,9 @@ class WritingScopeService:
         self._enforce_policy(self._action_id("characters", "detail", normalized_mode))
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(
-            self._require_method(service, "get_character", normalized_mode)(character_id)
+            self._require_method(service, "get_character", normalized_mode)(
+                character_id
+            )
         )
         return self._normalize_result(normalized_mode, "character", result)
 
@@ -582,10 +600,14 @@ class WritingScopeService:
         **kwargs: Any,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._action_id("relationships", "create", normalized_mode))
+        self._enforce_policy(
+            self._action_id("relationships", "create", normalized_mode)
+        )
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(
-            self._require_method(service, "create_relationship", normalized_mode)(project_id, **kwargs)
+            self._require_method(service, "create_relationship", normalized_mode)(
+                project_id, **kwargs
+            )
         )
         return self._normalize_result(normalized_mode, "relationship", result)
 
@@ -599,7 +621,9 @@ class WritingScopeService:
         self._enforce_policy(self._action_id("relationships", "list", normalized_mode))
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(
-            self._require_method(service, "list_relationships", normalized_mode)(project_id)
+            self._require_method(service, "list_relationships", normalized_mode)(
+                project_id
+            )
         )
         return self._normalize_result(normalized_mode, "relationship", result)
 
@@ -611,7 +635,9 @@ class WritingScopeService:
         expected_version: int | None = None,
     ) -> bool:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._action_id("relationships", "delete", normalized_mode))
+        self._enforce_policy(
+            self._action_id("relationships", "delete", normalized_mode)
+        )
         service = self._service_for_mode(normalized_mode)
         return bool(
             await self._maybe_await(
@@ -655,7 +681,9 @@ class WritingScopeService:
         self._enforce_policy(self._action_id("world_info", "list", normalized_mode))
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(
-            self._require_method(service, "list_world_info", normalized_mode)(project_id, kind=kind)
+            self._require_method(service, "list_world_info", normalized_mode)(
+                project_id, kind=kind
+            )
         )
         return self._normalize_result(normalized_mode, "world_info", result)
 
@@ -724,7 +752,9 @@ class WritingScopeService:
         self._enforce_policy(self._action_id("plot_lines", "create", normalized_mode))
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(
-            self._require_method(service, "create_plot_line", normalized_mode)(project_id, title=title, **kwargs)
+            self._require_method(service, "create_plot_line", normalized_mode)(
+                project_id, title=title, **kwargs
+            )
         )
         return self._normalize_result(normalized_mode, "plot_line", result)
 
@@ -738,7 +768,9 @@ class WritingScopeService:
         self._enforce_policy(self._action_id("plot_lines", "list", normalized_mode))
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(
-            self._require_method(service, "list_plot_lines", normalized_mode)(project_id)
+            self._require_method(service, "list_plot_lines", normalized_mode)(
+                project_id
+            )
         )
         return self._normalize_result(normalized_mode, "plot_line", result)
 
@@ -811,7 +843,9 @@ class WritingScopeService:
         self._enforce_policy(self._action_id("plot_events", "list", normalized_mode))
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(
-            self._require_method(service, "list_plot_events", normalized_mode)(plot_line_id)
+            self._require_method(service, "list_plot_events", normalized_mode)(
+                plot_line_id
+            )
         )
         return self._normalize_result(normalized_mode, "plot_event", result)
 
@@ -866,7 +900,9 @@ class WritingScopeService:
         self._enforce_policy(self._action_id("plot_holes", "create", normalized_mode))
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(
-            self._require_method(service, "create_plot_hole", normalized_mode)(project_id, title=title, **kwargs)
+            self._require_method(service, "create_plot_hole", normalized_mode)(
+                project_id, title=title, **kwargs
+            )
         )
         return self._normalize_result(normalized_mode, "plot_hole", result)
 
@@ -881,7 +917,9 @@ class WritingScopeService:
         self._enforce_policy(self._action_id("plot_holes", "list", normalized_mode))
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(
-            self._require_method(service, "list_plot_holes", normalized_mode)(project_id, status=status)
+            self._require_method(service, "list_plot_holes", normalized_mode)(
+                project_id, status=status
+            )
         )
         return self._normalize_result(normalized_mode, "plot_hole", result)
 
@@ -933,7 +971,9 @@ class WritingScopeService:
         is_pov: bool = False,
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._action_id("scene_characters", "create", normalized_mode))
+        self._enforce_policy(
+            self._action_id("scene_characters", "create", normalized_mode)
+        )
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(
             self._require_method(service, "link_scene_character", normalized_mode)(
@@ -951,10 +991,14 @@ class WritingScopeService:
         scene_id: str,
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._action_id("scene_characters", "list", normalized_mode))
+        self._enforce_policy(
+            self._action_id("scene_characters", "list", normalized_mode)
+        )
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(
-            self._require_method(service, "list_scene_characters", normalized_mode)(scene_id)
+            self._require_method(service, "list_scene_characters", normalized_mode)(
+                scene_id
+            )
         )
         return self._normalize_result(normalized_mode, "scene_character_link", result)
 
@@ -966,11 +1010,15 @@ class WritingScopeService:
         character_id: str,
     ) -> bool:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._action_id("scene_characters", "delete", normalized_mode))
+        self._enforce_policy(
+            self._action_id("scene_characters", "delete", normalized_mode)
+        )
         service = self._service_for_mode(normalized_mode)
         return bool(
             await self._maybe_await(
-                self._require_method(service, "unlink_scene_character", normalized_mode)(scene_id, character_id)
+                self._require_method(
+                    service, "unlink_scene_character", normalized_mode
+                )(scene_id, character_id)
             )
         )
 
@@ -982,7 +1030,9 @@ class WritingScopeService:
         world_info_id: str,
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._action_id("scene_world_info", "create", normalized_mode))
+        self._enforce_policy(
+            self._action_id("scene_world_info", "create", normalized_mode)
+        )
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(
             self._require_method(service, "link_scene_world_info", normalized_mode)(
@@ -999,10 +1049,14 @@ class WritingScopeService:
         scene_id: str,
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._action_id("scene_world_info", "list", normalized_mode))
+        self._enforce_policy(
+            self._action_id("scene_world_info", "list", normalized_mode)
+        )
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(
-            self._require_method(service, "list_scene_world_info", normalized_mode)(scene_id)
+            self._require_method(service, "list_scene_world_info", normalized_mode)(
+                scene_id
+            )
         )
         return self._normalize_result(normalized_mode, "scene_world_info_link", result)
 
@@ -1014,11 +1068,15 @@ class WritingScopeService:
         world_info_id: str,
     ) -> bool:
         normalized_mode = self._normalize_mode(mode)
-        self._enforce_policy(self._action_id("scene_world_info", "delete", normalized_mode))
+        self._enforce_policy(
+            self._action_id("scene_world_info", "delete", normalized_mode)
+        )
         service = self._service_for_mode(normalized_mode)
         return bool(
             await self._maybe_await(
-                self._require_method(service, "unlink_scene_world_info", normalized_mode)(scene_id, world_info_id)
+                self._require_method(
+                    service, "unlink_scene_world_info", normalized_mode
+                )(scene_id, world_info_id)
             )
         )
 
@@ -1087,7 +1145,9 @@ class WritingScopeService:
         self._enforce_policy(self._action_id("research", "launch", normalized_mode))
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(
-            self._require_method(service, "research_scene", normalized_mode)(scene_id, query=query, top_k=top_k)
+            self._require_method(service, "research_scene", normalized_mode)(
+                scene_id, query=query, top_k=top_k
+            )
         )
         if isinstance(result, dict):
             payload = dict(result)
@@ -1156,7 +1216,9 @@ class WritingScopeService:
         self._enforce_policy(self._action_id("analysis", "launch", normalized_mode))
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(
-            self._require_method(service, "analyze_project_plot_holes", normalized_mode)(
+            self._require_method(
+                service, "analyze_project_plot_holes", normalized_mode
+            )(
                 project_id,
                 analysis_types=analysis_types,
                 provider=provider,
@@ -1178,7 +1240,9 @@ class WritingScopeService:
         self._enforce_policy(self._action_id("analysis", "launch", normalized_mode))
         service = self._service_for_mode(normalized_mode)
         result = await self._maybe_await(
-            self._require_method(service, "analyze_project_consistency", normalized_mode)(
+            self._require_method(
+                service, "analyze_project_consistency", normalized_mode
+            )(
                 project_id,
                 analysis_types=analysis_types,
                 provider=provider,
@@ -1215,7 +1279,11 @@ class WritingScopeService:
                 list(payload.get("analyses", [])),
             )
             return payload
-        return {"analyses": self._normalize_result(normalized_mode, "analysis", list(result or []))}
+        return {
+            "analyses": self._normalize_result(
+                normalized_mode, "analysis", list(result or [])
+            )
+        }
 
     async def create_version(
         self,
@@ -1246,7 +1314,9 @@ class WritingScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("versions", "list", normalized_mode))
         result = await self._maybe_await(
-            self._service_for_mode(normalized_mode).list_versions(entity_type, entity_id)
+            self._service_for_mode(normalized_mode).list_versions(
+                entity_type, entity_id
+            )
         )
         return self._normalize_result(normalized_mode, "version", result)
 

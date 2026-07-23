@@ -3,6 +3,7 @@ Try-it panel renders. Mirrors ``Chat_Dictionary_Lib``'s
 ``DictionaryProcessDiagnostics``/``DictionaryEntryDiagnostic`` shape, with
 world-info-specific fields (source book, injection position, recursion depth).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -38,7 +39,9 @@ class WorldBookEntryDiagnostic:
     keys: List[str]
     priority: int = 0
     activation_reason: str = ""
-    status: str = ""  # "fired" | "skipped:disabled" | "skipped:secondary" | "skipped:budget"
+    status: str = (
+        ""  # "fired" | "skipped:disabled" | "skipped:secondary" | "skipped:budget"
+    )
     token_cost: int = 0
     injection_order: Optional[int] = None
     position: str = "before_char"

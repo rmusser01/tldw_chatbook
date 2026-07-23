@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from time import monotonic
+
 from typing import Iterable, Literal, Mapping
 
 from loguru import logger
@@ -17,13 +19,20 @@ from textual.events import Click, Key
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Chat.console_image_view import (
     PIXELS_MAX_COLS,
     PIXELS_MAX_LINES,
     ConsoleImageRowSpec,
+    fit_image_cell_size,
 )
-from tldw_chatbook.Chat.console_message_actions import ConsoleMessageAction, ConsoleMessageActionService
+from tldw_chatbook.Chat.console_message_actions import (
+    ConsoleMessageAction,
+    ConsoleMessageActionService,
+)
 from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_QUIET_EMPTY_COPY,
     ConsoleSetupCardState,
@@ -84,7 +93,13 @@ def _message_body(message: ConsoleChatMessage) -> str:
         # has no content; show a visible generating state instead of an empty
         # row (local models can take 30-90s to first token).
         return CONSOLE_GENERATING_PLACEHOLDER
-    if message.status in {"streaming", "stopped", "failed"}:
+    if (
+        message.role is not ConsoleMessageRole.USER
+        and message.status in {"streaming", "stopped", "failed"}
+    ):
+        # streaming/stopped/failed are assistant-response states; a USER row only
+        # carries "failed" via the TASK-457(a) send-blocked echo, where the
+        # SYSTEM block-row already explains it — so keep the user's text clean.
         return f"{content} [{message.status}]".strip()
     return content
 
@@ -217,7 +232,9 @@ class ConsoleTranscriptMessage(Static):
             classes=classes,
         )
 
-    def sync_message(self, message: ConsoleChatMessage, *, selected: bool = False) -> None:
+    def sync_message(
+        self, message: ConsoleChatMessage, *, selected: bool = False
+    ) -> None:
         """Update row content and selection styling without remounting the row."""
         self.message_id = message.id
         self.update(_message_render_text(message, selected=selected))
@@ -372,10 +389,28 @@ class ConsoleTranscript(VerticalScroll):
         ("r", "invoke_selected_action('regenerate')", "Regenerate"),
     ]
 
+    PROTECTED_CLICK_CLASSES: frozenset[str] = frozenset({
+        "console-transcript-action-row",
+        "console-transcript-action-guide",
+        "console-transcript-empty-panel",
+        "console-transcript-empty-body",
+        "console-transcript-empty-state",
+        "console-transcript-rule",
+        # Textual scrollbars carry the generic system-widget class; ignore them
+        # defensively if a scrollbar click ever bubbles up to the transcript.
+        "-textual-system",
+        "vertical-scrollbar",
+        "horizontal-scrollbar",
+        "scrollbar",
+    })
+    """Widget classes that must keep the current selection active when clicked."""
+
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._messages: list[ConsoleChatMessage] = []
         self.selected_message_id: str | None = None
+        self._follow_intent_time = 0.0
+        self._user_scroll_time = 0.0
         self._refresh_lock = asyncio.Lock()
         self._empty_card_state = ConsoleSetupCardState(
             mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY
@@ -420,6 +455,48 @@ class ConsoleTranscript(VerticalScroll):
             self._row_signatures[row.key] = row.signature
             yield widget
 
+    @property
+    def allow_vertical_scroll(self) -> bool:
+        """Accept scroll gestures whenever the transcript holds messages.
+
+        TASK-336 (live mechanism): during heavy row churn (sub-agent runs)
+        the arrangement transiently collapses — ``max_scroll_y`` reads 0
+        (scroll_y can even go negative via the compositor's anchor path) —
+        and the base gate (``is_scrollable and show_vertical_scrollbar``)
+        is False at exactly the moment the wheel event arrives. The gesture
+        is then silently dropped: no scroll, and crucially no
+        ``release_anchor``, so follow never detaches (the review's
+        byte-identical wheel evidence). A clamped scroll on a collapsed
+        layout is a harmless no-op, but accepting it registers the
+        reader's intent; the layout recovers within a tick and subsequent
+        gestures scroll normally.
+        """
+        if self._messages:
+            return True
+        return super().allow_vertical_scroll
+
+    def note_follow_intent(self) -> None:
+        """Record a programmatic jump-to-tail intent (send/resume/switch).
+
+        TASK-336: the send-time ``anchor()`` arrives via the coalesced sync
+        pass and can land AFTER the user has already wheel-scrolled up —
+        yanking them back to the tail mid-stream. ``set_messages`` only
+        honors a new-user-send anchor when the most recent of (follow
+        intent, user scroll) is the intent; a later user scroll wins.
+        """
+        self._follow_intent_time = monotonic()
+
+    def release_anchor(self) -> None:
+        """Release tail-follow, stamping the scroll as user intent.
+
+        Every user-driven scroll path (wheel, keyboard scroll actions)
+        funnels through ``release_anchor`` — the timestamp lets a scroll
+        that happens after a send outrank that send's late-arriving anchor
+        (see ``note_follow_intent``, TASK-336).
+        """
+        self._user_scroll_time = monotonic()
+        super().release_anchor()
+
     def set_messages(self, messages: Iterable[ConsoleChatMessage]) -> None:
         """Replace transcript messages and refresh mounted rows when possible.
 
@@ -435,14 +512,21 @@ class ConsoleTranscript(VerticalScroll):
             and message.role == ConsoleMessageRole.USER
             for message in self._messages
         )
-        if self.is_mounted and new_user_send:
+        if (
+            self.is_mounted
+            and new_user_send
+            and self._follow_intent_time >= self._user_scroll_time
+        ):
             # A send: jump to the tail even if the user had scrolled up
             # (anchor() also re-engages follow for the reply that streams
             # in next). Checked against ALL newly-seen ids, not just the
             # tail -- the send path appends USER + ASSISTANT placeholder
             # together and the first polled update can already have the
             # placeholder at the tail. Appended assistant/tool rows alone
-            # never yank a reader.
+            # never yank a reader. TASK-336: a user scroll AFTER the
+            # send/resume intent wins — the coalesced sync can deliver this
+            # anchor late, and it must not yank a reader who has already
+            # scrolled back.
             self.anchor()
         self._seen_message_ids = message_ids
         if self.selected_message_id not in message_ids:
@@ -540,7 +624,11 @@ class ConsoleTranscript(VerticalScroll):
     def select_next_variant(self, message_id: str) -> None:
         """Select the next rendered variant for a message when available."""
         message = self._message_by_id(message_id)
-        if message is None or message.variants is None or not message.variants.can_go_next:
+        if (
+            message is None
+            or message.variants is None
+            or not message.variants.can_go_next
+        ):
             return
         message.variants.selected_index += 1
         if self.is_mounted:
@@ -549,7 +637,11 @@ class ConsoleTranscript(VerticalScroll):
     def select_previous_variant(self, message_id: str) -> None:
         """Select the previous rendered variant for a message when available."""
         message = self._message_by_id(message_id)
-        if message is None or message.variants is None or not message.variants.can_go_previous:
+        if (
+            message is None
+            or message.variants is None
+            or not message.variants.can_go_previous
+        ):
             return
         message.variants.selected_index -= 1
         if self.is_mounted:
@@ -641,6 +733,25 @@ class ConsoleTranscript(VerticalScroll):
         button.press()
         return True
 
+    def on_click(self, event: Click) -> None:
+        """Clear selection when the user clicks negative space in the transcript.
+
+        Clicks that land on controls with classes in ``PROTECTED_CLICK_CLASSES``
+        (message action rows/buttons, rule separators, action-help text, the
+        empty-state panel, or scrollbars) keep the current selection active. All
+        other clicks that bubble up to the transcript itself clear the selection.
+        """
+        control = event.control
+        if control is not None and any(
+            control.has_class(class_name)
+            for class_name in self.PROTECTED_CLICK_CLASSES
+        ):
+            event.stop()
+            return
+        if control is self:
+            self.action_clear_selection()
+            event.stop()
+
     def on_key(self, event: Key) -> None:
         if event.key in {"down", "j"}:
             self.action_select_next()
@@ -673,11 +784,15 @@ class ConsoleTranscript(VerticalScroll):
         self.select_message(self._messages[index].id)
 
     def _message_by_id(self, message_id: str) -> ConsoleChatMessage | None:
-        return next((message for message in self._messages if message.id == message_id), None)
+        return next(
+            (message for message in self._messages if message.id == message_id), None
+        )
 
     def _notify_selection_changed(self) -> None:
         """Let the owning screen refresh inspector/control surfaces after selection changes."""
-        sync_console_control_bar = getattr(self.screen, "_sync_console_control_bar", None)
+        sync_console_control_bar = getattr(
+            self.screen, "_sync_console_control_bar", None
+        )
         if callable(sync_console_control_bar):
             sync_console_control_bar()
 
@@ -760,13 +875,17 @@ class ConsoleTranscript(VerticalScroll):
         return rows
 
     def _message_widgets(self) -> list[Widget]:
-        return [self._build_row_widget(row, track=False) for row in self._transcript_rows()]
+        return [
+            self._build_row_widget(row, track=False) for row in self._transcript_rows()
+        ]
 
     async def _reconcile_rows(self, rows: list[_TranscriptRow]) -> None:
         desired_keys = [row.key for row in rows]
         desired_key_set = set(desired_keys)
 
-        for stale_key in [key for key in self._row_widgets if key not in desired_key_set]:
+        for stale_key in [
+            key for key in self._row_widgets if key not in desired_key_set
+        ]:
             stale_widget = self._row_widgets.pop(stale_key)
             self._row_signatures.pop(stale_key, None)
             self._row_build_counts.pop(stale_key, None)
@@ -774,6 +893,14 @@ class ConsoleTranscript(VerticalScroll):
 
         previous_widget: Widget | None = None
         for index, row in enumerate(rows):
+            if self._closing or self._pruning or not self.is_attached:
+                # This instance is being removed (a parent recompose/session
+                # surface swap can prune the transcript between this loop's
+                # awaits). Widget.mount() silently no-ops while pruning, so
+                # continuing would record detached widgets in the row maps
+                # and then crash in move_child. The replacement instance
+                # composes fresh state; abandon this pass.
+                return
             widget = self._row_widgets.get(row.key)
             row_was_mounted = False
             if widget is None:
@@ -800,6 +927,14 @@ class ConsoleTranscript(VerticalScroll):
                     self._row_widgets[row.key] = widget
                     self._row_signatures[row.key] = row.signature
 
+            if row_was_mounted and widget.parent is not self:
+                # Version-proof backstop for the pruning check above:
+                # mount() completed without attaching (it no-ops while the
+                # container is being removed). Drop the phantom map entries
+                # and abandon the pass instead of poisoning later moves.
+                self._row_widgets.pop(row.key, None)
+                self._row_signatures.pop(row.key, None)
+                return
             if not row_was_mounted:
                 if previous_widget is None:
                     self.move_child(widget, before=0)
@@ -847,6 +982,18 @@ class ConsoleTranscript(VerticalScroll):
                 from textual_image.widget import Image as _GraphicsImage
 
                 widget = _GraphicsImage(spec.pil, id=f"console-image-{spec.message_id}")
+                # Explicit fitted cell size, not just max-width/max-height:
+                # textual_image's "auto" sizing resolves its render region
+                # from the parent's settled layout, and mounting a tick before
+                # that settles can ask the renderer to scale into a transient
+                # 0-width/height region - which PIL's resize() raises on. Fixed
+                # ints resolve without waiting on layout, sidestepping the race
+                # (the personas avatar preview uses the same guard).
+                w_cells, h_cells = fit_image_cell_size(
+                    spec.pil.width, spec.pil.height, PIXELS_MAX_COLS, PIXELS_MAX_LINES
+                )
+                widget.styles.width = w_cells
+                widget.styles.height = h_cells
             except Exception:
                 logger.opt(exception=True).warning(
                     "textual-image unavailable; falling back to pixels row."
@@ -868,13 +1015,19 @@ class ConsoleTranscript(VerticalScroll):
                 pixels if pixels is not None else "",
                 id=f"console-image-{spec.message_id}",
             )
+            # Pixels render at their baked half-block size; a max cap is safe
+            # here (no textual_image auto-sizing race).
+            widget.styles.max_width = PIXELS_MAX_COLS
+            widget.styles.max_height = PIXELS_MAX_LINES
         widget.add_class("console-transcript-image")
-        widget.styles.max_width = 80
-        widget.styles.max_height = 40
         return widget
 
     def _update_row_widget(self, widget: Widget, row: _TranscriptRow) -> Widget:
-        if row.kind == "message" and row.message is not None and isinstance(widget, ConsoleTranscriptMessage):
+        if (
+            row.kind == "message"
+            and row.message is not None
+            and isinstance(widget, ConsoleTranscriptMessage)
+        ):
             widget.sync_message(row.message, selected=row.selected)
             return widget
         if row.kind == "empty" and isinstance(widget, ConsoleTranscriptEmptyPanel):
@@ -892,7 +1045,9 @@ class ConsoleTranscript(VerticalScroll):
         return "console-transcript-row-" + row.key.replace(":", "-")
 
     @staticmethod
-    def _message_signature_token(message: ConsoleChatMessage, *, selected: bool) -> tuple:
+    def _message_signature_token(
+        message: ConsoleChatMessage, *, selected: bool
+    ) -> tuple:
         """Return a cheap change-token covering every render-signature input.
 
         Captures the exact inputs of ``_message_render_text`` plus the
@@ -1003,18 +1158,32 @@ class ConsoleTranscript(VerticalScroll):
         buttons: list[Button] = []
         for action in ConsoleMessageActionService().available_actions(message):
             if action.action_id == "feedback":
-                buttons.append(self._action_button(message, ConsoleMessageAction("feedback-up", "👍")))
-                buttons.append(self._action_button(message, ConsoleMessageAction("feedback-down", "👎")))
+                buttons.append(
+                    self._action_button(
+                        message, ConsoleMessageAction("feedback-up", "👍")
+                    )
+                )
+                buttons.append(
+                    self._action_button(
+                        message, ConsoleMessageAction("feedback-down", "👎")
+                    )
+                )
                 continue
             buttons.append(self._action_button(message, action))
-        return Horizontal(*buttons, id=f"console-message-actions-{message.id}", classes="console-transcript-action-row")
+        return Horizontal(
+            *buttons,
+            id=f"console-message-actions-{message.id}",
+            classes="console-transcript-action-row",
+        )
 
     @staticmethod
     def _plain_action_row(message: ConsoleChatMessage) -> str:
         return ConsoleMessageActionService().plain_action_row(message)
 
     @staticmethod
-    def _action_button(message: ConsoleChatMessage, action: ConsoleMessageAction) -> Button:
+    def _action_button(
+        message: ConsoleChatMessage, action: ConsoleMessageAction
+    ) -> Button:
         button = ConsoleTranscriptActionButton(
             action.label,
             id=f"console-message-action-{action.action_id}-{message.id}",
@@ -1029,6 +1198,8 @@ class ConsoleTranscript(VerticalScroll):
 
     def _focus_action_button(self, message_id: str, action_id: str) -> None:
         try:
-            self.query_one(f"#console-message-action-{action_id}-{message_id}", Button).focus()
+            self.query_one(
+                f"#console-message-action-{action_id}-{message_id}", Button
+            ).focus()
         except Exception:
             return

@@ -55,12 +55,18 @@ class FakePolicyEnforcer:
 async def test_outputs_scope_service_routes_server_templates_artifacts_and_preview():
     server = FakeOutputsService()
     policy = FakePolicyEnforcer()
-    scope = OutputsScopeService(local_service=None, server_service=server, policy_enforcer=policy)
+    scope = OutputsScopeService(
+        local_service=None, server_service=server, policy_enforcer=policy
+    )
 
     templates = await scope.list_templates(mode="server", q="news")
     template = await scope.get_template(mode="server", template_id=5)
-    artifact = await scope.create_artifact(mode="server", template_id=5, data={"title": "Digest"})
-    preview = await scope.preview_template(mode="server", template_id=5, data={"title": "Digest"})
+    artifact = await scope.create_artifact(
+        mode="server", template_id=5, data={"title": "Digest"}
+    )
+    preview = await scope.preview_template(
+        mode="server", template_id=5, data={"title": "Digest"}
+    )
 
     assert templates["items"][0]["record_id"] == "server:output_template:5"
     assert templates["items"][0]["backend"] == "server"
@@ -84,7 +90,9 @@ async def test_outputs_scope_service_routes_server_templates_artifacts_and_previ
 @pytest.mark.asyncio
 async def test_outputs_scope_service_honestly_rejects_local_mode_when_backend_missing():
     policy = FakePolicyEnforcer()
-    scope = OutputsScopeService(local_service=None, server_service=FakeOutputsService(), policy_enforcer=policy)
+    scope = OutputsScopeService(
+        local_service=None, server_service=FakeOutputsService(), policy_enforcer=policy
+    )
 
     with pytest.raises(NotImplementedError, match="Local managed output templates"):
         await scope.list_templates(mode="local")
@@ -96,7 +104,9 @@ async def test_outputs_scope_service_honestly_rejects_local_mode_when_backend_mi
 async def test_outputs_scope_service_blocks_local_backend_even_if_adapter_is_injected():
     local = FakeOutputsService(source="local")
     policy = FakePolicyEnforcer()
-    scope = OutputsScopeService(local_service=local, server_service=FakeOutputsService(), policy_enforcer=policy)
+    scope = OutputsScopeService(
+        local_service=local, server_service=FakeOutputsService(), policy_enforcer=policy
+    )
 
     with pytest.raises(NotImplementedError, match="Local managed output templates"):
         await scope.list_templates(mode="local")

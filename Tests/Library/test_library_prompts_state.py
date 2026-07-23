@@ -1,4 +1,5 @@
 """Pure display-state contracts for the Library prompts canvas."""
+
 import sqlite3
 from datetime import datetime, timezone
 
@@ -44,20 +45,26 @@ PROMPT_C = {
 
 
 def test_list_state_newest_sort_orders_by_modified_desc():
-    state = build_prompts_list_state([PROMPT_B, PROMPT_A], query="", sort="newest", now=NOW)
+    state = build_prompts_list_state(
+        [PROMPT_B, PROMPT_A], query="", sort="newest", now=NOW
+    )
     assert [row.prompt_id for row in state.rows] == [1, 2]
     assert state.count == 2
     assert state.sort == "newest"
 
 
 def test_list_state_name_sort_alpha_ci():
-    state = build_prompts_list_state([PROMPT_A, PROMPT_B], query="", sort="name", now=NOW)
+    state = build_prompts_list_state(
+        [PROMPT_A, PROMPT_B], query="", sort="name", now=NOW
+    )
     assert [row.name for row in state.rows] == ["brainstorm", "Summarize"]
     assert state.sort == "name"
 
 
 def test_list_state_query_matches_name_case_insensitively():
-    state = build_prompts_list_state([PROMPT_A, PROMPT_B], query="BRAIN", sort="newest", now=NOW)
+    state = build_prompts_list_state(
+        [PROMPT_A, PROMPT_B], query="BRAIN", sort="newest", now=NOW
+    )
     assert [row.prompt_id for row in state.rows] == [2]
     assert state.count == 1
 
@@ -66,7 +73,9 @@ def test_list_state_query_matches_details_case_insensitively():
     """D2/U1: the filter matches ``details`` -- a field list-page records
     actually carry (unlike ``keywords``, which real list rows never do --
     see ``_prompts_page_records_or_empty``)."""
-    state = build_prompts_list_state([PROMPT_A, PROMPT_B], query="SUMMARIZES", sort="newest", now=NOW)
+    state = build_prompts_list_state(
+        [PROMPT_A, PROMPT_B], query="SUMMARIZES", sort="newest", now=NOW
+    )
     assert [row.prompt_id for row in state.rows] == [1]
 
 
@@ -77,13 +86,17 @@ def test_list_state_query_does_not_silently_match_keywords_absent_from_list_rows
     because this fixture also doubles for the editor-detail-shaped tests
     below; "WRITING" (one of its keywords) is absent from every record's
     name/details, so the filter must now find nothing."""
-    state = build_prompts_list_state([PROMPT_A, PROMPT_B], query="WRITING", sort="newest", now=NOW)
+    state = build_prompts_list_state(
+        [PROMPT_A, PROMPT_B], query="WRITING", sort="newest", now=NOW
+    )
     assert state.rows == ()
 
 
 def test_list_state_secondary_omits_empty_details():
     state = build_prompts_list_state([PROMPT_B], query="", sort="newest", now=NOW)
-    assert state.rows[0] == PromptListRow(prompt_id=2, name="brainstorm", secondary="1d")
+    assert state.rows[0] == PromptListRow(
+        prompt_id=2, name="brainstorm", secondary="1d"
+    )
 
 
 def test_list_state_secondary_shows_details_and_age():
@@ -205,7 +218,9 @@ def test_editor_state_tolerates_empty_mapping():
 
 
 def test_classify_soft_deleted_name():
-    message = "Prompt 'Foo' exists but is soft-deleted. Use overwrite to restore/update."
+    message = (
+        "Prompt 'Foo' exists but is soft-deleted. Use overwrite to restore/update."
+    )
     assert classify_prompt_save_error(None, message, None) == "soft-deleted-name"
 
 
@@ -230,7 +245,9 @@ def test_meta_line_new_prompt_sentinel_overrides_modified_and_version():
     """Task 8b D1: a blank, not-yet-saved editor state (``prompt_id=None``)
     renders "New prompt", never "Modified … · vN" -- even when the caller
     (a malformed record) happens to also carry ``modified``/``version``."""
-    state = build_prompt_editor_state({"last_modified": "2026-07-07T11:00:00+00:00", "version": 3})
+    state = build_prompt_editor_state(
+        {"last_modified": "2026-07-07T11:00:00+00:00", "version": 3}
+    )
     assert state.prompt_id is None
     assert prompt_editor_meta_line(state) == "New prompt"
 
@@ -262,5 +279,7 @@ def test_meta_line_new_prompt_sentinel_appends_unsaved_marker_when_dirty():
     """The "New prompt" sentinel also gets the unsaved marker once the user
     starts typing into a blank create-flow record (dirty becomes True)."""
     state = build_prompt_editor_state({})
-    assert prompt_editor_meta_line(state, dirty=True) == "New prompt · • Unsaved changes"
+    assert (
+        prompt_editor_meta_line(state, dirty=True) == "New prompt · • Unsaved changes"
+    )
     assert prompt_editor_meta_line(state) == "New prompt"

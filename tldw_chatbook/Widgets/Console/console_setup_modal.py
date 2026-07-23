@@ -374,7 +374,9 @@ class ConsoleSetupModal(Vertical):
             action: Affordance built by ``build_console_detected_server_action``
                 or ``None`` when no detected server should be offered.
         """
-        self._detected_action = action if isinstance(action, ConsoleDetectedServerAction) else None
+        self._detected_action = (
+            action if isinstance(action, ConsoleDetectedServerAction) else None
+        )
         if self.is_mounted:
             self._sync_detected_action_button()
 

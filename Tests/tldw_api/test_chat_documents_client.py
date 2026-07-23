@@ -20,7 +20,9 @@ from tldw_chatbook.tldw_api.client import TLDWAPIClient
 
 
 @pytest.mark.asyncio
-async def test_chat_document_generation_methods_route_current_server_contract(monkeypatch):
+async def test_chat_document_generation_methods_route_current_server_contract(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
@@ -207,11 +209,16 @@ async def test_chat_document_generation_methods_route_current_server_contract(mo
         "limit": 25,
     }
     assert mocked.await_args_list[7].kwargs["json_data"]["temperature"] == 0.5
-    assert mocked.await_args_list[9].kwargs["json_data"]["document_types"] == ["study_guide", "summary"]
+    assert mocked.await_args_list[9].kwargs["json_data"]["document_types"] == [
+        "study_guide",
+        "summary",
+    ]
 
 
 @pytest.mark.asyncio
-async def test_chat_document_stream_generation_is_rejected_before_json_request(monkeypatch):
+async def test_chat_document_stream_generation_is_rejected_before_json_request(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(return_value={})
     monkeypatch.setattr(client, "_request", mocked)

@@ -19,9 +19,13 @@ def _patch_rag_settings(monkeypatch, rag_settings):
     def fake_get_cli_setting(section, key, default=None):
         return app_config.get(section, {}).get(key, default)
 
-    monkeypatch.setattr(rag_config_module, "load_cli_config_and_ensure_existence", lambda: app_config)
+    monkeypatch.setattr(
+        rag_config_module, "load_cli_config_and_ensure_existence", lambda: app_config
+    )
     monkeypatch.setattr(rag_config_module, "get_cli_setting", fake_get_cli_setting)
-    monkeypatch.setattr(rag_config_module, "get_user_data_dir", lambda: Path("/tmp/tldw-rag-test"))
+    monkeypatch.setattr(
+        rag_config_module, "get_user_data_dir", lambda: Path("/tmp/tldw-rag-test")
+    )
     monkeypatch.delenv("RAG_TOP_K", raising=False)
     monkeypatch.delenv("RAG_SEARCH_MODE", raising=False)
 
@@ -157,9 +161,7 @@ def test_load_library_rag_defaults_reads_nested_search_and_retriever_sections():
 )
 def test_validate_library_rag_defaults_rejects_invalid_values(field, value, message):
     values = SettingsLibraryRagDefaults()
-    values = SettingsLibraryRagDefaults(
-        **{**values.__dict__, field: value}
-    )
+    values = SettingsLibraryRagDefaults(**{**values.__dict__, field: value})
 
     result = validate_library_rag_defaults(values)
 

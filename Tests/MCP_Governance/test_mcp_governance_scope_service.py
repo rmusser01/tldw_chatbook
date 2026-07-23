@@ -1,6 +1,8 @@
 import pytest
 
-from tldw_chatbook.MCP_Governance_Interop.mcp_governance_scope_service import MCPGovernanceScopeService
+from tldw_chatbook.MCP_Governance_Interop.mcp_governance_scope_service import (
+    MCPGovernanceScopeService,
+)
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
@@ -10,14 +12,21 @@ class FakeServerMCPGovernanceService:
 
     async def list_external_servers(self, **kwargs):
         self.calls.append(("list_external_servers", kwargs))
-        return [{"server_id": "github", "owner_scope_type": "team", "owner_scope_id": 7}]
+        return [
+            {"server_id": "github", "owner_scope_type": "team", "owner_scope_id": 7}
+        ]
 
     async def create_external_server(self, request_data):
         self.calls.append(("create_external_server", request_data))
         return {"server_id": "github", **request_data}
 
     async def update_external_server(self, server_id, request_data):
-        self.calls.append(("update_external_server", {"server_id": server_id, "request_data": request_data}))
+        self.calls.append(
+            (
+                "update_external_server",
+                {"server_id": server_id, "request_data": request_data},
+            )
+        )
         return {"server_id": server_id, **request_data}
 
     async def list_team_tool_catalogs(self, *, team_id):
@@ -25,11 +34,25 @@ class FakeServerMCPGovernanceService:
         return [{"id": 3, "team_id": team_id, "name": "Team Tools"}]
 
     async def create_team_tool_catalog(self, *, team_id, request_data):
-        self.calls.append(("create_team_tool_catalog", {"team_id": team_id, "request_data": request_data}))
+        self.calls.append(
+            (
+                "create_team_tool_catalog",
+                {"team_id": team_id, "request_data": request_data},
+            )
+        )
         return {"id": 5, "team_id": team_id, **request_data}
 
     async def add_team_catalog_entry(self, *, team_id, catalog_id, request_data):
-        self.calls.append(("add_team_catalog_entry", {"team_id": team_id, "catalog_id": catalog_id, "request_data": request_data}))
+        self.calls.append(
+            (
+                "add_team_catalog_entry",
+                {
+                    "team_id": team_id,
+                    "catalog_id": catalog_id,
+                    "request_data": request_data,
+                },
+            )
+        )
         return {"catalog_id": catalog_id, **request_data}
 
     async def list_org_tool_catalogs(self, *, org_id):
@@ -74,9 +97,15 @@ async def test_mcp_governance_scope_service_routes_server_actions_and_normalizes
     policy = FakePolicyEnforcer()
     scope = MCPGovernanceScopeService(server_service=server, policy_enforcer=policy)
 
-    servers = await scope.list_external_servers(mode="server", owner_scope_type="team", owner_scope_id=7)
-    team_catalogs = await scope.list_tool_catalogs(mode="server", scope_type="team", scope_id=7)
-    org_catalogs = await scope.list_tool_catalogs(mode="server", scope_type="org", scope_id=2)
+    servers = await scope.list_external_servers(
+        mode="server", owner_scope_type="team", owner_scope_id=7
+    )
+    team_catalogs = await scope.list_tool_catalogs(
+        mode="server", scope_type="team", scope_id=7
+    )
+    org_catalogs = await scope.list_tool_catalogs(
+        mode="server", scope_type="org", scope_id=2
+    )
     effective = await scope.get_effective_policy(mode="server", team_id=7)
 
     assert servers[0]["backend"] == "server"
@@ -88,7 +117,10 @@ async def test_mcp_governance_scope_service_routes_server_actions_and_normalizes
         ("list_external_servers", {"owner_scope_type": "team", "owner_scope_id": 7}),
         ("list_team_tool_catalogs", {"team_id": 7}),
         ("list_org_tool_catalogs", {"org_id": 2}),
-        ("get_effective_policy", {"persona_id": None, "group_id": None, "org_id": None, "team_id": 7}),
+        (
+            "get_effective_policy",
+            {"persona_id": None, "group_id": None, "org_id": None, "team_id": 7},
+        ),
     ]
     assert policy.calls == [
         "mcp.governance.external_servers.list.server",
@@ -108,8 +140,12 @@ async def test_mcp_governance_scope_service_exposes_server_crud_through_source_b
         {"server_id": "github", "name": "GitHub", "transport": "stdio"},
         mode="server",
     )
-    updated = await scope.update_external_server("github", {"enabled": False}, mode="server")
-    catalog = await scope.create_tool_catalog({"name": "Team Tools"}, mode="server", scope_type="team", scope_id=7)
+    updated = await scope.update_external_server(
+        "github", {"enabled": False}, mode="server"
+    )
+    catalog = await scope.create_tool_catalog(
+        {"name": "Team Tools"}, mode="server", scope_type="team", scope_id=7
+    )
     entry = await scope.add_catalog_entry(
         {"tool_name": "search"},
         mode="server",
@@ -123,10 +159,22 @@ async def test_mcp_governance_scope_service_exposes_server_crud_through_source_b
     assert catalog["record_id"] == "server:mcp_tool_catalog:team:5"
     assert entry["record_id"] == "server:mcp_tool_catalog_entry:search"
     assert server.calls == [
-        ("create_external_server", {"server_id": "github", "name": "GitHub", "transport": "stdio"}),
-        ("update_external_server", {"server_id": "github", "request_data": {"enabled": False}}),
-        ("create_team_tool_catalog", {"team_id": 7, "request_data": {"name": "Team Tools"}}),
-        ("add_team_catalog_entry", {"team_id": 7, "catalog_id": 5, "request_data": {"tool_name": "search"}}),
+        (
+            "create_external_server",
+            {"server_id": "github", "name": "GitHub", "transport": "stdio"},
+        ),
+        (
+            "update_external_server",
+            {"server_id": "github", "request_data": {"enabled": False}},
+        ),
+        (
+            "create_team_tool_catalog",
+            {"team_id": 7, "request_data": {"name": "Team Tools"}},
+        ),
+        (
+            "add_team_catalog_entry",
+            {"team_id": 7, "catalog_id": 5, "request_data": {"tool_name": "search"}},
+        ),
     ]
     assert policy.calls == [
         "mcp.governance.external_servers.create.server",
@@ -139,7 +187,9 @@ async def test_mcp_governance_scope_service_exposes_server_crud_through_source_b
 @pytest.mark.asyncio
 async def test_mcp_governance_scope_service_honestly_rejects_local_mode():
     server = FakeServerMCPGovernanceService()
-    scope = MCPGovernanceScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer())
+    scope = MCPGovernanceScopeService(
+        server_service=server, policy_enforcer=FakePolicyEnforcer()
+    )
 
     with pytest.raises(ValueError, match="Remote MCP governance is server-only"):
         await scope.list_external_servers(mode="local")
@@ -158,7 +208,10 @@ async def test_mcp_governance_scope_service_requires_explicit_catalog_scope():
 @pytest.mark.asyncio
 async def test_mcp_governance_scope_service_blocks_denied_policy_before_dispatch():
     server = FakeServerMCPGovernanceService()
-    scope = MCPGovernanceScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer("server_auth_required"))
+    scope = MCPGovernanceScopeService(
+        server_service=server,
+        policy_enforcer=FakePolicyEnforcer("server_auth_required"),
+    )
 
     with pytest.raises(PolicyDeniedError) as exc:
         await scope.list_external_servers(mode="server")

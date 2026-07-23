@@ -1,0 +1,45 @@
+{
+  "items": [
+    {
+      "id": "task_01J3B8K2VQX4E9M5P7R2T6Y8Z",
+      "user_id": "usr_abc123",
+      "tenant_id": "tenant_default",
+      "title": "Weekly team stand-up reminder",
+      "body": "Prepare your updates before the stand-up meeting.",
+      "link_type": "conversation",
+      "link_id": "conv_standup_notes",
+      "link_url": null,
+      "schedule_kind": "recurring",
+      "run_at": null,
+      "cron": "0 9 * * MON",
+      "timezone": "America/New_York",
+      "enabled": true,
+      "last_run_at": "2026-07-13T13:00:00Z",
+      "next_run_at": "2026-07-20T13:00:00Z",
+      "last_status": "completed",
+      "created_at": "2026-07-01T10:30:00Z",
+      "updated_at": "2026-07-13T13:05:00Z"
+    },
+    {
+      "id": "task_01J3B8K2VQX4E9M5P7R2T6Y9A",
+      "user_id": "usr_abc123",
+      "tenant_id": "tenant_default",
+      "title": "One-time project deadline reminder",
+      "body": null,
+      "link_type": null,
+      "link_id": null,
+      "link_url": "https://example.com/project/deadline",
+      "schedule_kind": "one_time",
+      "run_at": "2026-07-25T17:00:00Z",
+      "cron": null,
+      "timezone": null,
+      "enabled": true,
+      "last_run_at": null,
+      "next_run_at": "2026-07-25T17:00:00Z",
+      "last_status": null,
+      "created_at": "2026-07-10T09:15:00Z",
+      "updated_at": "2026-07-10T09:15:00Z"
+    }
+  ],
+  "total": 2
+}

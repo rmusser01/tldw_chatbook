@@ -1,4 +1,4 @@
-"""Console left-rail staged context tray tests."""
+"""Console staged context tray tests (Inspector-rail Context section)."""
 
 from __future__ import annotations
 
@@ -25,9 +25,7 @@ async def test_staged_context_renders_source_count() -> None:
                 ConsoleStagedContextState(
                     heading="Context",
                     summary="",
-                    rows=(
-                        ConsoleDisplayRow("Source", "readme.md", status="ready"),
-                    ),
+                    rows=(ConsoleDisplayRow("Source", "readme.md", status="ready"),),
                 )
             )
 

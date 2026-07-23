@@ -1,15 +1,26 @@
 """Pure unit tests for the dictionary validation module (P1c)."""
 
 from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_validation import (
-    ValidationFinding,
     validate_entries,
 )
 
 
-def _entry(pattern, *, etype="literal", probability=1.0, case_sensitive=False,
-           entry_id="local:chat_dictionary_entry:1:0"):
-    return {"id": entry_id, "pattern": pattern, "replacement": "x", "type": etype,
-            "probability": probability, "case_sensitive": case_sensitive}
+def _entry(
+    pattern,
+    *,
+    etype="literal",
+    probability=1.0,
+    case_sensitive=False,
+    entry_id="local:chat_dictionary_entry:1:0",
+):
+    return {
+        "id": entry_id,
+        "pattern": pattern,
+        "replacement": "x",
+        "type": etype,
+        "probability": probability,
+        "case_sensitive": case_sensitive,
+    }
 
 
 def test_clean_entries_yield_no_findings():
@@ -27,7 +38,9 @@ def test_duplicate_pattern_same_type_flagged_once_per_extra():
     entries = [
         _entry("BP", entry_id="local:chat_dictionary_entry:1:0"),
         _entry("BP", entry_id="local:chat_dictionary_entry:1:1"),
-        _entry("BP", etype="regex", entry_id="local:chat_dictionary_entry:1:2"),  # different type: ok
+        _entry(
+            "BP", etype="regex", entry_id="local:chat_dictionary_entry:1:2"
+        ),  # different type: ok
     ]
     findings = validate_entries(entries)
     dups = [f for f in findings if f.code == "duplicate_pattern"]
@@ -68,4 +81,7 @@ def test_regex_probe_survives_malformed_sibling_probability():
     findings = validate_entries(
         [_entry("/spo2/i", etype="regex", probability="garbage", case_sensitive=True)]
     )
-    assert set(f.code for f in findings) == {"malformed_probability", "case_flag_on_regex"}
+    assert set(f.code for f in findings) == {
+        "malformed_probability",
+        "case_flag_on_regex",
+    }

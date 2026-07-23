@@ -18,7 +18,9 @@ def _event(
     event_id: str | None = None,
     include_event_id: bool = True,
 ) -> NormalizedEventRecord:
-    resolved_event_id = event_id if event_id is not None else f"{entity_id}:{payload_hash}"
+    resolved_event_id = (
+        event_id if event_id is not None else f"{entity_id}:{payload_hash}"
+    )
     return NormalizedEventRecord(
         source_authority="server",
         server_profile_id=server_profile_id,
@@ -108,7 +110,9 @@ def test_acknowledgement_reports_stale_reset_when_expected_cursor_no_longer_matc
     store = EventCursorStore()
     store.acknowledge_event(_event(server_cursor="cursor-current"))
 
-    result = store.acknowledge_event(_event(server_cursor="cursor-next"), expected_cursor="cursor-old")
+    result = store.acknowledge_event(
+        _event(server_cursor="cursor-next"), expected_cursor="cursor-old"
+    )
 
     assert result.status is CursorAdvanceStatus.STALE_RESET
     assert result.cursor.cursor is None

@@ -19,7 +19,9 @@ def test_workbench_package_import_stays_side_effect_light():
     }
 
     ui_package = sys.modules.get("tldw_chatbook.UI")
-    had_workbench_attribute = ui_package is not None and hasattr(ui_package, "Workbench")
+    had_workbench_attribute = ui_package is not None and hasattr(
+        ui_package, "Workbench"
+    )
     original_workbench_attribute = (
         getattr(ui_package, "Workbench") if had_workbench_attribute else None
     )

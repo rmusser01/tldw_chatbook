@@ -7,7 +7,9 @@ import pytest
 from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
 from tldw_chatbook.Sync_Interop.envelope_builder import SyncEnvelopeBuilder
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
-from tldw_chatbook.Sync_Interop import sync_state_repository as sync_state_repository_module
+from tldw_chatbook.Sync_Interop import (
+    sync_state_repository as sync_state_repository_module,
+)
 
 
 def test_identity_mapping_persists_scope_and_side_keys(tmp_path):
@@ -38,8 +40,14 @@ def test_identity_mapping_persists_scope_and_side_keys(tmp_path):
     )
 
     assert mapping.source_scope_key == "server:server-a:user-a:workspace-1:notes:note"
-    assert mapping.local_side_key == "server:server-a:user-a:workspace-1:notes:note:local:local-note-1"
-    assert mapping.remote_side_key == "server:server-a:user-a:workspace-1:notes:note:remote:remote-note-1"
+    assert (
+        mapping.local_side_key
+        == "server:server-a:user-a:workspace-1:notes:note:local:local-note-1"
+    )
+    assert (
+        mapping.remote_side_key
+        == "server:server-a:user-a:workspace-1:notes:note:remote:remote-note-1"
+    )
     assert [row.local_entity_id for row in rows] == ["local-note-1"]
     assert rows[0].remote_entity_id == "remote-note-1"
 
@@ -74,10 +82,15 @@ def test_duplicate_local_side_mapping_creates_conflict_without_overwrite(tmp_pat
     assert duplicate.mapping_status == "conflict"
     assert len(repo.list_identity_mappings(domain="notes")) == 2
     assert conflicts[0]["conflict_type"] == "duplicate_local_side"
-    assert conflicts[0]["source_scope_key"] == "server:server-a:user-a:workspace-1:notes:note"
+    assert (
+        conflicts[0]["source_scope_key"]
+        == "server:server-a:user-a:workspace-1:notes:note"
+    )
 
 
-def test_identity_mapping_validation_allows_orphans_but_not_confirmed_missing_side(tmp_path):
+def test_identity_mapping_validation_allows_orphans_but_not_confirmed_missing_side(
+    tmp_path,
+):
     repo = SyncStateRepository(tmp_path / "sync_state.db")
 
     orphan = repo.record_identity_mapping(
@@ -93,7 +106,9 @@ def test_identity_mapping_validation_allows_orphans_but_not_confirmed_missing_si
     )
 
     assert orphan.remote_side_key is None
-    with pytest.raises(ValueError, match="confirmed mapping requires local and remote entity IDs"):
+    with pytest.raises(
+        ValueError, match="confirmed mapping requires local and remote entity IDs"
+    ):
         repo.record_identity_mapping(
             source_authority="server",
             server_profile_id="server-a",
@@ -140,24 +155,36 @@ def test_pull_cursor_and_mirror_report_persist_by_principal(tmp_path):
 
     reopened = SyncStateRepository(db_path)
 
-    assert reopened.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-        domain="notes",
-        remote_collection="notes",
-    ).cursor == "cursor-a"
-    assert reopened.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-b",
-        workspace_scope="workspace-1",
-        domain="notes",
-        remote_collection="notes",
-    ).cursor == "cursor-b"
-    assert reopened.list_mirror_reports(domain="notes")[0]["report_id"] == report["report_id"]
-    assert reopened.list_mirror_reports(domain="notes")[0]["report"]["write_enabled"] is False
+    assert (
+        reopened.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="notes",
+            remote_collection="notes",
+        ).cursor
+        == "cursor-a"
+    )
+    assert (
+        reopened.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-b",
+            workspace_scope="workspace-1",
+            domain="notes",
+            remote_collection="notes",
+        ).cursor
+        == "cursor-b"
+    )
+    assert (
+        reopened.list_mirror_reports(domain="notes")[0]["report_id"]
+        == report["report_id"]
+    )
+    assert (
+        reopened.list_mirror_reports(domain="notes")[0]["report"]["write_enabled"]
+        is False
+    )
 
 
 def test_latest_mirror_report_fetches_newest_without_full_history(tmp_path):
@@ -315,24 +342,33 @@ def test_sync_profile_state_persists_last_report_and_error_by_principal(tmp_path
 
     reopened = SyncStateRepository(db_path)
 
-    assert reopened.get_sync_profile_state(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-    )["last_mirror_report_id"] == report["report_id"]
-    assert reopened.get_sync_profile_state(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-    )["last_error"] == "remote_unavailable"
-    assert reopened.get_sync_profile_state(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-b",
-        workspace_scope="workspace-1",
-    ) is None
+    assert (
+        reopened.get_sync_profile_state(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+        )["last_mirror_report_id"]
+        == report["report_id"]
+    )
+    assert (
+        reopened.get_sync_profile_state(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+        )["last_error"]
+        == "remote_unavailable"
+    )
+    assert (
+        reopened.get_sync_profile_state(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-b",
+            workspace_scope="workspace-1",
+        )
+        is None
+    )
 
 
 def test_sync_v2_profile_state_persists_device_dataset_cursors_and_metadata(tmp_path):
@@ -432,10 +468,14 @@ def test_sync_v2_schema_migration_updates_legacy_schema_version(tmp_path):
         conflict_reviews = conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sync_v2_conflict_reviews'"
         ).fetchone()
-        schema_version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+        schema_version = conn.execute(
+            "SELECT MAX(version) FROM schema_version"
+        ).fetchone()[0]
         schema_versions = [
             row[0]
-            for row in conn.execute("SELECT version FROM schema_version ORDER BY version").fetchall()
+            for row in conn.execute(
+                "SELECT version FROM schema_version ORDER BY version"
+            ).fetchall()
         ]
 
     assert {
@@ -452,7 +492,9 @@ def test_sync_v2_schema_migration_updates_legacy_schema_version(tmp_path):
     assert schema_versions == [3]
 
 
-def test_sync_v2_profile_column_migration_validates_column_identifiers(tmp_path, monkeypatch):
+def test_sync_v2_profile_column_migration_validates_column_identifiers(
+    tmp_path, monkeypatch
+):
     db_path = tmp_path / "sync_state.db"
     with sqlite3.connect(db_path) as conn:
         conn.executescript(
@@ -481,7 +523,9 @@ def test_sync_v2_profile_column_migration_validates_column_identifiers(tmp_path,
         )
     calls: list[tuple[str, str | None]] = []
 
-    def record_validated_column(column_name: str, table_name: str | None = None) -> bool:
+    def record_validated_column(
+        column_name: str, table_name: str | None = None
+    ) -> bool:
         calls.append((column_name, table_name))
         return True
 
@@ -587,7 +631,9 @@ def test_sync_v2_outbox_persists_pending_entries_and_push_results(tmp_path):
     )
 
     assert result == {"dispatched": 1, "retained": 2}
-    assert [entry["client_envelope_id"] for entry in dispatched] == [accepted.client_envelope_id]
+    assert [entry["client_envelope_id"] for entry in dispatched] == [
+        accepted.client_envelope_id
+    ]
     assert dispatched[0]["attempt_count"] == 1
     assert [entry["client_envelope_id"] for entry in pending_after] == [
         rejected.client_envelope_id,
@@ -727,7 +773,9 @@ def test_sync_v2_profile_summary_aggregates_state_counts_and_status(tmp_path):
     assert summary["last_mirror_report"]["domain"] == "notes"
 
 
-def test_sync_v2_profile_summary_combines_legacy_and_v2_conflicts_before_limit(tmp_path):
+def test_sync_v2_profile_summary_combines_legacy_and_v2_conflicts_before_limit(
+    tmp_path,
+):
     repo = SyncStateRepository(tmp_path / "sync_state.db")
     repo.set_sync_v2_profile_state(
         server_profile_id="server-a",
@@ -786,7 +834,9 @@ def test_sync_v2_profile_summary_combines_legacy_and_v2_conflicts_before_limit(t
     assert summary["conflicts"]["latest"][0]["item_label"] == "Newest v2 conflict"
 
 
-def test_sync_v2_conflict_review_listing_is_bounded_by_default_and_newest_first(tmp_path):
+def test_sync_v2_conflict_review_listing_is_bounded_by_default_and_newest_first(
+    tmp_path,
+):
     repo = SyncStateRepository(tmp_path / "sync_state.db")
     for index in range(101):
         repo.record_sync_v2_conflict_review(
@@ -844,7 +894,10 @@ def test_sync_v2_conflict_review_listing_filters_domain_before_limit(tmp_path):
         limit=2,
     )
 
-    assert [review["source_conflict_key"] for review in reviews] == ["notes-2", "notes-1"]
+    assert [review["source_conflict_key"] for review in reviews] == [
+        "notes-2",
+        "notes-1",
+    ]
     assert {review["domain"] for review in reviews} == {"notes"}
 
 
@@ -1001,29 +1054,41 @@ def test_clear_server_profile_state_removes_only_scoped_sync_rows(tmp_path):
         authenticated_principal_id="user-a",
     )
 
-    assert repo.list_identity_mappings(
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-    ) == []
-    assert len(
+    assert (
         repo.list_identity_mappings(
             server_profile_id="server-a",
-            authenticated_principal_id="user-b",
+            authenticated_principal_id="user-a",
         )
-    ) == 1
-    assert repo.get_remote_pull_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-        domain="notes",
-        remote_collection="notes",
-    ).cursor is None
-    assert repo.get_sync_profile_state(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        workspace_scope="workspace-1",
-    ) is None
+        == []
+    )
+    assert (
+        len(
+            repo.list_identity_mappings(
+                server_profile_id="server-a",
+                authenticated_principal_id="user-b",
+            )
+        )
+        == 1
+    )
+    assert (
+        repo.get_remote_pull_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domain="notes",
+            remote_collection="notes",
+        ).cursor
+        is None
+    )
+    assert (
+        repo.get_sync_profile_state(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+        )
+        is None
+    )
     assert repo.list_mirror_reports(domain="notes") == []
     assert repo.get_domain_eligibility("notes")["sync_eligible"] is True

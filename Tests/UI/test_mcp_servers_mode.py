@@ -19,17 +19,32 @@ from tldw_chatbook.MCP.readiness import (
     builtin_readiness,
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
+from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
 from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel
-from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
+from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode, _named_items_text
 
-_BUNDLED_CSS_PATH = str(Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss")
-_AGENTIC_TERMINAL_TCSS = Path(tldw_chatbook.__file__).parent / "css" / "components" / "_agentic_terminal.tcss"
+_BUNDLED_CSS_PATH = str(
+    Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
+)
+_AGENTIC_TERMINAL_TCSS = (
+    Path(tldw_chatbook.__file__).parent
+    / "css"
+    / "components"
+    / "_agentic_terminal.tcss"
+)
 
 
-def _snap(key: str, label: str, state=ReadinessState.READY, reasons=(), message="", **kw):
+def _snap(
+    key: str, label: str, state=ReadinessState.READY, reasons=(), message="", **kw
+):
     return ReadinessSnapshot(
-        server_key=key, label=label, source=key.split(":", 1)[0],
-        state=state, reasons=reasons, message=message, **kw,
+        server_key=key,
+        label=label,
+        source=key.split(":", 1)[0],
+        state=state,
+        reasons=reasons,
+        message=message,
+        **kw,
     )
 
 
@@ -81,7 +96,8 @@ async def test_overview_renders_aggregate_table_and_callouts():
             [
                 _snap("local:docs", "docs", tool_count=4),
                 _snap(
-                    "local:web", "web",
+                    "local:web",
+                    "web",
                     state=ReadinessState.NEEDS_SETUP,
                     reasons=(ReasonCode.AUTH_MISSING,),
                     message="Missing environment variables: KEY.",
@@ -102,6 +118,50 @@ async def test_overview_renders_aggregate_table_and_callouts():
 
 
 @pytest.mark.asyncio
+async def test_status_column_cells_carry_semantic_color_by_readiness_state():
+    """Task 1 (MCP Hub Phase 6): the overview's Status cell now colors the
+    WHOLE `badge_text()` string (glyph + word together, one Rich `Text`) by
+    its readiness state's `state_text()` kind -- mirrors `mcp_rail.py`'s row
+    Buttons, which already color both the same way via `STATE_CSS_CLASSES`.
+    The kind is derived from that SAME `STATE_CSS_CLASSES` mapping (its
+    class names are already exactly `"mcp-status-{kind}"`), not a second,
+    parallel table."""
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        await canvas.update_overview(
+            [
+                _snap("local:docs", "docs"),
+                _snap(
+                    "local:web", "web",
+                    state=ReadinessState.NEEDS_ATTENTION,
+                    reasons=(ReasonCode.AUTH_MISSING,),
+                    message="Timed out",
+                ),
+                _snap(
+                    "local:beta", "beta",
+                    state=ReadinessState.NEEDS_SETUP,
+                    reasons=(ReasonCode.AUTH_MISSING,),
+                    message="Missing environment variables: KEY.",
+                ),
+            ]
+        )
+        await pilot.pause()
+        table = app.query_one("#mcp-servers-table", DataTable)
+        assert table.get_cell_at((0, 2)).style == state_text(
+            "x", "ready"
+        ).style  # READY
+        assert table.get_cell_at((1, 2)).style == state_text(
+            "x", "error"
+        ).style  # NEEDS_ATTENTION
+        assert table.get_cell_at((2, 2)).style == state_text(
+            "x", "warning"
+        ).style  # NEEDS_SETUP
+        # Content itself is unchanged -- glyph + label, still one string.
+        assert str(table.get_cell_at((0, 2))) == f"{STATE_GLYPHS[ReadinessState.READY]} Ready"
+
+
+@pytest.mark.asyncio
 async def test_overview_summary_glyph_carries_worst_state_class_sentence_stays_neutral():
     """A5: the aggregate summary row is a neutral sentence with a small
     colored glyph in front of it, not the whole line taking on the
@@ -118,7 +178,8 @@ async def test_overview_summary_glyph_carries_worst_state_class_sentence_stays_n
             [
                 _snap("local:docs", "docs"),
                 _snap(
-                    "local:web", "web",
+                    "local:web",
+                    "web",
                     state=ReadinessState.NEEDS_ATTENTION,
                     reasons=(ReasonCode.AUTH_MISSING,),
                     message="Timed out",
@@ -142,7 +203,8 @@ async def test_overview_summary_glyph_carries_worst_state_class_sentence_stays_n
         await canvas.update_overview(
             [
                 _snap(
-                    "local:docs", "docs",
+                    "local:docs",
+                    "docs",
                     state=ReadinessState.NEEDS_SETUP,
                     reasons=(ReasonCode.AUTH_MISSING,),
                     message="Missing environment variables: KEY.",
@@ -172,7 +234,8 @@ async def test_overview_callouts_are_left_aligned_with_bundled_css():
         await canvas.update_overview(
             [
                 _snap(
-                    "local:web", "web",
+                    "local:web",
+                    "web",
                     state=ReadinessState.NEEDS_SETUP,
                     reasons=(ReasonCode.AUTH_MISSING,),
                     message="Missing environment variables: KEY.",
@@ -221,7 +284,8 @@ async def test_update_overview_survives_markup_like_labels_and_renders_plain():
             [
                 _snap("local:evil1", "[/bold]docs"),
                 _snap(
-                    "local:evil2", "safe-label",
+                    "local:evil2",
+                    "safe-label",
                     auth_display="[red]x[/red]",
                     scope_display="[red]y[/red]",
                 ),
@@ -285,10 +349,20 @@ async def test_second_update_overview_leaves_only_latest_callouts():
         canvas = app.query_one(MCPServersMode)
         await canvas.update_overview(
             [
-                _snap("local:a", "a", state=ReadinessState.NEEDS_SETUP,
-                      reasons=(ReasonCode.AUTH_MISSING,), message="first-a"),
-                _snap("local:b", "b", state=ReadinessState.NEEDS_SETUP,
-                      reasons=(ReasonCode.AUTH_MISSING,), message="first-b"),
+                _snap(
+                    "local:a",
+                    "a",
+                    state=ReadinessState.NEEDS_SETUP,
+                    reasons=(ReasonCode.AUTH_MISSING,),
+                    message="first-a",
+                ),
+                _snap(
+                    "local:b",
+                    "b",
+                    state=ReadinessState.NEEDS_SETUP,
+                    reasons=(ReasonCode.AUTH_MISSING,),
+                    message="first-b",
+                ),
             ]
         )
         # No pilot.pause() here: the second call must start (and its own
@@ -296,8 +370,13 @@ async def test_second_update_overview_leaves_only_latest_callouts():
         # returns.
         await canvas.update_overview(
             [
-                _snap("local:c", "c", state=ReadinessState.NEEDS_SETUP,
-                      reasons=(ReasonCode.AUTH_MISSING,), message="second-c"),
+                _snap(
+                    "local:c",
+                    "c",
+                    state=ReadinessState.NEEDS_SETUP,
+                    reasons=(ReasonCode.AUTH_MISSING,),
+                    message="second-c",
+                ),
             ]
         )
         await pilot.pause()
@@ -336,8 +415,11 @@ async def test_detail_text_redacts_secret_query_params_in_base_url():
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
         snap = _snap(
-            "server:main", "main",
-            detail={"base_url": "https://example.test/api?api_key=sk-super-secret&region=us"},
+            "server:main",
+            "main",
+            detail={
+                "base_url": "https://example.test/api?api_key=sk-super-secret&region=us"
+            },
         )
         await canvas.show_detail(snap)
         await pilot.pause()
@@ -360,7 +442,8 @@ async def test_detail_text_marks_env_placeholder_missing_despite_whitespace():
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
         local = _snap(
-            "local:docs", "docs",
+            "local:docs",
+            "docs",
             detail={
                 "command": "python",
                 "args": [],
@@ -381,13 +464,18 @@ async def test_detail_renders_redacted_config_and_builtin_snippet():
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
         local = _snap(
-            "local:docs", "docs",
+            "local:docs",
+            "docs",
             detail={
                 "command": "python",
                 "args": ["--api-key", "sk-123"],
                 "env_placeholders": {"API_KEY": "$MY_KEY"},
                 "missing_env": [],
-                "discovery_snapshot": {"tools": [{"name": "a"}], "resources": [], "prompts": []},
+                "discovery_snapshot": {
+                    "tools": [{"name": "a"}],
+                    "resources": [],
+                    "prompts": [],
+                },
             },
         )
         await canvas.show_detail(local)
@@ -405,6 +493,97 @@ async def test_detail_renders_redacted_config_and_builtin_snippet():
         assert app.query_one("#mcp-servers-overview").display
 
 
+# -- Task 5 (MCP Hub Phase 6): resources/prompts read-only listing -----------
+
+
+@pytest.mark.asyncio
+async def test_local_detail_lists_resources_and_prompts_from_discovery_snapshot():
+    """§14 compensation for Advanced leaving the default view: the local
+    detail body lists resource URIs and prompt names from the LOCAL
+    discovery snapshot -- read-only, no interactions."""
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        local = _snap(
+            "local:docs", "docs",
+            detail={
+                "command": "python",
+                "args": [],
+                "env_placeholders": {},
+                "missing_env": [],
+                "discovery_snapshot": {
+                    "tools": [{"name": "search"}],
+                    "resources": [{"uri": "note://123"}, {"uri": "note://456"}],
+                    "prompts": [{"name": "summarize_conversation"}],
+                },
+            },
+        )
+        await canvas.show_detail(local)
+        await pilot.pause()
+        body = str(app.query_one("#mcp-detail-body", Static).renderable)
+        assert "Resources · 2: note://123, note://456" in body
+        assert "Prompts · 1: summarize_conversation" in body
+        assert "Tools · 1: search" in body
+
+
+@pytest.mark.asyncio
+async def test_local_detail_resources_prompts_empty_copy_is_none():
+    """Empty (or absent) discovery lists render the literal "none" -- not a
+    bare zero, and never a crash on a malformed snapshot shape."""
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        local = _snap(
+            "local:docs", "docs",
+            detail={
+                "command": "python",
+                "args": [],
+                "env_placeholders": {},
+                "missing_env": [],
+                # resources absent entirely; prompts present but malformed
+                # (not a list) -- both must degrade to "none".
+                "discovery_snapshot": {"tools": [], "prompts": "corrupt"},
+            },
+        )
+        await canvas.show_detail(local)
+        await pilot.pause()
+        body = str(app.query_one("#mcp-detail-body", Static).renderable)
+        assert "Tools · none" in body
+        assert "Resources · none" in body
+        assert "Prompts · none" in body
+
+
+@pytest.mark.asyncio
+async def test_server_external_record_detail_shows_resource_prompt_counts_only():
+    """Server-source external records show COUNTS only (from the snapshot's
+    own resource_count/prompt_count fields, derived from the existing
+    payload) -- no names/URIs, which the server owns."""
+    app = CanvasApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPServersMode)
+        snap = _snap(
+            "server:main/docs", "docs",
+            resource_count=3, prompt_count=0,
+            detail={"raw": {"server_id": "docs", "enabled": True}},
+        )
+        await canvas.show_detail(snap)
+        await pilot.pause()
+        body = str(app.query_one("#mcp-detail-body", Static).renderable)
+        assert "Resources · 3" in body
+        assert "Prompts · 0" in body
+
+        # Unreported counts render "—" (unknown), never a fake zero.
+        bare = _snap(
+            "server:main/other", "other",
+            detail={"raw": {"server_id": "other", "enabled": True}},
+        )
+        await canvas.show_detail(bare)
+        await pilot.pause()
+        body = str(app.query_one("#mcp-detail-body", Static).renderable)
+        assert "Resources · —" in body
+        assert "Prompts · —" in body
+
+
 @pytest.mark.asyncio
 async def test_builtin_detail_no_longer_dumps_raw_expose_flags_in_body_text():
     """A3c (carried forward from Task 6): the builtin detail body must not
@@ -417,7 +596,10 @@ async def test_builtin_detail_no_longer_dumps_raw_expose_flags_in_body_text():
         canvas = app.query_one(MCPServersMode)
         await canvas.show_detail(
             builtin_readiness(
-                enabled=True, expose_tools=True, expose_resources=True, expose_prompts=False
+                enabled=True,
+                expose_tools=True,
+                expose_resources=True,
+                expose_prompts=False,
             )
         )
         await pilot.pause()
@@ -441,7 +623,10 @@ async def test_builtin_detail_shows_enable_expose_checkboxes_with_values_and_not
         canvas = app.query_one(MCPServersMode)
         await canvas.show_detail(
             builtin_readiness(
-                enabled=True, expose_tools=True, expose_resources=False, expose_prompts=True
+                enabled=True,
+                expose_tools=True,
+                expose_resources=False,
+                expose_prompts=True,
             )
         )
         await pilot.pause()
@@ -483,7 +668,10 @@ async def test_builtin_toggles_container_does_not_expand_past_content():
         canvas = app.query_one(MCPServersMode)
         await canvas.show_detail(
             builtin_readiness(
-                enabled=True, expose_tools=True, expose_resources=True, expose_prompts=True
+                enabled=True,
+                expose_tools=True,
+                expose_resources=True,
+                expose_prompts=True,
             )
         )
         await pilot.pause()
@@ -527,7 +715,10 @@ async def test_showing_builtin_detail_does_not_post_builtin_flag_changed():
         canvas = app.query_one(MCPServersMode)
         await canvas.show_detail(
             builtin_readiness(
-                enabled=False, expose_tools=False, expose_resources=True, expose_prompts=False
+                enabled=False,
+                expose_tools=False,
+                expose_resources=True,
+                expose_prompts=False,
             )
         )
         await pilot.pause()
@@ -556,7 +747,10 @@ async def test_toggling_builtin_expose_checkboxes_posts_matching_keys():
         canvas = app.query_one(MCPServersMode)
         await canvas.show_detail(
             builtin_readiness(
-                enabled=True, expose_tools=True, expose_resources=True, expose_prompts=True
+                enabled=True,
+                expose_tools=True,
+                expose_resources=True,
+                expose_prompts=True,
             )
         )
         await pilot.pause()
@@ -582,9 +776,17 @@ async def test_delete_requires_arm_then_confirm():
     app = CanvasApp()
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPServersMode)
-        snap = _snap("local:docs", "docs",
-                     detail={"command": "npx", "args": [], "env_placeholders": {},
-                             "missing_env": [], "discovery_snapshot": None})
+        snap = _snap(
+            "local:docs",
+            "docs",
+            detail={
+                "command": "npx",
+                "args": [],
+                "env_placeholders": {},
+                "missing_env": [],
+                "discovery_snapshot": None,
+            },
+        )
         await canvas.show_detail(snap)
         await pilot.pause()
         await pilot.click("#mcp-detail-delete")
@@ -672,7 +874,9 @@ async def test_edit_button_posts_edit_config_hub_action():
         await pilot.pause()
         await pilot.click("#mcp-detail-edit")
         await pilot.pause()
-        posted = [e for e in app.events if isinstance(e, MCPInspector.HubActionRequested)]
+        posted = [
+            e for e in app.events if isinstance(e, MCPInspector.HubActionRequested)
+        ]
         assert posted and posted[-1].action is HubAction.EDIT_CONFIG
         assert posted[-1].server_key == "local:docs"
 
@@ -684,7 +888,11 @@ async def test_every_detail_toolbar_button_has_a_tooltip():
         canvas = app.query_one(MCPServersMode)
         await canvas.show_detail(_snap("local:docs", "docs", is_connected=True))
         await pilot.pause()
-        for button_id in ("#mcp-detail-edit", "#mcp-detail-disconnect", "#mcp-detail-delete"):
+        for button_id in (
+            "#mcp-detail-edit",
+            "#mcp-detail-disconnect",
+            "#mcp-detail-delete",
+        ):
             button = app.query_one(button_id)
             assert button.tooltip, f"{button_id} missing a tooltip"
         await pilot.click("#mcp-detail-delete")
@@ -703,7 +911,11 @@ async def test_import_button_posts_import_servers_requested():
     async with app.run_test() as pilot:
         await pilot.click("#mcp-import-server")
         await pilot.pause()
-        posted = [e for e in app.events if isinstance(e, MCPServersMode.ImportServersRequested)]
+        posted = [
+            e
+            for e in app.events
+            if isinstance(e, MCPServersMode.ImportServersRequested)
+        ]
         assert posted
 
 
@@ -837,7 +1049,8 @@ async def test_callout_click_posts_server_row_selected_with_its_key():
             [
                 _snap("local:docs", "docs"),
                 _snap(
-                    "local:web", "web",
+                    "local:web",
+                    "web",
                     state=ReadinessState.NEEDS_SETUP,
                     reasons=(ReasonCode.AUTH_MISSING,),
                     message="Missing environment variables: KEY.",
@@ -859,7 +1072,8 @@ async def test_callouts_cap_at_four_with_overflow_static():
         canvas = app.query_one(MCPServersMode)
         problem_snaps = [
             _snap(
-                f"local:p{i}", f"p{i}",
+                f"local:p{i}",
+                f"p{i}",
                 state=ReadinessState.NEEDS_SETUP,
                 reasons=(ReasonCode.AUTH_MISSING,),
                 message=f"problem {i}",
@@ -962,7 +1176,8 @@ async def test_overview_table_hugs_content_so_callouts_sit_close_below():
                 _snap("local:a", "a"),
                 _snap("local:b", "b"),
                 _snap(
-                    "local:c", "c",
+                    "local:c",
+                    "c",
                     state=ReadinessState.NEEDS_SETUP,
                     reasons=(ReasonCode.AUTH_MISSING,),
                     message="Missing environment variables: KEY.",
@@ -1023,8 +1238,12 @@ def test_servers_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
         assert start != -1, f"{label} is missing {selector!r}"
         end = text.find("}", start)
         block = text[start:end]
-        assert "height: auto;" in block, f"{label}'s {selector!r} block is missing 'height: auto;'"
-        assert "max-height: 70%;" in block, f"{label}'s {selector!r} block is missing 'max-height: 70%;'"
+        assert "height: auto;" in block, (
+            f"{label}'s {selector!r} block is missing 'height: auto;'"
+        )
+        assert "max-height: 70%;" in block, (
+            f"{label}'s {selector!r} block is missing 'max-height: 70%;'"
+        )
 
 
 class InspectorAppWithBundledCSS(App):
@@ -1070,11 +1289,21 @@ async def test_detail_scroll_focus_is_quiet_not_the_generic_outline_with_bundled
 
 
 @pytest.mark.asyncio
-async def test_adv_scroll_focus_is_quiet_not_the_generic_outline_with_bundled_css():
+async def test_adv_scroll_focus_is_quiet_not_the_generic_outline_with_bundled_css(monkeypatch):
     """Same contract as the detail-scroll test above, for the Advanced
-    collapsible's `#mcp-adv-scroll` in mcp_inspector.py."""
+    collapsible's `#mcp-adv-scroll` in mcp_inspector.py.
+
+    Task 5 (MCP Hub Phase 6): the Advanced collapsible is opt-in now
+    (`mcp.hub_state.advanced_visible`, default False) -- monkeypatch the
+    inspector module's `get_cli_setting` so it composes at mount (and never
+    reads the developer's real config), mirroring test_mcp_inspector.py's
+    own autouse fixture.
+    """
+    import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
     from textual.widgets import Collapsible
 
+    monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: True)
+    monkeypatch.setattr(mcp_inspector_module, "save_setting_to_cli_config", lambda *a, **k: True)
     app = InspectorAppWithBundledCSS()
     async with app.run_test(size=(120, 40)) as pilot:
         collapsible = app.query_one("#mcp-adv-collapsible", Collapsible)
@@ -1088,3 +1317,27 @@ async def test_adv_scroll_focus_is_quiet_not_the_generic_outline_with_bundled_cs
         assert scroll.styles.border.top[0] in {"", "none"}
         assert scroll.styles.border.top[0] != "dashed"
         assert scroll.styles.background.a > 0
+
+
+# -- F3/F4 (PR #722 bot review): `_named_items_text()` tuple support + cap --
+
+
+def test_named_items_text_accepts_tuple_not_just_list():
+    """F3 (Gemini bot review): `_named_items_text()` gated on `isinstance(
+    items, list)` -- a tuple-valued `discovery_snapshot` field (tools/
+    resources/prompts don't strictly have to be a list on the wire) would
+    silently collapse to "none" instead of rendering. Now accepts either.
+    """
+    assert _named_items_text(("fetch", "search"), key="name") == "2: fetch, search"
+    assert _named_items_text([], key="name") == "none"
+    assert _named_items_text(None, key="name") == "none"
+
+
+def test_named_items_text_truncates_at_named_items_cap():
+    """F4: the truncation point and the "+N more" arithmetic both derive
+    from the same `_NAMED_ITEMS_CAP` constant now -- pin the boundary so a
+    future edit to one without the other regresses visibly."""
+    items = [{"name": f"tool{i}"} for i in range(10)]
+    text = _named_items_text(items, key="name")
+    assert text.startswith("10: tool0, tool1, tool2, tool3, tool4, tool5, tool6, tool7")
+    assert text.endswith("… +2 more")

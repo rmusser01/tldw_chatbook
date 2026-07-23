@@ -29,7 +29,9 @@ LAB_MODE_CHIPS: tuple[tuple[str, str, str, str], ...] = (
     ("evals", "Evals", "evals", "Run and review evaluation jobs."),
 )
 
-LAB_MODE_CHIP_IDS: tuple[str, ...] = tuple(f"lab-mode-{mode_id}" for mode_id, *_ in LAB_MODE_CHIPS)
+LAB_MODE_CHIP_IDS: tuple[str, ...] = tuple(
+    f"lab-mode-{mode_id}" for mode_id, *_ in LAB_MODE_CHIPS
+)
 
 
 class LabModeStrip(DestinationModeStrip):

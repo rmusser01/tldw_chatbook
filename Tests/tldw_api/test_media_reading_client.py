@@ -1,3 +1,4 @@
+# ruff: noqa: F811
 from unittest.mock import AsyncMock
 
 import httpx
@@ -30,7 +31,6 @@ from tldw_chatbook.tldw_api import (
     ItemsBulkRequest,
     ItemsBulkResponse,
     IngestionSourceCreateRequest,
-    IngestionSourceItemListResponse,
     IngestionSourceItemResponse,
     IngestionSourcePatchRequest,
     IngestionSourceResponse,
@@ -89,7 +89,10 @@ from tldw_chatbook.tldw_api import (
     UnifiedItemsListResponse,
     WebScrapingRequest,
 )
-from tldw_chatbook.tldw_api.media_reading_schemas import ItemsBulkRequest, ItemsBulkResponse
+from tldw_chatbook.tldw_api.media_reading_schemas import (
+    ItemsBulkRequest,
+    ItemsBulkResponse,
+)
 
 
 class _FakeHTTPClient:
@@ -136,8 +139,21 @@ async def test_media_management_routes_wire_server_item_listing_and_lookup(monke
     mocked = AsyncMock(
         side_effect=[
             {"keywords": ["ai", "paper"]},
-            {"items": [], "pagination": {"page": 2, "results_per_page": 25, "total_pages": 0, "total_items": 0}},
-            {"deleted_count": 2, "failed_count": 0, "failed_ids": [], "remaining_count": 0},
+            {
+                "items": [],
+                "pagination": {
+                    "page": 2,
+                    "results_per_page": 25,
+                    "total_pages": 0,
+                    "total_items": 0,
+                },
+            },
+            {
+                "deleted_count": 2,
+                "failed_count": 0,
+                "failed_ids": [],
+                "remaining_count": 0,
+            },
             {
                 "media_id": 7,
                 "source": {"title": "Paper", "type": "pdf"},
@@ -165,7 +181,10 @@ async def test_media_management_routes_wire_server_item_listing_and_lookup(monke
             },
             {},
             {"media_id": 7, "keywords": ["ai"]},
-            {"results": [{"media_id": 7}], "pagination": {"page": 2, "per_page": 10, "total": 1, "total_pages": 1}},
+            {
+                "results": [{"media_id": 7}],
+                "pagination": {"page": 2, "per_page": 10, "total": 1, "total_pages": 1},
+            },
             {"results": [{"media_id": 7}], "total": 1},
         ]
     )
@@ -174,12 +193,18 @@ async def test_media_management_routes_wire_server_item_listing_and_lookup(monke
     await client.list_media_keywords(query="ai", limit=5)
     await client.list_media_trash(page=2, results_per_page=25, include_keywords=True)
     await client.empty_media_trash()
-    await client.get_media_item(7, include_content=False, include_versions=True, include_version_content=False)
-    await client.update_media_item(7, MediaItemUpdateRequest(title="Renamed", keywords=["ai"]))
+    await client.get_media_item(
+        7, include_content=False, include_versions=True, include_version_content=False
+    )
+    await client.update_media_item(
+        7, MediaItemUpdateRequest(title="Renamed", keywords=["ai"])
+    )
     await client.delete_media_item(7)
     await client.restore_media_item(7, include_content=False)
     await client.permanently_delete_media_item(7)
-    await client.update_media_keywords(7, MediaKeywordsUpdateRequest(keywords=["ai"], mode="set"))
+    await client.update_media_keywords(
+        7, MediaKeywordsUpdateRequest(keywords=["ai"], mode="set")
+    )
     await client.search_media_metadata(
         field="doi",
         value="10.123/example",
@@ -207,14 +232,23 @@ async def test_media_management_routes_wire_server_item_listing_and_lookup(monke
         "include_version_content": "false",
     }
     assert mocked.await_args_list[4].args[:2] == ("PUT", "/api/v1/media/7")
-    assert mocked.await_args_list[4].kwargs["json_data"] == {"title": "Renamed", "keywords": ["ai"]}
+    assert mocked.await_args_list[4].kwargs["json_data"] == {
+        "title": "Renamed",
+        "keywords": ["ai"],
+    }
     assert mocked.await_args_list[5].args[:2] == ("DELETE", "/api/v1/media/7")
     assert mocked.await_args_list[6].args[:2] == ("POST", "/api/v1/media/7/restore")
     assert mocked.await_args_list[6].kwargs["params"]["include_content"] == "false"
     assert mocked.await_args_list[7].args[:2] == ("DELETE", "/api/v1/media/7/permanent")
     assert mocked.await_args_list[8].args[:2] == ("PATCH", "/api/v1/media/7/keywords")
-    assert mocked.await_args_list[8].kwargs["json_data"] == {"keywords": ["ai"], "mode": "set"}
-    assert mocked.await_args_list[9].args[:2] == ("GET", "/api/v1/media/metadata-search")
+    assert mocked.await_args_list[8].kwargs["json_data"] == {
+        "keywords": ["ai"],
+        "mode": "set",
+    }
+    assert mocked.await_args_list[9].args[:2] == (
+        "GET",
+        "/api/v1/media/metadata-search",
+    )
     assert mocked.await_args_list[9].kwargs["params"] == {
         "field": "doi",
         "op": "icontains",
@@ -255,7 +289,12 @@ async def test_media_navigation_routes_wire_and_return_typed_models(monkeypatch)
                         "source": "pdf_outline",
                     }
                 ],
-                "stats": {"returned_node_count": 1, "node_count": 1, "max_depth": 0, "truncated": False},
+                "stats": {
+                    "returned_node_count": 1,
+                    "node_count": 1,
+                    "max_depth": 0,
+                    "truncated": False,
+                },
             },
             {
                 "media_id": 9,
@@ -270,7 +309,9 @@ async def test_media_navigation_routes_wire_and_return_typed_models(monkeypatch)
     )
     monkeypatch.setattr(client, "_request", mocked)
 
-    navigation = await client.get_media_navigation(9, max_depth=3, max_nodes=25, parent_id="root")
+    navigation = await client.get_media_navigation(
+        9, max_depth=3, max_nodes=25, parent_id="root"
+    )
     content = await client.get_media_navigation_content(
         9,
         "node-1",
@@ -285,7 +326,10 @@ async def test_media_navigation_routes_wire_and_return_typed_models(monkeypatch)
         "max_nodes": 25,
         "parent_id": "root",
     }
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/media/9/navigation/node-1/content")
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/media/9/navigation/node-1/content",
+    )
     assert mocked.await_args_list[1].kwargs["params"] == {
         "format": "markdown",
         "include_alternates": True,
@@ -297,7 +341,9 @@ async def test_media_navigation_routes_wire_and_return_typed_models(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_mediawiki_streaming_and_original_file_routes_use_media_router(monkeypatch, tmp_path):
+async def test_mediawiki_streaming_and_original_file_routes_use_media_router(
+    monkeypatch, tmp_path
+):
     client = TLDWAPIClient("http://localhost:8000")
     dump_path = tmp_path / "dump.xml"
     dump_path.write_text("<mediawiki />", encoding="utf-8")
@@ -314,7 +360,11 @@ async def test_mediawiki_streaming_and_original_file_routes_use_media_router(mon
             },
         }
 
-    binary = AsyncMock(return_value=ReadingExportResponse(content=b"%PDF", content_type="application/pdf"))
+    binary = AsyncMock(
+        return_value=ReadingExportResponse(
+            content=b"%PDF", content_type="application/pdf"
+        )
+    )
     headers = AsyncMock(
         return_value={
             "content-type": "application/pdf",
@@ -328,9 +378,15 @@ async def test_mediawiki_streaming_and_original_file_routes_use_media_router(mon
     monkeypatch.setattr(client, "_binary_request", binary)
     monkeypatch.setattr(client, "_headers_request", headers)
 
-    request = ProcessMediaWikiRequest(wiki_name="Demo", namespaces_str="0", skip_redirects=True)
-    pages = [page async for page in client.process_mediawiki_dump(request, str(dump_path))]
-    events = [event async for event in client.ingest_mediawiki_dump(request, str(dump_path))]
+    request = ProcessMediaWikiRequest(
+        wiki_name="Demo", namespaces_str="0", skip_redirects=True
+    )
+    pages = [
+        page async for page in client.process_mediawiki_dump(request, str(dump_path))
+    ]
+    events = [
+        event async for event in client.ingest_mediawiki_dump(request, str(dump_path))
+    ]
     file_response = await client.download_media_file(7, file_type="original")
     file_availability = await client.check_media_file(7, file_type="original")
 
@@ -365,7 +421,10 @@ async def test_reading_digest_schedule_routes_wire_and_return_typed_models(monke
                     "enabled": True,
                     "require_online": False,
                     "format": "md",
-                    "filters": {"status": ["saved"], "suggestions": {"enabled": True, "limit": 3}},
+                    "filters": {
+                        "status": ["saved"],
+                        "suggestions": {"enabled": True, "limit": 3},
+                    },
                 }
             ],
             {
@@ -431,9 +490,14 @@ async def test_reading_digest_schedule_routes_wire_and_return_typed_models(monke
         ),
     )
     deleted = await client.delete_reading_digest_schedule("digest-1")
-    outputs = await client.list_reading_digest_outputs(schedule_id="digest-1", limit=25, offset=5)
+    outputs = await client.list_reading_digest_outputs(
+        schedule_id="digest-1", limit=25, offset=5
+    )
 
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/reading/digests/schedules")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/reading/digests/schedules",
+    )
     assert mocked.await_args_list[0].kwargs["json_data"] == {
         "name": "Morning",
         "cron": "0 8 * * *",
@@ -441,12 +505,29 @@ async def test_reading_digest_schedule_routes_wire_and_return_typed_models(monke
         "enabled": True,
         "require_online": False,
         "format": "md",
-        "filters": {"status": ["saved"], "suggestions": {"enabled": True, "limit": 3, "include_read": False, "include_archived": False}},
+        "filters": {
+            "status": ["saved"],
+            "suggestions": {
+                "enabled": True,
+                "limit": 3,
+                "include_read": False,
+                "include_archived": False,
+            },
+        },
     }
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/reading/digests/schedules")
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/reading/digests/schedules",
+    )
     assert mocked.await_args_list[1].kwargs["params"] == {"limit": 25, "offset": 5}
-    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/reading/digests/schedules/digest-1")
-    assert mocked.await_args_list[3].args[:2] == ("PATCH", "/api/v1/reading/digests/schedules/digest-1")
+    assert mocked.await_args_list[2].args[:2] == (
+        "GET",
+        "/api/v1/reading/digests/schedules/digest-1",
+    )
+    assert mocked.await_args_list[3].args[:2] == (
+        "PATCH",
+        "/api/v1/reading/digests/schedules/digest-1",
+    )
     assert mocked.await_args_list[3].kwargs["json_data"] == {
         "name": "Updated",
         "cron": "0 9 * * *",
@@ -454,9 +535,19 @@ async def test_reading_digest_schedule_routes_wire_and_return_typed_models(monke
         "require_online": True,
         "format": "html",
     }
-    assert mocked.await_args_list[4].args[:2] == ("DELETE", "/api/v1/reading/digests/schedules/digest-1")
-    assert mocked.await_args_list[5].args[:2] == ("GET", "/api/v1/reading/digests/outputs")
-    assert mocked.await_args_list[5].kwargs["params"] == {"schedule_id": "digest-1", "limit": 25, "offset": 5}
+    assert mocked.await_args_list[4].args[:2] == (
+        "DELETE",
+        "/api/v1/reading/digests/schedules/digest-1",
+    )
+    assert mocked.await_args_list[5].args[:2] == (
+        "GET",
+        "/api/v1/reading/digests/outputs",
+    )
+    assert mocked.await_args_list[5].kwargs["params"] == {
+        "schedule_id": "digest-1",
+        "limit": 25,
+        "offset": 5,
+    }
     assert created == {"id": "digest-1"}
     assert isinstance(schedules[0], ReadingDigestScheduleResponse)
     assert schedules[0].filters.suggestions.enabled is True
@@ -503,7 +594,10 @@ async def test_ingest_web_content_route_wires_and_returns_typed_response(monkeyp
         )
     )
 
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/media/ingest-web-content")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/media/ingest-web-content",
+    )
     assert mocked.await_args_list[0].kwargs["json_data"] == {
         "urls": ["https://example.com/article"],
         "titles": ["Example Article"],
@@ -532,7 +626,9 @@ async def test_ingest_web_content_route_wires_and_returns_typed_response(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_processing_no_db_routes_wire_for_code_email_web_and_models(monkeypatch, tmp_path):
+async def test_processing_no_db_routes_wire_for_code_email_web_and_models(
+    monkeypatch, tmp_path
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
@@ -600,11 +696,17 @@ async def test_processing_no_db_routes_wire_for_code_email_web_and_models(monkey
         "chunk_size": "4000",
         "chunk_overlap": "200",
     }
-    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/media/process-emails")
+    assert mocked.await_args_list[1].args[:2] == (
+        "POST",
+        "/api/v1/media/process-emails",
+    )
     assert mocked.await_args_list[1].kwargs["data"]["title"] == "Inbox"
     assert mocked.await_args_list[1].kwargs["data"]["accept_mbox"] == "true"
     assert mocked.await_args_list[1].kwargs["files"][0][0] == "files"
-    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/media/process-web-scraping")
+    assert mocked.await_args_list[2].args[:2] == (
+        "POST",
+        "/api/v1/media/process-web-scraping",
+    )
     assert mocked.await_args_list[2].kwargs["json_data"] == {
         "scrape_method": "individual",
         "url_input": "https://example.com/post",
@@ -614,7 +716,10 @@ async def test_processing_no_db_routes_wire_for_code_email_web_and_models(monkey
         "temperature": 0.7,
         "mode": "ephemeral",
     }
-    assert mocked.await_args_list[3].args[:2] == ("GET", "/api/v1/media/transcription-models")
+    assert mocked.await_args_list[3].args[:2] == (
+        "GET",
+        "/api/v1/media/transcription-models",
+    )
     assert isinstance(code_response, BatchMediaProcessResponse)
     assert code_response.results[0].media_type == "code"
     assert isinstance(email_response, BatchMediaProcessResponse)
@@ -624,7 +729,9 @@ async def test_processing_no_db_routes_wire_for_code_email_web_and_models(monkey
 
 
 @pytest.mark.asyncio
-async def test_media_code_and_email_processing_routes_wire_to_server_contract(monkeypatch):
+async def test_media_code_and_email_processing_routes_wire_to_server_contract(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
@@ -660,7 +767,10 @@ async def test_media_code_and_email_processing_routes_wire_to_server_contract(mo
         "chunk_overlap": "10",
     }
     assert mocked.await_args_list[0].kwargs["files"] is None
-    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/media/process-emails")
+    assert mocked.await_args_list[1].args[:2] == (
+        "POST",
+        "/api/v1/media/process-emails",
+    )
     assert mocked.await_args_list[1].kwargs["data"]["media_type"] == "email"
     assert mocked.await_args_list[1].kwargs["data"]["title"] == "Inbox"
     assert mocked.await_args_list[1].kwargs["data"]["accept_archives"] == "true"
@@ -896,7 +1006,9 @@ async def test_media_transcription_models_route_wires_to_server_contract(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_server_media_listing_search_and_trash_adjunct_routes_wire_to_server_contract(monkeypatch):
+async def test_server_media_listing_search_and_trash_adjunct_routes_wire_to_server_contract(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     list_payload = {
         "items": [
@@ -920,21 +1032,36 @@ async def test_server_media_listing_search_and_trash_adjunct_routes_wire_to_serv
         side_effect=[
             {"keywords": ["ai", "testing"]},
             list_payload,
-            {**list_payload, "items": [{**list_payload["items"][0], "title": "Trashed Paper"}]},
-            {"deleted_count": 1, "failed_count": 0, "failed_ids": [], "remaining_count": 0},
+            {
+                **list_payload,
+                "items": [{**list_payload["items"][0], "title": "Trashed Paper"}],
+            },
+            {
+                "deleted_count": 1,
+                "failed_count": 0,
+                "failed_ids": [],
+                "remaining_count": 0,
+            },
             list_payload,
             {
                 "results": [{"media_id": 99, "safe_metadata": {"doi": "10/example"}}],
                 "pagination": {"page": 2, "per_page": 10, "total": 1, "total_pages": 1},
             },
-            {"results": [{"media_id": 99, "safe_metadata": {"doi": "10/example"}}], "total": 1},
+            {
+                "results": [{"media_id": 99, "safe_metadata": {"doi": "10/example"}}],
+                "total": 1,
+            },
         ]
     )
     monkeypatch.setattr(client, "_request", mocked)
 
     keywords = await client.list_media_keywords(query="ai", limit=5)
-    listed = await client.list_media_items(page=1, results_per_page=20, include_keywords=True)
-    trash = await client.list_media_trash(page=1, results_per_page=20, include_keywords=True)
+    listed = await client.list_media_items(
+        page=1, results_per_page=20, include_keywords=True
+    )
+    trash = await client.list_media_trash(
+        page=1, results_per_page=20, include_keywords=True
+    )
     emptied = await client.empty_media_trash()
     searched = await client.search_media_items(
         MediaSearchRequest(query="paper", media_types=["pdf"]),
@@ -952,7 +1079,9 @@ async def test_server_media_listing_search_and_trash_adjunct_routes_wire_to_serv
         must_not_have=["draft"],
         sort_by="date_desc",
     )
-    identifier = await client.get_media_by_identifier(doi="10/example", group_by_media=False)
+    identifier = await client.get_media_by_identifier(
+        doi="10/example", group_by_media=False
+    )
 
     assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/media/keywords")
     assert mocked.await_args_list[0].kwargs["params"] == {"query": "ai", "limit": 5}
@@ -971,7 +1100,10 @@ async def test_server_media_listing_search_and_trash_adjunct_routes_wire_to_serv
         "media_types": ["pdf"],
         "sort_by": "relevance",
     }
-    assert mocked.await_args_list[5].args[:2] == ("GET", "/api/v1/media/metadata-search")
+    assert mocked.await_args_list[5].args[:2] == (
+        "GET",
+        "/api/v1/media/metadata-search",
+    )
     assert mocked.await_args_list[5].kwargs["params"] == {
         "filters": '[{"field": "doi", "op": "eq", "value": "10/example"}]',
         "match_mode": "all",
@@ -1061,7 +1193,10 @@ async def test_media_navigation_routes_wire_to_server_contract(monkeypatch):
         "max_nodes": 100,
         "parent_id": "root",
     }
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/media/99/navigation/node-1/content")
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/media/99/navigation/node-1/content",
+    )
     assert mocked.await_args_list[1].kwargs["params"] == {
         "format": "markdown",
         "include_alternates": "true",
@@ -1100,7 +1235,10 @@ async def test_media_item_lifecycle_routes_wire_to_server_contract(monkeypatch):
     mocked = AsyncMock(
         side_effect=[
             detail_payload,
-            {**detail_payload, "source": {**detail_payload["source"], "title": "Renamed"}},
+            {
+                **detail_payload,
+                "source": {**detail_payload["source"], "title": "Renamed"},
+            },
             {},
             detail_payload,
             {},
@@ -1142,7 +1280,10 @@ async def test_media_item_lifecycle_routes_wire_to_server_contract(monkeypatch):
         "include_version_content": "true",
     }
     assert mocked.await_args_list[1].args[:2] == ("PUT", "/api/v1/media/99")
-    assert mocked.await_args_list[1].kwargs["json_data"] == {"title": "Renamed", "author": "Ada"}
+    assert mocked.await_args_list[1].kwargs["json_data"] == {
+        "title": "Renamed",
+        "author": "Ada",
+    }
     assert mocked.await_args_list[2].args[:2] == ("DELETE", "/api/v1/media/99")
     assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/media/99/restore")
     assert mocked.await_args_list[3].kwargs["params"] == {
@@ -1150,9 +1291,15 @@ async def test_media_item_lifecycle_routes_wire_to_server_contract(monkeypatch):
         "include_versions": "true",
         "include_version_content": "false",
     }
-    assert mocked.await_args_list[4].args[:2] == ("DELETE", "/api/v1/media/99/permanent")
+    assert mocked.await_args_list[4].args[:2] == (
+        "DELETE",
+        "/api/v1/media/99/permanent",
+    )
     assert mocked.await_args_list[5].args[:2] == ("PATCH", "/api/v1/media/99/keywords")
-    assert mocked.await_args_list[5].kwargs["json_data"] == {"keywords": ["ai", "ml"], "mode": "set"}
+    assert mocked.await_args_list[5].kwargs["json_data"] == {
+        "keywords": ["ai", "ml"],
+        "mode": "set",
+    }
     assert request_bytes.await_args.args[:2] == ("GET", "/api/v1/media/99/file")
     assert request_bytes.await_args.kwargs["params"] == {"file_type": "original"}
     assert isinstance(detail, MediaDetailResponse)
@@ -1291,7 +1438,9 @@ async def test_document_workspace_routes_wire_and_return_typed_responses(monkeyp
     synced = await client.sync_document_annotations(
         99,
         DocumentAnnotationSyncRequest(
-            annotations=[DocumentAnnotationCreateRequest(location="page:1", text="Quote")],
+            annotations=[
+                DocumentAnnotationCreateRequest(location="page:1", text="Quote")
+            ],
             client_ids=["client-1"],
         ),
     )
@@ -1300,10 +1449,22 @@ async def test_document_workspace_routes_wire_and_return_typed_responses(monkeyp
     assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/media/99/figures")
     assert mocked.await_args_list[1].kwargs["params"] == {"min_size": 75}
     assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/media/99/annotations")
-    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/media/99/annotations")
-    assert mocked.await_args_list[4].args[:2] == ("PUT", "/api/v1/media/99/annotations/ann_1")
-    assert mocked.await_args_list[5].args[:2] == ("DELETE", "/api/v1/media/99/annotations/ann_1")
-    assert mocked.await_args_list[6].args[:2] == ("POST", "/api/v1/media/99/annotations/sync")
+    assert mocked.await_args_list[3].args[:2] == (
+        "POST",
+        "/api/v1/media/99/annotations",
+    )
+    assert mocked.await_args_list[4].args[:2] == (
+        "PUT",
+        "/api/v1/media/99/annotations/ann_1",
+    )
+    assert mocked.await_args_list[5].args[:2] == (
+        "DELETE",
+        "/api/v1/media/99/annotations/ann_1",
+    )
+    assert mocked.await_args_list[6].args[:2] == (
+        "POST",
+        "/api/v1/media/99/annotations/sync",
+    )
     assert isinstance(outline, DocumentOutlineResponse)
     assert isinstance(figures, DocumentFiguresResponse)
     assert isinstance(annotations, DocumentAnnotationListResponse)
@@ -1408,8 +1569,14 @@ async def test_document_version_routes_wire_and_list_is_typed(monkeypatch):
         "prompt": "Prompt",
         "analysis_content": "Analysis",
     }
-    assert mocked.await_args_list[3].args[:2] == ("DELETE", "/api/v1/media/99/versions/1")
-    assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/media/99/versions/rollback")
+    assert mocked.await_args_list[3].args[:2] == (
+        "DELETE",
+        "/api/v1/media/99/versions/1",
+    )
+    assert mocked.await_args_list[4].args[:2] == (
+        "POST",
+        "/api/v1/media/99/versions/rollback",
+    )
     assert mocked.await_args_list[4].kwargs["json_data"] == {"version_number": 1}
     assert mocked.await_args_list[5].args[:2] == ("PATCH", "/api/v1/media/99/metadata")
     assert mocked.await_args_list[5].kwargs["json_data"] == {
@@ -1417,13 +1584,19 @@ async def test_document_version_routes_wire_and_list_is_typed(monkeypatch):
         "merge": False,
         "new_version": True,
     }
-    assert mocked.await_args_list[6].args[:2] == ("PUT", "/api/v1/media/99/versions/1/metadata")
+    assert mocked.await_args_list[6].args[:2] == (
+        "PUT",
+        "/api/v1/media/99/versions/1/metadata",
+    )
     assert mocked.await_args_list[6].kwargs["json_data"] == {
         "safe_metadata": {"reviewed": True},
         "merge": True,
         "new_version": False,
     }
-    assert mocked.await_args_list[7].args[:2] == ("POST", "/api/v1/media/99/versions/advanced")
+    assert mocked.await_args_list[7].args[:2] == (
+        "POST",
+        "/api/v1/media/99/versions/advanced",
+    )
     assert mocked.await_args_list[7].kwargs["json_data"] == {
         "content": "Advanced body",
         "safe_metadata": {"kind": "advanced"},
@@ -1460,10 +1633,16 @@ async def test_file_artifact_routes_wire_and_delete_serializes_flags(monkeypatch
 
     assert len(mocked.await_args_list) == 4
     assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/files/create")
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/files/reference-images")
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/files/reference-images",
+    )
     assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/files/19")
     assert mocked.await_args_list[3].args[:2] == ("DELETE", "/api/v1/files/19")
-    assert mocked.await_args_list[3].kwargs["params"] == {"hard": "true", "delete_file": "true"}
+    assert mocked.await_args_list[3].kwargs["params"] == {
+        "hard": "true",
+        "delete_file": "true",
+    }
 
 
 @pytest.mark.asyncio
@@ -1483,7 +1662,9 @@ async def test_file_artifact_export_and_purge_routes_wire(monkeypatch):
 
     exported = await client.export_file_artifact(19, format="md")
     purged = await client.purge_file_artifacts(
-        FileArtifactsPurgeRequest(delete_files=True, soft_deleted_grace_days=7, include_retention=False)
+        FileArtifactsPurgeRequest(
+            delete_files=True, soft_deleted_grace_days=7, include_retention=False
+        )
     )
 
     binary.assert_awaited_once()
@@ -1502,7 +1683,9 @@ async def test_file_artifact_export_and_purge_routes_wire(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_ingestion_source_routes_wire_and_list_methods_are_typed_as_lists(monkeypatch, tmp_path):
+async def test_ingestion_source_routes_wire_and_list_methods_are_typed_as_lists(
+    monkeypatch, tmp_path
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
@@ -1569,7 +1752,9 @@ async def test_ingestion_source_routes_wire_and_list_methods_are_typed_as_lists(
     )
     listed = await client.list_ingestion_sources()
     got = await client.get_ingestion_source(7)
-    patched = await client.patch_ingestion_source(7, IngestionSourcePatchRequest(enabled=False))
+    patched = await client.patch_ingestion_source(
+        7, IngestionSourcePatchRequest(enabled=False)
+    )
     items = await client.list_ingestion_source_items(7)
     synced = await client.trigger_ingestion_source_sync(7)
     archived = await client.upload_ingestion_source_archive(7, str(archive))
@@ -1578,12 +1763,27 @@ async def test_ingestion_source_routes_wire_and_list_methods_are_typed_as_lists(
     assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/ingestion-sources/")
     assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/ingestion-sources/")
     assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/ingestion-sources/7")
-    assert mocked.await_args_list[3].args[:2] == ("PATCH", "/api/v1/ingestion-sources/7")
-    assert mocked.await_args_list[4].args[:2] == ("GET", "/api/v1/ingestion-sources/7/items")
-    assert mocked.await_args_list[5].args[:2] == ("POST", "/api/v1/ingestion-sources/7/sync")
-    assert mocked.await_args_list[6].args[:2] == ("POST", "/api/v1/ingestion-sources/7/archive")
+    assert mocked.await_args_list[3].args[:2] == (
+        "PATCH",
+        "/api/v1/ingestion-sources/7",
+    )
+    assert mocked.await_args_list[4].args[:2] == (
+        "GET",
+        "/api/v1/ingestion-sources/7/items",
+    )
+    assert mocked.await_args_list[5].args[:2] == (
+        "POST",
+        "/api/v1/ingestion-sources/7/sync",
+    )
+    assert mocked.await_args_list[6].args[:2] == (
+        "POST",
+        "/api/v1/ingestion-sources/7/archive",
+    )
     assert mocked.await_args_list[6].kwargs["files"][0][0] == "archive"
-    assert mocked.await_args_list[7].args[:2] == ("POST", "/api/v1/ingestion-sources/7/items/5/reattach")
+    assert mocked.await_args_list[7].args[:2] == (
+        "POST",
+        "/api/v1/ingestion-sources/7/items/5/reattach",
+    )
 
     assert isinstance(created, IngestionSourceResponse)
     assert isinstance(got, IngestionSourceResponse)
@@ -1613,7 +1813,9 @@ async def test_binary_request_returns_content_headers_and_filename(monkeypatch):
     fake_http = _FakeHTTPClient(response)
     monkeypatch.setattr(client, "_get_client", AsyncMock(return_value=fake_http))
 
-    payload = await client._binary_request("GET", "/api/v1/reading/export", params={"format": "jsonl"})
+    payload = await client._binary_request(
+        "GET", "/api/v1/reading/export", params={"format": "jsonl"}
+    )
 
     assert payload == ReadingExportResponse(
         content=b'{"id": 1}\n',
@@ -1799,9 +2001,14 @@ async def test_reading_digest_schedule_and_output_routes_wire(monkeypatch):
         ReadingDigestScheduleUpdateRequest(enabled=False),
     )
     deleted = await client.delete_reading_digest_schedule("sched-1")
-    outputs = await client.list_reading_digest_outputs(schedule_id="sched-1", limit=25, offset=5)
+    outputs = await client.list_reading_digest_outputs(
+        schedule_id="sched-1", limit=25, offset=5
+    )
 
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/reading/digests/schedules")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/reading/digests/schedules",
+    )
     assert mocked.await_args_list[0].kwargs["json_data"] == {
         "name": "Morning Digest",
         "cron": "0 8 * * *",
@@ -1811,14 +2018,33 @@ async def test_reading_digest_schedule_and_output_routes_wire(monkeypatch):
         "format": "md",
         "filters": {"status": ["saved"], "tags": ["ai"]},
     }
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/reading/digests/schedules")
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/reading/digests/schedules",
+    )
     assert mocked.await_args_list[1].kwargs["params"] == {"limit": 25, "offset": 5}
-    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/reading/digests/schedules/sched-1")
-    assert mocked.await_args_list[3].args[:2] == ("PATCH", "/api/v1/reading/digests/schedules/sched-1")
+    assert mocked.await_args_list[2].args[:2] == (
+        "GET",
+        "/api/v1/reading/digests/schedules/sched-1",
+    )
+    assert mocked.await_args_list[3].args[:2] == (
+        "PATCH",
+        "/api/v1/reading/digests/schedules/sched-1",
+    )
     assert mocked.await_args_list[3].kwargs["json_data"] == {"enabled": False}
-    assert mocked.await_args_list[4].args[:2] == ("DELETE", "/api/v1/reading/digests/schedules/sched-1")
-    assert mocked.await_args_list[5].args[:2] == ("GET", "/api/v1/reading/digests/outputs")
-    assert mocked.await_args_list[5].kwargs["params"] == {"schedule_id": "sched-1", "limit": 25, "offset": 5}
+    assert mocked.await_args_list[4].args[:2] == (
+        "DELETE",
+        "/api/v1/reading/digests/schedules/sched-1",
+    )
+    assert mocked.await_args_list[5].args[:2] == (
+        "GET",
+        "/api/v1/reading/digests/outputs",
+    )
+    assert mocked.await_args_list[5].kwargs["params"] == {
+        "schedule_id": "sched-1",
+        "limit": 25,
+        "offset": 5,
+    }
 
     assert created == {"id": "sched-1"}
     assert isinstance(listed[0], ReadingDigestScheduleResponse)
@@ -1830,7 +2056,9 @@ async def test_reading_digest_schedule_and_output_routes_wire(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_media_ingest_job_routes_wire_form_payload_and_status_controls(monkeypatch):
+async def test_media_ingest_job_routes_wire_form_payload_and_status_controls(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
@@ -1923,7 +2151,9 @@ async def test_media_ingest_job_routes_wire_form_payload_and_status_controls(mon
     status = await client.get_media_ingest_job(7)
     listed = await client.list_media_ingest_jobs(batch_id="batch-1", limit=10)
     cancelled = await client.cancel_media_ingest_job(7, reason="duplicate")
-    batch_cancelled = await client.cancel_media_ingest_jobs_batch(batch_id="batch-1", reason="duplicate")
+    batch_cancelled = await client.cancel_media_ingest_jobs_batch(
+        batch_id="batch-1", reason="duplicate"
+    )
 
     assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/media/ingest/jobs")
     assert mocked.await_args_list[0].kwargs["data"] == {
@@ -1935,11 +2165,23 @@ async def test_media_ingest_job_routes_wire_form_payload_and_status_controls(mon
     }
     assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/media/ingest/jobs/7")
     assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/media/ingest/jobs")
-    assert mocked.await_args_list[2].kwargs["params"] == {"batch_id": "batch-1", "limit": 10}
-    assert mocked.await_args_list[3].args[:2] == ("DELETE", "/api/v1/media/ingest/jobs/7")
+    assert mocked.await_args_list[2].kwargs["params"] == {
+        "batch_id": "batch-1",
+        "limit": 10,
+    }
+    assert mocked.await_args_list[3].args[:2] == (
+        "DELETE",
+        "/api/v1/media/ingest/jobs/7",
+    )
     assert mocked.await_args_list[3].kwargs["params"] == {"reason": "duplicate"}
-    assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/media/ingest/jobs/cancel")
-    assert mocked.await_args_list[4].kwargs["params"] == {"batch_id": "batch-1", "reason": "duplicate"}
+    assert mocked.await_args_list[4].args[:2] == (
+        "POST",
+        "/api/v1/media/ingest/jobs/cancel",
+    )
+    assert mocked.await_args_list[4].kwargs["params"] == {
+        "batch_id": "batch-1",
+        "reason": "duplicate",
+    }
 
     assert isinstance(submitted, SubmitMediaIngestJobsResponse)
     assert submitted.batch_id == "batch-1"
@@ -2045,7 +2287,10 @@ async def test_ingest_web_content_route_wires_json_payload(monkeypatch):
         )
     )
 
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/media/ingest-web-content")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/media/ingest-web-content",
+    )
     assert mocked.await_args_list[0].kwargs["json_data"] == {
         "urls": ["https://example.com/a"],
         "scrape_method": "url_level",
@@ -2107,7 +2352,10 @@ async def test_process_web_scraping_route_wires_legacy_json_payload(monkeypatch)
         )
     )
 
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/media/process-web-scraping")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/media/process-web-scraping",
+    )
     assert mocked.await_args_list[0].kwargs["json_data"] == {
         "scrape_method": "individual",
         "url_input": "https://example.com/a",
@@ -2124,7 +2372,9 @@ async def test_process_web_scraping_route_wires_legacy_json_payload(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_process_mediawiki_dump_uses_media_route_and_plain_page_stream(monkeypatch, tmp_path):
+async def test_process_mediawiki_dump_uses_media_route_and_plain_page_stream(
+    monkeypatch, tmp_path
+):
     dump = tmp_path / "example.xml"
     dump.write_text("<mediawiki />", encoding="utf-8")
     client = TLDWAPIClient("http://localhost:8000")
@@ -2136,11 +2386,24 @@ async def test_process_mediawiki_dump_uses_media_route_and_plain_page_stream(mon
                 method,
                 endpoint,
                 dict(data or {}),
-                [(field, file_info[0], file_info[2]) for field, file_info in (files or [])],
+                [
+                    (field, file_info[0], file_info[2])
+                    for field, file_info in (files or [])
+                ],
             )
         )
-        yield {"title": "Page One", "content": "Body", "namespace": 0, "page_id": 5, "status": "Success"}
-        yield {"type": "validation_error", "title": "Broken Page", "detail": [{"msg": "bad"}]}
+        yield {
+            "title": "Page One",
+            "content": "Body",
+            "namespace": 0,
+            "page_id": 5,
+            "status": "Success",
+        }
+        yield {
+            "type": "validation_error",
+            "title": "Broken Page",
+            "detail": [{"msg": "bad"}],
+        }
 
     monkeypatch.setattr(client, "_stream_request", fake_stream)
 
@@ -2173,14 +2436,23 @@ async def test_process_mediawiki_dump_uses_media_route_and_plain_page_stream(mon
 
 
 @pytest.mark.asyncio
-async def test_ingest_mediawiki_dump_uses_media_route_and_streams_raw_events(monkeypatch, tmp_path):
+async def test_ingest_mediawiki_dump_uses_media_route_and_streams_raw_events(
+    monkeypatch, tmp_path
+):
     dump = tmp_path / "example.xml"
     dump.write_text("<mediawiki />", encoding="utf-8")
     client = TLDWAPIClient("http://localhost:8000")
     calls = []
 
     async def fake_stream(method, endpoint, data=None, files=None):
-        calls.append((method, endpoint, dict(data or {}), [(field, file_info[0]) for field, file_info in (files or [])]))
+        calls.append(
+            (
+                method,
+                endpoint,
+                dict(data or {}),
+                [(field, file_info[0]) for field, file_info in (files or [])],
+            )
+        )
         yield {"type": "progress", "processed": 1}
         yield {"type": "item_result", "data": {"title": "Stored Page", "media_id": 42}}
 
@@ -2198,7 +2470,11 @@ async def test_ingest_mediawiki_dump_uses_media_route_and_streams_raw_events(mon
         (
             "POST",
             "/api/v1/media/mediawiki/ingest-dump",
-            {"wiki_name": "Example Wiki", "skip_redirects": "true", "chunk_max_size": "1000"},
+            {
+                "wiki_name": "Example Wiki",
+                "skip_redirects": "true",
+                "chunk_max_size": "1000",
+            },
             [("dump_file", "example.xml")],
         )
     ]
@@ -2214,12 +2490,18 @@ async def test_reading_item_and_progress_routes_wire_delete_paths(monkeypatch):
     mocked = AsyncMock(return_value={"ok": True})
     monkeypatch.setattr(client, "_request", mocked)
 
-    await client.list_reading_items(status=["saved"], tags=["ai"], q="rag", page=2, size=50)
+    await client.list_reading_items(
+        status=["saved"], tags=["ai"], q="rag", page=2, size=50
+    )
     await client.get_reading_item(31)
-    await client.update_reading_item(31, ReadingUpdateRequest(status="read", favorite=True, tags=[" ai "]))
+    await client.update_reading_item(
+        31, ReadingUpdateRequest(status="read", favorite=True, tags=[" ai "])
+    )
     await client.delete_reading_item(31, hard=True)
     await client.get_reading_progress(42)
-    await client.update_reading_progress(42, ReadingProgressUpdate(current_page=4, total_pages=10))
+    await client.update_reading_progress(
+        42, ReadingProgressUpdate(current_page=4, total_pages=10)
+    )
     await client.delete_reading_progress(42)
 
     assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/reading/items")
@@ -2334,7 +2616,10 @@ async def test_reading_highlight_routes_wire_crud_paths(monkeypatch):
     )
     deleted = await client.delete_reading_highlight(5)
 
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/reading/items/31/highlight")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/reading/items/31/highlight",
+    )
     assert mocked.await_args_list[0].kwargs["json_data"] == {
         "item_id": 31,
         "quote": "Important sentence",
@@ -2344,14 +2629,23 @@ async def test_reading_highlight_routes_wire_crud_paths(monkeypatch):
         "note": "Check this",
         "anchor_strategy": "fuzzy_quote",
     }
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/reading/items/31/highlights")
-    assert mocked.await_args_list[2].args[:2] == ("PATCH", "/api/v1/reading/highlights/5")
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/reading/items/31/highlights",
+    )
+    assert mocked.await_args_list[2].args[:2] == (
+        "PATCH",
+        "/api/v1/reading/highlights/5",
+    )
     assert mocked.await_args_list[2].kwargs["json_data"] == {
         "color": "blue",
         "note": "Updated",
         "state": "active",
     }
-    assert mocked.await_args_list[3].args[:2] == ("DELETE", "/api/v1/reading/highlights/5")
+    assert mocked.await_args_list[3].args[:2] == (
+        "DELETE",
+        "/api/v1/reading/highlights/5",
+    )
 
     assert isinstance(created, api.ReadingHighlight)
     assert isinstance(listed[0], api.ReadingHighlight)
@@ -2407,20 +2701,38 @@ async def test_reading_saved_search_and_note_link_routes_wire_crud(monkeypatch):
     links = await client.list_reading_item_note_links(31)
     unlinked = await client.unlink_reading_item_note(31, "note-uuid-1")
 
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/reading/saved-searches")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/reading/saved-searches",
+    )
     assert mocked.await_args_list[0].kwargs["json_data"] == {
         "name": "Morning",
         "query": {"status": ["saved"], "tags": ["ai"]},
         "sort": "updated_desc",
     }
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/reading/saved-searches")
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/reading/saved-searches",
+    )
     assert mocked.await_args_list[1].kwargs["params"] == {"limit": 50, "offset": 0}
-    assert mocked.await_args_list[2].args[:2] == ("PATCH", "/api/v1/reading/saved-searches/9")
+    assert mocked.await_args_list[2].args[:2] == (
+        "PATCH",
+        "/api/v1/reading/saved-searches/9",
+    )
     assert mocked.await_args_list[2].kwargs["json_data"] == {"name": "Updated"}
-    assert mocked.await_args_list[3].args[:2] == ("DELETE", "/api/v1/reading/saved-searches/9")
-    assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/reading/items/31/links/note")
+    assert mocked.await_args_list[3].args[:2] == (
+        "DELETE",
+        "/api/v1/reading/saved-searches/9",
+    )
+    assert mocked.await_args_list[4].args[:2] == (
+        "POST",
+        "/api/v1/reading/items/31/links/note",
+    )
     assert mocked.await_args_list[4].kwargs["json_data"] == {"note_id": "note-uuid-1"}
-    assert mocked.await_args_list[5].args[:2] == ("GET", "/api/v1/reading/items/31/links")
+    assert mocked.await_args_list[5].args[:2] == (
+        "GET",
+        "/api/v1/reading/items/31/links",
+    )
     assert mocked.await_args_list[6].args[:2] == (
         "DELETE",
         "/api/v1/reading/items/31/links/note/note-uuid-1",
@@ -2436,7 +2748,9 @@ async def test_reading_saved_search_and_note_link_routes_wire_crud(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_reading_import_job_and_archive_routes_wire_payloads(monkeypatch, tmp_path):
+async def test_reading_import_job_and_archive_routes_wire_payloads(
+    monkeypatch, tmp_path
+):
     client = TLDWAPIClient("http://localhost:8000")
     import_file = tmp_path / "pocket.csv"
     import_file.write_text("title,url\nExample,https://example.com\n", encoding="utf-8")
@@ -2479,15 +2793,22 @@ async def test_reading_import_job_and_archive_routes_wire_payloads(monkeypatch, 
         source="pocket",
         merge_tags=False,
     )
-    jobs = await client.list_reading_import_jobs(status="processing", limit=50, offset=0)
+    jobs = await client.list_reading_import_jobs(
+        status="processing", limit=50, offset=0
+    )
     job = await client.get_reading_import_job(42)
     archive = await client.create_reading_archive(
         31,
-        api.ReadingArchiveCreateRequest(format="md", source="text", title="Example Archive"),
+        api.ReadingArchiveCreateRequest(
+            format="md", source="text", title="Example Archive"
+        ),
     )
 
     assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/reading/import")
-    assert mocked.await_args_list[0].kwargs["data"] == {"source": "pocket", "merge_tags": "false"}
+    assert mocked.await_args_list[0].kwargs["data"] == {
+        "source": "pocket",
+        "merge_tags": "false",
+    }
     assert mocked.await_args_list[0].kwargs["files"][0][0] == "file"
     assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/reading/import/jobs")
     assert mocked.await_args_list[1].kwargs["params"] == {
@@ -2495,8 +2816,14 @@ async def test_reading_import_job_and_archive_routes_wire_payloads(monkeypatch, 
         "limit": 50,
         "offset": 0,
     }
-    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/reading/import/jobs/42")
-    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/reading/items/31/archive")
+    assert mocked.await_args_list[2].args[:2] == (
+        "GET",
+        "/api/v1/reading/import/jobs/42",
+    )
+    assert mocked.await_args_list[3].args[:2] == (
+        "POST",
+        "/api/v1/reading/items/31/archive",
+    )
     assert mocked.await_args_list[3].kwargs["json_data"] == {
         "format": "md",
         "source": "text",
@@ -2563,7 +2890,10 @@ async def test_reading_export_summarize_and_tts_routes_wire_payloads(monkeypatch
         "include_notes": True,
         "format": "jsonl",
     }
-    assert request_mock.await_args.args[:2] == ("POST", "/api/v1/reading/items/31/summarize")
+    assert request_mock.await_args.args[:2] == (
+        "POST",
+        "/api/v1/reading/items/31/summarize",
+    )
     assert request_mock.await_args.kwargs["json_data"] == {
         "provider": "openai",
         "model": "gpt-4o-mini",
@@ -2571,7 +2901,10 @@ async def test_reading_export_summarize_and_tts_routes_wire_payloads(monkeypatch
         "recursive": False,
         "chunked": False,
     }
-    assert bytes_mock.await_args_list[1].args[:2] == ("POST", "/api/v1/reading/items/31/tts")
+    assert bytes_mock.await_args_list[1].args[:2] == (
+        "POST",
+        "/api/v1/reading/items/31/tts",
+    )
     assert bytes_mock.await_args_list[1].kwargs["json_data"] == {
         "model": "kokoro",
         "voice": "af_heart",
@@ -2591,7 +2924,9 @@ async def test_list_reading_items_omits_page_size_when_offset_limit_used(monkeyp
     mocked = AsyncMock(return_value={"items": [], "total": 0, "page": 1, "size": 20})
     monkeypatch.setattr(client, "_request", mocked)
 
-    await client.list_reading_items(status=["saved"], tags=["ai"], q="rag", offset=10, limit=5)
+    await client.list_reading_items(
+        status=["saved"], tags=["ai"], q="rag", offset=10, limit=5
+    )
 
     args, kwargs = mocked.await_args
     assert args[:2] == ("GET", "/api/v1/reading/items")
@@ -2609,7 +2944,12 @@ async def test_reading_save_saved_searches_and_note_links_routes_wire(monkeypatc
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
-            {"id": 10, "title": "Saved URL", "url": "https://example.com", "tags": ["ai"]},
+            {
+                "id": 10,
+                "title": "Saved URL",
+                "url": "https://example.com",
+                "tags": ["ai"],
+            },
             {
                 "id": 1,
                 "name": "Morning",
@@ -2661,7 +3001,9 @@ async def test_reading_save_saved_searches_and_note_links_routes_wire(monkeypatc
     searches = await client.list_reading_saved_searches(limit=25, offset=5)
     updated_search = await client.update_reading_saved_search(
         1,
-        ReadingSavedSearchUpdateRequest(name="Updated", query={"q": "ml"}, sort="created_desc"),
+        ReadingSavedSearchUpdateRequest(
+            name="Updated", query={"q": "ml"}, sort="created_desc"
+        ),
     )
     deleted_search = await client.delete_reading_saved_search(1)
     linked = await client.link_note_to_reading_item(10, "note-1")
@@ -2670,15 +3012,36 @@ async def test_reading_save_saved_searches_and_note_links_routes_wire(monkeypatc
 
     assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/reading/save")
     assert mocked.await_args_list[0].kwargs["json_data"]["tags"] == ["ai"]
-    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/reading/saved-searches")
-    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/reading/saved-searches")
+    assert mocked.await_args_list[1].args[:2] == (
+        "POST",
+        "/api/v1/reading/saved-searches",
+    )
+    assert mocked.await_args_list[2].args[:2] == (
+        "GET",
+        "/api/v1/reading/saved-searches",
+    )
     assert mocked.await_args_list[2].kwargs["params"] == {"limit": 25, "offset": 5}
-    assert mocked.await_args_list[3].args[:2] == ("PATCH", "/api/v1/reading/saved-searches/1")
-    assert mocked.await_args_list[4].args[:2] == ("DELETE", "/api/v1/reading/saved-searches/1")
-    assert mocked.await_args_list[5].args[:2] == ("POST", "/api/v1/reading/items/10/links/note")
+    assert mocked.await_args_list[3].args[:2] == (
+        "PATCH",
+        "/api/v1/reading/saved-searches/1",
+    )
+    assert mocked.await_args_list[4].args[:2] == (
+        "DELETE",
+        "/api/v1/reading/saved-searches/1",
+    )
+    assert mocked.await_args_list[5].args[:2] == (
+        "POST",
+        "/api/v1/reading/items/10/links/note",
+    )
     assert mocked.await_args_list[5].kwargs["json_data"] == {"note_id": "note-1"}
-    assert mocked.await_args_list[6].args[:2] == ("GET", "/api/v1/reading/items/10/links")
-    assert mocked.await_args_list[7].args[:2] == ("DELETE", "/api/v1/reading/items/10/links/note/note-1")
+    assert mocked.await_args_list[6].args[:2] == (
+        "GET",
+        "/api/v1/reading/items/10/links",
+    )
+    assert mocked.await_args_list[7].args[:2] == (
+        "DELETE",
+        "/api/v1/reading/items/10/links/note/note-1",
+    )
 
     assert saved["id"] == 10
     assert isinstance(created_search, ReadingSavedSearchResponse)
@@ -2731,7 +3094,9 @@ async def test_reading_bulk_archive_and_summary_routes_wire(monkeypatch):
     )
     summary = await client.summarize_reading_item(
         10,
-        ReadingSummarizeRequest(provider="openai", model="gpt-4o-mini", prompt="Summarize"),
+        ReadingSummarizeRequest(
+            provider="openai", model="gpt-4o-mini", prompt="Summarize"
+        ),
     )
 
     assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/reading/items/bulk")
@@ -2741,13 +3106,19 @@ async def test_reading_bulk_archive_and_summary_routes_wire(monkeypatch):
         "status": "read",
         "hard": False,
     }
-    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/reading/items/10/archive")
+    assert mocked.await_args_list[1].args[:2] == (
+        "POST",
+        "/api/v1/reading/items/10/archive",
+    )
     assert mocked.await_args_list[1].kwargs["json_data"] == {
         "format": "md",
         "source": "text",
         "title": "Archive",
     }
-    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/reading/items/10/summarize")
+    assert mocked.await_args_list[2].args[:2] == (
+        "POST",
+        "/api/v1/reading/items/10/summarize",
+    )
     assert mocked.await_args_list[2].kwargs["json_data"] == {
         "provider": "openai",
         "model": "gpt-4o-mini",
@@ -2775,7 +3146,13 @@ async def test_reading_import_job_routes_wire(monkeypatch, tmp_path):
                         "job_id": 701,
                         "job_uuid": "job-uuid",
                         "status": "completed",
-                        "result": {"source": "pocket", "imported": 2, "updated": 1, "skipped": 0, "errors": []},
+                        "result": {
+                            "source": "pocket",
+                            "imported": 2,
+                            "updated": 1,
+                            "skipped": 0,
+                            "errors": [],
+                        },
                     }
                 ],
                 "total": 1,
@@ -2786,7 +3163,13 @@ async def test_reading_import_job_routes_wire(monkeypatch, tmp_path):
                 "job_id": 701,
                 "job_uuid": "job-uuid",
                 "status": "completed",
-                "result": {"source": "pocket", "imported": 2, "updated": 1, "skipped": 0, "errors": []},
+                "result": {
+                    "source": "pocket",
+                    "imported": 2,
+                    "updated": 1,
+                    "skipped": 0,
+                    "errors": [],
+                },
             },
         ]
     )
@@ -2794,16 +3177,30 @@ async def test_reading_import_job_routes_wire(monkeypatch, tmp_path):
     import_path = tmp_path / "pocket.csv"
     import_path.write_text("title,url\nExample,https://example.com\n", encoding="utf-8")
 
-    submitted = await client.import_reading_items(str(import_path), source="pocket", merge_tags=False)
-    listed = await client.list_reading_import_jobs(status="completed", limit=25, offset=5)
+    submitted = await client.import_reading_items(
+        str(import_path), source="pocket", merge_tags=False
+    )
+    listed = await client.list_reading_import_jobs(
+        status="completed", limit=25, offset=5
+    )
     detail = await client.get_reading_import_job(701)
 
     assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/reading/import")
-    assert mocked.await_args_list[0].kwargs["data"] == {"source": "pocket", "merge_tags": "false"}
+    assert mocked.await_args_list[0].kwargs["data"] == {
+        "source": "pocket",
+        "merge_tags": "false",
+    }
     assert mocked.await_args_list[0].kwargs["files"][0][0] == "file"
     assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/reading/import/jobs")
-    assert mocked.await_args_list[1].kwargs["params"] == {"status": "completed", "limit": 25, "offset": 5}
-    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/reading/import/jobs/701")
+    assert mocked.await_args_list[1].kwargs["params"] == {
+        "status": "completed",
+        "limit": 25,
+        "offset": 5,
+    }
+    assert mocked.await_args_list[2].args[:2] == (
+        "GET",
+        "/api/v1/reading/import/jobs/701",
+    )
     assert isinstance(submitted, ReadingImportJobResponse)
     assert submitted.job_id == 701
     assert isinstance(listed, ReadingImportJobsListResponse)

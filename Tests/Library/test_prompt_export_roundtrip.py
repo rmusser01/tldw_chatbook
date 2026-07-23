@@ -45,8 +45,12 @@ covered as its own test.
 
 from __future__ import annotations
 
-from tldw_chatbook.Prompt_Management.prompt_markdown_export import render_prompt_markdown
-from tldw_chatbook.Prompt_Management.Prompts_Interop import parse_markdown_prompts_from_content
+from tldw_chatbook.Prompt_Management.prompt_markdown_export import (
+    render_prompt_markdown,
+)
+from tldw_chatbook.Prompt_Management.Prompts_Interop import (
+    parse_markdown_prompts_from_content,
+)
 
 
 def test_prompt_markdown_export_roundtrips():
@@ -193,7 +197,9 @@ def test_prompt_markdown_export_roundtrips_multiline_with_blank_interior_lines()
     parsed = parse_markdown_prompts_from_content(text)
     assert len(parsed) == 1
     p = parsed[0]
-    assert p["system_prompt"] == "System line one\n\nSystem line two\n\nSystem line three"
+    assert (
+        p["system_prompt"] == "System line one\n\nSystem line two\n\nSystem line three"
+    )
     assert p["user_prompt"] == "User line one\n\n\nUser line two"
     assert p["keywords"] == ["x"]
 

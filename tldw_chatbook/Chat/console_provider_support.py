@@ -121,8 +121,13 @@ def resolve_console_provider_identity(
     display_key = provider_config_key(raw_provider)
     exact_key = raw_provider.lower()
 
-    if exact_key in DIRECT_CONSOLE_PROVIDER_KEYS or display_key in DIRECT_CONSOLE_PROVIDER_KEYS:
-        direct_key = exact_key if exact_key in DIRECT_CONSOLE_PROVIDER_KEYS else display_key
+    if (
+        exact_key in DIRECT_CONSOLE_PROVIDER_KEYS
+        or display_key in DIRECT_CONSOLE_PROVIDER_KEYS
+    ):
+        direct_key = (
+            exact_key if exact_key in DIRECT_CONSOLE_PROVIDER_KEYS else display_key
+        )
         return ConsoleProviderIdentity(
             display_key=direct_key,
             readiness_key=direct_key,
@@ -143,7 +148,9 @@ def resolve_console_provider_identity(
     readiness_key = _EXECUTION_TO_READINESS_ALIASES.get(handler_exact_key, display_key)
     execution_key = _READINESS_TO_EXECUTION_ALIASES.get(readiness_key)
     if execution_key is None:
-        execution_key = handler_exact_key if handler_exact_key in handlers else readiness_key
+        execution_key = (
+            handler_exact_key if handler_exact_key in handlers else readiness_key
+        )
 
     return ConsoleProviderIdentity(
         display_key=display_key,
@@ -181,7 +188,8 @@ def supported_console_provider_catalog(
                 readiness_key=identity.readiness_key,
                 execution_key=identity.execution_key,
                 display_name=_provider_display_name(identity.readiness_key),
-                requires_api_key=identity.readiness_key in PROVIDERS_REQUIRING_API_KEY_KEYS,
+                requires_api_key=identity.readiness_key
+                in PROVIDERS_REQUIRING_API_KEY_KEYS,
                 uses_direct_llama_path=identity.uses_direct_llama_path,
             ),
         )

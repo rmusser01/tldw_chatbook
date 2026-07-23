@@ -12,7 +12,9 @@ from tldw_chatbook.Chat.citation_evidence_models import (
 )
 
 
-def test_evidence_bundle_round_trip_preserves_source_authority_and_json_payload() -> None:
+def test_evidence_bundle_round_trip_preserves_source_authority_and_json_payload() -> (
+    None
+):
     reference = EvidenceReference(
         evidence_id="S1",
         source_id="note-1",
@@ -45,7 +47,9 @@ def test_evidence_bundle_round_trip_preserves_source_authority_and_json_payload(
     assert restored.available_references()[0].source_id == "note-1"
 
 
-def test_evidence_reference_truncates_large_snippets_without_losing_original_count() -> None:
+def test_evidence_reference_truncates_large_snippets_without_losing_original_count() -> (
+    None
+):
     long_snippet = "x" * (EVIDENCE_SNIPPET_CHAR_LIMIT + 25)
 
     reference = EvidenceReference(
@@ -114,7 +118,12 @@ def test_citation_ref_validates_against_bundle_and_rejects_unknown_status() -> N
 
     assert citation.to_payload()["status"] == "validated"
     assert citation.validate_against(bundle).status == "validated"
-    assert CitationRef(evidence_id="S2", source_id="note-2", status="validated").validate_against(bundle).status == "unknown"
+    assert (
+        CitationRef(evidence_id="S2", source_id="note-2", status="validated")
+        .validate_against(bundle)
+        .status
+        == "unknown"
+    )
 
     with pytest.raises(ValueError, match="Unsupported citation status"):
         CitationRef(evidence_id="S1", source_id="note-1", status="trusted")
@@ -131,7 +140,9 @@ def test_evidence_payload_round_trip_preserves_falsy_json_identifiers() -> None:
             "authority_label": "Local Library",
         }
     )
-    citation = CitationRef.from_payload({"evidence_id": 0, "source_id": 0, "status": "validated"})
+    citation = CitationRef.from_payload(
+        {"evidence_id": 0, "source_id": 0, "status": "validated"}
+    )
 
     assert restored.evidence_id == "0"
     assert restored.source_id == "0"
@@ -139,7 +150,9 @@ def test_evidence_payload_round_trip_preserves_falsy_json_identifiers() -> None:
     assert citation.source_id == "0"
 
 
-def test_metadata_payload_omits_nulls_preserves_token_metrics_and_serializes_sets() -> None:
+def test_metadata_payload_omits_nulls_preserves_token_metrics_and_serializes_sets() -> (
+    None
+):
     reference = EvidenceReference(
         evidence_id="S1",
         source_id="note-1",
@@ -155,7 +168,9 @@ def test_metadata_payload_omits_nulls_preserves_token_metrics_and_serializes_set
             "tags": {"beta", "alpha"},
         },
     )
-    bundle = EvidenceBundle(bundle_id="bundle-1", query="query", references=(reference,), metadata=None)
+    bundle = EvidenceBundle(
+        bundle_id="bundle-1", query="query", references=(reference,), metadata=None
+    )
     citation = CitationRef(evidence_id="S1", source_id="note-1", metadata=None)
 
     metadata = bundle.to_payload()["references"][0]["metadata"]
@@ -200,9 +215,21 @@ def test_text_aliases_are_accepted_for_rag_citation_compatibility() -> None:
         text="The feature is enabled.",
         authority_label="Local Library",
     )
-    citation = CitationRef(evidence_id="S1", source_id="note-1", text="The feature is enabled.")
+    citation = CitationRef(
+        evidence_id="S1", source_id="note-1", text="The feature is enabled."
+    )
 
     assert reference.snippet == "The feature is enabled."
-    assert EvidenceReference.from_payload({**reference.to_payload(), "text": "ignored"}).snippet == "The feature is enabled."
+    assert (
+        EvidenceReference.from_payload(
+            {**reference.to_payload(), "text": "ignored"}
+        ).snippet
+        == "The feature is enabled."
+    )
     assert citation.quote == "The feature is enabled."
-    assert CitationRef.from_payload({"evidence_id": "S1", "source_id": "note-1", "text": "Alias"}).quote == "Alias"
+    assert (
+        CitationRef.from_payload(
+            {"evidence_id": "S1", "source_id": "note-1", "text": "Alias"}
+        ).quote
+        == "Alias"
+    )

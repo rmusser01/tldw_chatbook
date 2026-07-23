@@ -217,7 +217,7 @@ class ClientNotificationsDB(BaseDB):
                 f"""
                 SELECT *
                 FROM client_notifications
-                WHERE {' AND '.join(clauses)}
+                WHERE {" AND ".join(clauses)}
                 ORDER BY id ASC
                 LIMIT ?
                 """,
@@ -247,7 +247,9 @@ class ClientNotificationsDB(BaseDB):
         """Return local notification settings with defaults filled in."""
         settings = deepcopy(DEFAULT_NOTIFICATION_SETTINGS)
         with self._get_connection() as conn:
-            rows = conn.execute("SELECT key, value FROM client_notification_settings").fetchall()
+            rows = conn.execute(
+                "SELECT key, value FROM client_notification_settings"
+            ).fetchall()
         for row in rows:
             try:
                 value = json.loads(row["value"])
@@ -317,7 +319,9 @@ class ClientNotificationsDB(BaseDB):
         self.update_settings(**settings)
         preferences = self.get_preferences()
         if muted_severities is not None:
-            preferences["muted_severities"] = sorted(str(item) for item in muted_severities)
+            preferences["muted_severities"] = sorted(
+                str(item) for item in muted_severities
+            )
         return preferences
 
     @staticmethod

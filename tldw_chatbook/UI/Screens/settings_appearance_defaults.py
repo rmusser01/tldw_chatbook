@@ -100,7 +100,9 @@ def _normalise_density(value: Any) -> str:
     return density if density in SUPPORTED_DENSITIES else DEFAULT_DENSITY
 
 
-def load_appearance_defaults(app_config: Mapping[str, Any]) -> SettingsAppearanceDefaults:
+def load_appearance_defaults(
+    app_config: Mapping[str, Any],
+) -> SettingsAppearanceDefaults:
     """Load Settings-owned Appearance defaults from app configuration.
 
     Args:

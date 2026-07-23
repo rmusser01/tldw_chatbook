@@ -69,10 +69,18 @@ def test_canonical_json_and_sha256_are_deterministic():
 
 def test_manifest_mac_rejects_tampered_manifest_payload():
     keys = derive_skill_trust_keys("passphrase", salt=b"1" * 32)
-    manifest = {"version": 1, "generation": 1, "skills": {"demo": {"status": "trusted"}}}
+    manifest = {
+        "version": 1,
+        "generation": 1,
+        "skills": {"demo": {"status": "trusted"}},
+    }
     tag = manifest_mac(manifest, keys.manifest_mac_key)
 
-    tampered = {"version": 1, "generation": 2, "skills": {"demo": {"status": "trusted"}}}
+    tampered = {
+        "version": 1,
+        "generation": 2,
+        "skills": {"demo": {"status": "trusted"}},
+    }
 
     assert manifest_mac(manifest, keys.manifest_mac_key) == tag
     assert manifest_mac(tampered, keys.manifest_mac_key) != tag
@@ -81,22 +89,30 @@ def test_manifest_mac_rejects_tampered_manifest_payload():
 def test_snapshot_encryption_round_trips_and_authenticates_associated_data():
     keys = derive_skill_trust_keys("passphrase", salt=b"2" * 32)
     payload = {"files": {"SKILL.md": "# Demo\nTrusted"}}
-    encrypted = encrypt_json_blob(payload, keys.snapshot_key, associated_data=b"demo:generation:1")
+    encrypted = encrypt_json_blob(
+        payload, keys.snapshot_key, associated_data=b"demo:generation:1"
+    )
 
     assert encrypted["alg"] == "AES-256-GCM"
     assert (
-        decrypt_json_blob(encrypted, keys.snapshot_key, associated_data=b"demo:generation:1")
+        decrypt_json_blob(
+            encrypted, keys.snapshot_key, associated_data=b"demo:generation:1"
+        )
         == payload
     )
 
     with pytest.raises(ValueError, match="snapshot authentication failed"):
-        decrypt_json_blob(encrypted, keys.snapshot_key, associated_data=b"demo:generation:2")
+        decrypt_json_blob(
+            encrypted, keys.snapshot_key, associated_data=b"demo:generation:2"
+        )
 
 
 def test_snapshot_encryption_requires_32_byte_keys():
     keys = derive_skill_trust_keys("passphrase", salt=b"3" * 32)
     payload = {"files": {"SKILL.md": "# Demo\nTrusted"}}
-    encrypted = encrypt_json_blob(payload, keys.snapshot_key, associated_data=b"demo:generation:1")
+    encrypted = encrypt_json_blob(
+        payload, keys.snapshot_key, associated_data=b"demo:generation:1"
+    )
 
     with pytest.raises(ValueError, match="32 bytes"):
         encrypt_json_blob(payload, b"short", associated_data=b"demo:generation:1")
@@ -114,7 +130,9 @@ def test_snapshot_decryption_rejects_non_object_payloads():
     )
 
     with pytest.raises(ValueError, match="snapshot payload must be an object"):
-        decrypt_json_blob(encrypted, keys.snapshot_key, associated_data=b"demo:generation:1")
+        decrypt_json_blob(
+            encrypted, keys.snapshot_key, associated_data=b"demo:generation:1"
+        )
 
 
 def test_trust_models_produce_json_safe_response_fields():

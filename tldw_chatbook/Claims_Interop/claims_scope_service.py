@@ -54,7 +54,9 @@ class ClaimsScopeService:
 
     def _require_server_service(self, mode: ClaimsBackend) -> Any:
         if mode == ClaimsBackend.LOCAL:
-            raise ValueError("Server claims records are server-only; switch to server mode to manage them.")
+            raise ValueError(
+                "Server claims records are server-only; switch to server mode to manage them."
+            )
         if self.server_service is None:
             raise ValueError("Server claims backend is unavailable.")
         return self.server_service
@@ -75,13 +77,20 @@ class ClaimsScopeService:
         if hasattr(payload, "model_dump"):
             return payload.model_dump(mode="python")
         if isinstance(payload, dict):
-            return {key: ClaimsScopeService._dump(value) for key, value in payload.items()}
+            return {
+                key: ClaimsScopeService._dump(value) for key, value in payload.items()
+            }
         if isinstance(payload, list):
             return [ClaimsScopeService._dump(item) for item in payload]
         return payload
 
     @staticmethod
-    def _with_record_id(mode: ClaimsBackend, kind: str, payload: dict[str, Any], identifier: Any | None = None) -> dict[str, Any]:
+    def _with_record_id(
+        mode: ClaimsBackend,
+        kind: str,
+        payload: dict[str, Any],
+        identifier: Any | None = None,
+    ) -> dict[str, Any]:
         record = dict(payload or {})
         record.setdefault("backend", mode.value)
         if identifier is None:
@@ -97,18 +106,28 @@ class ClaimsScopeService:
         return record
 
     @classmethod
-    def _normalize_claim(cls, mode: ClaimsBackend, item: dict[str, Any]) -> dict[str, Any]:
-        return cls._with_record_id(mode, "claim", item, item.get("id") or item.get("claim_id"))
+    def _normalize_claim(
+        cls, mode: ClaimsBackend, item: dict[str, Any]
+    ) -> dict[str, Any]:
+        return cls._with_record_id(
+            mode, "claim", item, item.get("id") or item.get("claim_id")
+        )
 
     @classmethod
-    def _normalize_cluster(cls, mode: ClaimsBackend, item: dict[str, Any]) -> dict[str, Any]:
-        record = cls._with_record_id(mode, "claim_cluster", item, item.get("cluster_id") or item.get("id"))
+    def _normalize_cluster(
+        cls, mode: ClaimsBackend, item: dict[str, Any]
+    ) -> dict[str, Any]:
+        record = cls._with_record_id(
+            mode, "claim_cluster", item, item.get("cluster_id") or item.get("id")
+        )
         if isinstance(record.get("top_claim"), dict):
             record["top_claim"] = cls._normalize_claim(mode, record["top_claim"])
         return record
 
     @classmethod
-    def _normalize_response(cls, mode: ClaimsBackend, payload: Any, *, kind: str | None = None) -> Any:
+    def _normalize_response(
+        cls, mode: ClaimsBackend, payload: Any, *, kind: str | None = None
+    ) -> Any:
         payload = cls._dump(payload)
         if isinstance(payload, list):
             return [cls._normalize_response(mode, item, kind=kind) for item in payload]
@@ -123,10 +142,14 @@ class ClaimsScopeService:
         if kind == "claim_review_rule":
             return cls._with_record_id(mode, "claim_review_rule", payload)
         if kind == "claim_analytics_export":
-            record = cls._with_record_id(mode, "claim_analytics_export", payload, payload.get("export_id"))
+            record = cls._with_record_id(
+                mode, "claim_analytics_export", payload, payload.get("export_id")
+            )
             if isinstance(record.get("exports"), list):
                 record["exports"] = [
-                    cls._with_record_id(mode, "claim_analytics_export", item, item.get("export_id"))
+                    cls._with_record_id(
+                        mode, "claim_analytics_export", item, item.get("export_id")
+                    )
                     if isinstance(item, dict)
                     else item
                     for item in record["exports"]
@@ -137,7 +160,11 @@ class ClaimsScopeService:
         if kind == "claim_cluster_link":
             parent = payload.get("parent_cluster_id")
             child = payload.get("child_cluster_id")
-            identifier = f"{parent}:{child}" if parent is not None and child is not None else None
+            identifier = (
+                f"{parent}:{child}"
+                if parent is not None and child is not None
+                else None
+            )
             return cls._with_record_id(mode, "claim_cluster_link", payload, identifier)
         if kind == "claims_fva":
             return cls._with_record_id(mode, "claims_fva", payload, "verification")
@@ -161,12 +188,17 @@ class ClaimsScopeService:
             ]
         if isinstance(record.get("notifications"), list):
             record["notifications"] = [
-                cls._with_record_id(mode, "claim_notification", item) if isinstance(item, dict) else item
+                cls._with_record_id(mode, "claim_notification", item)
+                if isinstance(item, dict)
+                else item
                 for item in record["notifications"]
             ]
         if isinstance(record.get("items"), list):
             record["items"] = [
-                cls._normalize_claim(mode, item) if isinstance(item, dict) and ("claim_text" in item or "claim_id" in item) else item
+                cls._normalize_claim(mode, item)
+                if isinstance(item, dict)
+                and ("claim_text" in item or "claim_id" in item)
+                else item
                 for item in record["items"]
             ]
         return record
@@ -194,13 +226,23 @@ class ClaimsScopeService:
         normalized_mode = self._normalize_mode(mode)
         service = self._require_server_service(normalized_mode)
         self._enforce_policy(action_id)
-        result = await self._maybe_await(getattr(service, method_name)(*args, **(kwargs or {})))
+        result = await self._maybe_await(
+            getattr(service, method_name)(*args, **(kwargs or {}))
+        )
         return self._normalize_response(normalized_mode, result, kind=normalize_kind)
 
-    async def get_claims_status(self, *, mode: ClaimsBackend | str | None = None) -> dict[str, Any]:
-        return await self._call(mode=mode, action_id="claims.status.detail.server", method_name="get_claims_status")
+    async def get_claims_status(
+        self, *, mode: ClaimsBackend | str | None = None
+    ) -> dict[str, Any]:
+        return await self._call(
+            mode=mode,
+            action_id="claims.status.detail.server",
+            method_name="get_claims_status",
+        )
 
-    async def list_all_claims(self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+    async def list_all_claims(
+        self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         return await self._call(
             mode=mode,
             action_id="claims.items.list.server",
@@ -209,10 +251,18 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def get_claims_settings(self, *, mode: ClaimsBackend | str | None = None) -> dict[str, Any]:
-        return await self._call(mode=mode, action_id="claims.settings.list.server", method_name="get_claims_settings")
+    async def get_claims_settings(
+        self, *, mode: ClaimsBackend | str | None = None
+    ) -> dict[str, Any]:
+        return await self._call(
+            mode=mode,
+            action_id="claims.settings.list.server",
+            method_name="get_claims_settings",
+        )
 
-    async def update_claims_settings(self, request_data: Any, *, mode: ClaimsBackend | str | None = None) -> dict[str, Any]:
+    async def update_claims_settings(
+        self, request_data: Any, *, mode: ClaimsBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.settings.update.server",
@@ -220,14 +270,18 @@ class ClaimsScopeService:
             args=(request_data,),
         )
 
-    async def get_claims_monitoring_config(self, *, mode: ClaimsBackend | str | None = None) -> dict[str, Any]:
+    async def get_claims_monitoring_config(
+        self, *, mode: ClaimsBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.monitoring.list.server",
             method_name="get_claims_monitoring_config",
         )
 
-    async def update_claims_monitoring_config(self, request_data: Any, *, mode: ClaimsBackend | str | None = None) -> dict[str, Any]:
+    async def update_claims_monitoring_config(
+        self, request_data: Any, *, mode: ClaimsBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.monitoring.update.server",
@@ -235,7 +289,9 @@ class ClaimsScopeService:
             args=(request_data,),
         )
 
-    async def list_claim_notifications(self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+    async def list_claim_notifications(
+        self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         return await self._call(
             mode=mode,
             action_id="claims.notifications.list.server",
@@ -244,7 +300,9 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def get_claim_notifications_digest(self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def get_claim_notifications_digest(
+        self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.notifications.list.server",
@@ -252,7 +310,9 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def ack_claim_notifications(self, request_data: Any, *, mode: ClaimsBackend | str | None = None) -> dict[str, Any]:
+    async def ack_claim_notifications(
+        self, request_data: Any, *, mode: ClaimsBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.notifications.update.server",
@@ -260,7 +320,9 @@ class ClaimsScopeService:
             args=(request_data,),
         )
 
-    async def evaluate_claim_watchlist_notifications(self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def evaluate_claim_watchlist_notifications(
+        self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.notifications.launch.server",
@@ -268,7 +330,9 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def list_claim_alerts(self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+    async def list_claim_alerts(
+        self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         return await self._call(
             mode=mode,
             action_id="claims.alerts.list.server",
@@ -277,7 +341,13 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def create_claim_alert(self, request_data: Any, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def create_claim_alert(
+        self,
+        request_data: Any,
+        *,
+        mode: ClaimsBackend | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.alerts.create.server",
@@ -287,7 +357,13 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def update_claim_alert(self, config_id: int, request_data: Any, *, mode: ClaimsBackend | str | None = None) -> dict[str, Any]:
+    async def update_claim_alert(
+        self,
+        config_id: int,
+        request_data: Any,
+        *,
+        mode: ClaimsBackend | str | None = None,
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.alerts.update.server",
@@ -296,7 +372,9 @@ class ClaimsScopeService:
             args=(config_id, request_data),
         )
 
-    async def delete_claim_alert(self, config_id: int, *, mode: ClaimsBackend | str | None = None) -> dict[str, Any]:
+    async def delete_claim_alert(
+        self, config_id: int, *, mode: ClaimsBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.alerts.delete.server",
@@ -304,7 +382,9 @@ class ClaimsScopeService:
             args=(config_id,),
         )
 
-    async def evaluate_claim_alerts(self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def evaluate_claim_alerts(
+        self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.alerts.launch.server",
@@ -312,14 +392,18 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def get_claims_rebuild_health(self, *, mode: ClaimsBackend | str | None = None) -> dict[str, Any]:
+    async def get_claims_rebuild_health(
+        self, *, mode: ClaimsBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.rebuild.detail.server",
             method_name="get_claims_rebuild_health",
         )
 
-    async def get_claim_review_queue(self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+    async def get_claim_review_queue(
+        self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         return await self._call(
             mode=mode,
             action_id="claims.review.list.server",
@@ -328,7 +412,14 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def review_claim(self, claim_id: int, request_data: Any, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def review_claim(
+        self,
+        claim_id: int,
+        request_data: Any,
+        *,
+        mode: ClaimsBackend | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.review.update.server",
@@ -338,7 +429,9 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def get_claim_review_history(self, claim_id: int, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+    async def get_claim_review_history(
+        self, claim_id: int, *, mode: ClaimsBackend | str | None = None, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         return await self._call(
             mode=mode,
             action_id="claims.review.list.server",
@@ -362,7 +455,9 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def list_claim_review_rules(self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+    async def list_claim_review_rules(
+        self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         return await self._call(
             mode=mode,
             action_id="claims.review_rules.list.server",
@@ -371,7 +466,13 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def create_claim_review_rule(self, request_data: Any, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def create_claim_review_rule(
+        self,
+        request_data: Any,
+        *,
+        mode: ClaimsBackend | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.review_rules.create.server",
@@ -381,7 +482,13 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def update_claim_review_rule(self, rule_id: int, request_data: Any, *, mode: ClaimsBackend | str | None = None) -> dict[str, Any]:
+    async def update_claim_review_rule(
+        self,
+        rule_id: int,
+        request_data: Any,
+        *,
+        mode: ClaimsBackend | str | None = None,
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.review_rules.update.server",
@@ -390,7 +497,9 @@ class ClaimsScopeService:
             args=(rule_id, request_data),
         )
 
-    async def delete_claim_review_rule(self, rule_id: int, *, mode: ClaimsBackend | str | None = None) -> dict[str, Any]:
+    async def delete_claim_review_rule(
+        self, rule_id: int, *, mode: ClaimsBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.review_rules.delete.server",
@@ -398,21 +507,27 @@ class ClaimsScopeService:
             args=(rule_id,),
         )
 
-    async def get_claim_review_analytics(self, *, mode: ClaimsBackend | str | None = None) -> dict[str, Any]:
+    async def get_claim_review_analytics(
+        self, *, mode: ClaimsBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.analytics.detail.server",
             method_name="get_claim_review_analytics",
         )
 
-    async def list_claim_extractors(self, *, mode: ClaimsBackend | str | None = None) -> dict[str, Any]:
+    async def list_claim_extractors(
+        self, *, mode: ClaimsBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.extractors.list.server",
             method_name="list_claim_extractors",
         )
 
-    async def list_claim_review_metrics(self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def list_claim_review_metrics(
+        self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.analytics.list.server",
@@ -420,7 +535,9 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def get_claims_analytics_dashboard(self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def get_claims_analytics_dashboard(
+        self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.analytics.detail.server",
@@ -428,7 +545,9 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def export_claims_analytics(self, request_data: Any, *, mode: ClaimsBackend | str | None = None) -> dict[str, Any]:
+    async def export_claims_analytics(
+        self, request_data: Any, *, mode: ClaimsBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.analytics.export.server",
@@ -437,7 +556,9 @@ class ClaimsScopeService:
             args=(request_data,),
         )
 
-    async def list_claims_analytics_exports(self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def list_claims_analytics_exports(
+        self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.analytics.list.server",
@@ -446,7 +567,9 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def download_claims_analytics_export(self, export_id: str, *, mode: ClaimsBackend | str | None = None) -> dict[str, Any]:
+    async def download_claims_analytics_export(
+        self, export_id: str, *, mode: ClaimsBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.analytics.detail.server",
@@ -454,7 +577,9 @@ class ClaimsScopeService:
             args=(export_id,),
         )
 
-    async def download_claims_analytics_export_file(self, export_id: str, *, mode: ClaimsBackend | str | None = None) -> dict[str, Any]:
+    async def download_claims_analytics_export_file(
+        self, export_id: str, *, mode: ClaimsBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.analytics.export.server",
@@ -462,7 +587,9 @@ class ClaimsScopeService:
             args=(export_id,),
         )
 
-    async def list_claim_clusters(self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+    async def list_claim_clusters(
+        self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         return await self._call(
             mode=mode,
             action_id="claims.clusters.list.server",
@@ -471,7 +598,9 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def rebuild_claim_clusters(self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def rebuild_claim_clusters(
+        self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.clusters.launch.server",
@@ -479,7 +608,9 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def get_claim_cluster(self, cluster_id: int, *, mode: ClaimsBackend | str | None = None) -> dict[str, Any]:
+    async def get_claim_cluster(
+        self, cluster_id: int, *, mode: ClaimsBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.clusters.detail.server",
@@ -488,7 +619,9 @@ class ClaimsScopeService:
             args=(cluster_id,),
         )
 
-    async def list_claim_cluster_links(self, cluster_id: int, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+    async def list_claim_cluster_links(
+        self, cluster_id: int, *, mode: ClaimsBackend | str | None = None, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         return await self._call(
             mode=mode,
             action_id="claims.cluster_links.list.server",
@@ -498,7 +631,13 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def create_claim_cluster_link(self, cluster_id: int, request_data: Any, *, mode: ClaimsBackend | str | None = None) -> dict[str, Any]:
+    async def create_claim_cluster_link(
+        self,
+        cluster_id: int,
+        request_data: Any,
+        *,
+        mode: ClaimsBackend | str | None = None,
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.cluster_links.create.server",
@@ -507,7 +646,13 @@ class ClaimsScopeService:
             args=(cluster_id, request_data),
         )
 
-    async def delete_claim_cluster_link(self, cluster_id: int, child_cluster_id: int, *, mode: ClaimsBackend | str | None = None) -> dict[str, Any]:
+    async def delete_claim_cluster_link(
+        self,
+        cluster_id: int,
+        child_cluster_id: int,
+        *,
+        mode: ClaimsBackend | str | None = None,
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.cluster_links.delete.server",
@@ -515,7 +660,9 @@ class ClaimsScopeService:
             args=(cluster_id, child_cluster_id),
         )
 
-    async def list_claim_cluster_members(self, cluster_id: int, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+    async def list_claim_cluster_members(
+        self, cluster_id: int, *, mode: ClaimsBackend | str | None = None, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         return await self._call(
             mode=mode,
             action_id="claims.cluster_members.list.server",
@@ -525,7 +672,9 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def get_claim_cluster_timeline(self, cluster_id: int, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def get_claim_cluster_timeline(
+        self, cluster_id: int, *, mode: ClaimsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.cluster_timeline.list.server",
@@ -534,7 +683,9 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def get_claim_cluster_evidence(self, cluster_id: int, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def get_claim_cluster_evidence(
+        self, cluster_id: int, *, mode: ClaimsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.cluster_evidence.list.server",
@@ -543,7 +694,9 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def search_claims(self, q: str, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def search_claims(
+        self, q: str, *, mode: ClaimsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.search.list.server",
@@ -552,7 +705,9 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def list_claims_for_media(self, media_id: int, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> Any:
+    async def list_claims_for_media(
+        self, media_id: int, *, mode: ClaimsBackend | str | None = None, **kwargs: Any
+    ) -> Any:
         return await self._call(
             mode=mode,
             action_id="claims.items.list.server",
@@ -562,7 +717,9 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def get_claim_item(self, claim_id: int, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def get_claim_item(
+        self, claim_id: int, *, mode: ClaimsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.items.detail.server",
@@ -572,7 +729,14 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def update_claim_item(self, claim_id: int, request_data: Any, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def update_claim_item(
+        self,
+        claim_id: int,
+        request_data: Any,
+        *,
+        mode: ClaimsBackend | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.items.update.server",
@@ -582,7 +746,9 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def rebuild_claims_for_media(self, media_id: int, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def rebuild_claims_for_media(
+        self, media_id: int, *, mode: ClaimsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.items.launch.server",
@@ -591,7 +757,9 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def rebuild_all_claims(self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def rebuild_all_claims(
+        self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.rebuild.launch.server",
@@ -599,7 +767,9 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def rebuild_claims_fts(self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def rebuild_claims_fts(
+        self, *, mode: ClaimsBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.rebuild.launch.server",
@@ -607,7 +777,13 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def verify_claims_fva(self, request_data: Any, *, mode: ClaimsBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def verify_claims_fva(
+        self,
+        request_data: Any,
+        *,
+        mode: ClaimsBackend | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="claims.fva.launch.server",
@@ -617,5 +793,11 @@ class ClaimsScopeService:
             kwargs=kwargs,
         )
 
-    async def get_fva_settings(self, *, mode: ClaimsBackend | str | None = None) -> dict[str, Any]:
-        return await self._call(mode=mode, action_id="claims.fva.list.server", method_name="get_fva_settings")
+    async def get_fva_settings(
+        self, *, mode: ClaimsBackend | str | None = None
+    ) -> dict[str, Any]:
+        return await self._call(
+            mode=mode,
+            action_id="claims.fva.list.server",
+            method_name="get_fva_settings",
+        )

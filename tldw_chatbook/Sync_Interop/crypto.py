@@ -55,7 +55,9 @@ def generate_dataset_key() -> bytes:
     return os.urandom(DATASET_KEY_BYTES)
 
 
-def encrypt_sync_payload(payload: Mapping[str, Any], *, key: bytes) -> SyncEncryptedPayload:
+def encrypt_sync_payload(
+    payload: Mapping[str, Any], *, key: bytes
+) -> SyncEncryptedPayload:
     """Encrypt a JSON sync payload using AES-256-GCM."""
 
     _validate_dataset_key(key)
@@ -70,7 +72,9 @@ def encrypt_sync_payload(payload: Mapping[str, Any], *, key: bytes) -> SyncEncry
     )
 
 
-def decrypt_sync_payload(encrypted: SyncEncryptedPayload | Mapping[str, Any], *, key: bytes) -> dict[str, Any]:
+def decrypt_sync_payload(
+    encrypted: SyncEncryptedPayload | Mapping[str, Any], *, key: bytes
+) -> dict[str, Any]:
     """Decrypt and authenticate a Sync v2 payload."""
 
     _validate_dataset_key(key)
@@ -82,7 +86,13 @@ def decrypt_sync_payload(encrypted: SyncEncryptedPayload | Mapping[str, Any], *,
             _b64decode(record.tag),
         )
         value = json.loads(plaintext.decode("utf-8"))
-    except (binascii.Error, json.JSONDecodeError, TypeError, UnicodeDecodeError, ValueError) as exc:
+    except (
+        binascii.Error,
+        json.JSONDecodeError,
+        TypeError,
+        UnicodeDecodeError,
+        ValueError,
+    ) as exc:
         raise ValueError("Failed to decrypt sync payload") from exc
     if not isinstance(value, dict):
         raise ValueError("Failed to decrypt sync payload")
@@ -155,7 +165,9 @@ def unwrap_recovery_bundle(
     return dataset_key
 
 
-def _validated_recovery_kdf_parameters(metadata: Mapping[str, Any]) -> tuple[bytes, int, int, int]:
+def _validated_recovery_kdf_parameters(
+    metadata: Mapping[str, Any],
+) -> tuple[bytes, int, int, int]:
     if metadata.get("algorithm") != "scrypt":
         raise ValueError("unsupported recovery bundle kdf algorithm")
     if int(metadata.get("version", 1)) != 1:
@@ -163,16 +175,24 @@ def _validated_recovery_kdf_parameters(metadata: Mapping[str, Any]) -> tuple[byt
     if int(metadata.get("key_len", DATASET_KEY_BYTES)) != DATASET_KEY_BYTES:
         raise ValueError("unsupported recovery bundle key length")
 
-    n = _validated_scrypt_parameter(metadata.get("n", SCRYPT_N), "n", SCRYPT_MIN_N, SCRYPT_MAX_N)
-    r = _validated_scrypt_parameter(metadata.get("r", SCRYPT_R), "r", SCRYPT_MIN_R, SCRYPT_MAX_R)
-    p = _validated_scrypt_parameter(metadata.get("p", SCRYPT_P), "p", SCRYPT_MIN_P, SCRYPT_MAX_P)
+    n = _validated_scrypt_parameter(
+        metadata.get("n", SCRYPT_N), "n", SCRYPT_MIN_N, SCRYPT_MAX_N
+    )
+    r = _validated_scrypt_parameter(
+        metadata.get("r", SCRYPT_R), "r", SCRYPT_MIN_R, SCRYPT_MAX_R
+    )
+    p = _validated_scrypt_parameter(
+        metadata.get("p", SCRYPT_P), "p", SCRYPT_MIN_P, SCRYPT_MAX_P
+    )
     salt = _b64decode(str(metadata["salt"]))
     if len(salt) != SCRYPT_SALT_BYTES:
         raise ValueError("invalid recovery bundle salt length")
     return salt, n, r, p
 
 
-def _validated_scrypt_parameter(value: Any, name: str, minimum: int, maximum: int) -> int:
+def _validated_scrypt_parameter(
+    value: Any, name: str, minimum: int, maximum: int
+) -> int:
     parsed = int(value)
     if parsed < minimum or parsed > maximum:
         raise ValueError(f"unsupported scrypt {name}")
@@ -212,13 +232,17 @@ def _b64decode(value: str) -> bytes:
     return base64.b64decode(value.encode("ascii"), validate=True)
 
 
-def _coerce_encrypted_payload(value: SyncEncryptedPayload | Mapping[str, Any]) -> SyncEncryptedPayload:
+def _coerce_encrypted_payload(
+    value: SyncEncryptedPayload | Mapping[str, Any],
+) -> SyncEncryptedPayload:
     if isinstance(value, SyncEncryptedPayload):
         return value
     return SyncEncryptedPayload.model_validate(value)
 
 
-def _coerce_recovery_bundle(value: SyncRecoveryBundle | Mapping[str, Any]) -> SyncRecoveryBundle:
+def _coerce_recovery_bundle(
+    value: SyncRecoveryBundle | Mapping[str, Any],
+) -> SyncRecoveryBundle:
     if isinstance(value, SyncRecoveryBundle):
         return value
     return SyncRecoveryBundle.model_validate(value)

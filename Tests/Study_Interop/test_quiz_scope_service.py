@@ -10,18 +10,49 @@ class FakeLocalQuizService:
 
     def list_quizzes(self, *, q=None, limit=100, offset=0):
         self.calls.append(("list_quizzes", q, limit, offset))
-        return {"items": [{"id": "quiz-local-1", "name": "Renal Review", "total_questions": 1}], "count": 1}
+        return {
+            "items": [
+                {"id": "quiz-local-1", "name": "Renal Review", "total_questions": 1}
+            ],
+            "count": 1,
+        }
 
     def count_quizzes(self):
         self.calls.append(("count_quizzes",))
         return 4
 
-    def create_quiz(self, *, name, description=None, time_limit_seconds=None, passing_score=None, workspace_id=None):
-        self.calls.append(("create_quiz", name, description, time_limit_seconds, passing_score, workspace_id))
-        return {"id": "quiz-local-1", "name": name, "description": description, "total_questions": 0}
+    def create_quiz(
+        self,
+        *,
+        name,
+        description=None,
+        time_limit_seconds=None,
+        passing_score=None,
+        workspace_id=None,
+    ):
+        self.calls.append(
+            (
+                "create_quiz",
+                name,
+                description,
+                time_limit_seconds,
+                passing_score,
+                workspace_id,
+            )
+        )
+        return {
+            "id": "quiz-local-1",
+            "name": name,
+            "description": description,
+            "total_questions": 0,
+        }
 
-    def list_questions(self, quiz_id, *, q=None, include_answers=False, limit=100, offset=0):
-        self.calls.append(("list_questions", quiz_id, q, include_answers, limit, offset))
+    def list_questions(
+        self, quiz_id, *, q=None, include_answers=False, limit=100, offset=0
+    ):
+        self.calls.append(
+            ("list_questions", quiz_id, q, include_answers, limit, offset)
+        )
         return {
             "items": [
                 {
@@ -55,7 +86,9 @@ class FakeLocalQuizService:
         return True
 
     def delete_question(self, question_id, *, expected_version=None, hard_delete=False):
-        self.calls.append(("delete_question", question_id, expected_version, hard_delete))
+        self.calls.append(
+            ("delete_question", question_id, expected_version, hard_delete)
+        )
         return True
 
     def start_attempt(self, quiz_id):
@@ -91,7 +124,14 @@ class FakeLocalQuizService:
             "score": 2,
             "total_possible": 2,
             "time_spent_seconds": 2,
-            "answers": [{"question_id": "question-local-1", "user_answer": "Paris", "is_correct": True, "points_awarded": 2}],
+            "answers": [
+                {
+                    "question_id": "question-local-1",
+                    "user_answer": "Paris",
+                    "is_correct": True,
+                    "points_awarded": 2,
+                }
+            ],
         }
 
     def list_attempts(self, *, quiz_id=None, limit=100, offset=0):
@@ -112,8 +152,12 @@ class FakeLocalQuizService:
             "count": 1,
         }
 
-    def get_attempt(self, attempt_id, *, include_questions=False, include_answers=False):
-        self.calls.append(("get_attempt", attempt_id, include_questions, include_answers))
+    def get_attempt(
+        self, attempt_id, *, include_questions=False, include_answers=False
+    ):
+        self.calls.append(
+            ("get_attempt", attempt_id, include_questions, include_answers)
+        )
         return {
             "id": attempt_id,
             "quiz_id": "quiz-local-1",
@@ -150,7 +194,17 @@ class FakeServerQuizService:
 
     async def list_quizzes(self, *, q=None, limit=100, offset=0):
         self.calls.append(("list_quizzes", q, limit, offset))
-        return {"items": [{"id": 7, "name": "Renal Review", "total_questions": 1, "time_limit_seconds": 300}], "count": 1}
+        return {
+            "items": [
+                {
+                    "id": 7,
+                    "name": "Renal Review",
+                    "total_questions": 1,
+                    "time_limit_seconds": 300,
+                }
+            ],
+            "count": 1,
+        }
 
     async def start_attempt(self, quiz_id):
         self.calls.append(("start_attempt", quiz_id))
@@ -179,8 +233,12 @@ class FakeServerQuizService:
         self.calls.append(("delete_quiz", quiz_id, expected_version, hard_delete))
         return True
 
-    async def delete_question(self, question_id, *, expected_version=None, hard_delete=False):
-        self.calls.append(("delete_question", question_id, expected_version, hard_delete))
+    async def delete_question(
+        self, question_id, *, expected_version=None, hard_delete=False
+    ):
+        self.calls.append(
+            ("delete_question", question_id, expected_version, hard_delete)
+        )
         return True
 
     async def submit_attempt(self, attempt_id, *, answers):
@@ -193,7 +251,14 @@ class FakeServerQuizService:
             "score": 2,
             "total_possible": 2,
             "time_spent_seconds": 2,
-            "answers": [{"question_id": 11, "user_answer": "Paris", "is_correct": True, "points_awarded": 2}],
+            "answers": [
+                {
+                    "question_id": 11,
+                    "user_answer": "Paris",
+                    "is_correct": True,
+                    "points_awarded": 2,
+                }
+            ],
         }
 
     async def list_attempts(self, *, quiz_id=None, limit=100, offset=0):
@@ -214,8 +279,12 @@ class FakeServerQuizService:
             "count": 1,
         }
 
-    async def get_attempt(self, attempt_id, *, include_questions=False, include_answers=False):
-        self.calls.append(("get_attempt", attempt_id, include_questions, include_answers))
+    async def get_attempt(
+        self, attempt_id, *, include_questions=False, include_answers=False
+    ):
+        self.calls.append(
+            ("get_attempt", attempt_id, include_questions, include_answers)
+        )
         return {
             "id": attempt_id,
             "quiz_id": 7,
@@ -265,9 +334,31 @@ class PagedFakeServerQuizService:
         items = list(self.pages.get(offset, []))
         return {"items": items, "count": len(items)}
 
-    async def create_quiz(self, *, name, description=None, time_limit_seconds=None, passing_score=None, workspace_id=None):
-        self.calls.append(("create_quiz", name, description, time_limit_seconds, passing_score, workspace_id))
-        return {"id": "quiz-created", "name": name, "description": description, "workspace_id": workspace_id}
+    async def create_quiz(
+        self,
+        *,
+        name,
+        description=None,
+        time_limit_seconds=None,
+        passing_score=None,
+        workspace_id=None,
+    ):
+        self.calls.append(
+            (
+                "create_quiz",
+                name,
+                description,
+                time_limit_seconds,
+                passing_score,
+                workspace_id,
+            )
+        )
+        return {
+            "id": "quiz-created",
+            "name": name,
+            "description": description,
+            "workspace_id": workspace_id,
+        }
 
 
 class FakePolicyEnforcer:
@@ -415,9 +506,13 @@ async def test_quiz_scope_service_filters_global_and_workspace_quizzes_without_m
             ],
         }
     )
-    scope = QuizScopeService(local_service=FakeLocalQuizService(), server_service=server)
+    scope = QuizScopeService(
+        local_service=FakeLocalQuizService(), server_service=server
+    )
 
-    global_quizzes = await scope.list_quizzes(mode="server", scope_type="global", limit=2, offset=0)
+    global_quizzes = await scope.list_quizzes(
+        mode="server", scope_type="global", limit=2, offset=0
+    )
     workspace_quizzes = await scope.list_quizzes(
         mode="server",
         scope_type="workspace",
@@ -455,9 +550,13 @@ async def test_quiz_scope_service_applies_offset_after_client_side_quiz_scope_fi
             ],
         }
     )
-    scope = QuizScopeService(local_service=FakeLocalQuizService(), server_service=server)
+    scope = QuizScopeService(
+        local_service=FakeLocalQuizService(), server_service=server
+    )
 
-    global_quizzes = await scope.list_quizzes(mode="server", scope_type="global", limit=2, offset=1)
+    global_quizzes = await scope.list_quizzes(
+        mode="server", scope_type="global", limit=2, offset=1
+    )
     workspace_quizzes = await scope.list_quizzes(
         mode="server",
         scope_type="workspace",
@@ -477,12 +576,21 @@ async def test_quiz_scope_service_applies_offset_after_client_side_quiz_scope_fi
         ("list_quizzes", {"mode": "server", "scope_type": "invalid", "limit": 1}),
         (
             "create_quiz",
-            {"mode": "server", "scope_type": "invalid", "name": "Workspace quiz", "description": None},
+            {
+                "mode": "server",
+                "scope_type": "invalid",
+                "name": "Workspace quiz",
+                "description": None,
+            },
         ),
     ],
 )
-async def test_quiz_scope_service_rejects_invalid_scope_type_for_scoped_methods(method_name, kwargs):
-    scope = QuizScopeService(local_service=FakeLocalQuizService(), server_service=FakeServerQuizService())
+async def test_quiz_scope_service_rejects_invalid_scope_type_for_scoped_methods(
+    method_name, kwargs
+):
+    scope = QuizScopeService(
+        local_service=FakeLocalQuizService(), server_service=FakeServerQuizService()
+    )
 
     with pytest.raises(ValueError, match="Invalid quiz scope_type: invalid"):
         await getattr(scope, method_name)(**kwargs)
@@ -495,22 +603,37 @@ async def test_quiz_scope_service_rejects_invalid_scope_type_for_scoped_methods(
         ("list_quizzes", {"mode": "server", "scope_type": "workspace", "limit": 1}),
         (
             "create_quiz",
-            {"mode": "server", "scope_type": "workspace", "name": "Workspace quiz", "description": None},
+            {
+                "mode": "server",
+                "scope_type": "workspace",
+                "name": "Workspace quiz",
+                "description": None,
+            },
         ),
     ],
 )
-async def test_quiz_scope_service_rejects_missing_workspace_id_for_workspace_scope(method_name, kwargs):
-    scope = QuizScopeService(local_service=FakeLocalQuizService(), server_service=FakeServerQuizService())
+async def test_quiz_scope_service_rejects_missing_workspace_id_for_workspace_scope(
+    method_name, kwargs
+):
+    scope = QuizScopeService(
+        local_service=FakeLocalQuizService(), server_service=FakeServerQuizService()
+    )
 
-    with pytest.raises(ValueError, match="workspace_id is required when scope_type='workspace'"):
+    with pytest.raises(
+        ValueError, match="workspace_id is required when scope_type='workspace'"
+    ):
         await getattr(scope, method_name)(**kwargs)
 
 
 @pytest.mark.asyncio
 async def test_quiz_scope_service_rejects_workspace_scope_attempt_calls_in_local_mode():
-    scope = QuizScopeService(local_service=FakeLocalQuizService(), server_service=FakeServerQuizService())
+    scope = QuizScopeService(
+        local_service=FakeLocalQuizService(), server_service=FakeServerQuizService()
+    )
 
-    with pytest.raises(ValueError, match="Workspace Study is unavailable in local mode"):
+    with pytest.raises(
+        ValueError, match="Workspace Study is unavailable in local mode"
+    ):
         await scope.start_attempt(
             mode="local",
             scope_type="workspace",
@@ -518,7 +641,9 @@ async def test_quiz_scope_service_rejects_workspace_scope_attempt_calls_in_local
             quiz_id="quiz-local-1",
         )
 
-    with pytest.raises(ValueError, match="Workspace Study is unavailable in local mode"):
+    with pytest.raises(
+        ValueError, match="Workspace Study is unavailable in local mode"
+    ):
         await scope.submit_attempt(
             mode="local",
             scope_type="workspace",
@@ -530,9 +655,13 @@ async def test_quiz_scope_service_rejects_workspace_scope_attempt_calls_in_local
 
 @pytest.mark.asyncio
 async def test_quiz_scope_service_rejects_workspace_scope_for_attempt_history_loading_in_local_mode():
-    scope = QuizScopeService(local_service=FakeLocalQuizService(), server_service=FakeServerQuizService())
+    scope = QuizScopeService(
+        local_service=FakeLocalQuizService(), server_service=FakeServerQuizService()
+    )
 
-    with pytest.raises(ValueError, match="Workspace Study is unavailable in local mode"):
+    with pytest.raises(
+        ValueError, match="Workspace Study is unavailable in local mode"
+    ):
         await scope.list_attempts(
             mode="local",
             scope_type="workspace",
@@ -540,7 +669,9 @@ async def test_quiz_scope_service_rejects_workspace_scope_for_attempt_history_lo
             quiz_id="quiz-local-1",
         )
 
-    with pytest.raises(ValueError, match="Workspace Study is unavailable in local mode"):
+    with pytest.raises(
+        ValueError, match="Workspace Study is unavailable in local mode"
+    ):
         await scope.get_attempt(
             mode="local",
             scope_type="workspace",
@@ -552,7 +683,9 @@ async def test_quiz_scope_service_rejects_workspace_scope_for_attempt_history_lo
 
 
 def test_quiz_scope_service_reports_known_unsupported_capabilities():
-    scope = QuizScopeService(local_service=FakeLocalQuizService(), server_service=FakeServerQuizService())
+    scope = QuizScopeService(
+        local_service=FakeLocalQuizService(), server_service=FakeServerQuizService()
+    )
 
     local_report = scope.list_unsupported_capabilities(mode="local")
     server_report = scope.list_unsupported_capabilities(mode="server")
@@ -578,7 +711,9 @@ def test_quiz_scope_service_reports_known_unsupported_capabilities():
 @pytest.mark.asyncio
 async def test_quiz_scope_service_forwards_workspace_id_on_server_create_and_nulls_global_create():
     server = PagedFakeServerQuizService({0: []})
-    scope = QuizScopeService(local_service=FakeLocalQuizService(), server_service=server)
+    scope = QuizScopeService(
+        local_service=FakeLocalQuizService(), server_service=server
+    )
 
     await scope.create_quiz(
         mode="server",
@@ -615,16 +750,26 @@ async def test_quiz_scope_service_keeps_workspace_load_errors_scoped():
         },
         fail_on_offset=2,
     )
-    scope = QuizScopeService(local_service=FakeLocalQuizService(), server_service=server)
+    scope = QuizScopeService(
+        local_service=FakeLocalQuizService(), server_service=server
+    )
 
     with pytest.raises(RuntimeError, match="quiz page load failed"):
-        await scope.list_quizzes(mode="server", scope_type="workspace", workspace_id="ws-1", limit=2, offset=0)
+        await scope.list_quizzes(
+            mode="server",
+            scope_type="workspace",
+            workspace_id="ws-1",
+            limit=2,
+            offset=0,
+        )
 
 
 @pytest.mark.asyncio
 async def test_quiz_scope_service_routes_question_create_and_list():
     local = FakeLocalQuizService()
-    scope = QuizScopeService(local_service=local, server_service=FakeServerQuizService())
+    scope = QuizScopeService(
+        local_service=local, server_service=FakeServerQuizService()
+    )
 
     created = await scope.create_question(
         mode="local",
@@ -635,7 +780,14 @@ async def test_quiz_scope_service_routes_question_create_and_list():
         explanation="Paris is the capital city.",
         points=2,
     )
-    listed = await scope.list_questions(mode="local", quiz_id="quiz-local-1", q="  ", include_answers=True, limit=10, offset=1)
+    listed = await scope.list_questions(
+        mode="local",
+        quiz_id="quiz-local-1",
+        q="  ",
+        include_answers=True,
+        limit=10,
+        offset=1,
+    )
 
     assert created["record_id"] == "local:quiz_question:question-local-1"
     assert listed[0]["quiz_record_id"] == "local:quiz:quiz-local-1"
@@ -646,7 +798,9 @@ async def test_quiz_scope_service_routes_question_create_and_list():
 @pytest.mark.asyncio
 async def test_quiz_scope_service_normalizes_attempt_start_and_submit():
     server = FakeServerQuizService()
-    scope = QuizScopeService(local_service=FakeLocalQuizService(), server_service=server)
+    scope = QuizScopeService(
+        local_service=FakeLocalQuizService(), server_service=server
+    )
 
     started = await scope.start_attempt(mode="server", quiz_id=7)
     submitted = await scope.submit_attempt(
@@ -661,7 +815,11 @@ async def test_quiz_scope_service_normalizes_attempt_start_and_submit():
     assert submitted["score"] == 2
     assert server.calls == [
         ("start_attempt", 7),
-        ("submit_attempt", 41, [{"question_id": 11, "user_answer": "Paris", "time_spent_ms": 1200}]),
+        (
+            "submit_attempt",
+            41,
+            [{"question_id": 11, "user_answer": "Paris", "time_spent_ms": 1200}],
+        ),
     ]
 
 
@@ -672,7 +830,9 @@ async def test_quiz_scope_service_routes_delete_and_attempt_history():
     scope = QuizScopeService(local_service=local, server_service=server)
 
     deleted_quiz = await scope.delete_quiz(mode="server", quiz_id=7, expected_version=2)
-    deleted_question = await scope.delete_question(mode="local", question_id="question-local-1", expected_version=3)
+    deleted_question = await scope.delete_question(
+        mode="local", question_id="question-local-1", expected_version=3
+    )
     attempts = await scope.list_attempts(mode="server", quiz_id=7, limit=5, offset=1)
     loaded_attempt = await scope.get_attempt(
         mode="local",
@@ -685,6 +845,9 @@ async def test_quiz_scope_service_routes_delete_and_attempt_history():
     assert deleted_question is True
     assert attempts[0]["record_id"] == "server:quiz_attempt:41"
     assert loaded_attempt["record_id"] == "local:quiz_attempt:attempt-local-1"
-    assert loaded_attempt["questions"][0]["record_id"] == "local:quiz_question:question-local-1"
+    assert (
+        loaded_attempt["questions"][0]["record_id"]
+        == "local:quiz_question:question-local-1"
+    )
     assert server.calls[0] == ("delete_quiz", 7, 2, False)
     assert local.calls[0] == ("delete_question", "question-local-1", 3, False)

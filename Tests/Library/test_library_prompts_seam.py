@@ -20,7 +20,9 @@ from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
 @pytest.mark.asyncio
 async def test_count_prompts_counts_non_deleted(tmp_path):
     db = PromptsDatabase(tmp_path / "prompts.db", client_id="test-client")
-    svc = LocalPromptService(db)  # match the service's real constructor; adjust if it takes a provider callable
+    svc = LocalPromptService(
+        db
+    )  # match the service's real constructor; adjust if it takes a provider callable
     assert await svc.count_prompts() == 0
     db.add_prompt(name="alpha", author="t", details="d", user_prompt="hello")
     db.add_prompt(name="beta", author="t", details="d", user_prompt="world")
@@ -30,7 +32,9 @@ async def test_count_prompts_counts_non_deleted(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_prompt_scope_service_count_prompts_passes_through_to_local_backend(tmp_path):
+async def test_prompt_scope_service_count_prompts_passes_through_to_local_backend(
+    tmp_path,
+):
     """``PromptScopeService.count_prompts(mode="local")`` routes to the local
     backend's own ``count_prompts`` -- mirroring ``NotesScopeService.count_notes``'s
     local-scope passthrough -- without requiring a dedicated ``count``
@@ -77,7 +81,9 @@ class _ActionRecordingPolicyEnforcer:
 
 
 @pytest.mark.asyncio
-async def test_prompt_scope_service_local_action_ids_from_library_ui_flows_are_registered(tmp_path):
+async def test_prompt_scope_service_local_action_ids_from_library_ui_flows_are_registered(
+    tmp_path,
+):
     """Regression test for the Library Prompts Phase-1 gate defect: clicking
     a prompt row raised ``PolicyDeniedError: Unknown runtime-policy
     action_id: prompts.detail.local`` (from ``PromptScopeService.get_prompt``
@@ -100,15 +106,21 @@ async def test_prompt_scope_service_local_action_ids_from_library_ui_flows_are_r
     db = PromptsDatabase(tmp_path / "prompts.db", client_id="test-client")
     local_service = ScopeLocalPromptService(db)
     policy = _ActionRecordingPolicyEnforcer()
-    service = PromptScopeService(local_service=local_service, server_service=None, policy_enforcer=policy)
+    service = PromptScopeService(
+        local_service=local_service, server_service=None, policy_enforcer=policy
+    )
 
-    created = await service.save_prompt(mode="local", name="Summarize", user_prompt="Summarize: {text}")
+    created = await service.save_prompt(
+        mode="local", name="Summarize", user_prompt="Summarize: {text}"
+    )
     prompt_id = created["local_id"]
     await service.list_prompts(mode="local")
     await service.count_prompts(mode="local")
     await service.search_prompts(mode="local", query="Summarize")
     await service.get_prompt(mode="local", prompt_identifier=prompt_id)
-    await service.save_prompt(mode="local", prompt_identifier=prompt_id, name="Summarize v2")
+    await service.save_prompt(
+        mode="local", prompt_identifier=prompt_id, name="Summarize v2"
+    )
     await service.delete_prompt(mode="local", prompt_identifier=prompt_id)
 
     emitted_action_ids = set(policy.actions)

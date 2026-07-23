@@ -64,7 +64,9 @@ def test_service_error_selector_is_shared_from_state_contract() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_library_rag_search_normalizes_results_and_preserves_metadata() -> None:
+async def test_run_library_rag_search_normalizes_results_and_preserves_metadata() -> (
+    None
+):
     service = StaticLibraryRagSearchService(
         {
             "results": [
@@ -116,7 +118,9 @@ async def test_run_library_rag_search_normalizes_results_and_preserves_metadata(
 
 
 @pytest.mark.asyncio
-async def test_run_library_rag_search_returns_unavailable_recovery_without_service() -> None:
+async def test_run_library_rag_search_returns_unavailable_recovery_without_service() -> (
+    None
+):
     outcome = await run_library_rag_search(
         SimpleNamespace(),
         LibraryRagSearchRequest(query="policy", source_types=("notes",), mode="search"),
@@ -126,29 +130,43 @@ async def test_run_library_rag_search_returns_unavailable_recovery_without_servi
     assert outcome.results == ()
     assert outcome.recovery_state is not None
     assert outcome.recovery_state.stable_selector == "library-rag-service-error"
-    assert "Unavailable: Library Search/RAG retrieval." in outcome.recovery_state.visible_copy
+    assert (
+        "Unavailable: Library Search/RAG retrieval."
+        in outcome.recovery_state.visible_copy
+    )
     assert "Owner: Library retrieval service." in outcome.recovery_state.visible_copy
 
 
 @pytest.mark.asyncio
-async def test_run_library_rag_search_maps_policy_denied_to_persistent_recovery() -> None:
+async def test_run_library_rag_search_maps_policy_denied_to_persistent_recovery() -> (
+    None
+):
     outcome = await run_library_rag_search(
-        SimpleNamespace(library_rag_search_service=PolicyDeniedLibraryRagSearchService()),
+        SimpleNamespace(
+            library_rag_search_service=PolicyDeniedLibraryRagSearchService()
+        ),
         LibraryRagSearchRequest(query="policy", source_types=("notes",), mode="search"),
     )
 
     assert outcome.status == "blocked"
     assert outcome.recovery_state is not None
     assert outcome.recovery_state.status_label == "Wrong source"
-    assert "Server Library RAG requires server mode." in outcome.recovery_state.visible_copy
+    assert (
+        "Server Library RAG requires server mode."
+        in outcome.recovery_state.visible_copy
+    )
     assert "Owner: active server." in outcome.recovery_state.visible_copy
 
 
 @pytest.mark.asyncio
-async def test_run_library_rag_search_maps_empty_and_failed_results_to_recovery() -> None:
+async def test_run_library_rag_search_maps_empty_and_failed_results_to_recovery() -> (
+    None
+):
     empty = await run_library_rag_search(
         SimpleNamespace(library_rag_search_service=StaticLibraryRagSearchService([])),
-        LibraryRagSearchRequest(query="missing", source_types=("notes",), mode="search"),
+        LibraryRagSearchRequest(
+            query="missing", source_types=("notes",), mode="search"
+        ),
     )
 
     assert empty.status == "empty"
@@ -169,7 +187,9 @@ async def test_run_library_rag_search_maps_empty_and_failed_results_to_recovery(
 
 
 @pytest.mark.asyncio
-async def test_run_library_rag_search_logs_failed_retrieval_without_query_text() -> None:
+async def test_run_library_rag_search_logs_failed_retrieval_without_query_text() -> (
+    None
+):
     # Capture through a real loguru sink instead of monkeypatching
     # `logger.warning`: the call site uses `logger.opt(exception=True)`
     # (loguru's traceback capture -- the stdlib `exc_info=True` kwarg is a
@@ -181,7 +201,9 @@ async def test_run_library_rag_search_logs_failed_retrieval_without_query_text()
     )
     try:
         failed = await run_library_rag_search(
-            SimpleNamespace(library_rag_search_service=RaisingLibraryRagSearchService()),
+            SimpleNamespace(
+                library_rag_search_service=RaisingLibraryRagSearchService()
+            ),
             LibraryRagSearchRequest(
                 query="sensitive private query",
                 source_types=("notes", "media"),

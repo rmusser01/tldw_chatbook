@@ -8,7 +8,9 @@ from tldw_chatbook.tldw_api.client import TLDWAPIClient
 
 
 @pytest.mark.asyncio
-async def test_control_surface_gateways_route_namespace_scoped_server_surfaces(monkeypatch):
+async def test_control_surface_gateways_route_namespace_scoped_server_surfaces(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(return_value={"ok": True})
     monkeypatch.setattr(client, "_request", mocked)
@@ -24,19 +26,26 @@ async def test_control_surface_gateways_route_namespace_scoped_server_surfaces(m
         "settings",
         payload={"enabled": True},
     )
-    await client.call_server_monitoring_endpoint("GET", "notifications/recent", params={"limit": 10})
+    await client.call_server_monitoring_endpoint(
+        "GET", "notifications/recent", params={"limit": 10}
+    )
 
     assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/setup/status")
     assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/kanban/cards/search")
     assert mocked.await_args_list[1].kwargs["json_data"] == {"query": "sync"}
     assert mocked.await_args_list[2].args[:2] == ("PUT", "/api/v1/moderation/settings")
     assert mocked.await_args_list[2].kwargs["json_data"] == {"enabled": True}
-    assert mocked.await_args_list[3].args[:2] == ("GET", "/api/v1/monitoring/notifications/recent")
+    assert mocked.await_args_list[3].args[:2] == (
+        "GET",
+        "/api/v1/monitoring/notifications/recent",
+    )
     assert mocked.await_args_list[3].kwargs["params"] == {"limit": 10}
 
 
 @pytest.mark.asyncio
-async def test_control_surface_gateways_reject_cross_namespace_and_unsafe_routes(monkeypatch):
+async def test_control_surface_gateways_reject_cross_namespace_and_unsafe_routes(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(return_value={"ok": True})
     monkeypatch.setattr(client, "_request", mocked)

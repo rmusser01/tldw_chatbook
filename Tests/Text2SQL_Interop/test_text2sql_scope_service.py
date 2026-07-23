@@ -107,7 +107,9 @@ async def test_text2sql_scope_service_routes_server_query_and_normalizes_record(
 @pytest.mark.asyncio
 async def test_text2sql_scope_service_honestly_rejects_local_mode_as_remote_only():
     server = FakeText2SQLService()
-    scope = Text2SQLScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer())
+    scope = Text2SQLScopeService(
+        server_service=server, policy_enforcer=FakePolicyEnforcer()
+    )
 
     with pytest.raises(ValueError, match="Text2SQL is server-only"):
         await scope.query(mode="local", query="SELECT 1", target_id="media_db")
@@ -118,7 +120,10 @@ async def test_text2sql_scope_service_honestly_rejects_local_mode_as_remote_only
 @pytest.mark.asyncio
 async def test_text2sql_scope_service_blocks_denied_server_action_before_dispatch():
     server = FakeText2SQLService()
-    scope = Text2SQLScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer("server_auth_required"))
+    scope = Text2SQLScopeService(
+        server_service=server,
+        policy_enforcer=FakePolicyEnforcer("server_auth_required"),
+    )
 
     with pytest.raises(PolicyDeniedError) as exc:
         await scope.query(mode="server", query="SELECT 1", target_id="media_db")

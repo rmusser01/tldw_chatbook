@@ -54,13 +54,15 @@ def _build_synthetic_chatbook(tmp_path: Path) -> Path:
     conversation_files = {}
     for i in range(NUM_CONVERSATIONS):
         conv_id = f"conv-{i}"
-        content_items.append({
-            "id": conv_id,
-            "type": "conversation",
-            "title": f"Synthetic Conversation {i}",
-            "created_at": now,
-            "file_path": f"content/conversations/conversation_{i}.json",
-        })
+        content_items.append(
+            {
+                "id": conv_id,
+                "type": "conversation",
+                "title": f"Synthetic Conversation {i}",
+                "created_at": now,
+                "file_path": f"content/conversations/conversation_{i}.json",
+            }
+        )
         conversation_files[f"content/conversations/conversation_{i}.json"] = {
             "id": conv_id,
             "name": f"Synthetic Conversation {i}",
@@ -213,8 +215,10 @@ def test_success_not_counted_when_commit_fails(tmp_path, monkeypatch):
     chatbook = _build_synthetic_chatbook(tmp_path)
     dest = tmp_path / "dest-commitfail"
     dest.mkdir()
-    dest_paths = {name: str(dest / f"{name}.db") for name in
-                  ("ChaChaNotes", "Prompts", "Media", "Evals", "RAG")}
+    dest_paths = {
+        name: str(dest / f"{name}.db")
+        for name in ("ChaChaNotes", "Prompts", "Media", "Evals", "RAG")
+    }
 
     original_transaction = db_module.CharactersRAGDB.transaction
 
@@ -244,9 +248,14 @@ def test_success_not_counted_when_commit_fails(tmp_path, monkeypatch):
     ok, _message = importer.import_chatbook(
         chatbook, content_selections={ContentType.CONVERSATION: ["conv-0"]}
     )
-    status = importer.last_import_status if hasattr(importer, "last_import_status") else None
+    status = (
+        importer.last_import_status if hasattr(importer, "last_import_status") else None
+    )
     # The import must not report the conversation as successful; depending on
     # reporting shape, either ok is False or the summary reports 0 successes.
-    assert (not ok) or ("0/" in _message) or ("Failed" in _message) or (
-        status is not None and status.successful_items == 0
+    assert (
+        (not ok)
+        or ("0/" in _message)
+        or ("Failed" in _message)
+        or (status is not None and status.successful_items == 0)
     )

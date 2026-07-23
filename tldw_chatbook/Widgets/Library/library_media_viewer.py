@@ -169,7 +169,9 @@ class LibraryMediaViewer(Vertical):
                     compact=True,
                 )
                 yield Button(
-                    "Remove from read-it-later" if self.viewer.read_later else "Read it later",
+                    "Remove from read-it-later"
+                    if self.viewer.read_later
+                    else "Read it later",
                     id="library-media-read-later",
                     classes="library-canvas-action",
                     compact=True,

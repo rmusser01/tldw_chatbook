@@ -7,7 +7,10 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.UI.Screens.study_screen import StudyScreen
-from tldw_chatbook.UI.Screens.study_scope_models import StudyScopeContext, StudyScopeType
+from tldw_chatbook.UI.Screens.study_scope_models import (
+    StudyScopeContext,
+    StudyScopeType,
+)
 from tldw_chatbook.UI.Study_Window import StudyWindow
 
 
@@ -15,19 +18,31 @@ class DashboardStudyScopeService:
     def __init__(self):
         self.calls = []
         self.decks = [
-            {"record_id": "local:study_deck:deck-1", "backing_id": "deck-1", "name": "Binary Trees"},
-            {"record_id": "local:study_deck:deck-2", "backing_id": "deck-2", "name": "Graph Theory"},
+            {
+                "record_id": "local:study_deck:deck-1",
+                "backing_id": "deck-1",
+                "name": "Binary Trees",
+            },
+            {
+                "record_id": "local:study_deck:deck-2",
+                "backing_id": "deck-2",
+                "name": "Graph Theory",
+            },
         ]
         self.due_cards = [
             {"record_id": "local:study_flashcard:card-1", "backing_id": "card-1"},
             {"record_id": "local:study_flashcard:card-2", "backing_id": "card-2"},
         ]
 
-    async def list_decks(self, *, mode=None, scope_type=None, workspace_id=None, limit=100, offset=0):
+    async def list_decks(
+        self, *, mode=None, scope_type=None, workspace_id=None, limit=100, offset=0
+    ):
         self.calls.append(("list_decks", mode, scope_type, workspace_id, limit, offset))
         return list(self.decks)
 
-    async def get_due_flashcards(self, *, mode=None, scope_type=None, workspace_id=None, limit=25):
+    async def get_due_flashcards(
+        self, *, mode=None, scope_type=None, workspace_id=None, limit=25
+    ):
         self.calls.append(("get_due_flashcards", mode, scope_type, workspace_id, limit))
         return list(self.due_cards[:limit])
 
@@ -62,19 +77,58 @@ class DashboardQuizScopeService:
             }
         ]
 
-    async def list_quizzes(self, *, mode=None, scope_type=None, workspace_id=None, q=None, limit=100, offset=0):
-        self.calls.append(("list_quizzes", mode, scope_type, workspace_id, q, limit, offset))
+    async def list_quizzes(
+        self,
+        *,
+        mode=None,
+        scope_type=None,
+        workspace_id=None,
+        q=None,
+        limit=100,
+        offset=0,
+    ):
+        self.calls.append(
+            ("list_quizzes", mode, scope_type, workspace_id, q, limit, offset)
+        )
         return list(self.quizzes)
 
-    async def list_questions(self, *, mode=None, quiz_id=None, q=None, include_answers=False, limit=100, offset=0):
-        self.calls.append(("list_questions", mode, quiz_id, q, include_answers, limit, offset))
-        return [question for question in self.questions if str(question.get("quiz_record_id", "")).endswith(str(quiz_id))]
+    async def list_questions(
+        self,
+        *,
+        mode=None,
+        quiz_id=None,
+        q=None,
+        include_answers=False,
+        limit=100,
+        offset=0,
+    ):
+        self.calls.append(
+            ("list_questions", mode, quiz_id, q, include_answers, limit, offset)
+        )
+        return [
+            question
+            for question in self.questions
+            if str(question.get("quiz_record_id", "")).endswith(str(quiz_id))
+        ]
 
-    async def list_attempts(self, *, mode=None, scope_type=None, workspace_id=None, quiz_id=None, limit=100, offset=0):
-        self.calls.append(("list_attempts", mode, scope_type, workspace_id, quiz_id, limit, offset))
+    async def list_attempts(
+        self,
+        *,
+        mode=None,
+        scope_type=None,
+        workspace_id=None,
+        quiz_id=None,
+        limit=100,
+        offset=0,
+    ):
+        self.calls.append(
+            ("list_attempts", mode, scope_type, workspace_id, quiz_id, limit, offset)
+        )
         return []
 
-    async def start_attempt(self, *, mode=None, scope_type=None, workspace_id=None, quiz_id=None):
+    async def start_attempt(
+        self, *, mode=None, scope_type=None, workspace_id=None, quiz_id=None
+    ):
         self.calls.append(("start_attempt", mode, scope_type, workspace_id, quiz_id))
         return {
             "record_id": "local:quiz_attempt:attempt-1",
@@ -171,7 +225,10 @@ async def test_study_dashboard_resume_action_returns_to_last_session():
 
     async with app.run_test() as pilot:
         await pilot.pause(0.3)
-        app.screen.current_study_session = {"section": "quizzes", "topic": "Binary Trees"}
+        app.screen.current_study_session = {
+            "section": "quizzes",
+            "topic": "Binary Trees",
+        }
         await pilot.pause(0.1)
 
         resume_button = app.screen.query_one("#study-resume-last", Button)
@@ -233,7 +290,9 @@ async def test_study_quizzes_start_action_explains_no_quiz_recovery():
         assert quiz_start.disabled is True
         assert "Create or import a quiz" in str(quiz_start.tooltip)
         assert review_in_chat.disabled is True
-        assert "Select a quiz before reviewing it in Chat" in str(review_in_chat.tooltip)
+        assert "Select a quiz before reviewing it in Chat" in str(
+            review_in_chat.tooltip
+        )
 
 
 @pytest.mark.asyncio
@@ -264,7 +323,10 @@ async def test_study_quizzes_review_in_chat_stages_selected_quiz_context():
         assert payload.title == "Tree Drill"
         assert "Tree Drill" in payload.body
         assert "Quiz status" in payload.body
-        assert payload.suggested_prompt == "Help me review this quiz and identify what to study next."
+        assert (
+            payload.suggested_prompt
+            == "Help me review this quiz and identify what to study next."
+        )
 
 
 @pytest.mark.asyncio

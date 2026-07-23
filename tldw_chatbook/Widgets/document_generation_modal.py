@@ -9,7 +9,7 @@ Provides a modal dialog for users to generate different document types
 from the current chat conversation including:
 - Timeline
 - Study Guide
-- Briefing Document  
+- Briefing Document
 - Original Note
 """
 
@@ -26,11 +26,11 @@ from loguru import logger
 
 class DocumentGenerationModal(ModalScreen):
     """Modal for selecting document generation options."""
-    
+
     BINDINGS = [
         Binding("escape", "dismiss", "Cancel"),
     ]
-    
+
     # CSS for the dialog
     DEFAULT_CSS = """
     DocumentGenerationModal {
@@ -115,19 +115,21 @@ class DocumentGenerationModal(ModalScreen):
         padding: 1;
     }
     """
-    
+
     # Track loading state
     is_loading = reactive(False)
     loading_message = reactive("")
-    
-    def __init__(self, 
-                 message_content: str,
-                 conversation_context: Optional[Dict[str, Any]] = None,
-                 callback: Optional[Callable[[str, str], None]] = None,
-                 **kwargs):
+
+    def __init__(
+        self,
+        message_content: str,
+        conversation_context: Optional[Dict[str, Any]] = None,
+        callback: Optional[Callable[[str, str], None]] = None,
+        **kwargs,
+    ):
         """
         Initialize the document generation modal.
-        
+
         Args:
             message_content: The specific message content to use
             conversation_context: Additional context from the conversation
@@ -137,148 +139,174 @@ class DocumentGenerationModal(ModalScreen):
         self.message_content = message_content
         self.conversation_context = conversation_context or {}
         self.callback = callback
-        
+
     def compose(self) -> ComposeResult:
         """Compose the dialog UI."""
         with Container(classes="document-dialog"):
             yield Label("Generate Document", classes="dialog-title")
-            yield Static("Choose a document type to generate from this conversation", 
-                        classes="dialog-subtitle")
-            
+            yield Static(
+                "Choose a document type to generate from this conversation",
+                classes="dialog-subtitle",
+            )
+
             # Loading state
             with Container(id="loading-container", classes="loading-container"):
                 yield LoadingIndicator()
                 yield Label("", id="loading-message", classes="loading-message")
-            
+
             # Document options
-            with ScrollableContainer(id="options-container", classes="options-container"):
+            with ScrollableContainer(
+                id="options-container", classes="options-container"
+            ):
                 # Timeline option
                 with Container(classes="option-card"):
                     yield Label("📅 Timeline", classes="option-title")
-                    yield Static("Create a chronological timeline of events and key points", 
-                                classes="option-description")
-                    yield Button("Generate Timeline", 
-                               id="timeline-button", 
-                               classes="generate-button",
-                               variant="primary")
-                
+                    yield Static(
+                        "Create a chronological timeline of events and key points",
+                        classes="option-description",
+                    )
+                    yield Button(
+                        "Generate Timeline",
+                        id="timeline-button",
+                        classes="generate-button",
+                        variant="primary",
+                    )
+
                 # Study Guide option
                 with Container(classes="option-card"):
                     yield Label("📚 Study Guide", classes="option-title")
-                    yield Static("Create a comprehensive study guide with key concepts and learning objectives", 
-                                classes="option-description")
-                    yield Button("Generate Study Guide", 
-                               id="study-guide-button", 
-                               classes="generate-button",
-                               variant="primary")
-                
+                    yield Static(
+                        "Create a comprehensive study guide with key concepts and learning objectives",
+                        classes="option-description",
+                    )
+                    yield Button(
+                        "Generate Study Guide",
+                        id="study-guide-button",
+                        classes="generate-button",
+                        variant="primary",
+                    )
+
                 # Briefing Document option
                 with Container(classes="option-card"):
                     yield Label("📋 Briefing Document", classes="option-title")
-                    yield Static("Create an executive briefing with key points and actionable insights", 
-                                classes="option-description")
-                    yield Button("Generate Briefing", 
-                               id="briefing-button", 
-                               classes="generate-button",
-                               variant="primary")
-                
+                    yield Static(
+                        "Create an executive briefing with key points and actionable insights",
+                        classes="option-description",
+                    )
+                    yield Button(
+                        "Generate Briefing",
+                        id="briefing-button",
+                        classes="generate-button",
+                        variant="primary",
+                    )
+
                 # Original Note option
                 with Container(classes="option-card"):
                     yield Label("📝 Note from Response", classes="option-title")
-                    yield Static("Create a note from this specific message (original functionality)", 
-                                classes="option-description")
-                    yield Button("Create Note", 
-                               id="note-button", 
-                               classes="generate-button",
-                               variant="success")
-            
+                    yield Static(
+                        "Create a note from this specific message (original functionality)",
+                        classes="option-description",
+                    )
+                    yield Button(
+                        "Create Note",
+                        id="note-button",
+                        classes="generate-button",
+                        variant="success",
+                    )
+
             # Close button
             with Container(classes="button-container"):
-                yield Button("Close", id="close-button", classes="close-button", variant="error")
-    
+                yield Button(
+                    "Close", id="close-button", classes="close-button", variant="error"
+                )
+
     def watch_is_loading(self, loading: bool) -> None:
         """React to loading state changes."""
         loading_container = self.query_one("#loading-container")
         options_container = self.query_one("#options-container")
-        
+
         loading_container.display = loading
         options_container.display = not loading
-    
+
     def watch_loading_message(self, message: str) -> None:
         """Update loading message."""
         loading_label = self.query_one("#loading-message", Label)
         loading_label.update(message)
-    
+
     @on(Button.Pressed, "#timeline-button")
     def handle_timeline(self, event: Button.Pressed) -> None:
         """Generate timeline document."""
         logger.debug("Timeline generation requested")
         event.stop()
         self._trigger_generation("timeline")
-    
+
     @on(Button.Pressed, "#study-guide-button")
     def handle_study_guide(self, event: Button.Pressed) -> None:
         """Generate study guide document."""
         logger.debug("Study guide generation requested")
         event.stop()
         self._trigger_generation("study_guide")
-    
+
     @on(Button.Pressed, "#briefing-button")
     def handle_briefing(self, event: Button.Pressed) -> None:
         """Generate briefing document."""
         logger.debug("Briefing document generation requested")
         event.stop()
         self._trigger_generation("briefing")
-    
+
     @on(Button.Pressed, "#note-button")
     def handle_note(self, event: Button.Pressed) -> None:
         """Create original note with customization modal."""
         logger.debug("Original note creation requested")
         event.stop()
-        
+
         # Import the note creation modal
-        from tldw_chatbook.Widgets.Note_Widgets.note_creation_modal import NoteCreationModal
-        
+        from tldw_chatbook.Widgets.Note_Widgets.note_creation_modal import (
+            NoteCreationModal,
+        )
+
         # Prepare default title and content
         timestamp_str = self.conversation_context.get("timestamp", "")
         message_role = self.conversation_context.get("message_role", "Message")
-        
+
         default_title = f"Chat Note - {message_role} - {timestamp_str}"
         default_content = f"""From: {message_role}
 Date: {timestamp_str}
-Message ID: {self.conversation_context.get("message_id") or 'N/A'}
+Message ID: {self.conversation_context.get("message_id") or "N/A"}
 ---
 {self.message_content}"""
-        
+
         # Show the note creation modal
         note_modal = NoteCreationModal(
             initial_title=default_title,
             initial_content=default_content,
-            initial_keywords=""
+            initial_keywords="",
         )
-        
+
         # Define callback for when note modal is dismissed
         def on_note_modal_dismiss(result):
             """Handle note modal result."""
             if result:
                 # User saved the note
-                logger.debug(f"Note creation confirmed with custom data: {result.get('title')}")
+                logger.debug(
+                    f"Note creation confirmed with custom data: {result.get('title')}"
+                )
                 # Dismiss this modal with the note data
                 self.dismiss(("note", result))
             else:
                 # User cancelled - don't dismiss this modal
                 logger.debug("Note creation cancelled by user")
-        
+
         # Push the note modal without waiting
         self.app.push_screen(note_modal, on_note_modal_dismiss)
-    
+
     @on(Button.Pressed, "#close-button")
     def handle_close(self, event: Button.Pressed) -> None:
         """Close the modal."""
         logger.debug("Document generation modal closed")
         event.stop()
         self.dismiss()
-    
+
     def _trigger_generation(self, document_type: str):
         """Trigger document generation for the specified type."""
         try:
@@ -286,13 +314,15 @@ Message ID: {self.conversation_context.get("message_id") or 'N/A'}
             # The actual generation will happen in the parent after modal dismisses
             logger.debug(f"Dismissing modal with document_type: {document_type}")
             self.dismiss(document_type)
-            
+
         except Exception as e:
             logger.error(f"Error triggering {document_type} generation: {e}")
             # Notify error but don't dismiss
-            if hasattr(self.app, 'notify'):
-                self.app.notify(f"Failed to generate {document_type}: {str(e)}", severity="error")
-    
+            if hasattr(self.app, "notify"):
+                self.app.notify(
+                    f"Failed to generate {document_type}: {str(e)}", severity="error"
+                )
+
     def action_dismiss(self):
         """Handle escape key."""
         logger.debug("Document generation modal dismissed via escape")

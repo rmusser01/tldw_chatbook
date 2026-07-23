@@ -1,4 +1,5 @@
 """Pure display-state for the Library notes sync panel."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

@@ -1,3 +1,4 @@
+import ast
 import shutil
 import sqlite3
 import tempfile
@@ -60,16 +61,9 @@ class _ToolsSettingsHostApp(App):
 
 @asynccontextmanager
 async def mount_settings_window(config_dict: dict, temp_config_path: Path, monkeypatch):
-    """Write config_dict to temp_config_path, point the effective config path at it, and yield a live-mounted ToolsSettingsWindow driven by a real pilot."""
+    """Write config_dict to temp_config_path, patch DEFAULT_CONFIG_PATH, and yield a live-mounted ToolsSettingsWindow driven by a real pilot."""
     create_dummy_config(temp_config_path, config_dict)
     monkeypatch.setattr(tldw_chatbook.config, "DEFAULT_CONFIG_PATH", temp_config_path)
-    # load/save resolve via _get_effective_config_path(), which prefers the
-    # TLDW_CONFIG_PATH env override (also set by Tests/UI/conftest.py) over
-    # DEFAULT_CONFIG_PATH, so the env var is the knob that actually takes effect.
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(temp_config_path))
-    # Drop any cached config loaded from this path before the test rewrote it.
-    monkeypatch.setattr(tldw_chatbook.config, "_CONFIG_CACHE", None)
-    monkeypatch.setattr(tldw_chatbook.config, "_CONFIG_CACHE_SOURCE", None)
 
     app = _ToolsSettingsHostApp()
     async with app.run_test() as pilot:
@@ -86,17 +80,12 @@ def temp_config_path(tmp_path: Path) -> Path:
 
 @pytest.fixture(autouse=True)
 def mock_config_path(monkeypatch, temp_config_path: Path):
-    """Monkeypatches the effective config path to use a temporary path."""
+    """Monkeypatches DEFAULT_CONFIG_PATH and related functions to use a temporary path."""
     # Ensure a default config exists at the temp path before tests run
     default_initial_content = {"initial_setting": "default_value"}
     create_dummy_config(temp_config_path, default_initial_content)
 
     monkeypatch.setattr(tldw_chatbook.config, 'DEFAULT_CONFIG_PATH', temp_config_path)
-    # config.py resolves loads/saves through _get_effective_config_path(), which
-    # honors the TLDW_CONFIG_PATH env override (also exported by conftest
-    # isolation fixtures) ahead of DEFAULT_CONFIG_PATH. Point it at the temp file
-    # so the content written here is what the window actually loads.
-    monkeypatch.setenv('TLDW_CONFIG_PATH', str(temp_config_path))
 
     # If load_cli_config_and_ensure_existence has its own reference to the original path (e.g. via default arg)
     # it might need to be mocked or reloaded. However, direct setattr should be effective for module-level constants.
@@ -531,12 +520,22 @@ async def test_database_error_handling(settings_window: ToolsSettingsWindow, moc
 
 
 @pytest.mark.asyncio
-async def test_tools_settings_window_exposes_unified_mcp_view():
+async def test_tools_settings_window_no_longer_exposes_unified_mcp_view():
+    """MCP Hub Phase 6 Task 5: the legacy `UnifiedMCPPanel` embed (nav
+    button + pane) is fully retired from Tools & Settings -- MCP management
+    now lives entirely in the MCP Hub screen/workbench. The window must
+    still compose and its other nav destinations must still work; only the
+    "Unified MCP" entry point is gone.
+    """
     class ToolsSettingsHostApp(App):
         def __init__(self):
             super().__init__()
             self.notify = MagicMock()
             self.unified_mcp_service = None
+            self.current_runtime_backend = "local"
+
+        def get_authoritative_runtime_source(self):
+            return self.current_runtime_backend
 
         def compose(self):
             yield ToolsSettingsWindow(app_instance=self)
@@ -545,14 +544,92 @@ async def test_tools_settings_window_exposes_unified_mcp_view():
     async with app.run_test() as pilot:
         await pilot.pause()
         window = app.query_one(ToolsSettingsWindow)
-        nav_button = window.query_one("#ts-nav-unified-mcp", Button)
 
-        assert nav_button.label.plain == "Unified MCP"
+        assert not window.query("#ts-nav-unified-mcp")
+        assert not window.query("#ts-view-unified-mcp")
+        assert not window.query("#unified-mcp-panel")
 
+        # The window still composes and other navigation still works --
+        # deleting the Unified MCP embed must not have taken the rest of
+        # the window down with it.
+        nav_button = window.query_one("#ts-nav-appearance", Button)
         await window.on_button_pressed(Button.Pressed(nav_button))
-
         content_switcher = window.query_one("#tools-settings-content-pane")
-        assert content_switcher.current == "ts-view-unified-mcp"
+        assert content_switcher.current == "ts-view-appearance"
+
+
+_RETIRED_MCP_MODULE_NAMES = {"unified_mcp_panel", "unified_mcp_sections"}
+_RETIRED_MCP_SYMBOL_NAMES = {
+    "UnifiedMCPPanel",
+    "render_unified_mcp_section",
+    "LAYOUT_MODE_FULL",
+    "LAYOUT_MODE_COMPACT_WORKBENCH",
+}
+
+
+def _mcp_retirement_offense(py_file: Path) -> str | None:
+    """One-line description of a real (non-comment, non-docstring) reference
+    to a retired MCP module/symbol in `py_file`, or `None` if it's clean.
+
+    AST-based rather than a plain substring search deliberately: this repo's
+    surviving MCP Hub modules/tests are FULL of historical prose comments
+    and docstrings explaining what `unified_mcp_panel.py`/`unified_mcp_
+    sections.py` used to do and why a given piece of redaction/shim logic
+    still exists -- a substring grep would flag every one of those as a
+    false positive. Parsing the source and only inspecting `import`/`from
+    ... import` statements and bare `Name` references (never `Constant`
+    string literals, which is what a comment or docstring becomes) catches
+    a REAL importer/reference while staying silent on prose that merely
+    names the retired module for historical context.
+    """
+    tree = ast.parse(py_file.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                if root in _RETIRED_MCP_MODULE_NAMES or any(
+                    part in _RETIRED_MCP_MODULE_NAMES for part in alias.name.split(".")
+                ):
+                    return f"import {alias.name} (line {node.lineno})"
+        elif isinstance(node, ast.ImportFrom):
+            module_parts = (node.module or "").split(".")
+            if any(part in _RETIRED_MCP_MODULE_NAMES for part in module_parts):
+                return f"from {node.module} import ... (line {node.lineno})"
+            for alias in node.names:
+                if alias.name in _RETIRED_MCP_SYMBOL_NAMES:
+                    return f"from {node.module} import {alias.name} (line {node.lineno})"
+        elif isinstance(node, ast.Name) and node.id in _RETIRED_MCP_SYMBOL_NAMES:
+            return f"reference to {node.id} (line {node.lineno})"
+        elif isinstance(node, ast.Attribute) and node.attr in _RETIRED_MCP_SYMBOL_NAMES:
+            return f"attribute reference to {node.attr} (line {node.lineno})"
+    return None
+
+
+def test_unified_mcp_panel_modules_have_zero_importers_repo_wide():
+    """Grep-gate (MCP Hub Phase 6 Task 5): `unified_mcp_panel.py` and
+    `unified_mcp_sections.py` (plus their `UnifiedMCPPanel`/
+    `render_unified_mcp_section`/`LAYOUT_MODE_*` symbols) are deleted along
+    with their own test file -- this asserts no other module in the tree
+    still imports or references them, so a stray import can't silently
+    resurrect a dependency on files that no longer exist (an `ImportError`
+    at collection/runtime instead of a clear, fast, repo-wide check here).
+    See `_mcp_retirement_offense()` for why this is AST-based rather than a
+    plain substring search.
+    """
+    project_root = Path(__file__).resolve().parents[2]
+    this_file = Path(__file__).resolve()
+    offenders: list[str] = []
+    for search_root in (project_root / "tldw_chatbook", project_root / "Tests"):
+        for py_file in search_root.rglob("*.py"):
+            if py_file.resolve() == this_file:
+                continue
+            offense = _mcp_retirement_offense(py_file)
+            if offense is not None:
+                offenders.append(f"{py_file.relative_to(project_root)}: {offense}")
+    assert offenders == [], f"stray references to retired MCP modules: {offenders}"
+    assert not (project_root / "tldw_chatbook" / "UI" / "MCP_Modules" / "unified_mcp_panel.py").exists()
+    assert not (project_root / "tldw_chatbook" / "UI" / "MCP_Modules" / "unified_mcp_sections.py").exists()
+    assert not (project_root / "Tests" / "UI" / "test_unified_mcp_panel.py").exists()
 
 
 @pytest.mark.asyncio

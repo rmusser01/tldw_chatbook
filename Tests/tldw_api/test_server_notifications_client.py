@@ -99,7 +99,9 @@ async def test_client_routes_reminder_task_crud_calls():
     )
     listed = await client.list_reminder_tasks()
     detail = await client.get_reminder_task("task-1")
-    updated = await client.update_reminder_task("task-1", ReminderTaskUpdateRequest(enabled=False))
+    updated = await client.update_reminder_task(
+        "task-1", ReminderTaskUpdateRequest(enabled=False)
+    )
     deleted = await client.delete_reminder_task("task-1")
 
     assert isinstance(created, ReminderTaskResponse)
@@ -152,11 +154,15 @@ async def test_client_routes_notification_feed_actions():
         ]
     )
 
-    listed = await client.list_server_notifications(limit=25, offset=5, include_archived=True, only_snoozed=False)
+    listed = await client.list_server_notifications(
+        limit=25, offset=5, include_archived=True, only_snoozed=False
+    )
     unread = await client.get_server_notifications_unread_count()
     read = await client.mark_server_notifications_read([11])
     dismissed = await client.dismiss_server_notification(11)
-    snoozed = await client.snooze_server_notification(11, NotificationSnoozeRequest(minutes=45))
+    snoozed = await client.snooze_server_notification(
+        11, NotificationSnoozeRequest(minutes=45)
+    )
     cancelled = await client.cancel_server_notification_snooze(11)
     prefs = await client.get_server_notification_preferences()
     updated_prefs = await client.update_server_notification_preferences(
@@ -191,7 +197,9 @@ async def test_client_routes_notification_feed_actions():
     }
     assert client._request.await_args_list[2].kwargs["json_data"] == {"ids": [11]}
     assert client._request.await_args_list[4].kwargs["json_data"] == {"minutes": 45}
-    assert client._request.await_args_list[7].kwargs["json_data"] == {"job_failed_enabled": False}
+    assert client._request.await_args_list[7].kwargs["json_data"] == {
+        "job_failed_enabled": False
+    }
 
 
 @pytest.mark.asyncio
@@ -211,9 +219,7 @@ async def test_client_streams_server_notifications_from_sse_path():
     client = TLDWAPIClient("http://example.test", "token")
     client._stream_sse_request = Mock(return_value=fake_stream())
 
-    events = [
-        event async for event in client.stream_server_notifications(after=10)
-    ]
+    events = [event async for event in client.stream_server_notifications(after=10)]
 
     assert events[0].event == "notification"
     assert events[0].data["notification_id"] == 11

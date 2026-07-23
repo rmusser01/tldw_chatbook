@@ -2,7 +2,6 @@ from datetime import datetime
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from textual.widgets import Input, Select
 
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.chat_models import ChatSessionData
@@ -10,9 +9,11 @@ from tldw_chatbook.Chat.tabs import TabContext
 from tldw_chatbook.Chat.tabs.tab_state_manager import TabStateManager
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-from tldw_chatbook.UI.Screens.chat_screen_state import ChatScreenState, MessageData, TabState
-from tldw_chatbook.Widgets.Chat_Widgets.chat_shell_bar import ChatShellBar
-from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
+from tldw_chatbook.UI.Screens.chat_screen_state import (
+    ChatScreenState,
+    MessageData,
+    TabState,
+)
 
 
 class EmptyChatLog:
@@ -173,7 +174,9 @@ class TestTabStateSerialization:
             body="Transcript",
             source_id="media-1",
         )
-        tab_state = TabState(tab_id="tab-1", title="Media: Video", handoff_payload=payload)
+        tab_state = TabState(
+            tab_id="tab-1", title="Media: Video", handoff_payload=payload
+        )
 
         restored = TabState.from_dict(tab_state.to_dict())
 
@@ -182,7 +185,9 @@ class TestTabStateSerialization:
 
 
 class TestChatScreenStateSerialization:
-    def test_chat_screen_state_round_trip_preserves_expanded_tab_and_message_fields(self):
+    def test_chat_screen_state_round_trip_preserves_expanded_tab_and_message_fields(
+        self,
+    ):
         state = ChatScreenState(
             tabs=[
                 TabState(
@@ -317,9 +322,9 @@ def test_tab_context_uses_original_query_callable_after_monkey_patch(monkeypatch
     selectors_seen = []
     monkeypatch.setattr(
         "tldw_chatbook.config.get_cli_setting",
-        lambda section, key, default=None: True
-        if (section, key) == ("chat_defaults", "enable_tabs")
-        else default,
+        lambda section, key, default=None: (
+            True if (section, key) == ("chat_defaults", "enable_tabs") else default
+        ),
     )
 
     def original_query_one(selector, widget_type=None):
@@ -343,7 +348,9 @@ def test_tab_context_uses_original_query_callable_after_monkey_patch(monkeypatch
 
 class TestChatScreenRestore:
     @pytest.mark.asyncio
-    async def test_restore_tab_sessions_does_not_overwrite_authoritative_runtime_source(self):
+    async def test_restore_tab_sessions_does_not_overwrite_authoritative_runtime_source(
+        self,
+    ):
         mock_app = Mock()
         mock_app.get_current_screen_state = Mock(return_value={})
         mock_app.notify = Mock()
@@ -367,7 +374,9 @@ class TestChatScreenRestore:
         )
 
         default_session = Mock()
-        default_session.session_data = ChatSessionData(tab_id="default", title="Default")
+        default_session.session_data = ChatSessionData(
+            tab_id="default", title="Default"
+        )
 
         tab_container = Mock()
         tab_container.sessions = {"default": default_session}
@@ -380,7 +389,9 @@ class TestChatScreenRestore:
         assert mock_app.runtime_policy.state.active_source == "local"
 
     @pytest.mark.asyncio
-    async def test_restore_tab_sessions_preserves_first_duplicate_and_remaps_active_tab(self):
+    async def test_restore_tab_sessions_preserves_first_duplicate_and_remaps_active_tab(
+        self,
+    ):
         mock_app = Mock()
         mock_app.get_current_screen_state = Mock(return_value={})
         mock_app.notify = Mock()
@@ -412,7 +423,9 @@ class TestChatScreenRestore:
         )
 
         restored_session = Mock()
-        restored_session.session_data = ChatSessionData(tab_id="live-tab-1", title="placeholder")
+        restored_session.session_data = ChatSessionData(
+            tab_id="live-tab-1", title="placeholder"
+        )
 
         async def fake_create_new_tab(title=None, session_data=None):
             if "live-tab-1" not in tab_container.sessions:
@@ -485,7 +498,9 @@ def test_extract_messages_clears_messages_when_direct_chat_log_lookup_succeeds()
     tab_state = TabState(
         tab_id="tab-1",
         title="Chat",
-        messages=[MessageData(message_id="old", role="user", content="stale", timestamp=None)],
+        messages=[
+            MessageData(message_id="old", role="user", content="stale", timestamp=None)
+        ],
     )
 
     screen._extract_and_save_messages(tab_state)
@@ -500,13 +515,19 @@ def test_extract_messages_prefers_active_session_chat_log_over_first_matching_lo
     screen = ChatScreen(app)
 
     inactive_log = FakeChatLog(
-        [FakeMessageWidget(message_id="inactive", role="user", message_text="wrong tab")]
+        [
+            FakeMessageWidget(
+                message_id="inactive", role="user", message_text="wrong tab"
+            )
+        ]
     )
     active_log = FakeChatLog(
         [FakeMessageWidget(message_id="active", role="user", message_text="active tab")]
     )
     screen.chat_window = Mock()
-    screen.chat_window.query = Mock(return_value=QueryResult([inactive_log, active_log]))
+    screen.chat_window.query = Mock(
+        return_value=QueryResult([inactive_log, active_log])
+    )
 
     active_session = Mock()
     active_session.get_chat_log.return_value = active_log
@@ -549,7 +570,9 @@ async def test_restore_messages_prefers_active_session_chat_log_over_first_match
     active_log = FakeChatLog()
     screen.chat_window = Mock()
     screen.chat_window.hide_empty_state = Mock()
-    screen.chat_window.query = Mock(return_value=QueryResult([inactive_log, active_log]))
+    screen.chat_window.query = Mock(
+        return_value=QueryResult([inactive_log, active_log])
+    )
 
     active_session = Mock()
     active_session.get_chat_log.return_value = active_log

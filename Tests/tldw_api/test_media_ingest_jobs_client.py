@@ -33,18 +33,33 @@ def _job_status(job_id: int = 11) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_media_ingest_jobs_client_routes_submit_status_list_cancel_and_reprocess(monkeypatch):
+async def test_media_ingest_jobs_client_routes_submit_status_list_cancel_and_reprocess(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
             {
                 "batch_id": "batch-1",
-                "jobs": [{"id": 11, "uuid": "job-uuid", "source": "https://example.com/a.pdf", "source_kind": "url", "status": "queued"}],
+                "jobs": [
+                    {
+                        "id": 11,
+                        "uuid": "job-uuid",
+                        "source": "https://example.com/a.pdf",
+                        "source_kind": "url",
+                        "status": "queued",
+                    }
+                ],
                 "errors": [],
             },
             _job_status(),
             {"batch_id": "batch-1", "jobs": [_job_status()]},
-            {"success": True, "job_id": 11, "status": "cancelled", "message": "Job cancellation requested"},
+            {
+                "success": True,
+                "job_id": 11,
+                "status": "cancelled",
+                "message": "Job cancellation requested",
+            },
             {
                 "success": True,
                 "batch_id": "batch-1",
@@ -77,7 +92,9 @@ async def test_media_ingest_jobs_client_routes_submit_status_list_cancel_and_rep
     status = await client.get_media_ingest_job(11)
     listed = await client.list_media_ingest_jobs("batch-1", limit=50)
     cancelled = await client.cancel_media_ingest_job(11, reason="user requested")
-    batch_cancelled = await client.cancel_media_ingest_batch(batch_id="batch-1", reason="user requested")
+    batch_cancelled = await client.cancel_media_ingest_batch(
+        batch_id="batch-1", reason="user requested"
+    )
     reprocessed = await client.reprocess_media(
         7,
         ReprocessMediaRequest(
@@ -101,11 +118,23 @@ async def test_media_ingest_jobs_client_routes_submit_status_list_cancel_and_rep
     }
     assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/media/ingest/jobs/11")
     assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/media/ingest/jobs")
-    assert mocked.await_args_list[2].kwargs["params"] == {"batch_id": "batch-1", "limit": 50}
-    assert mocked.await_args_list[3].args[:2] == ("DELETE", "/api/v1/media/ingest/jobs/11")
+    assert mocked.await_args_list[2].kwargs["params"] == {
+        "batch_id": "batch-1",
+        "limit": 50,
+    }
+    assert mocked.await_args_list[3].args[:2] == (
+        "DELETE",
+        "/api/v1/media/ingest/jobs/11",
+    )
     assert mocked.await_args_list[3].kwargs["params"] == {"reason": "user requested"}
-    assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/media/ingest/jobs/cancel")
-    assert mocked.await_args_list[4].kwargs["params"] == {"batch_id": "batch-1", "reason": "user requested"}
+    assert mocked.await_args_list[4].args[:2] == (
+        "POST",
+        "/api/v1/media/ingest/jobs/cancel",
+    )
+    assert mocked.await_args_list[4].kwargs["params"] == {
+        "batch_id": "batch-1",
+        "reason": "user requested",
+    }
     assert mocked.await_args_list[5].args[:2] == ("POST", "/api/v1/media/7/reprocess")
     assert mocked.await_args_list[5].kwargs["json_data"] == {
         "perform_chunking": True,
@@ -135,13 +164,29 @@ async def test_media_ingest_jobs_client_streams_sse_events(monkeypatch):
     monkeypatch.setattr(
         client,
         "_sse_request",
-        lambda *args, **kwargs: _fake_sse([{"event": "status", "data": {"id": 11, "status": "completed"}}], streamed, args, kwargs),
+        lambda *args, **kwargs: _fake_sse(
+            [{"event": "status", "data": {"id": 11, "status": "completed"}}],
+            streamed,
+            args,
+            kwargs,
+        ),
     )
 
-    events = [event async for event in client.stream_media_ingest_job_events(batch_id="batch-1", after_id=4)]
+    events = [
+        event
+        async for event in client.stream_media_ingest_job_events(
+            batch_id="batch-1", after_id=4
+        )
+    ]
 
-    assert streamed.await_args.args[0] == ("GET", "/api/v1/media/ingest/jobs/events/stream")
-    assert streamed.await_args.args[1]["params"] == {"batch_id": "batch-1", "after_id": 4}
+    assert streamed.await_args.args[0] == (
+        "GET",
+        "/api/v1/media/ingest/jobs/events/stream",
+    )
+    assert streamed.await_args.args[1]["params"] == {
+        "batch_id": "batch-1",
+        "after_id": 4,
+    }
     assert events == [{"event": "status", "data": {"id": 11, "status": "completed"}}]
 
 

@@ -13,7 +13,9 @@ from tldw_chatbook.Widgets.template_selector import (
     TemplatePreviewWidget,
     TemplateSelectorDialog,
 )
-from tldw_chatbook.Widgets.transcription_history_viewer import TranscriptionHistoryViewer
+from tldw_chatbook.Widgets.transcription_history_viewer import (
+    TranscriptionHistoryViewer,
+)
 
 
 class _WidgetHost(App):
@@ -56,9 +58,13 @@ def _static_text(static: Static) -> str:
 
 
 @pytest.mark.asyncio
-async def test_search_rag_missing_embeddings_dependency_exposes_phase_five_recovery(monkeypatch, tmp_path):
+async def test_search_rag_missing_embeddings_dependency_exposes_phase_five_recovery(
+    monkeypatch, tmp_path
+):
     monkeypatch.setattr(search_rag_module, "get_user_data_dir", lambda: tmp_path)
-    monkeypatch.setitem(search_rag_module.DEPENDENCIES_AVAILABLE, "embeddings_rag", False)
+    monkeypatch.setitem(
+        search_rag_module.DEPENDENCIES_AVAILABLE, "embeddings_rag", False
+    )
     monkeypatch.setattr(
         "tldw_chatbook.Utils.widget_helpers.alert_embeddings_not_available",
         lambda widget: None,
@@ -87,7 +93,9 @@ async def test_search_rag_missing_embeddings_dependency_exposes_phase_five_recov
         assert widget.is_searching is False
         assert "Search/RAG queries" in str(search_button.tooltip)
         assert 'pip install -e ".[embeddings_rag]"' in str(search_button.tooltip)
-        assert 'pip install "tldw_chatbook[embeddings_rag]"' in str(search_button.tooltip)
+        assert 'pip install "tldw_chatbook[embeddings_rag]"' in str(
+            search_button.tooltip
+        )
 
 
 @pytest.mark.asyncio
@@ -109,22 +117,30 @@ async def test_stts_missing_speech_dependencies_expose_phase_five_recovery(monke
         recovery_text = _static_text(recovery)
         assert "Dependency missing" in recovery_text
         assert "Unavailable: Local speech providers." in recovery_text
-        assert "Why: Missing optional dependencies: local_tts, transcription_faster_whisper, speech_recording." in recovery_text
+        assert (
+            "Why: Missing optional dependencies: local_tts, transcription_faster_whisper, speech_recording."
+            in recovery_text
+        )
         assert (
             'Next: Install with pip install "tldw_chatbook[local_tts,transcription_faster_whisper,speech_recording]" '
             "and restart."
         ) in recovery_text
         assert "Recovery: Settings > Speech." in recovery_text
         assert "Owner: optional dependency." in recovery_text
-        assert 'pip install "tldw_chatbook[local_tts,transcription_faster_whisper,speech_recording]"' in str(
-            recovery.tooltip
+        assert (
+            'pip install "tldw_chatbook[local_tts,transcription_faster_whisper,speech_recording]"'
+            in str(recovery.tooltip)
         )
 
 
 @pytest.mark.asyncio
-async def test_transcription_history_disabled_actions_explain_selection_requirement(monkeypatch):
+async def test_transcription_history_disabled_actions_explain_selection_requirement(
+    monkeypatch,
+):
     monkeypatch.setattr(TranscriptionHistoryViewer, "on_mount", lambda self: None)
-    monkeypatch.setattr(TranscriptionHistoryViewer, "on_select_changed", lambda self, event: None)
+    monkeypatch.setattr(
+        TranscriptionHistoryViewer, "on_select_changed", lambda self, event: None
+    )
     monkeypatch.setattr(
         "tldw_chatbook.Widgets.transcription_history_viewer.get_transcription_history",
         lambda: SimpleNamespace(is_encrypted=lambda: False),
@@ -201,7 +217,9 @@ async def test_template_preview_actions_explain_selection_requirement():
 
 
 @pytest.mark.asyncio
-async def test_template_selector_select_action_explains_selection_requirement(monkeypatch):
+async def test_template_selector_select_action_explains_selection_requirement(
+    monkeypatch,
+):
     monkeypatch.setattr(TemplateSelectorDialog, "_load_templates", lambda self: None)
     app = _ScreenHost(TemplateSelectorDialog())
 

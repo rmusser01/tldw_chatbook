@@ -64,6 +64,7 @@ DECOY_CONTENT = (
 
 # === Fixtures ===
 
+
 @pytest.fixture
 def media_db(tmp_path):
     db = MediaDatabase(tmp_path / "media.db", client_id="test-ingest")
@@ -87,7 +88,15 @@ def _clean_hook_registry():
     media_db_module._MEDIA_POST_INGEST_CALLBACKS.clear()
 
 
-def _add_media(db, *, title="Doc", content="hello world content", media_type="document", overwrite=True, url=None):
+def _add_media(
+    db,
+    *,
+    title="Doc",
+    content="hello world content",
+    media_type="document",
+    overwrite=True,
+    url=None,
+):
     return db.add_media_with_keywords(
         url=url,
         title=title,
@@ -119,7 +128,9 @@ class FakeRAGService:
             raise RuntimeError("boom: embedding backend exploded")
         self.indexed_docs.extend(documents)
         return [
-            IndexingResult(doc_id=d["id"], chunks_created=2, time_taken=0.0, success=True)
+            IndexingResult(
+                doc_id=d["id"], chunks_created=2, time_taken=0.0, success=True
+            )
             for d in documents
         ]
 
@@ -141,8 +152,14 @@ def indexer(fake_service, indexing_db):
     idx.stop()
 
 
-def _entry(item_id="1", *, content=DISTINCTIVE_CONTENT, title="Quokka Manifesto",
-           last_modified=None, item_type="media"):
+def _entry(
+    item_id="1",
+    *,
+    content=DISTINCTIVE_CONTENT,
+    title="Quokka Manifesto",
+    last_modified=None,
+    item_type="media",
+):
     last_modified = last_modified or datetime.now(timezone.utc)
     return IndexEntry(
         item_id=str(item_id),
@@ -163,6 +180,7 @@ def _entry(item_id="1", *, content=DISTINCTIVE_CONTENT, title="Quokka Manifesto"
 
 # === Post-ingest hook seam (DB layer) ===
 
+
 @pytest.mark.unit
 class TestMediaPostIngestHook:
     def test_callback_fires_post_commit_for_new_media(self, media_db):
@@ -175,7 +193,9 @@ class TestMediaPostIngestHook:
 
         media_db_module.register_media_post_ingest_callback(callback)
         try:
-            media_id, media_uuid, _msg = _add_media(media_db, content="post commit visible")
+            media_id, media_uuid, _msg = _add_media(
+                media_db, content="post commit visible"
+            )
         finally:
             media_db_module.unregister_media_post_ingest_callback(callback)
 
@@ -190,7 +210,9 @@ class TestMediaPostIngestHook:
             lambda db, mid, muuid: calls.append(mid)
         )
         try:
-            media_id, _, message = _add_media(media_db, content="dup content", overwrite=False)
+            media_id, _, message = _add_media(
+                media_db, content="dup content", overwrite=False
+            )
         finally:
             media_db_module._MEDIA_POST_INGEST_CALLBACKS.clear()
 
@@ -213,7 +235,8 @@ class TestMediaPostIngestHook:
 
     def test_unregister_stops_callbacks(self, media_db):
         calls = []
-        cb = lambda db, mid, muuid: calls.append(mid)
+        def cb(db, mid, muuid):
+            return calls.append(mid)
         media_db_module.register_media_post_ingest_callback(cb)
         media_db_module.unregister_media_post_ingest_callback(cb)
 
@@ -222,14 +245,19 @@ class TestMediaPostIngestHook:
 
     def test_callback_fires_for_content_update(self, media_db):
         calls = []
-        media_id, _, _ = _add_media(media_db, content="version one", url="https://example.com/x")
+        media_id, _, _ = _add_media(
+            media_db, content="version one", url="https://example.com/x"
+        )
 
         media_db_module.register_media_post_ingest_callback(
             lambda db, mid, muuid: calls.append(mid)
         )
         try:
             updated_id, _, _ = _add_media(
-                media_db, content="version two", url="https://example.com/x", overwrite=True
+                media_db,
+                content="version two",
+                url="https://example.com/x",
+                overwrite=True,
             )
         finally:
             media_db_module._MEDIA_POST_INGEST_CALLBACKS.clear()
@@ -240,15 +268,20 @@ class TestMediaPostIngestHook:
 
 # === Availability gate (AC #5) ===
 
+
 @pytest.mark.unit
 class TestAvailabilityGate:
     def test_no_indexing_attempted_when_deps_missing(self, media_db, monkeypatch):
-        monkeypatch.setattr(ingestion_indexing, "embeddings_rag_deps_installed", lambda: False)
+        monkeypatch.setattr(
+            ingestion_indexing, "embeddings_rag_deps_installed", lambda: False
+        )
 
         def _fail_if_touched():
             raise AssertionError("indexer must not be touched when deps are missing")
 
-        monkeypatch.setattr(ingestion_indexing, "get_ingestion_indexer", _fail_if_touched)
+        monkeypatch.setattr(
+            ingestion_indexing, "get_ingestion_indexer", _fail_if_touched
+        )
 
         install_media_ingest_hook()
         media_id, _, _ = _add_media(media_db, content="no deps, still ingests fine")
@@ -257,23 +290,31 @@ class TestAvailabilityGate:
         assert media_db.get_media_by_id(media_id) is not None
 
     def test_semantic_indexing_available_false_when_deps_missing(self, monkeypatch):
-        monkeypatch.setattr(ingestion_indexing, "embeddings_rag_deps_installed", lambda: False)
+        monkeypatch.setattr(
+            ingestion_indexing, "embeddings_rag_deps_installed", lambda: False
+        )
         assert semantic_indexing_available() is False
 
     def test_config_kill_switch_disables_indexing(self, media_db, monkeypatch):
-        monkeypatch.setattr(ingestion_indexing, "embeddings_rag_deps_installed", lambda: True)
+        monkeypatch.setattr(
+            ingestion_indexing, "embeddings_rag_deps_installed", lambda: True
+        )
         monkeypatch.setattr(
             ingestion_indexing,
             "get_cli_setting",
-            lambda section, key, default=None: {"indexing": {"enabled": False}}
-            if (section, key) == ("AppRAGSearchConfig", "rag")
-            else default,
+            lambda section, key, default=None: (
+                {"indexing": {"enabled": False}}
+                if (section, key) == ("AppRAGSearchConfig", "rag")
+                else default
+            ),
         )
 
         def _fail_if_touched():
             raise AssertionError("indexer must not be touched when disabled by config")
 
-        monkeypatch.setattr(ingestion_indexing, "get_ingestion_indexer", _fail_if_touched)
+        monkeypatch.setattr(
+            ingestion_indexing, "get_ingestion_indexer", _fail_if_touched
+        )
 
         install_media_ingest_hook()
         media_id, _, _ = _add_media(media_db, content="disabled by config")
@@ -287,8 +328,12 @@ class TestAvailabilityGate:
                 submitted.append(entry)
                 return True
 
-        monkeypatch.setattr(ingestion_indexing, "get_ingestion_indexer", lambda: OneShotIndexer())
-        monkeypatch.setattr(ingestion_indexing, "embeddings_rag_deps_installed", lambda: True)
+        monkeypatch.setattr(
+            ingestion_indexing, "get_ingestion_indexer", lambda: OneShotIndexer()
+        )
+        monkeypatch.setattr(
+            ingestion_indexing, "embeddings_rag_deps_installed", lambda: True
+        )
 
         install_media_ingest_hook()
         install_media_ingest_hook()
@@ -298,6 +343,7 @@ class TestAvailabilityGate:
 
 
 # === Document builders (metadata contract for _semantic_row) ===
+
 
 @pytest.mark.unit
 class TestDocumentBuilders:
@@ -349,7 +395,11 @@ class TestDocumentBuilders:
         assert doc["metadata"]["title"] == "My Note"
 
     def test_conversation_document_contract(self):
-        conv = {"id": "conv-1", "title": "Chat about quokkas", "last_modified": "2026-07-16T10:00:00Z"}
+        conv = {
+            "id": "conv-1",
+            "title": "Chat about quokkas",
+            "last_modified": "2026-07-16T10:00:00Z",
+        }
         messages = [
             {"sender": "user", "content": "Tell me about quokkas"},
             {"sender": "assistant", "content": "Quokkas are marsupials."},
@@ -366,6 +416,7 @@ class TestDocumentBuilders:
 
 
 # === Background worker (AC #1, #4) ===
+
 
 @pytest.mark.unit
 class TestIngestionIndexer:
@@ -392,7 +443,9 @@ class TestIngestionIndexer:
         assert fake_service.indexed_docs == []
         assert indexer.stats()["skipped"] == 1
 
-    def test_updated_item_is_reindexed_with_stale_chunk_delete(self, indexer, fake_service, indexing_db):
+    def test_updated_item_is_reindexed_with_stale_chunk_delete(
+        self, indexer, fake_service, indexing_db
+    ):
         old = datetime.now(timezone.utc) - timedelta(hours=1)
         indexing_db.mark_item_indexed("33", "media", last_modified=old, chunk_count=2)
 
@@ -402,7 +455,9 @@ class TestIngestionIndexer:
         assert [d["id"] for d in fake_service.indexed_docs] == ["media_33"]
         assert "media_33" in fake_service.vector_store.deleted
 
-    def test_failure_is_recorded_and_worker_survives(self, indexer, fake_service, indexing_db):
+    def test_failure_is_recorded_and_worker_survives(
+        self, indexer, fake_service, indexing_db
+    ):
         failures = []
         indexer.set_failure_notifier(lambda msg: failures.append(msg))
 
@@ -427,9 +482,13 @@ class TestIngestionIndexer:
         release = threading.Event()
 
         class SlowService(FakeRAGService):
-            async def index_batch_optimized(self, documents, show_progress=True, batch_size=32):
+            async def index_batch_optimized(
+                self, documents, show_progress=True, batch_size=32
+            ):
                 await asyncio.to_thread(release.wait, 10)
-                return await super().index_batch_optimized(documents, show_progress, batch_size)
+                return await super().index_batch_optimized(
+                    documents, show_progress, batch_size
+                )
 
         slow = SlowService()
         idx = IngestionIndexer(rag_service=slow, indexing_db=indexing_db)
@@ -447,6 +506,7 @@ class TestIngestionIndexer:
 
 # === End-to-end: ingest -> worker -> semantic search (AC #1, #2) ===
 
+
 def _make_real_service(store_type="memory", persist_dir=None):
     from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
     from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
@@ -463,20 +523,28 @@ def _make_real_service(store_type="memory", persist_dir=None):
 
 
 @pytest.mark.integration
-@pytest.mark.skipif(not embeddings_rag_deps_installed(), reason="embeddings_rag deps not installed")
+@pytest.mark.skipif(
+    not embeddings_rag_deps_installed(), reason="embeddings_rag deps not installed"
+)
 class TestEndToEndSemanticSearch:
     def _ingest_and_search(self, media_db, tmp_path, monkeypatch, service):
         indexer = IngestionIndexer(
             rag_service=service,
             indexing_db=RAGIndexingDB(tmp_path / "rag_indexing.db"),
         )
-        monkeypatch.setattr(ingestion_indexing, "get_ingestion_indexer", lambda: indexer)
+        monkeypatch.setattr(
+            ingestion_indexing, "get_ingestion_indexer", lambda: indexer
+        )
         install_media_ingest_hook()
         try:
             _add_media(media_db, title="Tax Law Digest", content=DECOY_CONTENT)
-            media_id, _, _ = _add_media(media_db, title="Quokka Manifesto", content=DISTINCTIVE_CONTENT)
+            media_id, _, _ = _add_media(
+                media_db, title="Quokka Manifesto", content=DISTINCTIVE_CONTENT
+            )
             assert media_id is not None
-            assert indexer.wait_until_idle(timeout=60), "background indexing did not finish"
+            assert indexer.wait_until_idle(timeout=60), (
+                "background indexing did not finish"
+            )
             assert indexer.stats()["failed"] == 0, indexer.stats()["last_error"]
 
             results = asyncio.run(
@@ -492,24 +560,34 @@ class TestEndToEndSemanticSearch:
             uninstall_media_ingest_hook()
             indexer.stop()
 
-    def test_semantic_search_returns_newly_ingested_document(self, media_db, tmp_path, monkeypatch):
+    def test_semantic_search_returns_newly_ingested_document(
+        self, media_db, tmp_path, monkeypatch
+    ):
         service = _make_real_service("memory")
-        media_id, results = self._ingest_and_search(media_db, tmp_path, monkeypatch, service)
+        media_id, results = self._ingest_and_search(
+            media_db, tmp_path, monkeypatch, service
+        )
 
         assert results, "semantic search returned nothing for distinctive content"
         top = results[0]
         assert top.metadata["source_id"] == str(media_id)
         assert top.metadata["source_type"] == "media"
         assert top.metadata["title"] == "Quokka Manifesto"
-        assert top.metadata.get("chunk_id"), "chunk_id must be present for _semantic_row"
+        assert top.metadata.get("chunk_id"), (
+            "chunk_id must be present for _semantic_row"
+        )
 
-    def test_v2_service_with_parallel_profile_indexes_and_searches(self, media_db, tmp_path, monkeypatch):
+    def test_v2_service_with_parallel_profile_indexes_and_searches(
+        self, media_db, tmp_path, monkeypatch
+    ):
         """Regression: EnhancedRAGServiceV2 with parallel processing enabled
         used to crash on index_batch_optimized (imports of nonexistent
         enhanced_indexing_helpers functions); it must now index via the base
         optimized path."""
         from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
-        from tldw_chatbook.RAG_Search.simplified.enhanced_rag_service_v2 import EnhancedRAGServiceV2
+        from tldw_chatbook.RAG_Search.simplified.enhanced_rag_service_v2 import (
+            EnhancedRAGServiceV2,
+        )
 
         cfg = RAGConfig()
         cfg.embedding.model = "mock"
@@ -525,16 +603,22 @@ class TestEndToEndSemanticSearch:
             enable_reranking=False,
             enable_parallel_processing=True,
         )
-        media_id, results = self._ingest_and_search(media_db, tmp_path, monkeypatch, service)
+        media_id, results = self._ingest_and_search(
+            media_db, tmp_path, monkeypatch, service
+        )
 
         assert results
         assert results[0].metadata["source_id"] == str(media_id)
 
-    def test_chroma_round_trip_persists_ingested_document(self, media_db, tmp_path, monkeypatch):
+    def test_chroma_round_trip_persists_ingested_document(
+        self, media_db, tmp_path, monkeypatch
+    ):
         pytest.importorskip("chromadb")
         persist_dir = tmp_path / "chromadb"
         service = _make_real_service("chroma", persist_dir)
-        media_id, results = self._ingest_and_search(media_db, tmp_path, monkeypatch, service)
+        media_id, results = self._ingest_and_search(
+            media_db, tmp_path, monkeypatch, service
+        )
 
         assert results
         assert results[0].metadata["source_id"] == str(media_id)
@@ -555,24 +639,44 @@ class TestEndToEndSemanticSearch:
 
 # === Backfill (AC #3) ===
 
+
 @pytest.mark.integration
-@pytest.mark.skipif(not embeddings_rag_deps_installed(), reason="embeddings_rag deps not installed")
+@pytest.mark.skipif(
+    not embeddings_rag_deps_installed(), reason="embeddings_rag deps not installed"
+)
 class TestBackfill:
-    def test_backfill_media_notes_conversations_and_incremental_rerun(self, media_db, tmp_path):
+    def test_backfill_media_notes_conversations_and_incremental_rerun(
+        self, media_db, tmp_path
+    ):
         from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
         # Pre-existing content, ingested with no hook installed.
-        m1, _, _ = _add_media(media_db, title="Quokka Manifesto", content=DISTINCTIVE_CONTENT)
+        m1, _, _ = _add_media(
+            media_db, title="Quokka Manifesto", content=DISTINCTIVE_CONTENT
+        )
         m2, _, _ = _add_media(media_db, title="Tax Law Digest", content=DECOY_CONTENT)
         assert m1 and m2
 
         cha_db = CharactersRAGDB(tmp_path / "cha.db", "test-backfill")
-        note_id = cha_db.add_note("Wombat Note", "Wombats dig unusually square burrows near eucalyptus groves.")
+        note_id = cha_db.add_note(
+            "Wombat Note",
+            "Wombats dig unusually square burrows near eucalyptus groves.",
+        )
         conv_id = cha_db.add_conversation({"title": "Chat about pelicans"})
-        cha_db.add_message({"conversation_id": conv_id, "sender": "user",
-                            "content": "Do pelicans migrate across hemispheres?"})
-        cha_db.add_message({"conversation_id": conv_id, "sender": "assistant",
-                            "content": "Some pelican populations are migratory, yes."})
+        cha_db.add_message(
+            {
+                "conversation_id": conv_id,
+                "sender": "user",
+                "content": "Do pelicans migrate across hemispheres?",
+            }
+        )
+        cha_db.add_message(
+            {
+                "conversation_id": conv_id,
+                "sender": "assistant",
+                "content": "Some pelican populations are migratory, yes.",
+            }
+        )
 
         service = _make_real_service("memory")
         indexing_db = RAGIndexingDB(tmp_path / "rag_indexing.db")
@@ -593,13 +697,23 @@ class TestBackfill:
 
         # Semantic search sees backfilled content from every source type.
         note_results = asyncio.run(
-            service.search("square wombat burrows", top_k=3, search_type="semantic", include_citations=False)
+            service.search(
+                "square wombat burrows",
+                top_k=3,
+                search_type="semantic",
+                include_citations=False,
+            )
         )
         assert note_results
         assert note_results[0].metadata["source_type"] == "note"
 
         conv_results = asyncio.run(
-            service.search("pelicans migrate hemispheres", top_k=3, search_type="semantic", include_citations=False)
+            service.search(
+                "pelicans migrate hemispheres",
+                top_k=3,
+                search_type="semantic",
+                include_citations=False,
+            )
         )
         assert conv_results
         assert conv_results[0].metadata["source_type"] == "conversation"
@@ -617,13 +731,16 @@ class TestBackfill:
         assert summary2["skipped"] == 4
 
     def test_backfill_unavailable_without_deps(self, media_db, tmp_path, monkeypatch):
-        monkeypatch.setattr(ingestion_indexing, "embeddings_rag_deps_installed", lambda: False)
+        monkeypatch.setattr(
+            ingestion_indexing, "embeddings_rag_deps_installed", lambda: False
+        )
         summary = asyncio.run(backfill_semantic_index(media_db=media_db))
         assert summary["status"] == "unavailable"
         assert summary["indexed"] == 0
 
 
 # === Shared service wiring ===
+
 
 @pytest.mark.unit
 class TestSharedRagService:
@@ -634,6 +751,19 @@ class TestSharedRagService:
             assert ingestion_indexing.get_shared_rag_service() is fake
         finally:
             ingestion_indexing.reset_shared_rag_service()
+
+    def test_peek_shared_service_never_creates(self):
+        """peek returns the existing service or None; it must not construct one (task-251)."""
+        ingestion_indexing.reset_shared_rag_service()
+        assert ingestion_indexing.peek_shared_rag_service() is None
+
+        fake = FakeRAGService()
+        ingestion_indexing.set_shared_rag_service(fake)
+        try:
+            assert ingestion_indexing.peek_shared_rag_service() is fake
+        finally:
+            ingestion_indexing.reset_shared_rag_service()
+        assert ingestion_indexing.peek_shared_rag_service() is None
 
     def test_chat_rag_events_uses_shared_service(self):
         from types import SimpleNamespace

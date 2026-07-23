@@ -181,4 +181,3 @@ def test_merge_review_outcome_record_merges_server_review_result_into_current_ca
     assert outcome["rating"] == 4
     assert outcome["review_session"]["review_session_id"] == 41
     assert outcome["next_intervals"]["good"] == "5d"
-

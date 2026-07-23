@@ -25,13 +25,18 @@ async def test_empty_state_when_no_dictionaries():
         await pilot.pause()
         empty = pilot.app.query_one("#personas-char-dicts-empty", Static)
         assert empty.display is True
-        assert pilot.app.query_one("#personas-char-dicts-table", DataTable).display is False
+        assert (
+            pilot.app.query_one("#personas-char-dicts-table", DataTable).display
+            is False
+        )
 
 
 async def test_load_renders_rows():
     async with _Host().run_test(size=(120, 40)) as pilot:
         panel = pilot.app.query_one(PersonasCharacterDictionariesWidget)
-        panel.load_character_dictionaries([{"name": "Slang", "entry_count": 2, "enabled": True}])
+        panel.load_character_dictionaries(
+            [{"name": "Slang", "entry_count": 2, "enabled": True}]
+        )
         await pilot.pause()
         table = pilot.app.query_one("#personas-char-dicts-table", DataTable)
         assert table.row_count == 1
@@ -42,7 +47,9 @@ async def test_attach_button_posts_intent():
     posted = []
 
     class _CaptureHost(_Host):
-        def on_character_dictionary_attach_requested(self, m: CharacterDictionaryAttachRequested):
+        def on_character_dictionary_attach_requested(
+            self, m: CharacterDictionaryAttachRequested
+        ):
             posted.append(m)
 
     async with _CaptureHost().run_test(size=(120, 40)) as pilot:
@@ -55,12 +62,16 @@ async def test_detach_button_posts_intent_with_name():
     posted = []
 
     class _CaptureHost(_Host):
-        def on_character_dictionary_detach_requested(self, m: CharacterDictionaryDetachRequested):
+        def on_character_dictionary_detach_requested(
+            self, m: CharacterDictionaryDetachRequested
+        ):
             posted.append(m.dictionary_name)
 
     async with _CaptureHost().run_test(size=(120, 40)) as pilot:
         panel = pilot.app.query_one(PersonasCharacterDictionariesWidget)
-        panel.load_character_dictionaries([{"name": "Slang", "entry_count": 1, "enabled": True}])
+        panel.load_character_dictionaries(
+            [{"name": "Slang", "entry_count": 1, "enabled": True}]
+        )
         await pilot.pause()
         pilot.app.query_one("#personas-char-dicts-table", DataTable).move_cursor(row=0)
         await pilot.click("#personas-char-dicts-detach")
@@ -79,10 +90,12 @@ async def test_duplicate_named_rows_do_not_crash_and_dedup_to_one_row():
     """
     async with _Host().run_test(size=(120, 40)) as pilot:
         panel = pilot.app.query_one(PersonasCharacterDictionariesWidget)
-        panel.load_character_dictionaries([
-            {"name": "Slang", "entry_count": 1, "enabled": True},
-            {"name": "Slang", "entry_count": 2, "enabled": True},
-        ])
+        panel.load_character_dictionaries(
+            [
+                {"name": "Slang", "entry_count": 1, "enabled": True},
+                {"name": "Slang", "entry_count": 2, "enabled": True},
+            ]
+        )
         await pilot.pause()
         table = pilot.app.query_one("#personas-char-dicts-table", DataTable)
         assert table.row_count == 1

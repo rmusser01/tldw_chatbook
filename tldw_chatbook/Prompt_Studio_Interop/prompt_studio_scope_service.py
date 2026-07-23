@@ -44,7 +44,9 @@ class PromptStudioScopeService:
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
 
-    def _normalize_mode(self, mode: PromptStudioBackend | str | None) -> PromptStudioBackend:
+    def _normalize_mode(
+        self, mode: PromptStudioBackend | str | None
+    ) -> PromptStudioBackend:
         if mode is None:
             return PromptStudioBackend.SERVER
         if isinstance(mode, PromptStudioBackend):
@@ -56,7 +58,9 @@ class PromptStudioScopeService:
 
     def _require_server_service(self, mode: PromptStudioBackend) -> Any:
         if mode == PromptStudioBackend.LOCAL:
-            raise ValueError("Server Prompt Studio records are server-only; switch to server mode to manage them.")
+            raise ValueError(
+                "Server Prompt Studio records are server-only; switch to server mode to manage them."
+            )
         if self.server_service is None:
             raise ValueError("Server Prompt Studio backend is unavailable.")
         return self.server_service
@@ -77,7 +81,10 @@ class PromptStudioScopeService:
         if hasattr(payload, "model_dump"):
             return payload.model_dump(mode="python", by_alias=True)
         if isinstance(payload, dict):
-            return {key: PromptStudioScopeService._dump(value) for key, value in payload.items()}
+            return {
+                key: PromptStudioScopeService._dump(value)
+                for key, value in payload.items()
+            }
         if isinstance(payload, list):
             return [PromptStudioScopeService._dump(item) for item in payload]
         return payload
@@ -106,7 +113,10 @@ class PromptStudioScopeService:
         if isinstance(payload, list):
             return [cls._rewrite_backend(item, backend) for item in payload]
         if isinstance(payload, dict):
-            record = {key: cls._rewrite_backend(value, backend) for key, value in payload.items()}
+            record = {
+                key: cls._rewrite_backend(value, backend)
+                for key, value in payload.items()
+            }
             if record.get("backend") == "server":
                 record["backend"] = backend
             return record
@@ -122,7 +132,10 @@ class PromptStudioScopeService:
             return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
         report: list[dict[str, Any]] = []
         for item in _SERVER_UNSUPPORTED_CAPABILITIES:
-            if item["operation_id"] == "prompt_studio.websocket_realtime.server" and self._has_websocket_realtime_adapter():
+            if (
+                item["operation_id"] == "prompt_studio.websocket_realtime.server"
+                and self._has_websocket_realtime_adapter()
+            ):
                 continue
             report.append(dict(item))
         return report
@@ -139,7 +152,10 @@ class PromptStudioScopeService:
             "stream_prompt_studio_websocket",
             "stream_realtime_websocket",
         )
-        return any(callable(getattr(service, method_name, None)) for method_name in websocket_methods)
+        return any(
+            callable(getattr(service, method_name, None))
+            for method_name in websocket_methods
+        )
 
     async def _call(
         self,
@@ -156,7 +172,9 @@ class PromptStudioScopeService:
         normalized_mode = self._normalize_mode(mode)
         service = self._require_server_service(normalized_mode)
         self._enforce_policy(action_id)
-        result = await self._maybe_await(getattr(service, method_name)(*args, **(kwargs or {})))
+        result = await self._maybe_await(
+            getattr(service, method_name)(*args, **(kwargs or {}))
+        )
         return self._normalize_response(
             normalized_mode,
             result,
@@ -165,7 +183,13 @@ class PromptStudioScopeService:
             parent_id=parent_id,
         )
 
-    async def create_project(self, request_data: Any, *, mode: PromptStudioBackend | str | None = None, idempotency_key: str | None = None) -> dict[str, Any]:
+    async def create_project(
+        self,
+        request_data: Any,
+        *,
+        mode: PromptStudioBackend | str | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.projects.create.server",
@@ -175,7 +199,9 @@ class PromptStudioScopeService:
             kwargs={"idempotency_key": idempotency_key},
         )
 
-    async def list_projects(self, *, mode: PromptStudioBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def list_projects(
+        self, *, mode: PromptStudioBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.projects.list.server",
@@ -184,7 +210,9 @@ class PromptStudioScopeService:
             kwargs=kwargs,
         )
 
-    async def get_project(self, project_id: int, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def get_project(
+        self, project_id: int, *, mode: PromptStudioBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.projects.detail.server",
@@ -193,7 +221,13 @@ class PromptStudioScopeService:
             args=(project_id,),
         )
 
-    async def update_project(self, project_id: int, request_data: Any, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def update_project(
+        self,
+        project_id: int,
+        request_data: Any,
+        *,
+        mode: PromptStudioBackend | str | None = None,
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.projects.update.server",
@@ -203,7 +237,13 @@ class PromptStudioScopeService:
             args=(project_id, request_data),
         )
 
-    async def delete_project(self, project_id: int, *, mode: PromptStudioBackend | str | None = None, permanent: bool = False) -> dict[str, Any]:
+    async def delete_project(
+        self,
+        project_id: int,
+        *,
+        mode: PromptStudioBackend | str | None = None,
+        permanent: bool = False,
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.projects.delete.server",
@@ -213,7 +253,9 @@ class PromptStudioScopeService:
             kwargs={"permanent": permanent},
         )
 
-    async def archive_project(self, project_id: int, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def archive_project(
+        self, project_id: int, *, mode: PromptStudioBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.projects.archive.server",
@@ -223,7 +265,9 @@ class PromptStudioScopeService:
             args=(project_id,),
         )
 
-    async def unarchive_project(self, project_id: int, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def unarchive_project(
+        self, project_id: int, *, mode: PromptStudioBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.projects.restore.server",
@@ -233,7 +277,9 @@ class PromptStudioScopeService:
             args=(project_id,),
         )
 
-    async def get_project_stats(self, project_id: int, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def get_project_stats(
+        self, project_id: int, *, mode: PromptStudioBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.project_stats.detail.server",
@@ -259,7 +305,13 @@ class PromptStudioScopeService:
             kwargs={"idempotency_key": idempotency_key},
         )
 
-    async def list_prompts(self, project_id: int, *, mode: PromptStudioBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def list_prompts(
+        self,
+        project_id: int,
+        *,
+        mode: PromptStudioBackend | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.prompts.list.server",
@@ -269,7 +321,9 @@ class PromptStudioScopeService:
             kwargs=kwargs,
         )
 
-    async def get_prompt(self, prompt_id: int, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def get_prompt(
+        self, prompt_id: int, *, mode: PromptStudioBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.prompts.detail.server",
@@ -279,7 +333,13 @@ class PromptStudioScopeService:
             args=(prompt_id,),
         )
 
-    async def update_prompt(self, prompt_id: int, request_data: Any, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def update_prompt(
+        self,
+        prompt_id: int,
+        request_data: Any,
+        *,
+        mode: PromptStudioBackend | str | None = None,
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.prompts.update.server",
@@ -289,7 +349,9 @@ class PromptStudioScopeService:
             args=(prompt_id, request_data),
         )
 
-    async def get_prompt_history(self, prompt_id: int, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def get_prompt_history(
+        self, prompt_id: int, *, mode: PromptStudioBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.prompt_versions.list.server",
@@ -299,7 +361,13 @@ class PromptStudioScopeService:
             args=(prompt_id,),
         )
 
-    async def revert_prompt(self, prompt_id: int, *, version: int, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def revert_prompt(
+        self,
+        prompt_id: int,
+        *,
+        version: int,
+        mode: PromptStudioBackend | str | None = None,
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.prompts.restore.server",
@@ -310,7 +378,9 @@ class PromptStudioScopeService:
             kwargs={"version": version},
         )
 
-    async def preview_prompt(self, request_data: Any, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def preview_prompt(
+        self, request_data: Any, *, mode: PromptStudioBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.prompts.preview.server",
@@ -319,7 +389,9 @@ class PromptStudioScopeService:
             args=(request_data,),
         )
 
-    async def convert_prompt(self, request_data: Any, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def convert_prompt(
+        self, request_data: Any, *, mode: PromptStudioBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.prompts.process.server",
@@ -328,7 +400,9 @@ class PromptStudioScopeService:
             args=(request_data,),
         )
 
-    async def execute_prompt(self, request_data: Any, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def execute_prompt(
+        self, request_data: Any, *, mode: PromptStudioBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.prompts.launch.server",
@@ -337,7 +411,9 @@ class PromptStudioScopeService:
             args=(request_data,),
         )
 
-    async def create_test_case(self, request_data: Any, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def create_test_case(
+        self, request_data: Any, *, mode: PromptStudioBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.test_cases.create.server",
@@ -346,7 +422,9 @@ class PromptStudioScopeService:
             args=(request_data,),
         )
 
-    async def create_test_cases_bulk(self, request_data: Any, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def create_test_cases_bulk(
+        self, request_data: Any, *, mode: PromptStudioBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.test_cases.create.server",
@@ -355,7 +433,13 @@ class PromptStudioScopeService:
             args=(request_data,),
         )
 
-    async def list_test_cases(self, project_id: int, *, mode: PromptStudioBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def list_test_cases(
+        self,
+        project_id: int,
+        *,
+        mode: PromptStudioBackend | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.test_cases.list.server",
@@ -365,7 +449,9 @@ class PromptStudioScopeService:
             kwargs=kwargs,
         )
 
-    async def get_test_case(self, test_case_id: int, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def get_test_case(
+        self, test_case_id: int, *, mode: PromptStudioBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.test_cases.detail.server",
@@ -375,7 +461,13 @@ class PromptStudioScopeService:
             args=(test_case_id,),
         )
 
-    async def update_test_case(self, test_case_id: int, request_data: Any, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def update_test_case(
+        self,
+        test_case_id: int,
+        request_data: Any,
+        *,
+        mode: PromptStudioBackend | str | None = None,
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.test_cases.update.server",
@@ -385,7 +477,13 @@ class PromptStudioScopeService:
             args=(test_case_id, request_data),
         )
 
-    async def delete_test_case(self, test_case_id: int, *, mode: PromptStudioBackend | str | None = None, permanent: bool = False) -> dict[str, Any]:
+    async def delete_test_case(
+        self,
+        test_case_id: int,
+        *,
+        mode: PromptStudioBackend | str | None = None,
+        permanent: bool = False,
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.test_cases.delete.server",
@@ -395,7 +493,9 @@ class PromptStudioScopeService:
             kwargs={"permanent": permanent},
         )
 
-    async def import_test_cases(self, request_data: Any, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def import_test_cases(
+        self, request_data: Any, *, mode: PromptStudioBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.test_cases.import.server",
@@ -428,7 +528,12 @@ class PromptStudioScopeService:
             },
         )
 
-    async def get_test_cases_csv_template(self, *, mode: PromptStudioBackend | str | None = None, signature_id: int | None = None) -> dict[str, Any]:
+    async def get_test_cases_csv_template(
+        self,
+        *,
+        mode: PromptStudioBackend | str | None = None,
+        signature_id: int | None = None,
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.test_cases.export.server",
@@ -438,7 +543,13 @@ class PromptStudioScopeService:
             kwargs={"signature_id": signature_id},
         )
 
-    async def export_test_cases(self, project_id: int, request_data: Any, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def export_test_cases(
+        self,
+        project_id: int,
+        request_data: Any,
+        *,
+        mode: PromptStudioBackend | str | None = None,
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.test_cases.export.server",
@@ -448,7 +559,9 @@ class PromptStudioScopeService:
             args=(project_id, request_data),
         )
 
-    async def generate_test_cases(self, *, mode: PromptStudioBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def generate_test_cases(
+        self, *, mode: PromptStudioBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.test_cases.launch.server",
@@ -457,7 +570,9 @@ class PromptStudioScopeService:
             kwargs=kwargs,
         )
 
-    async def run_test_cases(self, request_data: Any, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def run_test_cases(
+        self, request_data: Any, *, mode: PromptStudioBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.test_cases.launch.server",
@@ -466,7 +581,9 @@ class PromptStudioScopeService:
             args=(request_data,),
         )
 
-    async def create_evaluation(self, request_data: Any, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def create_evaluation(
+        self, request_data: Any, *, mode: PromptStudioBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.evaluations.create.server",
@@ -475,7 +592,9 @@ class PromptStudioScopeService:
             args=(request_data,),
         )
 
-    async def list_evaluations(self, *, mode: PromptStudioBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def list_evaluations(
+        self, *, mode: PromptStudioBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.evaluations.list.server",
@@ -484,7 +603,9 @@ class PromptStudioScopeService:
             kwargs=kwargs,
         )
 
-    async def get_evaluation(self, evaluation_id: int, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def get_evaluation(
+        self, evaluation_id: int, *, mode: PromptStudioBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.evaluations.detail.server",
@@ -494,7 +615,9 @@ class PromptStudioScopeService:
             args=(evaluation_id,),
         )
 
-    async def delete_evaluation(self, evaluation_id: int, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def delete_evaluation(
+        self, evaluation_id: int, *, mode: PromptStudioBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.evaluations.delete.server",
@@ -519,7 +642,9 @@ class PromptStudioScopeService:
             kwargs={"idempotency_key": idempotency_key},
         )
 
-    async def create_optimization_simple(self, request_data: Any, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def create_optimization_simple(
+        self, request_data: Any, *, mode: PromptStudioBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.optimizations.launch.server",
@@ -528,7 +653,13 @@ class PromptStudioScopeService:
             args=(request_data,),
         )
 
-    async def list_optimizations(self, project_id: int, *, mode: PromptStudioBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def list_optimizations(
+        self,
+        project_id: int,
+        *,
+        mode: PromptStudioBackend | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.optimizations.list.server",
@@ -538,7 +669,9 @@ class PromptStudioScopeService:
             kwargs=kwargs,
         )
 
-    async def get_optimization(self, optimization_id: int, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def get_optimization(
+        self, optimization_id: int, *, mode: PromptStudioBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.optimizations.detail.server",
@@ -548,7 +681,9 @@ class PromptStudioScopeService:
             args=(optimization_id,),
         )
 
-    async def get_optimization_job_status(self, job_id: str, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def get_optimization_job_status(
+        self, job_id: str, *, mode: PromptStudioBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.optimizations.detail.server",
@@ -558,7 +693,13 @@ class PromptStudioScopeService:
             args=(job_id,),
         )
 
-    async def cancel_optimization(self, optimization_id: int, *, mode: PromptStudioBackend | str | None = None, reason: str | None = None) -> dict[str, Any]:
+    async def cancel_optimization(
+        self,
+        optimization_id: int,
+        *,
+        mode: PromptStudioBackend | str | None = None,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.optimizations.cancel.server",
@@ -569,7 +710,9 @@ class PromptStudioScopeService:
             kwargs={"reason": reason},
         )
 
-    async def get_optimization_strategies(self, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def get_optimization_strategies(
+        self, *, mode: PromptStudioBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.optimization_strategies.list.server",
@@ -578,7 +721,9 @@ class PromptStudioScopeService:
             identifier="catalog",
         )
 
-    async def get_optimization_history(self, optimization_id: int, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def get_optimization_history(
+        self, optimization_id: int, *, mode: PromptStudioBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.optimization_iterations.list.server",
@@ -588,7 +733,13 @@ class PromptStudioScopeService:
             args=(optimization_id,),
         )
 
-    async def add_optimization_iteration(self, optimization_id: int, request_data: Any, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def add_optimization_iteration(
+        self,
+        optimization_id: int,
+        request_data: Any,
+        *,
+        mode: PromptStudioBackend | str | None = None,
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.optimization_iterations.create.server",
@@ -598,7 +749,13 @@ class PromptStudioScopeService:
             args=(optimization_id, request_data),
         )
 
-    async def list_optimization_iterations(self, optimization_id: int, *, mode: PromptStudioBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def list_optimization_iterations(
+        self,
+        optimization_id: int,
+        *,
+        mode: PromptStudioBackend | str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.optimization_iterations.list.server",
@@ -609,7 +766,9 @@ class PromptStudioScopeService:
             kwargs=kwargs,
         )
 
-    async def compare_optimization_strategies(self, request_data: Any, *, mode: PromptStudioBackend | str | None = None) -> dict[str, Any]:
+    async def compare_optimization_strategies(
+        self, request_data: Any, *, mode: PromptStudioBackend | str | None = None
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.optimization_strategies.launch.server",
@@ -618,7 +777,9 @@ class PromptStudioScopeService:
             args=(request_data,),
         )
 
-    async def get_status(self, *, mode: PromptStudioBackend | str | None = None, warn_seconds: int = 30) -> dict[str, Any]:
+    async def get_status(
+        self, *, mode: PromptStudioBackend | str | None = None, warn_seconds: int = 30
+    ) -> dict[str, Any]:
         return await self._call(
             mode=mode,
             action_id="prompt_studio.status.detail.server",
@@ -637,7 +798,9 @@ class PromptStudioScopeService:
         normalized_mode = self._normalize_mode(mode)
         service = self._require_server_service(normalized_mode)
         self._enforce_policy("prompt_studio.events.observe.server")
-        async for event in service.stream_events(client_id=client_id, project_id=project_id):
+        async for event in service.stream_events(
+            client_id=client_id, project_id=project_id
+        ):
             payload = self._dump(event)
             if isinstance(payload, dict):
                 payload.setdefault("backend", normalized_mode.value)

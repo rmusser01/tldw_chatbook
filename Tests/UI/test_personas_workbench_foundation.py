@@ -57,7 +57,10 @@ def test_personas_workbench_selection_builds_console_target_metadata():
 
     assert state.selected_entity_kind == "persona_profile"
     assert state.selected_entity_id == "persona.local.researcher"
-    assert state.selected_runtime_target == "local:persona_profile:persona.local.researcher"
+    assert (
+        state.selected_runtime_target
+        == "local:persona_profile:persona.local.researcher"
+    )
     assert state.selected_metadata() == {
         "selected_kind": "persona_profile",
         "selected_record_id": "persona.local.researcher",

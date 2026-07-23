@@ -67,7 +67,9 @@ async def test_document_annotations_client_routes_crud_and_sync(monkeypatch):
         7,
         DocumentAnnotationSyncRequest(
             annotations=[
-                DocumentAnnotationCreate(location="13", text="offline note", annotation_type="page_note")
+                DocumentAnnotationCreate(
+                    location="13", text="offline note", annotation_type="page_note"
+                )
             ],
             client_ids=["client-1"],
         ),
@@ -84,10 +86,22 @@ async def test_document_annotations_client_routes_crud_and_sync(monkeypatch):
         "chapter_title": "Chapter 1",
         "percentage": 45.5,
     }
-    assert mocked.await_args_list[2].args[:2] == ("PUT", "/api/v1/media/7/annotations/ann_1")
-    assert mocked.await_args_list[2].kwargs["json_data"] == {"text": "updated text", "color": "blue"}
-    assert mocked.await_args_list[3].args[:2] == ("DELETE", "/api/v1/media/7/annotations/ann_1")
-    assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/media/7/annotations/sync")
+    assert mocked.await_args_list[2].args[:2] == (
+        "PUT",
+        "/api/v1/media/7/annotations/ann_1",
+    )
+    assert mocked.await_args_list[2].kwargs["json_data"] == {
+        "text": "updated text",
+        "color": "blue",
+    }
+    assert mocked.await_args_list[3].args[:2] == (
+        "DELETE",
+        "/api/v1/media/7/annotations/ann_1",
+    )
+    assert mocked.await_args_list[4].args[:2] == (
+        "POST",
+        "/api/v1/media/7/annotations/sync",
+    )
     assert mocked.await_args_list[4].kwargs["json_data"] == {
         "annotations": [
             {

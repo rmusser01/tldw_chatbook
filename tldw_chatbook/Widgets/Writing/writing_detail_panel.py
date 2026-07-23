@@ -40,8 +40,12 @@ class WritingDetailPanel(Vertical):
         with Horizontal(classes="writing-detail-actions"):
             yield Button("Save", id="writing-save-current", disabled=True)
             yield Button("Delete", id="writing-delete-current", disabled=True)
-            yield Button("Create New Version", id="writing-create-version", disabled=True)
-            yield Button("Restore To Working Draft", id="writing-restore-version", disabled=True)
+            yield Button(
+                "Create New Version", id="writing-create-version", disabled=True
+            )
+            yield Button(
+                "Restore To Working Draft", id="writing-restore-version", disabled=True
+            )
         yield Static("", id="writing-version-list")
         yield Static("", id="writing-version-preview")
         yield Static("", id="writing-trash-list")
@@ -70,9 +74,15 @@ class WritingDetailPanel(Vertical):
         self.unsupported_reasons = {}
         kind = str(node_data.get("kind") or "")
         source = str(node_data.get("source") or "local")
-        self.title = self._record_title(entity, fallback=str(node_data.get("title") or "Untitled"))
+        self.title = self._record_title(
+            entity, fallback=str(node_data.get("title") or "Untitled")
+        )
         self.body_editor_enabled = kind == "scene"
-        self.create_version_enabled = source == "local" and kind in {"manuscript", "chapter", "scene"}
+        self.create_version_enabled = source == "local" and kind in {
+            "manuscript",
+            "chapter",
+            "scene",
+        }
         self.detail_text = (
             str(self._record_get(entity, "body_markdown", "") or "")
             if self.body_editor_enabled
@@ -88,14 +98,10 @@ class WritingDetailPanel(Vertical):
         ]
         self.version_list_read_only = True
         self.selected_version_id = (
-            str(self._record_get(self.versions[0], "id"))
-            if self.versions
-            else None
+            str(self._record_get(self.versions[0], "id")) if self.versions else None
         )
         self.version_preview_text = (
-            self._version_preview(self.versions[0])
-            if self.versions
-            else ""
+            self._version_preview(self.versions[0]) if self.versions else ""
         )
         self._refresh_mounted()
 
@@ -129,16 +135,30 @@ class WritingDetailPanel(Vertical):
         except Exception:
             pass
         try:
-            self.query_one("#writing-save-current", Button).disabled = self.entity is None
-            self.query_one("#writing-delete-current", Button).disabled = self.entity is None
-            self.query_one("#writing-create-version", Button).disabled = not self.create_version_enabled
-            self.query_one("#writing-restore-version", Button).disabled = not bool(self.selected_version_id)
+            self.query_one("#writing-save-current", Button).disabled = (
+                self.entity is None
+            )
+            self.query_one("#writing-delete-current", Button).disabled = (
+                self.entity is None
+            )
+            self.query_one(
+                "#writing-create-version", Button
+            ).disabled = not self.create_version_enabled
+            self.query_one("#writing-restore-version", Button).disabled = not bool(
+                self.selected_version_id
+            )
         except Exception:
             pass
         try:
-            self.query_one("#writing-version-list", Static).update("\n".join(self.version_labels))
-            self.query_one("#writing-version-preview", Static).update(self.version_preview_text)
-            self.query_one("#writing-trash-list", Static).update("\n".join(self.trash_labels))
+            self.query_one("#writing-version-list", Static).update(
+                "\n".join(self.version_labels)
+            )
+            self.query_one("#writing-version-preview", Static).update(
+                self.version_preview_text
+            )
+            self.query_one("#writing-trash-list", Static).update(
+                "\n".join(self.trash_labels)
+            )
         except Exception:
             pass
 

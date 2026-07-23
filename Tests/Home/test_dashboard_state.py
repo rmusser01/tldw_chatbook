@@ -160,7 +160,9 @@ def test_home_selected_item_uses_same_priority_as_default_details_control():
     assert selected_item.item_id == "local:watchlist_run:5"
     controls_by_id = {control.control_id: control for control in dashboard.controls}
     assert controls_by_id["home-open-details"].target_id == selected_item.item_id
-    assert controls_by_id["home-open-details"].target_route == selected_item.detail_route
+    assert (
+        controls_by_id["home-open-details"].target_route == selected_item.detail_route
+    )
     assert controls_by_id["home-open-in-console"].target_id == selected_item.item_id
 
 
@@ -245,7 +247,9 @@ def test_dashboard_summary_exposes_active_work_item_context_and_targets():
         )
     )
 
-    active_work_section = next(section for section in dashboard.sections if section.section_id == "active_work")
+    active_work_section = next(
+        section for section in dashboard.sections if section.section_id == "active_work"
+    )
     assert "Daily digest" in "\n".join(active_work_section.lines)
     assert "running" in "\n".join(active_work_section.lines)
     assert "workflows" in "\n".join(active_work_section.lines)
@@ -288,7 +292,9 @@ def test_dashboard_summary_keeps_chatbook_artifact_reachable_when_mixed_with_wat
     assert controls_by_id["home-open-in-console"].target_id == "local:watchlist_run:5"
     assert controls_by_id["home-open-chatbook-details"].target_id == "local:chatbook:77"
     assert controls_by_id["home-open-chatbook-details"].target_route == "artifacts"
-    assert controls_by_id["home-open-chatbook-in-console"].target_id == "local:chatbook:77"
+    assert (
+        controls_by_id["home-open-chatbook-in-console"].target_id == "local:chatbook:77"
+    )
 
 
 def test_dashboard_item_statuses_gate_matching_controls():
@@ -336,7 +342,9 @@ def test_build_home_controls_suppresses_pause_for_selected_ingest_item():
         active_work_items=(ingest_item,),
     )
 
-    controls = build_home_controls(state, selected_row_id=ingest_item.item_id, selected_item=ingest_item)
+    controls = build_home_controls(
+        state, selected_row_id=ingest_item.item_id, selected_item=ingest_item
+    )
 
     control_ids = {control.control_id for control in controls}
     assert "home-pause" not in control_ids
@@ -356,7 +364,9 @@ def test_build_home_controls_keeps_pause_for_selected_non_ingest_running_item():
         active_work_items=(running_item,),
     )
 
-    controls = build_home_controls(state, selected_row_id=running_item.item_id, selected_item=running_item)
+    controls = build_home_controls(
+        state, selected_row_id=running_item.item_id, selected_item=running_item
+    )
 
     control_ids = {control.control_id for control in controls}
     assert "home-pause" in control_ids
@@ -407,9 +417,8 @@ def test_dashboard_counts_parsing_and_writing_ingest_items_as_running():
     assert {row.title for row in running_section.rows} == {"report.pdf", "notes.txt"}
 
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone  # noqa: E402
 
-from tldw_chatbook.Home.dashboard_state import build_home_triage_state
 
 _NOW = datetime(2026, 7, 4, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -553,7 +562,9 @@ def test_triage_selecting_flashcards_due_row_builds_canvas_without_stopiteration
 
 
 def test_build_home_controls_includes_review_flashcards_control_when_due():
-    controls = build_home_controls(HomeDashboardInput(model_ready=True, flashcards_due_count=12))
+    controls = build_home_controls(
+        HomeDashboardInput(model_ready=True, flashcards_due_count=12)
+    )
     control = next(c for c in controls if c.control_id == "home-review-flashcards")
 
     assert control.label == "Review flashcards"
@@ -563,7 +574,9 @@ def test_build_home_controls_includes_review_flashcards_control_when_due():
 
 
 def test_build_home_controls_omits_review_flashcards_control_when_not_due():
-    controls = build_home_controls(HomeDashboardInput(model_ready=True, flashcards_due_count=0))
+    controls = build_home_controls(
+        HomeDashboardInput(model_ready=True, flashcards_due_count=0)
+    )
 
     assert all(c.control_id != "home-review-flashcards" for c in controls)
 
@@ -572,10 +585,15 @@ def test_build_home_controls_omits_review_flashcards_control_when_not_due():
 
 
 def test_canvas_primary_control_follows_selected_failed_item():
-    triage = build_home_triage_state(_items_input(), selected_row_id="sched:fail-1", now=_NOW)
+    triage = build_home_triage_state(
+        _items_input(), selected_row_id="sched:fail-1", now=_NOW
+    )
 
     assert triage.canvas.primary_control_id == "home-retry"
-    assert any(c.control_id == "home-review-flashcards" for c in triage.canvas.actions) is False
+    assert (
+        any(c.control_id == "home-review-flashcards" for c in triage.canvas.actions)
+        is False
+    )
 
 
 def test_canvas_primary_control_follows_selected_approval_item():
@@ -596,7 +614,9 @@ def test_canvas_primary_control_follows_selected_flashcards_due_row():
 
 
 def test_canvas_primary_control_defers_to_open_details_for_running_item():
-    triage = build_home_triage_state(_items_input(), selected_row_id="watch:run-1", now=_NOW)
+    triage = build_home_triage_state(
+        _items_input(), selected_row_id="watch:run-1", now=_NOW
+    )
 
     assert triage.selected_row_id == "watch:run-1"
     assert triage.canvas.primary_control_id == "home-open-details"
@@ -625,7 +645,9 @@ def test_canvas_omits_retry_control_when_selected_item_retry_unavailable():
             ),
         )
     )
-    triage = build_home_triage_state(state, selected_row_id="local:ingest:job-1", now=_NOW)
+    triage = build_home_triage_state(
+        state, selected_row_id="local:ingest:job-1", now=_NOW
+    )
 
     control_ids = {c.control_id for c in triage.canvas.actions}
     assert "home-retry" not in control_ids
@@ -646,7 +668,9 @@ def test_canvas_keeps_retry_control_when_selected_item_retry_available():
             ),
         )
     )
-    triage = build_home_triage_state(state, selected_row_id="local:ingest:job-1", now=_NOW)
+    triage = build_home_triage_state(
+        state, selected_row_id="local:ingest:job-1", now=_NOW
+    )
 
     control_ids = {c.control_id for c in triage.canvas.actions}
     assert "home-retry" in control_ids
@@ -672,7 +696,9 @@ def test_build_home_controls_selected_item_retry_unavailable_omits_home_retry():
     )
     selected = state.active_work_items[0]
 
-    controls = build_home_controls(state, selected_row_id=selected.item_id, selected_item=selected)
+    controls = build_home_controls(
+        state, selected_row_id=selected.item_id, selected_item=selected
+    )
 
     assert all(c.control_id != "home-retry" for c in controls)
 
@@ -740,11 +766,17 @@ def test_build_home_controls_open_details_targets_selected_failed_item_not_first
     Retry/Pause already have.
     """
     first = HomeActiveWorkItem(
-        item_id="fail-1", title="first", source="Runs", status="failed",
+        item_id="fail-1",
+        title="first",
+        source="Runs",
+        status="failed",
         detail_route="chat",
     )
     second = HomeActiveWorkItem(
-        item_id="fail-2", title="second", source="Runs", status="failed",
+        item_id="fail-2",
+        title="second",
+        source="Runs",
+        status="failed",
         detail_route="chat",
     )
     state = HomeDashboardInput(
@@ -832,7 +864,9 @@ def test_canvas_primary_control_flips_between_failed_item_and_flashcards_row():
     it no longer coexists with that item's own controls."""
     state = _items_input(flashcards_due_count=5)
 
-    failed_triage = build_home_triage_state(state, selected_row_id="sched:fail-1", now=_NOW)
+    failed_triage = build_home_triage_state(
+        state, selected_row_id="sched:fail-1", now=_NOW
+    )
     assert failed_triage.canvas.primary_control_id == "home-retry"
     control_ids = {c.control_id for c in failed_triage.canvas.actions}
     assert "home-review-flashcards" not in control_ids  # scoped out of the item canvas
@@ -849,7 +883,9 @@ def test_canvas_primary_control_flips_between_failed_item_and_flashcards_row():
 
 
 def test_canvas_lines_merge_status_and_source_once_for_selected_item():
-    triage = build_home_triage_state(_items_input(), selected_row_id="wf:approve-1", now=_NOW)
+    triage = build_home_triage_state(
+        _items_input(), selected_row_id="wf:approve-1", now=_NOW
+    )
 
     assert triage.canvas.lines == (
         "● pending_approval · Workflows · since 3m",
@@ -858,7 +894,9 @@ def test_canvas_lines_merge_status_and_source_once_for_selected_item():
 
 
 def test_canvas_lines_merge_status_and_source_for_running_item():
-    triage = build_home_triage_state(_items_input(), selected_row_id="watch:run-1", now=_NOW)
+    triage = build_home_triage_state(
+        _items_input(), selected_row_id="watch:run-1", now=_NOW
+    )
 
     assert triage.canvas.lines == (
         "● running · Watchlists · since now",
@@ -926,7 +964,9 @@ def test_build_home_controls_keeps_review_flashcards_when_flashcards_row_selecte
 def test_build_home_controls_keeps_review_flashcards_when_nothing_selected():
     """Default (no ``selected_row_id``) preserves today's count-only-path
     behavior -- the control stays reachable regardless of selection."""
-    controls = build_home_controls(HomeDashboardInput(model_ready=True, flashcards_due_count=12))
+    controls = build_home_controls(
+        HomeDashboardInput(model_ready=True, flashcards_due_count=12)
+    )
 
     assert any(c.control_id == "home-review-flashcards" for c in controls)
 
@@ -936,7 +976,9 @@ def test_triage_count_only_canvas_still_offers_review_flashcards():
     exposing Review flashcards -- H2 only scopes it out of a *selected real
     item's* canvas, not the no-selection path."""
     triage = build_home_triage_state(
-        HomeDashboardInput(model_ready=True, flashcards_due_count=12, has_library_content=True),
+        HomeDashboardInput(
+            model_ready=True, flashcards_due_count=12, has_library_content=True
+        ),
         now=_NOW,
     )
 
@@ -965,7 +1007,9 @@ def test_choose_next_best_action_exclude_suppresses_review_failed_work():
     default_action = choose_next_best_action(state)
     assert default_action.action_id == "review_failed_work"
 
-    suppressed_action = choose_next_best_action(state, exclude=frozenset({"review_failed_work"}))
+    suppressed_action = choose_next_best_action(
+        state, exclude=frozenset({"review_failed_work"})
+    )
     assert suppressed_action.action_id != "review_failed_work"
 
 
@@ -1178,7 +1222,9 @@ def test_canvas_lines_include_failure_reason_for_selected_failed_item_with_detai
 
 
 def test_canvas_lines_omit_status_detail_line_when_blank():
-    triage = build_home_triage_state(_items_input(), selected_row_id="sched:fail-1", now=_NOW)
+    triage = build_home_triage_state(
+        _items_input(), selected_row_id="sched:fail-1", now=_NOW
+    )
 
     assert triage.canvas.lines == (
         "● failed · Schedules · since 1h",
@@ -1336,9 +1382,7 @@ def test_resume_control_conversation_routes_to_chat():
 def test_resume_control_absent_without_candidate():
     assert build_home_resume_control(HomeDashboardInput()) is None
     assert (
-        build_home_resume_control(
-            HomeDashboardInput(resume_kind="note", resume_id="")
-        )
+        build_home_resume_control(HomeDashboardInput(resume_kind="note", resume_id=""))
         is None
     )
     assert (

@@ -26,7 +26,11 @@ def test_normalize_server_notification_event_includes_principal_scope_and_payloa
         {
             "event": "notification.created",
             "event_id": "evt-8",
-            "data": {"id": 8, "title": "Observed", "created_at": "2026-04-29T01:02:03Z"},
+            "data": {
+                "id": 8,
+                "title": "Observed",
+                "created_at": "2026-04-29T01:02:03Z",
+            },
         },
         server_profile_id="server-a",
         authenticated_principal_id="user-a",
@@ -51,7 +55,9 @@ def test_normalize_server_notification_event_includes_principal_scope_and_payloa
 
 
 @pytest.mark.asyncio
-async def test_server_notification_observer_persists_actual_server_stream_events(tmp_path):
+async def test_server_notification_observer_persists_actual_server_stream_events(
+    tmp_path,
+):
     repo = EventStateRepository(tmp_path / "events.db")
     service = FakeServerNotificationsService(
         [
@@ -74,13 +80,16 @@ async def test_server_notification_observer_persists_actual_server_stream_events
 
     assert result.handled_events == 1
     assert service.calls == [{"after": 0, "last_event_id": None}]
-    assert repo.get_processed_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    ).cursor == "evt-8"
+    assert (
+        repo.get_processed_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        ).cursor
+        == "evt-8"
+    )
     rows = repo.list_events(
         source_authority="server",
         server_profile_id="server-a",
@@ -90,17 +99,22 @@ async def test_server_notification_observer_persists_actual_server_stream_events
         limit=10,
     )
     assert [row["event_id"] for row in rows] == ["evt-8"]
-    assert repo.get_observer_status(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    )["status"] == "idle"
+    assert (
+        repo.get_observer_status(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        )["status"]
+        == "idle"
+    )
 
 
 @pytest.mark.asyncio
-async def test_server_notification_observer_resumes_with_durable_cursor_and_dedupes(tmp_path):
+async def test_server_notification_observer_resumes_with_durable_cursor_and_dedupes(
+    tmp_path,
+):
     repo = EventStateRepository(tmp_path / "events.db")
     service = FakeServerNotificationsService(
         [
@@ -130,7 +144,9 @@ async def test_server_notification_observer_resumes_with_durable_cursor_and_dedu
     assert len(repo.list_events(limit=10)) == 1
 
 
-def test_server_notification_feed_projects_durable_events_without_parallel_local_store(tmp_path):
+def test_server_notification_feed_projects_durable_events_without_parallel_local_store(
+    tmp_path,
+):
     repo = EventStateRepository(tmp_path / "events.db")
     repo.record_event_and_advance_processed_cursor(
         normalize_server_notification_event(
@@ -158,16 +174,21 @@ def test_server_notification_feed_projects_durable_events_without_parallel_local
     assert feed["source"] == "event_state_repository"
     assert feed["total"] == 1
     assert feed["items"][0]["record_id"] == "server:notification:8"
-    assert feed["items"][0]["event_key"].startswith("server:server-a:user-a:notifications:workspace-1")
+    assert feed["items"][0]["event_key"].startswith(
+        "server:server-a:user-a:notifications:workspace-1"
+    )
     assert feed["items"][0]["source_event_id"] == "evt-8"
     assert feed["items"][0]["title"] == "Observed"
-    assert repo.get_presented_high_water(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    ).cursor == "evt-8"
+    assert (
+        repo.get_presented_high_water(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        ).cursor
+        == "evt-8"
+    )
 
 
 def test_server_notification_feed_reports_retention_gap_metadata(tmp_path):
@@ -212,7 +233,11 @@ def test_server_notification_feed_filters_null_principal_scope(tmp_path):
     repo = EventStateRepository(tmp_path / "events.db")
     repo.record_event_and_advance_processed_cursor(
         normalize_server_notification_event(
-            {"event": "notification.created", "event_id": "evt-none", "data": {"id": 8}},
+            {
+                "event": "notification.created",
+                "event_id": "evt-none",
+                "data": {"id": 8},
+            },
             server_profile_id="server-a",
             authenticated_principal_id=None,
             stream_instance_id="workspace-1",
@@ -220,7 +245,11 @@ def test_server_notification_feed_filters_null_principal_scope(tmp_path):
     )
     repo.record_event_and_advance_processed_cursor(
         normalize_server_notification_event(
-            {"event": "notification.created", "event_id": "evt-user", "data": {"id": 9}},
+            {
+                "event": "notification.created",
+                "event_id": "evt-user",
+                "data": {"id": 9},
+            },
             server_profile_id="server-a",
             authenticated_principal_id="user-a",
             stream_instance_id="workspace-1",

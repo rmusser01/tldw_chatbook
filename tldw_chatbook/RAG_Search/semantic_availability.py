@@ -181,6 +181,30 @@ async def resolve_semantic_rag_service(
     return service, None
 
 
+def trustworthy_collection_count(stats: Any) -> Optional[int]:
+    """Return the vector-store chunk count only when it is trustworthy.
+
+    Trustworthy means: an error-free stats mapping whose ``count`` is a
+    genuine non-negative int -- ``bool``, floats, and numeric strings are all
+    rejected (bool is an int subclass, and coercion would accept ``0.0`` /
+    ``"0"``). Shared by ``semantic_index_is_empty`` and the Search window's
+    index-statistics display (task-251), so both surfaces apply the same
+    strictness before showing or acting on a count.
+
+    Args:
+        stats: Whatever ``vector_store.get_collection_stats()`` returned.
+
+    Returns:
+        The count as an int, or None when it cannot be trusted.
+    """
+    if not isinstance(stats, Mapping) or stats.get("error"):
+        return None
+    count = stats.get("count")
+    if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+        return count
+    return None
+
+
 async def semantic_index_is_empty(rag_service: Any) -> bool:
     """True only when the runtime's vector store verifiably has 0 documents.
 
@@ -212,9 +236,7 @@ async def semantic_index_is_empty(rag_service: Any) -> bool:
     except Exception:
         logger.opt(exception=True).debug("Vector store stats probe failed.")
         return False
-    if not isinstance(stats, Mapping) or stats.get("error"):
-        return False
-    count = stats.get("count")
-    # Strict integer check: bool is an int subclass, and int(...) coercion
-    # would accept 0.0 / "0" -- none of those are a trustworthy zero.
-    return isinstance(count, int) and not isinstance(count, bool) and count == 0
+    # Strict shared rule (trustworthy_collection_count): bool is an int
+    # subclass, and int(...) coercion would accept 0.0 / "0" -- none of
+    # those are a trustworthy zero.
+    return trustworthy_collection_count(stats) == 0

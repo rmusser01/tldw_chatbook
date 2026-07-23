@@ -8,7 +8,13 @@ class FakeHighlightsClient:
         self.calls = []
 
     async def create_reading_highlight(self, item_id, request_data):
-        self.calls.append(("create_reading_highlight", item_id, request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "create_reading_highlight",
+                item_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {"id": 5, "item_id": item_id, "quote": request_data.quote}
 
     async def list_reading_highlights(self, item_id):
@@ -16,7 +22,13 @@ class FakeHighlightsClient:
         return [{"id": 5, "item_id": item_id, "quote": "important"}]
 
     async def update_reading_highlight(self, highlight_id, request_data):
-        self.calls.append(("update_reading_highlight", highlight_id, request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "update_reading_highlight",
+                highlight_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {"id": highlight_id, "item_id": 41, "quote": "important"}
 
     async def delete_reading_highlight(self, highlight_id):
@@ -38,7 +50,9 @@ async def test_server_media_service_routes_reading_highlight_crud():
         note="check",
     )
     listed = await service.list_highlights(41)
-    updated = await service.update_highlight(5, color="blue", note="recheck", state="stale")
+    updated = await service.update_highlight(
+        5, color="blue", note="recheck", state="stale"
+    )
     deleted = await service.delete_highlight(5)
 
     assert created["id"] == 5
@@ -60,6 +74,10 @@ async def test_server_media_service_routes_reading_highlight_crud():
             },
         ),
         ("list_reading_highlights", 41),
-        ("update_reading_highlight", 5, {"color": "blue", "note": "recheck", "state": "stale"}),
+        (
+            "update_reading_highlight",
+            5,
+            {"color": "blue", "note": "recheck", "state": "stale"},
+        ),
         ("delete_reading_highlight", 5),
     ]

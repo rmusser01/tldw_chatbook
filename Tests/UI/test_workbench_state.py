@@ -26,7 +26,9 @@ def test_workbench_package_import_does_not_load_widget_or_navigation_modules():
     }
 
     ui_package = sys.modules.get("tldw_chatbook.UI")
-    had_workbench_attribute = ui_package is not None and hasattr(ui_package, "Workbench")
+    had_workbench_attribute = ui_package is not None and hasattr(
+        ui_package, "Workbench"
+    )
     original_workbench_attribute = (
         getattr(ui_package, "Workbench") if had_workbench_attribute else None
     )

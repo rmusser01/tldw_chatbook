@@ -2,10 +2,10 @@ from __future__ import annotations
 
 """Remote-only scope seam for server reminders and notification feeds."""
 
-import inspect
-from collections.abc import Mapping
-from enum import Enum
-from typing import Any
+import inspect  # noqa: E402
+from collections.abc import Mapping  # noqa: E402
+from enum import Enum  # noqa: E402
+from typing import Any  # noqa: E402
 
 
 class ServerNotificationBackend(str, Enum):
@@ -25,7 +25,9 @@ class ServerNotificationsScopeService:
             return await value
         return value
 
-    def _normalize_mode(self, mode: ServerNotificationBackend | str | None) -> ServerNotificationBackend:
+    def _normalize_mode(
+        self, mode: ServerNotificationBackend | str | None
+    ) -> ServerNotificationBackend:
         if mode is None:
             return ServerNotificationBackend.LOCAL
         if isinstance(mode, ServerNotificationBackend):
@@ -38,7 +40,9 @@ class ServerNotificationsScopeService:
     def _require_server(self, mode: ServerNotificationBackend | str | None) -> None:
         normalized = self._normalize_mode(mode)
         if normalized != ServerNotificationBackend.SERVER:
-            raise ValueError("Server reminders and notification feed require server mode.")
+            raise ValueError(
+                "Server reminders and notification feed require server mode."
+            )
         if self.server_service is None:
             raise ValueError("Server notification backend is unavailable.")
 
@@ -69,11 +73,15 @@ class ServerNotificationsScopeService:
     @classmethod
     def _parse_notification_id(cls, item_id: Any) -> int:
         try:
-            return int(cls._parse_entity_id(item_id, expected_entity_kind="notification"))
+            return int(
+                cls._parse_entity_id(item_id, expected_entity_kind="notification")
+            )
         except ValueError as exc:
             raise ValueError("Invalid server notification id.") from exc
 
-    async def list_reminders(self, *, runtime_backend: ServerNotificationBackend | str | None = None) -> dict[str, Any]:
+    async def list_reminders(
+        self, *, runtime_backend: ServerNotificationBackend | str | None = None
+    ) -> dict[str, Any]:
         self._require_server(runtime_backend)
         self._enforce_policy("notifications.reminders.list.server")
         return dict(await self._maybe_await(self.server_service.list_reminders()))
@@ -102,7 +110,9 @@ class ServerNotificationsScopeService:
         self._require_server(runtime_backend)
         self._enforce_policy("notifications.reminders.configure.server")
         resolved_id = self._parse_reminder_id(task_id)
-        return dict(await self._maybe_await(self.server_service.delete_reminder(resolved_id)))
+        return dict(
+            await self._maybe_await(self.server_service.delete_reminder(resolved_id))
+        )
 
     async def list_feed(
         self,
@@ -143,7 +153,11 @@ class ServerNotificationsScopeService:
     ) -> dict[str, Any]:
         self._require_server(runtime_backend)
         self._enforce_policy("notifications.feed.configure.server")
-        return dict(await self._maybe_await(self.server_service.update_preferences(dict(payload))))
+        return dict(
+            await self._maybe_await(
+                self.server_service.update_preferences(dict(payload))
+            )
+        )
 
     async def mark_notification_read(
         self,
@@ -155,7 +169,9 @@ class ServerNotificationsScopeService:
         self._enforce_policy("notifications.feed.observe.server")
         return dict(
             await self._maybe_await(
-                self.server_service.mark_notification_read(self._parse_notification_id(notification_id))
+                self.server_service.mark_notification_read(
+                    self._parse_notification_id(notification_id)
+                )
             )
         )
 
@@ -169,7 +185,9 @@ class ServerNotificationsScopeService:
         self._enforce_policy("notifications.feed.observe.server")
         return dict(
             await self._maybe_await(
-                self.server_service.dismiss_notification(self._parse_notification_id(notification_id))
+                self.server_service.dismiss_notification(
+                    self._parse_notification_id(notification_id)
+                )
             )
         )
 
@@ -201,7 +219,9 @@ class ServerNotificationsScopeService:
         self._enforce_policy("notifications.reminders.launch.server")
         return dict(
             await self._maybe_await(
-                self.server_service.cancel_notification_snooze(self._parse_notification_id(notification_id))
+                self.server_service.cancel_notification_snooze(
+                    self._parse_notification_id(notification_id)
+                )
             )
         )
 

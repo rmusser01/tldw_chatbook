@@ -20,6 +20,7 @@ from tldw_chatbook.MCP.permission_store import (
     definition_hash,
     resolve_effective_state,
 )
+from tldw_chatbook.MCP.readiness import HubAction
 from tldw_chatbook.MCP.unified_control_models import UnifiedMCPContext
 from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
@@ -3180,16 +3181,15 @@ async def test_open_test_for_selected_tool_does_not_duplicate_already_open_panel
 async def test_open_test_for_selected_tool_with_non_executable_selection_notifies_phase_note():
     """T8 regression: `MCPInspector.open_test_panel()` used to return the
     same `False` for BOTH "nothing selected" and "a tool IS selected but
-    isn't executable yet" (server-source, Phase 4), so
-    `open_test_for_selected_tool()` notified "Select a tool first." for
-    both -- misleading when a tool is in fact selected. With a
-    server-source tool selected (never executable -- see
-    `server_tools_from_inventory`), the `t` keybinding must notify with
-    the SAME copy the inline detail view already shows for that tool
-    (`mcp_inspector.py`'s "Testing server-source tools isn't available
-    yet." `Static`), not the generic no-selection message, and must not
-    mount a test panel (there is no schema-driven form to open for a
-    tool that can't be invoked).
+    isn't executable" (server-source), so `open_test_for_selected_tool()`
+    notified "Select a tool first." for both -- misleading when a tool is
+    in fact selected. With a server-source tool selected (never executable
+    -- see `server_tools_from_inventory`), the `t` keybinding must notify
+    with the SAME copy the inline detail view already shows for that tool
+    (`mcp_inspector.py`'s "Server-source tools are display-only." `Static`),
+    not the generic no-selection message, and must not mount a test panel
+    (there is no schema-driven form to open for a tool that can't be
+    invoked).
     """
     app = ServerToolsApp()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -3208,7 +3208,7 @@ async def test_open_test_for_selected_tool_with_non_executable_selection_notifie
         assert not list(app.query("#mcp-inspector-test-panel"))
         assert notifications
         message, severity = notifications[-1]
-        assert message == "Testing server-source tools isn't available yet."
+        assert message == "Server-source tools are display-only."
         assert severity == "information"
 
 
@@ -4031,8 +4031,12 @@ async def test_preview_shows_override_count_when_no_server_selected(tmp_path):
         await app.workers.wait_for_complete()
         await pilot.pause()
 
+        # Task 3 (MCP Hub Phase 6): the Space-cycle that just ran is a
+        # standalone mutation resync, so the preview also carries its
+        # transient echo prefix now -- the override-count SUFFIX this test
+        # exists to pin is still computed correctly underneath it.
         assert str(preview.renderable) == (
-            "global default: ask · 1 override across 1 server"
+            "search → Allow · global default: ask · 1 override across 1 server"
         )
 
 
@@ -4214,8 +4218,23 @@ async def test_permissions_mode_tool_row_selection_shows_permission_block(tmp_pa
         await pilot.pause()
 
         assert app.query_one("#mcp-inspector-permission").display is True
-        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
-        assert origin == "Inherited from the global default."
+        # Task 3 (MCP Hub Phase 6): `show_permission()` routed through the
+        # workbench now carries a cascade tuple -- the plain origin sentence
+        # is superseded by the three provenance rungs; nothing is overridden
+        # here, so the global rung wins.
+        assert not list(app.query("#mcp-inspector-permission-origin"))
+        assert (
+            str(app.query_one("#mcp-inspector-permission-cascade-tool", Static).renderable)
+            == "Tool override: —"
+        )
+        assert (
+            str(app.query_one("#mcp-inspector-permission-cascade-server", Static).renderable)
+            == "Server default: —"
+        )
+        assert (
+            str(app.query_one("#mcp-inspector-permission-cascade-global", Static).renderable)
+            == "▸ Global default: Ask"
+        )
         # Routed through show_permission(), NOT show_tool() -- the full
         # tool-detail-plus-Test-Tool block is Tools mode's own surface.
         assert not list(app.query("#mcp-inspector-tool-name"))
@@ -4244,8 +4263,10 @@ async def test_cycling_the_selected_tool_refreshes_its_open_permission_block(tmp
         table.move_cursor(row=3)  # local:docs::search
         await pilot.press("enter")
         await pilot.pause()
-        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
-        assert origin == "Inherited from the global default."
+        assert (
+            str(app.query_one("#mcp-inspector-permission-cascade-global", Static).renderable)
+            == "▸ Global default: Ask"
+        )
 
         await pilot.press("space")  # cycle_ui_state(None) == "allow"
         await pilot.pause()
@@ -4253,9 +4274,13 @@ async def test_cycling_the_selected_tool_refreshes_its_open_permission_block(tmp
         await pilot.pause()
 
         state = str(app.query_one("#mcp-inspector-permission-state", Static).renderable)
-        origin = str(app.query_one("#mcp-inspector-permission-origin", Static).renderable)
         assert state == "Permission: Allow"
-        assert origin == "From this tool's override."
+        # Task 3: the cascade rungs refresh along with the origin used to --
+        # the tool rung now wins with the freshly-cycled override.
+        assert (
+            str(app.query_one("#mcp-inspector-permission-cascade-tool", Static).renderable)
+            == "▸ Tool override: Allow •"
+        )
 
 
 @pytest.mark.asyncio
@@ -4325,6 +4350,446 @@ async def test_reallow_round_trip_clears_config_changed_marker_and_matrix_warnin
 
         assert _perm_table_texts(app, 3) == ["  search", "Allow •"]
         assert not list(app.query("#mcp-inspector-reallow"))
+
+
+# -- Task 3 (MCP Hub Phase 6): cascade provenance end-to-end -----------------
+
+
+@pytest.mark.asyncio
+async def test_permissions_row_selection_cascade_marks_tool_override_as_winner(tmp_path):
+    store_path = tmp_path / "mcp_permissions.json"
+    # Critical review fix regression: the stored hash must match "search"'s
+    # REAL definition (`PermissionsHubService`'s own discovery_snapshot
+    # description, "Search docs.", no inputSchema -- see
+    # `hub_tool_catalog.local_tools_from_record()`'s `input_schema=None`
+    # default) -- a mismatched hash (this test's own pre-fix
+    # `definition_hash="anything"`) trips the SAME rug-pull guard
+    # `test_reallow_refreshes_cascade_with_tool_rung_as_winner` exercises
+    # on purpose, downgrading `config_changed=True` and coloring the
+    # winning rung warning, not the plain undowngraded-override "ready"
+    # this test's own name asserts.
+    MCPPermissionStore(store_path).set_tool_state(
+        "local:docs", "search", "allow", definition_hash=definition_hash("Search docs.", None)
+    )
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)  # local:docs::search
+        await pilot.press("enter")
+        await pilot.pause()
+
+        tool_rung = app.query_one("#mcp-inspector-permission-cascade-tool", Static)
+        assert "▸" in str(tool_rung.renderable)
+        assert "mcp-status-ready" in tool_rung.classes
+
+
+@pytest.mark.asyncio
+async def test_permissions_row_selection_cascade_marks_server_default_as_winner(tmp_path):
+    store_path = tmp_path / "mcp_permissions.json"
+    MCPPermissionStore(store_path).set_server_default("local:docs", "deny")
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)  # local:docs::search -- inherits the server default
+        await pilot.press("enter")
+        await pilot.pause()
+
+        tool_rung = app.query_one("#mcp-inspector-permission-cascade-tool", Static)
+        server_rung = app.query_one("#mcp-inspector-permission-cascade-server", Static)
+        assert str(tool_rung.renderable) == "Tool override: —"
+        assert str(server_rung.renderable) == "▸ Server default: Off •"
+        assert "mcp-status-error" in server_rung.classes
+        assert "mcp-status-muted" in tool_rung.classes
+
+
+@pytest.mark.asyncio
+async def test_reallow_refreshes_cascade_with_tool_rung_as_winner(tmp_path):
+    store_path = tmp_path / "mcp_permissions.json"
+    MCPPermissionStore(store_path).set_tool_state(
+        "local:docs", "search", "allow", definition_hash="stale-hash-from-a-different-tool-shape"
+    )
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)
+        await pilot.press("enter")
+        await pilot.pause()
+
+        await pilot.click("#mcp-inspector-reallow")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        tool_rung = app.query_one("#mcp-inspector-permission-cascade-tool", Static)
+        assert str(tool_rung.renderable) == "▸ Tool override: Allow •"
+        assert "mcp-status-ready" in tool_rung.classes
+
+
+# -- Task 3 (MCP Hub Phase 6): Change in Permissions cross-mode jump --------
+
+
+@pytest.mark.asyncio
+async def test_tools_mode_permission_block_change_button_jumps_to_permissions_row():
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        assert app.query_one("#mcp-inspector-permission").display is True
+
+        await pilot.click("#mcp-inspector-goto-permission")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench.active_mode == "permissions"
+        perm_table = app.query_one("#mcp-perm-table", DataTable)
+        cursor_key, _ = perm_table.coordinate_to_cell_key((perm_table.cursor_row, 0))
+        assert cursor_key.value == "local:docs::fetch"
+        permission_text = str(app.query_one("#mcp-inspector-permission-tool", Static).renderable)
+        assert "fetch" in permission_text
+
+
+@pytest.mark.asyncio
+async def test_test_tool_blocked_change_button_jumps_to_permissions_row():
+    app = ToolTestApp()
+    app.unified_mcp_service.gate_state = "deny"
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        goto_button = app.query_one("#mcp-inspector-goto-permission-test", Button)
+        assert goto_button.display is True
+
+        await pilot.click("#mcp-inspector-goto-permission-test")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench.active_mode == "permissions"
+        perm_table = app.query_one("#mcp-perm-table", DataTable)
+        cursor_key, _ = perm_table.coordinate_to_cell_key((perm_table.cursor_row, 0))
+        assert cursor_key.value == "local:docs::fetch"
+
+
+@pytest.mark.asyncio
+async def test_goto_permission_row_is_the_single_shared_implementation_for_all_three_triggers(
+    monkeypatch,
+):
+    """The brief's "no duplication" requirement, proven behaviorally: the
+    audit drill's "Adjust permission" button, the Tools-mode permission
+    block's "Change in Permissions" button, and the Test Tool panel's own
+    blocked-result button all route through the exact same
+    `MCPWorkbench._goto_permission_row()` coroutine -- spied here so a
+    regression that reintroduces a second, drifted copy for any of the three
+    would be caught even if their end-to-end OUTCOMES still happened to
+    match."""
+    # "fetch" (not "search") throughout -- "fetch" is raw/no-required-fields
+    # (mirrors `test_deny_gate_blocks_without_calling_service`'s own row-0
+    # choice for exactly this reason); "search" has a required "query"
+    # field, so an empty Test Tool Run would raise inside the inspector's
+    # own `form.collect_arguments()` before `ToolTestRequested` is even
+    # posted -- never reaching the gate check trigger 3 needs.
+    app = AuditApp([_audit_record(server_key="local:docs", tool_name="fetch")])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        calls: list[tuple[str, str]] = []
+        original = MCPWorkbench._goto_permission_row
+
+        async def _spy(self, server_key, tool_name):
+            calls.append((server_key, tool_name))
+            await original(self, server_key, tool_name)
+
+        monkeypatch.setattr(MCPWorkbench, "_goto_permission_row", _spy)
+
+        # Trigger 1: the audit drill's own "Adjust permission" button.
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await _select_audit_mode_row(app, pilot, 0)
+        await pilot.click("#mcp-audit-adjust-permission")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # Trigger 2: the Tools-mode permission block's own button.
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        await pilot.click("#mcp-inspector-goto-permission")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # Trigger 3: the Test Tool panel's own button (blocked path).
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        app.unified_mcp_service.gate_state = "deny"
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-goto-permission-test")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert calls == [
+            ("local:docs", "fetch"),
+            ("local:docs", "fetch"),
+            ("local:docs", "fetch"),
+        ]
+
+
+@pytest.mark.asyncio
+async def test_tools_mode_permission_block_change_button_clears_stale_tool_detail():
+    """Critical review fix: jumping to Permissions mode via the Tools-mode
+    permission block's own "Change in Permissions" button fires from Tools
+    mode, where `#mcp-inspector-tool` is populated. `_goto_permission_row()`
+    dispatches `_open_audit_permission()` into the SAME exclusive
+    `"mcp-tool-clear"` worker group `set_mode()`'s own `_clear_tool_view()`
+    just used, cancelling that clear before it runs (the documented trap --
+    see `_open_audit_tool()`'s own docstring for the mechanism), so
+    `_open_audit_permission()` must explicitly clear `#mcp-inspector-tool`
+    itself (mirroring its existing explicit `show_audit_entry(None)` clear)
+    or the stale tool detail stays stacked underneath the new Permissions-
+    mode block."""
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        assert app.query_one("#mcp-inspector-tool-name", Static)
+        assert app.query_one("#mcp-inspector-tool", Vertical).display is True
+
+        await pilot.click("#mcp-inspector-goto-permission")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench.active_mode == "permissions"
+        assert app.query_one("#mcp-inspector-permission").display is True
+        assert not list(app.query("#mcp-inspector-tool-name"))
+        assert app.query_one("#mcp-inspector-tool", Vertical).display is False
+
+
+@pytest.mark.asyncio
+async def test_test_tool_armed_change_button_clears_stale_tool_detail_and_arm():
+    """Same Critical fix as above, exercised via the Test Tool panel's own
+    blocked/ask "Change in Permissions" button (`#mcp-inspector-goto-
+    permission-test`) with the panel actually OPEN and ARMED (an "ask" gate
+    that has already consumed one Run press) -- the worse of the two new
+    Tools-mode-origin jump triggers, since a live "Confirm run" button would
+    otherwise stay mounted and pressable underneath the Permissions-mode
+    block. `show_tool(None)` clearing `#mcp-inspector-tool` also resets
+    `test_run_armed` (its own `remove_children()` discards the panel, and
+    it explicitly sets the flag false), so this doubles as the "no armed
+    buttons survive the jump" assertion."""
+    app = ToolTestApp()
+    app.unified_mcp_service.gate_state = "ask"
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-run")  # arms
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        inspector = app.query_one(MCPInspector)
+        assert inspector.test_run_armed is True
+        assert app.query_one("#mcp-inspector-goto-permission-test", Button).display is True
+
+        await pilot.click("#mcp-inspector-goto-permission-test")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench.active_mode == "permissions"
+        assert app.query_one("#mcp-inspector-permission").display is True
+        assert not list(app.query("#mcp-inspector-tool-name"))
+        assert not list(app.query("#mcp-inspector-test-panel"))
+        assert app.query_one("#mcp-inspector-tool", Vertical).display is False
+        assert inspector.test_run_armed is False
+
+
+# -- Task 3 (MCP Hub Phase 6): mutation echo ---------------------------------
+
+
+@pytest.mark.asyncio
+async def test_space_cycle_prefixes_preview_with_mutation_echo(tmp_path):
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)  # local:docs::search
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
+        assert preview.startswith("search → Allow · ")
+
+
+@pytest.mark.asyncio
+async def test_double_space_cycle_echo_replaces_not_appends(tmp_path):
+    """Minor 4 (review): back-to-back Space-cycles on the same tool row must
+    each render their OWN fresh mutation echo, not stack the previous
+    press's echo underneath the new one -- `MCPPermissionsMode.
+    update_matrix()`'s `#mcp-perm-preview` render is a single
+    `Static.update()` call per pass (full replace, never append), and each
+    Space press recomputes `echo` fresh from ITS OWN cycle event
+    (`_cycled_ui_label(event.new_state)`), so the second press's preview
+    must show exactly one "→" -- the SECOND cycle's own arrow -- not two.
+    Mirrors `test_double_space_cycle_on_tool_row_stays_on_that_row`'s own
+    double-press-same-row choreography (the `pilot.pause(0.3)` settle
+    between presses)."""
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)  # local:docs::search
+        await pilot.press("space")  # cycle_ui_state(None) == "allow"
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause(0.3)
+
+        preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
+        assert preview.startswith("search → Allow · ")
+        assert preview.count("→") == 1
+
+        await pilot.press("space")  # cycle_ui_state("allow") == "ask"
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause(0.3)
+
+        preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
+        assert preview.startswith("search → Ask · ")
+        assert preview.count("→") == 1
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_toggle_prefixes_preview_with_echo(tmp_path):
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        await pilot.click("#mcp-perm-kill-switch")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
+        assert preview.startswith("kill switch → on · ")
+
+
+@pytest.mark.asyncio
+async def test_reallow_prefixes_preview_with_echo(tmp_path):
+    store_path = tmp_path / "mcp_permissions.json"
+    MCPPermissionStore(store_path).set_tool_state(
+        "local:docs", "search", "allow", definition_hash="stale-hash-from-a-different-tool-shape"
+    )
+    app = PermissionsApp(store_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)
+        await pilot.press("enter")
+        await pilot.pause()
+
+        await pilot.click("#mcp-inspector-reallow")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
+        assert preview.startswith("search → Allow · ")
+
+
+@pytest.mark.asyncio
+async def test_full_resync_clears_mutation_echo(tmp_path):
+    app = PermissionsApp(tmp_path / "mcp_permissions.json")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("permissions")
+        await pilot.pause()
+
+        table = app.query_one("#mcp-perm-table", DataTable)
+        table.focus()
+        table.move_cursor(row=3)  # local:docs::search
+        await pilot.press("space")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
+        assert preview.startswith("search → Allow · ")
+
+        # A full `_sync_children()` pass isn't itself a standalone mutation
+        # resync -- it must clear the echo without anyone calling a
+        # dedicated "clear" method.
+        await workbench._sync_children()
+        await pilot.pause()
+
+        preview = str(app.query_one("#mcp-perm-preview", Static).renderable)
+        assert not preview.startswith("search → Allow · ")
+        assert preview == "global default: ask · 1 override across 1 server"
 
 
 @pytest.mark.asyncio
@@ -5221,6 +5686,7 @@ class AuditFindingsHubService(AuditHubService):
             selected_source="server", selected_active_server_id="main"
         )
         self.advanced_fetch_calls = 0
+        self.governance_fetch_calls = 0
         self._findings_items = (
             [
                 {
@@ -5244,6 +5710,40 @@ class AuditFindingsHubService(AuditHubService):
                 "server_id": "main",
                 "governance_audit_findings": {"items": list(self._findings_items)},
             }
+        elif effective_section == "governance":
+            self.governance_fetch_calls += 1
+            return {
+                "server_id": "main",
+                "permission_profiles": [],
+            }
+        return await super().load_section(section)
+
+
+class MultiTargetAuditFindingsHubService(AuditFindingsHubService):
+    """`AuditFindingsHubService` with a second target ("aux", via
+    `TwoTargetStore`) and a per-fetch record of which target was ACTIVE
+    (`self.context.selected_active_server_id`) at each advanced/governance
+    `load_section()` call -- New Minor 2 (MCP Hub Phase 6 finale, linked to
+    I1): `_refresh_server_discovery()` must route its refetch through the
+    triggering event's OWN server_key (here: a finding whose `target_id`
+    field names "aux"), not whatever target happened to already be
+    active/rail-selected ("main", the mount-time default) -- this fake makes
+    that distinction observable without needing the real target to actually
+    return different data.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.target_store = TwoTargetStore()
+        self.advanced_fetch_targets: list[str | None] = []
+        self.governance_fetch_targets: list[str | None] = []
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if effective_section == "advanced":
+            self.advanced_fetch_targets.append(self.context.selected_active_server_id)
+        elif effective_section == "governance":
+            self.governance_fetch_targets.append(self.context.selected_active_server_id)
         return await super().load_section(section)
 
 
@@ -5253,9 +5753,10 @@ class AuditFindingsApp(App):
         records: list[dict] | None = None,
         *,
         findings_items: list[dict] | None = None,
+        service: AuditFindingsHubService | None = None,
     ) -> None:
         super().__init__()
-        self.unified_mcp_service = AuditFindingsHubService(
+        self.unified_mcp_service = service or AuditFindingsHubService(
             records, findings_items=findings_items
         )
 
@@ -5396,8 +5897,331 @@ async def test_finding_selection_shows_read_only_detail_with_remediation_in_insp
         assert "orphaned_path_scope" in detail_text
         assert "Needs review" in detail_text
         assert "Remove the unused path scope." in detail_text
-        # No client-side fix actions this phase -- read-only detail only.
-        assert not list(container.query(Button))
+        # Task 2 (MCP Hub Phase 6): "orphaned_path_scope" matches none of the
+        # remediation keyword buckets, so it renders the single default
+        # (VIEW_DETAILS) remediation button rather than none at all.
+        assert [b.id for b in container.query(Button)] == ["mcp-finding-action-view_details"]
+
+
+# -- Task 2 (MCP Hub Phase 6): finding remediation routing + per-source -----
+# -- HubAction routing for `server:` keys ------------------------------------
+#
+# `AuditFindingsHubService`'s context pre-selects the "main" target -- per
+# `MCPWorkbench.reload()`, that means `workbench._selected_server_key` is
+# already "server:main" right after mount (no rail click needed), which is
+# exactly "the selected rail server" fallback these tests exercise.
+
+
+@pytest.mark.asyncio
+async def test_finding_view_details_action_routes_to_servers_mode_using_rail_fallback():
+    """The finding carries no target-identifying field, so the routed
+    `server_key` falls back to the already-selected rail server
+    ("server:main", set at mount by `reload()`)."""
+    app = AuditFindingsApp(
+        findings_items=[{"severity": "low", "finding_type": "stale_binding", "message": "x"}]
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        assert workbench._selected_server_key == "server:main"
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await _select_findings_row(app, pilot, 0)
+
+        await pilot.click("#mcp-finding-action-view_details")
+        await pilot.pause()
+        assert workbench.active_mode == "servers"
+        assert workbench._selected_server_key == "server:main"
+
+
+@pytest.mark.asyncio
+async def test_finding_view_details_action_prefers_findings_own_target_id_over_rail_selection():
+    """A finding carrying its own `target_id` wins over the rail's own
+    selection -- proves the "target-level server:<target_id>" derivation
+    actually takes priority, not just falls through to the rail fallback."""
+    app = AuditFindingsApp(
+        findings_items=[
+            {
+                "severity": "low",
+                "finding_type": "orphaned_path_scope",
+                "message": "x",
+                "target_id": "other",
+            }
+        ]
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        assert workbench._selected_server_key == "server:main"
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await _select_findings_row(app, pilot, 0)
+
+        await pilot.click("#mcp-finding-action-view_details")
+        await pilot.pause()
+        assert workbench.active_mode == "servers"
+        assert workbench._selected_server_key == "server:other"
+
+
+@pytest.mark.asyncio
+async def test_finding_open_credentials_action_selects_server_and_notifies_honest_copy():
+    app = AuditFindingsApp(
+        findings_items=[
+            {
+                "severity": "high",
+                "finding_type": "credential_expired",
+                "message": "Server credential needs renewal.",
+            }
+        ]
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await _select_findings_row(app, pilot, 0)
+
+        notifications = _capture_notifications(app)
+        await pilot.click("#mcp-finding-action-open_credentials")
+        await pilot.pause()
+        assert workbench.active_mode == "servers"
+        assert workbench._selected_server_key == "server:main"
+        assert notifications and notifications[-1] == (
+            "Credentials are managed in the server's config.",
+            "information",
+        )
+
+
+@pytest.mark.asyncio
+async def test_finding_refresh_discovery_action_invalidates_caches_resyncs_and_toasts():
+    """REFRESH_DISCOVERY on a `server:` key invalidates BOTH the findings
+    (T8) and governance-profiles (T11) `(source, target)` caches and runs a
+    full resync -- `service.advanced_fetch_calls` (the findings fetch) and
+    `service.governance_fetch_calls` (the governance fetch) both go from 1
+    (the mount-time sync) to 2 (this resync), proving both cache keys were
+    actually reset rather than reused."""
+    app = AuditFindingsApp(
+        findings_items=[
+            {
+                "severity": "medium",
+                "finding_type": "catalog_expired",
+                "message": "Tool catalog is stale.",
+            }
+        ]
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        service = app.unified_mcp_service
+        assert service.advanced_fetch_calls == 1
+        assert service.governance_fetch_calls == 1
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await _select_findings_row(app, pilot, 0)
+
+        notifications = _capture_notifications(app)
+        await pilot.click("#mcp-finding-action-refresh_discovery")
+        await pilot.pause()
+        assert service.advanced_fetch_calls == 2
+        assert service.governance_fetch_calls == 2
+        assert notifications and notifications[-1] == (
+            "Server discovery refreshed.",
+            "information",
+        )
+
+
+@pytest.mark.asyncio
+async def test_finding_refresh_routes_to_findings_own_target_not_active_one():
+    """New Minor 2 (MCP Hub Phase 6 finale, review, linked to I1):
+    REFRESH_DISCOVERY from a Findings-detail remediation button must refresh
+    the FINDING's own owning target -- resolved via `_finding_owning_server_
+    key()`'s `target_id` field alias -- not whatever target happens to
+    already be active/rail-selected. `AuditFindingsApp`'s mount-time default
+    active target is "main" (both the service's own `context.selected_
+    active_server_id` and, via `reload()`'s auto-select, this workbench's
+    own `_selected_server_key`); this finding names "aux" as its OWN target
+    via `target_id`, a genuine mismatch. Previously `_refresh_server_
+    discovery()` ignored the triggering event's `server_key` entirely and
+    always refreshed `_active_service_target_id()` (here: "main"), so the
+    finding's real owning target ("aux") was never refetched at all."""
+    service = MultiTargetAuditFindingsHubService(
+        findings_items=[
+            {
+                "severity": "high",
+                "finding_type": "catalog_expired",
+                "message": "Tool catalog is stale.",
+                "target_id": "aux",
+            }
+        ]
+    )
+    app = AuditFindingsApp(service=service)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        assert workbench._selected_server_key == "server:main"
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await _select_findings_row(app, pilot, 0)
+
+        service.advanced_fetch_targets.clear()
+        service.governance_fetch_targets.clear()
+        await pilot.click("#mcp-finding-action-refresh_discovery")
+        await pilot.pause()
+
+        assert service.advanced_fetch_targets == ["aux"]
+        assert service.governance_fetch_targets == ["aux"]
+        # The workbench's own selection follows the refreshed target too --
+        # the NEXT fetch (e.g. a plain resync) must keep landing on it
+        # rather than snapping back to "main".
+        assert workbench._selected_server_key == "server:aux"
+
+
+class TargetSwitchTrackingHubService(FakeHubService):
+    """F1 (Qodo bot review, PR #722): `on_mcp_inspector_hub_action_
+    requested()`'s VIEW_DETAILS/OPEN_CREDENTIALS `server:`-key branches used
+    to set `_selected_server_key` directly and resync WITHOUT calling
+    `service.select_server_target()` first -- but `_collect_snapshots()`'s
+    external-servers fetch is scoped to whatever target the SERVICE ITSELF
+    considers active (`self.context.selected_active_server_id`), not the
+    workbench's own UI selection. A remediation button naming a target
+    other than the one already active would then label/cache the OLD
+    target's data under the NEW target's key.
+
+    Two targets ("main"/"aux", via `TwoTargetStore`) so a VIEW_DETAILS
+    remediation can name a genuinely non-active one. Tracks, mirroring
+    `MultiTargetAuditFindingsHubService`'s own per-fetch target list but for
+    the `external_servers` section `_collect_snapshots()` reads (rather
+    than "advanced"/"governance"):
+
+    - `select_server_target_calls`: every target id the service was told to
+      activate, in order.
+    - `external_servers_fetch_targets`: `self.context.selected_active_
+      server_id` AT THE MOMENT each `external_servers` fetch ran -- proving
+      which target's data actually came back, not just which key the
+      workbench labeled it under.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.target_store = TwoTargetStore()
+        self.context = UnifiedMCPContext(
+            selected_source="server", selected_active_server_id="main"
+        )
+        self.select_server_target_calls: list[str] = []
+        self.external_servers_fetch_targets: list[str | None] = []
+
+    async def select_server_target(self, server_id):
+        self.select_server_target_calls.append(server_id)
+        return await super().select_server_target(server_id)
+
+    async def load_section(self, section=None):
+        effective_section = section or self.context.selected_section or "overview"
+        if self.context.selected_source == "server" and effective_section == "external_servers":
+            self.external_servers_fetch_targets.append(self.context.selected_active_server_id)
+            return {
+                "external_servers": [{"name": "ext"}],
+                "source": "server",
+                "section": "external_servers",
+            }
+        return await super().load_section(section)
+
+
+class TargetSwitchTrackingApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unified_mcp_service = TargetSwitchTrackingHubService()
+
+    def compose(self) -> ComposeResult:
+        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+@pytest.mark.asyncio
+async def test_view_details_remediation_for_non_active_target_switches_service_target_before_sync():
+    """F1 (PR #722 Qodo bot review): a VIEW_DETAILS remediation button
+    naming a `server:` key for a target OTHER than the one the SERVICE
+    already considers active must switch the service's own active target
+    BEFORE the resulting resync -- mirroring `_select_server_key()`'s
+    already-correct rail/table selection path -- rather than only updating
+    the workbench's local `_selected_server_key` and resyncing from
+    whatever was already loaded under the OLD target.
+    """
+    app = TargetSwitchTrackingApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        service = app.unified_mcp_service
+        # Mount-time reload auto-selects the service's own active target.
+        assert workbench._selected_server_key == "server:main"
+        assert service.external_servers_fetch_targets == ["main"]
+
+        workbench.post_message(
+            MCPInspector.HubActionRequested(HubAction.VIEW_DETAILS, "server:aux")
+        )
+        await pilot.pause()
+
+        # The service was actually told to switch targets...
+        assert service.select_server_target_calls == ["aux"]
+        # ...and the NEXT external-servers fetch landed on "aux", not the
+        # stale "main" -- proving the fetch/cache identity now matches the
+        # UI-selected key rather than silently reusing "main"'s data under
+        # the "aux" label.
+        assert service.external_servers_fetch_targets[-1] == "aux"
+        assert workbench.active_mode == "servers"
+        assert workbench._selected_server_key == "server:aux"
+
+
+@pytest.mark.asyncio
+async def test_unrouted_action_for_server_key_shows_managed_on_server_toast_not_silent_drop():
+    """CONNECT/VALIDATE/EDIT_CONFIG (local-only lifecycle seams) posted with
+    a `server:` key must no longer be silently dropped."""
+    app = AuditFindingsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        notifications = _capture_notifications(app)
+        for action in (HubAction.CONNECT, HubAction.VALIDATE, HubAction.EDIT_CONFIG):
+            workbench.post_message(MCPInspector.HubActionRequested(action, "server:main"))
+            await pilot.pause()
+        assert notifications == [("Managed on the server.", "information")] * 3
+
+
+@pytest.mark.asyncio
+async def test_server_source_empty_tools_diagnosis_uses_refresh_not_disabled_actions():
+    """UX item 10 (Task 2, MCP Hub Phase 6): server source's empty-tools
+    diagnosis must not point at connect/refresh actions that are disabled
+    for server-source snapshots -- and its own "refresh" button must invoke
+    the cache-invalidating resync, not just navigate to Servers mode."""
+    app = AuditFindingsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        service = app.unified_mcp_service
+        assert service.advanced_fetch_calls == 1
+        workbench.set_mode("tools")
+        await pilot.pause()
+        canvas = app.query_one(MCPToolsMode)
+        message = str(canvas.query_one("#mcp-tools-empty-message", Static).renderable)
+        assert message == "No tools visible from this server — refresh or check the server."
+
+        notifications = _capture_notifications(app)
+        await pilot.click("#mcp-tools-empty-action")
+        await pilot.pause()
+        assert workbench.active_mode == "tools"  # unlike local source, no mode switch
+        assert service.advanced_fetch_calls == 2
+        assert notifications and notifications[-1] == (
+            "Server discovery refreshed.",
+            "information",
+        )
 
 
 @pytest.mark.asyncio
@@ -5599,3 +6423,130 @@ async def test_subview_selection_persists_across_reload_resync():
         assert app.query_one("#mcp-audit-findings-view", Vertical).display is True
         assert app.query_one("#mcp-audit-executions-view", Vertical).display is False
         assert app.query_one("#mcp-audit-subview-findings", Button).has_class("is-active")
+
+
+# -- Regression tests: MCP Hub Phase 6 source-switch and stale-key guards -----
+
+
+@pytest.mark.asyncio
+async def test_switch_source_clears_finding_detail():
+    """Regression: when switching source (local->server or server->local) while
+    a finding detail is open, the finding pane (#mcp-inspector-finding) must
+    become invisible and any action buttons must be cleared. Verifies the
+    workbench properly responds to source switches by clearing stale
+    detail state."""
+    app = AuditFindingsApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        # Server source is pre-selected in AuditFindingsApp
+        assert workbench._source == "server"
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await _select_findings_row(app, pilot, 0)
+
+        # Finding detail is now visible with action buttons
+        finding_pane = app.query_one("#mcp-inspector-finding")
+        assert finding_pane.display is True
+        action_buttons = list(finding_pane.query(Button))
+        assert len(action_buttons) > 0, "Expected action buttons in finding detail"
+
+        # Switch source via rail (server -> local)
+        rail = app.query_one(MCPRail)
+        rail.post_message(MCPRail.SourceChanged("local"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        # Finding pane must be cleared
+        assert app.query_one("#mcp-inspector-finding").display is False
+        # No action buttons should remain
+        assert not list(app.query_one("#mcp-inspector-finding").query(Button))
+
+
+@pytest.mark.asyncio
+async def test_switching_rail_server_clears_finding_detail():
+    """I1 (MCP Hub Phase 6 finale, review -- the program's 6th occurrence of
+    this same stale-panel class): switching the RAIL SERVER selection (not
+    the source -- `_select_server_key()`'s own path, exercised here via
+    `MCPRail.ServerSelected` rather than `SourceChanged`) while a
+    Findings-detail pane is open must also clear it. Mirrors
+    `test_switch_source_clears_finding_detail()` exactly, but for the other
+    stale-panel trigger: leaving the OLD server's finding (remediation
+    buttons and all -- whose own "Refresh" would silently refresh the WRONG
+    target with a success toast) on screen after switching to a different
+    server under the SAME source."""
+    app = AuditFindingsApp()
+    app.unified_mcp_service.target_store = TwoTargetStore()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        assert workbench._source == "server"
+        assert workbench._selected_server_key == "server:main"
+        workbench.set_mode("audit")
+        await pilot.pause()
+        await pilot.click("#mcp-audit-subview-findings")
+        await pilot.pause()
+        await _select_findings_row(app, pilot, 0)
+
+        # Finding detail is now visible with action buttons
+        finding_pane = app.query_one("#mcp-inspector-finding")
+        assert finding_pane.display is True
+        action_buttons = list(finding_pane.query(Button))
+        assert len(action_buttons) > 0, "Expected action buttons in finding detail"
+
+        # Switch the RAIL SERVER selection (same source, different target).
+        rail = app.query_one(MCPRail)
+        rail.post_message(MCPRail.ServerSelected("server:aux"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench._selected_server_key == "server:aux"
+        # Finding pane must be cleared -- not left showing "main"'s finding
+        # (and its now-mistargeted remediation buttons) under "aux".
+        assert app.query_one("#mcp-inspector-finding").display is False
+        assert not list(app.query_one("#mcp-inspector-finding").query(Button))
+
+
+@pytest.mark.asyncio
+async def test_stale_server_key_action_under_local_source_is_harmless():
+    """Regression: when source is 'local' but a HubActionRequested with a
+    server_key arrives (stale from a previous server-source action),
+    the workbench must:
+    1. Not update _selected_server_key
+    2. Not fetch anything
+    3. Fire a "Managed on the server." notification instead of crashing
+    Covers both REFRESH_DISCOVERY and OPEN_CREDENTIALS as test examples."""
+    app = WorkbenchApp()  # Uses local source
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        assert workbench._source == "local"
+        initial_key = workbench._selected_server_key
+
+        notifications = _capture_notifications(app)
+
+        # Post stale server-keyed actions (as if they arrived from audit findings)
+        workbench.post_message(
+            MCPInspector.HubActionRequested(HubAction.REFRESH_DISCOVERY, "server:main")
+        )
+        await pilot.pause()
+        workbench.post_message(
+            MCPInspector.HubActionRequested(HubAction.OPEN_CREDENTIALS, "server:main")
+        )
+        await pilot.pause()
+
+        # Selection must not change
+        assert workbench._selected_server_key == initial_key
+
+        # The "Managed on the server." toast must appear twice (once per action)
+        managed_toasts = [
+            (msg, sev) for msg, sev in notifications if "Managed on the server" in msg
+        ]
+        assert len(managed_toasts) == 2, (
+            f"Expected 2 'Managed on the server.' toasts, got {len(managed_toasts)}: "
+            f"{notifications!r}"
+        )

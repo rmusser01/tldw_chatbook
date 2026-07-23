@@ -7,7 +7,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 KanbanPriority = Literal["low", "medium", "high", "urgent"]
-KanbanLabelColor = Literal["red", "orange", "yellow", "green", "blue", "purple", "pink", "gray"]
+KanbanLabelColor = Literal[
+    "red", "orange", "yellow", "green", "blue", "purple", "pink", "gray"
+]
 KanbanSearchMode = Literal["fts", "vector", "hybrid"]
 
 

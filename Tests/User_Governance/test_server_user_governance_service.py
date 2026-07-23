@@ -38,7 +38,9 @@ def _privilege_self_payload():
                 "ownership_predicates": ["owner"],
                 "status": "allowed",
                 "blocked_reason": None,
-                "dependencies": [{"id": "auth", "type": "dependency", "module": "auth"}],
+                "dependencies": [
+                    {"id": "auth", "type": "dependency", "module": "auth"}
+                ],
                 "dependency_sources": ["auth"],
                 "rate_limit_class": "standard",
                 "rate_limit_resources": ["notes"],
@@ -47,7 +49,9 @@ def _privilege_self_payload():
                 "tags": ["notes"],
             }
         ],
-        "recommended_actions": [{"privilege_scope_id": "notes.read", "action": "none", "reason": None}],
+        "recommended_actions": [
+            {"privilege_scope_id": "notes.read", "action": "none", "reason": None}
+        ],
     }
 
 
@@ -93,7 +97,9 @@ async def test_server_user_governance_service_routes_consent_and_privilege_surfa
     granted = await service.grant_consent("personalization")
     withdrawn = await service.withdraw_consent("analytics")
     self_privileges = await service.get_self_privilege_map(resource="notes")
-    user_privileges = await service.get_user_privilege_map("42", page=1, page_size=25, resource="notes")
+    user_privileges = await service.get_user_privilege_map(
+        "42", page=1, page_size=25, resource="notes"
+    )
 
     assert preferences["user_id"] == 42
     assert granted["purpose"] == "personalization"
@@ -105,9 +111,15 @@ async def test_server_user_governance_service_routes_consent_and_privilege_surfa
         ("grant_consent", "personalization"),
         ("withdraw_consent", "analytics"),
         ("get_self_privilege_map", {"resource": "notes"}),
-        ("get_user_privilege_map", "42", {"page": 1, "page_size": 25, "resource": "notes"}),
+        (
+            "get_user_privilege_map",
+            "42",
+            {"page": 1, "page_size": 25, "resource": "notes"},
+        ),
     ]
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "user_governance.consent.list.server",
         "user_governance.consent.update.server",
         "user_governance.consent.update.server",

@@ -33,7 +33,9 @@ original tests missed entirely.
 import pytest
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
-from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
 from tldw_chatbook.Chat.console_display_state import ConsoleDisplayRow
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -48,7 +50,9 @@ class _FakeDictionaryScopeService:
         self.summary = summary
         self.calls: list[tuple] = []
 
-    async def summarize_active_dictionaries(self, conversation_id, character_id, mode="local"):
+    async def summarize_active_dictionaries(
+        self, conversation_id, character_id, mode="local"
+    ):
         self.calls.append((conversation_id, character_id, mode))
         return self.summary
 
@@ -63,12 +67,18 @@ class _PerConversationFakeDictionaryScopeService:
         self.summaries_by_conversation_id = summaries_by_conversation_id
         self.calls: list[tuple] = []
 
-    async def summarize_active_dictionaries(self, conversation_id, character_id, mode="local"):
+    async def summarize_active_dictionaries(
+        self, conversation_id, character_id, mode="local"
+    ):
         self.calls.append((conversation_id, character_id, mode))
-        return self.summaries_by_conversation_id.get(conversation_id, {"dictionaries": []})
+        return self.summaries_by_conversation_id.get(
+            conversation_id, {"dictionaries": []}
+        )
 
 
-async def _wait_for_active_session_id(store, pilot, expected_session_id: str, *, attempts: int = 40) -> None:
+async def _wait_for_active_session_id(
+    store, pilot, expected_session_id: str, *, attempts: int = 40
+) -> None:
     """Wait for the Console store to report the expected active session."""
     for _ in range(attempts):
         if store.active_session_id == expected_session_id:
@@ -91,6 +101,7 @@ def _active_native_session(console: ChatScreen):
 # real (running) app context -- so these run inside `ConsoleHarness`, the
 # same Console `ChatScreen` mounting harness `test_console_persistent_rails`/
 # `test_product_maturity_gate1_core_loop_screen_adaptation` already use.
+
 
 @pytest.mark.asyncio
 async def test_refresh_caches_summary_and_build_projects_dictionary_rows():
@@ -163,6 +174,7 @@ async def test_build_console_inspector_state_never_re_queries_the_summarize_serv
 
 # --- Guard / edge-case coverage ---------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_refresh_with_no_service_and_no_chat_caches_empty():
     app = _build_test_app()
@@ -220,9 +232,27 @@ async def test_shadowed_and_disabled_suffixes_render_on_the_row_value():
     app = _build_test_app()
     summary = {
         "dictionaries": [
-            {"name": "Slang", "source": "conversation", "enabled": True, "entry_count": 2, "shadowed": False},
-            {"name": "Slang", "source": "character", "enabled": True, "entry_count": 1, "shadowed": True},
-            {"name": "Lore", "source": "character", "enabled": False, "entry_count": 5, "shadowed": False},
+            {
+                "name": "Slang",
+                "source": "conversation",
+                "enabled": True,
+                "entry_count": 2,
+                "shadowed": False,
+            },
+            {
+                "name": "Slang",
+                "source": "character",
+                "enabled": True,
+                "entry_count": 1,
+                "shadowed": True,
+            },
+            {
+                "name": "Lore",
+                "source": "character",
+                "enabled": False,
+                "entry_count": 5,
+                "shadowed": False,
+            },
         ],
         "source": "local",
     }
@@ -268,8 +298,12 @@ async def test_actions_reflect_conversation_and_attach_state():
         await screen.refresh_active_dictionaries_summary()
 
         actions = screen._console_dictionary_inspector_actions()
-        attach = next(a for a in actions if a.widget_id == "console-inspector-dictionaries-attach")
-        detach = next(a for a in actions if a.widget_id == "console-inspector-dictionaries-detach")
+        attach = next(
+            a for a in actions if a.widget_id == "console-inspector-dictionaries-attach"
+        )
+        detach = next(
+            a for a in actions if a.widget_id == "console-inspector-dictionaries-detach"
+        )
         assert attach.enabled is False
         assert attach.disabled_reason == "Start or load a conversation first"
         assert detach.enabled is False
@@ -279,20 +313,35 @@ async def test_actions_reflect_conversation_and_attach_state():
         _active_native_session(screen).persisted_conversation_id = "conv-2"
         service.summary = {
             "dictionaries": [
-                {"name": "Slang", "source": "conversation", "enabled": True, "entry_count": 1, "shadowed": False},
+                {
+                    "name": "Slang",
+                    "source": "conversation",
+                    "enabled": True,
+                    "entry_count": 1,
+                    "shadowed": False,
+                },
             ],
             "source": "local",
         }
         await screen.refresh_active_dictionaries_summary()
 
         actions2 = screen._console_dictionary_inspector_actions()
-        attach2 = next(a for a in actions2 if a.widget_id == "console-inspector-dictionaries-attach")
-        detach2 = next(a for a in actions2 if a.widget_id == "console-inspector-dictionaries-detach")
+        attach2 = next(
+            a
+            for a in actions2
+            if a.widget_id == "console-inspector-dictionaries-attach"
+        )
+        detach2 = next(
+            a
+            for a in actions2
+            if a.widget_id == "console-inspector-dictionaries-detach"
+        )
         assert attach2.enabled is True
         assert detach2.enabled is True
 
 
 # --- Real native Console session-switch wiring (the fix under test) --------
+
 
 @pytest.mark.asyncio
 async def test_real_native_console_session_switch_drives_dictionary_summary_per_session():
@@ -384,7 +433,9 @@ async def test_real_native_console_session_switch_drives_dictionary_summary_per_
         )
 
 
-async def _wait_for_active_session_change(store, pilot, previous_session_id, *, attempts: int = 40) -> str:
+async def _wait_for_active_session_change(
+    store, pilot, previous_session_id, *, attempts: int = 40
+) -> str:
     """Wait for the Console store to activate a session other than
     `previous_session_id` and return its id."""
     for _ in range(attempts):

@@ -367,9 +367,7 @@ class LocalLibraryCollectionsService:
             raise DuplicateLibraryCollectionName(
                 "A deleted Collection already used this name."
             )
-        raise DuplicateLibraryCollectionName(
-            f"Collection name already exists: {name}"
-        )
+        raise DuplicateLibraryCollectionName(f"Collection name already exists: {name}")
 
 
 def _record_from_row(row) -> LibraryCollectionRecord:
@@ -386,7 +384,12 @@ def _record_from_row(row) -> LibraryCollectionRecord:
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def _collapse_text(value: str) -> str:

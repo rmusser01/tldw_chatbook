@@ -75,7 +75,9 @@ class ACPRuntimeSessionState:
 
     @property
     def has_console_session_payload(self) -> bool:
-        return bool(self.runtime_configured and self.session_id and self.session_payload)
+        return bool(
+            self.runtime_configured and self.session_id and self.session_payload
+        )
 
     def to_console_live_work_launch(self) -> ConsoleLiveWorkLaunch | None:
         if not self.has_console_session_payload:

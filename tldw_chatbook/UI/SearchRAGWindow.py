@@ -8,7 +8,7 @@ from .Views.RAGSearch import (
     SearchRAGWindow,
     SearchHistoryDropdown,
     SearchResult,
-    SavedSearchesPanel
+    SavedSearchesPanel,
 )
 
 # Re-export for backward compatibility
@@ -16,7 +16,7 @@ __all__ = [
     "SearchRAGWindow",
     "SearchHistoryDropdown",
     "SearchResult",
-    "SavedSearchesPanel"
+    "SavedSearchesPanel",
 ]
 
 # Import statements preserved for reference

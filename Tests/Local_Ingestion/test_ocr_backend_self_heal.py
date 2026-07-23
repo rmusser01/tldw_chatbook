@@ -56,12 +56,18 @@ class _BrokenImportBackend(OCRBackend):
     def process_image(self, image_path, language="en", **kwargs) -> OCRResult:
         if not self._initialized:
             self.initialize()
-        return OCRResult(text="broken", confidence=1.0, language=language, backend="broken")
+        return OCRResult(
+            text="broken", confidence=1.0, language=language, backend="broken"
+        )
 
     def process_pdf(self, pdf_path, language="en", **kwargs):
         if not self._initialized:
             self.initialize()
-        return [OCRResult(text="broken", confidence=1.0, language=language, backend="broken")]
+        return [
+            OCRResult(
+                text="broken", confidence=1.0, language=language, backend="broken"
+            )
+        ]
 
     def get_supported_languages(self):
         return ["en"]
@@ -77,10 +83,14 @@ class _WorkingBackend(OCRBackend):
         self._initialized = True
 
     def process_image(self, image_path, language="en", **kwargs) -> OCRResult:
-        return OCRResult(text="ok", confidence=0.9, language=language, backend="working")
+        return OCRResult(
+            text="ok", confidence=0.9, language=language, backend="working"
+        )
 
     def process_pdf(self, pdf_path, language="en", **kwargs):
-        return [OCRResult(text="ok", confidence=0.9, language=language, backend="working")]
+        return [
+            OCRResult(text="ok", confidence=0.9, language=language, backend="working")
+        ]
 
     def get_supported_languages(self):
         return ["en"]

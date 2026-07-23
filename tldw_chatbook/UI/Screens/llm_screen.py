@@ -18,11 +18,11 @@ class LLMScreen(BaseAppScreen):
     """
     LLM Management screen wrapper.
     """
-    
-    def __init__(self, app_instance: 'TldwCli', **kwargs):
+
+    def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(app_instance, "llm", **kwargs)
         self.llm_window = None
-    
+
     def compose_content(self) -> ComposeResult:
         """Compose the LLM management window content with its destination header."""
         yield DestinationHeader(
@@ -39,13 +39,13 @@ class LLMScreen(BaseAppScreen):
         self.llm_window.styles.height = "1fr"
         # Yield the window widget directly
         yield self.llm_window
-    
+
     def save_state(self):
         """Save LLM window state."""
         state = super().save_state()
         # Add any LLM-specific state here
         return state
-    
+
     def restore_state(self, state):
         """Restore LLM window state."""
         super().restore_state(state)

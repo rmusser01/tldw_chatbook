@@ -106,8 +106,12 @@ class LibraryNotesCanvas(Vertical):
         list_state = self.list_state
         if list_state is None:
             return
-        yield Static(list_state.header_copy, id="library-notes-header",
-                     classes="destination-section", markup=False)
+        yield Static(
+            list_state.header_copy,
+            id="library-notes-header",
+            classes="destination-section",
+            markup=False,
+        )
         yield Input(
             placeholder="Filter notes… (Enter)",
             id="library-notes-filter",
@@ -130,26 +134,35 @@ class LibraryNotesCanvas(Vertical):
         with toolbar:
             yield Button(
                 f"sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')} ▸",
-                id="library-notes-sort", classes="library-canvas-action", compact=True,
+                id="library-notes-sort",
+                classes="library-canvas-action",
+                compact=True,
             )
             yield Button(
-                "Sync", id="library-notes-sync-open",
-                classes="library-canvas-action", compact=True,
+                "Sync",
+                id="library-notes-sync-open",
+                classes="library-canvas-action",
+                compact=True,
             )
             yield Button(
-                "Import note", id="library-notes-import",
-                classes="library-canvas-action", compact=True,
+                "Import note",
+                id="library-notes-import",
+                classes="library-canvas-action",
+                compact=True,
             )
             export_btn = Button(
-                "Export…", id="library-notes-export",
-                classes="library-canvas-action", compact=True,
+                "Export…",
+                id="library-notes-export",
+                classes="library-canvas-action",
+                compact=True,
             )
             export_btn.display = not select_mode
             yield export_btn
             select_btn = Button(
                 "Done" if select_mode else "Select",
                 id="library-notes-select-toggle",
-                classes="library-canvas-action", compact=True,
+                classes="library-canvas-action",
+                compact=True,
             )
             # Disable only when nothing to select AND not already in select mode
             # -- in select mode "Done" must stay pressable so the user can exit
@@ -160,20 +173,35 @@ class LibraryNotesCanvas(Vertical):
             action_row = Horizontal(classes="ds-toolbar")
             action_row.styles.height = "auto"
             with action_row:
-                yield Static(f"{list_state.selected_count} selected",
-                             id="library-notes-selected-count", markup=False)
-                yield Button(f"Select all {rendered_count} shown",
-                             id="library-notes-select-all",
-                             classes="library-canvas-action", compact=True)
-                yield Button("Clear", id="library-notes-select-clear",
-                             classes="library-canvas-action", compact=True)
-                export_selected = Button("Export selected",
-                                         id="library-notes-export-selected",
-                                         classes="library-canvas-action", compact=True)
+                yield Static(
+                    f"{list_state.selected_count} selected",
+                    id="library-notes-selected-count",
+                    markup=False,
+                )
+                yield Button(
+                    f"Select all {rendered_count} shown",
+                    id="library-notes-select-all",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
+                    "Clear",
+                    id="library-notes-select-clear",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                export_selected = Button(
+                    "Export selected",
+                    id="library-notes-export-selected",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
                 export_selected.disabled = list_state.selected_count == 0
                 yield export_selected
         if list_state.status_copy:
-            yield Static(list_state.status_copy, id="library-notes-status", markup=False)
+            yield Static(
+                list_state.status_copy, id="library-notes-status", markup=False
+            )
         if not list_state.rows:
             yield Static(list_state.empty_copy, id="library-notes-empty", markup=False)
             return
@@ -192,7 +220,9 @@ class LibraryNotesCanvas(Vertical):
                     # glyph shifts line 1, so indent the age line by 2 to keep it
                     # aligned under the title rather than under the checkbox.
                     glyph = "☑ " if row.checked else "☐ "
-                    label_rest = f"{title}\n  {row.age_label}" if row.age_label else title
+                    label_rest = (
+                        f"{title}\n  {row.age_label}" if row.age_label else title
+                    )
                     label = f"{glyph}{label_rest}"
                 else:
                     label_rest = f"{title}\n{row.age_label}" if row.age_label else title
@@ -200,7 +230,8 @@ class LibraryNotesCanvas(Vertical):
                 button = Button(
                     label,
                     id=f"library-notes-row-{index}",
-                    classes="library-notes-row", compact=True,
+                    classes="library-notes-row",
+                    compact=True,
                 )
                 button.note_id = row.note_id
                 # task-281 (PR #665 review): raw marker-less label for the

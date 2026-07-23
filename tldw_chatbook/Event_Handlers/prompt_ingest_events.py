@@ -4,33 +4,41 @@
 #
 # Imports
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, List, Any, Dict, Callable, Union
+from typing import TYPE_CHECKING, Optional, List, Any, Dict, Callable
 
 # 3rd-party Libraries
 from loguru import logger
-from textual.widgets import Button, Label, ListItem, ListView, Static, Markdown, TextArea, Select
+from textual.widgets import (
+    Button,
+    Label,
+    ListItem,
+    ListView,
+    Static,
+    Markdown,
+    TextArea,
+)
 from textual.css.query import QueryError
 from textual.containers import VerticalScroll
 
 # Local Imports
 from ..Prompt_Management.Prompts_Interop import (
-    parse_yaml_prompts_from_content, parse_json_prompts_from_content,
-    parse_markdown_prompts_from_content, parse_txt_prompts_from_content,
+    parse_yaml_prompts_from_content,
+    parse_json_prompts_from_content,
+    parse_markdown_prompts_from_content,
+    parse_txt_prompts_from_content,
     is_initialized as prompts_db_initialized,
-    import_prompts_from_files, _get_file_type as _get_prompt_file_type
+    import_prompts_from_files,
+    _get_file_type as _get_prompt_file_type,
 )
 from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
-from .ingest_utils import (
-    PROMPT_FILE_FILTERS,
-    MAX_PROMPT_PREVIEWS,
-    _truncate_text
-)
+from .ingest_utils import PROMPT_FILE_FILTERS, MAX_PROMPT_PREVIEWS, _truncate_text
 
 if TYPE_CHECKING:
     from ..app import TldwCli
 
+
 # --- Prompt Preview Functions ---
-async def _update_prompt_preview_display(app: 'TldwCli') -> None:
+async def _update_prompt_preview_display(app: "TldwCli") -> None:
     """Updates the prompt preview area in the UI."""
     try:
         preview_area = app.query_one("#ingest-prompts-preview-area", VerticalScroll)
@@ -38,7 +46,11 @@ async def _update_prompt_preview_display(app: 'TldwCli') -> None:
 
         if not app.parsed_prompts_for_preview:
             await preview_area.mount(
-                Static("Select files to see a preview, or no prompts found.", id="ingest-prompts-preview-placeholder"))
+                Static(
+                    "Select files to see a preview, or no prompts found.",
+                    id="ingest-prompts-preview-placeholder",
+                )
+            )
             return
 
         num_to_display = len(app.parsed_prompts_for_preview)
@@ -73,27 +85,40 @@ async def _update_prompt_preview_display(app: 'TldwCli') -> None:
 ```
 ---
 """
-            await preview_area.mount(Markdown(md_content, classes="prompt-preview-item"))
+            await preview_area.mount(
+                Markdown(md_content, classes="prompt-preview-item")
+            )
 
         if num_to_display > MAX_PROMPT_PREVIEWS:
             await preview_area.mount(
-                Static(f"...and {num_to_display - MAX_PROMPT_PREVIEWS} more prompts loaded (not shown)."))
+                Static(
+                    f"...and {num_to_display - MAX_PROMPT_PREVIEWS} more prompts loaded (not shown)."
+                )
+            )
 
     except QueryError as e:
         logger.error(f"UI component not found for prompt preview update: {e}")
         app.notify("Error updating prompt preview UI.", severity="error")
     except Exception as e:
-        logger.opt(exception=True).error(f"Unexpected error updating prompt preview: {e}")
+        logger.opt(exception=True).error(
+            f"Unexpected error updating prompt preview: {e}"
+        )
         app.notify("Unexpected error during preview update.", severity="error")
 
 
-def _parse_single_prompt_file_for_preview(file_path: Path, app_ref: 'TldwCli') -> List[Dict[str, Any]]:
+def _parse_single_prompt_file_for_preview(
+    file_path: Path, app_ref: "TldwCli"
+) -> List[Dict[str, Any]]:
     """Parses a single prompt file and returns a list of prompt data dicts."""
     file_type = _get_prompt_file_type(file_path)  # Use helper from interop
     if not file_type:
         logger.warning(f"Unsupported file type for preview: {file_path}")
-        return [{"name": f"Error: Unsupported type {file_path.name}",
-                 "details": "File type not recognized for prompt import."}]
+        return [
+            {
+                "name": f"Error: Unsupported type {file_path.name}",
+                "details": "File type not recognized for prompt import.",
+            }
+        ]
 
     parser_map: Dict[str, Callable[[str], List[Dict[str, Any]]]] = {
         "json": parse_json_prompts_from_content,
@@ -105,13 +130,19 @@ def _parse_single_prompt_file_for_preview(file_path: Path, app_ref: 'TldwCli') -
     if not parser:
         logger.error(f"No parser found for file type {file_type} (preview)")
         return [
-            {"name": f"Error: No parser for {file_path.name}", "details": f"File type '{file_type}' has no parser."}]
+            {
+                "name": f"Error: No parser for {file_path.name}",
+                "details": f"File type '{file_type}' has no parser.",
+            }
+        ]
 
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
         parsed = parser(content)
-        if not parsed:  # If parser returns empty list (e.g. empty file or no valid prompts)
+        if (
+            not parsed
+        ):  # If parser returns empty list (e.g. empty file or no valid prompts)
             logger.info(f"No prompts found in {file_path.name} by parser for preview.")
             # Not necessarily an error, could be an empty file.
             # Return an empty list, or a specific message if preferred.
@@ -119,26 +150,41 @@ def _parse_single_prompt_file_for_preview(file_path: Path, app_ref: 'TldwCli') -
         return parsed
     except RuntimeError as e:
         logger.error(f"Parser dependency missing for {file_path}: {e}")
-        app_ref.notify(f"Cannot preview {file_path.name}: Required library missing ({e}).", severity="error", timeout=7)
+        app_ref.notify(
+            f"Cannot preview {file_path.name}: Required library missing ({e}).",
+            severity="error",
+            timeout=7,
+        )
         return [{"name": f"Error processing {file_path.name}", "details": str(e)}]
     except ValueError as e:
         logger.error(f"Failed to parse {file_path} for preview: {e}")
-        app_ref.notify(f"Error parsing {file_path.name}: Invalid format.", severity="warning", timeout=7)
+        app_ref.notify(
+            f"Error parsing {file_path.name}: Invalid format.",
+            severity="warning",
+            timeout=7,
+        )
         return [{"name": f"Error parsing {file_path.name}", "details": str(e)}]
     except Exception as e:
-        logger.opt(exception=True).error(f"Unexpected error reading/parsing {file_path} for preview: {e}")
+        logger.opt(exception=True).error(
+            f"Unexpected error reading/parsing {file_path} for preview: {e}"
+        )
         app_ref.notify(f"Error reading {file_path.name}.", severity="error", timeout=7)
         return [{"name": f"Error reading {file_path.name}", "details": str(e)}]
 
 
-async def _handle_prompt_file_selected_callback(app: 'TldwCli', selected_path: Optional[Path]) -> None:
+async def _handle_prompt_file_selected_callback(
+    app: "TldwCli", selected_path: Optional[Path]
+) -> None:
     """
     Callback function executed after the FileOpen dialog for prompt selection returns.
     """
     if selected_path:
         logger.info(f"Prompt file selected via dialog: {selected_path}")
         if selected_path in app.selected_prompt_files_for_import:
-            app.notify(f"File '{selected_path.name}' is already in the selection.", severity="warning")
+            app.notify(
+                f"File '{selected_path.name}' is already in the selection.",
+                severity="warning",
+            )
             return
 
         app.selected_prompt_files_for_import.append(selected_path)
@@ -155,23 +201,32 @@ async def _handle_prompt_file_selected_callback(app: 'TldwCli', selected_path: O
                     first_label_of_first_item = first_child.children[0]
                     if isinstance(first_label_of_first_item, Label):
                         # Convert Label's renderable (Rich Text) to plain string for comparison
-                        if str(first_label_of_first_item.renderable).strip() == "No files selected.":
+                        if (
+                            str(first_label_of_first_item.renderable).strip()
+                            == "No files selected."
+                        ):
                             placeholder_exists = True
 
             if placeholder_exists:
                 await list_view.clear()
-                logger.debug("Cleared 'No files selected.' placeholder from prompt list.")
+                logger.debug(
+                    "Cleared 'No files selected.' placeholder from prompt list."
+                )
 
             await list_view.append(ListItem(Label(str(selected_path))))
             logger.debug(f"Appended '{selected_path}' to prompt list view.")
 
         except QueryError:
-            logger.error("Could not find #ingest-prompts-selected-files-list ListView to update.")
+            logger.error(
+                "Could not find #ingest-prompts-selected-files-list ListView to update."
+            )
         except Exception as e_lv:
             logger.opt(exception=True).error(f"Error updating prompt list view: {e_lv}")
 
         # Parse this file and add to overall preview list
-        parsed_prompts_from_file = _parse_single_prompt_file_for_preview(selected_path, app)
+        parsed_prompts_from_file = _parse_single_prompt_file_for_preview(
+            selected_path, app
+        )
         app.parsed_prompts_for_preview.extend(parsed_prompts_from_file)
 
         await _update_prompt_preview_display(app)  # Update the preview display
@@ -181,33 +236,47 @@ async def _handle_prompt_file_selected_callback(app: 'TldwCli', selected_path: O
 
 
 # --- Prompt Ingest Handlers ---
-async def handle_ingest_prompts_select_file_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+async def handle_ingest_prompts_select_file_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     logger.debug("Select Prompt File(s) button pressed. Opening file dialog.")
     current_dir = app.last_prompt_import_dir or Path(".")
     await app.push_screen(
-        FileOpen(location=str(current_dir, context="prompt_ingest"),
+        FileOpen(
+            location=str(current_dir, context="prompt_ingest"),
             title="Select Prompt File (.md, .json, .yaml, .txt)",
-            filters=PROMPT_FILE_FILTERS
+            filters=PROMPT_FILE_FILTERS,
         ),
-        lambda path: app.call_after_refresh(lambda: _handle_prompt_file_selected_callback(app, path))
+        lambda path: app.call_after_refresh(
+            lambda: _handle_prompt_file_selected_callback(app, path)
+        ),
         # path type here is Optional[Path]
     )
 
 
-async def handle_ingest_prompts_clear_files_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+async def handle_ingest_prompts_clear_files_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     """Handles the 'Clear Selection' button press for prompt import."""
     logger.info("Clearing selected prompt files and preview.")
     app.selected_prompt_files_for_import.clear()
     app.parsed_prompts_for_preview.clear()
 
     try:
-        selected_list_view = app.query_one("#ingest-prompts-selected-files-list", ListView)
+        selected_list_view = app.query_one(
+            "#ingest-prompts-selected-files-list", ListView
+        )
         await selected_list_view.clear()
         await selected_list_view.append(ListItem(Label("No files selected.")))
 
         preview_area = app.query_one("#ingest-prompts-preview-area", VerticalScroll)
         await preview_area.remove_children()
-        await preview_area.mount(Static("Select files to see a preview.", id="ingest-prompts-preview-placeholder"))
+        await preview_area.mount(
+            Static(
+                "Select files to see a preview.",
+                id="ingest-prompts-preview-placeholder",
+            )
+        )
 
         status_area = app.query_one("#prompt-import-status-area", TextArea)
         status_area.clear()
@@ -217,7 +286,9 @@ async def handle_ingest_prompts_clear_files_button_pressed(app: 'TldwCli', event
         app.notify("Error clearing UI.", severity="error")
 
 
-async def handle_ingest_prompts_import_now_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+async def handle_ingest_prompts_import_now_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     """Handles the 'Import Selected Files Now' button press."""
     logger.info("Import Selected Prompt Files Now button pressed.")
 
@@ -251,10 +322,14 @@ async def handle_ingest_prompts_import_now_button_pressed(app: 'TldwCli', event:
         logger.info("--- import_worker_target (Prompts) RUNNING ---")
         try:
             results = import_prompts_from_files(app.selected_prompt_files_for_import)
-            logger.info(f"--- import_worker_target (Prompts) FINISHED, results count: {len(results)} ---")
+            logger.info(
+                f"--- import_worker_target (Prompts) FINISHED, results count: {len(results)} ---"
+            )
             return results  # Return the results
         except Exception as e_worker:
-            logger.opt(exception=True).error(f"Exception inside import_worker_target (Prompts): {e_worker}")
+            logger.opt(exception=True).error(
+                f"Exception inside import_worker_target (Prompts): {e_worker}"
+            )
             # To signal an error to the worker system, you should re-raise the exception
             # or return a specific error indicator if you want to handle it differently
             # in on_worker_state_changed. For now, re-raising is simpler.
@@ -265,10 +340,14 @@ async def handle_ingest_prompts_import_now_button_pressed(app: 'TldwCli', event:
     # We pass the worker_name to identify which worker completed.
 
     def process_prompt_import_success(results: List[Dict[str, Any]], worker_name: str):
-        if worker_name != "prompt_import_worker":  # Ensure this is for the correct worker
+        if (
+            worker_name != "prompt_import_worker"
+        ):  # Ensure this is for the correct worker
             return
 
-        logger.info(f"--- process_prompt_import_success CALLED for worker: {worker_name} ---")
+        logger.info(
+            f"--- process_prompt_import_success CALLED for worker: {worker_name} ---"
+        )
         logger.debug(f"Import results received: {results}")
 
         log_text_parts = ["Import process finished.\n\nResults:\n"]
@@ -277,7 +356,9 @@ async def handle_ingest_prompts_import_now_button_pressed(app: 'TldwCli', event:
 
         if not results:
             log_text_parts.append("No results returned from import worker.\n")
-            logger.warning("process_prompt_import_success: Received empty results list.")
+            logger.warning(
+                "process_prompt_import_success: Received empty results list."
+            )
         else:
             for res_idx, res in enumerate(results):
                 logger.debug(f"Processing result item {res_idx}: {res}")
@@ -306,17 +387,26 @@ async def handle_ingest_prompts_import_now_button_pressed(app: 'TldwCli', event:
 
         try:
             status_area_cb = app.query_one("#prompt-import-status-area", TextArea)
-            logger.info("Successfully queried #prompt-import-status-area in process_prompt_import_success.")
+            logger.info(
+                "Successfully queried #prompt-import-status-area in process_prompt_import_success."
+            )
             status_area_cb.load_text(final_log_text_to_display)
             logger.info("Called load_text on #prompt-import-status-area.")
             status_area_cb.refresh(layout=True)
             logger.info("Called refresh() on status_area_cb.")
         except QueryError:
-            logger.error("Failed to find #prompt-import-status-area in process_prompt_import_success.")
+            logger.error(
+                "Failed to find #prompt-import-status-area in process_prompt_import_success."
+            )
         except Exception as e_load_text:
-            logger.opt(exception=True).error(f"Error during status_area_cb.load_text in process_prompt_import_success: {e_load_text}")
+            logger.opt(exception=True).error(
+                f"Error during status_area_cb.load_text in process_prompt_import_success: {e_load_text}"
+            )
 
-        app.notify(f"Prompt import finished. Success: {successful_imports}, Failed: {failed_imports}", timeout=8)
+        app.notify(
+            f"Prompt import finished. Success: {successful_imports}, Failed: {failed_imports}",
+            timeout=8,
+        )
         logger.info(f"Prompt import summary: {summary.strip()}")
 
         app.call_later(ccp_handlers.populate_ccp_prompts_list_view, app)
@@ -327,15 +417,23 @@ async def handle_ingest_prompts_import_now_button_pressed(app: 'TldwCli', event:
         if worker_name != "prompt_import_worker":
             return
 
-        logger.opt(exception=True).error(f"--- process_prompt_import_failure CALLED for worker {worker_name}: {error} ---")
+        logger.opt(exception=True).error(
+            f"--- process_prompt_import_failure CALLED for worker {worker_name}: {error} ---"
+        )
         try:
             status_area_cb_fail = app.query_one("#prompt-import-status-area", TextArea)
             current_text = status_area_cb_fail.text
             status_area_cb_fail.load_text(
-                current_text + f"\nImport process failed critically: {error}\nCheck logs for details.\n")
+                current_text
+                + f"\nImport process failed critically: {error}\nCheck logs for details.\n"
+            )
         except QueryError:
-            logger.error("Failed to find #prompt-import-status-area in process_prompt_import_failure.")
-        app.notify(f"Prompt import failed: {str(error)[:100]}", severity="error", timeout=10)
+            logger.error(
+                "Failed to find #prompt-import-status-area in process_prompt_import_failure."
+            )
+        app.notify(
+            f"Prompt import failed: {str(error)[:100]}", severity="error", timeout=10
+        )
 
     async def _run_prompt_import_worker_and_dispatch():
         # Task 172: the file_operations worker group has no worker-state
@@ -355,5 +453,5 @@ async def handle_ingest_prompts_import_now_button_pressed(app: 'TldwCli', event:
         _run_prompt_import_worker_and_dispatch,
         name="prompt_import_worker",  # Crucial for identifying the worker later
         group="file_operations",
-        description="Importing selected prompt files."
+        description="Importing selected prompt files.",
     )

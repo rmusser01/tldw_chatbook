@@ -149,17 +149,23 @@ class LibraryPromptsListCanvas(Vertical):
         with toolbar:
             yield Button(
                 f"sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')} ▸",
-                id="library-prompts-sort", classes="library-canvas-action", compact=True,
+                id="library-prompts-sort",
+                classes="library-canvas-action",
+                compact=True,
             )
             yield Button(
-                "Import…", id="library-prompts-import",
-                classes="library-canvas-action", compact=True,
+                "Import…",
+                id="library-prompts-import",
+                classes="library-canvas-action",
+                compact=True,
             )
         if self.import_open:
             yield from self._compose_import_row()
         if not state.rows:
             yield Static(
-                _EMPTY_PROMPTS_FILTER_COPY if self.filter_value else _EMPTY_PROMPTS_COPY,
+                _EMPTY_PROMPTS_FILTER_COPY
+                if self.filter_value
+                else _EMPTY_PROMPTS_COPY,
                 id="library-prompts-empty",
                 markup=False,
             )
@@ -212,16 +218,22 @@ class LibraryPromptsListCanvas(Vertical):
             # be typed by hand into the path Input above; this only covers
             # the file case (see handle_library_prompts_import_browse).
             yield Button(
-                "Browse…", id="library-prompts-import-browse",
-                classes="library-canvas-action", compact=True,
+                "Browse…",
+                id="library-prompts-import-browse",
+                classes="library-canvas-action",
+                compact=True,
             )
             yield Button(
-                "Import", id="library-prompts-import-run",
-                classes="library-canvas-action", compact=True,
+                "Import",
+                id="library-prompts-import-run",
+                classes="library-canvas-action",
+                compact=True,
             )
             yield Button(
-                "Cancel", id="library-prompts-import-cancel",
-                classes="library-canvas-action", compact=True,
+                "Cancel",
+                id="library-prompts-import-cancel",
+                classes="library-canvas-action",
+                compact=True,
             )
         yield Static(
             self.import_status,
@@ -267,7 +279,9 @@ class LibraryPromptsListCanvas(Vertical):
         # (``details``, ``#library-prompt-details``) is untouched.
         yield Static("Description", classes="library-prompt-field-label", markup=False)
         yield Input(value=editor_state.details, id="library-prompt-details")
-        yield Static("System prompt", classes="library-prompt-field-label", markup=False)
+        yield Static(
+            "System prompt", classes="library-prompt-field-label", markup=False
+        )
         yield Static(
             _SYSTEM_PROMPT_HINT, classes="library-prompt-field-hint", markup=False
         )

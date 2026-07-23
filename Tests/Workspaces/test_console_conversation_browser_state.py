@@ -3,8 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from tldw_chatbook.Workspaces.conversation_browser_state import (
+    CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
     ConsoleConversationBrowserInputRow,
     build_console_conversation_browser_state,
+    console_persisted_row_updated_sort,
     format_console_relative_age,
 )
 from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
@@ -26,7 +28,9 @@ def _row(
     return ConsoleConversationBrowserInputRow(
         row_key=key,
         conversation_id=None if key.startswith("native:") else key,
-        native_session_id=key.removeprefix("native:") if key.startswith("native:") else None,
+        native_session_id=key.removeprefix("native:")
+        if key.startswith("native:")
+        else None,
         title=title,
         scope_type=scope_type,
         workspace_id=workspace_id,
@@ -43,27 +47,46 @@ def _row(
 
 
 def _section(state, section_id):
-    return next(section for section in state.sections if section.section_id == section_id)
+    return next(
+        section for section in state.sections if section.section_id == section_id
+    )
 
 
 def _workspace_group(state, group_id):
     workspace_section = _section(state, "workspaces")
-    return next(group for group in workspace_section.groups if group.group_id == group_id)
+    return next(
+        group for group in workspace_section.groups if group.group_id == group_id
+    )
 
 
 def test_browser_groups_starred_workspaces_and_chats():
     state = build_console_conversation_browser_state(
         rows=(
             _row("conv-a", "Workspace chat", starred=True),
-            _row("conv-b", "Global chat", scope_type="global", workspace_id=None, workspace_label="Chats"),
-            _row("conv-c", "Default chat", workspace_id=DEFAULT_WORKSPACE_ID, workspace_label="Default"),
+            _row(
+                "conv-b",
+                "Global chat",
+                scope_type="global",
+                workspace_id=None,
+                workspace_label="Chats",
+            ),
+            _row(
+                "conv-c",
+                "Default chat",
+                workspace_id=DEFAULT_WORKSPACE_ID,
+                workspace_label="Default",
+            ),
         ),
         active_workspace_id="ws-a",
         group_collapse_preferences={},
         query="",
     )
 
-    assert [section.section_id for section in state.sections] == ["starred", "workspaces", "chats"]
+    assert [section.section_id for section in state.sections] == [
+        "starred",
+        "workspaces",
+        "chats",
+    ]
     assert state.sections[0].rows[0].row_key == "conv-a"
     assert state.sections[1].groups[0].group_id == "workspace:ws-a"
     assert [row.row_key for row in state.sections[2].rows] == ["conv-c", "conv-b"]
@@ -75,7 +98,9 @@ def test_search_exposes_matching_rows_from_collapsed_groups_without_changing_pre
     state = build_console_conversation_browser_state(
         rows=(
             _row("conv-a", "Alpha", workspace_id="ws-a", workspace_label="Workspace A"),
-            _row("conv-b", "Needle", workspace_id="ws-b", workspace_label="Workspace B"),
+            _row(
+                "conv-b", "Needle", workspace_id="ws-b", workspace_label="Workspace B"
+            ),
         ),
         active_workspace_id="ws-a",
         group_collapse_preferences={"workspace:ws-b": True},
@@ -173,7 +198,9 @@ def test_search_exposes_workspaces_section_matches_when_section_preference_colla
     state = build_console_conversation_browser_state(
         rows=(
             _row("conv-a", "Alpha", workspace_id="ws-a", workspace_label="Workspace A"),
-            _row("conv-b", "Needle", workspace_id="ws-b", workspace_label="Workspace B"),
+            _row(
+                "conv-b", "Needle", workspace_id="ws-b", workspace_label="Workspace B"
+            ),
         ),
         active_workspace_id="ws-a",
         group_collapse_preferences={"section:workspaces": True},
@@ -242,7 +269,13 @@ def test_starred_is_expanded_by_default_and_can_be_overridden():
 def test_chats_is_expanded_when_it_has_rows():
     state = build_console_conversation_browser_state(
         rows=(
-            _row("conv-a", "Global chat", scope_type="global", workspace_id=None, workspace_label="Chats"),
+            _row(
+                "conv-a",
+                "Global chat",
+                scope_type="global",
+                workspace_id=None,
+                workspace_label="Chats",
+            ),
         ),
         active_workspace_id="ws-a",
     )
@@ -254,9 +287,7 @@ def test_chats_is_expanded_when_it_has_rows():
 
 def test_native_rows_have_star_enabled_false():
     state = build_console_conversation_browser_state(
-        rows=(
-            _row("native:session-a", "Draft session", source_kind="native"),
-        ),
+        rows=(_row("native:session-a", "Draft session", source_kind="native"),),
         active_workspace_id="ws-a",
     )
 
@@ -307,7 +338,9 @@ def test_titles_are_plain_strings_and_do_not_render_markup_control_data():
 def test_capped_groups_expose_hidden_count_and_status_copy():
     state = build_console_conversation_browser_state(
         rows=tuple(
-            _row(f"conv-{index}", f"Needle {index}", updated_sort=f"2026-06-{index:02d}")
+            _row(
+                f"conv-{index}", f"Needle {index}", updated_sort=f"2026-06-{index:02d}"
+            )
             for index in range(1, 5)
         ),
         active_workspace_id="ws-a",
@@ -325,7 +358,9 @@ def test_capped_groups_expose_hidden_count_and_status_copy():
 def test_result_total_count_is_used_for_capped_status_copy():
     state = build_console_conversation_browser_state(
         rows=tuple(
-            _row(f"conv-{index}", f"Needle {index}", updated_sort=f"2026-06-{index:02d}")
+            _row(
+                f"conv-{index}", f"Needle {index}", updated_sort=f"2026-06-{index:02d}"
+            )
             for index in range(1, 4)
         ),
         active_workspace_id="ws-a",
@@ -366,8 +401,20 @@ def test_query_matches_workspace_label_status_and_scope_copy():
     state = build_console_conversation_browser_state(
         rows=(
             _row("conv-a", "Alpha", workspace_id="ws-a", workspace_label="Research"),
-            _row("conv-b", "Beta", scope_type="global", workspace_id=None, workspace_label="Chats"),
-            _row("conv-c", "Gamma", selected=True, workspace_id="ws-c", workspace_label="Gamma WS"),
+            _row(
+                "conv-b",
+                "Beta",
+                scope_type="global",
+                workspace_id=None,
+                workspace_label="Chats",
+            ),
+            _row(
+                "conv-c",
+                "Gamma",
+                selected=True,
+                workspace_id="ws-c",
+                workspace_label="Gamma WS",
+            ),
         ),
         active_workspace_id="ws-a",
         query="global",
@@ -378,13 +425,21 @@ def test_query_matches_workspace_label_status_and_scope_copy():
     status_state = build_console_conversation_browser_state(
         rows=(
             _row("conv-a", "Alpha", workspace_id="ws-a", workspace_label="Research"),
-            _row("conv-c", "Gamma", selected=True, workspace_id="ws-c", workspace_label="Gamma WS"),
+            _row(
+                "conv-c",
+                "Gamma",
+                selected=True,
+                workspace_id="ws-c",
+                workspace_label="Gamma WS",
+            ),
         ),
         active_workspace_id="ws-a",
         query="active",
     )
 
-    assert [row.row_key for row in _workspace_group(status_state, "workspace:ws-c").rows] == ["conv-c"]
+    assert [
+        row.row_key for row in _workspace_group(status_state, "workspace:ws-c").rows
+    ] == ["conv-c"]
 
 
 def test_selected_summary_prefers_title_and_workspace_label():
@@ -517,7 +572,9 @@ def test_format_console_relative_age_tolerates_bad_input():
 
 def test_format_console_relative_age_tolerates_naive_now():
     naive_now = datetime(2026, 7, 2, 12, 0, 0)
-    assert format_console_relative_age("2026-07-02T11:58:00+00:00", now=naive_now) == "2m"
+    assert (
+        format_console_relative_age("2026-07-02T11:58:00+00:00", now=naive_now) == "2m"
+    )
 
 
 def _input_row(**overrides):
@@ -560,7 +617,12 @@ def test_non_active_workspace_groups_default_collapsed_regression():
     state = build_console_conversation_browser_state(
         rows=[
             _input_row(),
-            _input_row(row_key="conv-2", conversation_id="conv-2", workspace_id="ws-2", workspace_label="Workspace 2"),
+            _input_row(
+                row_key="conv-2",
+                conversation_id="conv-2",
+                workspace_id="ws-2",
+                workspace_label="Workspace 2",
+            ),
         ],
         active_workspace_id="ws-1",
         now=_NOW,
@@ -574,8 +636,18 @@ def test_non_active_workspace_groups_default_collapsed_regression():
 def test_rows_sorted_recent_first_regression():
     state = build_console_conversation_browser_state(
         rows=[
-            _input_row(row_key="old", conversation_id="old", title="Old", updated_sort="2026-06-01T00:00:00+00:00"),
-            _input_row(row_key="new", conversation_id="new", title="New", updated_sort="2026-07-01T00:00:00+00:00"),
+            _input_row(
+                row_key="old",
+                conversation_id="old",
+                title="Old",
+                updated_sort="2026-06-01T00:00:00+00:00",
+            ),
+            _input_row(
+                row_key="new",
+                conversation_id="new",
+                title="New",
+                updated_sort="2026-07-01T00:00:00+00:00",
+            ),
         ],
         active_workspace_id="ws-1",
         now=_NOW,
@@ -583,3 +655,108 @@ def test_rows_sorted_recent_first_regression():
     workspaces = next(s for s in state.sections if s.section_id == "workspaces")
     titles = [row.title for row in workspaces.groups[0].rows]
     assert titles == ["New", "Old"]
+
+
+def test_persisted_updated_sort_prefers_last_modified_over_created_at():
+    """TASK-355: normalize_conversation_row exposes last_modified/created_at but
+    NO updated_at key, so the rail's recency ordering + age labels must derive
+    from last_modified. Falling through to created_at orders the rail by
+    creation time, so a just-used conversation looks stale and sorts wrong."""
+    row = {
+        "last_modified": "2026-07-21T13:19:00+00:00",
+        "created_at": "2026-07-21T13:04:00+00:00",
+    }
+    assert console_persisted_row_updated_sort(row) == "2026-07-21T13:19:00+00:00"
+
+
+def test_persisted_updated_sort_fallback_chain():
+    # explicit updated_at still wins when present (back-compat).
+    assert (
+        console_persisted_row_updated_sort(
+            {"updated_at": "U", "last_modified": "M", "created_at": "C"}
+        )
+        == "U"
+    )
+    # last_modified beats created_at (the recency fix).
+    assert (
+        console_persisted_row_updated_sort({"last_modified": "M", "created_at": "C"})
+        == "M"
+    )
+    # created_at / last_updated remain the fallbacks when no recency field.
+    assert console_persisted_row_updated_sort({"created_at": "C"}) == "C"
+    assert console_persisted_row_updated_sort({"last_updated": "L"}) == "L"
+    # empty and None-bearing rows never raise and collapse to "".
+    assert console_persisted_row_updated_sort({}) == ""
+    assert (
+        console_persisted_row_updated_sort({"last_modified": None, "created_at": "C"})
+        == "C"
+    )
+
+
+def test_normalized_conversation_row_recency_flows_through_helper():
+    """Integration for TASK-355: persisted rail rows are built from
+    normalize_conversation_row's output, which emits last_modified but NO
+    updated_at — so the helper must source recency from last_modified end-to-end,
+    reproducing the exact data shape the rail sees."""
+    from tldw_chatbook.Chat.chat_conversation_service import normalize_conversation_row
+
+    normalized = normalize_conversation_row(
+        {
+            "id": "conv-1",
+            "title": "Long conversation about embeddings",
+            "last_modified": "2026-07-21T13:19:00+00:00",
+            "created_at": "2026-07-21T13:04:00+00:00",
+        }
+    )
+    # The root cause: the normalized payload carries no updated_at key.
+    assert "updated_at" not in normalized
+    # The fix: recency is sourced from last_modified, not creation time.
+    assert (
+        console_persisted_row_updated_sort(normalized) == "2026-07-21T13:19:00+00:00"
+    )
+
+
+def _chat_rows(n):
+    return tuple(
+        _row(
+            f"c{i}",
+            f"Chat {i}",
+            scope_type="global",
+            workspace_id=None,
+            workspace_label="Chats",
+        )
+        for i in range(n)
+    )
+
+
+def test_no_query_view_discloses_conversations_hidden_by_the_cap():
+    """TASK-354: the rail silently caps each group at
+    CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT; with no search active the
+    overflow was dropped with zero disclosure, so the oldest conversations
+    looked deleted. The no-query view must announce the hidden rows and how to
+    reach them."""
+    rows = _chat_rows(CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3)
+    state = build_console_conversation_browser_state(
+        rows=rows, active_workspace_id="ws-a"
+    )
+    assert "3 more" in state.status_copy
+    assert "Ctrl+K" in state.status_copy
+
+
+def test_no_query_view_has_no_disclosure_when_nothing_is_capped():
+    state = build_console_conversation_browser_state(
+        rows=_chat_rows(3), active_workspace_id="ws-a"
+    )
+    assert state.status_copy == ""
+
+
+def test_cap_disclosure_excludes_user_collapsed_sections():
+    """A collapsed section shows its own count in the header — its rows are not
+    'silently' hidden, so they must not inflate the cap disclosure."""
+    rows = _chat_rows(CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 5)
+    state = build_console_conversation_browser_state(
+        rows=rows,
+        active_workspace_id="ws-a",
+        group_collapse_preferences={"section:chats": True},
+    )
+    assert state.status_copy == ""

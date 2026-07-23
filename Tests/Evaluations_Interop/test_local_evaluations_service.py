@@ -1,10 +1,9 @@
 import pytest
-from types import SimpleNamespace
 
 from tldw_chatbook.DB.Evals_DB import EvalsDB
-from tldw_chatbook.Evaluations_Interop.local_evaluations_service import LocalEvaluationsService
-from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
-from tldw_chatbook.Notifications.notification_dispatch_service import NotificationDispatchService
+from tldw_chatbook.Evaluations_Interop.local_evaluations_service import (
+    LocalEvaluationsService,
+)
 
 
 class FakeEvalsDB:
@@ -20,7 +19,10 @@ class FakeEvalsDB:
             "config_format": "custom",
             "config_data": {
                 "metrics": ["accuracy"],
-                "__tldw_eval_metadata__": {"project": "offline-parity", "tags": ["compat"]},
+                "__tldw_eval_metadata__": {
+                    "project": "offline-parity",
+                    "tags": ["compat"],
+                },
             },
             "dataset_id": "dataset_123",
             "created_at": "2026-04-20T00:00:00Z",
@@ -114,7 +116,9 @@ class FakeEvalsDB:
 
     def update_dataset(self, dataset_id, **kwargs):
         self.calls.append(("update_dataset", dataset_id, kwargs))
-        self.dataset.update({key: value for key, value in kwargs.items() if value is not None})
+        self.dataset.update(
+            {key: value for key, value in kwargs.items() if value is not None}
+        )
         return True
 
     def delete_dataset(self, dataset_id):
@@ -132,7 +136,9 @@ class FakeEvalsDB:
         return [dict(self.model)]
 
     def create_run(self, name, task_id, model_id, config_overrides=None):
-        self.calls.append(("create_run", name, task_id, model_id, config_overrides or {}))
+        self.calls.append(
+            ("create_run", name, task_id, model_id, config_overrides or {})
+        )
         self.created_run = {
             **self.run,
             "id": "run_999",
@@ -183,7 +189,10 @@ def test_create_evaluation_stores_eval_metadata_in_local_task_payload():
     assert task_id == "task_999"
     assert db.created_task["config_format"] == "custom"
     assert db.created_task["config_data"]["metrics"] == ["accuracy"]
-    assert db.created_task["config_data"]["__tldw_eval_metadata__"]["project"] == "offline-parity"
+    assert (
+        db.created_task["config_data"]["__tldw_eval_metadata__"]["project"]
+        == "offline-parity"
+    )
 
 
 def test_create_evaluation_accepts_scope_dataset_keyword_when_empty():
@@ -218,7 +227,9 @@ def test_create_dataset_stores_inline_samples_in_local_metadata():
     dataset_id = service.create_dataset(
         name="offline_dataset",
         description="Offline dataset",
-        samples=[{"input": "Question", "expected": "Answer", "metadata": {"source": "local"}}],
+        samples=[
+            {"input": "Question", "expected": "Answer", "metadata": {"source": "local"}}
+        ],
         metadata={"project": "offline-parity"},
     )
 
@@ -231,12 +242,16 @@ def test_create_dataset_stores_inline_samples_in_local_metadata():
             "source_path": "inline:offline_dataset",
             "description": "Offline dataset",
             "metadata": {
-            "project": "offline-parity",
-            "__tldw_eval_samples__": [
-                {"input": "Question", "expected": "Answer", "metadata": {"source": "local"}}
-            ],
-            "sample_count": 1,
-            "inline_samples": True,
+                "project": "offline-parity",
+                "__tldw_eval_samples__": [
+                    {
+                        "input": "Question",
+                        "expected": "Answer",
+                        "metadata": {"source": "local"},
+                    }
+                ],
+                "sample_count": 1,
+                "inline_samples": True,
             },
         },
     )
@@ -265,7 +280,9 @@ def test_update_dataset_threads_inline_samples_through_local_metadata():
             "source_path": "/tmp/demo.json",
             "metadata": {
                 "project": "offline-v2",
-                "__tldw_eval_samples__": [{"input": "New question", "expected": "New answer"}],
+                "__tldw_eval_samples__": [
+                    {"input": "New question", "expected": "New answer"}
+                ],
                 "sample_count": 1,
                 "inline_samples": True,
             },
@@ -273,7 +290,9 @@ def test_update_dataset_threads_inline_samples_through_local_metadata():
     )
 
 
-def test_update_dataset_preserves_inline_samples_when_metadata_changes_against_evals_db(tmp_path):
+def test_update_dataset_preserves_inline_samples_when_metadata_changes_against_evals_db(
+    tmp_path,
+):
     db = EvalsDB(db_path=str(tmp_path / "evals.db"), client_id="test_client")
     service = LocalEvaluationsService(db=db)
 
@@ -327,7 +346,13 @@ def test_create_run_resolves_provider_model_string_to_local_model_id():
     )
 
     assert run["id"] == "run_999"
-    assert db.calls[-2] == ("create_run", "manual_run", "task_123", "model_123", {"temperature": 0.4})
+    assert db.calls[-2] == (
+        "create_run",
+        "manual_run",
+        "task_123",
+        "model_123",
+        {"temperature": 0.4},
+    )
     assert run["model_id"] == "model_123"
     assert run["model_name"] == "Preferred Local"
 
@@ -337,7 +362,9 @@ def test_create_run_persists_dataset_override_and_webhook_url_in_local_run_confi
     service = LocalEvaluationsService(db=db)
     dataset_override = {
         "name": "inline_cases",
-        "samples": [{"input": "Q1", "expected": "A1", "metadata": {"difficulty": "easy"}}],
+        "samples": [
+            {"input": "Q1", "expected": "A1", "metadata": {"difficulty": "easy"}}
+        ],
         "metadata": {"project": "offline-parity"},
     }
 
@@ -353,7 +380,10 @@ def test_create_run_persists_dataset_override_and_webhook_url_in_local_run_confi
     assert run["id"] == "run_999"
     assert db.created_run["config_overrides"]["temperature"] == 0.2
     assert db.created_run["config_overrides"]["dataset_override"] == dataset_override
-    assert db.created_run["config_overrides"]["webhook_url"] == "http://127.0.0.1:9000/eval-callback"
+    assert (
+        db.created_run["config_overrides"]["webhook_url"]
+        == "http://127.0.0.1:9000/eval-callback"
+    )
 
 
 def test_get_run_artifacts_returns_local_metrics_and_sample_results():
@@ -382,7 +412,10 @@ def test_update_evaluation_merges_eval_spec_and_metadata_into_local_task_payload
     assert db.calls[-1][1] == "task_123"
     assert db.calls[-1][2]["description"] == "Updated evaluation"
     assert db.calls[-1][2]["config_data"]["metrics"] == ["f1"]
-    assert db.calls[-1][2]["config_data"]["__tldw_eval_metadata__"]["project"] == "server-sync"
+    assert (
+        db.calls[-1][2]["config_data"]["__tldw_eval_metadata__"]["project"]
+        == "server-sync"
+    )
 
 
 def test_cancel_run_marks_local_run_cancelled():

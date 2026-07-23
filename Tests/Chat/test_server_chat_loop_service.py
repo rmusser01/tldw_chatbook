@@ -86,7 +86,9 @@ def test_server_chat_loop_service_module_does_not_reference_legacy_config_client
 
 
 @pytest.mark.asyncio
-async def test_server_chat_loop_service_from_config_builds_and_reuses_client_lazily(monkeypatch):
+async def test_server_chat_loop_service_from_config_builds_and_reuses_client_lazily(
+    monkeypatch,
+):
     sentinel_client = FakeClient()
     build_client_calls: list[dict[str, Any]] = []
 
@@ -99,7 +101,9 @@ async def test_server_chat_loop_service_from_config_builds_and_reuses_client_laz
         build_client,
     )
 
-    service = ServerChatLoopService.from_config({"tldw_api": {"base_url": "https://example.com"}})
+    service = ServerChatLoopService.from_config(
+        {"tldw_api": {"base_url": "https://example.com"}}
+    )
 
     assert isinstance(service, ServerChatLoopService)
     assert service.client is None
@@ -199,8 +203,12 @@ async def test_chat_loop_scope_service_enforces_server_mode_policy_and_normalize
         conversation_id="conv-1",
     )
     events = await scope.list_events(mode="server", run_id="run_1", after_seq=3)
-    approved = await scope.approve(mode="server", run_id="run_1", approval_id="approval-1")
-    rejected = await scope.reject(mode="server", run_id="run_1", approval_id="approval-2")
+    approved = await scope.approve(
+        mode="server", run_id="run_1", approval_id="approval-1"
+    )
+    rejected = await scope.reject(
+        mode="server", run_id="run_1", approval_id="approval-2"
+    )
     cancelled = await scope.cancel(mode="server", run_id="run_1")
 
     assert started["id"] == "server:chat_loop_run:run_1"
@@ -223,10 +231,15 @@ async def test_chat_loop_scope_service_enforces_server_mode_policy_and_normalize
 @pytest.mark.asyncio
 async def test_chat_loop_scope_service_rejects_local_mode_before_policy_dispatch():
     policy = FakePolicyEnforcer()
-    scope = ServerChatLoopScopeService(server_service=ServerChatLoopService(client=FakeClient()), policy_enforcer=policy)
+    scope = ServerChatLoopScopeService(
+        server_service=ServerChatLoopService(client=FakeClient()),
+        policy_enforcer=policy,
+    )
 
     with pytest.raises(ValueError, match="Server chat loop requires server mode"):
-        await scope.start_run(mode="local", messages=[{"role": "user", "content": "hello"}])
+        await scope.start_run(
+            mode="local", messages=[{"role": "user", "content": "hello"}]
+        )
 
     assert policy.calls == []
 
@@ -234,7 +247,10 @@ async def test_chat_loop_scope_service_rejects_local_mode_before_policy_dispatch
 @pytest.mark.asyncio
 async def test_chat_loop_scope_service_rejects_all_local_controls_before_policy_dispatch():
     policy = FakePolicyEnforcer()
-    scope = ServerChatLoopScopeService(server_service=ServerChatLoopService(client=FakeClient()), policy_enforcer=policy)
+    scope = ServerChatLoopScopeService(
+        server_service=ServerChatLoopService(client=FakeClient()),
+        policy_enforcer=policy,
+    )
 
     with pytest.raises(ValueError, match="Server chat loop requires server mode"):
         await scope.list_events(mode="local", run_id="run_1", after_seq=3)

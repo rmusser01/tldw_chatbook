@@ -3,11 +3,15 @@ import pytest
 from tldw_chatbook.Writing_Interop.local_writing_service import LocalWritingService
 
 
-def test_local_writing_service_persists_project_hierarchy_and_unassigned_chapters(tmp_path):
+def test_local_writing_service_persists_project_hierarchy_and_unassigned_chapters(
+    tmp_path,
+):
     service = LocalWritingService(tmp_path / "writing.db")
 
     project = service.create_project(title="Novel", author="Ada", genre="sci-fi")
-    manuscript = service.create_manuscript(project["id"], title="Book One", synopsis="Opening arc")
+    manuscript = service.create_manuscript(
+        project["id"], title="Book One", synopsis="Opening arc"
+    )
     assigned_chapter = service.create_chapter(
         project["id"],
         title="Chapter 1",
@@ -39,8 +43,12 @@ def test_local_writing_service_updates_versions_and_soft_deletes(tmp_path):
     service = LocalWritingService(tmp_path / "writing.db")
     project = service.create_project(title="Novel")
     manuscript = service.create_manuscript(project["id"], title="Book One")
-    chapter = service.create_chapter(project["id"], title="Chapter 1", manuscript_id=manuscript["id"])
-    scene = service.create_scene(chapter["id"], title="Scene 1", content_markdown="Draft")
+    chapter = service.create_chapter(
+        project["id"], title="Chapter 1", manuscript_id=manuscript["id"]
+    )
+    scene = service.create_scene(
+        chapter["id"], title="Scene 1", content_markdown="Draft"
+    )
 
     updated_scene = service.update_scene(
         scene["id"],
@@ -61,7 +69,9 @@ def test_local_writing_service_updates_and_deletes_manuscripts_and_chapters(tmp_
     service = LocalWritingService(tmp_path / "writing.db")
     project = service.create_project(title="Novel")
     manuscript = service.create_manuscript(project["id"], title="Book One")
-    chapter = service.create_chapter(project["id"], title="Chapter 1", manuscript_id=manuscript["id"])
+    chapter = service.create_chapter(
+        project["id"], title="Chapter 1", manuscript_id=manuscript["id"]
+    )
 
     updated_manuscript = service.update_manuscript(
         manuscript["id"],
@@ -87,11 +97,15 @@ def test_local_writing_service_updates_and_deletes_manuscripts_and_chapters(tmp_
     assert service.get_manuscript(manuscript["id"]) is None
 
 
-def test_local_writing_service_preserves_chapter_manuscript_when_not_explicitly_changed(tmp_path):
+def test_local_writing_service_preserves_chapter_manuscript_when_not_explicitly_changed(
+    tmp_path,
+):
     service = LocalWritingService(tmp_path / "writing.db")
     project = service.create_project(title="Novel")
     manuscript = service.create_manuscript(project["id"], title="Book One")
-    chapter = service.create_chapter(project["id"], title="Chapter 1", manuscript_id=manuscript["id"])
+    chapter = service.create_chapter(
+        project["id"], title="Chapter 1", manuscript_id=manuscript["id"]
+    )
 
     updated_chapter = service.update_chapter(
         chapter["id"],
@@ -110,16 +124,29 @@ def test_local_writing_service_rejects_stale_expected_versions(tmp_path):
         service.update_project(project["id"], expected_version=2, title="Stale")
 
 
-def test_local_writing_service_creates_manual_scene_versions_and_restores_them(tmp_path):
+def test_local_writing_service_creates_manual_scene_versions_and_restores_them(
+    tmp_path,
+):
     service = LocalWritingService(tmp_path / "writing.db")
     project = service.create_project(title="Novel")
     manuscript = service.create_manuscript(project["id"], title="Book One")
-    chapter = service.create_chapter(project["id"], title="Chapter 1", manuscript_id=manuscript["id"])
-    scene = service.create_scene(chapter["id"], title="Scene 1", content_markdown="# Draft\n\nOpening.")
+    chapter = service.create_chapter(
+        project["id"], title="Chapter 1", manuscript_id=manuscript["id"]
+    )
+    scene = service.create_scene(
+        chapter["id"], title="Scene 1", content_markdown="# Draft\n\nOpening."
+    )
 
     version = service.create_version("scene", scene["id"], label="First draft")
-    service.update_scene(scene["id"], expected_version=1, title="Scene 1 revised", content_markdown="Changed.")
-    restored = service.restore_version("scene", scene["id"], version["version_number"], expected_version=2)
+    service.update_scene(
+        scene["id"],
+        expected_version=1,
+        title="Scene 1 revised",
+        content_markdown="Changed.",
+    )
+    restored = service.restore_version(
+        "scene", scene["id"], version["version_number"], expected_version=2
+    )
     versions = service.list_versions("scene", scene["id"])
 
     assert version["source"] == "local"
@@ -136,12 +163,18 @@ def test_local_writing_service_creates_manual_scene_versions_and_restores_them(t
     assert versions[0]["payload"]["content_markdown"] == "# Draft\n\nOpening."
 
 
-def test_local_writing_service_container_versions_snapshot_structure_not_body_drafts(tmp_path):
+def test_local_writing_service_container_versions_snapshot_structure_not_body_drafts(
+    tmp_path,
+):
     service = LocalWritingService(tmp_path / "writing.db")
     project = service.create_project(title="Novel")
     manuscript = service.create_manuscript(project["id"], title="Book One")
-    chapter = service.create_chapter(project["id"], title="Chapter 1", manuscript_id=manuscript["id"])
-    scene = service.create_scene(chapter["id"], title="Scene 1", content_markdown="Opening line.")
+    chapter = service.create_chapter(
+        project["id"], title="Chapter 1", manuscript_id=manuscript["id"]
+    )
+    scene = service.create_scene(
+        chapter["id"], title="Scene 1", content_markdown="Opening line."
+    )
 
     manuscript_version = service.create_version("manuscript", manuscript["id"])
     chapter_version = service.create_version("chapter", chapter["id"])
@@ -158,8 +191,12 @@ def test_local_writing_service_lists_and_restores_soft_deleted_records(tmp_path)
     service = LocalWritingService(tmp_path / "writing.db")
     project = service.create_project(title="Novel")
     manuscript = service.create_manuscript(project["id"], title="Book One")
-    chapter = service.create_chapter(project["id"], title="Chapter 1", manuscript_id=manuscript["id"])
-    scene = service.create_scene(chapter["id"], title="Scene 1", content_markdown="Draft")
+    chapter = service.create_chapter(
+        project["id"], title="Chapter 1", manuscript_id=manuscript["id"]
+    )
+    scene = service.create_scene(
+        chapter["id"], title="Scene 1", content_markdown="Draft"
+    )
 
     assert service.delete_scene(scene["id"], expected_version=1) is True
     trash = service.list_trash(entity_type="scene")
@@ -179,20 +216,46 @@ def test_local_writing_service_reorders_and_moves_chapters_and_scenes(tmp_path):
     project = service.create_project(title="Novel")
     manuscript_a = service.create_manuscript(project["id"], title="Book One")
     manuscript_b = service.create_manuscript(project["id"], title="Book Two")
-    chapter_a = service.create_chapter(project["id"], title="Chapter 1", manuscript_id=manuscript_a["id"])
-    chapter_b = service.create_chapter(project["id"], title="Chapter 2", manuscript_id=manuscript_b["id"])
-    scene = service.create_scene(chapter_a["id"], title="Scene 1", content_markdown="Draft")
+    chapter_a = service.create_chapter(
+        project["id"], title="Chapter 1", manuscript_id=manuscript_a["id"]
+    )
+    chapter_b = service.create_chapter(
+        project["id"], title="Chapter 2", manuscript_id=manuscript_b["id"]
+    )
+    scene = service.create_scene(
+        chapter_a["id"], title="Scene 1", content_markdown="Draft"
+    )
 
-    assert service.reorder_entities(
-        project["id"],
-        "chapters",
-        [{"id": chapter_a["id"], "sort_order": 10.0, "version": 1, "new_parent_id": manuscript_b["id"]}],
-    ) is True
-    assert service.reorder_entities(
-        project["id"],
-        "scenes",
-        [{"id": scene["id"], "sort_order": 5.0, "version": 1, "new_parent_id": chapter_b["id"]}],
-    ) is True
+    assert (
+        service.reorder_entities(
+            project["id"],
+            "chapters",
+            [
+                {
+                    "id": chapter_a["id"],
+                    "sort_order": 10.0,
+                    "version": 1,
+                    "new_parent_id": manuscript_b["id"],
+                }
+            ],
+        )
+        is True
+    )
+    assert (
+        service.reorder_entities(
+            project["id"],
+            "scenes",
+            [
+                {
+                    "id": scene["id"],
+                    "sort_order": 5.0,
+                    "version": 1,
+                    "new_parent_id": chapter_b["id"],
+                }
+            ],
+        )
+        is True
+    )
 
     moved_chapter = service.get_chapter(chapter_a["id"])
     moved_scene = service.get_scene(scene["id"])
@@ -229,8 +292,12 @@ def test_local_writing_service_persists_authoring_auxiliary_resources(tmp_path):
     service = LocalWritingService(tmp_path / "writing.db")
     project = service.create_project(title="Novel")
     manuscript = service.create_manuscript(project["id"], title="Book One")
-    chapter = service.create_chapter(project["id"], title="Chapter 1", manuscript_id=manuscript["id"])
-    scene = service.create_scene(chapter["id"], title="Scene 1", content_markdown="Draft")
+    chapter = service.create_chapter(
+        project["id"], title="Chapter 1", manuscript_id=manuscript["id"]
+    )
+    scene = service.create_scene(
+        chapter["id"], title="Scene 1", content_markdown="Draft"
+    )
 
     character = service.create_character(
         project["id"],
@@ -253,7 +320,9 @@ def test_local_writing_service_persists_authoring_auxiliary_resources(tmp_path):
         properties={"climate": "rain"},
         tags=["city"],
     )
-    plot_line = service.create_plot_line(project["id"], title="Main Plot", color="#336699")
+    plot_line = service.create_plot_line(
+        project["id"], title="Main Plot", color="#336699"
+    )
     plot_event = service.create_plot_event(
         plot_line["id"],
         title="Inciting Incident",
@@ -267,7 +336,9 @@ def test_local_writing_service_persists_authoring_auxiliary_resources(tmp_path):
         plot_line_id=plot_line["id"],
         severity="high",
     )
-    scene_characters = service.link_scene_character(scene["id"], character_id=character["id"], is_pov=True)
+    scene_characters = service.link_scene_character(
+        scene["id"], character_id=character["id"], is_pov=True
+    )
     scene_world = service.link_scene_world_info(scene["id"], world_info_id=world["id"])
     citation = service.create_citation(
         scene["id"],
@@ -281,9 +352,15 @@ def test_local_writing_service_persists_authoring_auxiliary_resources(tmp_path):
         expected_version=1,
         notes="Revised notes",
     )
-    updated_world = service.update_world_info(world["id"], expected_version=1, tags=["city", "capital"])
-    updated_plot_line = service.update_plot_line(plot_line["id"], expected_version=1, status="resolved")
-    updated_plot_event = service.update_plot_event(plot_event["id"], expected_version=1, title="New Incident")
+    updated_world = service.update_world_info(
+        world["id"], expected_version=1, tags=["city", "capital"]
+    )
+    updated_plot_line = service.update_plot_line(
+        plot_line["id"], expected_version=1, status="resolved"
+    )
+    updated_plot_event = service.update_plot_event(
+        plot_event["id"], expected_version=1, title="New Incident"
+    )
     updated_plot_hole = service.update_plot_hole(
         plot_hole["id"],
         expected_version=1,
@@ -293,23 +370,40 @@ def test_local_writing_service_persists_authoring_auxiliary_resources(tmp_path):
 
     assert character["record_id"] == f"local:writing_character:{character['id']}"
     assert character["custom_fields"] == {"voice": "dry"}
-    assert service.list_characters(project["id"], role="protagonist")[0]["id"] == character["id"]
+    assert (
+        service.list_characters(project["id"], role="protagonist")[0]["id"]
+        == character["id"]
+    )
     assert updated_character["version"] == 2
     assert updated_character["notes"] == "Revised notes"
     assert relationship["bidirectional"] is False
-    assert service.list_relationships(project["id"])[0]["record_id"] == f"local:writing_relationship:{relationship['id']}"
+    assert (
+        service.list_relationships(project["id"])[0]["record_id"]
+        == f"local:writing_relationship:{relationship['id']}"
+    )
     assert world["properties"] == {"climate": "rain"}
     assert updated_world["tags"] == ["city", "capital"]
-    assert service.list_world_info(project["id"], kind="location")[0]["id"] == world["id"]
+    assert (
+        service.list_world_info(project["id"], kind="location")[0]["id"] == world["id"]
+    )
     assert updated_plot_line["status"] == "resolved"
     assert updated_plot_event["title"] == "New Incident"
     assert service.list_plot_events(plot_line["id"])[0]["id"] == plot_event["id"]
     assert updated_plot_hole["status"] == "resolved"
-    assert service.list_plot_holes(project["id"], status="resolved")[0]["id"] == plot_hole["id"]
-    assert scene_characters[0]["record_id"] == f"local:writing_scene_character_link:{scene['id']}:{character['id']}"
+    assert (
+        service.list_plot_holes(project["id"], status="resolved")[0]["id"]
+        == plot_hole["id"]
+    )
+    assert (
+        scene_characters[0]["record_id"]
+        == f"local:writing_scene_character_link:{scene['id']}:{character['id']}"
+    )
     assert scene_characters[0]["name"] == "Ada"
     assert scene_characters[0]["is_pov"] is True
-    assert scene_world[0]["record_id"] == f"local:writing_scene_world_info_link:{scene['id']}:{world['id']}"
+    assert (
+        scene_world[0]["record_id"]
+        == f"local:writing_scene_world_info_link:{scene['id']}:{world['id']}"
+    )
     assert scene_world[0]["name"] == "Capital"
     assert citation["record_id"] == f"local:writing_citation:{citation['id']}"
     assert service.list_citations(scene["id"])[0]["source_title"] == "Reference"
@@ -333,13 +427,17 @@ def test_local_writing_service_runs_local_research_and_persists_analyses(tmp_pat
     service = LocalWritingService(tmp_path / "writing.db")
     project = service.create_project(title="Novel")
     manuscript = service.create_manuscript(project["id"], title="Book One")
-    chapter = service.create_chapter(project["id"], title="Chapter 1", manuscript_id=manuscript["id"])
+    chapter = service.create_chapter(
+        project["id"], title="Chapter 1", manuscript_id=manuscript["id"]
+    )
     scene = service.create_scene(
         chapter["id"],
         title="Market Chase",
         content_markdown="Ada follows the brass automaton through the market.",
     )
-    service.create_character(project["id"], name="Ada", notes="Inventor hunting a brass automaton.")
+    service.create_character(
+        project["id"], name="Ada", notes="Inventor hunting a brass automaton."
+    )
     service.create_world_info(
         project["id"],
         kind="location",
@@ -349,7 +447,9 @@ def test_local_writing_service_runs_local_research_and_persists_analyses(tmp_pat
 
     research = service.research_scene(scene["id"], query="brass market", top_k=3)
     scene_analyses = service.analyze_scene(scene["id"], analysis_types=["pacing"])
-    chapter_analyses = service.analyze_chapter(chapter["id"], analysis_types=["continuity"])
+    chapter_analyses = service.analyze_chapter(
+        chapter["id"], analysis_types=["continuity"]
+    )
     plot_holes = service.analyze_project_plot_holes(project["id"])
     consistency = service.analyze_project_consistency(project["id"])
     listed = service.list_analyses(project["id"], scope_type="scene")

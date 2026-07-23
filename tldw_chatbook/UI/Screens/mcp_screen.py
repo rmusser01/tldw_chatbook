@@ -33,7 +33,10 @@ _MODE_TOOLTIPS = {
 # screen, mirroring how `("1-4", "mode")` documents the mode-strip Buttons'
 # own bindings rather than a screen-level one.
 MCP_SHORTCUTS = (
-    ("1-4", "mode"), ("a", "add server"), ("r", "refresh"), ("t", "test tool"),
+    ("1-4", "mode"),
+    ("a", "add server"),
+    ("r", "refresh"),
+    ("t", "test tool"),
     ("space", "cycle permission"),
 )
 
@@ -118,7 +121,9 @@ class MCPScreen(BaseAppScreen):
                 id="mcp-purpose",
                 classes="destination-purpose",
             )
-            with DestinationModeStrip(id="mcp-mode-strip", classes="destination-mode-strip"):
+            with DestinationModeStrip(
+                id="mcp-mode-strip", classes="destination-mode-strip"
+            ):
                 for mode, spec in MCP_HUB_MODES.items():
                     chip = Button(
                         spec["label"],

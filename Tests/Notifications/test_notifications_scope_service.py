@@ -37,7 +37,11 @@ class FakeServerNotificationsService:
 
     async def observe_feed(self, **kwargs):
         self.calls.append(("observe_feed", kwargs))
-        yield {"event": "notification", "data": {"id": 8, "title": "Observed"}, "event_id": "evt-8"}
+        yield {
+            "event": "notification",
+            "data": {"id": 8, "title": "Observed"},
+            "event_id": "evt-8",
+        }
 
 
 class FakeLocalNotificationsService:
@@ -79,7 +83,9 @@ class FakeLocalNotificationsService:
         self.calls.append(("update_notification", notification_id, kwargs))
         for row in self.rows:
             if row["id"] == int(notification_id):
-                row.update({key: value for key, value in kwargs.items() if value is not None})
+                row.update(
+                    {key: value for key, value in kwargs.items() if value is not None}
+                )
                 return dict(row)
         raise KeyError(notification_id)
 
@@ -128,7 +134,9 @@ async def test_notifications_scope_service_routes_server_feed_reminders_and_obse
     feed = await scope.list_feed(mode="server", limit=25)
     unread = await scope.unread_count(mode="server")
     marked = await scope.mark_read(mode="server", ids=[7])
-    created = await scope.create_reminder(mode="server", title="Follow up", schedule_kind="one_time")
+    created = await scope.create_reminder(
+        mode="server", title="Follow up", schedule_kind="one_time"
+    )
     reminders = await scope.list_reminders(mode="server")
     observed = [event async for event in scope.observe_feed(mode="server", after=7)]
 
@@ -159,7 +167,9 @@ async def test_notifications_scope_service_routes_server_feed_reminders_and_obse
 
 
 @pytest.mark.asyncio
-async def test_notifications_scope_service_can_observe_server_feed_into_event_state(tmp_path):
+async def test_notifications_scope_service_can_observe_server_feed_into_event_state(
+    tmp_path,
+):
     server = FakeServerNotificationsService()
     policy = FakePolicyEnforcer()
     repo = EventStateRepository(tmp_path / "events.db")
@@ -179,13 +189,16 @@ async def test_notifications_scope_service_can_observe_server_feed_into_event_st
 
     assert result.handled_events == 1
     assert feed["items"][0]["record_id"] == "server:notification:8"
-    assert repo.get_processed_cursor(
-        source_authority="server",
-        server_profile_id="server-a",
-        authenticated_principal_id="user-a",
-        stream_name="notifications",
-        stream_instance_id="workspace-1",
-    ).cursor == "evt-8"
+    assert (
+        repo.get_processed_cursor(
+            source_authority="server",
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            stream_name="notifications",
+            stream_instance_id="workspace-1",
+        ).cursor
+        == "evt-8"
+    )
     assert server.calls == [("observe_feed", {"after": 0, "last_event_id": None})]
     assert policy.calls == [
         "notifications.feed.observe.server",
@@ -211,7 +224,9 @@ def test_notifications_scope_service_enforces_policy_for_observed_server_feed(tm
     assert exc.value.action_id == "notifications.feed.list.server"
 
 
-def test_notifications_scope_service_raises_structured_missing_server_event_scope(tmp_path):
+def test_notifications_scope_service_raises_structured_missing_server_event_scope(
+    tmp_path,
+):
     repo = EventStateRepository(tmp_path / "events.db")
     scope = NotificationsScopeService(
         event_state_repository=repo,
@@ -225,7 +240,9 @@ def test_notifications_scope_service_raises_structured_missing_server_event_scop
 @pytest.mark.asyncio
 async def test_notifications_scope_service_requires_local_backend_for_local_feed():
     server = FakeServerNotificationsService()
-    scope = NotificationsScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer())
+    scope = NotificationsScopeService(
+        server_service=server, policy_enforcer=FakePolicyEnforcer()
+    )
 
     with pytest.raises(ValueError, match="Local notifications backend is unavailable"):
         await scope.list_feed(mode="local")
@@ -248,7 +265,9 @@ async def test_notifications_scope_service_routes_local_feed_to_client_queue():
     unread = await scope.unread_count(mode="local")
     marked = await scope.mark_read(mode="local", ids=[3])
     dismissed = await scope.dismiss(3, mode="local")
-    observed = [event async for event in scope.observe_feed(mode="local", after_id=2, limit=10)]
+    observed = [
+        event async for event in scope.observe_feed(mode="local", after_id=2, limit=10)
+    ]
 
     assert feed["items"][0]["record_id"] == "local:notification:3"
     assert feed["items"][0]["backend"] == "local"
@@ -260,7 +279,10 @@ async def test_notifications_scope_service_routes_local_feed_to_client_queue():
     assert observed[0]["data"]["record_id"] == "local:notification:3"
     assert server.calls == []
     assert local.calls == [
-        ("list_queue", {"limit": 10, "include_dismissed": False, "category": "watchlists"}),
+        (
+            "list_queue",
+            {"limit": 10, "include_dismissed": False, "category": "watchlists"},
+        ),
         ("list_queue", {"limit": 1000, "include_dismissed": False}),
         ("update_notification", 3, {"is_read": True}),
         ("update_notification", 3, {"is_dismissed": True}),
@@ -282,7 +304,9 @@ async def test_notifications_scope_service_routes_local_settings_to_client_servi
     scope = NotificationsScopeService(local_service=local, policy_enforcer=policy)
 
     settings = await scope.get_settings(mode="local")
-    updated = await scope.update_settings(mode="local", enabled=False, toast_enabled=False)
+    updated = await scope.update_settings(
+        mode="local", enabled=False, toast_enabled=False
+    )
 
     assert settings["record_id"] == "local:notification_settings"
     assert settings["backend"] == "local"
@@ -303,10 +327,14 @@ async def test_notifications_scope_service_routes_local_settings_to_client_servi
 @pytest.mark.asyncio
 async def test_notifications_scope_service_keeps_local_reminders_server_owned():
     local = FakeLocalNotificationsService()
-    scope = NotificationsScopeService(local_service=local, server_service=FakeServerNotificationsService())
+    scope = NotificationsScopeService(
+        local_service=local, server_service=FakeServerNotificationsService()
+    )
 
     with pytest.raises(ValueError, match="Server reminders are server-only"):
-        await scope.create_reminder(mode="local", title="Follow up", schedule_kind="one_time")
+        await scope.create_reminder(
+            mode="local", title="Follow up", schedule_kind="one_time"
+        )
 
     assert local.calls == []
 
@@ -320,7 +348,9 @@ async def test_notifications_scope_service_blocks_denied_server_action_before_di
     )
 
     with pytest.raises(PolicyDeniedError) as exc:
-        await scope.create_reminder(mode="server", title="Follow up", schedule_kind="one_time")
+        await scope.create_reminder(
+            mode="server", title="Follow up", schedule_kind="one_time"
+        )
 
     assert exc.value.reason_code == "server_auth_required"
     assert server.calls == []

@@ -22,7 +22,9 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, DataTable, Input, Select, Static
 
+from tldw_chatbook.MCP.readiness import HubAction
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import format_duration_ms
+from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
 
 _TABLE_COLUMNS = ("When", "Tool", "Initiator", "Decision", "Duration", "Outcome")
 
@@ -66,6 +68,7 @@ def _finding_field(finding: Mapping[str, Any], key: str) -> str:
         return "—"
     return str(value)
 
+
 # Decision vocabulary (spec-verbatim, task-7-brief.md): the permission
 # decision under which one execution-log entry ran or stopped.
 # "allowed"/"approved" reached the tool (`execute_hub_tool()`/
@@ -90,6 +93,121 @@ _INITIATOR_OPTIONS: list[tuple[str, str]] = [
 ]
 
 _BLOCKED_DECISIONS = {"denied", "denied-timeout"}
+
+# Task 1 (MCP Hub Phase 6): `state_text()` kind buckets for the Decision and
+# Outcome columns -- "allowed"/"approved" reached the tool (ready);
+# "denied"/"denied-timeout" never did (error); "downgraded" is a rug-pull
+# audit note, not a call outcome (warning, same tier a config_changed
+# permission downgrade gets elsewhere in this Hub). A missing/unrecognized
+# raw decision value (rendered "—" by `_apply_filter()` below) falls back to
+# `muted` via `.get()`'s default, same "no verdict to color" treatment
+# `mcp_tools_mode.py`'s own State-column absent case uses.
+_DECISION_KIND: dict[str, str] = {
+    "allowed": "ready",
+    "approved": "ready",
+    "denied": "error",
+    "denied-timeout": "error",
+    "downgraded": "warning",
+}
+
+
+def _decision_kind(decision: str) -> str:
+    return _DECISION_KIND.get(decision, "muted")
+
+
+# Outcome is `_outcome_text()`'s own OUTPUT vocabulary ("OK"/"Failed"/
+# "Blocked"/"Downgraded"), not the raw `decision` field -- a separate table
+# keyed on that text, mirroring `_decision_kind()`'s shape one level down
+# the rendering pipeline.
+_OUTCOME_KIND: dict[str, str] = {
+    "OK": "ready",
+    "Failed": "error",
+    "Blocked": "error",
+    "Downgraded": "warning",
+}
+
+
+def _outcome_kind(outcome: str) -> str:
+    return _OUTCOME_KIND.get(outcome, "muted")
+
+
+# Findings Severity column (T8, MCP Hub Phase 5's server-source-only Findings
+# sub-view): case-insensitive since the wire-derived `severity` field's
+# casing isn't pinned down by any schema in this codebase yet (mirrors
+# `_finding_field()`'s own defensive-read discipline for the same raw dict).
+_SEVERITY_KIND: dict[str, str] = {
+    "critical": "error",
+    "high": "error",
+    "medium": "warning",
+    "low": "info",
+    "info": "info",
+}
+
+
+def _severity_kind(severity: str) -> str:
+    return _SEVERITY_KIND.get(severity.strip().lower(), "muted")
+
+
+# Task 2 (MCP Hub Phase 6): findings carry NO machine-actionable remediation
+# code -- only the free-text `finding_type`/`message` fields every Findings-
+# table row already renders (see `_finding_field()` above). `remediation_
+# actions()` below is a pure, defensive heuristic over that text (spec-
+# verbatim keyword table, task-2-brief.md) that `MCPInspector.show_finding()`
+# uses to decide which `HubAction` buttons to render for one finding's
+# detail view. First matching bucket (in the order below) wins; an
+# unrecognized finding still gets ONE usable action (`VIEW_DETAILS`) rather
+# than none at all -- mirrors `_severity_kind()`'s own "always resolve to
+# something, never raise" contract for the same raw, wire-derived dict.
+_REMEDIATION_KEYWORDS: tuple[tuple[tuple[str, ...], tuple[HubAction, ...]], ...] = (
+    (
+        ("discovery", "stale", "catalog"),
+        (HubAction.REFRESH_DISCOVERY, HubAction.VIEW_DETAILS),
+    ),
+    (
+        ("auth", "credential", "token"),
+        (HubAction.OPEN_CREDENTIALS, HubAction.VIEW_DETAILS),
+    ),
+    (
+        ("permission", "policy"),
+        (HubAction.VIEW_DETAILS, HubAction.OPEN_AUDIT),
+    ),
+)
+_REMEDIATION_DEFAULT: tuple[HubAction, ...] = (HubAction.VIEW_DETAILS,)
+
+
+def remediation_actions(finding: Mapping[str, Any]) -> tuple[HubAction, ...]:
+    """Heuristic `HubAction` mapping for one Findings-table row.
+
+    Scans `finding_type` + `message` (lowercased, concatenated) for the
+    keyword buckets in `_REMEDIATION_KEYWORDS`, in order -- the FIRST bucket
+    with a matching keyword wins, so a finding whose text happens to match
+    more than one bucket (e.g. both "stale" and "policy") always resolves to
+    the earlier one's action set, not some combination of both. A finding
+    matching none of them falls back to `_REMEDIATION_DEFAULT`
+    (`(VIEW_DETAILS,)`).
+
+    Defensive like every other raw-dict Findings reader in this module
+    (`_finding_field()`, `_severity_kind()`): a missing/non-string
+    `finding_type` or `message` degrades to an empty contribution rather
+    than raising -- `finding` is a server-side product versioned
+    independently of this client, so every field is optional.
+
+    Args:
+        finding: One raw Findings-table row (a server-provided dict);
+            only `finding_type`/`type` and `message` are read.
+
+    Returns:
+        The matched bucket's `HubAction` tuple from
+        `_REMEDIATION_KEYWORDS`, or `_REMEDIATION_DEFAULT`
+        (`(VIEW_DETAILS,)`) when nothing matches.
+    """
+    finding_type = finding.get("finding_type") or finding.get("type") or ""
+    message = finding.get("message") or ""
+    haystack = f"{finding_type} {message}".lower()
+    for keywords, actions in _REMEDIATION_KEYWORDS:
+        if any(keyword in haystack for keyword in keywords):
+            return actions
+    return _REMEDIATION_DEFAULT
 
 
 def _format_when(ts: Any) -> str:
@@ -305,27 +423,37 @@ class MCPAuditMode(Vertical):
     def compose(self) -> ComposeResult:
         with Horizontal(id="mcp-audit-subview-strip", classes="ds-toolbar"):
             yield Button(
-                "Executions", id="mcp-audit-subview-executions",
-                classes="mcp-audit-subview-btn", compact=True,
+                "Executions",
+                id="mcp-audit-subview-executions",
+                classes="mcp-audit-subview-btn",
+                compact=True,
                 tooltip="Show the tool execution log.",
             )
             yield Button(
-                "Findings", id="mcp-audit-subview-findings",
-                classes="mcp-audit-subview-btn", compact=True,
+                "Findings",
+                id="mcp-audit-subview-findings",
+                classes="mcp-audit-subview-btn",
+                compact=True,
                 tooltip="Show governance findings for the active tldw_server target.",
             )
         with Vertical(id="mcp-audit-executions-view"):
             with Horizontal(id="mcp-audit-filter-bar", classes="ds-toolbar"):
-                yield Input(placeholder="Filter tool or server…", id="mcp-audit-filter-text")
+                yield Input(
+                    placeholder="Filter tool or server…", id="mcp-audit-filter-text"
+                )
                 with Vertical(id="mcp-audit-filter-decision-slot"):
                     yield Select(
-                        _DECISION_OPTIONS, id="mcp-audit-filter-decision",
-                        prompt="All decisions", value=Select.NULL,
+                        _DECISION_OPTIONS,
+                        id="mcp-audit-filter-decision",
+                        prompt="All decisions",
+                        value=Select.NULL,
                     )
                 with Vertical(id="mcp-audit-filter-initiator-slot"):
                     yield Select(
-                        _INITIATOR_OPTIONS, id="mcp-audit-filter-initiator",
-                        prompt="All initiators", value=Select.NULL,
+                        _INITIATOR_OPTIONS,
+                        id="mcp-audit-filter-initiator",
+                        prompt="All initiators",
+                        value=Select.NULL,
                     )
             table = DataTable(id="mcp-audit-table")
             table.cursor_type = "row"
@@ -364,9 +492,15 @@ class MCPAuditMode(Vertical):
         self._apply_filter()
 
     def _matches(self, entry: dict[str, Any]) -> bool:
-        if self._filter_decision and str(entry.get("decision") or "") != self._filter_decision:
+        if (
+            self._filter_decision
+            and str(entry.get("decision") or "") != self._filter_decision
+        ):
             return False
-        if self._filter_initiator and str(entry.get("initiator") or "") != self._filter_initiator:
+        if (
+            self._filter_initiator
+            and str(entry.get("initiator") or "") != self._filter_initiator
+        ):
             return False
         if self._filter_text:
             needle = self._filter_text.strip().lower()
@@ -416,13 +550,21 @@ class MCPAuditMode(Vertical):
             if not self._matches(entry):
                 continue
             key = str(index)
+            # Task 1 (MCP Hub Phase 6): Decision and Outcome are colored by
+            # their own semantic bucket -- separately, since a rug-pull
+            # "downgraded" decision (warning) and a hard "denied" one
+            # (error) both fall back to `_outcome_text()`'s own "Downgraded"/
+            # "Blocked" copy, which needs the identical color to stay
+            # visually consistent between the two columns for the same row.
+            decision_value = str(entry.get("decision") or "—")
+            outcome_value = _outcome_text(entry)
             table.add_row(
                 Text(_format_when(entry.get("ts"))),
                 Text(f"{entry.get('server_key', '')}::{entry.get('tool_name', '')}"),
                 Text(str(entry.get("initiator") or "—")),
-                Text(str(entry.get("decision") or "—")),
+                state_text(decision_value, _decision_kind(decision_value)),
                 Text(format_duration_ms(int(entry.get("duration_ms") or 0))),
-                Text(_outcome_text(entry)),
+                state_text(outcome_value, _outcome_kind(outcome_value)),
                 key=key,
             )
             if cursor_key is not None and key == cursor_key:
@@ -520,8 +662,9 @@ class MCPAuditMode(Vertical):
                 # wire-derived list.
                 continue
             key = str(index)
+            severity_value = _finding_field(finding, "severity")
             table.add_row(
-                Text(_finding_field(finding, "severity")),
+                state_text(severity_value, _severity_kind(severity_value)),
                 Text(_finding_field(finding, "finding_type")),
                 Text(_finding_field(finding, "message")),
                 key=key,
@@ -542,8 +685,12 @@ class MCPAuditMode(Vertical):
         `#mcp-audit-executions-view`/`#mcp-audit-findings-view` for why
         this isn't split across a CSS default too)."""
         executions_active = self._sub_view == "executions"
-        self.query_one("#mcp-audit-executions-view", Vertical).display = executions_active
-        self.query_one("#mcp-audit-findings-view", Vertical).display = not executions_active
+        self.query_one(
+            "#mcp-audit-executions-view", Vertical
+        ).display = executions_active
+        self.query_one(
+            "#mcp-audit-findings-view", Vertical
+        ).display = not executions_active
         self.query_one("#mcp-audit-subview-executions", Button).set_class(
             executions_active, "is-active"
         )
@@ -584,11 +731,15 @@ class MCPAuditMode(Vertical):
         # echo either.
         if event.select.id == "mcp-audit-filter-decision":
             event.stop()
-            self._filter_decision = None if event.value is Select.NULL else str(event.value)
+            self._filter_decision = (
+                None if event.value is Select.NULL else str(event.value)
+            )
             self._apply_filter()
         elif event.select.id == "mcp-audit-filter-initiator":
             event.stop()
-            self._filter_initiator = None if event.value is Select.NULL else str(event.value)
+            self._filter_initiator = (
+                None if event.value is Select.NULL else str(event.value)
+            )
             self._apply_filter()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:

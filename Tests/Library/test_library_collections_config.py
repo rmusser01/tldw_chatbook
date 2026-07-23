@@ -9,7 +9,9 @@ import pytest
 from tldw_chatbook import config
 
 
-def test_library_collections_custom_db_path_is_validated(monkeypatch, tmp_path: Path) -> None:
+def test_library_collections_custom_db_path_is_validated(
+    monkeypatch, tmp_path: Path
+) -> None:
     safe_path = tmp_path / "collections.db"
     monkeypatch.setattr(
         config,
@@ -20,7 +22,9 @@ def test_library_collections_custom_db_path_is_validated(monkeypatch, tmp_path: 
     assert config.get_library_collections_db_path() == safe_path.resolve()
 
 
-def test_library_collections_custom_db_path_rejects_dangerous_input(monkeypatch) -> None:
+def test_library_collections_custom_db_path_rejects_dangerous_input(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(
         config,
         "get_cli_setting",

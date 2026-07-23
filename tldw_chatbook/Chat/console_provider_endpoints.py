@@ -7,7 +7,9 @@ from ipaddress import ip_address
 from urllib.parse import urlparse, urlunparse
 
 
-UNSAVED_ENDPOINT_COPY = "Provider blocked: save the endpoint in Settings before using it from Console."
+UNSAVED_ENDPOINT_COPY = (
+    "Provider blocked: save the endpoint in Settings before using it from Console."
+)
 URL_BASED_PROVIDER_KEYS = frozenset(
     {
         "aphrodite",
@@ -57,7 +59,9 @@ def first_configured_endpoint(provider_settings: Mapping[str, object]) -> str | 
     return None
 
 
-def provider_uses_endpoint(provider_key: str, provider_settings: Mapping[str, object]) -> bool:
+def provider_uses_endpoint(
+    provider_key: str, provider_settings: Mapping[str, object]
+) -> bool:
     """Return whether a provider should validate saved endpoint overrides.
 
     Args:
@@ -73,7 +77,9 @@ def provider_uses_endpoint(provider_key: str, provider_settings: Mapping[str, ob
     )
 
 
-def generic_endpoint_differs(base_url: str | None, provider_settings: Mapping[str, object]) -> bool:
+def generic_endpoint_differs(
+    base_url: str | None, provider_settings: Mapping[str, object]
+) -> bool:
     """Return whether a session endpoint differs from the persisted endpoint.
 
     Args:
@@ -92,7 +98,9 @@ def generic_endpoint_differs(base_url: str | None, provider_settings: Mapping[st
     return selected_base_url != configured_base_url
 
 
-def unsaved_endpoint_copy(base_url: str | None, provider_settings: Mapping[str, object]) -> str:
+def unsaved_endpoint_copy(
+    base_url: str | None, provider_settings: Mapping[str, object]
+) -> str:
     """Return actionable recovery copy with safe endpoint details.
 
     Args:
@@ -104,7 +112,10 @@ def unsaved_endpoint_copy(base_url: str | None, provider_settings: Mapping[str, 
         fragments from endpoint values.
     """
     selected = safe_endpoint_display(base_url) or "selected session endpoint"
-    configured = safe_endpoint_display(first_configured_endpoint(provider_settings)) or "not saved"
+    configured = (
+        safe_endpoint_display(first_configured_endpoint(provider_settings))
+        or "not saved"
+    )
     return f"{UNSAVED_ENDPOINT_COPY} Selected endpoint: {selected}. Saved endpoint: {configured}."
 
 
@@ -141,7 +152,9 @@ def normalize_generic_endpoint_for_compare(url: str | None) -> str:
     return _format_endpoint(parsed_endpoint, drop_default_port=True)
 
 
-def _parse_http_endpoint(url: str | None) -> tuple[bool, str, str, int | None, str] | None:
+def _parse_http_endpoint(
+    url: str | None,
+) -> tuple[bool, str, str, int | None, str] | None:
     raw_value = str(url or "")
     raw_url = raw_value.strip()
     if not raw_url:
@@ -170,7 +183,9 @@ def _parse_http_endpoint(url: str | None) -> tuple[bool, str, str, int | None, s
     return (has_scheme, scheme, hostname, port, path)
 
 
-def _is_allowed_endpoint_host(hostname: str, *, has_scheme: bool, port: int | None) -> bool:
+def _is_allowed_endpoint_host(
+    hostname: str, *, has_scheme: bool, port: int | None
+) -> bool:
     if hostname == "localhost":
         return True
     try:
@@ -196,7 +211,10 @@ def _is_dns_label(label: str) -> bool:
         1 <= len(label) <= 63
         and label[0].isalnum()
         and label[-1].isalnum()
-        and all(character.isascii() and (character.isalnum() or character == "-") for character in label)
+        and all(
+            character.isascii() and (character.isalnum() or character == "-")
+            for character in label
+        )
     )
 
 
@@ -209,8 +227,14 @@ def _format_endpoint(
     host = hostname
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"
-    default_port = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
-    netloc = host if port is None or (drop_default_port and default_port) else f"{host}:{port}"
+    default_port = (scheme == "http" and port == 80) or (
+        scheme == "https" and port == 443
+    )
+    netloc = (
+        host
+        if port is None or (drop_default_port and default_port)
+        else f"{host}:{port}"
+    )
     if has_scheme:
         return urlunparse((scheme, netloc, path, "", "", "")).rstrip("/")
     return f"{netloc}{path}".rstrip("/")

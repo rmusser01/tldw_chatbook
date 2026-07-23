@@ -59,7 +59,11 @@ class TestDiagnosticsCore:
         assert by_pattern["HR"].status == "skipped:probability"
 
     def test_cooldown_is_near_miss(self):
-        entry = _entry("BP", "blood pressure", timed_effects={"sticky": 0, "cooldown": 3600, "delay": 0})
+        entry = _entry(
+            "BP",
+            "blood pressure",
+            timed_effects={"sticky": 0, "cooldown": 3600, "delay": 0},
+        )
         entry.last_triggered = datetime.now() - timedelta(seconds=10)
         _, diag = process_user_input_with_diagnostics("BP now", [entry])
         assert diag.entries[0].status == "skipped:timed_effects"
@@ -68,10 +72,14 @@ class TestDiagnosticsCore:
     def test_budget_truncation_marks_survivor_accounting_and_flag(self):
         # Costs: big=6 tokens, small=1 token. Budget 5: big fits? 6 > 5 -> break
         # at big; small (after the break) is ALSO dropped (walk-and-stop).
-        cheap = _entry("aa", "one")                     # cost 1 - fits first (budget walks the unified (strategy+priority) order; alphabetical == stored in this fixture)
-        big = _entry("bb", "w1 w2 w3 w4 w5 w6")         # cost 6
-        small = _entry("cc", "tiny")                    # cost 1, after the break
-        _, diag = process_user_input_with_diagnostics("aa bb cc", [cheap, big, small], max_tokens=5)
+        cheap = _entry(
+            "aa", "one"
+        )  # cost 1 - fits first (budget walks the unified (strategy+priority) order; alphabetical == stored in this fixture)
+        big = _entry("bb", "w1 w2 w3 w4 w5 w6")  # cost 6
+        small = _entry("cc", "tiny")  # cost 1, after the break
+        _, diag = process_user_input_with_diagnostics(
+            "aa bb cc", [cheap, big, small], max_tokens=5
+        )
         by_pattern = {r.pattern: r for r in diag.entries}
         assert by_pattern["aa"].status == "fired"
         assert by_pattern["bb"].status == "skipped:token_budget"
@@ -82,8 +90,8 @@ class TestDiagnosticsCore:
 
     def test_sequential_consumption_yields_no_replacement(self):
         # Post-strategy order is alphabetical by raw_key: "aa bb" applies before "bb".
-        eater = _entry("aa bb", "eaten")   # replaces the whole phrase first
-        victim = _entry("bb", "late")      # matched original text; nothing left to replace
+        eater = _entry("aa bb", "eaten")  # replaces the whole phrase first
+        victim = _entry("bb", "late")  # matched original text; nothing left to replace
         text, diag = process_user_input_with_diagnostics("aa bb here", [eater, victim])
         assert text == "eaten here"
         by_pattern = {r.pattern: r for r in diag.entries}
@@ -98,13 +106,18 @@ class TestDiagnosticsCore:
         import tldw_chatbook.Character_Chat.Chat_Dictionary_Lib as cdl_module
 
         monkeypatch.setattr(
-            cdl_module, "enforce_token_budget",
-            lambda entries, max_tokens: (_ for _ in ()).throw(RuntimeError("budget boom")),
+            cdl_module,
+            "enforce_token_budget",
+            lambda entries, max_tokens: (_ for _ in ()).throw(
+                RuntimeError("budget boom")
+            ),
         )
         entries = [_entry("BP", "blood pressure")]
         text, diag = process_user_input_with_diagnostics("BP now", entries)
         assert text == "BP now"  # degraded, nothing replaced
-        assert diag.budget_exceeded is False  # error, not truncation  (RED-first: True pre-fix)
+        assert (
+            diag.budget_exceeded is False
+        )  # error, not truncation  (RED-first: True pre-fix)
         assert diag.entries[0].status == "skipped:token_budget"
 
     def test_replacement_error_gets_distinct_status(self, monkeypatch):
@@ -117,7 +130,9 @@ class TestDiagnosticsCore:
         entries = [_entry("BP", "blood pressure")]
         text, diag = process_user_input_with_diagnostics("BP now", entries)
         assert text == "BP now"
-        assert diag.entries[0].status == "error:replacement"  # RED-first: "no_replacement" pre-fix
+        assert (
+            diag.entries[0].status == "error:replacement"
+        )  # RED-first: "no_replacement" pre-fix
         assert diag.matched == diag.fired + diag.skipped
 
     def test_totals_invariant_and_to_dict_shape(self):
@@ -129,13 +144,24 @@ class TestDiagnosticsCore:
         assert diag.matched == diag.fired + diag.skipped
         payload = diag.to_dict()
         assert set(payload) == {
-            "entries", "matched", "fired", "skipped", "total_replacements",
-            "tokens_used", "token_budget", "budget_exceeded",
+            "entries",
+            "matched",
+            "fired",
+            "skipped",
+            "total_replacements",
+            "tokens_used",
+            "token_budget",
+            "budget_exceeded",
         }
         record = payload["entries"][0]
         assert set(record) == {
-            "input_index", "pattern", "status", "replacements",
-            "token_cost", "applied_order", "content_preview",
+            "input_index",
+            "pattern",
+            "status",
+            "replacements",
+            "token_cost",
+            "applied_order",
+            "content_preview",
         }
 
 
@@ -150,7 +176,9 @@ class TestWrapperContract:
         ]
         sample = "BP HR SpO2 zz end"
         wrapped = process_user_input(sample, entries, max_tokens=6)
-        core_text, _ = process_user_input_with_diagnostics(sample, entries, max_tokens=6)
+        core_text, _ = process_user_input_with_diagnostics(
+            sample, entries, max_tokens=6
+        )
         assert wrapped == core_text
 
     def test_none_entries_degrades_to_unchanged_input(self):
@@ -165,10 +193,12 @@ class TestWrapperContract:
             def __init__(self, items):
                 self._items = items
                 self._used = False
+
             def __iter__(self):
                 assert not self._used, "consumed twice"
                 self._used = True
                 return iter(self._items)
+
             def __len__(self):
                 return len(self._items)
 

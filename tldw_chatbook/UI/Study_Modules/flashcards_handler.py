@@ -6,7 +6,16 @@ import asyncio
 from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
-from textual.widgets import Button, Input, Label, ListItem, ListView, Select, Static, TextArea
+from textual.widgets import (
+    Button,
+    Input,
+    Label,
+    ListItem,
+    ListView,
+    Select,
+    Static,
+    TextArea,
+)
 
 from ...Study_Interop import LocalStudyService, ServerStudyService, StudyScopeService
 
@@ -14,16 +23,16 @@ if TYPE_CHECKING:
     from ..Study_Window import StudyWindow
 
 
-FLASHCARD_SCOPE_UNAVAILABLE_TOOLTIP = (
-    "Workspace Flashcards require server mode. Switch to server mode or use Global Study to edit flashcards."
+FLASHCARD_SCOPE_UNAVAILABLE_TOOLTIP = "Workspace Flashcards require server mode. Switch to server mode or use Global Study to edit flashcards."
+FLASHCARD_SELECT_DECK_TOOLTIP = (
+    "Select or create a deck before adding cards or starting review."
 )
-FLASHCARD_SELECT_DECK_TOOLTIP = "Select or create a deck before adding cards or starting review."
 FLASHCARD_SELECT_CARD_DELETE_TOOLTIP = "Select a flashcard before deleting it."
-FLASHCARD_SELECT_CARD_MOVE_TOOLTIP = "Select a flashcard and a different target deck before moving it."
-FLASHCARD_SELECT_DECK_DELETE_TOOLTIP = "Select a deck before deleting it."
-FLASHCARD_DELETE_DECK_SERVER_TOOLTIP = (
-    "Server mode does not support deck deletion. Delete cards individually or switch to local mode."
+FLASHCARD_SELECT_CARD_MOVE_TOOLTIP = (
+    "Select a flashcard and a different target deck before moving it."
 )
+FLASHCARD_SELECT_DECK_DELETE_TOOLTIP = "Select a deck before deleting it."
+FLASHCARD_DELETE_DECK_SERVER_TOOLTIP = "Server mode does not support deck deletion. Delete cards individually or switch to local mode."
 
 
 class StudyFlashcardsController:
@@ -98,9 +107,9 @@ class StudyFlashcardsController:
             return True
         if self._scope_type_value(scope_state) != "workspace":
             return True
-        return bool(getattr(scope_state, "workspace_scope_available", False)) and not bool(
-            str(getattr(scope_state, "error_message", "") or "").strip()
-        )
+        return bool(
+            getattr(scope_state, "workspace_scope_available", False)
+        ) and not bool(str(getattr(scope_state, "error_message", "") or "").strip())
 
     def _scope_unavailable_message(self) -> str:
         scope_state = self._scope_state()
@@ -118,7 +127,9 @@ class StudyFlashcardsController:
                 "No study decks in this workspace yet. Create a workspace deck, "
                 "or switch to Global Study to review existing decks."
             )
-        return "No study decks yet. Create a deck, add flashcards, then start reviewing."
+        return (
+            "No study decks yet. Create a deck, add flashcards, then start reviewing."
+        )
 
     def _scope_arguments(self) -> dict[str, Any]:
         scope_type = self._scope_type()
@@ -185,7 +196,9 @@ class StudyFlashcardsController:
             local_service = LocalStudyService(db=db)
 
         try:
-            server_service = ServerStudyService.from_config(getattr(self.app_instance, "app_config", {}) or {})
+            server_service = ServerStudyService.from_config(
+                getattr(self.app_instance, "app_config", {}) or {}
+            )
         except ValueError:
             server_service = ServerStudyService(client=None)
 
@@ -211,7 +224,9 @@ class StudyFlashcardsController:
 
     @staticmethod
     def _is_blank_select_value(value: Any) -> bool:
-        return value in {None, "", False, Select.BLANK} or str(value).startswith("Select.")
+        return value in {None, "", False, Select.BLANK} or str(value).startswith(
+            "Select."
+        )
 
     def _selected_deck_id(self) -> Optional[str]:
         try:
@@ -288,7 +303,9 @@ class StudyFlashcardsController:
         self._sync_move_target_options()
         try:
             self.reset_review_panel(
-                self._scope_unavailable_message() if not self._scope_is_available() else "Select a deck to review cards."
+                self._scope_unavailable_message()
+                if not self._scope_is_available()
+                else "Select a deck to review cards."
             )
         except Exception:
             pass
@@ -323,7 +340,9 @@ class StudyFlashcardsController:
 
         target_select.set_options(options)
         valid_values = {option[1] for option in options}
-        if str(getattr(target_select, "value", "")) not in {str(value) for value in valid_values}:
+        if str(getattr(target_select, "value", "")) not in {
+            str(value) for value in valid_values
+        }:
             target_select.clear()
 
     def _update_lifecycle_controls(self) -> None:
@@ -332,8 +351,12 @@ class StudyFlashcardsController:
             create_deck_button = self.window.query_one("#create-deck-button", Button)
             create_card_button = self.window.query_one("#create-card-btn", Button)
             start_review_button = self.window.query_one("#start-review-btn", Button)
-            move_selected_button = self.window.query_one("#move-selected-card-button", Button)
-            delete_selected_button = self.window.query_one("#delete-selected-card-button", Button)
+            move_selected_button = self.window.query_one(
+                "#move-selected-card-button", Button
+            )
+            delete_selected_button = self.window.query_one(
+                "#delete-selected-card-button", Button
+            )
             delete_deck_button = self.window.query_one("#delete-deck-button", Button)
         except Exception:
             return
@@ -363,19 +386,33 @@ class StudyFlashcardsController:
             return
 
         delete_selected_button.disabled = selected_card is None
-        move_selected_button.disabled = selected_card is None or selected_target_deck is None
-        delete_deck_button.disabled = self._current_mode() == "server" or selected_deck is None
+        move_selected_button.disabled = (
+            selected_card is None or selected_target_deck is None
+        )
+        delete_deck_button.disabled = (
+            self._current_mode() == "server" or selected_deck is None
+        )
         create_deck_button.tooltip = None
-        create_card_button.tooltip = FLASHCARD_SELECT_DECK_TOOLTIP if selected_deck is None else None
-        start_review_button.tooltip = FLASHCARD_SELECT_DECK_TOOLTIP if selected_deck is None else None
-        delete_selected_button.tooltip = FLASHCARD_SELECT_CARD_DELETE_TOOLTIP if selected_card is None else None
+        create_card_button.tooltip = (
+            FLASHCARD_SELECT_DECK_TOOLTIP if selected_deck is None else None
+        )
+        start_review_button.tooltip = (
+            FLASHCARD_SELECT_DECK_TOOLTIP if selected_deck is None else None
+        )
+        delete_selected_button.tooltip = (
+            FLASHCARD_SELECT_CARD_DELETE_TOOLTIP if selected_card is None else None
+        )
         move_selected_button.tooltip = (
-            FLASHCARD_SELECT_CARD_MOVE_TOOLTIP if selected_card is None or selected_target_deck is None else None
+            FLASHCARD_SELECT_CARD_MOVE_TOOLTIP
+            if selected_card is None or selected_target_deck is None
+            else None
         )
         if self._current_mode() == "server":
             delete_deck_button.tooltip = FLASHCARD_DELETE_DECK_SERVER_TOOLTIP
         else:
-            delete_deck_button.tooltip = FLASHCARD_SELECT_DECK_DELETE_TOOLTIP if selected_deck is None else None
+            delete_deck_button.tooltip = (
+                FLASHCARD_SELECT_DECK_DELETE_TOOLTIP if selected_deck is None else None
+            )
 
     def _parse_tags(self, text: str) -> list[str]:
         return [item for item in str(text or "").split() if item.strip()]
@@ -383,7 +420,9 @@ class StudyFlashcardsController:
     def _set_review_status(self, message: str) -> None:
         self.window.query_one("#review-status", Static).update(message)
 
-    def _set_review_card(self, *, front: str = "", back: str = "", show_back: bool = False) -> None:
+    def _set_review_card(
+        self, *, front: str = "", back: str = "", show_back: bool = False
+    ) -> None:
         front_widget = self.window.query_one("#review-front", Static)
         back_widget = self.window.query_one("#review-back", Static)
         front_widget.update(front)
@@ -403,7 +442,10 @@ class StudyFlashcardsController:
         back_widget = self.window.query_one("#review-back", Static)
         intervals_widget = self.window.query_one("#review-next-intervals", Static)
         show_answer_button = self.window.query_one("#show-answer-button", Button)
-        rating_buttons = [self.window.query_one(f"#review-rating-{rating}", Button) for rating in range(6)]
+        rating_buttons = [
+            self.window.query_one(f"#review-rating-{rating}", Button)
+            for rating in range(6)
+        ]
         return {
             "status": str(self.window.query_one("#review-status", Static).render()),
             "front": str(front_widget.render()),
@@ -428,7 +470,9 @@ class StudyFlashcardsController:
             ratings_enabled=bool(state.get("ratings_enabled")),
         )
 
-    def _set_review_controls(self, *, show_answer_enabled: bool, ratings_enabled: bool) -> None:
+    def _set_review_controls(
+        self, *, show_answer_enabled: bool, ratings_enabled: bool
+    ) -> None:
         show_answer = self.window.query_one("#show-answer-button", Button)
         show_answer.disabled = not show_answer_enabled
         for rating in range(6):
@@ -463,7 +507,9 @@ class StudyFlashcardsController:
             self.reset_review_panel("Study flashcards backend is unavailable.")
             return
         if not await self._wait_for_flashcards_widgets():
-            logger.warning("Study flashcards UI did not finish mounting before initialization")
+            logger.warning(
+                "Study flashcards UI did not finish mounting before initialization"
+            )
             self.reset_review_panel("Study flashcards UI is still loading.")
             return
         if not self._scope_is_available():
@@ -615,7 +661,9 @@ class StudyFlashcardsController:
             return
 
         name_input.value = ""
-        created_deck_id = str(created.get("backing_id") or created.get("record_id") or Select.BLANK)
+        created_deck_id = str(
+            created.get("backing_id") or created.get("record_id") or Select.BLANK
+        )
         await self.refresh_decks(
             preserve_selection=False,
             preferred_selection=created_deck_id,
@@ -719,7 +767,9 @@ class StudyFlashcardsController:
             return
 
         review_snapshot = None
-        if self.current_review_card and str(self.current_review_card.get("backing_id") or "") == str(selected_card.get("backing_id") or ""):
+        if self.current_review_card and str(
+            self.current_review_card.get("backing_id") or ""
+        ) == str(selected_card.get("backing_id") or ""):
             await self.end_review_session_if_needed()
             self.reset_review_panel("Selected flashcard deleted.")
             preserve_review_panel = False
@@ -736,7 +786,12 @@ class StudyFlashcardsController:
         self._reconcile_live_selection_state()
         selected_card = self.selected_card_record
         target_deck = self._selected_target_deck_record()
-        if service is None or selected_card is None or target_deck is None or not self._scope_is_available():
+        if (
+            service is None
+            or selected_card is None
+            or target_deck is None
+            or not self._scope_is_available()
+        ):
             return
 
         try:
@@ -752,7 +807,9 @@ class StudyFlashcardsController:
             return
 
         review_snapshot = None
-        if self.current_review_card and str(self.current_review_card.get("backing_id") or "") == str(selected_card.get("backing_id") or ""):
+        if self.current_review_card and str(
+            self.current_review_card.get("backing_id") or ""
+        ) == str(selected_card.get("backing_id") or ""):
             await self.end_review_session_if_needed()
             self.reset_review_panel("Selected flashcard moved.")
             preserve_review_panel = False
@@ -791,7 +848,11 @@ class StudyFlashcardsController:
         self.selected_card_record = None
         await self.refresh_decks(preserve_selection=False)
         await self.refresh_cards()
-        message = "Select a deck to review cards." if self.has_decks else self._scope_empty_message()
+        message = (
+            "Select a deck to review cards."
+            if self.has_decks
+            else self._scope_empty_message()
+        )
         self.reset_review_panel(message)
 
     async def start_review(self) -> None:
@@ -800,7 +861,9 @@ class StudyFlashcardsController:
         if self._pending_review_session_teardown is not None:
             await self.end_review_session_if_needed()
             if self._pending_review_session_teardown is not None:
-                self._notify("Failed to close the previous review session.", severity="error")
+                self._notify(
+                    "Failed to close the previous review session.", severity="error"
+                )
                 return
         deck_id = self._selected_deck_id()
         if deck_id is None:
@@ -820,7 +883,11 @@ class StudyFlashcardsController:
 
     async def submit_rating(self, rating: int) -> None:
         service = self._scope_service()
-        if service is None or not self.current_review_card or not self._scope_is_available():
+        if (
+            service is None
+            or not self.current_review_card
+            or not self._scope_is_available()
+        ):
             return
 
         try:
@@ -849,7 +916,11 @@ class StudyFlashcardsController:
     async def _load_next_review_candidate(self, *, deck_id: Optional[str]) -> None:
         service = self._scope_service()
         if service is None or deck_id is None or not self._scope_is_available():
-            self.reset_review_panel(self._scope_empty_message() if deck_id is None and not self.has_decks else "Select a deck to review cards.")
+            self.reset_review_panel(
+                self._scope_empty_message()
+                if deck_id is None and not self.has_decks
+                else "Select a deck to review cards."
+            )
             return
 
         try:
@@ -866,7 +937,11 @@ class StudyFlashcardsController:
         card = candidate.get("card")
         if not card:
             await self.end_review_session_if_needed()
-            self.reset_review_panel(self._scope_empty_message() if not self.has_decks else "No cards due for review.")
+            self.reset_review_panel(
+                self._scope_empty_message()
+                if not self.has_decks
+                else "No cards due for review."
+            )
             return
 
         self.current_review_card = card
@@ -875,7 +950,9 @@ class StudyFlashcardsController:
         if session_id is not None:
             self.current_review_session_id = int(session_id)
             self.current_review_session_mode = self._current_mode()
-        self._set_review_status(f"Next card ({candidate.get('selection_reason', 'unknown')}).")
+        self._set_review_status(
+            f"Next card ({candidate.get('selection_reason', 'unknown')})."
+        )
         self._set_review_card(
             front=str(card.get("front") or ""),
             back=str(card.get("back") or ""),
@@ -896,7 +973,10 @@ class StudyFlashcardsController:
             await service.end_review_session(**teardown_request)
         except Exception:
             self._pending_review_session_teardown = teardown_request
-            logger.opt(exception=True).warning("Failed to end review session {}", teardown_request.get("review_session_id"))
+            logger.opt(exception=True).warning(
+                "Failed to end review session {}",
+                teardown_request.get("review_session_id"),
+            )
             return
 
         self._pending_review_session_teardown = None

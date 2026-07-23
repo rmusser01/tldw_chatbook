@@ -42,6 +42,7 @@ This file has three kinds of coverage, matching the task's ACs:
       scoped to `tldw_chatbook.config` and `tldw_chatbook.Utils.Utils`
       directly, which is the actual surface TASK-258 touches.
 """
+
 from __future__ import annotations
 
 import builtins
@@ -136,9 +137,7 @@ class TestBothCachesServeFromOneLoad:
         with _real_config(tmp_path, monkeypatch, SCRATCH_TOML):
             # Prime both caches with the original scratch value first.
             assert get_cli_setting("chat_defaults", "temperature", None) == 0.42
-            assert (
-                config_mod.load_settings()["chat_defaults"]["temperature"] == 0.42
-            )
+            assert config_mod.load_settings()["chat_defaults"]["temperature"] == 0.42
 
             assert config_mod.save_setting_to_cli_config(
                 "chat_defaults", "temperature", 0.99
@@ -147,9 +146,7 @@ class TestBothCachesServeFromOneLoad:
             # No force_reload here on purpose -- save_setting_to_cli_config
             # must have already invalidated + reloaded both caches.
             assert get_cli_setting("chat_defaults", "temperature", None) == 0.99
-            assert (
-                config_mod.load_settings()["chat_defaults"]["temperature"] == 0.99
-            )
+            assert config_mod.load_settings()["chat_defaults"]["temperature"] == 0.99
 
 
 # --- (b) Embedded default TOML parsed at most once per process ------------
@@ -216,7 +213,7 @@ class TestEmbeddedDefaultParsedOnce:
         monkeypatch.setattr(config_mod.tomllib, "loads", _counting_loads)
 
         config_path = tmp_path / "parse-count-config.toml"
-        config_path.write_text("[general]\ndefault_tab = \"chat\"\n", encoding="utf-8")
+        config_path.write_text('[general]\ndefault_tab = "chat"\n', encoding="utf-8")
         monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
 
         config_mod.load_cli_config_and_ensure_existence(force_reload=True)
@@ -250,7 +247,7 @@ class TestEmbeddedDefaultParsedOnce:
         this consolidation and intentionally not asserted here.
         """
         config_path = tmp_path / "parse-count-user-config.toml"
-        config_path.write_text("[general]\ndefault_tab = \"chat\"\n", encoding="utf-8")
+        config_path.write_text('[general]\ndefault_tab = "chat"\n', encoding="utf-8")
         monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
         # Start both caches cold for this path, matching a fresh process.
         monkeypatch.setattr(config_mod, "_CONFIG_CACHE", None)
@@ -285,7 +282,9 @@ class TestEmbeddedDefaultParsedOnce:
 # --- (c) chardet stays out of sys.modules for config.py's own import chain -
 
 
-def _run_isolated_python(tmp_path: Path, code: str) -> "subprocess.CompletedProcess[str]":
+def _run_isolated_python(
+    tmp_path: Path, code: str
+) -> "subprocess.CompletedProcess[str]":
     """Run a Python snippet in a fresh interpreter with isolated config/data
     dirs -- NEVER the real `~/.config/tldw_cli`.
 

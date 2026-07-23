@@ -244,10 +244,14 @@ class ResearchDatabase(BaseDB):
         updates = {
             "status": status if status is not None else current["status"],
             "phase": phase if phase is not None else current["phase"],
-            "control_state": control_state if control_state is not None else current["control_state"],
+            "control_state": control_state
+            if control_state is not None
+            else current["control_state"],
             "progress_percent": progress_percent,
             "progress_message": progress_message,
-            "completed_at": _utc_now() if status in {"completed", "failed", "cancelled"} else current["completed_at"],
+            "completed_at": _utc_now()
+            if status in {"completed", "failed", "cancelled"}
+            else current["completed_at"],
             "updated_at": _utc_now(),
         }
         with self.transaction() as conn:

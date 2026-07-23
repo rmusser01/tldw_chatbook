@@ -17,8 +17,7 @@ def _assert_local_marks_schema(db):
     conn = db.get_connection()
     columns = conn.execute("PRAGMA table_info(conversation_local_marks)").fetchall()
     assert [
-        (row["name"], row["type"], row["notnull"], row["pk"])
-        for row in columns
+        (row["name"], row["type"], row["notnull"], row["pk"]) for row in columns
     ] == [
         ("conversation_id", "TEXT", 1, 1),
         ("mark_type", "TEXT", 1, 2),
@@ -42,10 +41,7 @@ def _assert_local_marks_schema(db):
         "PRAGMA index_xinfo(idx_conversation_local_marks_type)"
     ).fetchall()
     indexed_columns = [row for row in index_xinfo_columns if row["key"]]
-    assert [
-        (row["name"], row["desc"])
-        for row in indexed_columns
-    ] == [
+    assert [(row["name"], row["desc"]) for row in indexed_columns] == [
         ("mark_type", 0),
         ("updated_at", 1),
         ("conversation_id", 0),
@@ -93,10 +89,14 @@ def test_local_marks_migrate_from_v16_to_v17_with_expected_schema(tmp_path):
 
     migrated = CharactersRAGDB(str(db_path), client_id="test-client")
 
-    version = migrated.get_connection().execute(
-        "SELECT version FROM db_schema_version WHERE schema_name = ?",
-        (migrated._SCHEMA_NAME,),
-    ).fetchone()
+    version = (
+        migrated.get_connection()
+        .execute(
+            "SELECT version FROM db_schema_version WHERE schema_name = ?",
+            (migrated._SCHEMA_NAME,),
+        )
+        .fetchone()
+    )
     assert version["version"] == migrated._CURRENT_SCHEMA_VERSION
     _assert_local_marks_schema(migrated)
 
@@ -166,9 +166,11 @@ def test_local_marks_do_not_create_sync_log_entries(tmp_path):
 
     ConversationLocalMarksService(db).star_conversation(conversation_id)
 
-    rows = db.get_connection().execute(
-        "SELECT entity, entity_id, operation, payload FROM sync_log"
-    ).fetchall()
+    rows = (
+        db.get_connection()
+        .execute("SELECT entity, entity_id, operation, payload FROM sync_log")
+        .fetchall()
+    )
     assert rows == []
 
 

@@ -42,7 +42,9 @@ def _privilege_self_payload() -> dict:
                 "ownership_predicates": ["owner"],
                 "status": "allowed",
                 "blocked_reason": None,
-                "dependencies": [{"id": "auth", "type": "dependency", "module": "auth"}],
+                "dependencies": [
+                    {"id": "auth", "type": "dependency", "module": "auth"}
+                ],
                 "dependency_sources": ["auth"],
                 "rate_limit_class": "standard",
                 "rate_limit_resources": ["notes"],
@@ -51,7 +53,9 @@ def _privilege_self_payload() -> dict:
                 "tags": ["notes"],
             }
         ],
-        "recommended_actions": [{"privilege_scope_id": "notes.read", "action": "none", "reason": None}],
+        "recommended_actions": [
+            {"privilege_scope_id": "notes.read", "action": "none", "reason": None}
+        ],
     }
 
 
@@ -74,8 +78,14 @@ async def test_user_governance_client_routes_consent_and_self_privileges(monkeyp
     privileges = await client.get_self_privilege_map(resource="notes")
 
     assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/consent/preferences")
-    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/consent/preferences/personalization")
-    assert mocked.await_args_list[2].args[:2] == ("DELETE", "/api/v1/consent/preferences/analytics")
+    assert mocked.await_args_list[1].args[:2] == (
+        "POST",
+        "/api/v1/consent/preferences/personalization",
+    )
+    assert mocked.await_args_list[2].args[:2] == (
+        "DELETE",
+        "/api/v1/consent/preferences/analytics",
+    )
     assert mocked.await_args_list[3].args[:2] == ("GET", "/api/v1/privileges/self")
     assert mocked.await_args_list[3].kwargs["params"] == {"resource": "notes"}
 

@@ -6,8 +6,6 @@ import re
 from collections import Counter
 from pathlib import Path
 
-import pytest
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AUDIT_PATH = REPO_ROOT / "Docs/Development/server-client-provider-migration-audit.md"
@@ -43,7 +41,9 @@ def _extract_semantic_matches(notes: str) -> Counter[str]:
     snippets = Counter()
     for snippet in re.findall(r"`([^`]+)`", notes[marker.end() :]):
         normalized = _normalize_builder_line(snippet)
-        if DIRECT_BUILDER_RE.search(normalized) or INDIRECT_BUILDER_RE.search(normalized):
+        if DIRECT_BUILDER_RE.search(normalized) or INDIRECT_BUILDER_RE.search(
+            normalized
+        ):
             snippets[normalized] += 1
     return snippets
 
@@ -73,12 +73,16 @@ def _audit_rows(audit_path: Path = AUDIT_PATH) -> list[tuple[str, str, str, str]
         if not row:
             continue
 
-        rows.append((row.group("path"), row.group("lines"), row.group("notes"), reason_category))
+        rows.append(
+            (row.group("path"), row.group("lines"), row.group("notes"), reason_category)
+        )
 
     return rows
 
 
-def load_provider_migration_audit_entries(audit_path: Path = AUDIT_PATH) -> list[dict[str, object]]:
+def load_provider_migration_audit_entries(
+    audit_path: Path = AUDIT_PATH,
+) -> list[dict[str, object]]:
     raw_entries: list[dict[str, object]] = []
     counts_by_path: Counter[str] = Counter()
     for path, _lines, notes, category in _audit_rows(audit_path=audit_path):
@@ -103,7 +107,9 @@ def load_provider_migration_audit_entries(audit_path: Path = AUDIT_PATH) -> list
     ]
 
 
-def _audited_match_metadata(audit_path: Path = AUDIT_PATH) -> dict[str, dict[str, object]]:
+def _audited_match_metadata(
+    audit_path: Path = AUDIT_PATH,
+) -> dict[str, dict[str, object]]:
     allowed: dict[str, dict[str, object]] = {}
 
     for entry in load_provider_migration_audit_entries(audit_path=audit_path):
@@ -137,20 +143,30 @@ def _audited_match_metadata(audit_path: Path = AUDIT_PATH) -> dict[str, dict[str
     return allowed
 
 
-def _builder_matches(source_root: Path = SOURCE_ROOT, repo_root: Path = REPO_ROOT) -> set[tuple[str, int, str]]:
+def _builder_matches(
+    source_root: Path = SOURCE_ROOT, repo_root: Path = REPO_ROOT
+) -> set[tuple[str, int, str]]:
     matches: set[tuple[str, int, str]] = set()
     for source_path in sorted(source_root.rglob("*.py")):
         relative_path = source_path.relative_to(repo_root).as_posix()
-        for line_number, line in enumerate(source_path.read_text(encoding="utf-8").splitlines(), start=1):
+        for line_number, line in enumerate(
+            source_path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
             if DIRECT_BUILDER_RE.search(line) or INDIRECT_BUILDER_RE.search(line):
                 matches.add((relative_path, line_number, _normalize_builder_line(line)))
     return matches
 
 
-def _audit_drift(audit_path: Path = AUDIT_PATH, source_root: Path = SOURCE_ROOT, repo_root: Path = REPO_ROOT) -> list[str]:
+def _audit_drift(
+    audit_path: Path = AUDIT_PATH,
+    source_root: Path = SOURCE_ROOT,
+    repo_root: Path = REPO_ROOT,
+) -> list[str]:
     audited_metadata = _audited_match_metadata(audit_path=audit_path)
     matches_by_path: dict[str, list[tuple[int, str]]] = {}
-    for path, line_number, line in sorted(_builder_matches(source_root=source_root, repo_root=repo_root)):
+    for path, line_number, line in sorted(
+        _builder_matches(source_root=source_root, repo_root=repo_root)
+    ):
         matches_by_path.setdefault(path, []).append((line_number, line))
 
     drift: list[str] = []
@@ -193,7 +209,9 @@ def test_audit_guard_rejects_new_unlisted_legacy_builder(tmp_path: Path):
     repo_root = tmp_path / "repo"
     source_root = repo_root / "tldw_chatbook"
     source_root.mkdir(parents=True)
-    audit_path = repo_root / "Docs/Development/server-client-provider-migration-audit.md"
+    audit_path = (
+        repo_root / "Docs/Development/server-client-provider-migration-audit.md"
+    )
     audit_path.parent.mkdir(parents=True)
     audit_path.write_text(
         "| Module | Audit lines | Notes |\n| --- | ---: | --- |\n",
@@ -204,7 +222,9 @@ def test_audit_guard_rejects_new_unlisted_legacy_builder(tmp_path: Path):
         encoding="utf-8",
     )
 
-    drift = _audit_drift(audit_path=audit_path, source_root=source_root, repo_root=repo_root)
+    drift = _audit_drift(
+        audit_path=audit_path, source_root=source_root, repo_root=repo_root
+    )
 
     assert drift
     assert "example.py" in drift[0]
@@ -214,7 +234,9 @@ def test_audit_guard_rejects_new_unlisted_server_service_from_config(tmp_path: P
     repo_root = tmp_path / "repo"
     source_root = repo_root / "tldw_chatbook"
     source_root.mkdir(parents=True)
-    audit_path = repo_root / "Docs/Development/server-client-provider-migration-audit.md"
+    audit_path = (
+        repo_root / "Docs/Development/server-client-provider-migration-audit.md"
+    )
     audit_path.parent.mkdir(parents=True)
     audit_path.write_text(
         "| Module | Audit lines | Notes |\n| --- | ---: | --- |\n",
@@ -225,7 +247,9 @@ def test_audit_guard_rejects_new_unlisted_server_service_from_config(tmp_path: P
         encoding="utf-8",
     )
 
-    drift = _audit_drift(audit_path=audit_path, source_root=source_root, repo_root=repo_root)
+    drift = _audit_drift(
+        audit_path=audit_path, source_root=source_root, repo_root=repo_root
+    )
 
     assert drift
     assert "ServerRAGAdminService.from_config(app_config)" in drift[0]
@@ -235,7 +259,9 @@ def test_audit_guard_uses_semantic_not_line_number_matching(tmp_path: Path):
     repo_root = tmp_path / "repo"
     source_root = repo_root / "tldw_chatbook"
     source_root.mkdir(parents=True)
-    audit_path = repo_root / "Docs/Development/server-client-provider-migration-audit.md"
+    audit_path = (
+        repo_root / "Docs/Development/server-client-provider-migration-audit.md"
+    )
     audit_path.parent.mkdir(parents=True)
     audit_path.write_text(
         "\n".join(
@@ -253,7 +279,9 @@ def test_audit_guard_uses_semantic_not_line_number_matching(tmp_path: Path):
         encoding="utf-8",
     )
 
-    drift = _audit_drift(audit_path=audit_path, source_root=source_root, repo_root=repo_root)
+    drift = _audit_drift(
+        audit_path=audit_path, source_root=source_root, repo_root=repo_root
+    )
 
     assert drift == [
         "tldw_chatbook/example.py: semantic match drift; missing=['build_runtime_api_client_from_config(app_config)'] extra=['build_runtime_api_client(app_config)']"
@@ -264,7 +292,9 @@ def test_audit_guard_rejects_line_number_only_rows(tmp_path: Path):
     repo_root = tmp_path / "repo"
     source_root = repo_root / "tldw_chatbook"
     source_root.mkdir(parents=True)
-    audit_path = repo_root / "Docs/Development/server-client-provider-migration-audit.md"
+    audit_path = (
+        repo_root / "Docs/Development/server-client-provider-migration-audit.md"
+    )
     audit_path.parent.mkdir(parents=True)
     audit_path.write_text(
         "\n".join(
@@ -282,7 +312,9 @@ def test_audit_guard_rejects_line_number_only_rows(tmp_path: Path):
         encoding="utf-8",
     )
 
-    drift = _audit_drift(audit_path=audit_path, source_root=source_root, repo_root=repo_root)
+    drift = _audit_drift(
+        audit_path=audit_path, source_root=source_root, repo_root=repo_root
+    )
 
     assert drift == [
         "tldw_chatbook/example.py: line-only audit row is invalid; add Semantic match snippets"
@@ -293,7 +325,9 @@ def test_audit_guard_rejects_stale_line_number_only_rows(tmp_path: Path):
     repo_root = tmp_path / "repo"
     source_root = repo_root / "tldw_chatbook"
     source_root.mkdir(parents=True)
-    audit_path = repo_root / "Docs/Development/server-client-provider-migration-audit.md"
+    audit_path = (
+        repo_root / "Docs/Development/server-client-provider-migration-audit.md"
+    )
     audit_path.parent.mkdir(parents=True)
     audit_path.write_text(
         "\n".join(
@@ -311,7 +345,9 @@ def test_audit_guard_rejects_stale_line_number_only_rows(tmp_path: Path):
         encoding="utf-8",
     )
 
-    drift = _audit_drift(audit_path=audit_path, source_root=source_root, repo_root=repo_root)
+    drift = _audit_drift(
+        audit_path=audit_path, source_root=source_root, repo_root=repo_root
+    )
 
     assert drift == [
         "tldw_chatbook/example.py: line-only audit row is invalid; add Semantic match snippets"
@@ -322,7 +358,9 @@ def test_audit_guard_rejects_stale_audited_row_with_no_live_match(tmp_path: Path
     repo_root = tmp_path / "repo"
     source_root = repo_root / "tldw_chatbook"
     source_root.mkdir(parents=True)
-    audit_path = repo_root / "Docs/Development/server-client-provider-migration-audit.md"
+    audit_path = (
+        repo_root / "Docs/Development/server-client-provider-migration-audit.md"
+    )
     audit_path.parent.mkdir(parents=True)
     audit_path.write_text(
         "\n".join(
@@ -340,18 +378,24 @@ def test_audit_guard_rejects_stale_audited_row_with_no_live_match(tmp_path: Path
         encoding="utf-8",
     )
 
-    drift = _audit_drift(audit_path=audit_path, source_root=source_root, repo_root=repo_root)
+    drift = _audit_drift(
+        audit_path=audit_path, source_root=source_root, repo_root=repo_root
+    )
 
     assert drift == [
         "tldw_chatbook/example.py: semantic match drift; missing=[] extra=['build_runtime_api_client_from_config(app_config)']"
     ]
 
 
-def test_audit_guard_accepts_line_number_drift_when_semantic_key_matches(tmp_path: Path):
+def test_audit_guard_accepts_line_number_drift_when_semantic_key_matches(
+    tmp_path: Path,
+):
     repo_root = tmp_path / "repo"
     source_root = repo_root / "tldw_chatbook"
     source_root.mkdir(parents=True)
-    audit_path = repo_root / "Docs/Development/server-client-provider-migration-audit.md"
+    audit_path = (
+        repo_root / "Docs/Development/server-client-provider-migration-audit.md"
+    )
     audit_path.parent.mkdir(parents=True)
     audit_path.write_text(
         "\n".join(
@@ -369,7 +413,9 @@ def test_audit_guard_accepts_line_number_drift_when_semantic_key_matches(tmp_pat
         encoding="utf-8",
     )
 
-    drift = _audit_drift(audit_path=audit_path, source_root=source_root, repo_root=repo_root)
+    drift = _audit_drift(
+        audit_path=audit_path, source_root=source_root, repo_root=repo_root
+    )
 
     assert drift == []
 
@@ -386,11 +432,15 @@ def test_raw_client_builder_audit_uses_semantic_keys_not_line_numbers():
         assert "line" not in entry
 
 
-def test_raw_client_builder_audit_tracks_reason_category_and_per_file_count(tmp_path: Path):
+def test_raw_client_builder_audit_tracks_reason_category_and_per_file_count(
+    tmp_path: Path,
+):
     repo_root = tmp_path / "repo"
     source_root = repo_root / "tldw_chatbook"
     source_root.mkdir(parents=True)
-    audit_path = repo_root / "Docs/Development/server-client-provider-migration-audit.md"
+    audit_path = (
+        repo_root / "Docs/Development/server-client-provider-migration-audit.md"
+    )
     audit_path.parent.mkdir(parents=True)
     audit_path.write_text(
         "\n".join(

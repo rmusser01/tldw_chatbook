@@ -2,7 +2,7 @@
 
 import random
 import time
-from typing import Optional, Any, List, Tuple
+from typing import Optional, Any, List
 
 from rich.markup import escape
 
@@ -18,9 +18,9 @@ class AsciiMorphEffect(BaseEffect):
         parent_widget: Any,
         start_content: str,
         end_content: str,
-        duration: float = 2.0, # Total duration of the morph
-        morph_style: str = "dissolve", # "dissolve", "random_pixel", "wipe_left_to_right"
-        **kwargs
+        duration: float = 2.0,  # Total duration of the morph
+        morph_style: str = "dissolve",  # "dissolve", "random_pixel", "wipe_left_to_right"
+        **kwargs,
     ):
         super().__init__(parent_widget, **kwargs)
         self.start_lines = start_content.splitlines()
@@ -45,7 +45,7 @@ class AsciiMorphEffect(BaseEffect):
                 for c in range(self.width):
                     if self.start_lines[r][c] != self.end_lines[r][c]:
                         self.all_positions.append((r, c))
-            if self.morph_style == "dissolve": # Shuffle for dissolve
+            if self.morph_style == "dissolve":  # Shuffle for dissolve
                 random.shuffle(self.all_positions)
 
         self.current_art_chars = [list(line) for line in self.start_lines]
@@ -56,9 +56,9 @@ class AsciiMorphEffect(BaseEffect):
         for i in range(self.height):
             if i < len(art_lines):
                 line = art_lines[i]
-                padded_art.append(line + ' ' * (self.width - len(line)))
+                padded_art.append(line + " " * (self.width - len(line)))
             else:
-                padded_art.append(' ' * self.width)
+                padded_art.append(" " * self.width)
         return padded_art
 
     def update(self) -> Optional[str]:
@@ -74,31 +74,43 @@ class AsciiMorphEffect(BaseEffect):
                 if i < len(self.all_positions):
                     r, c = self.all_positions[i]
                     if self.morph_style == "dissolve":
-                         # For dissolve, directly set to end char
+                        # For dissolve, directly set to end char
                         self.current_art_chars[r][c] = self.end_lines[r][c]
                     elif self.morph_style == "random_pixel":
                         # For random_pixel, set to a random char during transition, then final
                         # This needs another state or to be driven by progress.
                         # Simpler: if not fully progressed, pick start or end based on sub-progress for that pixel
-                        if random.random() < progress: # As progress increases, more chance to be end_char
-                           self.current_art_chars[r][c] = self.end_lines[r][c]
+                        if (
+                            random.random() < progress
+                        ):  # As progress increases, more chance to be end_char
+                            self.current_art_chars[r][c] = self.end_lines[r][c]
                         else:
-                           self.current_art_chars[r][c] = self.start_lines[r][c] # Or a random char
+                            self.current_art_chars[r][c] = self.start_lines[r][
+                                c
+                            ]  # Or a random char
 
             # For random_pixel, we should re-evaluate all pixels each frame based on progress
             if self.morph_style == "random_pixel":
-                 for r_idx in range(self.height):
+                for r_idx in range(self.height):
                     for c_idx in range(self.width):
-                        if self.start_lines[r_idx][c_idx] != self.end_lines[r_idx][c_idx]:
+                        if (
+                            self.start_lines[r_idx][c_idx]
+                            != self.end_lines[r_idx][c_idx]
+                        ):
                             if random.random() < progress:
-                                self.current_art_chars[r_idx][c_idx] = self.end_lines[r_idx][c_idx]
+                                self.current_art_chars[r_idx][c_idx] = self.end_lines[
+                                    r_idx
+                                ][c_idx]
                             else:
                                 # Optionally, insert a random "transition" character
                                 # self.current_art_chars[r_idx][c_idx] = random.choice(".:-=+*#%@")
-                                self.current_art_chars[r_idx][c_idx] = self.start_lines[r_idx][c_idx]
+                                self.current_art_chars[r_idx][c_idx] = self.start_lines[
+                                    r_idx
+                                ][c_idx]
                         else:
-                            self.current_art_chars[r_idx][c_idx] = self.start_lines[r_idx][c_idx]
-
+                            self.current_art_chars[r_idx][c_idx] = self.start_lines[
+                                r_idx
+                            ][c_idx]
 
         elif self.morph_style == "wipe_left_to_right":
             wipe_column = int(progress * self.width)
@@ -113,12 +125,13 @@ class AsciiMorphEffect(BaseEffect):
         # So, stick to one of the above, or make dissolve the default.
         # If morph_style is not recognized, it will effectively be stuck on start_art or do random_pixel if all_positions was populated.
         # Let's ensure 'dissolve' is the default if style is unknown.
-        else: # Fallback or if morph_style == "dissolve" initially
+        else:  # Fallback or if morph_style == "dissolve" initially
             num_chars_to_change = int(progress * len(self.all_positions))
             for i in range(num_chars_to_change):
                 if i < len(self.all_positions):
                     r, c = self.all_positions[i]
                     self.current_art_chars[r][c] = self.end_lines[r][c]
 
-
-        return "\n".join("".join(row) for row in self.current_art_chars).replace('[',r'\[')
+        return "\n".join("".join(row) for row in self.current_art_chars).replace(
+            "[", r"\["
+        )

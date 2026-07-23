@@ -141,7 +141,9 @@ class PersonasInspectorPane(Vertical):
         self._selected_kind = kind
         self.query_one("#personas-selected-name", Static).update(f"Selected: {name}")
         self.query_one("#personas-selected-kind", Static).update(f"Type: {kind}")
-        self.query_one("#personas-selected-authority", Static).update(f"Authority: {authority}")
+        self.query_one("#personas-selected-authority", Static).update(
+            f"Authority: {authority}"
+        )
         self._apply_action_state()
 
     async def clear_selection(self) -> None:
@@ -151,7 +153,9 @@ class PersonasInspectorPane(Vertical):
         self.set_console_actions_enabled(False, reason="select an item")
         self.query_one("#personas-selected-name", Static).update("Selected: none")
         self.query_one("#personas-selected-kind", Static).update("Type: -")
-        self.query_one("#personas-selected-authority", Static).update("Authority: Local")
+        self.query_one("#personas-selected-authority", Static).update(
+            "Authority: Local"
+        )
         await self.show_conversations(())
         self.show_validation(())
         self._apply_action_state()
@@ -234,7 +238,9 @@ class PersonasInspectorPane(Vertical):
         items: list[ListItem] = []
         seen: set[str] = set()
         for conversation_id, title in rows:
-            dom_id = f"personas-conversation-row-{_ID_SAFE.sub('-', str(conversation_id))}"
+            dom_id = (
+                f"personas-conversation-row-{_ID_SAFE.sub('-', str(conversation_id))}"
+            )
             if dom_id in seen:
                 suffix = 2
                 while f"{dom_id}-{suffix}" in seen:
@@ -279,7 +285,9 @@ class PersonasInspectorPane(Vertical):
             button.disabled = not export_enabled
             button.tooltip = export_tooltip
         png_button = self.query_one("#personas-export-png", Button)
-        png_button.disabled = not (export_enabled and self._selected_kind == "character")
+        png_button.disabled = not (
+            export_enabled and self._selected_kind == "character"
+        )
         png_button.tooltip = export_tooltip
         self.query_one("#personas-delete", Button).disabled = not selected
 

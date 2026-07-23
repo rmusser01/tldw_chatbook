@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
-from tldw_chatbook.Workspaces.conversation_browser_state import format_console_relative_age
+from tldw_chatbook.Workspaces.conversation_browser_state import (
+    format_console_relative_age,
+)
 
 _ID_KEYS = ("id", "media_id", "uuid")
 _TYPE_KEYS = ("type", "media_type")
@@ -14,7 +16,12 @@ _TYPE_KEYS = ("type", "media_type")
 # so the same item reads the same "Updated: <age>" in the list and the viewer.
 _UPDATED_KEYS = ("last_modified", "ingestion_date", "date", "updated_at")
 
-_EMPTY_EDIT_FIELDS: dict[str, str] = {"title": "", "author": "", "url": "", "keywords": ""}
+_EMPTY_EDIT_FIELDS: dict[str, str] = {
+    "title": "",
+    "author": "",
+    "url": "",
+    "keywords": "",
+}
 
 
 @dataclass(frozen=True)
@@ -185,7 +192,9 @@ def build_library_media_viewer_state(
     keywords_text = _keywords_text(detail)
     updated_raw = _first_present_text(detail, _UPDATED_KEYS)
     updated_age = (
-        format_console_relative_age(updated_raw, now=reference_now) if updated_raw else ""
+        format_console_relative_age(updated_raw, now=reference_now)
+        if updated_raw
+        else ""
     )
 
     lines: list[str] = [f"Type: {media_type}"]
@@ -203,7 +212,9 @@ def build_library_media_viewer_state(
         lines.append(f"Updated: {updated_age}")
 
     content = _text(detail.get("content"))
-    analysis = _text(detail.get("analysis_content")) or _latest_version_analysis_text(detail)
+    analysis = _text(detail.get("analysis_content")) or _latest_version_analysis_text(
+        detail
+    )
     read_later = bool(detail.get("is_read_it_later"))
 
     return LibraryMediaViewerState(

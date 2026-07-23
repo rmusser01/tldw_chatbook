@@ -7,6 +7,7 @@ global default), the rug-pull hash guard (mismatch and persisted
 the high-risk floor (inherited-allow-only, tag-gated), and the two
 Space-cycle helpers.
 """
+
 from __future__ import annotations
 
 import json
@@ -75,7 +76,9 @@ def test_definition_hash_matches_manual_canonical_json():
 
 
 def test_definition_hash_is_order_independent():
-    assert definition_hash("desc", {"a": 1, "b": 2}) == definition_hash("desc", {"b": 2, "a": 1})
+    assert definition_hash("desc", {"a": 1, "b": 2}) == definition_hash(
+        "desc", {"b": 2, "a": 1}
+    )
 
 
 def test_definition_hash_defaults_none_description_and_schema():
@@ -102,7 +105,9 @@ def test_ui_label_is_defensive_against_unknown_state():
     not `KeyError` regardless -- a future direct `EffectiveToolState(...)`
     construction, or a store shape this module hasn't seen yet, must
     render SOMETHING rather than panic whatever render pass called it."""
-    assert EffectiveToolState(state="banana", origin="global_default").ui_label == "Banana"
+    assert (
+        EffectiveToolState(state="banana", origin="global_default").ui_label == "Banana"
+    )
     assert EffectiveToolState(state="", origin="global_default").ui_label == "Ask"
 
 
@@ -124,7 +129,9 @@ def test_resolve_effective_state_tool_override_wins_over_server_and_global():
         servers={
             tool.server_key: {
                 "default": "deny",
-                "tools": {tool.name: {"state": "allow", "definition_hash": current_hash}},
+                "tools": {
+                    tool.name: {"state": "allow", "definition_hash": current_hash}
+                },
             }
         },
     )
@@ -139,7 +146,9 @@ def test_resolve_effective_state_tool_override_wins_over_server_and_global():
 
 def test_resolve_effective_state_falls_back_to_server_default_when_no_tool_entry():
     tool = _tool()
-    payload = _payload(global_default="deny", servers={tool.server_key: {"default": "ask"}})
+    payload = _payload(
+        global_default="deny", servers={tool.server_key: {"default": "ask"}}
+    )
 
     result = resolve_effective_state(payload, tool)
 
@@ -189,7 +198,9 @@ def test_resolve_effective_state_falls_back_to_global_default_when_server_entry_
 
 def test_resolve_effective_state_tool_override_ask_and_deny_pass_through_unchanged():
     tool = _tool()
-    payload = _payload(servers={tool.server_key: {"tools": {tool.name: {"state": "ask"}}}})
+    payload = _payload(
+        servers={tool.server_key: {"tools": {tool.name: {"state": "ask"}}}}
+    )
 
     result = resolve_effective_state(payload, tool)
 
@@ -204,7 +215,15 @@ def test_resolve_effective_state_tool_override_ask_and_deny_pass_through_unchang
 def test_resolve_effective_state_matching_hash_does_not_downgrade():
     tool = _tool()
     current_hash = definition_hash(tool.description, tool.input_schema)
-    payload = _payload(servers={tool.server_key: {"tools": {tool.name: {"state": "allow", "definition_hash": current_hash}}}})
+    payload = _payload(
+        servers={
+            tool.server_key: {
+                "tools": {
+                    tool.name: {"state": "allow", "definition_hash": current_hash}
+                }
+            }
+        }
+    )
 
     result = resolve_effective_state(payload, tool)
 
@@ -215,7 +234,13 @@ def test_resolve_effective_state_matching_hash_does_not_downgrade():
 def test_resolve_effective_state_hash_mismatch_downgrades_allow_to_ask():
     tool = _tool()
     payload = _payload(
-        servers={tool.server_key: {"tools": {tool.name: {"state": "allow", "definition_hash": "stale-hash"}}}}
+        servers={
+            tool.server_key: {
+                "tools": {
+                    tool.name: {"state": "allow", "definition_hash": "stale-hash"}
+                }
+            }
+        }
     )
 
     result = resolve_effective_state(payload, tool)
@@ -298,7 +323,15 @@ def test_resolve_effective_state_floor_applies_to_inherited_allow_via_global_def
 def test_resolve_effective_state_floor_does_not_apply_to_explicit_tool_override_allow():
     tool = _tool(tags=("mutates",))
     current_hash = definition_hash(tool.description, tool.input_schema)
-    payload = _payload(servers={tool.server_key: {"tools": {tool.name: {"state": "allow", "definition_hash": current_hash}}}})
+    payload = _payload(
+        servers={
+            tool.server_key: {
+                "tools": {
+                    tool.name: {"state": "allow", "definition_hash": current_hash}
+                }
+            }
+        }
+    )
 
     result = resolve_effective_state(payload, tool)
 
@@ -362,7 +395,11 @@ def test_resolve_by_key_explicit_allow_downgrades_to_ask_config_unknown():
     exact gap the I1 fix closes: the gate must not resolve "allow" for a
     tool it can't verify)."""
     payload = _payload(
-        servers={"local:demo": {"tools": {"search": {"state": "allow", "definition_hash": "whatever"}}}}
+        servers={
+            "local:demo": {
+                "tools": {"search": {"state": "allow", "definition_hash": "whatever"}}
+            }
+        }
     )
 
     result = resolve_effective_state_by_key(payload, "local:demo", "search")
@@ -476,7 +513,9 @@ def test_resolve_effective_state_null_tools_falls_back_to_server_default():
 
 def test_resolve_effective_state_non_mapping_tool_entry_does_not_raise():
     tool = _tool()
-    payload = _payload(servers={tool.server_key: {"tools": {tool.name: "not-a-mapping"}}})
+    payload = _payload(
+        servers={tool.server_key: {"tools": {tool.name: "not-a-mapping"}}}
+    )
 
     result = resolve_effective_state(payload, tool)
 

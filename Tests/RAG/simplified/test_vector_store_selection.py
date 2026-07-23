@@ -22,16 +22,23 @@ from tldw_chatbook.RAG_Search.simplified.config import RAGConfig, VectorStoreCon
 
 # === Helpers ===
 
-def _patch_environment(monkeypatch, rag_settings=None, user_data_dir="/tmp/tldw-rag-selection-test"):
+
+def _patch_environment(
+    monkeypatch, rag_settings=None, user_data_dir="/tmp/tldw-rag-selection-test"
+):
     """Isolate the selection logic from the host machine's config and env."""
     app_config = {"AppRAGSearchConfig": {"rag": rag_settings or {}}}
 
     def fake_get_cli_setting(section, key, default=None):
         return app_config.get(section, {}).get(key, default)
 
-    monkeypatch.setattr(rag_config_module, "load_cli_config_and_ensure_existence", lambda: app_config)
+    monkeypatch.setattr(
+        rag_config_module, "load_cli_config_and_ensure_existence", lambda: app_config
+    )
     monkeypatch.setattr(rag_config_module, "get_cli_setting", fake_get_cli_setting)
-    monkeypatch.setattr(rag_config_module, "get_user_data_dir", lambda: Path(user_data_dir))
+    monkeypatch.setattr(
+        rag_config_module, "get_user_data_dir", lambda: Path(user_data_dir)
+    )
     monkeypatch.delenv("RAG_VECTOR_STORE", raising=False)
     monkeypatch.delenv("RAG_PERSIST_DIR", raising=False)
     monkeypatch.delenv("RAG_EMBEDDING_MODEL", raising=False)
@@ -40,10 +47,13 @@ def _patch_environment(monkeypatch, rag_settings=None, user_data_dir="/tmp/tldw-
 
 def _patch_deps(monkeypatch, available: bool):
     """Force the embeddings_rag availability check to a known value."""
-    monkeypatch.setattr(rag_config_module, "_embeddings_rag_available", lambda: available)
+    monkeypatch.setattr(
+        rag_config_module, "_embeddings_rag_available", lambda: available
+    )
 
 
 # === Default selection: deps installed ===
+
 
 @pytest.mark.unit
 class TestDefaultWithEmbeddingsDeps:
@@ -83,7 +93,10 @@ class TestDefaultWithEmbeddingsDeps:
         config = RAGConfig.from_settings()
 
         assert config.vector_store.type == "chroma"
-        assert config.vector_store.persist_directory == Path("/tmp/tldw-rag-selection-test") / "chromadb"
+        assert (
+            config.vector_store.persist_directory
+            == Path("/tmp/tldw-rag-selection-test") / "chromadb"
+        )
 
     def test_hybrid_basic_profile_inherits_persistent_default(self, monkeypatch):
         """The runtime profile used by chat RAG must pick up the persistent default."""
@@ -101,6 +114,7 @@ class TestDefaultWithEmbeddingsDeps:
 
 
 # === Default selection: deps missing ===
+
 
 @pytest.mark.unit
 class TestDefaultWithoutEmbeddingsDeps:
@@ -141,7 +155,10 @@ class TestDefaultWithoutEmbeddingsDeps:
             raise RuntimeError("dependency probe exploded")
 
         import tldw_chatbook.Utils.optional_deps as optional_deps
-        monkeypatch.setattr(optional_deps, "embeddings_rag_deps_installed", broken_probe)
+
+        monkeypatch.setattr(
+            optional_deps, "embeddings_rag_deps_installed", broken_probe
+        )
 
         config = VectorStoreConfig()
 
@@ -161,12 +178,15 @@ class TestDefaultWithoutEmbeddingsDeps:
 
 # === Explicit overrides (AC #3) ===
 
+
 @pytest.mark.unit
 class TestExplicitOverrides:
     """Explicit user configuration must always win over the deps-based default."""
 
     def test_explicit_memory_in_user_config_wins_over_deps(self, monkeypatch):
-        _patch_environment(monkeypatch, rag_settings={"vector_store": {"type": "memory"}})
+        _patch_environment(
+            monkeypatch, rag_settings={"vector_store": {"type": "memory"}}
+        )
         _patch_deps(monkeypatch, True)
 
         config = RAGConfig()
@@ -175,7 +195,9 @@ class TestExplicitOverrides:
         assert config.vector_store.persist_directory is None
 
     def test_explicit_memory_in_user_config_wins_in_from_settings(self, monkeypatch):
-        _patch_environment(monkeypatch, rag_settings={"vector_store": {"type": "memory"}})
+        _patch_environment(
+            monkeypatch, rag_settings={"vector_store": {"type": "memory"}}
+        )
         _patch_deps(monkeypatch, True)
 
         config = RAGConfig.from_settings()
@@ -184,7 +206,9 @@ class TestExplicitOverrides:
 
     def test_explicit_memory_applies_to_runtime_profiles(self, monkeypatch):
         """User `type = \"memory\"` must also govern profile-built configs."""
-        _patch_environment(monkeypatch, rag_settings={"vector_store": {"type": "memory"}})
+        _patch_environment(
+            monkeypatch, rag_settings={"vector_store": {"type": "memory"}}
+        )
         _patch_deps(monkeypatch, True)
 
         from tldw_chatbook.RAG_Search.config_profiles import ConfigProfileManager
@@ -207,7 +231,9 @@ class TestExplicitOverrides:
     def test_explicit_persist_directory_in_user_config_wins(self, monkeypatch):
         _patch_environment(
             monkeypatch,
-            rag_settings={"vector_store": {"persist_directory": "/tmp/custom-chroma-home"}},
+            rag_settings={
+                "vector_store": {"persist_directory": "/tmp/custom-chroma-home"}
+            },
         )
         _patch_deps(monkeypatch, True)
 
@@ -255,6 +281,7 @@ class TestExplicitOverrides:
 
 # === Normalization of explicit values (PR #656 review) ===
 
+
 @pytest.mark.unit
 class TestExplicitValueNormalization:
     """Explicit env/config values are normalized; 'auto'/blank run detection."""
@@ -279,7 +306,9 @@ class TestExplicitValueNormalization:
 
     def test_auto_env_var_falls_through_to_explicit_config(self, monkeypatch):
         """env 'auto' means automatic behavior, which still honors user config."""
-        _patch_environment(monkeypatch, rag_settings={"vector_store": {"type": "memory"}})
+        _patch_environment(
+            monkeypatch, rag_settings={"vector_store": {"type": "memory"}}
+        )
         _patch_deps(monkeypatch, True)
         monkeypatch.setenv("RAG_VECTOR_STORE", "auto")
 
@@ -299,7 +328,9 @@ class TestExplicitValueNormalization:
         assert RAGConfig(vector_store=config).validate() == []
 
     def test_uppercase_memory_in_user_config_is_canonicalized(self, monkeypatch):
-        _patch_environment(monkeypatch, rag_settings={"vector_store": {"type": "MEMORY"}})
+        _patch_environment(
+            monkeypatch, rag_settings={"vector_store": {"type": "MEMORY"}}
+        )
         _patch_deps(monkeypatch, True)
 
         config = VectorStoreConfig()
@@ -348,6 +379,7 @@ class TestExplicitValueNormalization:
 
 # === Legacy [AppRAGSearchConfig.rag.chroma] compatibility (PR #656 review) ===
 
+
 @pytest.mark.unit
 class TestLegacyChromaSection:
     """Profile-built configs must honor the legacy chroma persist location."""
@@ -374,7 +406,10 @@ class TestLegacyChromaSection:
         plain = RAGConfig()
         loaded = RAGConfig.from_settings()
 
-        assert plain.vector_store.persist_directory == loaded.vector_store.persist_directory
+        assert (
+            plain.vector_store.persist_directory
+            == loaded.vector_store.persist_directory
+        )
 
     def test_explicit_vector_store_key_beats_legacy_key(self, monkeypatch):
         _patch_environment(
@@ -392,6 +427,7 @@ class TestLegacyChromaSection:
 
 
 # === Persistence round-trip (AC #1 evidence; requires real chromadb) ===
+
 
 @pytest.mark.integration
 class TestChromaPersistenceRoundTrip:

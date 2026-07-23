@@ -4,7 +4,10 @@ from datetime import datetime, timedelta, timezone
 from tldw_chatbook.runtime_policy.engine import PolicyEngine
 import pytest
 
-from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer, classify_backend_exception
+from tldw_chatbook.runtime_policy.enforcement import (
+    ServicePolicyEnforcer,
+    classify_backend_exception,
+)
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError, RuntimeSourceState
 from tldw_chatbook.tldw_api.exceptions import APIResponseError, AuthenticationError
@@ -19,13 +22,19 @@ def _action_ids(block: str) -> frozenset[str]:
 
 
 FULL_CRUD = _action_kinds("browse", "detail", "create", "update", "delete")
-FULL_CRUD_AND_LAUNCH = _action_kinds("browse", "detail", "create", "update", "delete", "launch")
+FULL_CRUD_AND_LAUNCH = _action_kinds(
+    "browse", "detail", "create", "update", "delete", "launch"
+)
 FULL_CRUD_AND_LAUNCH_AND_OBSERVE = _action_kinds(
     "browse", "detail", "create", "update", "delete", "launch", "observe"
 )
 DISCOVER_TRIGGER_OBSERVE = _action_kinds("browse", "launch", "observe")
-DISCOVER_CONFIGURE_TRIGGER_OBSERVE = _action_kinds("browse", "update", "launch", "observe")
-CONNECTOR_ACTIONS = _action_kinds("browse", "create", "update", "delete", "launch", "observe")
+DISCOVER_CONFIGURE_TRIGGER_OBSERVE = _action_kinds(
+    "browse", "update", "launch", "observe"
+)
+CONNECTOR_ACTIONS = _action_kinds(
+    "browse", "create", "update", "delete", "launch", "observe"
+)
 
 
 EXPECTED_AUDITED_CAPABILITIES = {
@@ -46,7 +55,9 @@ EXPECTED_AUDITED_CAPABILITIES = {
     "companion_personalization": {
         "expected_domain_ids": {"companion"},
         "expected_action_kinds_by_source": {
-            "server": _action_kinds("browse", "detail", "create", "update", "delete", "launch"),
+            "server": _action_kinds(
+                "browse", "detail", "create", "update", "delete", "launch"
+            ),
         },
     },
     "notes_workspaces": {
@@ -161,20 +172,28 @@ EXPECTED_AUDITED_CAPABILITIES = {
     "meetings": {
         "expected_domain_ids": {"meetings"},
         "expected_action_kinds_by_source": {
-            "server": _action_kinds("browse", "detail", "create", "update", "launch", "observe"),
+            "server": _action_kinds(
+                "browse", "detail", "create", "update", "launch", "observe"
+            ),
         },
     },
     "prompt_studio": {
         "expected_domain_ids": {"prompt_studio"},
         "expected_action_kinds_by_source": {
-            "server": _action_kinds("browse", "detail", "create", "update", "delete", "launch", "observe"),
+            "server": _action_kinds(
+                "browse", "detail", "create", "update", "delete", "launch", "observe"
+            ),
         },
     },
     "kanban_boards_tasks": {
         "expected_domain_ids": {"kanban"},
         "expected_action_kinds_by_source": {
-            "local": _action_kinds("browse", "detail", "create", "update", "delete", "launch", "observe"),
-            "server": _action_kinds("browse", "detail", "create", "update", "delete", "launch", "observe"),
+            "local": _action_kinds(
+                "browse", "detail", "create", "update", "delete", "launch", "observe"
+            ),
+            "server": _action_kinds(
+                "browse", "detail", "create", "update", "delete", "launch", "observe"
+            ),
         },
     },
     "translation_utility": {
@@ -212,7 +231,9 @@ EXPECTED_AUDITED_CAPABILITIES = {
     "voice_assistant": {
         "expected_domain_ids": {"voice_assistant"},
         "expected_action_kinds_by_source": {
-            "server": _action_kinds("browse", "detail", "create", "update", "delete", "launch", "observe"),
+            "server": _action_kinds(
+                "browse", "detail", "create", "update", "delete", "launch", "observe"
+            ),
         },
     },
     "auth_profile_sessions": {
@@ -291,7 +312,9 @@ EXPECTED_AUDITED_CAPABILITIES = {
     "remote_mcp_control_plane_governance": {
         "expected_domain_ids": {"mcp_governance"},
         "expected_action_kinds_by_source": {
-            "server": _action_kinds("browse", "detail", "create", "update", "delete", "launch", "observe"),
+            "server": _action_kinds(
+                "browse", "detail", "create", "update", "delete", "launch", "observe"
+            ),
         },
     },
     "sharing": {
@@ -1726,7 +1749,9 @@ def _collect_registry_action_kinds_by_source(entries) -> dict[str, frozenset[str
         kinds = action_kinds_by_source.setdefault(entry.required_source, set())
         kinds.add(entry.action_kind)
 
-    return {source: frozenset(kinds) for source, kinds in action_kinds_by_source.items()}
+    return {
+        source: frozenset(kinds) for source, kinds in action_kinds_by_source.items()
+    }
 
 
 def _group_registry_entries_by_capability():
@@ -1742,7 +1767,8 @@ def test_runtime_source_state_downgrades_stale_server_signals_to_unknown():
         active_server_id="primary",
         server_configured=True,
         server_reachability="reachable",
-        server_reachability_checked_at=datetime.now(timezone.utc) - timedelta(minutes=30),
+        server_reachability_checked_at=datetime.now(timezone.utc)
+        - timedelta(minutes=30),
         server_auth_state="authenticated",
         server_auth_checked_at=datetime.now(timezone.utc) - timedelta(minutes=30),
     )
@@ -1876,7 +1902,9 @@ def test_policy_engine_knows_local_model_discovery_actions(action_id):
         "llm.catalog.models.persist.server",
     ],
 )
-def test_policy_engine_knows_server_model_discovery_actions_but_blocks_in_local_mode(action_id):
+def test_policy_engine_knows_server_model_discovery_actions_but_blocks_in_local_mode(
+    action_id,
+):
     engine = PolicyEngine(CAPABILITY_REGISTRY)
 
     local_decision = engine.evaluate(
@@ -1912,19 +1940,33 @@ def test_runtime_policy_registry_contains_full_audited_rows():
     for capability_id, expected in EXPECTED_AUDITED_CAPABILITIES.items():
         entries = actual_entries_by_capability[capability_id]
         assert {entry.domain_id for entry in entries} == expected["expected_domain_ids"]
-        assert {entry.action_id for entry in entries} == EXPECTED_ACTION_IDS_BY_CAPABILITY[capability_id]
+        assert {
+            entry.action_id for entry in entries
+        } == EXPECTED_ACTION_IDS_BY_CAPABILITY[capability_id]
 
-        actual_action_kinds_by_source = _collect_registry_action_kinds_by_source(entries)
-        assert set(actual_action_kinds_by_source) == set(expected["expected_action_kinds_by_source"])
+        actual_action_kinds_by_source = _collect_registry_action_kinds_by_source(
+            entries
+        )
+        assert set(actual_action_kinds_by_source) == set(
+            expected["expected_action_kinds_by_source"]
+        )
 
-        for source, expected_action_kinds in expected["expected_action_kinds_by_source"].items():
-            assert expected_action_kinds.issubset(actual_action_kinds_by_source[source]), (
+        for source, expected_action_kinds in expected[
+            "expected_action_kinds_by_source"
+        ].items():
+            assert expected_action_kinds.issubset(
+                actual_action_kinds_by_source[source]
+            ), (
                 f"{capability_id} is missing audited action kinds for {source}: "
                 f"{sorted(expected_action_kinds.difference(actual_action_kinds_by_source[source]))}"
             )
 
+
 def test_backend_exception_classifier_handles_authentication_errors():
-    assert classify_backend_exception(AuthenticationError("bad credentials")) == "server_auth_required"
+    assert (
+        classify_backend_exception(AuthenticationError("bad credentials"))
+        == "server_auth_required"
+    )
 
 
 def test_service_policy_enforcer_fails_closed_when_runtime_state_is_missing():

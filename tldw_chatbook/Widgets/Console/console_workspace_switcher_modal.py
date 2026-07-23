@@ -108,10 +108,14 @@ class ConsoleWorkspaceSwitcherModal(ModalScreen[str | None]):
                             classes="console-workspace-switcher-option",
                             compact=True,
                         )
-                        button.tooltip = f"Use {workspace.name} as the active Console workspace"
+                        button.tooltip = (
+                            f"Use {workspace.name} as the active Console workspace"
+                        )
                         yield button
             with Horizontal(id="console-workspace-switcher-actions"):
-                yield Button("Cancel", id="console-workspace-switcher-cancel", compact=True)
+                yield Button(
+                    "Cancel", id="console-workspace-switcher-cancel", compact=True
+                )
 
     def action_dismiss(self) -> None:
         self.dismiss(None)

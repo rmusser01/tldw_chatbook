@@ -29,7 +29,12 @@ LIBRARY_RAG_SOURCE_TYPES: tuple[tuple[str, str], ...] = (
 # The subset of LIBRARY_RAG_SOURCE_TYPES with a real per-source toggle in the
 # Search canvas scope region (B2): workspaces/collections have no retrieval
 # seam of their own yet, so they get no toggle row.
-LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES: tuple[str, ...] = ("notes", "media", "conversations", "prompts")
+LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES: tuple[str, ...] = (
+    "notes",
+    "media",
+    "conversations",
+    "prompts",
+)
 LIBRARY_RAG_DEFAULT_TOP_K = 5
 LIBRARY_RAG_RUN_ACTION_ID = "library-rag-run-query"
 LIBRARY_RAG_USE_IN_CONSOLE_ACTION_ID = "library-rag-use-in-console"
@@ -85,9 +90,12 @@ LIBRARY_RAG_NO_SOURCES_GATE_COPY = (
 _NO_SOURCES_NEXT_ACTION = "Import media or create notes, then search."
 LIBRARY_RAG_SEARCHING_LABEL = "Searching…"
 _OPEN_SOURCE_TYPE_MAP = {
-    "note": "notes", "notes": "notes",
-    "media": "media", "media_chunk": "media",
-    "conversation": "conversations", "conversations": "conversations",
+    "note": "notes",
+    "notes": "notes",
+    "media": "media",
+    "media_chunk": "media",
+    "conversation": "conversations",
+    "conversations": "conversations",
     "chat": "conversations",
     # Deliberately singular, unlike the other three (whose canonical/open
     # value coincides with the plural scope-toggle key "prompts"):
@@ -655,7 +663,9 @@ class LibraryRagResultRow:
         if explicit_eligible is False:
             return "blocked"
         workspace_ids = _provenance_text_tuple(self.provenance, "workspace_ids")
-        if workspace_ids and not _provenance_text(self.provenance, "active_workspace_id"):
+        if workspace_ids and not _provenance_text(
+            self.provenance, "active_workspace_id"
+        ):
             return "blocked"
         return "eligible"
 
@@ -742,7 +752,9 @@ class LibraryRagResultRow:
             return f"Eligibility: blocked for active workspace ({reason})"
 
         workspace_ids = _provenance_text_tuple(self.provenance, "workspace_ids")
-        if workspace_ids and not _provenance_text(self.provenance, "active_workspace_id"):
+        if workspace_ids and not _provenance_text(
+            self.provenance, "active_workspace_id"
+        ):
             return "Eligibility: blocked until an active workspace is available"
         return "Eligibility: available for active context"
 
@@ -754,12 +766,16 @@ class LibraryRagResultRow:
     @property
     def open_source_type(self) -> str:
         """Library canvas target this result can open, or empty string."""
-        raw = str(
-            self.provenance.get("source_type")
-            or self.provenance.get("item_type")
-            or self.provenance.get("type")
-            or ""
-        ).strip().lower()
+        raw = (
+            str(
+                self.provenance.get("source_type")
+                or self.provenance.get("item_type")
+                or self.provenance.get("type")
+                or ""
+            )
+            .strip()
+            .lower()
+        )
         return _OPEN_SOURCE_TYPE_MAP.get(raw, "")
 
     @property
@@ -917,7 +933,9 @@ class LibraryRagPanelState:
         elif result_rows:
             normalized_status = "ready"
             recovery_copy = ""
-            next_action = "Review cited evidence or send the selected result to Console."
+            next_action = (
+                "Review cited evidence or send the selected result to Console."
+            )
         else:
             normalized_status = "ready"
             recovery_copy = ""
@@ -952,7 +970,9 @@ class LibraryRagPanelState:
                 enabled=can_use_console,
                 widget_id=LIBRARY_RAG_USE_IN_CONSOLE_ACTION_ID,
                 disabled_reason=(
-                    "" if can_use_console else LIBRARY_RAG_USE_IN_CONSOLE_DISABLED_REASON
+                    ""
+                    if can_use_console
+                    else LIBRARY_RAG_USE_IN_CONSOLE_DISABLED_REASON
                 ),
             ),
             selected_result_id=normalized_selected_result_id,

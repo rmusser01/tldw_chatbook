@@ -14,6 +14,7 @@ from tldw_chatbook.Sync_Interop.validation import (
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
+
 if TYPE_CHECKING:
     from ..tldw_api import ClientChangesPayload, SyncV2Envelope, TLDWAPIClient
 
@@ -73,7 +74,9 @@ class ServerSyncService:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -82,10 +85,14 @@ class ServerSyncService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
-                    user_message=getattr(decision, "user_message", None) or "Sync action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
+                    user_message=getattr(decision, "user_message", None)
+                    or "Sync action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @staticmethod
@@ -95,7 +102,9 @@ class ServerSyncService:
         if isinstance(response, list):
             return [ServerSyncService._dump(item) for item in response]
         if isinstance(response, dict):
-            return {key: ServerSyncService._dump(value) for key, value in response.items()}
+            return {
+                key: ServerSyncService._dump(value) for key, value in response.items()
+            }
         return response
 
     @staticmethod
@@ -119,7 +128,9 @@ class ServerSyncService:
         return selected
 
     @staticmethod
-    def _coerce_payload(request_data: ClientChangesPayload | Mapping[str, Any]) -> ClientChangesPayload:
+    def _coerce_payload(
+        request_data: ClientChangesPayload | Mapping[str, Any],
+    ) -> ClientChangesPayload:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import ClientChangesPayload
 
@@ -191,7 +202,6 @@ class ServerSyncService:
             SyncV2PushRequest,
         )
 
-
         if self.state_repository is None:
             raise ValueError("Sync state repository is required for Sync v2 dry-run.")
         if not server_profile_id:
@@ -209,13 +219,25 @@ class ServerSyncService:
         existing_device_id = profile["device_id"] if profile else None
         existing_dataset_id = profile["dataset_id"] if profile else None
 
-        requested_domains = domains or ["notes", "chat", "workspaces", "source_cache", "media"]
+        requested_domains = domains or [
+            "notes",
+            "chat",
+            "workspaces",
+            "source_cache",
+            "media",
+        ]
         capabilities = await client.get_sync_v2_capabilities()
         capabilities_record = self._dump(capabilities)
         # M1 schema: model_dump() produces "domains"; fall back to "supported_domains"
         # for raw-dict responses (e.g. from test stubs that pre-date M1).
-        supported_domains = capabilities_record.get("domains") or capabilities_record.get("supported_domains") or []
-        sync_domains = self._select_advertised_domains(requested_domains, supported_domains)
+        supported_domains = (
+            capabilities_record.get("domains")
+            or capabilities_record.get("supported_domains")
+            or []
+        )
+        sync_domains = self._select_advertised_domains(
+            requested_domains, supported_domains
+        )
         if not sync_domains:
             raise ValueError("Server does not advertise any requested Sync v2 domains.")
 
@@ -295,7 +317,11 @@ class ServerSyncService:
             envelope_count=len(pulled_envelopes),
         )
 
-        next_cursor = pull_record.get("next_cursor") or push_record.get("next_cursor") or cursor_record.cursor
+        next_cursor = (
+            pull_record.get("next_cursor")
+            or push_record.get("next_cursor")
+            or cursor_record.cursor
+        )
         dataset_cursors = dict(dataset_record.get("cursors") or {})
         if next_cursor is not None:
             dataset_cursors["sync_v2"] = next_cursor
@@ -350,7 +376,6 @@ class ServerSyncService:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import SyncV2KeyRecoveryBundleRequest
 
-
         self._enforce("sync.v2.keys.store.server")
         request = SyncV2KeyRecoveryBundleRequest(
             dataset_id=dataset_id,
@@ -361,7 +386,9 @@ class ServerSyncService:
             recovery_hint=recovery_hint,
             rotation_of_key_record_id=rotation_of_key_record_id,
         )
-        return self._dump(await self._require_client().store_sync_v2_key_recovery_bundle(request))
+        return self._dump(
+            await self._require_client().store_sync_v2_key_recovery_bundle(request)
+        )
 
     async def list_v2_recovery_bundles(
         self,
@@ -427,7 +454,6 @@ class ServerSyncService:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import SyncV2Envelope, SyncV2PushRequest
 
-
         self._enforce("sync.v2.push.server")
         coerced_envelopes = [
             envelope
@@ -452,13 +478,14 @@ class ServerSyncService:
             idempotency_key=idempotency_key,
             last_known_cursor=last_known_cursor,
         )
-        response = self._dump(await self._require_client().push_sync_v2_envelopes(request))
+        response = self._dump(
+            await self._require_client().push_sync_v2_envelopes(request)
+        )
         validate_push_response_scope(
             dataset_id=dataset_id,
             response_dataset_id=response.get("dataset_id"),
             submitted_client_envelope_ids=[
-                envelope.client_envelope_id
-                for envelope in coerced_envelopes
+                envelope.client_envelope_id for envelope in coerced_envelopes
             ],
             accepted=response.get("accepted", []),
             rejected=response.get("rejected", []),
@@ -495,7 +522,6 @@ class ServerSyncService:
         """
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import SyncV2Envelope
-
 
         self._enforce("sync.v2.restore.pull.server")
         response = self._dump(
@@ -555,7 +581,6 @@ class ServerSyncService:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import SyncV2ConflictResolveRequest
 
-
         self._enforce("sync.v2.conflicts.resolve.server")
         request = SyncV2ConflictResolveRequest(
             conflict_id=conflict_id,
@@ -564,4 +589,6 @@ class ServerSyncService:
             resolved_by_device_id=resolved_by_device_id,
             notes=notes,
         )
-        return self._dump(await self._require_client().resolve_sync_v2_conflict(conflict_id, request))
+        return self._dump(
+            await self._require_client().resolve_sync_v2_conflict(conflict_id, request)
+        )

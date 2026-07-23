@@ -56,7 +56,9 @@ async def test_server_tools_service_routes_tool_surface_with_policy_actions():
             },
         ),
     ]
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "tools.catalog.list.server",
         "tools.execution.launch.server",
     ]

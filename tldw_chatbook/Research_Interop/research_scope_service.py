@@ -45,7 +45,7 @@ _SERVER_UNSUPPORTED_CAPABILITIES = [
         "reason_code": "server_contract_missing",
         "user_message": "The current server API does not support research run deletion.",
         "affected_action_ids": ["research.runs.delete.server"],
-    }
+    },
 ]
 
 
@@ -120,7 +120,9 @@ class ResearchScopeService:
 
     @staticmethod
     def _raise_server_run_delete_unsupported() -> None:
-        raise NotImplementedError("The current server API does not support research run deletion.")
+        raise NotImplementedError(
+            "The current server API does not support research run deletion."
+        )
 
     def _server_supports_method(self, method_name: str) -> bool:
         return callable(getattr(self.server_service, method_name, None))
@@ -151,7 +153,10 @@ class ResearchScopeService:
         except (TypeError, ValueError):
             return False
         parameters = signature.parameters
-        if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):
+        if any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        ):
             return True
         return {"offset", "session_id", "status"}.issubset(parameters)
 
@@ -170,17 +175,20 @@ class ResearchScopeService:
         reports = [dict(item) for item in _SERVER_UNSUPPORTED_CAPABILITIES]
         if self._server_supports_sessions():
             reports = [
-                item for item in reports
+                item
+                for item in reports
                 if item.get("operation_id") != "research.sessions.server_crud"
             ]
         if self._server_supports_filtered_run_list():
             reports = [
-                item for item in reports
+                item
+                for item in reports
                 if item.get("operation_id") != "research.runs.filtered_list.server"
             ]
         if self._server_supports_run_delete():
             reports = [
-                item for item in reports
+                item
+                for item in reports
                 if item.get("operation_id") != "research.runs.delete.server"
             ]
         return reports
@@ -209,7 +217,9 @@ class ResearchScopeService:
             remote_records=remote_records or [],
         )
 
-    async def _call_service(self, service: Any, method_name: str, *args: Any, **kwargs: Any) -> Any:
+    async def _call_service(
+        self, service: Any, method_name: str, *args: Any, **kwargs: Any
+    ) -> Any:
         method = getattr(service, method_name)
         signature = inspect.signature(method)
         accepts_kwargs = any(
@@ -217,7 +227,11 @@ class ResearchScopeService:
             for parameter in signature.parameters.values()
         )
         if not accepts_kwargs:
-            kwargs = {key: value for key, value in kwargs.items() if key in signature.parameters}
+            kwargs = {
+                key: value
+                for key, value in kwargs.items()
+                if key in signature.parameters
+            }
         return await self._maybe_await(method(*args, **kwargs))
 
     @staticmethod
@@ -228,13 +242,17 @@ class ResearchScopeService:
             return normalize_research_record(mode.value, kind, value)
         return value
 
-    def _normalize_bundle(self, mode: ResearchBackend, value: Any, *, run_id: str) -> Any:
+    def _normalize_bundle(
+        self, mode: ResearchBackend, value: Any, *, run_id: str
+    ) -> Any:
         if not isinstance(value, dict):
             return value
         payload = dict(value)
         payload.setdefault("backend", mode.value)
         if isinstance(payload.get("run"), dict):
-            payload["run"] = normalize_research_record(mode.value, "run", payload["run"])
+            payload["run"] = normalize_research_record(
+                mode.value, "run", payload["run"]
+            )
         if isinstance(payload.get("artifacts"), list):
             artifacts = []
             for item in payload["artifacts"]:
@@ -243,7 +261,9 @@ class ResearchScopeService:
                     continue
                 artifact = dict(item)
                 artifact.setdefault("run_id", run_id)
-                artifacts.append(normalize_research_record(mode.value, "artifact", artifact))
+                artifacts.append(
+                    normalize_research_record(mode.value, "artifact", artifact)
+                )
             payload["artifacts"] = artifacts
         return payload
 
@@ -259,7 +279,9 @@ class ResearchScopeService:
         action_id = self._action_id("sessions", "list", normalized_mode)
         self._enforce_policy(action_id)
         service = self._service_for_mode(normalized_mode)
-        if normalized_mode == ResearchBackend.SERVER and not callable(getattr(service, "list_sessions", None)):
+        if normalized_mode == ResearchBackend.SERVER and not callable(
+            getattr(service, "list_sessions", None)
+        ):
             self._raise_server_sessions_unsupported()
         result = await self._call_service(
             service,
@@ -282,7 +304,9 @@ class ResearchScopeService:
         action_id = self._action_id("sessions", "create", normalized_mode)
         self._enforce_policy(action_id)
         service = self._service_for_mode(normalized_mode)
-        if normalized_mode == ResearchBackend.SERVER and not callable(getattr(service, "create_session", None)):
+        if normalized_mode == ResearchBackend.SERVER and not callable(
+            getattr(service, "create_session", None)
+        ):
             self._raise_server_sessions_unsupported()
         result = await self._call_service(
             service,
@@ -303,7 +327,9 @@ class ResearchScopeService:
         action_id = self._action_id("sessions", "detail", normalized_mode)
         self._enforce_policy(action_id)
         service = self._service_for_mode(normalized_mode)
-        if normalized_mode == ResearchBackend.SERVER and not callable(getattr(service, "get_session", None)):
+        if normalized_mode == ResearchBackend.SERVER and not callable(
+            getattr(service, "get_session", None)
+        ):
             self._raise_server_sessions_unsupported()
         result = await self._call_service(service, "get_session", session_id)
         return self._normalize_result(normalized_mode, "session", result)
@@ -320,7 +346,9 @@ class ResearchScopeService:
         action_id = self._action_id("sessions", "update", normalized_mode)
         self._enforce_policy(action_id)
         service = self._service_for_mode(normalized_mode)
-        if normalized_mode == ResearchBackend.SERVER and not callable(getattr(service, "update_session", None)):
+        if normalized_mode == ResearchBackend.SERVER and not callable(
+            getattr(service, "update_session", None)
+        ):
             self._raise_server_sessions_unsupported()
         result = await self._call_service(
             service,
@@ -342,7 +370,9 @@ class ResearchScopeService:
         action_id = self._action_id("sessions", "delete", normalized_mode)
         self._enforce_policy(action_id)
         service = self._service_for_mode(normalized_mode)
-        if normalized_mode == ResearchBackend.SERVER and not callable(getattr(service, "delete_session", None)):
+        if normalized_mode == ResearchBackend.SERVER and not callable(
+            getattr(service, "delete_session", None)
+        ):
             self._raise_server_sessions_unsupported()
         return bool(
             await self._call_service(
@@ -401,9 +431,13 @@ class ResearchScopeService:
         normalized_mode = self._normalize_mode(mode)
         action_id = self._action_id("runs", "list", normalized_mode)
         self._enforce_policy(action_id)
-        if normalized_mode == ResearchBackend.SERVER and (
-            offset not in (0, None) or session_id is not None or status is not None
-        ) and not self._server_supports_filtered_run_list():
+        if (
+            normalized_mode == ResearchBackend.SERVER
+            and (
+                offset not in (0, None) or session_id is not None or status is not None
+            )
+            and not self._server_supports_filtered_run_list()
+        ):
             self._raise_server_run_list_filters_unsupported()
         result = await self._call_service(
             self._service_for_mode(normalized_mode),
@@ -423,7 +457,9 @@ class ResearchScopeService:
     ) -> dict[str, Any] | None:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("runs", "detail", normalized_mode))
-        result = await self._call_service(self._service_for_mode(normalized_mode), "get_run", run_id)
+        result = await self._call_service(
+            self._service_for_mode(normalized_mode), "get_run", run_id
+        )
         return self._normalize_result(normalized_mode, "run", result)
 
     async def pause_run(
@@ -434,7 +470,9 @@ class ResearchScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("runs", "update", normalized_mode))
-        result = await self._call_service(self._service_for_mode(normalized_mode), "pause_run", run_id)
+        result = await self._call_service(
+            self._service_for_mode(normalized_mode), "pause_run", run_id
+        )
         return self._normalize_result(normalized_mode, "run", result)
 
     async def resume_run(
@@ -446,7 +484,9 @@ class ResearchScopeService:
         normalized_mode = self._normalize_mode(mode)
         action = "launch" if normalized_mode == ResearchBackend.SERVER else "update"
         self._enforce_policy(self._action_id("runs", action, normalized_mode))
-        result = await self._call_service(self._service_for_mode(normalized_mode), "resume_run", run_id)
+        result = await self._call_service(
+            self._service_for_mode(normalized_mode), "resume_run", run_id
+        )
         return self._normalize_result(normalized_mode, "run", result)
 
     async def cancel_run(
@@ -457,7 +497,9 @@ class ResearchScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("runs", "update", normalized_mode))
-        result = await self._call_service(self._service_for_mode(normalized_mode), "cancel_run", run_id)
+        result = await self._call_service(
+            self._service_for_mode(normalized_mode), "cancel_run", run_id
+        )
         return self._normalize_result(normalized_mode, "run", result)
 
     async def delete_run(
@@ -470,7 +512,10 @@ class ResearchScopeService:
         normalized_mode = self._normalize_mode(mode)
         action_id = self._action_id("runs", "delete", normalized_mode)
         self._enforce_policy(action_id)
-        if normalized_mode == ResearchBackend.SERVER and not self._server_supports_run_delete():
+        if (
+            normalized_mode == ResearchBackend.SERVER
+            and not self._server_supports_run_delete()
+        ):
             self._raise_server_run_delete_unsupported()
         return bool(
             await self._call_service(
@@ -491,14 +536,20 @@ class ResearchScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("runs", "observe", normalized_mode))
         service = self._service_for_mode(normalized_mode)
-        method_name = "observe_run_events" if hasattr(service, "observe_run_events") else "list_run_events"
+        method_name = (
+            "observe_run_events"
+            if hasattr(service, "observe_run_events")
+            else "list_run_events"
+        )
         result = getattr(service, method_name)(run_id, after_id=after_id)
         if inspect.isasyncgen(result):
             items = [item async for item in result]
         else:
             items = list(await self._maybe_await(result))
         items = [
-            {**item, "run_id": item.get("run_id") or run_id} if isinstance(item, dict) else item
+            {**item, "run_id": item.get("run_id") or run_id}
+            if isinstance(item, dict)
+            else item
             for item in items
         ]
         return self._normalize_result(normalized_mode, "event", items)
@@ -535,7 +586,9 @@ class ResearchScopeService:
         used_positional_run_id = bool(args)
         if args:
             if len(args) != 1:
-                raise TypeError("get_bundle accepts a single run_id positional argument")
+                raise TypeError(
+                    "get_bundle accepts a single run_id positional argument"
+                )
             run_id = args[0]
         if run_id is None:
             raise TypeError("get_bundle requires run_id")
@@ -546,7 +599,9 @@ class ResearchScopeService:
             else "detail"
         )
         self._enforce_policy(self._action_id("runs", action, normalized_mode))
-        result = await self._call_service(self._service_for_mode(normalized_mode), "get_bundle", run_id)
+        result = await self._call_service(
+            self._service_for_mode(normalized_mode), "get_bundle", run_id
+        )
         return self._normalize_bundle(normalized_mode, result, run_id=run_id)
 
     async def get_artifact(
@@ -566,7 +621,11 @@ class ResearchScopeService:
         )
         if isinstance(result, dict):
             result = {**result, "run_id": result.get("run_id") or run_id}
-        return self._normalize_result(normalized_mode, "artifact", result) if result else result
+        return (
+            self._normalize_result(normalized_mode, "artifact", result)
+            if result
+            else result
+        )
 
     async def patch_and_approve_checkpoint(
         self,
@@ -581,7 +640,9 @@ class ResearchScopeService:
         service = self._service_for_mode(normalized_mode)
         method = getattr(service, "patch_and_approve_checkpoint", None)
         if method is None:
-            raise NotImplementedError("Research checkpoint approval is only available on supported server backends.")
+            raise NotImplementedError(
+                "Research checkpoint approval is only available on supported server backends."
+            )
         return await self._maybe_await(
             method(
                 run_id,

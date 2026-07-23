@@ -105,9 +105,10 @@ async def test_seed_append_reset_roundtrip():
         await pane.reset()
         await pilot.pause()
         assert _line_texts(pilot.app) == ["character: Greetings, detective."]
-        assert str(
-            pilot.app.query_one("#personas-preview-status", Static).renderable
-        ) == ""
+        assert (
+            str(pilot.app.query_one("#personas-preview-status", Static).renderable)
+            == ""
+        )
 
 
 async def test_seed_empty_greeting_clears_transcript():
@@ -178,8 +179,8 @@ async def test_transcript_lines_carry_role_classes():
         await pilot.pause()
         you_lines = pilot.app.query(".personas-preview-line-you")
         character_lines = pilot.app.query(".personas-preview-line-character")
-        assert [str(l.renderable) for l in you_lines] == ["you: Hi"]
-        assert [str(l.renderable) for l in character_lines] == ["character: Hello."]
+        assert [str(line.renderable) for line in you_lines] == ["you: Hi"]
+        assert [str(line.renderable) for line in character_lines] == ["character: Hello."]
 
 
 async def test_test_reply_posts_message_and_clears_input():
@@ -229,9 +230,7 @@ async def test_oversized_message_is_rejected_with_readable_status():
         assert pilot.app.replies == []
         assert _line_texts(pilot.app) == []
         assert field.value == oversized  # the draft stays editable
-        status = str(
-            pilot.app.query_one("#personas-preview-status", Static).renderable
-        )
+        status = str(pilot.app.query_one("#personas-preview-status", Static).renderable)
         assert "Message too long (max 4000 characters)." == status
 
 
@@ -248,9 +247,7 @@ async def test_scripty_message_is_rejected_with_readable_status():
         await pilot.pause()
         assert pilot.app.replies == []
         assert _line_texts(pilot.app) == []
-        status = str(
-            pilot.app.query_one("#personas-preview-status", Static).renderable
-        )
+        status = str(pilot.app.query_one("#personas-preview-status", Static).renderable)
         assert status.strip()
         assert "Traceback" not in status
 
@@ -365,9 +362,10 @@ async def test_reset_button_restores_greeting_and_posts_reset():
         await pilot.pause()
         assert pilot.app.resets == 1
         assert _line_texts(pilot.app) == ["character: Hello."]
-        assert str(
-            pilot.app.query_one("#personas-preview-status", Static).renderable
-        ) == ""
+        assert (
+            str(pilot.app.query_one("#personas-preview-status", Static).renderable)
+            == ""
+        )
 
 
 async def test_open_in_console_posts_message():

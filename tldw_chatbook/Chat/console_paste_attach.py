@@ -24,6 +24,7 @@ from loguru import logger
 from tldw_chatbook.Chat.attachment_core import attachment_filter_specs
 from tldw_chatbook.Utils.path_validation import is_safe_path
 
+
 def _supported_patterns() -> tuple[str, ...]:
     """Glob patterns for attachable files, from the call-time picker specs."""
     return tuple(
@@ -184,9 +185,7 @@ def grab_clipboard_image() -> ClipboardGrab:
     if grabbed is None:
         return ClipboardGrab(kind="empty")
     if isinstance(grabbed, list):
-        return ClipboardGrab(
-            kind="paths", paths=tuple(str(item) for item in grabbed)
-        )
+        return ClipboardGrab(kind="paths", paths=tuple(str(item) for item in grabbed))
     try:
         buffer = BytesIO()
         grabbed.save(buffer, format="PNG")

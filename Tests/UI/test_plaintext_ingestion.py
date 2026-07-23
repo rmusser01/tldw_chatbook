@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from textual.widgets import Button, Input
 
-from Tests.textual_test_utils import widget_pilot
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
     FileIngestionError,
     detect_file_type,
@@ -74,7 +73,9 @@ async def test_plaintext_processing_passes_metadata_to_ingest_helper(
     mock_app_instance: MagicMock,
     widget_pilot,
 ) -> None:
-    async with await widget_pilot(LocalIngestionPanel, app_instance=mock_app_instance) as pilot:
+    async with await widget_pilot(
+        LocalIngestionPanel, app_instance=mock_app_instance
+    ) as pilot:
         panel = pilot.app.test_widget
         panel.selected_files = [Path("notes.txt")]
         panel.query_one("#local-process-btn", Button).disabled = False

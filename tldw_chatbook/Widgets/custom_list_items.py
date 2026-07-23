@@ -1,5 +1,6 @@
 from textual.widgets import ListItem, Label
 
+
 class NoteListItem(ListItem):
     def __init__(self, title: str, note_id: str, note_version: int, **kwargs):
         super().__init__(Label(title), **kwargs)

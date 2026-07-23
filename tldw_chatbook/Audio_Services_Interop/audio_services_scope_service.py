@@ -89,12 +89,20 @@ _LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE = (
 class AudioServicesScopeService:
     """Route local and server audio services without merging histories or artifacts."""
 
-    def __init__(self, *, local_service: Any = None, server_service: Any = None, policy_enforcer: Any = None):
+    def __init__(
+        self,
+        *,
+        local_service: Any = None,
+        server_service: Any = None,
+        policy_enforcer: Any = None,
+    ):
         self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
 
-    def _normalize_mode(self, mode: AudioServicesBackend | str | None) -> AudioServicesBackend:
+    def _normalize_mode(
+        self, mode: AudioServicesBackend | str | None
+    ) -> AudioServicesBackend:
         if mode is None:
             return AudioServicesBackend.LOCAL
         if isinstance(mode, AudioServicesBackend):
@@ -105,9 +113,15 @@ class AudioServicesScopeService:
             raise ValueError(f"Invalid audio services backend: {mode}") from exc
 
     def _service_for_mode(self, mode: AudioServicesBackend) -> Any:
-        service = self.local_service if mode == AudioServicesBackend.LOCAL else self.server_service
+        service = (
+            self.local_service
+            if mode == AudioServicesBackend.LOCAL
+            else self.server_service
+        )
         if service is None:
-            raise ValueError(f"{mode.value.title()} audio services backend is unavailable.")
+            raise ValueError(
+                f"{mode.value.title()} audio services backend is unavailable."
+            )
         return service
 
     def _enforce_policy(self, action_id: str) -> None:
@@ -152,15 +166,29 @@ class AudioServicesScopeService:
         service = self._service_for_mode(normalized_mode)
         method = getattr(service, method_name, None)
         if not callable(method):
-            raise ValueError(f"{method_name} is unavailable for {normalized_mode.value} audio services.")
-        return normalized_mode, self._dump(await self._maybe_await(method(**(kwargs or {}))))
+            raise ValueError(
+                f"{method_name} is unavailable for {normalized_mode.value} audio services."
+            )
+        return normalized_mode, self._dump(
+            await self._maybe_await(method(**(kwargs or {})))
+        )
 
     @staticmethod
-    def _with_record_id(mode: AudioServicesBackend, kind: str, payload: dict[str, Any], identifier: Any | None = None) -> dict[str, Any]:
+    def _with_record_id(
+        mode: AudioServicesBackend,
+        kind: str,
+        payload: dict[str, Any],
+        identifier: Any | None = None,
+    ) -> dict[str, Any]:
         record = dict(payload or {})
         record.setdefault("backend", mode.value)
         if identifier is None:
-            identifier = record.get("id") or record.get("job_id") or record.get("voice_id") or record.get("profile_id")
+            identifier = (
+                record.get("id")
+                or record.get("job_id")
+                or record.get("voice_id")
+                or record.get("profile_id")
+            )
         if identifier is None:
             record.setdefault("record_id", f"{mode.value}:audio:{kind}")
         else:
@@ -168,27 +196,37 @@ class AudioServicesScopeService:
         return record
 
     @classmethod
-    def _normalize_history_list(cls, mode: AudioServicesBackend, payload: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_history_list(
+        cls, mode: AudioServicesBackend, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         record = cls._with_record_id(mode, "audio_history_list", payload, "list")
         if isinstance(record.get("items"), list):
             record["items"] = [
-                cls._with_record_id(mode, "audio_history", item) if isinstance(item, dict) else item
+                cls._with_record_id(mode, "audio_history", item)
+                if isinstance(item, dict)
+                else item
                 for item in record["items"]
             ]
         return record
 
     @classmethod
-    def _normalize_voice_list(cls, mode: AudioServicesBackend, payload: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_voice_list(
+        cls, mode: AudioServicesBackend, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         record = cls._with_record_id(mode, "audio_voices", payload, "list")
         if isinstance(record.get("voices"), list):
             record["voices"] = [
-                cls._with_record_id(mode, "audio_voice", item) if isinstance(item, dict) else item
+                cls._with_record_id(mode, "audio_voice", item)
+                if isinstance(item, dict)
+                else item
                 for item in record["voices"]
             ]
         return record
 
     @classmethod
-    def _normalize_audiobook_projects(cls, mode: AudioServicesBackend, payload: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_audiobook_projects(
+        cls, mode: AudioServicesBackend, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         record = cls._with_record_id(mode, "audiobook_projects", payload, "list")
         if isinstance(record.get("projects"), list):
             normalized_projects = []
@@ -197,7 +235,9 @@ class AudioServicesScopeService:
                     normalized_projects.append(item)
                     continue
                 project_id = item.get("project_id") or item.get("project_db_id")
-                normalized_projects.append(cls._with_record_id(mode, "audiobook_project", item, project_id))
+                normalized_projects.append(
+                    cls._with_record_id(mode, "audiobook_project", item, project_id)
+                )
             record["projects"] = normalized_projects
         return record
 
@@ -221,20 +261,33 @@ class AudioServicesScopeService:
         return record
 
     @classmethod
-    def _normalize_audiobook_project_detail(cls, mode: AudioServicesBackend, payload: dict[str, Any]) -> dict[str, Any]:
-        record = cls._with_record_id(mode, "audiobook_project_detail", payload, "detail")
+    def _normalize_audiobook_project_detail(
+        cls, mode: AudioServicesBackend, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        record = cls._with_record_id(
+            mode, "audiobook_project_detail", payload, "detail"
+        )
         if isinstance(record.get("project"), dict):
             project = dict(record["project"])
             project_id = project.get("project_id") or project.get("project_db_id")
-            record["project"] = cls._with_record_id(mode, "audiobook_project", project, project_id)
+            record["project"] = cls._with_record_id(
+                mode, "audiobook_project", project, project_id
+            )
         return record
 
     @classmethod
-    def _normalize_audiobook_chapters(cls, mode: AudioServicesBackend, payload: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_audiobook_chapters(
+        cls, mode: AudioServicesBackend, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         record = cls._with_record_id(mode, "audiobook_chapters", payload, "list")
         if isinstance(record.get("chapters"), list):
             record["chapters"] = [
-                cls._with_record_id(mode, "audiobook_chapter", item, item.get("id") or item.get("chapter_id"))
+                cls._with_record_id(
+                    mode,
+                    "audiobook_chapter",
+                    item,
+                    item.get("id") or item.get("chapter_id"),
+                )
                 if isinstance(item, dict)
                 else item
                 for item in record["chapters"]
@@ -242,11 +295,15 @@ class AudioServicesScopeService:
         return record
 
     @classmethod
-    def _normalize_audiobook_voice_profiles(cls, mode: AudioServicesBackend, payload: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_audiobook_voice_profiles(
+        cls, mode: AudioServicesBackend, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         record = cls._with_record_id(mode, "audiobook_voice_profiles", payload, "list")
         if isinstance(record.get("profiles"), list):
             record["profiles"] = [
-                cls._with_record_id(mode, "audiobook_voice_profile", item, item.get("profile_id"))
+                cls._with_record_id(
+                    mode, "audiobook_voice_profile", item, item.get("profile_id")
+                )
                 if isinstance(item, dict)
                 else item
                 for item in record["profiles"]
@@ -263,7 +320,10 @@ class AudioServicesScopeService:
             return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
         reports = []
         for item in _SERVER_UNSUPPORTED_CAPABILITIES:
-            if item["operation_id"] == "audio.websocket_streaming.server" and self._has_websocket_streaming_adapter():
+            if (
+                item["operation_id"] == "audio.websocket_streaming.server"
+                and self._has_websocket_streaming_adapter()
+            ):
                 continue
             reports.append(dict(item))
         return reports
@@ -283,9 +343,14 @@ class AudioServicesScopeService:
             "stream_tts_websocket",
             "stream_realtime_tts_websocket",
         )
-        return any(callable(getattr(service, method_name, None)) for method_name in websocket_methods)
+        return any(
+            callable(getattr(service, method_name, None))
+            for method_name in websocket_methods
+        )
 
-    async def get_tts_health(self, *, mode: AudioServicesBackend | str | None = None) -> dict[str, Any]:
+    async def get_tts_health(
+        self, *, mode: AudioServicesBackend | str | None = None
+    ) -> dict[str, Any]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="audio.health.observe.local",
@@ -308,7 +373,9 @@ class AudioServicesScopeService:
         )
         return self._with_record_id(normalized_mode, "audio", result, "stt_health")
 
-    async def list_tts_providers(self, *, mode: AudioServicesBackend | str | None = None) -> dict[str, Any]:
+    async def list_tts_providers(
+        self, *, mode: AudioServicesBackend | str | None = None
+    ) -> dict[str, Any]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="audio.providers.list.local",
@@ -337,10 +404,16 @@ class AudioServicesScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == AudioServicesBackend.LOCAL:
-            raise ValueError("Audio streaming REST helpers are server-only; switch to server mode to use them.")
+            raise ValueError(
+                "Audio streaming REST helpers are server-only; switch to server mode to use them."
+            )
         self._enforce_policy("audio.streaming.status.server")
-        result = await self._maybe_await(self._service_for_mode(normalized_mode).get_audio_streaming_status())
-        return self._with_record_id(normalized_mode, "audio_streaming", self._dump(result), "status")
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).get_audio_streaming_status()
+        )
+        return self._with_record_id(
+            normalized_mode, "audio_streaming", self._dump(result), "status"
+        )
 
     async def get_audio_streaming_limits(
         self,
@@ -349,10 +422,16 @@ class AudioServicesScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == AudioServicesBackend.LOCAL:
-            raise ValueError("Audio streaming REST helpers are server-only; switch to server mode to use them.")
+            raise ValueError(
+                "Audio streaming REST helpers are server-only; switch to server mode to use them."
+            )
         self._enforce_policy("audio.streaming.detail.server")
-        result = await self._maybe_await(self._service_for_mode(normalized_mode).get_audio_streaming_limits())
-        return self._with_record_id(normalized_mode, "audio_streaming", self._dump(result), "limits")
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).get_audio_streaming_limits()
+        )
+        return self._with_record_id(
+            normalized_mode, "audio_streaming", self._dump(result), "limits"
+        )
 
     async def test_audio_streaming(
         self,
@@ -361,10 +440,16 @@ class AudioServicesScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == AudioServicesBackend.LOCAL:
-            raise ValueError("Audio streaming REST helpers are server-only; switch to server mode to use them.")
+            raise ValueError(
+                "Audio streaming REST helpers are server-only; switch to server mode to use them."
+            )
         self._enforce_policy("audio.streaming.launch.server")
-        result = await self._maybe_await(self._service_for_mode(normalized_mode).test_audio_streaming())
-        return self._with_record_id(normalized_mode, "audio_streaming", self._dump(result), "test")
+        result = await self._maybe_await(
+            self._service_for_mode(normalized_mode).test_audio_streaming()
+        )
+        return self._with_record_id(
+            normalized_mode, "audio_streaming", self._dump(result), "test"
+        )
 
     async def create_speech_chat(
         self,
@@ -374,14 +459,18 @@ class AudioServicesScopeService:
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == AudioServicesBackend.LOCAL:
-            raise ValueError("Audio speech-chat REST helper is server-only; switch to server mode to use it.")
+            raise ValueError(
+                "Audio speech-chat REST helper is server-only; switch to server mode to use it."
+            )
         self._enforce_policy("audio.speech_chat.launch.server")
         result = await self._maybe_await(
             self._service_for_mode(normalized_mode).create_speech_chat(request_data)
         )
         payload = self._dump(result)
         identifier = payload.get("session_id") if isinstance(payload, dict) else None
-        return self._with_record_id(normalized_mode, "audio_speech_chat", payload, identifier or "session")
+        return self._with_record_id(
+            normalized_mode, "audio_speech_chat", payload, identifier or "session"
+        )
 
     async def create_audio_speech_job(
         self,
@@ -476,14 +565,18 @@ class AudioServicesScopeService:
         service = self._service_for_mode(normalized_mode)
         method = getattr(service, "stream_audio_job_progress", None)
         if not callable(method):
-            raise ValueError(f"stream_audio_job_progress is unavailable for {normalized_mode.value} audio services.")
+            raise ValueError(
+                f"stream_audio_job_progress is unavailable for {normalized_mode.value} audio services."
+            )
         async for event in method(job_id, after_id=after_id):
             record = self._dump(event)
             if isinstance(record, dict):
                 record.setdefault("backend", normalized_mode.value)
             yield record
 
-    async def list_tts_history(self, *, mode: AudioServicesBackend | str | None = None, **kwargs: Any) -> dict[str, Any]:
+    async def list_tts_history(
+        self, *, mode: AudioServicesBackend | str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="audio.history.list.local",
@@ -504,7 +597,9 @@ class AudioServicesScopeService:
             method_name="get_tts_history_entry",
             kwargs={"history_id": history_id},
         )
-        return self._with_record_id(normalized_mode, "audio_history", result, history_id)
+        return self._with_record_id(
+            normalized_mode, "audio_history", result, history_id
+        )
 
     async def update_tts_history_favorite(
         self,
@@ -519,7 +614,9 @@ class AudioServicesScopeService:
             method_name="update_tts_history_favorite",
             kwargs={"history_id": history_id, "request_data": request_data},
         )
-        return self._with_record_id(normalized_mode, "audio_history", result, history_id)
+        return self._with_record_id(
+            normalized_mode, "audio_history", result, history_id
+        )
 
     async def delete_tts_history_entry(
         self,
@@ -533,7 +630,9 @@ class AudioServicesScopeService:
             method_name="delete_tts_history_entry",
             kwargs={"history_id": history_id},
         )
-        return self._with_record_id(normalized_mode, "audio_history", result, history_id)
+        return self._with_record_id(
+            normalized_mode, "audio_history", result, history_id
+        )
 
     async def create_audio_transcription(
         self,
@@ -580,7 +679,9 @@ class AudioServicesScopeService:
             kwargs={"request_data": request_data},
             local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
-        return self._with_record_id(normalized_mode, "audio", result, "tokenizer_encode")
+        return self._with_record_id(
+            normalized_mode, "audio", result, "tokenizer_encode"
+        )
 
     async def decode_audio_tokenizer(
         self,
@@ -595,7 +696,9 @@ class AudioServicesScopeService:
             kwargs={"request_data": request_data},
             local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
-        return self._with_record_id(normalized_mode, "audio", result, "tokenizer_decode")
+        return self._with_record_id(
+            normalized_mode, "audio", result, "tokenizer_decode"
+        )
 
     async def upload_custom_voice(
         self,
@@ -637,7 +740,9 @@ class AudioServicesScopeService:
         )
         return self._with_record_id(normalized_mode, "audio_voice", result)
 
-    async def list_custom_voices(self, *, mode: AudioServicesBackend | str | None = None) -> dict[str, Any]:
+    async def list_custom_voices(
+        self, *, mode: AudioServicesBackend | str | None = None
+    ) -> dict[str, Any]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="audio.voices.list.local",
@@ -675,7 +780,9 @@ class AudioServicesScopeService:
             kwargs={"voice_id": voice_id, "text": text},
             local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
-        return self._with_record_id(normalized_mode, "audio_voice_preview", result, voice_id)
+        return self._with_record_id(
+            normalized_mode, "audio_voice_preview", result, voice_id
+        )
 
     async def delete_custom_voice(
         self,
@@ -705,7 +812,9 @@ class AudioServicesScopeService:
             kwargs={"request_data": request_data},
             local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
-        return self._with_record_id(normalized_mode, "audiobook_parse", result, result.get("project_id"))
+        return self._with_record_id(
+            normalized_mode, "audiobook_parse", result, result.get("project_id")
+        )
 
     async def create_audiobook_job(
         self,
@@ -868,7 +977,9 @@ class AudioServicesScopeService:
             kwargs={"profile_id": profile_id},
             local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
-        return self._with_record_id(normalized_mode, "audiobook_voice_profile", result, profile_id)
+        return self._with_record_id(
+            normalized_mode, "audiobook_voice_profile", result, profile_id
+        )
 
     async def export_audiobook_subtitles(
         self,
@@ -883,4 +994,6 @@ class AudioServicesScopeService:
             kwargs={"request_data": request_data},
             local_unavailable_message=_LOCAL_ADVANCED_AUDIO_UNAVAILABLE_MESSAGE,
         )
-        return self._with_record_id(normalized_mode, "audiobook_subtitles", result, "export")
+        return self._with_record_id(
+            normalized_mode, "audiobook_subtitles", result, "export"
+        )

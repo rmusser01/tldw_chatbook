@@ -14,14 +14,18 @@ from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
 
 @pytest.mark.asyncio
 async def test_count_skills_counts_managed_skills(tmp_path):
-    svc = LocalSkillsService(store_dir=tmp_path, allow_untrusted_without_trust_service=True)
+    svc = LocalSkillsService(
+        store_dir=tmp_path, allow_untrusted_without_trust_service=True
+    )
     assert await svc.count_skills() == 0
     await svc.create_skill(
         name="code-review",
-        content="---\nname: code-review\ndescription: Review code\n---\nDo it.")
+        content="---\nname: code-review\ndescription: Review code\n---\nDo it.",
+    )
     await svc.create_skill(
         name="summarize",
-        content="---\nname: summarize\ndescription: Summarize text\n---\nGo.")
+        content="---\nname: summarize\ndescription: Summarize text\n---\nGo.",
+    )
     assert await svc.count_skills() == 2
 
 
@@ -85,7 +89,9 @@ async def test_scope_service_count_skills_routes_to_local_backend_and_returns_in
 @pytest.mark.asyncio
 async def test_scope_service_count_skills_enforces_context_list_action_id():
     policy = _FakePolicyEnforcer()
-    scope = SkillsScopeService(local_service=_FakeLocalSkillsService(count=5), policy_enforcer=policy)
+    scope = SkillsScopeService(
+        local_service=_FakeLocalSkillsService(count=5), policy_enforcer=policy
+    )
 
     result = await scope.count_skills(mode="local")
 

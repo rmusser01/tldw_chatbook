@@ -1,8 +1,7 @@
 """Blink splash screen effect."""
 
-from rich.style import Style
 import time
-from typing import Optional, Any, List, Tuple
+from typing import Optional, Any, List
 from rich.text import Text
 
 from ..base_effect import BaseEffect, register_effect
@@ -17,16 +16,18 @@ class BlinkEffect(BaseEffect):
         parent_widget: Any,
         content: str,
         blink_speed: float = 0.5,  # Time for one state (on or off)
-        blink_targets: Optional[List[str]] = None, # List of exact strings to blink
-        blink_style_on: str = "default", # Style when text is visible
+        blink_targets: Optional[List[str]] = None,  # List of exact strings to blink
+        blink_style_on: str = "default",  # Style when text is visible
         blink_style_off: str = "dim",  # Style when text is "off" (e.g., dimmed or hidden via color)
-        **kwargs
+        **kwargs,
     ):
         super().__init__(parent_widget, **kwargs)
         self.original_content = content
         self.blink_speed = blink_speed
         self.blink_targets = blink_targets if blink_targets else []
-        self.blink_style_on = blink_style_on # Not actively used if "default" means use card's base style
+        self.blink_style_on = (
+            blink_style_on  # Not actively used if "default" means use card's base style
+        )
         self.blink_style_off = blink_style_off
         self._is_on = True
         self._last_blink_time = time.time()
@@ -45,7 +46,7 @@ class BlinkEffect(BaseEffect):
         # This assumes the card's main style will handle the "on" state appearance.
         # The effect focuses on altering the "off" state or replacing text.
 
-        output_text = Text.from_markup(self.original_content.replace('[', r'\['))
+        output_text = Text.from_markup(self.original_content.replace("[", r"\["))
 
         if not self._is_on:
             for target_text in self.blink_targets:
@@ -60,20 +61,30 @@ class BlinkEffect(BaseEffect):
 
                         if self.blink_style_off == "hidden":
                             # Replace with spaces
-                            output_text.plain = output_text.plain[:found_pos] + ' ' * len(target_text) + output_text.plain[found_pos+len(target_text):]
+                            output_text.plain = (
+                                output_text.plain[:found_pos]
+                                + " " * len(target_text)
+                                + output_text.plain[found_pos + len(target_text) :]
+                            )
                             # This modification of .plain is a bit of a hack.
                             # A more robust way would be to reconstruct the Text object or use Text.replace.
                             # For now, let's rebuild the text object to ensure spans are cleared.
                             current_plain = output_text.plain
-                            output_text = Text(current_plain) # Re-create to clear old spans over modified region
+                            output_text = Text(
+                                current_plain
+                            )  # Re-create to clear old spans over modified region
                         else:
                             # Apply style
-                            output_text.stylize(self.blink_style_off, start=found_pos, end=found_pos + len(target_text))
+                            output_text.stylize(
+                                self.blink_style_off,
+                                start=found_pos,
+                                end=found_pos + len(target_text),
+                            )
 
                         start_index = found_pos + len(target_text)
-                    except ValueError: # Should not happen with plain.find
+                    except ValueError:  # Should not happen with plain.find
                         break
         # If _is_on, the text remains as is, relying on the Static widget's base style.
         # If blink_style_on was not "default", one would apply it here to the targets.
 
-        return output_text.markup # Return the Rich markup string
+        return output_text.markup  # Return the Rich markup string

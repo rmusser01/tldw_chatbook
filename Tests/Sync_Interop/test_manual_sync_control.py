@@ -11,7 +11,9 @@ pytestmark = pytest.mark.asyncio
 
 
 class RecordingLocalFirstSync:
-    def __init__(self, result: dict | None = None, exc: Exception | None = None) -> None:
+    def __init__(
+        self, result: dict | None = None, exc: Exception | None = None
+    ) -> None:
         self.calls: list[dict] = []
         self.local_store = object()
         self.result = result or {
@@ -79,7 +81,9 @@ class MutatingLocalFirstSync(RecordingLocalFirstSync):
 
 
 class FailingMutatingLocalFirstSync(RecordingLocalFirstSync):
-    def __init__(self, repo: SyncStateRepository, *, failed_client_envelope_id: str) -> None:
+    def __init__(
+        self, repo: SyncStateRepository, *, failed_client_envelope_id: str
+    ) -> None:
         super().__init__(exc=RuntimeError("temporary network split"))
         self.repo = repo
         self.failed_client_envelope_id = failed_client_envelope_id
@@ -105,7 +109,9 @@ class FailingMutatingLocalFirstSync(RecordingLocalFirstSync):
         raise self.exc
 
 
-def _repo_with_profile(tmp_path, *, dataset_id: str | None = "dataset-1") -> SyncStateRepository:
+def _repo_with_profile(
+    tmp_path, *, dataset_id: str | None = "dataset-1"
+) -> SyncStateRepository:
     repo = SyncStateRepository(tmp_path / "manual_sync_state.db")
     repo.set_sync_v2_profile_state(
         server_profile_id="server-a",
@@ -188,7 +194,9 @@ async def test_manual_sync_run_is_explicit_and_maps_partial_failure(tmp_path):
             "applied_envelopes": 0,
             "outbox_dispatched": 1,
             "outbox_retained": 1,
-            "rejected_envelopes": [{"client_envelope_id": "msg-1", "error_code": "policy"}],
+            "rejected_envelopes": [
+                {"client_envelope_id": "msg-1", "error_code": "policy"}
+            ],
             "push_conflicts": [],
             "conflicts": [],
         }

@@ -90,13 +90,23 @@ class SyncV2ConflictReviewService:
         )
 
     @staticmethod
-    def _from_retained_outbox_entry(entry: Mapping[str, Any]) -> SyncV2ConflictReviewItem:
-        envelope = entry.get("envelope") if isinstance(entry.get("envelope"), Mapping) else {}
-        last_error = entry.get("last_error") if isinstance(entry.get("last_error"), Mapping) else {}
+    def _from_retained_outbox_entry(
+        entry: Mapping[str, Any],
+    ) -> SyncV2ConflictReviewItem:
+        envelope = (
+            entry.get("envelope") if isinstance(entry.get("envelope"), Mapping) else {}
+        )
+        last_error = (
+            entry.get("last_error")
+            if isinstance(entry.get("last_error"), Mapping)
+            else {}
+        )
         error_code = str(last_error.get("error_code") or "push_failed")
         message = str(last_error.get("message") or "Outgoing change was retained.")
         domain = str(entry.get("domain") or envelope.get("domain") or "sync")
-        entity_id = str(envelope.get("entity_id") or entry.get("client_envelope_id") or "pending")
+        entity_id = str(
+            envelope.get("entity_id") or entry.get("client_envelope_id") or "pending"
+        )
         return SyncV2ConflictReviewItem(
             domain=domain,
             item_label=f"{domain} {entity_id}",
@@ -117,8 +127,7 @@ def _normalize_recovery_options(value: Any) -> dict[str, str]:
     if not isinstance(value, Mapping):
         return {action: "unavailable" for action in RECOVERY_ACTIONS}
     return {
-        action: str(value.get(action) or "unavailable")
-        for action in RECOVERY_ACTIONS
+        action: str(value.get(action) or "unavailable") for action in RECOVERY_ACTIONS
     }
 
 

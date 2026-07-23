@@ -95,7 +95,9 @@ class PersonaProfileCardWidget(Container):
             # not information (same rule as the character card).
             widget.display = bool(value)
             widget.update(f"{label}: {value}" if value else f"{label}:")
-        self.query_one("#personas-card-edit", Button).disabled = self._persona_id is None
+        self.query_one("#personas-card-edit", Button).disabled = (
+            self._persona_id is None
+        )
 
     @on(Button.Pressed, "#personas-card-edit")
     def _edit_pressed(self, event: Button.Pressed) -> None:

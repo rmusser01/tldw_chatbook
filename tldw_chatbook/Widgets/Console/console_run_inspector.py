@@ -41,6 +41,8 @@ _ROW_IDS = {
     "Conversation source": "console-inspector-conversation-source",
     "Workspace": "console-inspector-workspace",
     "Resume state": "console-inspector-resume-state",
+    "Prefill (next send only)": "console-inspector-prefill-one-shot",
+    "Prefill (pinned)": "console-inspector-prefill-pinned",
     "Session provider": "console-inspector-session-provider",
     "Session model": "console-inspector-session-model",
     "Session endpoint": "console-inspector-session-endpoint",
@@ -89,7 +91,14 @@ _ROW_GROUPS = (
     (
         "Selected Conversation",
         "console-inspector-selected-conversation-heading",
-        ("Selected conversation", "Conversation source", "Workspace", "Resume state"),
+        (
+            "Selected conversation",
+            "Conversation source",
+            "Workspace",
+            "Resume state",
+            "Prefill (next send only)",
+            "Prefill (pinned)",
+        ),
     ),
     (
         "Session Defaults",
@@ -105,7 +114,14 @@ _ROW_GROUPS = (
     (
         "Selected Message",
         "console-inspector-selected-message-heading",
-        ("Selected message", "Message actions", "Keyboard", "Variants", "Excerpt", "Delete confirmation"),
+        (
+            "Selected message",
+            "Message actions",
+            "Keyboard",
+            "Variants",
+            "Excerpt",
+            "Delete confirmation",
+        ),
     ),
 )
 
@@ -193,7 +209,9 @@ class ConsoleRunInspector(Vertical):
             Row entries in compose order, dictionary rows last.
         """
         entries: list[tuple[str, str, str]] = []
-        rows_by_label = {row.label: (index, row) for index, row in enumerate(state.rows)}
+        rows_by_label = {
+            row.label: (index, row) for index, row in enumerate(state.rows)
+        }
         rendered_labels: set[str] = set()
         for _heading, _heading_id, labels in _ROW_GROUPS:
             for label in labels:
@@ -209,6 +227,10 @@ class ConsoleRunInspector(Vertical):
         for index, row in enumerate(getattr(state, "dictionary_rows", ()) or ()):
             entries.append(
                 (f"console-inspector-dictionaries-row-{index}", row.text, row.status)
+            )
+        for index, row in enumerate(getattr(state, "world_book_rows", ()) or ()):
+            entries.append(
+                (f"console-inspector-worldbooks-row-{index}", row.text, row.status)
             )
         return entries
 
@@ -243,6 +265,10 @@ class ConsoleRunInspector(Vertical):
             tuple(
                 _action_key(action)
                 for action in getattr(state, "dictionary_actions", ()) or ()
+            ),
+            tuple(
+                _action_key(action)
+                for action in getattr(state, "world_book_actions", ()) or ()
             ),
         )
 
@@ -335,6 +361,10 @@ class ConsoleRunInspector(Vertical):
             return "Status: Needs approval"
         if rag_source is not None and rag_source.status == "blocked":
             return "Status: Source blocked"
+        # TASK-347: a live generation must not read "Ready" — but a mid-run
+        # block / pending approval above is still the more important signal.
+        if getattr(state or self.state, "run_active", False):
+            return "Status: Generating…"
         return "Status: Ready"
 
     def compose(self) -> ComposeResult:
@@ -343,7 +373,9 @@ class ConsoleRunInspector(Vertical):
             id="console-inspector-run-status-summary",
             classes="console-inspector-status-summary",
         )
-        rows_by_label = {row.label: (index, row) for index, row in enumerate(self.state.rows)}
+        rows_by_label = {
+            row.label: (index, row) for index, row in enumerate(self.state.rows)
+        }
         rendered_labels: set[str] = set()
         rendered_action_ids: set[str] = set()
 
@@ -408,4 +440,22 @@ class ConsoleRunInspector(Vertical):
                     markup=False,
                 )
             for action in dict_actions:
+                yield from self._compose_action(action)
+
+        world_book_rows = getattr(self.state, "world_book_rows", ())
+        world_book_actions = getattr(self.state, "world_book_actions", ())
+        if world_book_rows or world_book_actions:
+            yield Static(
+                "World Books",
+                id="console-inspector-worldbooks-heading",
+                classes="console-inspector-group-heading destination-section",
+            )
+            for index, row in enumerate(world_book_rows):
+                yield Static(
+                    row.text,
+                    id=f"console-inspector-worldbooks-row-{index}",
+                    classes=f"console-inspector-row console-inspector-row-{row.status}",
+                    markup=False,
+                )
+            for action in world_book_actions:
                 yield from self._compose_action(action)

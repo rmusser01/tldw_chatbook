@@ -39,7 +39,9 @@ _KIND_TO_RECORD_TYPE = {
 }
 
 
-def normalize_research_record(source: str, kind: str, record: Mapping[str, Any]) -> dict[str, Any]:
+def normalize_research_record(
+    source: str, kind: str, record: Mapping[str, Any]
+) -> dict[str, Any]:
     """Return a source-labeled research record without hiding backend-native IDs."""
 
     payload = dict(record)

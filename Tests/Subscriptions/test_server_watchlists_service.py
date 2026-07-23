@@ -152,7 +152,7 @@ class FakeWatchlistsClient:
             "name": "Too many",
             "enabled": True,
             "condition_type": "items_above",
-            "condition_value": "{\"threshold\": 10}",
+            "condition_value": '{"threshold": 10}',
             "severity": "critical",
             "created_at": "2026-04-21T12:00:00Z",
             "updated_at": "2026-04-21T12:00:00Z",
@@ -173,7 +173,7 @@ class FakeWatchlistsClient:
             "name": "Too many updated",
             "enabled": False,
             "condition_type": "items_above",
-            "condition_value": "{\"threshold\": 25}",
+            "condition_value": '{"threshold": 25}',
             "severity": "warning",
             "created_at": "2026-04-21T12:00:00Z",
             "updated_at": "2026-04-21T12:05:00Z",
@@ -452,7 +452,11 @@ async def test_server_watchlists_service_routes_run_lifecycle_and_normalizes_run
         ("trigger_watchlist_run", 7),
         ("list_watchlist_runs", {"job_id": 7, "page": 2, "size": 25, "q": None}),
         ("get_watchlist_run", 101),
-        ("get_watchlist_run_details", 101, {"include_tallies": True, "filtered_sample_max": 5}),
+        (
+            "get_watchlist_run_details",
+            101,
+            {"include_tallies": True, "filtered_sample_max": 5},
+        ),
     ]
 
 
@@ -519,7 +523,9 @@ async def test_server_watchlists_service_enforces_policy_actions():
 
     await service.list_sources(q="ai")
     await service.get_source(17)
-    await service.create_source(name="Docs", url="https://example.com/docs", source_type="site")
+    await service.create_source(
+        name="Docs", url="https://example.com/docs", source_type="site"
+    )
     await service.update_source(17, name="Renamed")
     await service.delete_source(17)
     await service.launch_run(job_id=7)
@@ -528,11 +534,15 @@ async def test_server_watchlists_service_enforces_policy_actions():
     await service.get_run_detail(101)
     await service.list_alert_rules(job_id=7)
     await service.get_alert_rule(11)
-    await service.create_alert_rule(name="Too many", condition_type="items_above", job_id=7)
+    await service.create_alert_rule(
+        name="Too many", condition_type="items_above", job_id=7
+    )
     await service.update_alert_rule(12, enabled=False)
     await service.delete_alert_rule(12)
 
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "watchlists.list.server",
         "watchlists.detail.server",
         "watchlists.create.server",

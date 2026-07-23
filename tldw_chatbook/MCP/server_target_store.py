@@ -23,7 +23,11 @@ class ConfiguredServerTargetStore:
             payload = payload.get("targets") if isinstance(payload, Mapping) else []
         if not isinstance(payload, list):
             return []
-        return [ConfiguredServerTarget.from_dict(item) for item in payload if isinstance(item, Mapping)]
+        return [
+            ConfiguredServerTarget.from_dict(item)
+            for item in payload
+            if isinstance(item, Mapping)
+        ]
 
     def list_targets(self) -> list[ConfiguredServerTarget]:
         return self.load()
@@ -37,7 +41,9 @@ class ConfiguredServerTargetStore:
                 return target
         return None
 
-    def resolve_active_target(self, server_id: str | None = None) -> ConfiguredServerTarget | None:
+    def resolve_active_target(
+        self, server_id: str | None = None
+    ) -> ConfiguredServerTarget | None:
         targets = self.list_targets()
         if not targets:
             return None
@@ -108,7 +114,12 @@ class ConfiguredServerTargetStore:
 
             normalized_auth_state = _normalize_status_choice(
                 last_known_auth_state,
-                valid_values={"unknown", "authenticated", "auth_required", "session_invalid"},
+                valid_values={
+                    "unknown",
+                    "authenticated",
+                    "auth_required",
+                    "session_invalid",
+                },
             )
             if normalized_auth_state is None:
                 normalized_auth_state = target.last_known_auth_state
@@ -121,7 +132,9 @@ class ConfiguredServerTargetStore:
                 last_known_server_label=normalized_server_label,
                 last_known_reachability=normalized_reachability,
                 last_known_auth_state=normalized_auth_state,
-                last_connected_at=last_connected_at if last_connected_at is not None else target.last_connected_at,
+                last_connected_at=last_connected_at
+                if last_connected_at is not None
+                else target.last_connected_at,
                 updated_at=updated_at if updated_at is not None else target.updated_at,
             )
             updated_target = target.with_status(status)
@@ -146,7 +159,9 @@ class ConfiguredServerTargetStore:
 
         temp_path.replace(self.path)
 
-    def bootstrap_from_legacy_config(self, app_config: Mapping[str, Any] | None) -> bool:
+    def bootstrap_from_legacy_config(
+        self, app_config: Mapping[str, Any] | None
+    ) -> bool:
         if self.list_targets():
             return False
 
@@ -161,7 +176,9 @@ class ConfiguredServerTargetStore:
         self,
         app_config: Mapping[str, Any] | None,
     ) -> ConfiguredServerTarget | None:
-        legacy_target = ConfiguredServerTarget.from_legacy_tldw_api_config(app_config or {})
+        legacy_target = ConfiguredServerTarget.from_legacy_tldw_api_config(
+            app_config or {}
+        )
         if legacy_target is None:
             return None
 
@@ -177,10 +194,14 @@ class ConfiguredServerTargetStore:
             synced_target = replace(
                 legacy_target,
                 is_default=True,
-                last_known_server_label=target.last_known_server_label or legacy_target.last_known_server_label,
-                last_known_reachability=target.last_known_reachability or legacy_target.last_known_reachability,
-                last_known_auth_state=target.last_known_auth_state or legacy_target.last_known_auth_state,
-                last_connected_at=target.last_connected_at or legacy_target.last_connected_at,
+                last_known_server_label=target.last_known_server_label
+                or legacy_target.last_known_server_label,
+                last_known_reachability=target.last_known_reachability
+                or legacy_target.last_known_reachability,
+                last_known_auth_state=target.last_known_auth_state
+                or legacy_target.last_known_auth_state,
+                last_connected_at=target.last_connected_at
+                or legacy_target.last_connected_at,
                 updated_at=target.updated_at or legacy_target.updated_at,
             )
             updated_targets.append(synced_target)
@@ -211,7 +232,9 @@ def _datetime_to_iso(value: datetime | None) -> str | None:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _normalize_status_choice(value: str | None, *, valid_values: set[str]) -> str | None:
+def _normalize_status_choice(
+    value: str | None, *, valid_values: set[str]
+) -> str | None:
     if value is None:
         return None
     normalized = str(value).strip()

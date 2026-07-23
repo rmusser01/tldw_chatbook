@@ -28,8 +28,15 @@ class FakeCollectionsFeedsClient:
         self.calls = []
 
     async def create_collections_feed(self, request_data):
-        self.calls.append(("create_collections_feed", request_data.model_dump(exclude_none=True, mode="json")))
-        return CollectionsFeed.model_validate(_feed_payload(id=21, name=request_data.name or "Example Feed"))
+        self.calls.append(
+            (
+                "create_collections_feed",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
+        return CollectionsFeed.model_validate(
+            _feed_payload(id=21, name=request_data.name or "Example Feed")
+        )
 
     async def list_collections_feeds(self, **kwargs):
         self.calls.append(("list_collections_feeds", kwargs))
@@ -40,7 +47,13 @@ class FakeCollectionsFeedsClient:
         return _feed_payload(id=feed_id)
 
     async def update_collections_feed(self, feed_id, request_data):
-        self.calls.append(("update_collections_feed", feed_id, request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "update_collections_feed",
+                feed_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return _feed_payload(id=feed_id, active=False)
 
     async def delete_collections_feed(self, feed_id):
@@ -48,12 +61,30 @@ class FakeCollectionsFeedsClient:
         return True
 
     async def subscribe_collections_feed_websub(self, feed_id, request_data):
-        self.calls.append(("subscribe_collections_feed_websub", feed_id, request_data.model_dump(exclude_none=True, mode="json")))
-        return {"id": 41, "source_id": feed_id, "hub_url": "https://hub.example.com", "topic_url": "https://example.com/feed.xml", "state": "pending"}
+        self.calls.append(
+            (
+                "subscribe_collections_feed_websub",
+                feed_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
+        return {
+            "id": 41,
+            "source_id": feed_id,
+            "hub_url": "https://hub.example.com",
+            "topic_url": "https://example.com/feed.xml",
+            "state": "pending",
+        }
 
     async def get_collections_feed_websub(self, feed_id):
         self.calls.append(("get_collections_feed_websub", feed_id))
-        return {"id": 41, "source_id": feed_id, "hub_url": "https://hub.example.com", "topic_url": "https://example.com/feed.xml", "state": "verified"}
+        return {
+            "id": 41,
+            "source_id": feed_id,
+            "hub_url": "https://hub.example.com",
+            "topic_url": "https://example.com/feed.xml",
+            "state": "verified",
+        }
 
     async def unsubscribe_collections_feed_websub(self, feed_id):
         self.calls.append(("unsubscribe_collections_feed_websub", feed_id))
@@ -109,7 +140,9 @@ async def test_server_collections_feeds_service_direct_client_takes_precedence_o
 
     assert result == {"items": [_feed_payload()], "total": 1}
     assert provider.build_calls == 0
-    assert client.calls == [("list_collections_feeds", {"q": None, "page": 2, "size": 10})]
+    assert client.calls == [
+        ("list_collections_feeds", {"q": None, "page": 2, "size": 10})
+    ]
 
 
 @pytest.mark.asyncio
@@ -128,7 +161,9 @@ async def test_server_collections_feeds_service_from_server_context_provider_is_
     assert result == {"items": [_feed_payload()], "total": 1}
     assert service.client is None
     assert provider.build_calls == 1
-    assert client.calls == [("list_collections_feeds", {"q": None, "page": 2, "size": 10})]
+    assert client.calls == [
+        ("list_collections_feeds", {"q": None, "page": 2, "size": 10})
+    ]
 
 
 @pytest.mark.asyncio
@@ -143,8 +178,12 @@ async def test_server_collections_feeds_service_re_resolves_provider_without_ser
     assert provider.build_calls == 2
     assert len(provider.clients) == 2
     assert provider.clients[0] is not provider.clients[1]
-    assert provider.clients[0].calls == [("list_collections_feeds", {"q": None, "page": 2, "size": 10})]
-    assert provider.clients[1].calls == [("list_collections_feeds", {"q": None, "page": 3, "size": 5})]
+    assert provider.clients[0].calls == [
+        ("list_collections_feeds", {"q": None, "page": 2, "size": 10})
+    ]
+    assert provider.clients[1].calls == [
+        ("list_collections_feeds", {"q": None, "page": 3, "size": 5})
+    ]
     for built_client in provider.clients:
         assert all(value is not built_client for value in vars(service).values())
 
@@ -171,7 +210,9 @@ async def test_server_collections_feeds_service_routes_crud_with_policy_actions(
     policy = Mock()
     service = ServerCollectionsFeedsService(client=client, policy_enforcer=policy)
 
-    created = await service.create_feed(url="https://example.com/feed.xml", name="Example Feed", tags=["news"])
+    created = await service.create_feed(
+        url="https://example.com/feed.xml", name="Example Feed", tags=["news"]
+    )
     listed = await service.list_feeds(q="example", page=2, size=10)
     fetched = await service.get_feed(12)
     updated = await service.update_feed(12, active=False)
@@ -185,19 +226,21 @@ async def test_server_collections_feeds_service_routes_crud_with_policy_actions(
     assert client.calls == [
         (
             "create_collections_feed",
-                {
-                    "url": "https://example.com/feed.xml",
-                    "name": "Example Feed",
-                    "tags": ["news"],
-                    "active": True,
-                },
-            ),
+            {
+                "url": "https://example.com/feed.xml",
+                "name": "Example Feed",
+                "tags": ["news"],
+                "active": True,
+            },
+        ),
         ("list_collections_feeds", {"q": "example", "page": 2, "size": 10}),
         ("get_collections_feed", 12),
         ("update_collections_feed", 12, {"active": False}),
         ("delete_collections_feed", 12),
     ]
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "collections.feeds.create.server",
         "collections.feeds.list.server",
         "collections.feeds.detail.server",
@@ -224,7 +267,9 @@ async def test_server_collections_feeds_service_routes_websub_with_policy_action
         ("get_collections_feed_websub", 12),
         ("unsubscribe_collections_feed_websub", 12),
     ]
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list][-3:] == [
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list][
+        -3:
+    ] == [
         "collections.feeds.websub.launch.server",
         "collections.feeds.websub.detail.server",
         "collections.feeds.websub.delete.server",

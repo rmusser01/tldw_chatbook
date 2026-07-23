@@ -119,7 +119,9 @@ def test_summarize_arguments_redacts_secret_looking_values():
     """Minor 4: the approval card must apply the same `redact_mapping`
     boundary as every other MCP display/log surface -- pre-fix, a raw
     `api_key` argument value rendered verbatim on the card."""
-    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import _summarize_arguments
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        _summarize_arguments,
+    )
 
     text = _summarize_arguments({"api_key": "sk-super-secret-value", "q": "hello"})
 
@@ -176,13 +178,19 @@ async def test_set_batch_renders_one_row_per_unique_name_with_tooltips():
         assert "(definition changed)" in headers[1]
         assert "(definition changed)" not in headers[0]
 
-        args_summaries = [_text(row.query_one(".approval-row-args", Static)) for row in rows]
+        args_summaries = [
+            _text(row.query_one(".approval-row-args", Static)) for row in rows
+        ]
         assert all(len(summary) <= 80 for summary in args_summaries)
 
         for select in app.query(Select):
             assert select.value == "approve_once"
 
-        for button_id in ("#approval-approve-all", "#approval-submit", "#approval-deny-all"):
+        for button_id in (
+            "#approval-approve-all",
+            "#approval-submit",
+            "#approval-deny-all",
+        ):
             button = app.query_one(button_id, Button)
             assert button.tooltip, f"{button_id} must be tooltipped"
 
@@ -366,7 +374,9 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
         )
 
 
-def test_approval_row_decision_select_width_rule_pinned_in_bundle_source_and_bundle() -> None:
+def test_approval_row_decision_select_width_rule_pinned_in_bundle_source_and_bundle() -> (
+    None
+):
     """T9: id-scoped bundle rule directly on `.approval-row-decision`
     (a class selector -- higher specificity than `_conversations.tcss`'s
     bare `Select { width: 100%; }` type selector, so it wins regardless of
@@ -459,7 +469,9 @@ async def test_request_mcp_approvals_round_trip_resolves_from_ui_thread():
         assert received[0]["timeout_seconds"] == 30.0
         controller.resolve_pending_approval({"mcp__srv__tool": "approve_session"})
 
-    decisions_task = asyncio.create_task(asyncio.to_thread(controller.request_mcp_approvals, pending))
+    decisions_task = asyncio.create_task(
+        asyncio.to_thread(controller.request_mcp_approvals, pending)
+    )
     await resolve_soon()
     decisions = await decisions_task
 
@@ -545,7 +557,9 @@ def test_request_mcp_approvals_active_cancel_event_denies_undecided():
     assert decisions == {"mcp__srv__tool": "deny"}
 
 
-def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution_log(tmp_path):
+def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution_log(
+    tmp_path,
+):
     """Finding I3: a stop/unmount that resolves this round via cancellation
     must still leave an audit record. Pre-fix, `run_agent_loop`'s own
     `should_cancel()` check fires for every call in the batch BEFORE any
@@ -562,15 +576,21 @@ def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution
 
     from tldw_chatbook.MCP.execution_log import MCPExecutionLog
     from tldw_chatbook.MCP.local_store import LocalExternalMCPProfile, LocalMCPStore
-    from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
 
     store = LocalMCPStore(tmp_path / "store.json")
     store.save_profile(
-        LocalExternalMCPProfile(profile_id="docs", command="python", args=("-m", "demo"))
+        LocalExternalMCPProfile(
+            profile_id="docs", command="python", args=("-m", "demo")
+        )
     )
     service = UnifiedMCPControlPlaneService(
         local_service=SimpleNamespace(store=store),
-        server_service=None, target_store=None, context_store=None,
+        server_service=None,
+        target_store=None,
+        context_store=None,
     )
 
     controller, _ = _build_controller()
@@ -587,7 +607,13 @@ def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution
     canceller = threading.Thread(target=_cancel_soon)
     canceller.start()
     decisions = controller.request_mcp_approvals(
-        [_pending(server_key="local:docs", tool_name="search", llm_name="mcp__docs__search")]
+        [
+            _pending(
+                server_key="local:docs",
+                tool_name="search",
+                llm_name="mcp__docs__search",
+            )
+        ]
     )
     canceller.join()
 
@@ -656,9 +682,12 @@ def test_request_mcp_approvals_snapshot_covers_exactly_the_unique_names():
         time.sleep(0.05)
         # Only decides "a" explicitly, includes an unrelated stray key,
         # and leaves "b" undecided (backstopped to "deny" pre-snapshot).
-        controller.resolve_pending_approval({
-            "mcp__srv__a": "approve_once", "mcp__unrelated__c": "deny",
-        })
+        controller.resolve_pending_approval(
+            {
+                "mcp__srv__a": "approve_once",
+                "mcp__unrelated__c": "deny",
+            }
+        )
 
     threading.Thread(target=_resolve_soon).start()
     decisions = controller.request_mcp_approvals(pending)

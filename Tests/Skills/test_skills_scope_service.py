@@ -10,11 +10,17 @@ class FakeSkillsService:
 
     async def list_skills(self, **kwargs):
         self.calls.append(("list_skills", kwargs))
-        return {"skills": [{"name": "summarize-notes", "user_invocable": True}], "total": 1}
+        return {
+            "skills": [{"name": "summarize-notes", "user_invocable": True}],
+            "total": 1,
+        }
 
     async def get_context(self):
         self.calls.append(("get_context",))
-        return {"available_skills": [{"name": "summarize-notes"}], "context_text": "- summarize-notes"}
+        return {
+            "available_skills": [{"name": "summarize-notes"}],
+            "context_text": "- summarize-notes",
+        }
 
     async def get_skill(self, skill_name):
         self.calls.append(("get_skill", skill_name))
@@ -26,7 +32,11 @@ class FakeSkillsService:
 
     async def execute_skill(self, skill_name, **kwargs):
         self.calls.append(("execute_skill", skill_name, kwargs))
-        return {"skill_name": skill_name, "rendered_prompt": "Summarize note-1", "execution_mode": "inline"}
+        return {
+            "skill_name": skill_name,
+            "rendered_prompt": "Summarize note-1",
+            "execution_mode": "inline",
+        }
 
 
 class FakePolicyEnforcer:
@@ -55,8 +65,12 @@ async def test_skills_scope_service_routes_server_operations_and_normalizes_reco
     listed = await scope.list_skills(mode="server", include_hidden=True)
     context = await scope.get_context(mode="server")
     fetched = await scope.get_skill("summarize-notes", mode="server")
-    imported = await scope.import_skill(mode="server", name="rewrite-draft", content="# Skill", overwrite=True)
-    executed = await scope.execute_skill("summarize-notes", mode="server", args="note-1")
+    imported = await scope.import_skill(
+        mode="server", name="rewrite-draft", content="# Skill", overwrite=True
+    )
+    executed = await scope.execute_skill(
+        "summarize-notes", mode="server", args="note-1"
+    )
 
     assert listed["skills"][0]["record_id"] == "server:skill:summarize-notes"
     assert context["available_skills"][0]["record_id"] == "server:skill:summarize-notes"
@@ -67,7 +81,10 @@ async def test_skills_scope_service_routes_server_operations_and_normalizes_reco
         ("list_skills", {"include_hidden": True}),
         ("get_context",),
         ("get_skill", "summarize-notes"),
-        ("import_skill", {"name": "rewrite-draft", "content": "# Skill", "overwrite": True}),
+        (
+            "import_skill",
+            {"name": "rewrite-draft", "content": "# Skill", "overwrite": True},
+        ),
         ("execute_skill", "summarize-notes", {"args": "note-1"}),
     ]
     assert policy.calls == [
@@ -84,12 +101,16 @@ async def test_skills_scope_service_routes_local_operations_without_server_dispa
     local = FakeSkillsService()
     server = FakeSkillsService()
     policy = FakePolicyEnforcer()
-    scope = SkillsScopeService(local_service=local, server_service=server, policy_enforcer=policy)
+    scope = SkillsScopeService(
+        local_service=local, server_service=server, policy_enforcer=policy
+    )
 
     listed = await scope.list_skills(mode="local", include_hidden=True)
     context = await scope.get_context(mode="local")
     fetched = await scope.get_skill("summarize-notes", mode="local")
-    imported = await scope.import_skill(mode="local", name="rewrite-draft", content="# Skill", overwrite=True)
+    imported = await scope.import_skill(
+        mode="local", name="rewrite-draft", content="# Skill", overwrite=True
+    )
     executed = await scope.execute_skill("summarize-notes", mode="local", args="note-1")
 
     assert listed["backend"] == "local"
@@ -102,7 +123,10 @@ async def test_skills_scope_service_routes_local_operations_without_server_dispa
         ("list_skills", {"include_hidden": True}),
         ("get_context",),
         ("get_skill", "summarize-notes"),
-        ("import_skill", {"name": "rewrite-draft", "content": "# Skill", "overwrite": True}),
+        (
+            "import_skill",
+            {"name": "rewrite-draft", "content": "# Skill", "overwrite": True},
+        ),
         ("execute_skill", "summarize-notes", {"args": "note-1"}),
     ]
     assert server.calls == []
@@ -156,7 +180,9 @@ async def test_skills_scope_service_preserves_blocked_local_context_trust_fields
 @pytest.mark.asyncio
 async def test_skills_scope_service_reports_missing_local_backend_before_dispatch():
     server = FakeSkillsService()
-    scope = SkillsScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer())
+    scope = SkillsScopeService(
+        server_service=server, policy_enforcer=FakePolicyEnforcer()
+    )
 
     with pytest.raises(ValueError, match="Local skills backend is unavailable"):
         await scope.list_skills(mode="local")
@@ -167,7 +193,10 @@ async def test_skills_scope_service_reports_missing_local_backend_before_dispatc
 @pytest.mark.asyncio
 async def test_skills_scope_service_blocks_denied_server_action_before_dispatch():
     server = FakeSkillsService()
-    scope = SkillsScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer("server_auth_required"))
+    scope = SkillsScopeService(
+        server_service=server,
+        policy_enforcer=FakePolicyEnforcer("server_auth_required"),
+    )
 
     with pytest.raises(PolicyDeniedError) as exc:
         await scope.list_skills(mode="server")
@@ -178,7 +207,9 @@ async def test_skills_scope_service_blocks_denied_server_action_before_dispatch(
 
 def test_skills_scope_service_reports_known_unsupported_capabilities():
     scope = SkillsScopeService(server_service=FakeSkillsService())
-    local_scope = SkillsScopeService(local_service=FakeSkillsService(), server_service=FakeSkillsService())
+    local_scope = SkillsScopeService(
+        local_service=FakeSkillsService(), server_service=FakeSkillsService()
+    )
 
     assert scope.list_unsupported_capabilities(mode="server") == []
     assert local_scope.list_unsupported_capabilities(mode="local") == []

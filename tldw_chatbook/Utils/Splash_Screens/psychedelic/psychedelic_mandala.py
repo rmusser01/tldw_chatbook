@@ -1,7 +1,7 @@
 """PsychedelicMandala splash screen effect."""
 
 import math
-from typing import Optional, Any, List, Tuple
+from typing import Optional, Any
 
 from ..base_effect import BaseEffect, register_effect
 
@@ -19,7 +19,7 @@ class PsychedelicMandalaEffect(BaseEffect):
         height: int = 24,
         rotation_speed: float = 0.4,
         num_segments: int = 8,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(parent_widget, **kwargs)
         self.title = title
@@ -36,8 +36,13 @@ class PsychedelicMandalaEffect(BaseEffect):
 
     def update(self) -> Optional[str]:
         self.time += 0.05
-        grid = [[' ' for _ in range(self.display_width)] for _ in range(self.display_height)]
-        styles = [[None for _ in range(self.display_width)] for _ in range(self.display_height)]
+        grid = [
+            [" " for _ in range(self.display_width)] for _ in range(self.display_height)
+        ]
+        styles = [
+            [None for _ in range(self.display_width)]
+            for _ in range(self.display_height)
+        ]
 
         for y in range(self.display_height):
             for x in range(self.display_width):
@@ -49,12 +54,16 @@ class PsychedelicMandalaEffect(BaseEffect):
                 if radius < self.max_radius:
                     # Psychedelic pattern generation
                     v1 = math.sin(radius * 0.5 - self.time * 2)
-                    v2 = math.sin(angle * self.num_segments + self.time * self.rotation_speed)
+                    v2 = math.sin(
+                        angle * self.num_segments + self.time * self.rotation_speed
+                    )
                     v3 = math.sin((angle + radius * 0.1) * 4 + self.time)
                     combined_value = v1 + v2 + v3
 
                     if combined_value > 1.5:
-                        char_index = int(abs(combined_value * 5)) % len(self.pattern_chars)
+                        char_index = int(abs(combined_value * 5)) % len(
+                            self.pattern_chars
+                        )
                         grid[y][x] = self.pattern_chars[char_index]
 
                         # Psychedelic color calculation
@@ -64,7 +73,19 @@ class PsychedelicMandalaEffect(BaseEffect):
                         b = int(128 + 127 * math.sin(math.radians(hue + 240)))
                         styles[y][x] = f"rgb({r},{g},{b})"
 
-        self._add_centered_text(grid, styles, self.title, self.display_height // 2 - 1, 'bold white on black')
-        self._add_centered_text(grid, styles, self.subtitle, self.display_height // 2 + 1, 'bold white on black')
+        self._add_centered_text(
+            grid,
+            styles,
+            self.title,
+            self.display_height // 2 - 1,
+            "bold white on black",
+        )
+        self._add_centered_text(
+            grid,
+            styles,
+            self.subtitle,
+            self.display_height // 2 + 1,
+            "bold white on black",
+        )
 
         return self._grid_to_string(grid, styles)

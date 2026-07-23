@@ -30,24 +30,22 @@ from .ccp_dictionary_editor_widget import (
 
 __all__ = [
     # Widgets
-    'CCPPromptEditorWidget',
-    'CCPDictionaryEditorWidget',
-
+    "CCPPromptEditorWidget",
+    "CCPDictionaryEditorWidget",
     # Prompt Editor Messages
-    'PromptSaveRequested',
-    'PromptDeleteRequested',
-    'PromptTestRequested',
-    'PromptEditorCancelled',
-    'PromptVariableAdded',
-    'PromptVariableRemoved',
-
+    "PromptSaveRequested",
+    "PromptDeleteRequested",
+    "PromptTestRequested",
+    "PromptEditorCancelled",
+    "PromptVariableAdded",
+    "PromptVariableRemoved",
     # Dictionary Editor Messages
-    'DictionarySaveRequested',
-    'DictionaryDeleteRequested',
-    'DictionaryEntryAdded',
-    'DictionaryEntryRemoved',
-    'DictionaryEntryUpdated',
-    'DictionaryImportRequested',
-    'DictionaryExportRequested',
-    'DictionaryEditorCancelled',
+    "DictionarySaveRequested",
+    "DictionaryDeleteRequested",
+    "DictionaryEntryAdded",
+    "DictionaryEntryRemoved",
+    "DictionaryEntryUpdated",
+    "DictionaryImportRequested",
+    "DictionaryExportRequested",
+    "DictionaryEditorCancelled",
 ]

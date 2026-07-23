@@ -1,8 +1,11 @@
 """agent_open threads through rail preferences + effective state."""
+
 from tldw_chatbook.Chat.console_rail_state import (
-    ConsoleRailPreferences, serialize_console_rail_preferences,
+    ConsoleRailPreferences,
+    serialize_console_rail_preferences,
     coerce_console_rail_preferences as deserialize_console_rail_preferences,
-    build_console_rail_preference_key, build_console_rail_state,
+    build_console_rail_preference_key,
+    build_console_rail_state,
 )
 
 

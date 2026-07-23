@@ -12,9 +12,9 @@ from tldw_chatbook.Sync_Interop.domain_adapters import (
     WorkspacesSyncAdapter,
 )
 from tldw_chatbook.Sync_Interop.domain_adapters.notes_m1 import NotesM1SyncAdapter
+
 if TYPE_CHECKING:
     from tldw_chatbook.tldw_api import SyncV2Envelope
-
 
 
 class SyncEnvelopeApplier:

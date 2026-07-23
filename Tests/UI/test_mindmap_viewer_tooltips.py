@@ -16,7 +16,7 @@ async def test_mindmap_viewer_compact_controls_have_descriptive_tooltips():
 
     app = MindmapViewerApp()
 
-    async with app.run_test() as pilot:
+    async with app.run_test():
         viewer = app.query_one(MindmapViewer)
         expected_tooltips = {
             "collapse-all": "Collapse every expanded mindmap node.",

@@ -78,7 +78,9 @@ class FlashcardsImportLimitsResponse(BaseModel):
 class TokenizerConfigResponse(BaseModel):
     mode: Literal["whitespace", "char_approx"] | str
     divisor: int
-    available_modes: list[str] = Field(default_factory=lambda: ["whitespace", "char_approx"])
+    available_modes: list[str] = Field(
+        default_factory=lambda: ["whitespace", "char_approx"]
+    )
 
 
 class TokenizerUpdateRequest(BaseModel):

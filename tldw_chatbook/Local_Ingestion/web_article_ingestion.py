@@ -4,6 +4,7 @@ Sync + dependency-light (httpx + trafilatura, no browser) so it runs inside
 the spawn-based parse pool worker exactly like the file-parsing branches.
 Heavy imports (httpx/trafilatura) are deferred inside the function.
 """
+
 from __future__ import annotations
 
 import re
@@ -13,8 +14,10 @@ from .local_file_ingestion import PermanentIngestError, canonicalize_url
 
 _MAX_BYTES = 10 * 1024 * 1024  # 10 MB body guard
 _RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
-_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-       "(KHTML, like Gecko) Chrome/122.0 Safari/537.36")
+_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/122.0 Safari/537.36"
+)
 _BOILERPLATE = re.compile(
     r"^\s*(subscribe now|sign up|share on \w+|follow us|newsletter|read more|"
     r"thanks for reading|advertisement)\b.*$",
@@ -65,26 +68,37 @@ def extract_article_for_ingest(url: str, options: Dict[str, Any]) -> Dict[str, A
     import httpx
 
     try:
-        with httpx.Client(follow_redirects=True, timeout=30.0,
-                          headers={"User-Agent": _UA, "Accept": "text/html,*/*"}) as client:
+        with httpx.Client(
+            follow_redirects=True,
+            timeout=30.0,
+            headers={"User-Agent": _UA, "Accept": "text/html,*/*"},
+        ) as client:
             with client.stream("GET", url) as resp:
                 try:
                     resp.raise_for_status()
                 except httpx.HTTPStatusError as exc:
                     status = exc.response.status_code
                     if status in _RETRYABLE_STATUS:
-                        raise                                    # retryable
-                    raise PermanentIngestError(f"URL fetch failed ({status}) for {url}") from exc
-                ctype = resp.headers.get("content-type", "").split(";")[0].strip().lower()
+                        raise  # retryable
+                    raise PermanentIngestError(
+                        f"URL fetch failed ({status}) for {url}"
+                    ) from exc
+                ctype = (
+                    resp.headers.get("content-type", "").split(";")[0].strip().lower()
+                )
                 if ctype and "html" not in ctype and "xml" not in ctype:
-                    raise PermanentIngestError(f"URL is not a web page (content-type {ctype!r}): {url}")
+                    raise PermanentIngestError(
+                        f"URL is not a web page (content-type {ctype!r}): {url}"
+                    )
                 # Stream the body, aborting the instant the running total
                 # crosses the cap -- never buffer an unbounded/hostile response.
                 collected = bytearray()
                 for chunk in resp.iter_bytes():
                     collected += chunk
                     if len(collected) > _MAX_BYTES:
-                        raise PermanentIngestError(f"URL response too large (>{_MAX_BYTES} bytes): {url}")
+                        raise PermanentIngestError(
+                            f"URL response too large (>{_MAX_BYTES} bytes): {url}"
+                        )
                 final_url = str(resp.url)
                 encoding = resp.encoding or "utf-8"
             body = bytes(collected).decode(encoding, errors="replace")
@@ -95,10 +109,15 @@ def extract_article_for_ingest(url: str, options: Dict[str, Any]) -> Dict[str, A
         # network/timeout/5xx -> retryable; unsupported protocol, redirect
         # loop, or a DNS-resolution failure -> permanent (identical on retry).
         import socket
+
         if isinstance(exc, (httpx.UnsupportedProtocol, httpx.TooManyRedirects)):
-            raise PermanentIngestError(f"URL could not be fetched ({type(exc).__name__}): {url}") from exc
+            raise PermanentIngestError(
+                f"URL could not be fetched ({type(exc).__name__}): {url}"
+            ) from exc
         if isinstance(getattr(exc, "__cause__", None), socket.gaierror):
-            raise PermanentIngestError(f"URL host could not be resolved: {url}") from exc
+            raise PermanentIngestError(
+                f"URL host could not be resolved: {url}"
+            ) from exc
         raise  # retryable transport error
 
     try:
@@ -119,7 +138,10 @@ def extract_article_for_ingest(url: str, options: Dict[str, Any]) -> Dict[str, A
     meta = trafilatura.extract_metadata(body)
     md = {}
     if meta is not None:
-        md = {k: getattr(meta, k, None) for k in ("sitename", "hostname", "language", "date")}
+        md = {
+            k: getattr(meta, k, None)
+            for k in ("sitename", "hostname", "language", "date")
+        }
     md["ingestion_method"] = "web_article"
 
     return {

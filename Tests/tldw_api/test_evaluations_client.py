@@ -1,54 +1,14 @@
-import json
 from unittest.mock import AsyncMock
 
 import pytest
 
 from tldw_chatbook.tldw_api import (
-    ABTestArm,
-    ABTestQuery,
-    ABTestRetrieval,
     CreateEvaluationRequest,
-    EmbeddingsABTestConfig,
-    EmbeddingsABTestCreateRequest,
-    EmbeddingsABTestCreateResponse,
-    EmbeddingsABTestResultsResponse,
-    EmbeddingsABTestRunRequest,
-    EmbeddingsABTestStatusResponse,
-    EmbeddingsABTestResultSummary,
-    BatchEvaluationRequest,
-    BatchEvaluationResponse,
-    EvaluationBenchmarkListResponse,
-    EvaluationBenchmarkRunRequest,
-    EvaluationBenchmarkRunResponse,
     EvaluationDatasetCreateRequest,
     EvaluationDatasetListResponse,
     EvaluationDatasetResponse,
-    EvaluationHistoryRequest,
-    EvaluationHistoryResponse,
     EvaluationListResponse,
-    GEvalRequest,
-    GEvalResponse,
-    OCREvaluationItem,
-    OCREvaluationRequest,
-    OCREvaluationResponse,
-    EvaluationRecipeDatasetValidationRequest,
-    EvaluationRecipeDatasetValidationResponse,
-    EvaluationRecipeLaunchReadiness,
-    EvaluationRecipeManifest,
-    EvaluationRecipeRunCreateRequest,
-    EvaluationRecipeRunRecord,
-    EvaluationRecipeRunReport,
     EvaluationResponse,
-    EvaluationWebhookRegistrationRequest,
-    EvaluationWebhookRegistrationResponse,
-    EvaluationWebhookStatusResponse,
-    EvaluationWebhookTestRequest,
-    EvaluationWebhookTestResponse,
-    WebhookEventType,
-    PipelineCleanupResponse,
-    PipelinePresetCreate,
-    PipelinePresetListResponse,
-    PipelinePresetResponse,
     EvaluationRunCreateRequest,
     EvaluationRunListResponse,
     EvaluationRunResponse,
@@ -88,7 +48,11 @@ async def test_evaluation_dataset_crud_routes_wire_and_return_typed_models(monke
                 "description": "Demo dataset",
                 "sample_count": 2,
                 "samples": [
-                    {"input": "What is 2+2?", "expected": "4", "metadata": {"difficulty": "easy"}},
+                    {
+                        "input": "What is 2+2?",
+                        "expected": "4",
+                        "metadata": {"difficulty": "easy"},
+                    },
                     {"input": "What is 3+3?", "expected": "6", "metadata": {}},
                 ],
                 "created": 1713571200,
@@ -122,7 +86,11 @@ async def test_evaluation_dataset_crud_routes_wire_and_return_typed_models(monke
                 "description": "Demo dataset",
                 "sample_count": 2,
                 "samples": [
-                    {"input": "What is 2+2?", "expected": "4", "metadata": {"difficulty": "easy"}},
+                    {
+                        "input": "What is 2+2?",
+                        "expected": "4",
+                        "metadata": {"difficulty": "easy"},
+                    },
                     {"input": "What is 3+3?", "expected": "6", "metadata": {}},
                 ],
                 "created": 1713571200,
@@ -140,7 +108,11 @@ async def test_evaluation_dataset_crud_routes_wire_and_return_typed_models(monke
             name="demo_dataset",
             description="Demo dataset",
             samples=[
-                {"input": "What is 2+2?", "expected": "4", "metadata": {"difficulty": "easy"}},
+                {
+                    "input": "What is 2+2?",
+                    "expected": "4",
+                    "metadata": {"difficulty": "easy"},
+                },
                 {"input": "What is 3+3?", "expected": "6"},
             ],
             metadata={"source": "local"},
@@ -155,16 +127,25 @@ async def test_evaluation_dataset_crud_routes_wire_and_return_typed_models(monke
     )
     await client.delete_evaluation_dataset("dataset_123")
 
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/evaluations/datasets")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/datasets",
+    )
     assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/evaluations/datasets")
     assert mocked.await_args_list[1].kwargs["params"] == {"limit": 10, "offset": 5}
-    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/evaluations/datasets/dataset_123")
+    assert mocked.await_args_list[2].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/datasets/dataset_123",
+    )
     assert mocked.await_args_list[2].kwargs["params"] == {
         "include_samples": False,
         "limit": 25,
         "offset": 3,
     }
-    assert mocked.await_args_list[3].args[:2] == ("DELETE", "/api/v1/evaluations/datasets/dataset_123")
+    assert mocked.await_args_list[3].args[:2] == (
+        "DELETE",
+        "/api/v1/evaluations/datasets/dataset_123",
+    )
 
     assert isinstance(created, EvaluationDatasetResponse)
     assert isinstance(listed, EvaluationDatasetListResponse)
@@ -260,7 +241,9 @@ async def test_evaluation_crud_routes_wire_and_return_typed_models(monkeypatch):
             metadata={"project": "demo"},
         )
     )
-    listed = await client.list_evaluations(limit=15, after="eval_100", eval_type="exact_match")
+    listed = await client.list_evaluations(
+        limit=15, after="eval_100", eval_type="exact_match"
+    )
     fetched = await client.get_evaluation("eval_123")
     updated = await client.update_evaluation(
         "eval_123",
@@ -280,8 +263,14 @@ async def test_evaluation_crud_routes_wire_and_return_typed_models(monkeypatch):
         "eval_type": "exact_match",
     }
     assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/evaluations/eval_123")
-    assert mocked.await_args_list[3].args[:2] == ("PATCH", "/api/v1/evaluations/eval_123")
-    assert mocked.await_args_list[4].args[:2] == ("DELETE", "/api/v1/evaluations/eval_123")
+    assert mocked.await_args_list[3].args[:2] == (
+        "PATCH",
+        "/api/v1/evaluations/eval_123",
+    )
+    assert mocked.await_args_list[4].args[:2] == (
+        "DELETE",
+        "/api/v1/evaluations/eval_123",
+    )
 
     assert isinstance(created, EvaluationResponse)
     assert isinstance(listed, EvaluationListResponse)
@@ -305,7 +294,11 @@ async def test_evaluation_run_routes_wire_and_return_typed_models(monkeypatch):
                 "created_at": 1713571200,
                 "started_at": None,
                 "completed_at": None,
-                "progress": {"completed_samples": 0, "total_samples": 20, "percent_complete": 0.0},
+                "progress": {
+                    "completed_samples": 0,
+                    "total_samples": 20,
+                    "percent_complete": 0.0,
+                },
                 "error_message": None,
                 "results": None,
                 "usage": None,
@@ -323,7 +316,11 @@ async def test_evaluation_run_routes_wire_and_return_typed_models(monkeypatch):
                         "created_at": 1713571200,
                         "started_at": 1713571210,
                         "completed_at": None,
-                        "progress": {"completed_samples": 5, "total_samples": 20, "percent_complete": 25.0},
+                        "progress": {
+                            "completed_samples": 5,
+                            "total_samples": 20,
+                            "percent_complete": 25.0,
+                        },
                         "error_message": None,
                         "results": None,
                         "usage": {"input_tokens": 100, "output_tokens": 20},
@@ -343,7 +340,11 @@ async def test_evaluation_run_routes_wire_and_return_typed_models(monkeypatch):
                 "created_at": 1713571200,
                 "started_at": 1713571210,
                 "completed_at": 1713571260,
-                "progress": {"completed_samples": 20, "total_samples": 20, "percent_complete": 100.0},
+                "progress": {
+                    "completed_samples": 20,
+                    "total_samples": 20,
+                    "percent_complete": 100.0,
+                },
                 "error_message": None,
                 "results": {"accuracy": 0.9},
                 "usage": {"input_tokens": 300, "output_tokens": 70},
@@ -360,19 +361,33 @@ async def test_evaluation_run_routes_wire_and_return_typed_models(monkeypatch):
             config={"temperature": 0.2, "max_workers": 2},
         ),
     )
-    listed = await client.list_evaluation_runs("eval_123", limit=20, after="run_100", status="running")
+    listed = await client.list_evaluation_runs(
+        "eval_123", limit=20, after="run_100", status="running"
+    )
     fetched = await client.get_evaluation_run("run_123")
     cancelled = await client.cancel_evaluation_run("run_123")
 
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/evaluations/eval_123/runs")
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/evaluations/eval_123/runs")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/eval_123/runs",
+    )
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/eval_123/runs",
+    )
     assert mocked.await_args_list[1].kwargs["params"] == {
         "limit": 20,
         "after": "run_100",
         "status": "running",
     }
-    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/evaluations/runs/run_123")
-    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/evaluations/runs/run_123/cancel")
+    assert mocked.await_args_list[2].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/runs/run_123",
+    )
+    assert mocked.await_args_list[3].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/runs/run_123/cancel",
+    )
 
     assert isinstance(created, EvaluationRunResponse)
     assert isinstance(listed, EvaluationRunListResponse)
@@ -386,9 +401,20 @@ async def test_evaluation_rag_pipeline_preset_routes_wire(monkeypatch):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
-            {"name": "fast", "config": {"retriever": "hybrid"}, "created_at": 1713571200},
-            {"items": [{"name": "fast", "config": {"retriever": "hybrid"}}], "total": 1},
-            {"name": "fast", "config": {"retriever": "hybrid"}, "updated_at": 1713571260},
+            {
+                "name": "fast",
+                "config": {"retriever": "hybrid"},
+                "created_at": 1713571200,
+            },
+            {
+                "items": [{"name": "fast", "config": {"retriever": "hybrid"}}],
+                "total": 1,
+            },
+            {
+                "name": "fast",
+                "config": {"retriever": "hybrid"},
+                "updated_at": 1713571260,
+            },
             {},
             {"expired_count": 3, "deleted_count": 2, "errors": ["stale: missing"]},
         ]
@@ -404,16 +430,31 @@ async def test_evaluation_rag_pipeline_preset_routes_wire(monkeypatch):
     await client.delete_evaluation_rag_pipeline_preset("fast")
     cleanup = await client.cleanup_evaluation_rag_pipeline()
 
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/evaluations/rag/pipeline/presets")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/rag/pipeline/presets",
+    )
     assert mocked.await_args_list[0].kwargs["json_data"] == {
         "name": "fast",
         "config": {"retriever": "hybrid"},
     }
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/evaluations/rag/pipeline/presets")
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/rag/pipeline/presets",
+    )
     assert mocked.await_args_list[1].kwargs["params"] == {"limit": 10, "offset": 5}
-    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/evaluations/rag/pipeline/presets/fast")
-    assert mocked.await_args_list[3].args[:2] == ("DELETE", "/api/v1/evaluations/rag/pipeline/presets/fast")
-    assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/evaluations/rag/pipeline/cleanup")
+    assert mocked.await_args_list[2].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/rag/pipeline/presets/fast",
+    )
+    assert mocked.await_args_list[3].args[:2] == (
+        "DELETE",
+        "/api/v1/evaluations/rag/pipeline/presets/fast",
+    )
+    assert mocked.await_args_list[4].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/rag/pipeline/cleanup",
+    )
     assert created["name"] == "fast"
     assert listed["total"] == 1
     assert fetched["updated_at"] == 1713571260
@@ -433,7 +474,11 @@ async def test_evaluation_embeddings_abtest_routes_wire(monkeypatch):
             {"test_id": "ab_123", "status": "created"},
             {"test_id": "ab_123", "status": "running", "progress": {"phase": 0.1}},
             {"test_id": "ab_123", "status": "completed", "arms": []},
-            {"summary": {"test_id": "ab_123", "status": "completed", "arms": []}, "results": [], "total": 0},
+            {
+                "summary": {"test_id": "ab_123", "status": "completed", "arms": []},
+                "results": [],
+                "total": 0,
+            },
             {"metric": "ndcg", "p_value": 0.05},
             {"test_id": "ab_123", "total": 0, "results": []},
             {"status": "deleted", "test_id": "ab_123"},
@@ -448,27 +493,52 @@ async def test_evaluation_embeddings_abtest_routes_wire(monkeypatch):
     )
     launched = await client.run_evaluation_embeddings_abtest("ab_123", config=config)
     status = await client.get_evaluation_embeddings_abtest_status("ab_123")
-    results = await client.get_evaluation_embeddings_abtest_results("ab_123", page=2, page_size=25)
-    significance = await client.get_evaluation_embeddings_abtest_significance("ab_123", metric="mrr")
+    results = await client.get_evaluation_embeddings_abtest_results(
+        "ab_123", page=2, page_size=25
+    )
+    significance = await client.get_evaluation_embeddings_abtest_significance(
+        "ab_123", metric="mrr"
+    )
     exported = await client.export_evaluation_embeddings_abtest("ab_123", format="json")
     deleted = await client.delete_evaluation_embeddings_abtest("ab_123")
 
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/evaluations/embeddings/abtest")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/embeddings/abtest",
+    )
     assert mocked.await_args_list[0].kwargs["json_data"] == {
         "name": "embed-test",
         "config": config,
         "run_immediately": True,
     }
-    assert mocked.await_args_list[1].args[:2] == ("POST", "/api/v1/evaluations/embeddings/abtest/ab_123/run")
+    assert mocked.await_args_list[1].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/embeddings/abtest/ab_123/run",
+    )
     assert mocked.await_args_list[1].kwargs["json_data"] == {"config": config}
-    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/evaluations/embeddings/abtest/ab_123")
-    assert mocked.await_args_list[3].args[:2] == ("GET", "/api/v1/evaluations/embeddings/abtest/ab_123/results")
+    assert mocked.await_args_list[2].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/embeddings/abtest/ab_123",
+    )
+    assert mocked.await_args_list[3].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/embeddings/abtest/ab_123/results",
+    )
     assert mocked.await_args_list[3].kwargs["params"] == {"page": 2, "page_size": 25}
-    assert mocked.await_args_list[4].args[:2] == ("GET", "/api/v1/evaluations/embeddings/abtest/ab_123/significance")
+    assert mocked.await_args_list[4].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/embeddings/abtest/ab_123/significance",
+    )
     assert mocked.await_args_list[4].kwargs["params"] == {"metric": "mrr"}
-    assert mocked.await_args_list[5].args[:2] == ("GET", "/api/v1/evaluations/embeddings/abtest/ab_123/export")
+    assert mocked.await_args_list[5].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/embeddings/abtest/ab_123/export",
+    )
     assert mocked.await_args_list[5].kwargs["params"] == {"format": "json"}
-    assert mocked.await_args_list[6].args[:2] == ("DELETE", "/api/v1/evaluations/embeddings/abtest/ab_123")
+    assert mocked.await_args_list[6].args[:2] == (
+        "DELETE",
+        "/api/v1/evaluations/embeddings/abtest/ab_123",
+    )
     assert created["test_id"] == "ab_123"
     assert launched["progress"]["phase"] == 0.1
     assert status["status"] == "completed"
@@ -486,7 +556,10 @@ async def test_evaluation_synthetic_routes_wire_and_return_typed_models(monkeypa
         "recipe_kind": "rag_answer_quality",
         "provenance": "synthetic_from_corpus",
         "review_state": "draft",
-        "sample_payload": {"input": "What is RAG?", "expected": "Retrieval augmented generation."},
+        "sample_payload": {
+            "input": "What is RAG?",
+            "expected": "Retrieval augmented generation.",
+        },
         "sample_metadata": {"topic": "rag"},
         "source_kind": "corpus",
         "created_by": "user_1",
@@ -556,7 +629,10 @@ async def test_evaluation_synthetic_routes_wire_and_return_typed_models(monkeypa
         )
     )
 
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/evaluations/synthetic/drafts/generate")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/synthetic/drafts/generate",
+    )
     assert mocked.await_args_list[0].kwargs["json_data"] == {
         "recipe_kind": "rag_answer_quality",
         "corpus_scope": {"collection": "docs"},
@@ -565,7 +641,10 @@ async def test_evaluation_synthetic_routes_wire_and_return_typed_models(monkeypa
         "seed_examples": [],
         "target_sample_count": 1,
     }
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/evaluations/synthetic/queue")
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/synthetic/queue",
+    )
     assert mocked.await_args_list[1].kwargs["params"] == {
         "recipe_kind": "rag_answer_quality",
         "review_state": "draft",
@@ -574,8 +653,14 @@ async def test_evaluation_synthetic_routes_wire_and_return_typed_models(monkeypa
         "limit": 25,
         "offset": 5,
     }
-    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/evaluations/synthetic/queue/sample_1/review")
-    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/evaluations/synthetic/promotions")
+    assert mocked.await_args_list[2].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/synthetic/queue/sample_1/review",
+    )
+    assert mocked.await_args_list[3].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/synthetic/promotions",
+    )
 
     assert isinstance(generated, SyntheticEvalGenerationResponse)
     assert isinstance(queue, SyntheticEvalQueueResponse)
@@ -592,7 +677,11 @@ async def test_evaluation_benchmark_and_webhook_routes_wire(monkeypatch):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
-            {"object": "list", "data": [{"name": "mmlu", "evaluation_type": "qa"}], "total": 1},
+            {
+                "object": "list",
+                "data": [{"name": "mmlu", "evaluation_type": "qa"}],
+                "total": 1,
+            },
             {"name": "mmlu", "evaluation_type": "qa", "description": "Benchmark"},
             {
                 "benchmark": "mmlu",
@@ -648,12 +737,25 @@ async def test_evaluation_benchmark_and_webhook_routes_wire(monkeypatch):
         )
     )
     webhooks = await client.list_evaluation_webhooks()
-    unregistered = await client.unregister_evaluation_webhook("https://example.com/evals")
-    tested = await client.test_evaluation_webhook(WebhookTestRequest(url="https://example.com/evals"))
+    unregistered = await client.unregister_evaluation_webhook(
+        "https://example.com/evals"
+    )
+    tested = await client.test_evaluation_webhook(
+        WebhookTestRequest(url="https://example.com/evals")
+    )
 
-    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/evaluations/benchmarks")
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/evaluations/benchmarks/mmlu")
-    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/evaluations/benchmarks/mmlu/run")
+    assert mocked.await_args_list[0].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/benchmarks",
+    )
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/benchmarks/mmlu",
+    )
+    assert mocked.await_args_list[2].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/benchmarks/mmlu/run",
+    )
     assert mocked.await_args_list[2].kwargs["json_data"] == {
         "limit": 2,
         "api_name": "openai",
@@ -661,11 +763,22 @@ async def test_evaluation_benchmark_and_webhook_routes_wire(monkeypatch):
         "save_results": True,
         "filter_categories": ["math"],
     }
-    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/evaluations/webhooks")
+    assert mocked.await_args_list[3].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/webhooks",
+    )
     assert mocked.await_args_list[4].args[:2] == ("GET", "/api/v1/evaluations/webhooks")
-    assert mocked.await_args_list[5].args[:2] == ("DELETE", "/api/v1/evaluations/webhooks")
-    assert mocked.await_args_list[5].kwargs["params"] == {"url": "https://example.com/evals"}
-    assert mocked.await_args_list[6].args[:2] == ("POST", "/api/v1/evaluations/webhooks/test")
+    assert mocked.await_args_list[5].args[:2] == (
+        "DELETE",
+        "/api/v1/evaluations/webhooks",
+    )
+    assert mocked.await_args_list[5].kwargs["params"] == {
+        "url": "https://example.com/evals"
+    }
+    assert mocked.await_args_list[6].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/webhooks/test",
+    )
 
     assert benchmarks["total"] == 1
     assert benchmark["name"] == "mmlu"
@@ -740,34 +853,58 @@ async def test_evaluation_recipe_routes_wire(monkeypatch):
 
     manifests = await client.list_evaluation_recipe_manifests()
     manifest = await client.get_evaluation_recipe_manifest("rag_answer_quality")
-    readiness = await client.get_evaluation_recipe_launch_readiness("rag_answer_quality")
+    readiness = await client.get_evaluation_recipe_launch_readiness(
+        "rag_answer_quality"
+    )
     validation = await client.validate_evaluation_recipe_dataset(
         "rag_answer_quality",
-        RecipeDatasetValidationRequest(dataset_id="dataset_1", run_config={"mode": "fast"}),
+        RecipeDatasetValidationRequest(
+            dataset_id="dataset_1", run_config={"mode": "fast"}
+        ),
     )
     created = await client.create_evaluation_recipe_run(
         "rag_answer_quality",
-        RecipeRunCreateRequest(dataset_id="dataset_1", run_config={"mode": "fast"}, force_rerun=True),
+        RecipeRunCreateRequest(
+            dataset_id="dataset_1", run_config={"mode": "fast"}, force_rerun=True
+        ),
     )
     fetched = await client.get_evaluation_recipe_run("recipe_run_1")
     report = await client.get_evaluation_recipe_run_report("recipe_run_1")
 
     assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/evaluations/recipes")
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/evaluations/recipes/rag_answer_quality")
-    assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/evaluations/recipes/rag_answer_quality/launch-readiness")
-    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/evaluations/recipes/rag_answer_quality/validate-dataset")
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/recipes/rag_answer_quality",
+    )
+    assert mocked.await_args_list[2].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/recipes/rag_answer_quality/launch-readiness",
+    )
+    assert mocked.await_args_list[3].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/recipes/rag_answer_quality/validate-dataset",
+    )
     assert mocked.await_args_list[3].kwargs["json_data"] == {
         "dataset_id": "dataset_1",
         "run_config": {"mode": "fast"},
     }
-    assert mocked.await_args_list[4].args[:2] == ("POST", "/api/v1/evaluations/recipes/rag_answer_quality/runs")
+    assert mocked.await_args_list[4].args[:2] == (
+        "POST",
+        "/api/v1/evaluations/recipes/rag_answer_quality/runs",
+    )
     assert mocked.await_args_list[4].kwargs["json_data"] == {
         "dataset_id": "dataset_1",
         "run_config": {"mode": "fast"},
         "force_rerun": True,
     }
-    assert mocked.await_args_list[5].args[:2] == ("GET", "/api/v1/evaluations/recipe-runs/recipe_run_1")
-    assert mocked.await_args_list[6].args[:2] == ("GET", "/api/v1/evaluations/recipe-runs/recipe_run_1/report")
+    assert mocked.await_args_list[5].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/recipe-runs/recipe_run_1",
+    )
+    assert mocked.await_args_list[6].args[:2] == (
+        "GET",
+        "/api/v1/evaluations/recipe-runs/recipe_run_1/report",
+    )
 
     assert isinstance(manifests[0], RecipeManifest)
     assert isinstance(manifest, RecipeManifest)

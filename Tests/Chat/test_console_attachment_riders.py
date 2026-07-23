@@ -13,10 +13,8 @@
 """
 
 import asyncio
-from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
 
 from Tests.Chat.test_console_chat_controller import (
     RecordingStreamingGateway,

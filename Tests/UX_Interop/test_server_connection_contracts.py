@@ -87,7 +87,11 @@ def test_server_switch_invalidation_contract_names_invalidated_runtime_handles()
     assert payload["kind"] == "server_switch_invalidation"
     assert payload["previous_server_id"] == "server-a"
     assert payload["next_server_id"] == "server-b"
-    assert payload["invalidated"] == ("client_cache", "capability_snapshot", "event_stream")
+    assert payload["invalidated"] == (
+        "client_cache",
+        "capability_snapshot",
+        "event_stream",
+    )
     assert _secret_field_names(payload) == set()
 
 
@@ -98,7 +102,12 @@ def test_capability_status_contract_is_versioned_and_snapshot_oriented():
         auth_state="authenticated",
         checked_at="2026-04-29T12:00:00Z",
         capabilities={"chat": True, "media": False},
-        errors=({"reason_code": "media_unavailable", "message": "Media API is unavailable."},),
+        errors=(
+            {
+                "reason_code": "media_unavailable",
+                "message": "Media API is unavailable.",
+            },
+        ),
     )
 
     assert payload["schema_version"] == 1
@@ -117,8 +126,14 @@ def test_capability_status_contract_is_versioned_and_snapshot_oriented():
 
 
 def test_server_parity_contracts_reexports_connection_builders():
-    assert server_parity_contracts.build_active_server_status_contract is build_active_server_status_contract
-    assert server_parity_contracts.build_auth_failure_contract is build_auth_failure_contract
+    assert (
+        server_parity_contracts.build_active_server_status_contract
+        is build_active_server_status_contract
+    )
+    assert (
+        server_parity_contracts.build_auth_failure_contract
+        is build_auth_failure_contract
+    )
     assert (
         server_parity_contracts.build_credential_store_unavailable_contract
         is build_credential_store_unavailable_contract
@@ -127,7 +142,10 @@ def test_server_parity_contracts_reexports_connection_builders():
         server_parity_contracts.build_server_switch_invalidation_contract
         is build_server_switch_invalidation_contract
     )
-    assert server_parity_contracts.build_capability_status_contract is build_capability_status_contract
+    assert (
+        server_parity_contracts.build_capability_status_contract
+        is build_capability_status_contract
+    )
 
 
 def test_contract_modules_do_not_import_textual_or_current_ui_screens():
@@ -144,4 +162,8 @@ def test_contract_modules_do_not_import_textual_or_current_ui_screens():
 
 def _secret_field_names(payload: dict[str, object]) -> set[str]:
     sensitive_markers = ("token", "secret", "password")
-    return {key for key in payload if any(marker in key.lower() for marker in sensitive_markers)}
+    return {
+        key
+        for key in payload
+        if any(marker in key.lower() for marker in sensitive_markers)
+    }

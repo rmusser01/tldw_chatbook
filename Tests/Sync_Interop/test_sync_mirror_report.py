@@ -46,7 +46,9 @@ def test_mirror_report_is_dry_run_and_uses_identity_map_entries() -> None:
     assert report["actions"][0]["identity"]["local_entity_id"] == "local-note-1"
 
 
-def test_mirror_report_preserves_workspace_boundaries_when_filtering_identity_map() -> None:
+def test_mirror_report_preserves_workspace_boundaries_when_filtering_identity_map() -> (
+    None
+):
     matching = SyncIdentityMapEntry(
         domain="notes",
         source_authority="server",
@@ -77,7 +79,9 @@ def test_mirror_report_preserves_workspace_boundaries_when_filtering_identity_ma
     assert report["actions"][0]["identity"]["workspace_id"] == "workspace-a"
 
 
-def test_mirror_report_excludes_identity_map_entries_with_wrong_source_authority() -> None:
+def test_mirror_report_excludes_identity_map_entries_with_wrong_source_authority() -> (
+    None
+):
     server_entry = SyncIdentityMapEntry(
         domain="notes",
         source_authority="server",

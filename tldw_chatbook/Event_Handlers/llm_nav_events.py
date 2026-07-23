@@ -3,26 +3,28 @@
 #
 # Imports
 from __future__ import annotations
+
 #
-import logging
 from typing import TYPE_CHECKING
+
 #
 # 3rd-Party Imports
 from loguru import logger as _loguru_fallback_logger
 from textual.css.query import QueryError
 from textual.widgets import Button
+
 #
 # Local Imports
 if TYPE_CHECKING:
     from ..app import TldwCli  # pragma: no cover – runtime import only
 # Import the specific handler
-from tldw_chatbook.Event_Handlers.LLM_Management_Events.llm_management_events_ollama import handle_ollama_nav_button_pressed
 #
 #######################################################################################################################
 #
 # Functions:
 
 __all__ = ["handle_llm_nav_button_pressed"]
+
 
 async def handle_llm_nav_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
     """
@@ -38,7 +40,9 @@ async def handle_llm_nav_button_pressed(app: "TldwCli", event: Button.Pressed) -
         for nav_button in nav_pane.query(".llm-nav-button"):
             nav_button.remove_class("-active")
     except QueryError as e:
-        logger.opt(exception=True).error(f"Could not query #llm-nav-pane or .llm-nav-button: {e}")
+        logger.opt(exception=True).error(
+            f"Could not query #llm-nav-pane or .llm-nav-button: {e}"
+        )
         # Proceeding because view switching might still work
 
     # Add active class to the specifically clicked button
@@ -46,7 +50,9 @@ async def handle_llm_nav_button_pressed(app: "TldwCli", event: Button.Pressed) -
         clicked_button = app.query_one(f"#{button_id}", Button)
         clicked_button.add_class("-active")
     except QueryError as e:
-        logger.opt(exception=True).error(f"Could not query clicked button #{button_id}: {e}")
+        logger.opt(exception=True).error(
+            f"Could not query clicked button #{button_id}: {e}"
+        )
         # Proceeding because view switching might still work
 
     # Activate the corresponding view
@@ -57,8 +63,12 @@ async def handle_llm_nav_button_pressed(app: "TldwCli", event: Button.Pressed) -
         # This relies on the watcher `watch_llm_active_view` in app.py
         app.llm_active_view = view_to_activate
         logger.info(f"Successfully set app.llm_active_view to: {view_to_activate}")
-    except Exception as e:  # Catch errors related to setting reactive or if watcher fails
-        logger.opt(exception=True).error(f"Error in LLM view activation for '{view_to_activate}': {e}")
+    except (
+        Exception
+    ) as e:  # Catch errors related to setting reactive or if watcher fails
+        logger.opt(exception=True).error(
+            f"Error in LLM view activation for '{view_to_activate}': {e}"
+        )
 
 
 # --- Button Handler Map ---

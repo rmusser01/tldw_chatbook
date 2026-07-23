@@ -20,7 +20,9 @@ WritingStatus = Literal[
     "outline",
     "final",
 ]
-WritingOutlineNodeKind = Literal["project", "manuscript", "chapter", "scene", "unassigned_chapters"]
+WritingOutlineNodeKind = Literal[
+    "project", "manuscript", "chapter", "scene", "unassigned_chapters"
+]
 
 
 _DATACLASS_KWARGS: dict[str, Any] = {"frozen": True}

@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from typing import Literal
 
 
-DomainAuthority = Literal["local_and_server", "local_parity", "remote_only", "server_primary"]
+DomainAuthority = Literal[
+    "local_and_server", "local_parity", "remote_only", "server_primary"
+]
 LocalParityState = Literal["remote_only", "pilot", "planned", "blocked"]
 SourceSelectorState = Literal["local", "server", "workspace"]
 
@@ -212,7 +214,9 @@ _REMOTE_UTILITY_LOCAL_PARITY: tuple[RemoteUtilityLocalParityContract, ...] = tup
             if domain_id in {"skills", "kanban"}
             else "remote_only"
         ),
-        local_adapter="TranslationScopeService.local_service" if domain_id == "translation" else None,
+        local_adapter="TranslationScopeService.local_service"
+        if domain_id == "translation"
+        else None,
         notes=(
             "Text translation can route to an explicit local adapter; without it, local mode keeps "
             "the existing unsupported report."
@@ -238,8 +242,7 @@ _CONTRACTS_BY_DOMAIN = {
     for contract in (*_DOMAIN_EDGE_CONTRACTS, *_REMOTE_ONLY_CONTRACTS)
 }
 _REMOTE_UTILITY_PARITY_BY_DOMAIN = {
-    contract.domain_id: contract
-    for contract in _REMOTE_UTILITY_LOCAL_PARITY
+    contract.domain_id: contract for contract in _REMOTE_UTILITY_LOCAL_PARITY
 }
 
 
@@ -267,7 +270,9 @@ def get_remote_utility_local_parity(domain_id: str) -> RemoteUtilityLocalParityC
     try:
         return _REMOTE_UTILITY_PARITY_BY_DOMAIN[domain_id]
     except KeyError as exc:
-        raise KeyError(f"Unknown remote utility local parity contract: {domain_id}") from exc
+        raise KeyError(
+            f"Unknown remote utility local parity contract: {domain_id}"
+        ) from exc
 
 
 def build_remote_utility_local_parity_matrix() -> dict[str, dict[str, object]]:
@@ -284,7 +289,9 @@ def build_unsupported_action_report(
     reason_code: str | None = None,
 ) -> dict[str, object]:
     contract = get_domain_edge_contract(domain_id)
-    resolved_reason = reason_code or _default_reason_code(contract=contract, source=source)
+    resolved_reason = reason_code or _default_reason_code(
+        contract=contract, source=source
+    )
     if resolved_reason not in REQUIRED_UNSUPPORTED_REASON_CODES:
         raise ValueError(f"Unsupported reason code: {resolved_reason}")
     return {
@@ -292,14 +299,18 @@ def build_unsupported_action_report(
         "source": source,
         "supported": False,
         "reason_code": resolved_reason,
-        "user_message": _unsupported_message(contract=contract, source=source, reason_code=resolved_reason),
+        "user_message": _unsupported_message(
+            contract=contract, source=source, reason_code=resolved_reason
+        ),
         "affected_action_ids": [],
         "domain_id": domain_id,
         "view_model_contract": contract.view_model_contract,
     }
 
 
-def _default_reason_code(*, contract: DomainEdgeContract, source: SourceSelectorState) -> str:
+def _default_reason_code(
+    *, contract: DomainEdgeContract, source: SourceSelectorState
+) -> str:
     if contract.authority == "remote_only" and source != "server":
         return "server_required"
     if source == "local":

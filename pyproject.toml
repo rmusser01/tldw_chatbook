@@ -55,6 +55,7 @@ dependencies = [
     "keyring",
     "markdownify",
     "aiofiles",
+    "croniter>=1.4.0",
     "textual-image",
     "anytree",
 ]
@@ -433,4 +434,15 @@ markers = [
     "performance: marks tests as performance tests",
     "property: marks tests as property-based tests",
     "slow: marks tests that take a long time to run",
+]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_return_any = false
+warn_unused_configs = true
+follow_imports = "skip"
+disable_error_code = ["annotation-unchecked"]
+exclude = [
+    "tldw_chatbook/Local_Ingestion/API_Endpoint_Sample.py",
 ]

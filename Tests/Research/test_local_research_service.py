@@ -15,12 +15,21 @@ class RecordingDispatcher:
 def test_local_research_service_persists_sessions_runs_events_and_artifacts(tmp_path):
     service = LocalResearchService(tmp_path / "research.db")
 
-    session = service.create_session(title="MCP governance", query="How should MCP approvals work?")
-    updated_session = service.update_session(session["id"], expected_version=1, notes="Focus on local/server scope")
+    session = service.create_session(
+        title="MCP governance", query="How should MCP approvals work?"
+    )
+    updated_session = service.update_session(
+        session["id"], expected_version=1, notes="Focus on local/server scope"
+    )
     run = service.launch_run(session_id=session["id"], query=session["query"])
     paused = service.pause_run(run["id"])
     resumed = service.resume_run(run["id"])
-    service.save_artifact(run["id"], artifact_name="notes.md", content_type="text/markdown", content="# Notes")
+    service.save_artifact(
+        run["id"],
+        artifact_name="notes.md",
+        content_type="text/markdown",
+        content="# Notes",
+    )
     artifact = service.get_artifact(run["id"], "notes.md")
     bundle = service.get_bundle(run["id"])
     events = list(service.list_run_events(run["id"]))
@@ -31,14 +40,25 @@ def test_local_research_service_persists_sessions_runs_events_and_artifacts(tmp_
     assert run["record_id"].startswith("local:research_run:")
     assert paused["control_state"] == "paused"
     assert resumed["control_state"] == "running"
-    assert artifact == {"artifact_name": "notes.md", "content_type": "text/markdown", "content": "# Notes"}
+    assert artifact == {
+        "artifact_name": "notes.md",
+        "content_type": "text/markdown",
+        "content": "# Notes",
+    }
     assert bundle["artifacts"][0]["artifact_name"] == "notes.md"
-    assert [event["event"] for event in events] == ["created", "paused", "resumed", "artifact_saved"]
+    assert [event["event"] for event in events] == [
+        "created",
+        "paused",
+        "resumed",
+        "artifact_saved",
+    ]
 
 
 def test_local_research_service_soft_deletes_sessions_and_runs(tmp_path):
     service = LocalResearchService(tmp_path / "research.db")
-    session = service.create_session(title="MCP governance", query="How should MCP approvals work?")
+    session = service.create_session(
+        title="MCP governance", query="How should MCP approvals work?"
+    )
     run = service.launch_run(session_id=session["id"], query=session["query"])
 
     assert service.delete_run(run["id"], expected_version=1) is True
@@ -52,7 +72,9 @@ def test_local_research_service_soft_deletes_sessions_and_runs(tmp_path):
 
 def test_local_research_service_rejects_stale_versions(tmp_path):
     service = LocalResearchService(tmp_path / "research.db")
-    session = service.create_session(title="MCP governance", query="How should MCP approvals work?")
+    session = service.create_session(
+        title="MCP governance", query="How should MCP approvals work?"
+    )
 
     with pytest.raises(ValueError, match="version conflict"):
         service.update_session(session["id"], expected_version=2, notes="Stale")
@@ -60,7 +82,9 @@ def test_local_research_service_rejects_stale_versions(tmp_path):
 
 def test_local_research_service_can_clear_nullable_session_fields(tmp_path):
     service = LocalResearchService(tmp_path / "research.db")
-    session = service.create_session(title="MCP governance", query="How should MCP approvals work?", notes="Draft")
+    session = service.create_session(
+        title="MCP governance", query="How should MCP approvals work?", notes="Draft"
+    )
 
     updated = service.update_session(session["id"], expected_version=1, notes=None)
 
@@ -76,7 +100,9 @@ def test_local_research_service_dispatches_terminal_run_notifications(tmp_path):
         notification_dispatcher=dispatcher,
         notification_app=app,
     )
-    session = service.create_session(title="MCP governance", query="How should MCP approvals work?")
+    session = service.create_session(
+        title="MCP governance", query="How should MCP approvals work?"
+    )
     run = service.launch_run(session_id=session["id"])
 
     completed = service.complete_run(run["id"], progress_message="Final report ready")

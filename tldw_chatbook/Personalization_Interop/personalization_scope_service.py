@@ -47,7 +47,9 @@ class PersonalizationScopeService:
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
 
-    def _normalize_mode(self, mode: PersonalizationBackend | str | None) -> PersonalizationBackend:
+    def _normalize_mode(
+        self, mode: PersonalizationBackend | str | None
+    ) -> PersonalizationBackend:
         if mode is None:
             return PersonalizationBackend.SERVER
         if isinstance(mode, PersonalizationBackend):
@@ -59,7 +61,9 @@ class PersonalizationScopeService:
 
     def _require_server_service(self, mode: PersonalizationBackend) -> Any:
         if mode == PersonalizationBackend.LOCAL:
-            raise ValueError("Personalization profile operations are server-only; switch to server mode.")
+            raise ValueError(
+                "Personalization profile operations are server-only; switch to server mode."
+            )
         if self.server_service is None:
             raise ValueError("Server Personalization backend is unavailable.")
         return self.server_service
@@ -97,7 +101,9 @@ class PersonalizationScopeService:
         normalized_mode = self._normalize_mode(mode)
         service = self._require_server_service(normalized_mode)
         self._enforce_policy(action_id)
-        return await self._maybe_await(getattr(service, method_name)(*args, **(kwargs or {})))
+        return await self._maybe_await(
+            getattr(service, method_name)(*args, **(kwargs or {}))
+        )
 
     async def get_profile(
         self,

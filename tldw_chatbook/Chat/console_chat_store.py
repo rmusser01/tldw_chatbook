@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping, Protocol, Sequence
+from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
 from uuid import uuid4
 
 from loguru import logger
@@ -24,6 +24,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     MessageAttachment,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.rag_scope import RagScope, SessionScopeHolder
 
 #: Maximum number of attachments a Console session may stage before send.
 MAX_PENDING_ATTACHMENTS = 5
@@ -44,6 +45,18 @@ class _VariantStreamBase:
 
 class ConsoleChatPersistence(Protocol):
     """Persistence surface used by Console without importing DB dependencies."""
+
+    #: Raw DB handle backing this persistence adapter, or ``None`` when the
+    #: adapter has none (e.g. a test fake, or a future persistence shape
+    #: with no single underlying database). ``persist_session_if_needed``
+    #: reaches through this seam -- rather than an undeclared ``getattr``
+    #: probe -- to flush a session-held RAG retrieval scope
+    #: (``SessionScopeHolder``) at first persistence (PR #747 review: a
+    #: conforming adapter that structurally satisfied this Protocol without
+    #: declaring ``.db`` made the flush silently no-op, losing the user's
+    #: pre-persistence scope selection with no diagnostic). Declaring it
+    #: here makes the seam an explicit, checkable part of the contract.
+    db: Any | None
 
     def create_conversation(self, **kwargs) -> str:
         """Create a persisted conversation and return its ID."""
@@ -98,6 +111,31 @@ class ConsoleChatPersistence(Protocol):
     ) -> bool:
         """Persist a changed system prompt for an already-saved conversation."""
 
+    def update_conversation_pinned_prefill(
+        self,
+        *,
+        conversation_id: str,
+        pinned_prefill: str | None,
+    ) -> bool:
+        """Set or clear the pinned response prefill on a conversation."""
+
+    def update_conversation_title(
+        self,
+        *,
+        conversation_id: str,
+        title: str,
+    ) -> bool:
+        """Persist a changed title for an already-saved conversation.
+
+        Args:
+            conversation_id: Durable Chat conversation identifier.
+            title: New conversation title (already validated non-blank).
+
+        Returns:
+            True when the update was applied; False when refused (e.g. an
+            optimistic-lock version check failed).
+        """
+
     def get_attachments_for_messages(
         self, message_ids: Sequence[str]
     ) -> dict[str, list[dict[str, Any]]]:
@@ -132,6 +170,16 @@ class ConsoleChatSession:
     draft: str = ""
     updated_at: str = field(default_factory=_utc_now_iso)
     pending_attachments: list[PendingAttachment] = field(default_factory=list)
+    one_shot_prefill: str | None = None
+    #: RAG retrieval scope (task-9) for a not-yet-persisted session -- see
+    #: ``SessionScopeHolder``. ``persist_session_if_needed`` flushes it
+    #: through to durable storage exactly once, at first persistence.
+    rag_scope_holder: SessionScopeHolder = field(default_factory=SessionScopeHolder)
+    #: When set, this is a character-bound session: it persists with the
+    #: character's id, forces the plain-provider path, and restores as a
+    #: character session (task-427). ``None`` = a normal Console session.
+    character_id: int | None = None
+    character_name: str | None = None
 
 
 class ConsoleChatStore:
@@ -146,6 +194,7 @@ class ConsoleChatStore:
         sync_v2_server_profile_id: str | None = None,
         sync_v2_authenticated_principal_id: str | None = None,
         sync_v2_workspace_scope: str | None = None,
+        on_scope_flushed: Callable[[str, "RagScope | None"], None] | None = None,
     ) -> None:
         """Initialize the Console chat store.
 
@@ -159,6 +208,20 @@ class ConsoleChatStore:
             sync_v2_authenticated_principal_id: Optional authenticated principal scope
                 for Chat outbox entries.
             sync_v2_workspace_scope: Optional workspace scope for Chat outbox entries.
+            on_scope_flushed: Optional callback invoked with
+                ``(conversation_id, scope)`` immediately after
+                ``persist_session_if_needed`` successfully flushes a
+                session-held RAG retrieval scope (``SessionScopeHolder``)
+                through to durable storage at first persistence (task-9
+                review finding 1). This is the ONLY moment a session
+                transitions from "scope held in memory" to "scope persisted
+                under a new conversation id" without going through any of
+                the UI's other read triggers (resume, modal-open,
+                after-save) -- callers that keep a display-side cache keyed
+                by conversation id (e.g. the Console Inspector's retrieval-
+                scope row) use this hook to stay in sync instead of reading
+                stale/absent cache state. Never called when nothing was
+                held, or when the flush itself raised.
         """
         self.persistence = persistence
         self.workspace_context = workspace_context or ConsoleWorkspaceContext()
@@ -166,6 +229,7 @@ class ConsoleChatStore:
         self.sync_v2_server_profile_id = sync_v2_server_profile_id
         self.sync_v2_authenticated_principal_id = sync_v2_authenticated_principal_id
         self.sync_v2_workspace_scope = sync_v2_workspace_scope
+        self.on_scope_flushed = on_scope_flushed
         self.active_session_id: str | None = None
         self._sessions: dict[str, ConsoleChatSession] = {}
         self._messages_by_session: dict[str, list[ConsoleChatMessage]] = {}
@@ -186,7 +250,9 @@ class ConsoleChatStore:
         """Return the active session, creating one when needed."""
         if self.active_session_id is not None:
             return self._sessions[self.active_session_id]
-        return self.create_session(title=title, workspace_id=workspace_id, settings=settings)
+        return self.create_session(
+            title=title, workspace_id=workspace_id, settings=settings
+        )
 
     def create_session(
         self,
@@ -248,14 +314,65 @@ class ConsoleChatStore:
         self.active_session_id = session.id
         return session
 
-    def rename_session(self, session_id: str, title: str) -> ConsoleChatSession:
-        """Rename an existing native Console session."""
+    def rename_session(
+        self, session_id: str, title: str
+    ) -> tuple[ConsoleChatSession, bool]:
+        """Rename a native Console session, persisting a saved conversation's title.
+
+        TASK-341: the tab IS the conversation for a resumed saved
+        conversation — renaming only the in-memory session looked successful
+        (tab + transcript header updated) but evaporated on restart.
+
+        Args:
+            session_id: Native Console session ID to rename.
+            title: New title; surrounding whitespace is trimmed.
+
+        Returns:
+            ``(session, persisted)`` — the in-memory rename is always
+            applied. ``persisted`` is ``False`` when the session has a saved
+            conversation whose durable title update did not happen: the
+            persistence call raised, returned falsy (e.g. an optimistic-lock
+            version check refused the write), or the persistence object has
+            no ``update_conversation_title`` seam at all.
+
+        Raises:
+            ValueError: If the trimmed title is blank.
+            KeyError: If no session with ``session_id`` exists.
+        """
         normalized_title = title.strip()
         if not normalized_title:
             raise ValueError("Console chat session title cannot be blank.")
         session = self._session_or_raise(session_id)
         session.title = normalized_title
-        return session
+        persisted = True
+        if (
+            session.persisted_conversation_id is not None
+            and self.persistence is not None
+        ):
+            update_title = getattr(self.persistence, "update_conversation_title", None)
+            if not callable(update_title):
+                # A saved conversation with no durable rename seam: claiming
+                # persisted=True here would recreate the original silent-loss
+                # bug for exactly the sessions this fix targets.
+                persisted = False
+            else:
+                try:
+                    persisted = bool(
+                        update_title(
+                            conversation_id=session.persisted_conversation_id,
+                            title=normalized_title,
+                        )
+                    )
+                except Exception:
+                    persisted = False
+                    logger.bind(
+                        session_id=session_id,
+                        conversation_id=session.persisted_conversation_id,
+                    ).exception(
+                        "Failed to persist Console session title; "
+                        "in-memory session keeps the applied value."
+                    )
+        return session, persisted
 
     def close_session(self, session_id: str) -> ConsoleChatSession | None:
         """Close a native Console session and activate a neighboring session.
@@ -318,6 +435,18 @@ class ConsoleChatStore:
         """Replace the in-memory composer draft for a native Console session."""
         session = self._session_or_raise(session_id)
         session.draft = draft
+        return session
+
+    def session_one_shot_prefill(self, session_id: str) -> str | None:
+        """Return the armed one-shot response prefill for a session, if any."""
+        return self._session_or_raise(session_id).one_shot_prefill
+
+    def set_session_one_shot_prefill(
+        self, session_id: str, prefill: str | None
+    ) -> ConsoleChatSession:
+        """Arm (or clear, with ``None``) the one-shot response prefill."""
+        session = self._session_or_raise(session_id)
+        session.one_shot_prefill = prefill
         return session
 
     def pending_attachments(self, session_id: str) -> list[PendingAttachment]:
@@ -531,7 +660,9 @@ class ConsoleChatStore:
         self._session_or_raise(session_id)
         for message in self._messages_by_session[session_id]:
             self._materialize_stream_buffer(message)
-        return [self._snapshot(message) for message in self._messages_by_session[session_id]]
+        return [
+            self._snapshot(message) for message in self._messages_by_session[session_id]
+        ]
 
     def get_message(self, message_id: str) -> ConsoleChatMessage:
         """Return a message by native message ID."""
@@ -553,7 +684,9 @@ class ConsoleChatStore:
         self._persist_existing_message(message, update_feedback=True)
         return self._snapshot(message)
 
-    def update_message_content(self, message_id: str, content: str) -> ConsoleChatMessage:
+    def update_message_content(
+        self, message_id: str, content: str
+    ) -> ConsoleChatMessage:
         """Update a complete Console message or its currently selected variant."""
         if not content.strip():
             raise ValueError("Message content cannot be blank.")
@@ -578,7 +711,9 @@ class ConsoleChatStore:
         message = self._message_or_raise(message_id)
         self._materialize_stream_buffer(message)
         if message.status in {"pending", "streaming"}:
-            raise ValueError("Wait for response to finish before deleting this message.")
+            raise ValueError(
+                "Wait for response to finish before deleting this message."
+            )
         session_id = self._message_session_index.pop(message_id)
         messages = self._messages_by_session[session_id]
         self._messages_by_session[session_id] = [
@@ -737,13 +872,56 @@ class ConsoleChatStore:
         self._persist_existing_message(message)
         return self._snapshot(message)
 
+    def mark_message_send_blocked(self, message_id: str) -> ConsoleChatMessage:
+        """Fail a never-streamed row so provider context (``skip_failed``) drops it.
+
+        TASK-457(a): the optimistic USER echo appends the user's message BEFORE
+        the provider readiness probe; if the provider is not ready the row stays
+        visible in the transcript (the send is not silently dropped) but must NOT
+        enter the NEXT send's provider context. Unlike ``mark_message_failed`` --
+        the assistant stream state machine's terminal, which guards
+        ``_validate_can_mark_terminal`` and restores a variant-regenerate base --
+        this row never streamed, so it is a plain status flip to ``"failed"`` with
+        no terminal guard or base handling. Callers use it only for such
+        never-streamed rows (a USER echo rejected before any provider send).
+
+        Args:
+            message_id: Id of the never-streamed USER echo row to fail.
+
+        Returns:
+            A snapshot of the failed message.
+
+        Raises:
+            ValueError: If the row is not a USER echo, or is mid-stream. The
+                optimistic echo is always a USER row; rejecting other roles /
+                stream states stops a mistaken caller from flipping an
+                assistant/system or in-flight row to ``"failed"`` and bypassing
+                the assistant terminal-state guards (``mark_message_failed``).
+        """
+        message = self._message_or_raise(message_id)
+        if message.role is not ConsoleMessageRole.USER:
+            raise ValueError(
+                "mark_message_send_blocked only fails a never-streamed USER echo "
+                "row; assistant stream terminals use mark_message_failed."
+            )
+        if message.status in {"pending", "streaming"}:
+            raise ValueError(
+                "mark_message_send_blocked expects a never-streamed row, "
+                "not one that is mid-stream."
+            )
+        message.status = "failed"
+        self._persist_existing_message(message)
+        return self._snapshot(message)
+
     def prepare_message_retry(self, message_id: str) -> ConsoleChatMessage:
         """Prepare a failed assistant message to receive replacement stream content."""
         message = self._message_or_raise(message_id)
         if message.role is not ConsoleMessageRole.ASSISTANT:
             raise ValueError("Only assistant messages can be retried.")
         if message.status != "failed":
-            raise ValueError(f"Only failed messages can be retried, not {message.status}.")
+            raise ValueError(
+                f"Only failed messages can be retried, not {message.status}."
+            )
         message.content = ""
         message.status = "pending"
         self._stream_chunks_by_message.pop(message.id, None)
@@ -831,7 +1009,9 @@ class ConsoleChatStore:
         self._persist_existing_message(message)
         return self._snapshot(message)
 
-    def select_variant(self, message_id: str, selected_index: int) -> ConsoleChatMessage:
+    def select_variant(
+        self, message_id: str, selected_index: int
+    ) -> ConsoleChatMessage:
         """Select one existing variant by index."""
         message = self._message_or_raise(message_id)
         self._materialize_stream_buffer(message)
@@ -852,14 +1032,104 @@ class ConsoleChatStore:
         if self.persistence is None:
             return None
         scope_type, persisted_workspace_id = self._persistence_scope(session)
+        if session.character_id is not None:
+            identity_kwargs = {
+                "assistant_kind": "character",
+                "assistant_id": str(session.character_id),
+                "character_id": session.character_id,
+                "character_name": session.character_name,
+            }
+        else:
+            identity_kwargs = {
+                "assistant_kind": "generic",
+                "assistant_id": "console",
+            }
         session.persisted_conversation_id = self.persistence.create_conversation(
-            assistant_kind="generic",
-            assistant_id="console",
             conversation_title=session.title,
             workspace_id=persisted_workspace_id,
             scope_type=scope_type,
-            system_prompt=session.settings.system_prompt if session.settings is not None else None,
+            system_prompt=session.settings.system_prompt
+            if session.settings is not None
+            else None,
+            **identity_kwargs,
         )
+        pinned_prefill = (
+            session.settings.pinned_prefill if session.settings is not None else None
+        )
+        if pinned_prefill:
+            update_pinned = getattr(
+                self.persistence, "update_conversation_pinned_prefill", None
+            )
+            if callable(update_pinned):
+                try:
+                    update_pinned(
+                        conversation_id=session.persisted_conversation_id,
+                        pinned_prefill=pinned_prefill,
+                    )
+                except Exception:
+                    logger.bind(
+                        session_id=session_id,
+                        conversation_id=session.persisted_conversation_id,
+                    ).exception("Failed to flush pinned prefill on first persist.")
+        # task-9: flush a session-held RAG retrieval scope (unpersisted-
+        # session lifecycle, ``SessionScopeHolder``) through to durable
+        # storage now that the conversation row exists. ``flush_to`` itself
+        # no-ops when nothing was held, so this is safe to call
+        # unconditionally. Requires the underlying ``CharactersRAGDB`` --
+        # ``self.persistence`` is the ``ChatPersistenceService`` wrapper, so
+        # the raw DB is reached via its ``db`` attribute, now a declared
+        # (not merely probed) member of ``ConsoleChatPersistence`` (PR #747
+        # review); persistence adapters without one (e.g. test fakes) still
+        # simply skip the flush, matching every other durable write in this
+        # method degrading gracefully when the seam it needs is absent --
+        # but that skip must be OBSERVABLE (see the ``else`` branch below)
+        # rather than a silent loss of the user's scope selection.
+        persistence_db = getattr(self.persistence, "db", None)
+        # Captured BEFORE the flush -- `flush_to` empties the holder on
+        # success, so this is the only chance to learn what was actually
+        # held (task-9 review finding 1; PR #747 review).
+        held_scope = session.rag_scope_holder.scope
+        if persistence_db is not None:
+            flushed_scope = held_scope
+            try:
+                session.rag_scope_holder.flush_to(
+                    persistence_db, session.persisted_conversation_id
+                )
+            except Exception:
+                logger.bind(
+                    session_id=session_id,
+                    conversation_id=session.persisted_conversation_id,
+                ).exception("Failed to flush RAG retrieval scope on first persist.")
+            else:
+                if flushed_scope is not None and self.on_scope_flushed is not None:
+                    try:
+                        self.on_scope_flushed(
+                            session.persisted_conversation_id, flushed_scope
+                        )
+                    except Exception:
+                        logger.bind(
+                            session_id=session_id,
+                            conversation_id=session.persisted_conversation_id,
+                        ).exception(
+                            "on_scope_flushed callback raised after a "
+                            "successful RAG retrieval scope flush."
+                        )
+        elif held_scope is not None:
+            # A scope WAS held but the persistence adapter exposes no raw
+            # `db` seam to flush it through -- the holder is left untouched
+            # (not emptied) so a later flush attempt could still succeed,
+            # but the loss must not be silent: warn, naming the
+            # conversation, so it is observable.
+            logger.bind(
+                session_id=session_id,
+                conversation_id=session.persisted_conversation_id,
+            ).warning(
+                "Skipped RAG retrieval scope flush for conversation {} on "
+                "first persist: persistence adapter exposes no `db` seam. "
+                "The scope remains held in-memory only and was not "
+                "written to durable storage.",
+                session.persisted_conversation_id,
+            )
         return session.persisted_conversation_id
 
     def set_session_system_prompt(
@@ -898,14 +1168,31 @@ class ConsoleChatStore:
             A ``(session, persisted)`` pair: the updated Console session,
             and whether the durable write (when one was attempted) actually
             succeeded. ``persisted`` is ``True`` when no durable write was
-            needed (session not yet saved, or no persistence configured).
+            needed (session not yet saved, or no persistence configured),
+            and ``False`` when the session has no settings snapshot — the
+            update was skipped entirely (task-402 honest-contract guard).
         """
         session = self._session_or_raise(session_id)
-        normalized = system_prompt if isinstance(system_prompt, str) and system_prompt.strip() else None
-        if session.settings is not None:
-            session.settings = replace(session.settings, system_prompt=normalized)
+        if session.settings is None:
+            # task-402: without a settings snapshot the update cannot take
+            # effect in memory; writing it durably anyway would split-brain
+            # the live session against the saved conversation. Report
+            # honestly instead of silently claiming success.
+            logger.bind(session_id=session_id).warning(
+                "set_session_system_prompt skipped: session has no settings."
+            )
+            return session, False
+        normalized = (
+            system_prompt
+            if isinstance(system_prompt, str) and system_prompt.strip()
+            else None
+        )
+        session.settings = replace(session.settings, system_prompt=normalized)
         persisted = True
-        if session.persisted_conversation_id is not None and self.persistence is not None:
+        if (
+            session.persisted_conversation_id is not None
+            and self.persistence is not None
+        ):
             update_system_prompt = getattr(
                 self.persistence,
                 "update_conversation_system_prompt",
@@ -928,7 +1215,69 @@ class ConsoleChatStore:
                     )
         return session, persisted
 
-    def _persist_new_message_or_defer(self, *, session_id: str, message: ConsoleChatMessage) -> None:
+    def set_session_pinned_prefill(
+        self, session_id: str, prefill: str | None
+    ) -> tuple[ConsoleChatSession, bool]:
+        """Set or clear a session's pinned response prefill.
+
+        Mirrors ``set_session_system_prompt``: updates the in-memory
+        settings snapshot and, when the session already owns a persisted
+        conversation, writes through to conversation metadata. A durable
+        write failure is caught and logged; the in-memory value is kept and
+        the honest ``persisted`` flag is returned. A session with no
+        settings snapshot skips the update entirely and returns ``False``
+        (task-402 honest-contract guard).
+
+        Args:
+            session_id: Native Console session ID to update.
+            prefill: New pinned prefill text, or ``None``/blank to clear it.
+
+        Returns:
+            A ``(session, persisted)`` pair: the updated Console session,
+            and whether the requested state fully took effect — ``False``
+            when the durable write failed or the session has no settings
+            snapshot; ``True`` otherwise (including when no durable write
+            was needed).
+        """
+        session = self._session_or_raise(session_id)
+        if session.settings is None:
+            # task-402: mirror set_session_system_prompt -- no settings
+            # snapshot means the update cannot apply in memory; skip the
+            # durable write and report honestly.
+            logger.bind(session_id=session_id).warning(
+                "set_session_pinned_prefill skipped: session has no settings."
+            )
+            return session, False
+        normalized = prefill if isinstance(prefill, str) and prefill.strip() else None
+        session.settings = replace(session.settings, pinned_prefill=normalized)
+        persisted = True
+        if (
+            session.persisted_conversation_id is not None
+            and self.persistence is not None
+        ):
+            update_pinned = getattr(
+                self.persistence, "update_conversation_pinned_prefill", None
+            )
+            if callable(update_pinned):
+                try:
+                    update_pinned(
+                        conversation_id=session.persisted_conversation_id,
+                        pinned_prefill=normalized,
+                    )
+                except Exception:
+                    persisted = False
+                    logger.bind(
+                        session_id=session_id,
+                        conversation_id=session.persisted_conversation_id,
+                    ).exception(
+                        "Failed to persist Console pinned prefill; "
+                        "in-memory session keeps the applied value."
+                    )
+        return session, persisted
+
+    def _persist_new_message_or_defer(
+        self, *, session_id: str, message: ConsoleChatMessage
+    ) -> None:
         if self.persistence is None:
             return
         if not message.content and not message.attachments:
@@ -960,7 +1309,9 @@ class ConsoleChatStore:
             for parameter in parameters.values()
         )
 
-    def _persist_new_message(self, *, session_id: str, message: ConsoleChatMessage) -> None:
+    def _persist_new_message(
+        self, *, session_id: str, message: ConsoleChatMessage
+    ) -> None:
         if self.persistence is None:
             return
         conversation_id = self.persist_session_if_needed(session_id)
@@ -1063,7 +1414,9 @@ class ConsoleChatStore:
         if session_id is None:
             return
         session = self._sessions.get(session_id)
-        conversation_id = session.persisted_conversation_id if session is not None else None
+        conversation_id = (
+            session.persisted_conversation_id if session is not None else None
+        )
         if conversation_id is None:
             return
         variant_metadata = self._sync_variant_metadata(message)
@@ -1129,7 +1482,9 @@ class ConsoleChatStore:
         return None
 
     @staticmethod
-    def _sync_variant_metadata(message: ConsoleChatMessage) -> dict[str, str | int | None]:
+    def _sync_variant_metadata(
+        message: ConsoleChatMessage,
+    ) -> dict[str, str | int | None]:
         if message.variants is None:
             return {
                 "variant_turn_id": None,
@@ -1144,7 +1499,9 @@ class ConsoleChatStore:
             "selected_variant_id": message.variants.current.id,
         }
 
-    def _record_sync_v2_message_version(self, stable_key: str, result: dict[str, Any]) -> None:
+    def _record_sync_v2_message_version(
+        self, stable_key: str, result: dict[str, Any]
+    ) -> None:
         if result.get("status") != "enqueued":
             return
         entry = result.get("outbox_entry")
@@ -1211,12 +1568,16 @@ class ConsoleChatStore:
         if message.role is not ConsoleMessageRole.ASSISTANT:
             raise ValueError("Only assistant messages can receive stream chunks.")
         if message.status not in {"pending", "streaming"}:
-            raise ValueError(f"Cannot append stream chunks to a {message.status} message.")
+            raise ValueError(
+                f"Cannot append stream chunks to a {message.status} message."
+            )
 
     @staticmethod
     def _validate_can_mark_terminal(message: ConsoleChatMessage) -> None:
         if message.role is not ConsoleMessageRole.ASSISTANT:
-            raise ValueError("Only assistant messages can enter terminal stream states.")
+            raise ValueError(
+                "Only assistant messages can enter terminal stream states."
+            )
         if message.status not in {"pending", "streaming"}:
             raise ValueError(f"Cannot mark a {message.status} message terminal.")
 

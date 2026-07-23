@@ -12,7 +12,9 @@ class FakeEvaluationScopeService:
     def __init__(self):
         self.calls = []
 
-    async def list_evaluations(self, *, mode=None, limit=100, offset=0, after=None, eval_type=None):
+    async def list_evaluations(
+        self, *, mode=None, limit=100, offset=0, after=None, eval_type=None
+    ):
         self.calls.append(("list_evaluations", mode, limit, offset, after, eval_type))
         return [
             {
@@ -56,7 +58,9 @@ class FakeEvaluationScopeService:
             }
         ]
 
-    async def list_runs(self, *, mode=None, eval_id, limit=100, offset=0, after=None, status=None):
+    async def list_runs(
+        self, *, mode=None, eval_id, limit=100, offset=0, after=None, status=None
+    ):
         self.calls.append(("list_runs", mode, eval_id, limit, offset, after, status))
         return [
             {
@@ -88,8 +92,21 @@ class FakeEvaluationScopeService:
             }
         ]
 
-    async def create_run(self, *, mode=None, eval_id, target_id=None, target_model=None, config=None, run_name=None, dataset_override=None, webhook_url=None):
-        self.calls.append(("create_run", mode, eval_id, target_id, target_model, config, run_name))
+    async def create_run(
+        self,
+        *,
+        mode=None,
+        eval_id,
+        target_id=None,
+        target_model=None,
+        config=None,
+        run_name=None,
+        dataset_override=None,
+        webhook_url=None,
+    ):
+        self.calls.append(
+            ("create_run", mode, eval_id, target_id, target_model, config, run_name)
+        )
         return {
             "record_id": "server:evaluation_run:run_new",
             "record_type": "evaluation_run",
@@ -162,7 +179,9 @@ class FakeEvaluationScopeService:
 class EvaluationBrowserTestApp(App):
     def __init__(self, app_instance, *, view_mode="manage"):
         super().__init__()
-        self._screen = EvaluationBrowserScreen(app_instance=app_instance, view_mode=view_mode)
+        self._screen = EvaluationBrowserScreen(
+            app_instance=app_instance, view_mode=view_mode
+        )
 
     async def on_mount(self) -> None:
         await self.push_screen(self._screen)
@@ -224,7 +243,9 @@ async def test_evaluation_browser_screen_shows_local_target_selector_and_results
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    local_app = EvaluationBrowserTestApp(app_instance=local_app_instance, view_mode="manage")
+    local_app = EvaluationBrowserTestApp(
+        app_instance=local_app_instance, view_mode="manage"
+    )
 
     async with local_app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -238,7 +259,9 @@ async def test_evaluation_browser_screen_shows_local_target_selector_and_results
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    results_app = EvaluationBrowserTestApp(app_instance=results_app_instance, view_mode="results")
+    results_app = EvaluationBrowserTestApp(
+        app_instance=results_app_instance, view_mode="results"
+    )
 
     async with results_app.run_test() as pilot:
         await pilot.pause(0.2)
@@ -262,4 +285,6 @@ async def test_evaluation_browser_screen_requires_app_owned_scope_service():
         await pilot.pause(0.2)
         context = app.screen.query_one("#browser-context", Static)
 
-        assert "app-owned evaluation scope service is unavailable" in str(context.render())
+        assert "app-owned evaluation scope service is unavailable" in str(
+            context.render()
+        )

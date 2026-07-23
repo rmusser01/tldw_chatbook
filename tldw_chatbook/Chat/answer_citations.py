@@ -102,7 +102,9 @@ def summarize_citation_artifact_metadata(metadata: Any) -> dict[str, Any]:
             payload["citation_count"] = len(cited_ids)
         else:
             citations = validation.get("citations")
-            payload["citation_count"] = len(citations) if isinstance(citations, list) else 0
+            payload["citation_count"] = (
+                len(citations) if isinstance(citations, list) else 0
+            )
 
         unknown_ids = _citation_summary_items(validation.get("unknown_citation_ids"))
         if unknown_ids:
@@ -274,8 +276,12 @@ def build_answer_citation_validation(
                 unknown_ids.append(evidence_id)
         citations.append(citation)
 
-    available_ids = tuple(reference.evidence_id for reference in bundle.available_references())
-    uncited_ids = tuple(evidence_id for evidence_id in available_ids if evidence_id not in cited_ids)
+    available_ids = tuple(
+        reference.evidence_id for reference in bundle.available_references()
+    )
+    uncited_ids = tuple(
+        evidence_id for evidence_id in available_ids if evidence_id not in cited_ids
+    )
     for evidence_id in uncited_ids:
         reference = bundle.reference_by_id(evidence_id)
         if reference is not None:
@@ -353,5 +359,9 @@ def _quote_for_marker(answer_text: str, evidence_id: str) -> str:
         )
         if index >= 0
     ]
-    end = min(sentence_end_candidates) + 1 if sentence_end_candidates else len(answer_text)
+    end = (
+        min(sentence_end_candidates) + 1
+        if sentence_end_candidates
+        else len(answer_text)
+    )
     return answer_text[start:end].strip()

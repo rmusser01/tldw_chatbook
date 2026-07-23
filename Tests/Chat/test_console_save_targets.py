@@ -20,8 +20,13 @@ def test_derive_console_save_title_includes_conversation_title_and_date():
 
 
 def test_derive_console_save_title_blank_conversation_falls_back_to_prefix():
-    assert derive_console_save_title("", now=FIXED_NOW) == "Console message (2026-07-11)"
-    assert derive_console_save_title("   ", now=FIXED_NOW) == "Console message (2026-07-11)"
+    assert (
+        derive_console_save_title("", now=FIXED_NOW) == "Console message (2026-07-11)"
+    )
+    assert (
+        derive_console_save_title("   ", now=FIXED_NOW)
+        == "Console message (2026-07-11)"
+    )
 
 
 def test_derive_console_save_title_weaves_role_label_into_prefix():

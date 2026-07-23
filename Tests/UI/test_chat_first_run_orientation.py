@@ -35,13 +35,19 @@ def first_run_settings(monkeypatch):
     providers = {"OpenAI": ["gpt-4o"]}
 
     monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", get_setting)
-    monkeypatch.setattr("tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting", get_setting)
-    monkeypatch.setattr("tldw_chatbook.Widgets.compact_model_bar.get_cli_setting", get_setting)
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting", get_setting
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Widgets.compact_model_bar.get_cli_setting", get_setting
+    )
     monkeypatch.setattr(
         "tldw_chatbook.Widgets.compact_model_bar.get_cli_providers_and_models",
         lambda: providers,
     )
-    monkeypatch.setattr("tldw_chatbook.Widgets.enhanced_settings_sidebar.get_cli_setting", get_setting)
+    monkeypatch.setattr(
+        "tldw_chatbook.Widgets.enhanced_settings_sidebar.get_cli_setting", get_setting
+    )
     monkeypatch.setattr(
         "tldw_chatbook.Widgets.enhanced_settings_sidebar.get_cli_providers_and_models",
         lambda: providers,
@@ -62,17 +68,23 @@ def first_run_tab_settings(monkeypatch):
     providers = {"OpenAI": ["gpt-4o"]}
 
     monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", get_setting)
-    monkeypatch.setattr("tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting", get_setting)
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting", get_setting
+    )
     monkeypatch.setattr(
         "tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container.get_cli_setting",
         get_setting,
     )
-    monkeypatch.setattr("tldw_chatbook.Widgets.compact_model_bar.get_cli_setting", get_setting)
+    monkeypatch.setattr(
+        "tldw_chatbook.Widgets.compact_model_bar.get_cli_setting", get_setting
+    )
     monkeypatch.setattr(
         "tldw_chatbook.Widgets.compact_model_bar.get_cli_providers_and_models",
         lambda: providers,
     )
-    monkeypatch.setattr("tldw_chatbook.Widgets.enhanced_settings_sidebar.get_cli_setting", get_setting)
+    monkeypatch.setattr(
+        "tldw_chatbook.Widgets.enhanced_settings_sidebar.get_cli_setting", get_setting
+    )
     monkeypatch.setattr(
         "tldw_chatbook.Widgets.enhanced_settings_sidebar.get_cli_providers_and_models",
         lambda: providers,
@@ -109,7 +121,9 @@ def first_run_host():
 
 
 @pytest.mark.asyncio
-async def test_chat_first_run_exposes_readiness_and_context_sources(first_run_settings, first_run_host):
+async def test_chat_first_run_exposes_readiness_and_context_sources(
+    first_run_settings, first_run_host
+):
     app = _ChatFirstRunHarnessApp(first_run_host)
 
     async with app.run_test() as pilot:
@@ -129,7 +143,9 @@ async def test_chat_first_run_exposes_readiness_and_context_sources(first_run_se
 
 
 @pytest.mark.asyncio
-async def test_chat_tab_first_run_exposes_readiness_and_context_sources(first_run_tab_settings, first_run_host):
+async def test_chat_tab_first_run_exposes_readiness_and_context_sources(
+    first_run_tab_settings, first_run_host
+):
     app = _ChatFirstRunHarnessApp(first_run_host)
 
     async with app.run_test() as pilot:
@@ -142,5 +158,7 @@ async def test_chat_tab_first_run_exposes_readiness_and_context_sources(first_ru
         assert "Empty transcript" in text
         assert "No messages yet. Send a prompt or attach context." in text
         assert "Provider setup required before sending." in text
-        assert "Context lanes: Library, Search/RAG, Artifacts, Personas, Skills." in text
+        assert (
+            "Context lanes: Library, Search/RAG, Artifacts, Personas, Skills." in text
+        )
         assert "Chat is the" not in text

@@ -40,6 +40,12 @@ class PersonasWorkbenchState:
     runtime_source: str = "local"
     search_query: str = ""
     filter_text: str = ""
+    #: Active library sort key (see ``PersonasScreen._character_sort_cycle``).
+    sort_key: str = "name_asc"
+    #: Active characters-only tag filter (``None`` means "all tags").
+    tag_filter: str | None = None
+    #: Zero-based offset of the visible library page (multiple of page size).
+    page_offset: int = 0
     selected_entity_kind: PersonaEntityKind | None = None
     selected_entity_id: str | None = None
     selected_entity_name: str = ""
@@ -54,6 +60,11 @@ class PersonasWorkbenchState:
             raise ValueError(f"Unsupported Personas mode: {mode}")
         self.active_mode = mode
         self.clear_selection()
+        # Each mode starts with a fresh library window: default sort, no tag
+        # filter, and page 0. Search is cleared by the screen's _apply_mode.
+        self.sort_key = "name_asc"
+        self.tag_filter = None
+        self.page_offset = 0
         self.has_unsaved_changes = False
         self.is_loading = False
         self.status_message = f"Mode: {MODE_LABELS[mode]}"
@@ -90,6 +101,9 @@ class PersonasWorkbenchState:
         self.runtime_source = str(runtime_source or "local")
         self.search_query = ""
         self.filter_text = ""
+        self.sort_key = "name_asc"
+        self.tag_filter = None
+        self.page_offset = 0
         self.clear_selection()
         self.is_loading = False
         self.has_unsaved_changes = False
@@ -110,7 +124,9 @@ class PersonasWorkbenchState:
             "selected_target_id": self.selected_runtime_target,
         }
 
-    def _default_runtime_target(self, entity_kind: PersonaEntityKind, entity_id: str) -> str:
+    def _default_runtime_target(
+        self, entity_kind: PersonaEntityKind, entity_id: str
+    ) -> str:
         return f"{self.runtime_source}:{entity_kind}:{entity_id}"
 
 

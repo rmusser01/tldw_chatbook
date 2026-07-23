@@ -130,5 +130,8 @@ def test_public_roadmap_matches_release_closeout_without_internal_commitments() 
         r"\bPhase\s+\d+(?:\.\d+)+\b",
         r"\b(?:ships?|launch(?:es)?|release(?:s)?|deadline|due|eta)\s+(?:on\s+)?\d{4}-\d{2}-\d{2}\b",
     )
-    assert not any(re.search(pattern, roadmap, flags=re.IGNORECASE) for pattern in forbidden_patterns)
+    assert not any(
+        re.search(pattern, roadmap, flags=re.IGNORECASE)
+        for pattern in forbidden_patterns
+    )
     assert "release-candidate recovery reference" in recovery

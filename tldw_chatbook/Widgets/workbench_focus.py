@@ -68,7 +68,9 @@ def _available_targets(
     return available
 
 
-def _resolve_focus_target(pane: Widget, preferred_focus_ids: tuple[str, ...]) -> Widget | None:
+def _resolve_focus_target(
+    pane: Widget, preferred_focus_ids: tuple[str, ...]
+) -> Widget | None:
     for focus_id in preferred_focus_ids:
         if pane.id == focus_id and _is_focusable(pane):
             return pane

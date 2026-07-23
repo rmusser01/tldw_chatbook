@@ -25,7 +25,9 @@ class ImmediateButton(Button):
         if self.action is None:
             self.post_message(Button.Pressed(self))
         else:
-            self.call_later(self.app.run_action, self.action, default_namespace=self._parent)
+            self.call_later(
+                self.app.run_action, self.action, default_namespace=self._parent
+            )
         return self
 
 
@@ -97,7 +99,9 @@ class ProcessingJob:
         elapsed = self.elapsed_time
         if elapsed is None or self.progress <= 0 or self.progress >= 1:
             return None
-        return timedelta(seconds=elapsed.total_seconds() * ((1 - self.progress) / self.progress))
+        return timedelta(
+            seconds=elapsed.total_seconds() * ((1 - self.progress) / self.progress)
+        )
 
     def start(self) -> None:
         self.state = ProcessingState.PROCESSING
@@ -143,7 +147,9 @@ class ProcessingJob:
 
 
 class ProcessingJobStatus(Message):
-    def __init__(self, job_id: str, status: ProcessingState, progress: float, message: str) -> None:
+    def __init__(
+        self, job_id: str, status: ProcessingState, progress: float, message: str
+    ) -> None:
         super().__init__()
         self.job_id = job_id
         self.status = status
@@ -183,7 +189,9 @@ class JobStatusWidget(CaptureSafePostMixin, Widget):
                 yield ImmediateButton("Pause", id=f"pause-{self.job.job_id}")
                 yield ImmediateButton("Resume", id=f"resume-{self.job.job_id}")
                 yield ImmediateButton("Cancel", id=f"cancel-{self.job.job_id}")
-            yield ProgressBar(total=100, id=f"progress-{self.job.job_id}", classes="job-progress")
+            yield ProgressBar(
+                total=100, id=f"progress-{self.job.job_id}", classes="job-progress"
+            )
 
     def _get_status_display(self) -> str:
         if self.job.state == ProcessingState.QUEUED:
@@ -260,35 +268,57 @@ class ProcessingDashboard(CaptureSafePostMixin, Widget):
         if self.is_mounted and not self.active_jobs:
             self.query_one("#empty-state").remove_class("hidden")
 
-    def update_job_status(self, job_id: str, state: ProcessingState, progress: float, message: str) -> None:
+    def update_job_status(
+        self, job_id: str, state: ProcessingState, progress: float, message: str
+    ) -> None:
         job = self.active_jobs[job_id]
         if state == ProcessingState.PROCESSING and job.start_time is None:
             job.start()
         job.state = state
         job.progress = progress
         job.message = message
-        if state in {ProcessingState.COMPLETED, ProcessingState.FAILED, ProcessingState.CANCELLED}:
+        if state in {
+            ProcessingState.COMPLETED,
+            ProcessingState.FAILED,
+            ProcessingState.CANCELLED,
+        }:
             job.end_time = job.end_time or datetime.now()
         self.total_progress = self._calculate_total_progress()
         self.is_processing = self.get_active_job_count() > 0
         self._emit_message(ProcessingJobStatus(job_id, state, progress, message))
 
-    def update_job_file_progress(self, job_id: str, file_key: str, progress: float, status: str) -> None:
+    def update_job_file_progress(
+        self, job_id: str, file_key: str, progress: float, status: str
+    ) -> None:
         self.active_jobs[job_id].update_file_progress(file_key, progress, status)
 
     def get_active_job_count(self) -> int:
-        return sum(1 for job in self.active_jobs.values() if job.state == ProcessingState.PROCESSING)
+        return sum(
+            1
+            for job in self.active_jobs.values()
+            if job.state == ProcessingState.PROCESSING
+        )
 
     def get_completed_job_count(self) -> int:
-        return sum(1 for job in self.active_jobs.values() if job.state == ProcessingState.COMPLETED)
+        return sum(
+            1
+            for job in self.active_jobs.values()
+            if job.state == ProcessingState.COMPLETED
+        )
 
     def get_failed_job_count(self) -> int:
-        return sum(1 for job in self.active_jobs.values() if job.state == ProcessingState.FAILED)
+        return sum(
+            1
+            for job in self.active_jobs.values()
+            if job.state == ProcessingState.FAILED
+        )
 
     def _calculate_total_progress(self) -> float:
         if not self.active_jobs:
             return 0.0
-        return sum(job.progress for job in self.active_jobs.values()) / len(self.active_jobs)
+        return sum(job.progress for job in self.active_jobs.values()) / len(
+            self.active_jobs
+        )
 
     @on(Button.Pressed, "#pause-all")
     def _pause_all(self) -> None:
@@ -305,5 +335,9 @@ class ProcessingDashboard(CaptureSafePostMixin, Widget):
     @on(Button.Pressed, "#clear-completed")
     def _clear_completed(self) -> None:
         for job_id, job in list(self.active_jobs.items()):
-            if job.state in {ProcessingState.COMPLETED, ProcessingState.FAILED, ProcessingState.CANCELLED}:
+            if job.state in {
+                ProcessingState.COMPLETED,
+                ProcessingState.FAILED,
+                ProcessingState.CANCELLED,
+            }:
                 self.remove_job(job_id)

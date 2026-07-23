@@ -3,6 +3,7 @@
 #
 # Imports
 from typing import TYPE_CHECKING, Optional
+
 #
 # Type checking imports
 if TYPE_CHECKING:
@@ -12,16 +13,17 @@ if TYPE_CHECKING:
 #
 # Functions:
 
+
 def show_notification(
-    app: 'TldwCli',
+    app: "TldwCli",
     message: str,
     severity: str = "information",
-    timeout: Optional[float] = None
+    timeout: Optional[float] = None,
 ) -> None:
     """
     Show a notification using toast if available, fallback to notify.
     Maps Textual's notify severity levels to toast severity levels.
-    
+
     Args:
         app: The app instance
         message: Message to display
@@ -35,24 +37,25 @@ def show_notification(
         "error": "error",
         "critical": "error",
     }
-    
+
     toast_severity = severity_map.get(severity, "info")
-    
+
     # Try to use toast notifications if available
-    if hasattr(app, 'show_toast'):
+    if hasattr(app, "show_toast"):
         # Default timeout if not specified
         if timeout is None:
             timeout = 5.0 if toast_severity != "error" else None  # Errors stay longer
-            
+
         app.show_toast(
             message=message,
             severity=toast_severity,
             timeout=timeout,
-            persistent=(timeout is None)
+            persistent=(timeout is None),
         )
     else:
         # Fallback to built-in notify
         app.notify(message, severity=severity, timeout=timeout)
+
 
 #
 # End of NotificationHelper.py

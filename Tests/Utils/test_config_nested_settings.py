@@ -16,7 +16,6 @@ inert feature through five review gates).
 import os
 from contextlib import contextmanager
 
-import pytest
 
 import tldw_chatbook.config as config_mod
 from tldw_chatbook.config import get_cli_setting

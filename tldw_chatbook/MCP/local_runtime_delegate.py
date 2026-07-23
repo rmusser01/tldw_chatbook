@@ -38,7 +38,9 @@ class LocalMCPRuntimeDelegate:
         "character_writing",
     )
 
-    def __init__(self, *, manifest_provider: Callable[[], dict[str, Any]] | None = None) -> None:
+    def __init__(
+        self, *, manifest_provider: Callable[[], dict[str, Any]] | None = None
+    ) -> None:
         self._manifest_provider = manifest_provider or describe_local_mcp_capabilities
         self._tools: Any | None = None
         self._resources: Any | None = None
@@ -80,8 +82,7 @@ class LocalMCPRuntimeDelegate:
             "mcp_sdk_available": MCP_AVAILABLE,
             "supports_batch": True,
             "methods": [
-                {"name": method, "supported": True}
-                for method in self._REQUEST_METHODS
+                {"name": method, "supported": True} for method in self._REQUEST_METHODS
             ],
             "manifest": {
                 "tools": len(tools),
@@ -93,7 +94,8 @@ class LocalMCPRuntimeDelegate:
                     "implemented": [
                         name
                         for name in tool_names
-                        if name not in self._UNAVAILABLE_DIRECT_TOOLS and hasattr(self, f"_tool_{name}")
+                        if name not in self._UNAVAILABLE_DIRECT_TOOLS
+                        and hasattr(self, f"_tool_{name}")
                     ],
                     "unavailable": [
                         name
@@ -103,7 +105,8 @@ class LocalMCPRuntimeDelegate:
                     "missing": [
                         name
                         for name in tool_names
-                        if name not in self._UNAVAILABLE_DIRECT_TOOLS and not hasattr(self, f"_tool_{name}")
+                        if name not in self._UNAVAILABLE_DIRECT_TOOLS
+                        and not hasattr(self, f"_tool_{name}")
                     ],
                 },
                 "resources": {
@@ -115,14 +118,10 @@ class LocalMCPRuntimeDelegate:
                 },
                 "prompts": {
                     "implemented": [
-                        name
-                        for name in prompt_names
-                        if name in self._PROMPT_NAMES
+                        name for name in prompt_names if name in self._PROMPT_NAMES
                     ],
                     "missing": [
-                        name
-                        for name in prompt_names
-                        if name not in self._PROMPT_NAMES
+                        name for name in prompt_names if name not in self._PROMPT_NAMES
                     ],
                 },
             },
@@ -158,7 +157,9 @@ class LocalMCPRuntimeDelegate:
             "issues": issues,
         }
 
-    async def execute_tool(self, tool_name: str, arguments: Mapping[str, Any] | None = None) -> Any:
+    async def execute_tool(
+        self, tool_name: str, arguments: Mapping[str, Any] | None = None
+    ) -> Any:
         normalized_name = str(tool_name or "").strip()
         payload = dict(arguments or {})
         handler = getattr(self, f"_tool_{normalized_name}", None)
@@ -166,7 +167,9 @@ class LocalMCPRuntimeDelegate:
             raise KeyError(f"Unsupported local MCP tool: {normalized_name}")
         return await handler(payload)
 
-    async def request(self, method: str, params: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    async def request(
+        self, method: str, params: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
         normalized_method = str(method or "").strip()
         payload = dict(params or {})
         manifest = self._get_manifest()
@@ -195,22 +198,32 @@ class LocalMCPRuntimeDelegate:
         if normalized_method == "tools/call":
             arguments = payload.get("arguments")
             return {
-                "tool_name": self._require_payload_field(payload, "name", aliases=("tool_name",)),
+                "tool_name": self._require_payload_field(
+                    payload, "name", aliases=("tool_name",)
+                ),
                 "result": await self.execute_tool(
-                    self._require_payload_field(payload, "name", aliases=("tool_name",)),
+                    self._require_payload_field(
+                        payload, "name", aliases=("tool_name",)
+                    ),
                     arguments if isinstance(arguments, Mapping) else {},
                 ),
             }
         if normalized_method == "resources/read":
             return {
-                "resource_uri": self._require_payload_field(payload, "uri", aliases=("resource_uri",)),
+                "resource_uri": self._require_payload_field(
+                    payload, "uri", aliases=("resource_uri",)
+                ),
                 "result": await self.read_resource(
-                    self._require_payload_field(payload, "uri", aliases=("resource_uri",))
+                    self._require_payload_field(
+                        payload, "uri", aliases=("resource_uri",)
+                    )
                 ),
             }
         if normalized_method == "prompts/get":
             arguments = payload.get("arguments")
-            prompt_name = self._require_payload_field(payload, "name", aliases=("prompt_name",))
+            prompt_name = self._require_payload_field(
+                payload, "name", aliases=("prompt_name",)
+            )
             normalized_arguments = arguments if isinstance(arguments, Mapping) else {}
             return {
                 "prompt_name": prompt_name,
@@ -219,13 +232,21 @@ class LocalMCPRuntimeDelegate:
             }
         raise KeyError(f"Unsupported local MCP runtime method: {normalized_method}")
 
-    async def batch(self, requests: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...]) -> list[dict[str, Any]]:
+    async def batch(
+        self, requests: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...]
+    ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         for index, request in enumerate(requests):
-            method = str(request.get("method") or "").strip() if isinstance(request, Mapping) else ""
+            method = (
+                str(request.get("method") or "").strip()
+                if isinstance(request, Mapping)
+                else ""
+            )
             params = request.get("params") if isinstance(request, Mapping) else None
             try:
-                await self.request(method, params if isinstance(params, Mapping) else {})
+                await self.request(
+                    method, params if isinstance(params, Mapping) else {}
+                )
                 results.append(
                     {
                         "index": index,
@@ -248,18 +269,30 @@ class LocalMCPRuntimeDelegate:
         normalized_uri = str(resource_uri or "").strip()
         resources = self._get_resources()
         if normalized_uri.startswith("conversation://"):
-            return await resources.get_conversation_resource(normalized_uri.removeprefix("conversation://"))
+            return await resources.get_conversation_resource(
+                normalized_uri.removeprefix("conversation://")
+            )
         if normalized_uri.startswith("note://"):
-            return await resources.get_note_resource(normalized_uri.removeprefix("note://"))
+            return await resources.get_note_resource(
+                normalized_uri.removeprefix("note://")
+            )
         if normalized_uri.startswith("character://"):
-            return await resources.get_character_resource(normalized_uri.removeprefix("character://"))
+            return await resources.get_character_resource(
+                normalized_uri.removeprefix("character://")
+            )
         if normalized_uri.startswith("media://"):
-            return await resources.get_media_resource(normalized_uri.removeprefix("media://"))
+            return await resources.get_media_resource(
+                normalized_uri.removeprefix("media://")
+            )
         if normalized_uri.startswith("rag-chunk://"):
-            return await resources.get_rag_chunk_resource(normalized_uri.removeprefix("rag-chunk://"))
+            return await resources.get_rag_chunk_resource(
+                normalized_uri.removeprefix("rag-chunk://")
+            )
         raise KeyError(f"Unsupported local MCP resource URI: {normalized_uri}")
 
-    async def get_prompt(self, prompt_name: str, arguments: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
+    async def get_prompt(
+        self, prompt_name: str, arguments: Mapping[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         normalized_name = str(prompt_name or "").strip()
         payload = dict(arguments or {})
         prompts = self._get_prompts()
@@ -321,10 +354,14 @@ class LocalMCPRuntimeDelegate:
             "created": datetime.now(timezone.utc).isoformat(),
         }
         if arguments.get("tags") or arguments.get("template"):
-            result["warning"] = "Local MCP create_note currently persists title/content only."
+            result["warning"] = (
+                "Local MCP create_note currently persists title/content only."
+            )
         return result
 
-    async def _tool_search_notes(self, arguments: dict[str, Any]) -> list[dict[str, Any]]:
+    async def _tool_search_notes(
+        self, arguments: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         db = self._require_chachanotes_db()
         results = db.search_notes(
             search_term=str(arguments.get("query") or ""),
@@ -334,7 +371,9 @@ class LocalMCPRuntimeDelegate:
             {
                 "id": item["id"],
                 "title": item["title"],
-                "preview": item["content"][:200] + "..." if len(item["content"]) > 200 else item["content"],
+                "preview": item["content"][:200] + "..."
+                if len(item["content"]) > 200
+                else item["content"],
                 "created": item.get("created_at"),
                 "modified": item.get("last_modified"),
             }
@@ -424,19 +463,25 @@ class LocalMCPRuntimeDelegate:
         if self._tools is None:
             from tldw_chatbook.MCP.tools import MCPTools
 
-            self._tools = MCPTools(self._require_chachanotes_db(), self._require_media_db())
+            self._tools = MCPTools(
+                self._require_chachanotes_db(), self._require_media_db()
+            )
         return self._tools
 
     def _get_resources(self):
         if self._resources is None:
             from tldw_chatbook.MCP.resources import MCPResources
 
-            self._resources = MCPResources(self._require_chachanotes_db(), self._require_media_db())
+            self._resources = MCPResources(
+                self._require_chachanotes_db(), self._require_media_db()
+            )
         return self._resources
 
     def _get_prompts(self):
         if self._prompts is None:
             from tldw_chatbook.MCP.prompts import MCPPrompts
 
-            self._prompts = MCPPrompts(self._require_chachanotes_db(), self._require_media_db())
+            self._prompts = MCPPrompts(
+                self._require_chachanotes_db(), self._require_media_db()
+            )
         return self._prompts

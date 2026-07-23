@@ -3,6 +3,7 @@
 Follows the Workspace_DB pattern: BaseDB, per-call connections (reads get
 their own connection automatically), transaction() for writes.
 """
+
 from __future__ import annotations
 
 import json
@@ -25,8 +26,7 @@ class AgentRunsDB(BaseDB):
 
     _CURRENT_SCHEMA_VERSION = 1
 
-    def __init__(self, db_path: Union[str, Path],
-                 client_id: str = "default") -> None:
+    def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
         super().__init__(db_path, client_id)
 
     def _get_connection(self) -> sqlite3.Connection:
@@ -111,13 +111,18 @@ class AgentRunsDB(BaseDB):
     def _row_to_dict(row: sqlite3.Row) -> dict:
         record = dict(row)
         record["steps"] = json.loads(record["steps"] or "[]")
-        record["budget"] = (json.loads(record["budget"])
-                            if record["budget"] else None)
+        record["budget"] = json.loads(record["budget"]) if record["budget"] else None
         return record
 
-    def create_run(self, *, conversation_id: str, agent_kind: str,
-                   task: str | None = None, parent_run_id: str | None = None,
-                   budget: dict | None = None) -> str:
+    def create_run(
+        self,
+        *,
+        conversation_id: str,
+        agent_kind: str,
+        task: str | None = None,
+        parent_run_id: str | None = None,
+        budget: dict | None = None,
+    ) -> str:
         """Create a new run record in ``running`` status.
 
         Args:
@@ -140,9 +145,16 @@ class AgentRunsDB(BaseDB):
                    (id, conversation_id, parent_run_id, agent_kind, task,
                     status, steps, result, budget, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?)""",
-                (run_id, conversation_id, parent_run_id, agent_kind, task,
-                 json.dumps(budget) if budget is not None else None,
-                 now, now),
+                (
+                    run_id,
+                    conversation_id,
+                    parent_run_id,
+                    agent_kind,
+                    task,
+                    json.dumps(budget) if budget is not None else None,
+                    now,
+                    now,
+                ),
             )
         return run_id
 
@@ -159,19 +171,18 @@ class AgentRunsDB(BaseDB):
         """
         with self.transaction() as conn:
             row = conn.execute(
-                "SELECT steps FROM agent_runs WHERE id = ?",
-                (run_id,)).fetchone()
+                "SELECT steps FROM agent_runs WHERE id = ?", (run_id,)
+            ).fetchone()
             if row is None:
                 raise KeyError(f"Unknown run id: {run_id}")
             existing = json.loads(row["steps"] or "[]")
             existing.extend(steps)
             conn.execute(
-                "UPDATE agent_runs SET steps = ?, updated_at = ? "
-                "WHERE id = ?",
-                (json.dumps(existing), _now_iso(), run_id))
+                "UPDATE agent_runs SET steps = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(existing), _now_iso(), run_id),
+            )
 
-    def set_status(self, run_id: str, status: str,
-                   result: str | None = None) -> None:
+    def set_status(self, run_id: str, status: str, result: str | None = None) -> None:
         """Update a run's terminal (or in-progress) status.
 
         Args:
@@ -187,7 +198,8 @@ class AgentRunsDB(BaseDB):
             conn.execute(
                 "UPDATE agent_runs SET status = ?, "
                 "result = COALESCE(?, result), updated_at = ? WHERE id = ?",
-                (status, result, _now_iso(), run_id))
+                (status, result, _now_iso(), run_id),
+            )
 
     def get_run(self, run_id: str) -> dict | None:
         """Fetch one run record.
@@ -201,13 +213,16 @@ class AgentRunsDB(BaseDB):
         """
         with self.connection() as conn:
             row = conn.execute(
-                "SELECT * FROM agent_runs WHERE id = ?",
-                (run_id,)).fetchone()
+                "SELECT * FROM agent_runs WHERE id = ?", (run_id,)
+            ).fetchone()
         return self._row_to_dict(row) if row else None
 
-    def list_runs(self, conversation_id: str,
-                  include_superseded: bool = True,
-                  limit: int | None = None) -> list[dict]:
+    def list_runs(
+        self,
+        conversation_id: str,
+        include_superseded: bool = True,
+        limit: int | None = None,
+    ) -> list[dict]:
         """List a conversation's run records, newest first.
 
         Args:
@@ -248,11 +263,13 @@ class AgentRunsDB(BaseDB):
             row = conn.execute(
                 "SELECT COUNT(*) AS n FROM agent_runs "
                 "WHERE conversation_id = ? AND agent_kind = 'subagent'",
-                (conversation_id,)).fetchone()
+                (conversation_id,),
+            ).fetchone()
         return int(row["n"])
 
     def count_subagents_by_conversation(
-        self, conversation_ids: list[str],
+        self,
+        conversation_ids: list[str],
     ) -> dict[str, int]:
         """Count sub-agent runs for many conversations in a single query.
 
@@ -283,7 +300,8 @@ class AgentRunsDB(BaseDB):
                 "SELECT conversation_id, COUNT(*) AS n FROM agent_runs "
                 f"WHERE agent_kind = 'subagent' AND conversation_id IN ({placeholders}) "
                 "GROUP BY conversation_id",
-                ids).fetchall()
+                ids,
+            ).fetchall()
         return {row["conversation_id"]: int(row["n"]) for row in rows}
 
     def supersede_run_tree(self, run_id: str) -> int:
@@ -303,5 +321,6 @@ class AgentRunsDB(BaseDB):
             cursor = conn.execute(
                 "UPDATE agent_runs SET status = 'superseded', "
                 "updated_at = ? WHERE id = ? OR parent_run_id = ?",
-                (_now_iso(), run_id, run_id))
+                (_now_iso(), run_id, run_id),
+            )
             return cursor.rowcount

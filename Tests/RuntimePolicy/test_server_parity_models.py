@@ -18,7 +18,9 @@ from tldw_chatbook.runtime_policy.server_parity_models import (
 )
 
 
-def test_event_cursor_key_is_scoped_by_source_server_principal_stream_and_instance() -> None:
+def test_event_cursor_key_is_scoped_by_source_server_principal_stream_and_instance() -> (
+    None
+):
     server_cursor = EventCursor(
         source_authority="server",
         server_profile_id="server-a",
@@ -44,7 +46,10 @@ def test_event_cursor_key_is_scoped_by_source_server_principal_stream_and_instan
     )
 
     assert server_cursor.storage_key() == "server:server-a:user-a:notifications:default"
-    assert other_principal_cursor.storage_key() == "server:server-a:user-b:notifications:default"
+    assert (
+        other_principal_cursor.storage_key()
+        == "server:server-a:user-b:notifications:default"
+    )
     assert local_cursor.storage_key() == "local:none:none:notifications:default"
     assert server_cursor.storage_key() != other_principal_cursor.storage_key()
     assert server_cursor.storage_key() != local_cursor.storage_key()
@@ -112,7 +117,9 @@ def test_sync_readiness_defaults_to_not_registered_and_not_write_enabled() -> No
     assert report.reason_codes == ("not_registered",)
 
 
-def test_sync_identity_map_entry_preserves_source_scope_server_and_workspace_ids() -> None:
+def test_sync_identity_map_entry_preserves_source_scope_server_and_workspace_ids() -> (
+    None
+):
     entry = SyncIdentityMapEntry(
         domain="notes",
         source_authority="server",
@@ -145,7 +152,9 @@ def test_provider_migration_status_represents_migrated_and_compatibility_mode() 
     assert compatibility.reason_code == "legacy_config_factory"
 
 
-def test_notification_presentation_keeps_local_delivery_state_separate_from_server_state() -> None:
+def test_notification_presentation_keeps_local_delivery_state_separate_from_server_state() -> (
+    None
+):
     presentation = NotificationPresentationRecord(
         event_key="server:server-a:notifications:default:n-1",
         local_delivery_state="delivered",
@@ -158,7 +167,9 @@ def test_notification_presentation_keeps_local_delivery_state_separate_from_serv
     assert presentation.server_dismiss_state == "active"
 
 
-def test_importing_server_parity_models_does_not_load_heavy_runtime_policy_modules() -> None:
+def test_importing_server_parity_models_does_not_load_heavy_runtime_policy_modules() -> (
+    None
+):
     script = """
 import json
 import sys
@@ -187,7 +198,9 @@ print(json.dumps({name: name in sys.modules for name in heavy_modules}, sort_key
     }
 
 
-def test_normalized_event_record_dedupe_identity_is_stable_after_input_mutation() -> None:
+def test_normalized_event_record_dedupe_identity_is_stable_after_input_mutation() -> (
+    None
+):
     entity_ref = {"type": "notification", "id": "n-1"}
     record = NormalizedEventRecord(
         source_authority="local",
@@ -230,7 +243,10 @@ def test_sync_readiness_report_details_are_stable_after_input_mutation() -> None
     details["nested"]["state"] = "mutated"
     details["reasons"].append("mutated")
 
-    assert report.details == {"nested": {"state": "initial"}, "reasons": ("missing_identity",)}
+    assert report.details == {
+        "nested": {"state": "initial"},
+        "reasons": ("missing_identity",),
+    }
 
 
 def test_normalized_event_record_json_fields_support_direct_json_dumps() -> None:
@@ -249,8 +265,14 @@ def test_normalized_event_record_json_fields_support_direct_json_dumps() -> None
         details={"nested": {"state": "initial"}, "reasons": ["missing_identity"]},
     )
 
-    assert json.loads(json.dumps(record.entity_ref)) == {"type": "notification", "id": "n-1"}
-    assert json.loads(json.dumps(record.payload)) == {"nested": {"ok": True}, "items": ["a", 1]}
+    assert json.loads(json.dumps(record.entity_ref)) == {
+        "type": "notification",
+        "id": "n-1",
+    }
+    assert json.loads(json.dumps(record.payload)) == {
+        "nested": {"ok": True},
+        "items": ["a", 1],
+    }
     assert json.loads(json.dumps(report.details)) == {
         "nested": {"state": "initial"},
         "reasons": ["missing_identity"],
@@ -288,7 +310,9 @@ def test_frozen_json_mappings_reject_mutation() -> None:
         ("details", {"details": {"unsupported": object()}}),
     ],
 )
-def test_unsupported_json_values_raise_type_error(field_name: str, kwargs: dict) -> None:
+def test_unsupported_json_values_raise_type_error(
+    field_name: str, kwargs: dict
+) -> None:
     if field_name == "details":
         with pytest.raises(TypeError):
             SyncReadinessReport(domain="notes", **kwargs)
@@ -317,7 +341,9 @@ def test_unsupported_json_values_raise_type_error(field_name: str, kwargs: dict)
         ("details", {"details": {"score": -math.inf}}),
     ],
 )
-def test_non_finite_json_float_values_raise_type_error(field_name: str, kwargs: dict) -> None:
+def test_non_finite_json_float_values_raise_type_error(
+    field_name: str, kwargs: dict
+) -> None:
     if field_name == "details":
         with pytest.raises(TypeError):
             SyncReadinessReport(domain="notes", **kwargs)
@@ -347,7 +373,9 @@ def test_non_finite_json_float_values_raise_type_error(field_name: str, kwargs: 
         ("details", {"details": {1: "numeric-key"}}),
     ],
 )
-def test_non_string_json_mapping_keys_raise_type_error(field_name: str, kwargs: dict) -> None:
+def test_non_string_json_mapping_keys_raise_type_error(
+    field_name: str, kwargs: dict
+) -> None:
     if field_name == "details":
         with pytest.raises(TypeError):
             SyncReadinessReport(domain="notes", **kwargs)
@@ -398,7 +426,9 @@ def test_string_tuple_fields_reject_plain_string_input(factory) -> None:
     "factory",
     [
         lambda: SyncReadinessReport(domain="chat", reason_codes=["not_registered", 1]),
-        lambda: ProviderMigrationStatus(service_name="chat", notes=["provider-backed", 1]),
+        lambda: ProviderMigrationStatus(
+            service_name="chat", notes=["provider-backed", 1]
+        ),
     ],
 )
 def test_string_tuple_fields_reject_non_string_items(factory) -> None:
@@ -409,8 +439,12 @@ def test_string_tuple_fields_reject_non_string_items(factory) -> None:
 @pytest.mark.parametrize(
     "factory",
     [
-        lambda: SyncReadinessReport(domain="chat", reason_codes={"not_registered": "detail"}),
-        lambda: ProviderMigrationStatus(service_name="chat", notes={"provider-backed": "detail"}),
+        lambda: SyncReadinessReport(
+            domain="chat", reason_codes={"not_registered": "detail"}
+        ),
+        lambda: ProviderMigrationStatus(
+            service_name="chat", notes={"provider-backed": "detail"}
+        ),
     ],
 )
 def test_string_tuple_fields_reject_mapping_input(factory) -> None:

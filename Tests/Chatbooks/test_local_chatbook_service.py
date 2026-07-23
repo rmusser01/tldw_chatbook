@@ -43,7 +43,9 @@ async def test_local_chatbook_service_persists_record_crud(tmp_path):
 
 @pytest.mark.asyncio
 async def test_local_chatbook_service_lists_with_query_limit_and_offset(tmp_path):
-    service = LocalChatbookService(db_paths={}, registry_path=tmp_path / "chatbooks.json")
+    service = LocalChatbookService(
+        db_paths={}, registry_path=tmp_path / "chatbooks.json"
+    )
     await service.create_chatbook(name="Alpha Pack", description="first")
     await service.create_chatbook(name="Beta Pack", description="second")
     await service.create_chatbook(name="Gamma Notes", description="third")
@@ -54,8 +56,12 @@ async def test_local_chatbook_service_lists_with_query_limit_and_offset(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_local_chatbook_service_home_artifact_snapshot_lists_latest_console_saved_artifacts(tmp_path):
-    service = LocalChatbookService(db_paths={}, registry_path=tmp_path / "chatbooks.json")
+async def test_local_chatbook_service_home_artifact_snapshot_lists_latest_console_saved_artifacts(
+    tmp_path,
+):
+    service = LocalChatbookService(
+        db_paths={}, registry_path=tmp_path / "chatbooks.json"
+    )
     await service.create_chatbook(
         name="Generic Pack",
         description="Imported pack",

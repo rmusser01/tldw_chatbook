@@ -27,7 +27,12 @@ class FakeChatGrammarsClient:
         self.calls = []
 
     async def create_chat_grammar(self, request_data):
-        self.calls.append(("create_chat_grammar", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "create_chat_grammar",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return _grammar_payload()
 
     async def list_chat_grammars(self, **kwargs):
@@ -39,7 +44,13 @@ class FakeChatGrammarsClient:
         return _grammar_payload(id=grammar_id)
 
     async def update_chat_grammar(self, grammar_id, request_data):
-        self.calls.append(("update_chat_grammar", grammar_id, request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "update_chat_grammar",
+                grammar_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return _grammar_payload(id=grammar_id, name="Strict JSON", version=2)
 
     async def delete_chat_grammar(self, grammar_id, **kwargs):
@@ -53,7 +64,11 @@ async def test_server_chat_grammars_service_routes_crud_with_policy_actions():
     policy = Mock()
     service = ServerChatGrammarsService(client=client, policy_enforcer=policy)
 
-    created = await service.create_grammar(name="JSON object", description="Constrain output to JSON.", grammar_text="root ::= object")
+    created = await service.create_grammar(
+        name="JSON object",
+        description="Constrain output to JSON.",
+        grammar_text="root ::= object",
+    )
     listed = await service.list_grammars(include_archived=True, limit=25, offset=5)
     fetched = await service.get_grammar("grammar-1", include_archived=True)
     updated = await service.update_grammar("grammar-1", name="Strict JSON", version=1)
@@ -78,7 +93,9 @@ async def test_server_chat_grammars_service_routes_crud_with_policy_actions():
         ("update_chat_grammar", "grammar-1", {"version": 1, "name": "Strict JSON"}),
         ("delete_chat_grammar", "grammar-1", {"hard_delete": True}),
     ]
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "chat.grammars.create.server",
         "chat.grammars.list.server",
         "chat.grammars.detail.server",

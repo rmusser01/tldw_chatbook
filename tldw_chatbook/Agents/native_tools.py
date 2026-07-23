@@ -17,33 +17,42 @@ A provider earns a place in ``NATIVE_TOOLS_PROVIDERS`` only when ALL of:
 
 Pure module: no I/O, no provider imports.
 """
+
 from __future__ import annotations
 
 import json
 
 from .agent_models import ToolCall, ToolSchema
 
-NATIVE_TOOLS_PROVIDERS = frozenset({
-    "openai", "groq", "openrouter", "mistral", "deepseek", "moonshot",
-    "custom-openai-api", "custom-openai-api-2",
-    # task-263: chat_with_anthropic converts OpenAI tools/tool-history to
-    # Anthropic blocks and normalizes tool_use (non-streaming + streaming)
-    # back to OpenAI shape — live-gated against the real API 2026-07-17
-    # (Docs/superpowers/qa/anthropic-native-2026-07/).
-    "anthropic",
-    # task-266: chat_with_google wraps functionDeclarations, converts
-    # functionCall/functionResponse history (incl. Gemini 3 thought-
-    # signature round-trip), and emits streamed functionCall parts as
-    # OpenAI fragments — live-gated 2026-07-17
-    # (Docs/superpowers/qa/google-native-2026-07/).
-    "google",
-    # task-267: chat_with_cohere migrated to the v2 /chat API (OpenAI-
-    # shaped messages/tools end-to-end), parses message.tool_calls on both
-    # response paths, and round-trips tool_plan as the cohere_tool_plan
-    # extra — live-gated 2026-07-17
-    # (Docs/superpowers/qa/cohere-native-2026-07/).
-    "cohere",
-})
+NATIVE_TOOLS_PROVIDERS = frozenset(
+    {
+        "openai",
+        "groq",
+        "openrouter",
+        "mistral",
+        "deepseek",
+        "moonshot",
+        "custom-openai-api",
+        "custom-openai-api-2",
+        # task-263: chat_with_anthropic converts OpenAI tools/tool-history to
+        # Anthropic blocks and normalizes tool_use (non-streaming + streaming)
+        # back to OpenAI shape — live-gated against the real API 2026-07-17
+        # (Docs/superpowers/qa/anthropic-native-2026-07/).
+        "anthropic",
+        # task-266: chat_with_google wraps functionDeclarations, converts
+        # functionCall/functionResponse history (incl. Gemini 3 thought-
+        # signature round-trip), and emits streamed functionCall parts as
+        # OpenAI fragments — live-gated 2026-07-17
+        # (Docs/superpowers/qa/google-native-2026-07/).
+        "google",
+        # task-267: chat_with_cohere migrated to the v2 /chat API (OpenAI-
+        # shaped messages/tools end-to-end), parses message.tool_calls on both
+        # response paths, and round-trips tool_plan as the cohere_tool_plan
+        # extra — live-gated 2026-07-17
+        # (Docs/superpowers/qa/cohere-native-2026-07/).
+        "cohere",
+    }
+)
 
 
 def provider_supports_native_tools(api_endpoint: str | None) -> bool:
@@ -74,18 +83,20 @@ def schemas_to_openai_tools(schemas: list[ToolSchema]) -> list[dict]:
     """
     tools = []
     for schema in schemas:
-        tools.append({
-            "type": "function",
-            "function": {
-                "name": schema.name,
-                "description": schema.description,
-                # A fresh literal per schema: a shared module-level default
-                # would leak downstream mutations across conversions through
-                # its nested "properties" dict (PR #648 review).
-                "parameters": schema.parameters or {"type": "object",
-                                                    "properties": {}},
-            },
-        })
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": schema.name,
+                    "description": schema.description,
+                    # A fresh literal per schema: a shared module-level default
+                    # would leak downstream mutations across conversions through
+                    # its nested "properties" dict (PR #648 review).
+                    "parameters": schema.parameters
+                    or {"type": "object", "properties": {}},
+                },
+            }
+        )
     return tools
 
 
@@ -153,6 +164,5 @@ def parse_native_tool_calls(message: dict | None) -> tuple[ToolCall, ...]:
                 parsed = None
             if isinstance(parsed, dict):
                 args = parsed
-        calls.append(ToolCall(name=name, args=args,
-                              call_id=str(raw.get("id") or "")))
+        calls.append(ToolCall(name=name, args=args, call_id=str(raw.get("id") or "")))
     return tuple(calls)

@@ -141,7 +141,9 @@ def test_flashcard_list_response_wraps_flashcard_records():
 
 
 def test_flashcard_review_request_and_response_preserve_session_and_intervals():
-    request_data = FlashcardReviewRequest(card_uuid="87ca2b3f-7e3a-47d7-a52f-8debc86c03cb", rating=4)
+    request_data = FlashcardReviewRequest(
+        card_uuid="87ca2b3f-7e3a-47d7-a52f-8debc86c03cb", rating=4
+    )
     assert request_data.model_dump() == {
         "card_uuid": "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
         "rating": 4,
@@ -171,7 +173,9 @@ def test_flashcard_review_request_and_response_preserve_session_and_intervals():
 
 
 def test_flashcard_next_review_response_defaults_to_no_card():
-    payload = FlashcardNextReviewResponse.model_validate({"card": None, "selection_reason": "none"})
+    payload = FlashcardNextReviewResponse.model_validate(
+        {"card": None, "selection_reason": "none"}
+    )
     assert payload.card is None
     assert payload.selection_reason == "none"
 
@@ -212,9 +216,16 @@ def test_flashcard_template_models_round_trip_server_shape():
             "version": 2,
         }
     )
-    listed = FlashcardTemplateListResponse.model_validate({"items": [response], "count": 1, "total": 1})
+    listed = FlashcardTemplateListResponse.model_validate(
+        {"items": [response], "count": 1, "total": 1}
+    )
 
-    assert create_payload.model_dump(mode="json", exclude_none=True)["placeholder_definitions"][0]["key"] == "statement"
+    assert (
+        create_payload.model_dump(mode="json", exclude_none=True)[
+            "placeholder_definitions"
+        ][0]["key"]
+        == "statement"
+    )
     assert update_payload.model_dump(mode="json", exclude_none=True) == {
         "notes_template": "Updated focus: {{topic}}",
         "expected_version": 2,
@@ -260,7 +271,9 @@ def test_flashcard_bulk_update_and_tag_suggestion_models_round_trip_server_shape
 
 
 def test_flashcard_import_preview_and_import_models_round_trip_server_shape():
-    preview_request = StructuredQaImportPreviewRequest(content="Q: What powers cells?\nA: ATP")
+    preview_request = StructuredQaImportPreviewRequest(
+        content="Q: What powers cells?\nA: ATP"
+    )
     preview = StructuredQaImportPreviewResponse.model_validate(
         {
             "drafts": [
@@ -289,7 +302,9 @@ def test_flashcard_import_preview_and_import_models_round_trip_server_shape():
         }
     )
 
-    assert preview_request.model_dump(mode="json") == {"content": "Q: What powers cells?\nA: ATP"}
+    assert preview_request.model_dump(mode="json") == {
+        "content": "Q: What powers cells?\nA: ATP"
+    }
     assert preview.drafts[0].front == "What powers cells?"
     assert import_request.delimiter == "\t"
     assert imported.items[0].deck_id == 7
@@ -353,8 +368,17 @@ def test_study_assistant_models_round_trip_server_shape():
     response = StudyAssistantRespondResponse.model_validate(
         {
             "thread": {**thread, "version": 3},
-            "user_message": {**message, "id": 101, "role": "user", "content": "Explain this"},
-            "assistant_message": {**message, "id": 102, "content": "ATP stores energy."},
+            "user_message": {
+                **message,
+                "id": 101,
+                "role": "user",
+                "content": "Explain this",
+            },
+            "assistant_message": {
+                **message,
+                "id": 102,
+                "content": "ATP stores energy.",
+            },
             "structured_payload": {"summary": "energy"},
             "context_snapshot": {"front": "What powers cells?"},
         }

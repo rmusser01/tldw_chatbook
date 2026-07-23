@@ -23,7 +23,9 @@ def normalize_conversation_state(value: str | None) -> ConversationState | None:
     if not normalized:
         raise ValueError("state cannot be empty")
     if normalized not in ALLOWED_CONVERSATION_STATES:
-        raise ValueError(f"Invalid state '{value}'. Allowed: {', '.join(ALLOWED_CONVERSATION_STATES)}")
+        raise ValueError(
+            f"Invalid state '{value}'. Allowed: {', '.join(ALLOWED_CONVERSATION_STATES)}"
+        )
     return cast(ConversationState, normalized)
 
 
@@ -46,14 +48,22 @@ class ConversationListItem(BaseModel):
     """Conversation list row returned by the chat conversations endpoints."""
 
     id: str = Field(..., description="Conversation ID")
-    scope_type: Literal["global", "workspace"] = Field("global", description="Conversation scope type")
-    workspace_id: str | None = Field(None, description="Workspace ID when scope_type='workspace'")
-    character_id: int | None = Field(None, description="Character ID associated with the conversation")
+    scope_type: Literal["global", "workspace"] = Field(
+        "global", description="Conversation scope type"
+    )
+    workspace_id: str | None = Field(
+        None, description="Workspace ID when scope_type='workspace'"
+    )
+    character_id: int | None = Field(
+        None, description="Character ID associated with the conversation"
+    )
     assistant_kind: Literal["character", "persona"] | None = Field(
         None,
         description="Normalized assistant identity kind for the conversation",
     )
-    assistant_id: str | None = Field(None, description="Normalized assistant identity ID for the conversation")
+    assistant_id: str | None = Field(
+        None, description="Normalized assistant identity ID for the conversation"
+    )
     runtime_backend: Literal["local", "server"] = Field(
         "local",
         description="Execution backend for the assistant/runtime (local or server)",
@@ -71,10 +81,16 @@ class ConversationListItem(BaseModel):
         description="Persona durable memory behavior for the conversation",
     )
     title: str | None = Field(None, description="Conversation title")
-    state: ConversationState = Field("in-progress", description="Lifecycle state of the conversation")
+    state: ConversationState = Field(
+        "in-progress", description="Lifecycle state of the conversation"
+    )
     topic_label: str | None = Field(None, description="Primary topic label")
-    topic_label_source: str | None = Field(None, description="Source of the assigned topic label")
-    topic_last_tagged_at: datetime | None = Field(None, description="Timestamp when topic label was last tagged")
+    topic_label_source: str | None = Field(
+        None, description="Source of the assigned topic label"
+    )
+    topic_last_tagged_at: datetime | None = Field(
+        None, description="Timestamp when topic label was last tagged"
+    )
     topic_last_tagged_message_id: str | None = Field(
         None,
         description="Message ID associated with the last topic tagging",
@@ -83,7 +99,9 @@ class ConversationListItem(BaseModel):
     last_modified: datetime = Field(..., description="Last modification timestamp")
     created_at: datetime = Field(..., description="Creation timestamp")
     message_count: int = Field(0, description="Total messages in the conversation")
-    keywords: list[str] = Field(default_factory=list, description="Keyword tags for the conversation")
+    keywords: list[str] = Field(
+        default_factory=list, description="Keyword tags for the conversation"
+    )
     cluster_id: str | None = Field(None, description="Cluster/group identifier")
     source: str | None = Field(None, description="Source of the conversation")
     external_ref: str | None = Field(None, description="External reference ID")
@@ -110,21 +128,29 @@ class ConversationUpdateRequest(BaseModel):
     """Request body for updating a conversation."""
 
     version: int = Field(..., description="Expected version for optimistic locking")
-    state: ConversationState | None = Field(None, description="Lifecycle state for the conversation")
+    state: ConversationState | None = Field(
+        None, description="Lifecycle state for the conversation"
+    )
     runtime_backend: Literal["local", "server"] | None = Field(
         None,
         description="Execution backend for the assistant/runtime (local or server)",
     )
-    discovery_owner: Literal["general_chat", "ccp_character", "ccp_persona"] | None = Field(
-        None,
-        description="Owning surface for discovery/canonical identity attribution",
+    discovery_owner: Literal["general_chat", "ccp_character", "ccp_persona"] | None = (
+        Field(
+            None,
+            description="Owning surface for discovery/canonical identity attribution",
+        )
     )
     discovery_entity_id: str | None = Field(
         None,
         description="Canonical entity ID used by the discovery surface (string-first stable ID)",
     )
-    topic_label: str | None = Field(None, description="Primary topic label for the conversation")
-    keywords: list[str] | None = Field(None, description="Replace full keyword set (use [] to clear)")
+    topic_label: str | None = Field(
+        None, description="Primary topic label for the conversation"
+    )
+    keywords: list[str] | None = Field(
+        None, description="Replace full keyword set (use [] to clear)"
+    )
     cluster_id: str | None = Field(None, description="Cluster/group identifier")
     source: str | None = Field(None, description="Source of the conversation")
     external_ref: str | None = Field(None, description="External reference/link")
@@ -155,7 +181,9 @@ class ConversationUpdateRequest(BaseModel):
         if not normalized:
             raise ValueError("discovery_owner cannot be empty")
         if normalized not in {"general_chat", "ccp_character", "ccp_persona"}:
-            raise ValueError("discovery_owner must be 'general_chat', 'ccp_character', or 'ccp_persona'")
+            raise ValueError(
+                "discovery_owner must be 'general_chat', 'ccp_character', or 'ccp_persona'"
+            )
         return normalized
 
     @field_validator("discovery_entity_id", mode="before")
@@ -192,14 +220,22 @@ class ConversationMetadata(BaseModel):
     """Conversation metadata returned by the detail and tree endpoints."""
 
     id: str = Field(..., description="Conversation ID")
-    scope_type: Literal["global", "workspace"] = Field("global", description="Conversation scope type")
-    workspace_id: str | None = Field(None, description="Workspace ID when scope_type='workspace'")
-    character_id: int | None = Field(None, description="Character ID associated with the conversation")
+    scope_type: Literal["global", "workspace"] = Field(
+        "global", description="Conversation scope type"
+    )
+    workspace_id: str | None = Field(
+        None, description="Workspace ID when scope_type='workspace'"
+    )
+    character_id: int | None = Field(
+        None, description="Character ID associated with the conversation"
+    )
     assistant_kind: Literal["character", "persona"] | None = Field(
         None,
         description="Normalized assistant identity kind for the conversation",
     )
-    assistant_id: str | None = Field(None, description="Normalized assistant identity ID for the conversation")
+    assistant_id: str | None = Field(
+        None, description="Normalized assistant identity ID for the conversation"
+    )
     runtime_backend: Literal["local", "server"] = Field(
         "local",
         description="Execution backend for the assistant/runtime (local or server)",
@@ -219,9 +255,15 @@ class ConversationMetadata(BaseModel):
     title: str | None = Field(None, description="Conversation title")
     state: ConversationState = Field("in-progress", description="Lifecycle state")
     topic_label: str | None = Field(None, description="Primary topic label")
-    created_at: datetime | None = Field(None, description="Conversation creation timestamp")
-    topic_label_source: str | None = Field(None, description="Source of the assigned topic label")
-    topic_last_tagged_at: datetime | None = Field(None, description="Timestamp when topic label was last tagged")
+    created_at: datetime | None = Field(
+        None, description="Conversation creation timestamp"
+    )
+    topic_label_source: str | None = Field(
+        None, description="Source of the assigned topic label"
+    )
+    topic_last_tagged_at: datetime | None = Field(
+        None, description="Timestamp when topic label was last tagged"
+    )
     topic_last_tagged_message_id: str | None = Field(
         None,
         description="Message ID associated with the last topic tagging",
@@ -329,7 +371,9 @@ class ChatKnowledgeSaveResponse(BaseModel):
     flashcard_id: str | int | None = None
     conversation_id: str
     message_id: str | None = None
-    export_status: Literal["not_requested", "skipped_disabled", "queued", "completed"] = "not_requested"
+    export_status: Literal[
+        "not_requested", "skipped_disabled", "queued", "completed"
+    ] = "not_requested"
     export_job_id: str | None = None
 
 
@@ -428,9 +472,13 @@ class ValidationIssue(BaseModel):
 class ValidateDictionaryRequest(BaseModel):
     """Request body for server-side chat dictionary validation."""
 
-    data: dict[str, Any] = Field(..., description="Dictionary JSON data including entries")
+    data: dict[str, Any] = Field(
+        ..., description="Dictionary JSON data including entries"
+    )
     schema_version: int = Field(1, description="Schema version for validation")
-    strict: bool = Field(False, description="If true, fail import policy while still returning a report")
+    strict: bool = Field(
+        False, description="If true, fail import policy while still returning a report"
+    )
 
 
 class ValidateDictionaryResponse(BaseModel):

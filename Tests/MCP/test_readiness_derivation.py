@@ -55,7 +55,11 @@ def test_local_profile_missing_env_var_is_auth_missing():
 
 def test_local_profile_discovered_but_disconnected_is_stale_runtime_unavailable():
     record = _local_record(
-        discovery_snapshot={"tools": [{"name": "a"}, {"name": "b"}], "resources": [], "prompts": []},
+        discovery_snapshot={
+            "tools": [{"name": "a"}, {"name": "b"}],
+            "resources": [],
+            "prompts": [],
+        },
         is_connected=False,
     )
     snap = local_profile_readiness(record, environ={})
@@ -115,7 +119,9 @@ def test_server_external_record_passthrough_and_fallback():
         },
         server_id="main",
     )
-    assert reported.state is ReadinessState.NEEDS_SETUP  # auth_missing outranks via table
+    assert (
+        reported.state is ReadinessState.NEEDS_SETUP
+    )  # auth_missing outranks via table
     assert reported.primary_reason is ReasonCode.AUTH_MISSING
     assert reported.tool_count == 3
     assert reported.server_key == "server:main/web-search"
@@ -123,6 +129,44 @@ def test_server_external_record_passthrough_and_fallback():
     bare = server_external_record_readiness({"name": "Mystery"}, server_id="main")
     assert bare.primary_reason is ReasonCode.DISCOVERY_NOT_RUN
     assert "not reported" in bare.message.lower()
+
+
+def test_server_external_record_resource_prompt_counts_follow_tool_count_rules():
+    """Task 5 (MCP Hub Phase 6): resource_count/prompt_count are derived the
+    same way as tool_count -- reported count wins, else the length of a raw
+    list, else None (unreported, rendered as "—" by the servers-mode detail
+    body -- never a fake zero)."""
+    reported = server_external_record_readiness(
+        {"server_id": "s1", "name": "S1", "resource_count": 3, "prompt_count": 0},
+        server_id="main",
+    )
+    assert reported.resource_count == 3
+    assert reported.prompt_count == 0
+
+    derived = server_external_record_readiness(
+        {
+            "server_id": "s2",
+            "name": "S2",
+            "resources": [{"uri": "a"}, {"uri": "b"}],
+            "prompts": [{"name": "p"}],
+        },
+        server_id="main",
+    )
+    assert derived.resource_count == 2
+    assert derived.prompt_count == 1
+
+    unreported = server_external_record_readiness(
+        {"server_id": "s3", "name": "S3"}, server_id="main"
+    )
+    assert unreported.resource_count is None
+    assert unreported.prompt_count is None
+
+    malformed = server_external_record_readiness(
+        {"server_id": "s4", "name": "S4", "resource_count": "many", "prompt_count": 2.5},
+        server_id="main",
+    )
+    assert malformed.resource_count is None
+    assert malformed.prompt_count is None
 
 
 def test_server_external_record_display_state_without_reason_codes_is_trusted():
@@ -211,8 +255,13 @@ def test_runtime_error_drives_needs_attention_with_stored_message():
         discovery_snapshot={"tools": [{"name": "a"}], "resources": [], "prompts": []},
         is_connected=False,
     )
-    record["runtime_state"] = {"ok": False, "last_error": "Timed out after 45s",
-                               "last_action": "connect", "last_attempt_at": "t", "last_ok_at": None}
+    record["runtime_state"] = {
+        "ok": False,
+        "last_error": "Timed out after 45s",
+        "last_action": "connect",
+        "last_attempt_at": "t",
+        "last_ok_at": None,
+    }
     snap = local_profile_readiness(record, environ={})
     assert snap.state is ReadinessState.NEEDS_ATTENTION
     assert snap.primary_reason is ReasonCode.DISCOVERY_FAILED
@@ -224,7 +273,11 @@ def test_runtime_ok_keeps_normal_derivation():
         discovery_snapshot={"tools": [{"name": "a"}], "resources": [], "prompts": []},
         is_connected=True,
     )
-    record["runtime_state"] = {"ok": True, "last_error": None, "last_ok_at": "2026-07-14T00:00:00Z"}
+    record["runtime_state"] = {
+        "ok": True,
+        "last_error": None,
+        "last_ok_at": "2026-07-14T00:00:00Z",
+    }
     snap = local_profile_readiness(record, environ={})
     assert snap.state is ReadinessState.READY
     assert snap.detail["last_ok_at"] == "2026-07-14T00:00:00Z"
@@ -247,9 +300,7 @@ def test_local_profile_auth_display_singular_for_one_env_var():
 
 
 def test_local_profile_auth_display_plural_for_multiple_env_vars():
-    record = _local_record(
-        env_placeholders={"API_KEY": "$X", "OTHER": "$Y"}
-    )
+    record = _local_record(env_placeholders={"API_KEY": "$X", "OTHER": "$Y"})
     snap = local_profile_readiness(record, environ={"X": "1", "Y": "2"})
     assert snap.auth_display == "2 env vars"
 

@@ -72,7 +72,9 @@ async def test_collections_feeds_client_routes_crud(monkeypatch):
     )
     listed = await client.list_collections_feeds(q="example", page=2, size=10)
     fetched = await client.get_collections_feed(12)
-    updated = await client.update_collections_feed(12, CollectionsFeedUpdateRequest(active=False))
+    updated = await client.update_collections_feed(
+        12, CollectionsFeedUpdateRequest(active=False)
+    )
     deleted = await client.delete_collections_feed(12)
 
     assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/collections/feeds")
@@ -86,11 +88,21 @@ async def test_collections_feeds_client_routes_crud(monkeypatch):
         "settings": {"limit": 20},
     }
     assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/collections/feeds")
-    assert mocked.await_args_list[1].kwargs["params"] == {"q": "example", "page": 2, "size": 10}
+    assert mocked.await_args_list[1].kwargs["params"] == {
+        "q": "example",
+        "page": 2,
+        "size": 10,
+    }
     assert mocked.await_args_list[2].args[:2] == ("GET", "/api/v1/collections/feeds/12")
-    assert mocked.await_args_list[3].args[:2] == ("PATCH", "/api/v1/collections/feeds/12")
+    assert mocked.await_args_list[3].args[:2] == (
+        "PATCH",
+        "/api/v1/collections/feeds/12",
+    )
     assert mocked.await_args_list[3].kwargs["json_data"] == {"active": False}
-    assert mocked.await_args_list[4].args[:2] == ("DELETE", "/api/v1/collections/feeds/12")
+    assert mocked.await_args_list[4].args[:2] == (
+        "DELETE",
+        "/api/v1/collections/feeds/12",
+    )
 
     assert isinstance(created, CollectionsFeed)
     assert isinstance(listed, CollectionsFeedsListResponse)
@@ -132,10 +144,19 @@ async def test_collections_feeds_client_routes_websub_management(monkeypatch):
     status = await client.get_collections_feed_websub(12)
     unsubscribed = await client.unsubscribe_collections_feed_websub(12)
 
-    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/collections/feeds/12/websub/subscribe")
+    assert mocked.await_args_list[0].args[:2] == (
+        "POST",
+        "/api/v1/collections/feeds/12/websub/subscribe",
+    )
     assert mocked.await_args_list[0].kwargs["json_data"] == {"lease_seconds": 3600}
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/collections/feeds/12/websub")
-    assert mocked.await_args_list[2].args[:2] == ("DELETE", "/api/v1/collections/feeds/12/websub")
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/collections/feeds/12/websub",
+    )
+    assert mocked.await_args_list[2].args[:2] == (
+        "DELETE",
+        "/api/v1/collections/feeds/12/websub",
+    )
     assert isinstance(subscribed, CollectionsWebSubSubscriptionResponse)
     assert status.state == "verified"
     assert unsubscribed["state"] == "unsubscribed"

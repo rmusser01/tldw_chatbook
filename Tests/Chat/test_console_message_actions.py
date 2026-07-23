@@ -25,6 +25,27 @@ def test_assistant_message_actions_include_required_order():
     ]
 
 
+def test_failed_user_row_offers_no_retry_action():
+    """TASK-457(a): retry regenerates a failed ASSISTANT response; a failed USER
+    row (the send-blocked optimistic echo) has nothing to regenerate, so it must
+    not offer 'retry' — a failed ASSISTANT row still does."""
+    service = ConsoleMessageActionService()
+
+    failed_user = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER, content="hello", status="failed"
+    )
+    assert "retry" not in [
+        action.action_id for action in service.available_actions(failed_user)
+    ]
+
+    failed_assistant = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="", status="failed"
+    )
+    assert "retry" in [
+        action.action_id for action in service.available_actions(failed_assistant)
+    ]
+
+
 def test_streaming_assistant_message_shows_completed_actions_disabled_with_reasons():
     service = ConsoleMessageActionService()
     message = ConsoleChatMessage(
@@ -81,7 +102,9 @@ def test_unavailable_save_destinations_carry_honest_default_reason():
 
     destinations = service.save_as_destinations(message)
 
-    note = next(destination for destination in destinations if destination.label == "Note")
+    note = next(
+        destination for destination in destinations if destination.label == "Note"
+    )
     assert note.available is False
     assert note.reason == "Save as Note is not available in this session."
     assert "WIP" not in note.reason
@@ -98,9 +121,14 @@ def test_unavailable_save_destinations_use_provided_specific_reason():
 
     destinations = service.save_as_destinations(message)
 
-    chatbook = next(destination for destination in destinations if destination.label == "Chatbook")
+    chatbook = next(
+        destination for destination in destinations if destination.label == "Chatbook"
+    )
     assert chatbook.available is False
-    assert chatbook.reason == "Only assistant responses can be saved as Chatbook artifacts."
+    assert (
+        chatbook.reason
+        == "Only assistant responses can be saved as Chatbook artifacts."
+    )
     assert [d.label for d in destinations if d.available] == ["Note", "Media", "Prompt"]
 
 
@@ -128,7 +156,9 @@ def test_action_labels_fit_compact_terminal_width_budget():
 
 def test_variant_action_labels_use_symbolic_navigation():
     service = ConsoleMessageActionService()
-    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="first", id="m1")
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="first", id="m1"
+    )
     message.variants = ConsoleVariantSet.from_contents(
         turn_id="turn-1",
         contents=["first", "second"],
@@ -152,7 +182,9 @@ def test_variant_action_labels_use_symbolic_navigation():
 
 def test_variant_action_labels_fit_compact_terminal_width_budget():
     service = ConsoleMessageActionService()
-    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="first", id="m1")
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="first", id="m1"
+    )
     message.variants = ConsoleVariantSet.from_contents(
         turn_id="turn-1",
         contents=["first", "second"],
@@ -204,7 +236,9 @@ def test_delete_action_returns_completed_result():
     ("action_id", "expected_feedback"),
     [("feedback-up", "up"), ("feedback-down", "down")],
 )
-def test_feedback_actions_return_completed_result(action_id: str, expected_feedback: str):
+def test_feedback_actions_return_completed_result(
+    action_id: str, expected_feedback: str
+):
     service = ConsoleMessageActionService()
     message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer")
 
@@ -240,7 +274,9 @@ def test_unimplemented_actions_return_wip_reason():
 
 def test_continue_action_targets_selected_variant_content():
     service = ConsoleMessageActionService()
-    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="first", id="m1")
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="first", id="m1"
+    )
     message.variants = ConsoleVariantSet.from_contents(
         turn_id="turn-1",
         contents=["first", "second"],

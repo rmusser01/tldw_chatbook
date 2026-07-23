@@ -28,7 +28,7 @@ class SearchScreen(BaseAppScreen):
     Search/RAG screen wrapper.
     """
 
-    def __init__(self, app_instance: 'TldwCli', **kwargs):
+    def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(app_instance, "search", **kwargs)
         self.search_window = None
         # Stashed by restore_state on this (pre-mount) instance; applied to
@@ -107,15 +107,23 @@ class SearchScreen(BaseAppScreen):
         try:
             state["search_query"] = window.query_one("#search-query-input", Input).value
         except Exception:
-            logger.opt(exception=True).debug("Could not read Search query input for save_state")
+            logger.opt(exception=True).debug(
+                "Could not read Search query input for save_state"
+            )
         try:
             state["search_mode"] = window.query_one("#search-mode-select", Select).value
         except Exception:
-            logger.opt(exception=True).debug("Could not read Search mode select for save_state")
+            logger.opt(exception=True).debug(
+                "Could not read Search mode select for save_state"
+            )
         try:
-            state["search_active_tab"] = window.query_one("#search-tabs", TabbedContent).active
+            state["search_active_tab"] = window.query_one(
+                "#search-tabs", TabbedContent
+            ).active
         except Exception:
-            logger.opt(exception=True).debug("Could not read Search active tab for save_state")
+            logger.opt(exception=True).debug(
+                "Could not read Search active tab for save_state"
+            )
         return state
 
     def restore_state(self, state: Dict[str, Any]) -> None:

@@ -51,11 +51,36 @@ def test_rows_with_type_and_age_secondary_and_missing_last():
 def test_type_options_enumerated_and_sorted():
     """type_options = ('All',) + sorted(distinct non-empty types, preserve title-case)."""
     records = [
-        {"id": "1", "title": "One", "type": "Video", "ingestion_date": "2026-07-06T11:00:00+00:00"},
-        {"id": "2", "title": "Two", "type": "audio", "ingestion_date": "2026-07-06T10:00:00+00:00"},
-        {"id": "3", "title": "Three", "type": "PDF", "ingestion_date": "2026-07-06T09:00:00+00:00"},
-        {"id": "4", "title": "Four", "type": "Video", "ingestion_date": "2026-07-06T08:00:00+00:00"},
-        {"id": "5", "title": "Five", "type": "", "ingestion_date": "2026-07-06T07:00:00+00:00"},  # empty type, skip
+        {
+            "id": "1",
+            "title": "One",
+            "type": "Video",
+            "ingestion_date": "2026-07-06T11:00:00+00:00",
+        },
+        {
+            "id": "2",
+            "title": "Two",
+            "type": "audio",
+            "ingestion_date": "2026-07-06T10:00:00+00:00",
+        },
+        {
+            "id": "3",
+            "title": "Three",
+            "type": "PDF",
+            "ingestion_date": "2026-07-06T09:00:00+00:00",
+        },
+        {
+            "id": "4",
+            "title": "Four",
+            "type": "Video",
+            "ingestion_date": "2026-07-06T08:00:00+00:00",
+        },
+        {
+            "id": "5",
+            "title": "Five",
+            "type": "",
+            "ingestion_date": "2026-07-06T07:00:00+00:00",
+        },  # empty type, skip
     ]
 
     state = build_library_media_state(records, now=NOW)
@@ -67,10 +92,30 @@ def test_type_options_enumerated_and_sorted():
 def test_active_type_filter_with_status_copy():
     """When active_type != 'All', filter rows to that type and show status."""
     records = [
-        {"id": "1", "title": "Video One", "type": "video", "ingestion_date": "2026-07-06T11:00:00+00:00"},
-        {"id": "2", "title": "PDF One", "type": "pdf", "ingestion_date": "2026-07-06T10:00:00+00:00"},
-        {"id": "3", "title": "Video Two", "type": "video", "ingestion_date": "2026-07-06T09:00:00+00:00"},
-        {"id": "4", "title": "Audio One", "type": "audio", "ingestion_date": "2026-07-06T08:00:00+00:00"},
+        {
+            "id": "1",
+            "title": "Video One",
+            "type": "video",
+            "ingestion_date": "2026-07-06T11:00:00+00:00",
+        },
+        {
+            "id": "2",
+            "title": "PDF One",
+            "type": "pdf",
+            "ingestion_date": "2026-07-06T10:00:00+00:00",
+        },
+        {
+            "id": "3",
+            "title": "Video Two",
+            "type": "video",
+            "ingestion_date": "2026-07-06T09:00:00+00:00",
+        },
+        {
+            "id": "4",
+            "title": "Audio One",
+            "type": "audio",
+            "ingestion_date": "2026-07-06T08:00:00+00:00",
+        },
     ]
 
     state = build_library_media_state(records, active_type="video", now=NOW)
@@ -84,8 +129,18 @@ def test_active_type_filter_with_status_copy():
 def test_active_type_filter_no_match_empty_copy():
     """When active_type != 'All' and no matches, empty_copy shows specific message."""
     records = [
-        {"id": "1", "title": "Video One", "type": "video", "ingestion_date": "2026-07-06T11:00:00+00:00"},
-        {"id": "2", "title": "PDF One", "type": "pdf", "ingestion_date": "2026-07-06T10:00:00+00:00"},
+        {
+            "id": "1",
+            "title": "Video One",
+            "type": "video",
+            "ingestion_date": "2026-07-06T11:00:00+00:00",
+        },
+        {
+            "id": "2",
+            "title": "PDF One",
+            "type": "pdf",
+            "ingestion_date": "2026-07-06T10:00:00+00:00",
+        },
     ]
 
     state = build_library_media_state(records, active_type="audio", now=NOW)
@@ -103,7 +158,10 @@ def test_no_records_yields_default_empty_copy():
 
     assert state.rows == ()
     assert state.status_copy == ""
-    assert state.empty_copy == "No media in your Library yet. Ingest something to see it here."
+    assert (
+        state.empty_copy
+        == "No media in your Library yet. Ingest something to see it here."
+    )
     assert state.selected_id == ""
     assert state.preview_lines == ()
     assert state.active_type == "All"
@@ -112,8 +170,18 @@ def test_no_records_yields_default_empty_copy():
 def test_selected_id_not_present_falls_back_to_first_row():
     """When selected_id not in filtered+limited rows, fallback to first row."""
     records = [
-        {"id": "media-a", "title": "Alpha", "type": "video", "ingestion_date": "2026-07-06T11:00:00+00:00"},
-        {"id": "media-b", "title": "Beta", "type": "pdf", "ingestion_date": "2026-07-06T10:00:00+00:00"},
+        {
+            "id": "media-a",
+            "title": "Alpha",
+            "type": "video",
+            "ingestion_date": "2026-07-06T11:00:00+00:00",
+        },
+        {
+            "id": "media-b",
+            "title": "Beta",
+            "type": "pdf",
+            "ingestion_date": "2026-07-06T10:00:00+00:00",
+        },
     ]
 
     state = build_library_media_state(records, selected_id="does-not-exist", now=NOW)
@@ -207,9 +275,23 @@ def test_id_title_type_key_fallbacks():
 def test_untitled_fallback_for_missing_title():
     """Missing or empty title defaults to 'Untitled media'."""
     records = [
-        {"id": "1", "title": None, "type": "video", "ingestion_date": "2026-07-06T11:00:00+00:00"},
-        {"id": "2", "title": "  ", "type": "pdf", "ingestion_date": "2026-07-06T10:00:00+00:00"},
-        {"id": "3", "type": "audio", "ingestion_date": "2026-07-06T09:00:00+00:00"},  # No title key
+        {
+            "id": "1",
+            "title": None,
+            "type": "video",
+            "ingestion_date": "2026-07-06T11:00:00+00:00",
+        },
+        {
+            "id": "2",
+            "title": "  ",
+            "type": "pdf",
+            "ingestion_date": "2026-07-06T10:00:00+00:00",
+        },
+        {
+            "id": "3",
+            "type": "audio",
+            "ingestion_date": "2026-07-06T09:00:00+00:00",
+        },  # No title key
     ]
 
     state = build_library_media_state(records, now=NOW)
@@ -276,11 +358,36 @@ def test_updated_key_fallbacks():
 def test_count_tracks_total_pre_type_filter():
     """count reflects total records pre-filter, status_copy shows filtered count."""
     records = [
-        {"id": "1", "title": "Video One", "type": "video", "ingestion_date": "2026-07-06T11:00:00+00:00"},
-        {"id": "2", "title": "PDF One", "type": "pdf", "ingestion_date": "2026-07-06T10:00:00+00:00"},
-        {"id": "3", "title": "Video Two", "type": "video", "ingestion_date": "2026-07-06T09:00:00+00:00"},
-        {"id": "4", "title": "Audio One", "type": "audio", "ingestion_date": "2026-07-06T08:00:00+00:00"},
-        {"id": "5", "title": "Video Three", "type": "video", "ingestion_date": "2026-07-06T07:00:00+00:00"},
+        {
+            "id": "1",
+            "title": "Video One",
+            "type": "video",
+            "ingestion_date": "2026-07-06T11:00:00+00:00",
+        },
+        {
+            "id": "2",
+            "title": "PDF One",
+            "type": "pdf",
+            "ingestion_date": "2026-07-06T10:00:00+00:00",
+        },
+        {
+            "id": "3",
+            "title": "Video Two",
+            "type": "video",
+            "ingestion_date": "2026-07-06T09:00:00+00:00",
+        },
+        {
+            "id": "4",
+            "title": "Audio One",
+            "type": "audio",
+            "ingestion_date": "2026-07-06T08:00:00+00:00",
+        },
+        {
+            "id": "5",
+            "title": "Video Three",
+            "type": "video",
+            "ingestion_date": "2026-07-06T07:00:00+00:00",
+        },
     ]
 
     state = build_library_media_state(records, active_type="video", now=NOW)
@@ -326,8 +433,18 @@ def test_tolerates_invalid_and_missing_records():
 def test_no_type_status_copy_when_active_type_all():
     """When active_type='All', status_copy is empty."""
     records = [
-        {"id": "1", "title": "Video", "type": "video", "ingestion_date": "2026-07-06T11:00:00+00:00"},
-        {"id": "2", "title": "PDF", "type": "pdf", "ingestion_date": "2026-07-06T10:00:00+00:00"},
+        {
+            "id": "1",
+            "title": "Video",
+            "type": "video",
+            "ingestion_date": "2026-07-06T11:00:00+00:00",
+        },
+        {
+            "id": "2",
+            "title": "PDF",
+            "type": "pdf",
+            "ingestion_date": "2026-07-06T10:00:00+00:00",
+        },
     ]
 
     state = build_library_media_state(records, active_type="All", now=NOW)
@@ -339,26 +456,23 @@ def test_no_type_status_copy_when_active_type_all():
 def test_status_copy_uses_pre_limit_count():
     """status_copy shows count of filtered entries (pre-limit), not displayed rows (post-limit)."""
     # 100 video records + 10 other-type records = 110 total
-    records = (
-        [
-            {
-                "id": f"video-{i}",
-                "title": f"Video {i}",
-                "type": "video",
-                "ingestion_date": f"2026-07-06T{11 - (i % 12):02d}:00:00+00:00",
-            }
-            for i in range(100)
-        ]
-        + [
-            {
-                "id": f"other-{i}",
-                "title": f"Other {i}",
-                "type": "audio",
-                "ingestion_date": f"2026-07-06T{10 - (i % 10):02d}:00:00+00:00",
-            }
-            for i in range(10)
-        ]
-    )
+    records = [
+        {
+            "id": f"video-{i}",
+            "title": f"Video {i}",
+            "type": "video",
+            "ingestion_date": f"2026-07-06T{11 - (i % 12):02d}:00:00+00:00",
+        }
+        for i in range(100)
+    ] + [
+        {
+            "id": f"other-{i}",
+            "title": f"Other {i}",
+            "type": "audio",
+            "ingestion_date": f"2026-07-06T{10 - (i % 10):02d}:00:00+00:00",
+        }
+        for i in range(10)
+    ]
 
     # Filter to video type with limit=75
     state = build_library_media_state(records, active_type="video", now=NOW, limit=75)
@@ -372,7 +486,12 @@ def test_status_copy_uses_pre_limit_count():
 def test_active_type_absent_from_records_stays_in_type_options():
     """When active_type is not in records, it is still included in type_options."""
     records = [
-        {"id": "1", "title": "PDF One", "type": "pdf", "ingestion_date": "2026-07-06T11:00:00+00:00"},
+        {
+            "id": "1",
+            "title": "PDF One",
+            "type": "pdf",
+            "ingestion_date": "2026-07-06T11:00:00+00:00",
+        },
     ]
 
     # Request active_type="video" even though no records have type="video"

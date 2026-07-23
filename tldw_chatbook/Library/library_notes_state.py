@@ -7,7 +7,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
-from tldw_chatbook.Workspaces.conversation_browser_state import format_console_relative_age
+from tldw_chatbook.Workspaces.conversation_browser_state import (
+    format_console_relative_age,
+)
 
 NOTES_SORT_MODES = ("newest", "oldest", "title")
 _UPDATED_KEYS = ("last_modified", "updated_at", "created_at")
@@ -279,8 +281,13 @@ def build_library_note_editor_state(
     """
     if not isinstance(detail, Mapping) or not _text(detail.get("id")):
         return LibraryNoteEditorState(
-            note_id="", title="", content="", keywords_text="",
-            version=None, meta_line="", has_note=False,
+            note_id="",
+            title="",
+            content="",
+            keywords_text="",
+            version=None,
+            meta_line="",
+            has_note=False,
         )
     reference_now = now if now is not None else datetime.now(timezone.utc)
     version_raw = detail.get("version")
@@ -291,10 +298,14 @@ def build_library_note_editor_state(
     parts: list[str] = []
     created = _text(detail.get("created_at"))
     if created:
-        parts.append(f"Created {format_console_relative_age(created, now=reference_now)}")
+        parts.append(
+            f"Created {format_console_relative_age(created, now=reference_now)}"
+        )
     modified = _updated_raw(detail)
     if modified:
-        parts.append(f"Modified {format_console_relative_age(modified, now=reference_now)}")
+        parts.append(
+            f"Modified {format_console_relative_age(modified, now=reference_now)}"
+        )
     if version is not None:
         parts.append(f"v{version}")
     return LibraryNoteEditorState(
@@ -337,7 +348,9 @@ def build_note_export_content(
         The rendered export text.
     """
     current_title = (title or "").strip() or "Untitled Note"
-    timestamp = (now if now is not None else datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = (now if now is not None else datetime.now()).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
     if export_format == "markdown":
         return (
             f"---\n"
@@ -381,7 +394,9 @@ def notes_autosave_status_text(state: str, *, word_count: int) -> str:
     return f"{base}{suffix}"
 
 
-def resolve_note_template_placeholders(text: str, *, now: datetime | None = None) -> str:
+def resolve_note_template_placeholders(
+    text: str, *, now: datetime | None = None
+) -> str:
     """Resolve ``{date}``/``{time}``/``{datetime}`` placeholders in template text.
 
     Mirrors the standalone Notes screen's substitution (same placeholder

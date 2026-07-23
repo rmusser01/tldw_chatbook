@@ -14,7 +14,7 @@ of regression this suite guards against).
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from textual.widgets import Button, Input, Static, TextArea
@@ -46,7 +46,11 @@ from Tests.UI.test_screen_navigation import _build_test_app
 
 
 def _real_skills_scope_service(
-    tmp_path, *, trust_service=None, allow_untrusted: bool = True, policy_enforcer=None,
+    tmp_path,
+    *,
+    trust_service=None,
+    allow_untrusted: bool = True,
+    policy_enforcer=None,
 ):
     """Build a real ``LocalSkillsService``/``SkillsScopeService`` pair.
 
@@ -68,7 +72,9 @@ def _real_skills_scope_service(
         policy_enforcer=policy_enforcer,
     )
     service = SkillsScopeService(
-        local_service=local_service, server_service=None, policy_enforcer=policy_enforcer,
+        local_service=local_service,
+        server_service=None,
+        policy_enforcer=policy_enforcer,
     )
     return local_service, service
 
@@ -165,8 +171,13 @@ async def test_open_skill_row_populates_editor_fields_and_save_bumps_version(tmp
 
         assert screen._library_skills_view == "editor"
         assert screen.query_one("#library-skill-name", Input).value == "summarize-notes"
-        assert screen.query_one("#library-skill-description", Input).value == "Summarize notes"
-        assert screen.query_one("#library-skill-argument-hint", Input).value == "note id"
+        assert (
+            screen.query_one("#library-skill-description", Input).value
+            == "Summarize notes"
+        )
+        assert (
+            screen.query_one("#library-skill-argument-hint", Input).value == "note id"
+        )
         assert "fork" in str(screen.query_one("#library-skill-context", Button).label)
         body_area = screen.query_one("#library-skill-body", TextArea)
         assert "Summarize body text." in body_area.text
@@ -241,7 +252,9 @@ async def test_renaming_an_existing_skill_is_refused_and_never_corrupts_it(tmp_p
         # compat default), so ``save_marks_needs_review`` also fires here
         # -- checking the exact shadow copy is a SUBSTRING (not the whole
         # Static's text) keeps this test about the shadow warning only.
-        warnings_text = str(screen.query_one("#library-skill-warnings", Static).renderable)
+        warnings_text = str(
+            screen.query_one("#library-skill-warnings", Static).renderable
+        )
         assert (
             'Name shadows a built-in command/tool ("calculator") — it will not be '
             "invocable as /calculator or as an agent tool."
@@ -271,7 +284,8 @@ async def test_saving_a_trusted_skill_warns_and_requeues_needs_review(tmp_path):
     local_service = LocalSkillsService(store_dir=tmp_path, trust_service=trust_service)
     service = SkillsScopeService(local_service=local_service, server_service=None)
     await local_service.create_skill(
-        name="reviewer", content=_skill_content(title="Reviewer", description="Reviews a diff"),
+        name="reviewer",
+        content=_skill_content(title="Reviewer", description="Reviews a diff"),
     )
     trust_service.bootstrap_trust()
 
@@ -287,7 +301,9 @@ async def test_saving_a_trusted_skill_warns_and_requeues_needs_review(tmp_path):
         await _open_skill_editor(screen, pilot, "reviewer")
 
         assert screen._library_skill_editor_state.trust_status == "trusted"
-        warnings_text = str(screen.query_one("#library-skill-warnings", Static).renderable)
+        warnings_text = str(
+            screen.query_one("#library-skill-warnings", Static).renderable
+        )
         assert warnings_text == (
             'Saving marks this skill "needs review" — re-approve it in the trust '
             "panel after saving."
@@ -311,14 +327,16 @@ async def test_trust_panel_review_then_approve_moves_skill_to_available(tmp_path
     local_service = LocalSkillsService(store_dir=tmp_path, trust_service=trust_service)
     service = SkillsScopeService(local_service=local_service, server_service=None)
     await local_service.create_skill(
-        name="approver", content=_skill_content(title="Approver", description="v1"),
+        name="approver",
+        content=_skill_content(title="Approver", description="v1"),
     )
     trust_service.bootstrap_trust()
     # An edit landing after the trusted baseline re-quarantines the skill --
     # simulates "someone already saved a change" so the editor opens on an
     # ALREADY needs-review skill (the brief's exact scenario shape).
     await local_service.update_skill(
-        "approver", content=_skill_content(title="Approver", description="v2"),
+        "approver",
+        content=_skill_content(title="Approver", description="v2"),
     )
 
     app = _build_test_app()
@@ -385,14 +403,16 @@ async def test_skill_editor_canvas_scrolls_trust_panel_into_view(tmp_path):
     local_service = LocalSkillsService(store_dir=tmp_path, trust_service=trust_service)
     service = SkillsScopeService(local_service=local_service, server_service=None)
     await local_service.create_skill(
-        name="scroll-check", content=_skill_content(title="Scroll", description="v1"),
+        name="scroll-check",
+        content=_skill_content(title="Scroll", description="v1"),
     )
     trust_service.bootstrap_trust()
     # Re-quarantine after bootstrap so the Trust panel's "Review changes"
     # button is enabled (focusable) -- a disabled Button cannot take focus,
     # so the focus-jump-into-view assertion below needs a real target.
     await local_service.update_skill(
-        "scroll-check", content=_skill_content(title="Scroll", description="v2"),
+        "scroll-check",
+        content=_skill_content(title="Scroll", description="v2"),
     )
 
     app = _build_test_app()
@@ -442,11 +462,15 @@ async def test_skill_editor_canvas_scrolls_trust_panel_into_view(tmp_path):
         assert canvas.scroll_offset.y > 0
         canvas_region = canvas.region
         button_region = review_button.region
-        assert canvas_region.y <= button_region.y < canvas_region.y + canvas_region.height
+        assert (
+            canvas_region.y <= button_region.y < canvas_region.y + canvas_region.height
+        )
 
 
 @pytest.mark.asyncio
-async def test_uninitialized_trust_shows_setup_state_and_bootstrap_enables_approve_flow(tmp_path):
+async def test_uninitialized_trust_shows_setup_state_and_bootstrap_enables_approve_flow(
+    tmp_path,
+):
     """Gate fix wave FIX 2: a brand-new (never-bootstrapped) trust store had
     no live-UI path to create the passphrase at all -- the Library editor's
     Unlock only ever unlocked an EXISTING manifest. This proves the fix end
@@ -460,7 +484,8 @@ async def test_uninitialized_trust_shows_setup_state_and_bootstrap_enables_appro
     local_service = LocalSkillsService(store_dir=tmp_path, trust_service=trust_service)
     service = SkillsScopeService(local_service=local_service, server_service=None)
     await local_service.create_skill(
-        name="onboarding-check", content=_skill_content(title="Onboard", description="v1"),
+        name="onboarding-check",
+        content=_skill_content(title="Onboard", description="v1"),
     )
 
     app = _build_test_app()
@@ -476,9 +501,10 @@ async def test_uninitialized_trust_shows_setup_state_and_bootstrap_enables_appro
 
         assert screen._library_skill_editor_state.trust_status == "trust_uninitialized"
         assert not trust_service.trust_store.has_manifest()
-        assert str(
-            screen.query_one("#library-skill-trust-state", Static).renderable
-        ) == "Trust: not initialized"
+        assert (
+            str(screen.query_one("#library-skill-trust-state", Static).renderable)
+            == "Trust: not initialized"
+        )
         assert screen.query_one("#library-skill-trust-setup", Button)
         # The normal Unlock/Review/Approve row must NOT render while
         # uninitialized -- there is nothing yet to unlock or review.
@@ -565,11 +591,13 @@ async def test_already_bootstrapped_store_never_shows_setup_state(tmp_path):
     local_service = LocalSkillsService(store_dir=tmp_path, trust_service=trust_service)
     service = SkillsScopeService(local_service=local_service, server_service=None)
     await local_service.create_skill(
-        name="already-bootstrapped", content=_skill_content(title="A", description="v1"),
+        name="already-bootstrapped",
+        content=_skill_content(title="A", description="v1"),
     )
     trust_service.bootstrap_trust()
     await local_service.update_skill(
-        "already-bootstrapped", content=_skill_content(title="A", description="v2"),
+        "already-bootstrapped",
+        content=_skill_content(title="A", description="v2"),
     )
 
     app = _build_test_app()
@@ -600,7 +628,8 @@ async def test_uninitialized_trust_store_list_still_shows_needs_review_glyph(tmp
     local_service = LocalSkillsService(store_dir=tmp_path, trust_service=trust_service)
     service = SkillsScopeService(local_service=local_service, server_service=None)
     await local_service.create_skill(
-        name="pre-bootstrap", content=_skill_content(title="P", description="p"),
+        name="pre-bootstrap",
+        content=_skill_content(title="P", description="p"),
     )
 
     app = _build_test_app()
@@ -650,7 +679,9 @@ async def test_skill_trust_bootstrap_modal_rejects_mismatched_confirmation():
         await pilot.pause()
         modal = app.screen
         modal.query_one("#skill-trust-bootstrap-input", Input).value = "correct-horse"
-        modal.query_one("#skill-trust-bootstrap-confirm-input", Input).value = "mismatched"
+        modal.query_one(
+            "#skill-trust-bootstrap-confirm-input", Input
+        ).value = "mismatched"
         await pilot.pause()
         modal.query_one("#skill-trust-bootstrap-submit", Button).press()
         await pilot.pause()
@@ -658,11 +689,15 @@ async def test_skill_trust_bootstrap_modal_rejects_mismatched_confirmation():
         # Rejected: the modal must still be on screen with an inline error
         # -- never dismissed with an unconfirmed passphrase.
         assert app.screen is modal
-        error_text = str(modal.query_one("#skill-trust-bootstrap-error", Static).renderable)
+        error_text = str(
+            modal.query_one("#skill-trust-bootstrap-error", Static).renderable
+        )
         assert "match" in error_text.lower()
         assert app.result == "unset"
 
-        modal.query_one("#skill-trust-bootstrap-confirm-input", Input).value = "correct-horse"
+        modal.query_one(
+            "#skill-trust-bootstrap-confirm-input", Input
+        ).value = "correct-horse"
         await pilot.pause()
         modal.query_one("#skill-trust-bootstrap-submit", Button).press()
         await pilot.pause()
@@ -674,10 +709,12 @@ async def test_skill_trust_bootstrap_modal_rejects_mismatched_confirmation():
 async def test_delete_skill_returns_to_list_and_decrements_count(tmp_path):
     local_service, service = _real_skills_scope_service(tmp_path)
     await local_service.create_skill(
-        name="throwaway", content=_skill_content(title="Temp", description="temp"),
+        name="throwaway",
+        content=_skill_content(title="Temp", description="temp"),
     )
     await local_service.create_skill(
-        name="keeper", content=_skill_content(title="Keep", description="keep"),
+        name="keeper",
+        content=_skill_content(title="Keep", description="keep"),
     )
     app = _build_test_app()
     _wire_empty_non_skill_services(app)
@@ -689,7 +726,14 @@ async def test_delete_skill_returns_to_list_and_decrements_count(tmp_path):
         await _wait_for_library_shell(screen, pilot)
         await _open_skill_editor(screen, pilot, "throwaway")
 
+        # task-415: Delete is a two-step inline confirmation now -- the
+        # first press arms it, the recomposed confirm button deletes.
         screen.query_one("#library-skill-delete", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_skill_confirming_delete is True
+        assert screen._library_skills_view == "editor"
+        screen.query_one("#library-skill-delete-confirm", Button).press()
         await pilot.pause()
         for _ in range(150):
             if screen._library_skills_view == "list":
@@ -713,7 +757,8 @@ async def test_delete_skill_returns_to_list_and_decrements_count(tmp_path):
 async def test_flush_pending_work_vetoes_dirty_skill_editor(tmp_path):
     local_service, service = _real_skills_scope_service(tmp_path)
     await local_service.create_skill(
-        name="dirty-check", content=_skill_content(title="D", description="d"),
+        name="dirty-check",
+        content=_skill_content(title="D", description="d"),
     )
     app = _build_test_app()
     _wire_empty_non_skill_services(app)
@@ -725,7 +770,9 @@ async def test_flush_pending_work_vetoes_dirty_skill_editor(tmp_path):
         await _wait_for_library_shell(screen, pilot)
         await _open_skill_editor(screen, pilot, "dirty-check")
 
-        screen.query_one("#library-skill-description", Input).value = "Changed mid switch"
+        screen.query_one(
+            "#library-skill-description", Input
+        ).value = "Changed mid switch"
         await pilot.pause()
         assert screen._library_skill_dirty is True
 
@@ -750,9 +797,12 @@ async def test_skill_editor_opens_under_real_runtime_policy_enforcer(tmp_path):
     policy_enforcer = ServicePolicyEnforcer(
         state_provider=lambda: RuntimeSourceState(active_source="local"),
     )
-    local_service, service = _real_skills_scope_service(tmp_path, policy_enforcer=policy_enforcer)
+    local_service, service = _real_skills_scope_service(
+        tmp_path, policy_enforcer=policy_enforcer
+    )
     await local_service.create_skill(
-        name="policy-check", content=_skill_content(title="P", description="p"),
+        name="policy-check",
+        content=_skill_content(title="P", description="p"),
     )
     app = _build_test_app()
     _wire_empty_non_skill_services(app)
@@ -778,7 +828,11 @@ async def test_skill_editor_opens_under_real_runtime_policy_enforcer(tmp_path):
         status_text = await _wait_for_skill_status(screen, pilot)
         assert status_text == "Saved."
 
+        # task-415: two-step delete -- arm the confirmation, then confirm.
         screen.query_one("#library-skill-delete", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        screen.query_one("#library-skill-delete-confirm", Button).press()
         await pilot.pause()
         for _ in range(150):
             if screen._library_skills_view == "list":
@@ -835,7 +889,8 @@ async def test_library_shell_create_skill_save_creates_and_increments_count(tmp_
     Mirrors ``test_library_shell_create_prompt_save_creates_and_increments_count``."""
     local_service, service = _real_skills_scope_service(tmp_path)
     await local_service.create_skill(
-        name="existing-one", content=_skill_content(title="Existing", description="d"),
+        name="existing-one",
+        content=_skill_content(title="Existing", description="d"),
     )
     app = _build_test_app()
     _wire_empty_non_skill_services(app)
@@ -851,9 +906,13 @@ async def test_library_shell_create_skill_save_creates_and_increments_count(tmp_
 
         screen.query_one("#library-skill-name", Input).value = "brand-new-skill"
         await pilot.pause()
-        screen.query_one("#library-skill-description", Input).value = "A brand new skill"
+        screen.query_one(
+            "#library-skill-description", Input
+        ).value = "A brand new skill"
         await pilot.pause()
-        screen.query_one("#library-skill-body", TextArea).text = "# Brand new\nDo the thing.\n"
+        screen.query_one(
+            "#library-skill-body", TextArea
+        ).text = "# Brand new\nDo the thing.\n"
         await pilot.pause()
         screen.query_one("#library-skill-save", Button).press()
         await pilot.pause()
@@ -877,7 +936,9 @@ async def test_library_shell_create_skill_save_creates_and_increments_count(tmp_
 
 
 @pytest.mark.asyncio
-async def test_library_shell_create_skill_save_invalid_name_shows_classify_outcome(tmp_path):
+async def test_library_shell_create_skill_save_invalid_name_shows_classify_outcome(
+    tmp_path,
+):
     """D1's three save outcomes apply to skills too -- an invalid-shaped
     name shows the same ``classify_skill_save_error`` outcome the update
     path already shows, and creates nothing."""
@@ -902,7 +963,10 @@ async def test_library_shell_create_skill_save_invalid_name_shows_classify_outco
         await pilot.pause()
 
         status_text = await _wait_for_skill_status(screen, pilot)
-        assert status_text == "Skill name must use lowercase letters, numbers, and hyphens."
+        assert (
+            status_text
+            == "Skill name must use lowercase letters, numbers, and hyphens."
+        )
         assert screen._selected_skill_name == ""
 
         context = await service.get_context(mode="local")
@@ -911,7 +975,9 @@ async def test_library_shell_create_skill_save_invalid_name_shows_classify_outco
 
 
 @pytest.mark.asyncio
-async def test_library_shell_create_skill_save_arrives_needs_review_with_panel_primed(tmp_path):
+async def test_library_shell_create_skill_save_arrives_needs_review_with_panel_primed(
+    tmp_path,
+):
     """A brand-new skill created via the "New skill" row arrives
     trust-pending -- ``create_skill``'s default never passes
     ``trust_approved=True`` -- so the trust panel must reflect that
@@ -951,7 +1017,9 @@ async def test_library_shell_create_skill_save_arrives_needs_review_with_panel_p
 
         assert screen._library_skill_editor_state.trust_status == "quarantined_added"
         assert screen._library_skill_editor_state.trust_blocked is True
-        trust_state_text = str(screen.query_one("#library-skill-trust-state", Static).renderable)
+        trust_state_text = str(
+            screen.query_one("#library-skill-trust-state", Static).renderable
+        )
         assert trust_state_text == "Trust: new untrusted file (SKILL.md)"
         review_button = screen.query_one("#library-skill-trust-review", Button)
         assert review_button.disabled is False
@@ -961,3 +1029,197 @@ async def test_library_shell_create_skill_save_arrives_needs_review_with_panel_p
         assert "fresh-skill" in blocked_names
         available_names = [item["name"] for item in context["available_skills"]]
         assert "fresh-skill" not in available_names
+
+
+# ---------------------------------------------------------------------------
+# Code-review follow-ups (xhigh workflow review of the skills UX branch).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_cancel_preserves_edits_typed_during_confirm(tmp_path):
+    """Review finding: fields stay editable during the delete confirmation;
+    an edit typed there was silently reverted on Cancel (and _dirty stayed
+    True, so a later Save persisted the reverted value). Cancel must
+    re-snapshot live fields so the edit survives."""
+    local_service, service = _real_skills_scope_service(tmp_path)
+    await local_service.create_skill(
+        name="editme",
+        content=_skill_content(title="E", description="orig desc"),
+    )
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_skill_editor(screen, pilot, "editme")
+
+        screen.query_one("#library-skill-delete", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_skill_confirming_delete is True
+
+        screen.query_one(
+            "#library-skill-description", Input
+        ).value = "edited during confirm"
+        await pilot.pause()
+
+        screen.query_one("#library-skill-delete-cancel", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_skill_confirming_delete is False
+        assert (
+            screen.query_one("#library-skill-description", Input).value
+            == "edited during confirm"
+        )
+        assert screen._library_skill_editor_state.description == "edited during confirm"
+
+
+@pytest.mark.asyncio
+async def test_derived_description_hint_hides_when_user_types(tmp_path):
+    """Review finding: the 'No description set' hint (gated on
+    description_derived at compose time) stayed visible after the user typed
+    a real description. Typing must hide it in place."""
+    local_service, service = _real_skills_scope_service(tmp_path)
+    # No frontmatter description -> the service derives one from the body, so
+    # description_derived is True and the field renders empty with the hint.
+    await local_service.create_skill(
+        name="no-desc-skill",
+        content="---\nargument_hint: note id\n---\n# Title\nFirst body line.\n",
+    )
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_skill_editor(screen, pilot, "no-desc-skill")
+
+        assert screen.query_one("#library-skill-description", Input).value == ""
+        hint = screen.query_one("#library-skill-description-hint", Static)
+        assert hint.display is True
+
+        screen.query_one(
+            "#library-skill-description", Input
+        ).value = "a real description"
+        await pilot.pause()
+
+        assert (
+            screen.query_one("#library-skill-description-hint", Static).display is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_derived_flag_cleared_when_snapshotting_populated_description(tmp_path):
+    """Review finding: _snapshot_library_skill_live_fields folded typed text
+    into state but left description_derived True, so the delete-confirm
+    recompose rendered the populated field AND the 'No description set' hint
+    together."""
+    local_service, service = _real_skills_scope_service(tmp_path)
+    await local_service.create_skill(
+        name="derived-then-typed",
+        content="---\nargument_hint: note id\n---\n# Title\nFirst body line.\n",
+    )
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_skill_editor(screen, pilot, "derived-then-typed")
+
+        screen.query_one("#library-skill-description", Input).value = "typed desc"
+        await pilot.pause()
+
+        screen.query_one("#library-skill-delete", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_skill_editor_state.description_derived is False
+        assert len(screen.query("#library-skill-description-hint")) == 0
+
+
+# ---------------------------------------------------------------------------
+# Task 5 (skills-foundation): list-header trust actions wired into the
+# screen -- posture computed off-thread and passed to the list canvas, so a
+# real orphaned-manifest (upgrade) scenario offers a single one-click
+# resetup instead of stranding the user in the locked/unlock/error detour.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_orphaned_manifest_is_one_click_resetup(tmp_path):
+    """Manifest present but scoped marker cleanly absent -> header offers a single
+    Set-up that reset-then-bootstraps, never the locked/unlock/error detour."""
+    trust = _real_uninitialized_trust_service(tmp_path)
+    local_service, service = _real_skills_scope_service(tmp_path, trust_service=trust)
+    await local_service.create_skill(
+        name="demo", content=_skill_content(title="D", description="d"),
+    )
+    # Bootstrap, then simulate the upgrade: clear ONLY the marker, leaving the manifest.
+    trust.bootstrap_trust("pw", salt=b"7" * 32)
+    trust.trust_store.marker_store.clear()
+    trust._keys = None  # fresh session
+    assert trust.trust_posture() == "needs_resetup"
+
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    app.local_skill_trust_service = trust
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-skills").press()
+        await pilot.pause(); await pilot.pause()
+        header = screen.query_one("#library-skills-trust-header", Static)
+        assert "again after an update" in str(header.renderable)
+        action = screen.query_one("#library-skills-trust-action", Button)
+        assert action.trust_action == "resetup"
+
+
+@pytest.mark.asyncio
+async def test_list_mode_unlock_refreshes_snapshot_not_just_posture(tmp_path):
+    """Qodo review: a list-header Unlock refreshed only the trust posture, but
+    the list rows' trust glyphs and the header's blocked-count derive from the
+    cached local-source snapshot -- so they stayed stale until some later
+    snapshot refresh. A successful list-mode unlock must refresh the snapshot
+    too (matching the sibling reset/setup handlers)."""
+    trust = _real_uninitialized_trust_service(tmp_path)
+    local_service, service = _real_skills_scope_service(tmp_path, trust_service=trust)
+    await local_service.create_skill(
+        name="demo", content=_skill_content(title="D", description="d"),
+    )
+    trust.bootstrap_trust("pw", salt=b"7" * 32)
+    trust._keys = None  # fresh session -> locked posture, offers Unlock
+    assert trust.trust_posture() == "locked"
+
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    app.local_skill_trust_service = trust
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-skills").press()
+        await pilot.pause(); await pilot.pause()
+        assert screen._library_skills_view != "editor"
+
+        # Spy the snapshot refresh (a @work-decorated method the production
+        # code calls bare) and drive a real, successful unlock.
+        snapshot_spy = MagicMock()
+        screen._refresh_local_source_snapshot = snapshot_spy
+        pilot.app.push_screen_wait = AsyncMock(return_value="pw")
+        await screen._unlock_library_skill_trust()
+
+        assert trust.trust_posture() == "ready"  # unlock genuinely succeeded
+        snapshot_spy.assert_called_once()

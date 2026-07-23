@@ -58,7 +58,11 @@ async def test_tools_scope_service_routes_server_operations_and_normalizes_recor
         (
             "execute_tool",
             "web_search",
-            {"arguments": {"query": "tldw"}, "idempotency_key": "tool-run-1", "dry_run": True},
+            {
+                "arguments": {"query": "tldw"},
+                "idempotency_key": "tool-run-1",
+                "dry_run": True,
+            },
         ),
     ]
     assert policy.calls == [
@@ -70,7 +74,9 @@ async def test_tools_scope_service_routes_server_operations_and_normalizes_recor
 @pytest.mark.asyncio
 async def test_tools_scope_service_honestly_rejects_local_mode_as_remote_only():
     server = FakeToolsService()
-    scope = ToolsScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer())
+    scope = ToolsScopeService(
+        server_service=server, policy_enforcer=FakePolicyEnforcer()
+    )
 
     with pytest.raises(ValueError, match="Server tools are server-only"):
         await scope.list_tools(mode="local")
@@ -81,7 +87,10 @@ async def test_tools_scope_service_honestly_rejects_local_mode_as_remote_only():
 @pytest.mark.asyncio
 async def test_tools_scope_service_blocks_denied_server_action_before_dispatch():
     server = FakeToolsService()
-    scope = ToolsScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer("server_auth_required"))
+    scope = ToolsScopeService(
+        server_service=server,
+        policy_enforcer=FakePolicyEnforcer("server_auth_required"),
+    )
 
     with pytest.raises(PolicyDeniedError) as exc:
         await scope.execute_tool("web_search", mode="server")

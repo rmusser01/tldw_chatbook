@@ -55,7 +55,9 @@ def coerce_library_rail_preferences(raw: Any) -> LibraryRailPreferences:
     )
 
 
-def serialize_library_rail_preferences(preferences: LibraryRailPreferences) -> dict[str, bool]:
+def serialize_library_rail_preferences(
+    preferences: LibraryRailPreferences,
+) -> dict[str, bool]:
     """Serialize Library rail preferences to the persistence shape.
 
     Args:

@@ -24,7 +24,11 @@ class SourceRef(BaseModel):
 
     @model_validator(mode="after")
     def _validate_payload(self) -> SourceRef:
-        if not self.upload_id and not self.media_id and not (self.raw_text or "").strip():
+        if (
+            not self.upload_id
+            and not self.media_id
+            and not (self.raw_text or "").strip()
+        ):
             raise ValueError("source requires upload_id, media_id, or raw_text")
         return self
 
@@ -49,7 +53,9 @@ class OutputOptions(BaseModel):
 
     @field_validator("formats")
     @classmethod
-    def _validate_formats(cls, value: list[AudiobookAudioFormat]) -> list[AudiobookAudioFormat]:
+    def _validate_formats(
+        cls, value: list[AudiobookAudioFormat]
+    ) -> list[AudiobookAudioFormat]:
         if not value:
             raise ValueError("formats must include at least one audio format")
         if len(set(value)) != len(value):

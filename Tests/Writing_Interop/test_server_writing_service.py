@@ -14,15 +14,37 @@ class FakeWritingClient:
         self.calls = []
 
     async def create_manuscript_project(self, request_data):
-        self.calls.append(("create_manuscript_project", request_data.model_dump(mode="json", exclude_none=True)))
+        self.calls.append(
+            (
+                "create_manuscript_project",
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
         return {"id": "project-1", "title": request_data.title, "version": 1}
 
     async def create_manuscript(self, project_id, request_data):
-        self.calls.append(("create_manuscript", project_id, request_data.model_dump(mode="json", exclude_none=True)))
-        return {"id": "manuscript-1", "project_id": project_id, "title": request_data.title, "version": 1}
+        self.calls.append(
+            (
+                "create_manuscript",
+                project_id,
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
+        return {
+            "id": "manuscript-1",
+            "project_id": project_id,
+            "title": request_data.title,
+            "version": 1,
+        }
 
     async def create_manuscript_chapter(self, project_id, request_data):
-        self.calls.append(("create_manuscript_chapter", project_id, request_data.model_dump(mode="json", exclude_none=True)))
+        self.calls.append(
+            (
+                "create_manuscript_chapter",
+                project_id,
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
         return {
             "id": "chapter-1",
             "project_id": project_id,
@@ -32,13 +54,21 @@ class FakeWritingClient:
         }
 
     async def create_manuscript_scene(self, chapter_id, request_data):
-        self.calls.append(("create_manuscript_scene", chapter_id, request_data.model_dump(mode="json", exclude_none=True)))
+        self.calls.append(
+            (
+                "create_manuscript_scene",
+                chapter_id,
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
         return {
             "id": "scene-1",
             "chapter_id": chapter_id,
             "project_id": "project-1",
             "title": request_data.title,
-            "content_json": json.dumps(request_data.content) if request_data.content is not None else None,
+            "content_json": json.dumps(request_data.content)
+            if request_data.content is not None
+            else None,
             "content_plain": request_data.content_plain,
             "version": 1,
         }
@@ -68,11 +98,23 @@ class FakeWritingClient:
         }
 
     async def reorder_manuscript_entities(self, project_id, request_data):
-        self.calls.append(("reorder_manuscript_entities", project_id, request_data.model_dump(mode="json", exclude_none=True)))
+        self.calls.append(
+            (
+                "reorder_manuscript_entities",
+                project_id,
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
         return True
 
     async def create_manuscript_character(self, project_id, request_data):
-        self.calls.append(("create_manuscript_character", project_id, request_data.model_dump(mode="json", exclude_none=True)))
+        self.calls.append(
+            (
+                "create_manuscript_character",
+                project_id,
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
         return {
             "id": "character-1",
             "project_id": project_id,
@@ -100,7 +142,13 @@ class FakeWritingClient:
         ]
 
     async def create_manuscript_world_info(self, project_id, request_data):
-        self.calls.append(("create_manuscript_world_info", project_id, request_data.model_dump(mode="json", exclude_none=True)))
+        self.calls.append(
+            (
+                "create_manuscript_world_info",
+                project_id,
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
         return {
             "id": "world-1",
             "project_id": project_id,
@@ -113,7 +161,13 @@ class FakeWritingClient:
         }
 
     async def create_manuscript_plot_line(self, project_id, request_data):
-        self.calls.append(("create_manuscript_plot_line", project_id, request_data.model_dump(mode="json", exclude_none=True)))
+        self.calls.append(
+            (
+                "create_manuscript_plot_line",
+                project_id,
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
         return {
             "id": "plot-line-1",
             "project_id": project_id,
@@ -125,7 +179,13 @@ class FakeWritingClient:
         }
 
     async def create_manuscript_plot_event(self, plot_line_id, request_data):
-        self.calls.append(("create_manuscript_plot_event", plot_line_id, request_data.model_dump(mode="json", exclude_none=True)))
+        self.calls.append(
+            (
+                "create_manuscript_plot_event",
+                plot_line_id,
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
         return {
             "id": "plot-event-1",
             "project_id": "project-1",
@@ -138,7 +198,13 @@ class FakeWritingClient:
         }
 
     async def create_manuscript_plot_hole(self, project_id, request_data):
-        self.calls.append(("create_manuscript_plot_hole", project_id, request_data.model_dump(mode="json", exclude_none=True)))
+        self.calls.append(
+            (
+                "create_manuscript_plot_hole",
+                project_id,
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
         return {
             "id": "plot-hole-1",
             "project_id": project_id,
@@ -150,11 +216,31 @@ class FakeWritingClient:
         }
 
     async def link_manuscript_scene_character(self, scene_id, request_data):
-        self.calls.append(("link_manuscript_scene_character", scene_id, request_data.model_dump(mode="json", exclude_none=True)))
-        return [{"scene_id": scene_id, "character_id": request_data.character_id, "is_pov": request_data.is_pov, "name": "Ada", "role": "protagonist"}]
+        self.calls.append(
+            (
+                "link_manuscript_scene_character",
+                scene_id,
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
+        return [
+            {
+                "scene_id": scene_id,
+                "character_id": request_data.character_id,
+                "is_pov": request_data.is_pov,
+                "name": "Ada",
+                "role": "protagonist",
+            }
+        ]
 
     async def create_manuscript_citation(self, scene_id, request_data):
-        self.calls.append(("create_manuscript_citation", scene_id, request_data.model_dump(mode="json", exclude_none=True)))
+        self.calls.append(
+            (
+                "create_manuscript_citation",
+                scene_id,
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
         return {
             "id": "citation-1",
             "project_id": "project-1",
@@ -167,7 +253,13 @@ class FakeWritingClient:
         }
 
     async def analyze_manuscript_scene(self, scene_id, request_data):
-        self.calls.append(("analyze_manuscript_scene", scene_id, request_data.model_dump(mode="json", exclude_none=True)))
+        self.calls.append(
+            (
+                "analyze_manuscript_scene",
+                scene_id,
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
         return [
             {
                 "id": "analysis-1",
@@ -183,7 +275,14 @@ class FakeWritingClient:
         ]
 
     async def create_manuscript_version(self, entity_type, entity_id, request_data):
-        self.calls.append(("create_manuscript_version", entity_type, entity_id, request_data.model_dump(mode="json", exclude_none=True)))
+        self.calls.append(
+            (
+                "create_manuscript_version",
+                entity_type,
+                entity_id,
+                request_data.model_dump(mode="json", exclude_none=True),
+            )
+        )
         return {
             "id": "version-1",
             "entity_type": entity_type,
@@ -215,7 +314,9 @@ class FakeWritingClient:
         }
 
     async def get_manuscript_version(self, entity_type, entity_id, version_number):
-        self.calls.append(("get_manuscript_version", entity_type, entity_id, version_number))
+        self.calls.append(
+            ("get_manuscript_version", entity_type, entity_id, version_number)
+        )
         return {
             "id": "version-1",
             "entity_type": entity_type,
@@ -227,8 +328,18 @@ class FakeWritingClient:
             "client_id": "server-client",
         }
 
-    async def restore_manuscript_version(self, entity_type, entity_id, version_number, *, expected_version=None):
-        self.calls.append(("restore_manuscript_version", entity_type, entity_id, version_number, expected_version))
+    async def restore_manuscript_version(
+        self, entity_type, entity_id, version_number, *, expected_version=None
+    ):
+        self.calls.append(
+            (
+                "restore_manuscript_version",
+                entity_type,
+                entity_id,
+                version_number,
+                expected_version,
+            )
+        )
         return {
             "id": entity_id,
             "chapter_id": "chapter-1",
@@ -255,8 +366,12 @@ class FakeWritingClient:
             "total": 1,
         }
 
-    async def restore_manuscript_trash(self, entity_type, entity_id, *, expected_version=None):
-        self.calls.append(("restore_manuscript_trash", entity_type, entity_id, expected_version))
+    async def restore_manuscript_trash(
+        self, entity_type, entity_id, *, expected_version=None
+    ):
+        self.calls.append(
+            ("restore_manuscript_trash", entity_type, entity_id, expected_version)
+        )
         return {
             "id": entity_id,
             "chapter_id": "chapter-1",
@@ -318,7 +433,10 @@ async def test_server_writing_service_direct_client_takes_precedence_over_provid
     assert project["record_id"] == "server:writing_project:project-1"
     assert provider.build_calls == 0
     assert client.calls == [
-        ("create_manuscript_project", {"title": "Novel", "status": "draft", "settings": {}})
+        (
+            "create_manuscript_project",
+            {"title": "Novel", "status": "draft", "settings": {}},
+        )
     ]
 
 
@@ -339,7 +457,10 @@ async def test_server_writing_service_from_server_context_provider_is_lazy():
     assert service.client is None
     assert provider.build_calls == 1
     assert client.calls == [
-        ("create_manuscript_project", {"title": "Novel", "status": "draft", "settings": {}})
+        (
+            "create_manuscript_project",
+            {"title": "Novel", "status": "draft", "settings": {}},
+        )
     ]
 
 
@@ -356,10 +477,16 @@ async def test_server_writing_service_re_resolves_provider_without_service_local
     assert len(provider.clients) == 2
     assert provider.clients[0] is not provider.clients[1]
     assert provider.clients[0].calls == [
-        ("create_manuscript_project", {"title": "Novel One", "status": "draft", "settings": {}})
+        (
+            "create_manuscript_project",
+            {"title": "Novel One", "status": "draft", "settings": {}},
+        )
     ]
     assert provider.clients[1].calls == [
-        ("create_manuscript_project", {"title": "Novel Two", "status": "draft", "settings": {}})
+        (
+            "create_manuscript_project",
+            {"title": "Novel Two", "status": "draft", "settings": {}},
+        )
     ]
     for built_client in provider.clients:
         assert all(value is not built_client for value in vars(service).values())
@@ -388,8 +515,12 @@ async def test_server_writing_service_maps_chatbook_manuscripts_to_server_parts(
 
     project = await service.create_project(title="Novel", author="Ada")
     manuscript = await service.create_manuscript(project["id"], title="Book One")
-    chapter = await service.create_chapter(project["id"], title="Chapter 1", manuscript_id=manuscript["id"])
-    scene = await service.create_scene(chapter["id"], title="Scene 1", content_markdown="Opening line.")
+    chapter = await service.create_chapter(
+        project["id"], title="Chapter 1", manuscript_id=manuscript["id"]
+    )
+    scene = await service.create_scene(
+        chapter["id"], title="Scene 1", content_markdown="Opening line."
+    )
     structure = await service.get_structure(project["id"])
 
     assert project["record_id"] == "server:writing_project:project-1"
@@ -397,18 +528,34 @@ async def test_server_writing_service_maps_chatbook_manuscripts_to_server_parts(
     assert chapter["manuscript_id"] == "manuscript-1"
     assert scene["content_markdown"] == "Opening line."
     assert scene["content_markdown_fidelity"] == "chatbook_markdown"
-    assert structure["manuscripts"][0]["record_id"] == "server:writing_manuscript:manuscript-1"
-    assert structure["unassigned_chapters"][0]["record_id"] == "server:writing_chapter:chapter-loose"
-    assert structure["unassigned_chapters"][0]["outline_bucket"] == "unassigned_chapters"
+    assert (
+        structure["manuscripts"][0]["record_id"]
+        == "server:writing_manuscript:manuscript-1"
+    )
+    assert (
+        structure["unassigned_chapters"][0]["record_id"]
+        == "server:writing_chapter:chapter-loose"
+    )
+    assert (
+        structure["unassigned_chapters"][0]["outline_bucket"] == "unassigned_chapters"
+    )
     assert structure["unassigned_chapters"][0]["outline_parent_type"] == "project"
     assert structure["unassigned_chapters"][0]["outline_parent_id"] == "project-1"
     assert client.calls == [
-        ("create_manuscript_project", {"title": "Novel", "author": "Ada", "status": "draft", "settings": {}}),
+        (
+            "create_manuscript_project",
+            {"title": "Novel", "author": "Ada", "status": "draft", "settings": {}},
+        ),
         ("create_manuscript", "project-1", {"title": "Book One", "sort_order": 0.0}),
         (
             "create_manuscript_chapter",
             "project-1",
-            {"title": "Chapter 1", "part_id": "manuscript-1", "sort_order": 0.0, "status": "draft"},
+            {
+                "title": "Chapter 1",
+                "part_id": "manuscript-1",
+                "sort_order": 0.0,
+                "status": "draft",
+            },
         ),
         (
             "create_manuscript_scene",
@@ -467,14 +614,26 @@ async def test_server_writing_service_routes_auxiliary_manuscript_surfaces():
     client = FakeWritingClient()
     service = ServerWritingService(client=client)
 
-    character = await service.create_character("project-1", name="Ada", role="protagonist")
+    character = await service.create_character(
+        "project-1", name="Ada", role="protagonist"
+    )
     characters = await service.list_characters("project-1", role="protagonist")
-    world = await service.create_world_info("project-1", kind="location", name="Capital")
+    world = await service.create_world_info(
+        "project-1", kind="location", name="Capital"
+    )
     plot_line = await service.create_plot_line("project-1", title="Main Plot")
-    plot_event = await service.create_plot_event(plot_line["id"], title="Inciting Incident", scene_id="scene-1")
-    plot_hole = await service.create_plot_hole("project-1", title="Continuity Issue", scene_id="scene-1")
-    scene_characters = await service.link_scene_character("scene-1", character_id=character["id"], is_pov=True)
-    citation = await service.create_citation("scene-1", source_type="manual", source_title="Reference")
+    plot_event = await service.create_plot_event(
+        plot_line["id"], title="Inciting Incident", scene_id="scene-1"
+    )
+    plot_hole = await service.create_plot_hole(
+        "project-1", title="Continuity Issue", scene_id="scene-1"
+    )
+    scene_characters = await service.link_scene_character(
+        "scene-1", character_id=character["id"], is_pov=True
+    )
+    citation = await service.create_citation(
+        "scene-1", source_type="manual", source_title="Reference"
+    )
     analyses = await service.analyze_scene("scene-1", analysis_types=["pacing"])
 
     assert character["record_id"] == "server:writing_character:character-1"
@@ -483,18 +642,74 @@ async def test_server_writing_service_routes_auxiliary_manuscript_surfaces():
     assert plot_line["record_id"] == "server:writing_plot_line:plot-line-1"
     assert plot_event["record_id"] == "server:writing_plot_event:plot-event-1"
     assert plot_hole["record_id"] == "server:writing_plot_hole:plot-hole-1"
-    assert scene_characters[0]["record_id"] == "server:writing_scene_character_link:scene-1:character-1"
+    assert (
+        scene_characters[0]["record_id"]
+        == "server:writing_scene_character_link:scene-1:character-1"
+    )
     assert citation["record_id"] == "server:writing_citation:citation-1"
     assert analyses[0]["record_id"] == "server:writing_analysis:analysis-1"
     assert client.calls == [
-        ("create_manuscript_character", "project-1", {"name": "Ada", "role": "protagonist", "custom_fields": {}, "sort_order": 0.0}),
-        ("list_manuscript_characters", "project-1", {"role": "protagonist", "cast_group": None}),
-        ("create_manuscript_world_info", "project-1", {"kind": "location", "name": "Capital", "properties": {}, "tags": [], "sort_order": 0.0}),
-        ("create_manuscript_plot_line", "project-1", {"title": "Main Plot", "status": "active", "sort_order": 0.0}),
-        ("create_manuscript_plot_event", "plot-line-1", {"title": "Inciting Incident", "scene_id": "scene-1", "event_type": "plot", "sort_order": 0.0}),
-        ("create_manuscript_plot_hole", "project-1", {"title": "Continuity Issue", "scene_id": "scene-1", "severity": "medium", "detected_by": "manual"}),
-        ("link_manuscript_scene_character", "scene-1", {"character_id": "character-1", "is_pov": True}),
-        ("create_manuscript_citation", "scene-1", {"source_type": "manual", "source_title": "Reference"}),
+        (
+            "create_manuscript_character",
+            "project-1",
+            {
+                "name": "Ada",
+                "role": "protagonist",
+                "custom_fields": {},
+                "sort_order": 0.0,
+            },
+        ),
+        (
+            "list_manuscript_characters",
+            "project-1",
+            {"role": "protagonist", "cast_group": None},
+        ),
+        (
+            "create_manuscript_world_info",
+            "project-1",
+            {
+                "kind": "location",
+                "name": "Capital",
+                "properties": {},
+                "tags": [],
+                "sort_order": 0.0,
+            },
+        ),
+        (
+            "create_manuscript_plot_line",
+            "project-1",
+            {"title": "Main Plot", "status": "active", "sort_order": 0.0},
+        ),
+        (
+            "create_manuscript_plot_event",
+            "plot-line-1",
+            {
+                "title": "Inciting Incident",
+                "scene_id": "scene-1",
+                "event_type": "plot",
+                "sort_order": 0.0,
+            },
+        ),
+        (
+            "create_manuscript_plot_hole",
+            "project-1",
+            {
+                "title": "Continuity Issue",
+                "scene_id": "scene-1",
+                "severity": "medium",
+                "detected_by": "manual",
+            },
+        ),
+        (
+            "link_manuscript_scene_character",
+            "scene-1",
+            {"character_id": "character-1", "is_pov": True},
+        ),
+        (
+            "create_manuscript_citation",
+            "scene-1",
+            {"source_type": "manual", "source_title": "Reference"},
+        ),
         ("analyze_manuscript_scene", "scene-1", {"analysis_types": ["pacing"]}),
     ]
 
@@ -507,7 +722,9 @@ async def test_server_writing_service_routes_version_history_and_trash_surfaces(
     version = await service.create_version("scene", "scene-1", label="First draft")
     versions = await service.list_versions("scene", "scene-1")
     fetched = await service.get_version("scene", "scene-1", 1)
-    restored_version = await service.restore_version("scene", "scene-1", 1, expected_version=2)
+    restored_version = await service.restore_version(
+        "scene", "scene-1", 1, expected_version=2
+    )
     trash = await service.list_trash(entity_type="scene")
     restored_trash = await service.restore_trash("scene", "scene-1", expected_version=3)
 
@@ -548,8 +765,12 @@ async def test_server_writing_service_enforces_policy_actions():
 
     project = await service.create_project(title="Novel", author="Ada")
     manuscript = await service.create_manuscript(project["id"], title="Book One")
-    chapter = await service.create_chapter(project["id"], title="Chapter 1", manuscript_id=manuscript["id"])
-    await service.create_scene(chapter["id"], title="Scene 1", content_markdown="Opening line.")
+    chapter = await service.create_chapter(
+        project["id"], title="Chapter 1", manuscript_id=manuscript["id"]
+    )
+    await service.create_scene(
+        chapter["id"], title="Scene 1", content_markdown="Opening line."
+    )
     await service.get_structure(project["id"])
     await service.reorder_entities(
         project["id"],
@@ -558,7 +779,9 @@ async def test_server_writing_service_enforces_policy_actions():
     )
     await service.create_version("scene", "scene-1")
 
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "writing.projects.create.server",
         "writing.manuscripts.create.server",
         "writing.chapters.create.server",

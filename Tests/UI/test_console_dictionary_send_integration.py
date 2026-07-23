@@ -9,13 +9,20 @@ conversation-attached dictionary (the P1e attach seam), a native session
 pinned to that conversation, and a capturing double standing in for the
 provider/agent transport so the actual outbound payload can be inspected.
 """
+
 import pytest
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
-from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
 from tldw_chatbook.Character_Chat import Chat_Dictionary_Lib as cdl
-from tldw_chatbook.Character_Chat.chat_dictionary_scope_service import ChatDictionaryScopeService
-from tldw_chatbook.Character_Chat.local_chat_dictionary_service import LocalChatDictionaryService
+from tldw_chatbook.Character_Chat.chat_dictionary_scope_service import (
+    ChatDictionaryScopeService,
+)
+from tldw_chatbook.Character_Chat.local_chat_dictionary_service import (
+    LocalChatDictionaryService,
+)
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
@@ -42,6 +49,7 @@ class _CapturingGateway:
         class _R:
             ready = True
             visible_copy = ""
+
         return _R()
 
     async def stream_chat(self, _resolution, provider_messages):
@@ -57,7 +65,9 @@ def _final_user_content(messages):
 
 
 @pytest.mark.asyncio
-async def test_native_send_applies_conversation_dictionary_provider_branch(dictionary_db):
+async def test_native_send_applies_conversation_dictionary_provider_branch(
+    dictionary_db,
+):
     app = _build_test_app()
     app.chachanotes_db = dictionary_db
     app.chat_dictionary_scope_service = ChatDictionaryScopeService(
@@ -66,7 +76,9 @@ async def test_native_send_applies_conversation_dictionary_provider_branch(dicti
 
     conv_id = dictionary_db.add_conversation({"title": "Send flow"})
     dict_id = cdl.save_chat_dictionary(
-        dictionary_db, "Slang", entries=[cdl.ChatDictionary(key="Warden", content="grim jailer")]
+        dictionary_db,
+        "Slang",
+        entries=[cdl.ChatDictionary(key="Warden", content="grim jailer")],
     )
     LocalChatDictionaryService(dictionary_db).attach_to_conversation(dict_id, conv_id)
 
@@ -87,8 +99,11 @@ async def test_native_send_applies_conversation_dictionary_provider_branch(dicti
         assert _final_user_content(gateway.captured) == "The grim jailer nods."
         # ...while the persisted transcript keeps the RAW text.
         store = screen._ensure_console_chat_store()
-        stored = [m for m in store.messages_for_session(_active_native_session(screen).id)
-                  if m.role is ConsoleMessageRole.USER]
+        stored = [
+            m
+            for m in store.messages_for_session(_active_native_session(screen).id)
+            if m.role is ConsoleMessageRole.USER
+        ]
         assert stored[-1].content == "The Warden nods."
 
 
@@ -102,7 +117,9 @@ async def test_native_send_applies_conversation_dictionary_agent_branch(dictiona
 
     conv_id = dictionary_db.add_conversation({"title": "Agent send"})
     dict_id = cdl.save_chat_dictionary(
-        dictionary_db, "Slang", entries=[cdl.ChatDictionary(key="Warden", content="grim jailer")]
+        dictionary_db,
+        "Slang",
+        entries=[cdl.ChatDictionary(key="Warden", content="grim jailer")],
     )
     LocalChatDictionaryService(dictionary_db).attach_to_conversation(dict_id, conv_id)
 
@@ -129,12 +146,23 @@ async def test_native_send_applies_conversation_dictionary_agent_branch(dictiona
         # internally) and returns a `RunOutcome(status=RUN_DONE, ...)` so
         # `_finalize_agent_reply`'s success path (`store.mark_message_complete`)
         # runs unmodified against a real placeholder message.
-        def _fake_run_reply(*, conversation_id, session_id, resolution, assistant_message_id,
-                             model, session_system_prompt, agent_messages, should_cancel,
-                             supersede_previous=False, mcp_provider=None,
-                             review_tool_calls=None):
+        def _fake_run_reply(
+            *,
+            conversation_id,
+            session_id,
+            resolution,
+            assistant_message_id,
+            model,
+            session_system_prompt,
+            agent_messages,
+            should_cancel,
+            supersede_previous=False,
+            mcp_provider=None,
+            review_tool_calls=None,
+        ):
             captured["agent_messages"] = [dict(m) for m in agent_messages]
             from tldw_chatbook.Agents.agent_models import RunOutcome, RUN_DONE
+
             store = screen._ensure_console_chat_store()
             store.append_stream_chunk(assistant_message_id, "ok")
             return RunOutcome(status=RUN_DONE, steps=[])
@@ -147,4 +175,6 @@ async def test_native_send_applies_conversation_dictionary_agent_branch(dictiona
 
         result = await controller.submit_draft("The Warden nods.")
         assert result.accepted
-        assert _final_user_content(captured["agent_messages"]) == "The grim jailer nods."
+        assert (
+            _final_user_content(captured["agent_messages"]) == "The grim jailer nods."
+        )

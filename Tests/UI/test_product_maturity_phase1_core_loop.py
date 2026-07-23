@@ -17,10 +17,14 @@ from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBa
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EVIDENCE = Path("Docs/superpowers/qa/product-maturity/phase-1/2026-05-05-phase-1-7-core-loop-proof.md")
+EVIDENCE = Path(
+    "Docs/superpowers/qa/product-maturity/phase-1/2026-05-05-phase-1-7-core-loop-proof.md"
+)
 TRACKER = Path("Docs/superpowers/trackers/product-maturity-roadmap.md")
 PHASE_1_README = Path("Docs/superpowers/qa/product-maturity/phase-1/README.md")
-TASK = Path("backlog/tasks/task-8.7 - Product-Maturity-Phase-1.7-Narrow-Core-Loop-Proof.md")
+TASK = Path(
+    "backlog/tasks/task-8.7 - Product-Maturity-Phase-1.7-Narrow-Core-Loop-Proof.md"
+)
 
 
 def _text(path: Path) -> str:
@@ -63,7 +67,9 @@ async def _wait_until(
         await asyncio.sleep(interval_seconds)
     if condition():
         return
-    raise AssertionError(f"condition was not met within {timeout_seconds:.1f}s for {context}")
+    raise AssertionError(
+        f"condition was not met within {timeout_seconds:.1f}s for {context}"
+    )
 
 
 def _core_loop_payload() -> ChatHandoffPayload:
@@ -120,7 +126,10 @@ async def test_search_rag_result_stages_context_into_console_core_loop() -> None
 
     with (
         patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting),
-        patch("tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting", side_effect=_test_cli_setting),
+        patch(
+            "tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting",
+            side_effect=_test_cli_setting,
+        ),
         patch(
             "tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container.get_cli_setting",
             side_effect=_test_cli_setting,
@@ -137,7 +146,10 @@ async def test_search_rag_result_stages_context_into_console_core_loop() -> None
 
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
+                lambda: (
+                    app.current_tab == "chat"
+                    and app.screen.__class__.__name__ == "ChatScreen"
+                ),
                 context="console route after RAG handoff",
             )
             # The native Console stages handoffs into its live-work lane
@@ -150,8 +162,14 @@ async def test_search_rag_result_stages_context_into_console_core_loop() -> None
             )
             await _wait_until(
                 pilot,
-                lambda: "Sources: 1 staged"
-                in str(app.screen.query_one("#console-sources-label", Static).renderable),
+                lambda: (
+                    "Sources: 1 staged"
+                    in str(
+                        app.screen.query_one(
+                            "#console-sources-label", Static
+                        ).renderable
+                    )
+                ),
                 context="staged source count",
             )
 
@@ -162,7 +180,7 @@ async def test_search_rag_result_stages_context_into_console_core_loop() -> None
             assert "Live work: Transcript chunk: Agentic terminal design" in screen_text
             assert "Evidence: 1/1 available" in screen_text
 
-            composer = app.screen.query_one("#console-native-composer", ConsoleComposerBar)
+            composer = app.screen.query_one(
+                "#console-native-composer", ConsoleComposerBar
+            )
             assert payload.suggested_prompt in composer.draft_text()
-
-

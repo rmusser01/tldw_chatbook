@@ -57,6 +57,7 @@ class FusedResult:
         vector_rrf: RRF contribution of the vector leg (0.0 if absent).
         score: Final fused score: (1 - alpha) * fts_rrf + alpha * vector_rrf.
     """
+
     key: Hashable
     fts_item: Optional[Any]
     vector_item: Optional[Any]
@@ -156,23 +157,27 @@ def reciprocal_rank_fusion(
         vector_rank = vector_entry[0] if vector_entry else None
         fts_rrf = (1.0 / (rrf_k + fts_rank)) if fts_rank is not None else 0.0
         vector_rrf = (1.0 / (rrf_k + vector_rank)) if vector_rank is not None else 0.0
-        fused.append(FusedResult(
-            key=k,
-            fts_item=fts_entry[1] if fts_entry else None,
-            vector_item=vector_entry[1] if vector_entry else None,
-            fts_rank=fts_rank,
-            vector_rank=vector_rank,
-            fts_rrf=fts_rrf,
-            vector_rrf=vector_rrf,
-            score=(1.0 - alpha) * fts_rrf + alpha * vector_rrf,
-        ))
+        fused.append(
+            FusedResult(
+                key=k,
+                fts_item=fts_entry[1] if fts_entry else None,
+                vector_item=vector_entry[1] if vector_entry else None,
+                fts_rank=fts_rank,
+                vector_rank=vector_rank,
+                fts_rrf=fts_rrf,
+                vector_rrf=vector_rrf,
+                score=(1.0 - alpha) * fts_rrf + alpha * vector_rrf,
+            )
+        )
 
     infinity = float("inf")
-    fused.sort(key=lambda f: (
-        -f.score,
-        f.fts_rank if f.fts_rank is not None else infinity,
-        f.vector_rank if f.vector_rank is not None else infinity,
-    ))
+    fused.sort(
+        key=lambda f: (
+            -f.score,
+            f.fts_rank if f.fts_rank is not None else infinity,
+            f.vector_rank if f.vector_rank is not None else infinity,
+        )
+    )
 
     if max_results is not None:
         fused = fused[:max_results]
@@ -233,6 +238,7 @@ def resolve_hybrid_alpha(explicit: Optional[float] = None) -> float:
     if value is None:
         try:
             from tldw_chatbook.config import get_cli_setting
+
             rag_section = get_cli_setting("AppRAGSearchConfig", "rag", {}) or {}
             retriever_section = rag_section.get("retriever", {}) or {}
             value = retriever_section.get("hybrid_alpha")

@@ -31,7 +31,7 @@ def test_row_press_in_select_mode_toggles_not_opens():
     event = SimpleNamespace(button=SimpleNamespace(media_id="7"), stop=lambda: None)
     LibraryScreen.handle_library_media_row(fake, event)
     assert fake._library_media_row_selection.is_selected("7")
-    assert fake._viewer_opened == []          # viewer NOT opened
+    assert fake._viewer_opened == []  # viewer NOT opened
     assert fake._refreshed == 1
 
 
@@ -48,7 +48,10 @@ def test_row_press_normal_mode_opens_viewer():
 async def test_export_selected_builds_ids_scope():
     fake = _media_fake(select_mode=True)
     fake._library_media_row_selection.select_all(["3", "1", "2"])
-    async def _open(scope): fake._opened.append(scope)
+
+    async def _open(scope):
+        fake._opened.append(scope)
+
     fake._open_library_export_canvas = _open
     event = SimpleNamespace(stop=lambda: None)
     await LibraryScreen.handle_library_media_export_selected(fake, event)
@@ -60,7 +63,10 @@ async def test_export_selected_empty_is_noop_not_whole_source():
     # An empty selection must NOT fall through to a whole-source export
     # (empty ids == whole source in resolve_export_selections).
     fake = _media_fake(select_mode=True)
-    async def _open(scope): fake._opened.append(scope)
+
+    async def _open(scope):
+        fake._opened.append(scope)
+
     fake._open_library_export_canvas = _open
     event = SimpleNamespace(stop=lambda: None)
     await LibraryScreen.handle_library_media_export_selected(fake, event)
@@ -100,7 +106,9 @@ def _select_mode_canvas_state() -> LibraryMediaCanvasState:
 
 class _MediaCanvasApp(App):
     def compose(self):
-        yield LibraryMediaCanvas(canvas=_select_mode_canvas_state(), id="library-media-canvas")
+        yield LibraryMediaCanvas(
+            canvas=_select_mode_canvas_state(), id="library-media-canvas"
+        )
 
 
 @pytest.mark.asyncio
@@ -109,7 +117,9 @@ async def test_canvas_select_mode_renders_action_row_and_disables_export():
     async with app.run_test() as pilot:
         select_all_btn = pilot.app.query_one("#library-media-select-all", Button)
         assert select_all_btn is not None
-        export_selected_btn = pilot.app.query_one("#library-media-export-selected", Button)
+        export_selected_btn = pilot.app.query_one(
+            "#library-media-export-selected", Button
+        )
         assert export_selected_btn.disabled is True
 
 
@@ -132,7 +142,9 @@ def _empty_select_mode_state() -> LibraryMediaCanvasState:
 
 class _EmptySelectModeCanvasApp(App):
     def compose(self):
-        yield LibraryMediaCanvas(canvas=_empty_select_mode_state(), id="library-media-canvas")
+        yield LibraryMediaCanvas(
+            canvas=_empty_select_mode_state(), id="library-media-canvas"
+        )
 
 
 @pytest.mark.asyncio
@@ -150,9 +162,24 @@ def _filtered_select_mode_state() -> LibraryMediaCanvasState:
     # Two media types; filtering to "video" renders ONE row while
     # ``count`` (the pre-filter total across all types) stays at 3.
     records = [
-        {"media_id": "1", "title": "A video", "type": "video", "last_modified": "2026-07-10T00:00:00Z"},
-        {"media_id": "2", "title": "An audio", "type": "audio", "last_modified": "2026-07-10T00:00:00Z"},
-        {"media_id": "3", "title": "More audio", "type": "audio", "last_modified": "2026-07-10T00:00:00Z"},
+        {
+            "media_id": "1",
+            "title": "A video",
+            "type": "video",
+            "last_modified": "2026-07-10T00:00:00Z",
+        },
+        {
+            "media_id": "2",
+            "title": "An audio",
+            "type": "audio",
+            "last_modified": "2026-07-10T00:00:00Z",
+        },
+        {
+            "media_id": "3",
+            "title": "More audio",
+            "type": "audio",
+            "last_modified": "2026-07-10T00:00:00Z",
+        },
     ]
     return build_library_media_state(
         records,
@@ -163,7 +190,9 @@ def _filtered_select_mode_state() -> LibraryMediaCanvasState:
 
 class _FilteredMediaCanvasApp(App):
     def compose(self):
-        yield LibraryMediaCanvas(canvas=_filtered_select_mode_state(), id="library-media-canvas")
+        yield LibraryMediaCanvas(
+            canvas=_filtered_select_mode_state(), id="library-media-canvas"
+        )
 
 
 @pytest.mark.asyncio

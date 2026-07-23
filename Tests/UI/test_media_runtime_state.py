@@ -4,10 +4,19 @@ from pathlib import Path
 
 
 _MEDIA_RUNTIME_STATE_PATH = (
-    Path(__file__).resolve().parents[2] / "tldw_chatbook" / "UI" / "Screens" / "media_runtime_state.py"
+    Path(__file__).resolve().parents[2]
+    / "tldw_chatbook"
+    / "UI"
+    / "Screens"
+    / "media_runtime_state.py"
 )
-_MEDIA_RUNTIME_STATE_SPEC = spec_from_file_location("test_media_runtime_state_module", _MEDIA_RUNTIME_STATE_PATH)
-assert _MEDIA_RUNTIME_STATE_SPEC is not None and _MEDIA_RUNTIME_STATE_SPEC.loader is not None
+_MEDIA_RUNTIME_STATE_SPEC = spec_from_file_location(
+    "test_media_runtime_state_module", _MEDIA_RUNTIME_STATE_PATH
+)
+assert (
+    _MEDIA_RUNTIME_STATE_SPEC is not None
+    and _MEDIA_RUNTIME_STATE_SPEC.loader is not None
+)
 _media_runtime_state_module = module_from_spec(_MEDIA_RUNTIME_STATE_SPEC)
 sys.modules[_MEDIA_RUNTIME_STATE_SPEC.name] = _media_runtime_state_module
 _MEDIA_RUNTIME_STATE_SPEC.loader.exec_module(_media_runtime_state_module)

@@ -4,25 +4,19 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from textual import events, on
+from textual import on
 from textual.app import ComposeResult
-from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
-from textual.message import Message
 from textual.widgets import Button, Static
 
-from tldw_chatbook.Chat.console_display_state import (
-    CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
-    ConsoleControlState,
-)
+from tldw_chatbook.Chat.console_display_state import ConsoleControlState
 from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchAction
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
-from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
 
-CONSOLE_CONTROL_BAR_HEIGHT = 2
+CONSOLE_CONTROL_BAR_HEIGHT = 1
 TOP_ACTION_IDS = {
     "new-tab",
     "settings",
@@ -75,40 +69,6 @@ def _summary_line(state: ConsoleControlState) -> str:
             state.approvals_label,
         )
     )
-
-
-class ConsoleChip(Static):
-    """Focusable Console readiness chip.
-
-    Chips ellipsize at 22 cells; focusing a chip lifts that cap (see
-    `.console-control-chip:focus` in `_agentic_terminal.tcss`) so the full
-    label is reachable from the keyboard, while the tooltip keeps carrying
-    the same full text on hover.
-    """
-
-    can_focus = True
-
-
-class ConsoleApprovalsChip(ConsoleChip):
-    """Approvals readiness chip that doubles as an approval-review action.
-
-    Activating it (Enter/Space while focused, or click) asks the control
-    bar to focus the pending approval card in the transcript.
-    """
-
-    BINDINGS = [
-        Binding("enter", "review_approval", "Review pending approval", show=False),
-        Binding("space", "review_approval", "Review pending approval", show=False),
-    ]
-
-    class ReviewRequested(Message):
-        """Posted when the approvals chip is activated from keyboard or mouse."""
-
-    def action_review_approval(self) -> None:
-        self.post_message(self.ReviewRequested())
-
-    def _on_click(self, event: events.Click) -> None:
-        self.post_message(self.ReviewRequested())
 
 
 class ConsoleControlBar(Vertical):
@@ -175,7 +135,11 @@ class ConsoleControlBar(Vertical):
         """
         if actions is None and state == self.state:
             return
-        if actions is not None and state == self.state and tuple(actions) == self.actions:
+        if (
+            actions is not None
+            and state == self.state
+            and tuple(actions) == self.actions
+        ):
             return
         self.state = state
         if actions is not None:
@@ -189,13 +153,6 @@ class ConsoleControlBar(Vertical):
             "#console-sources-label": state.sources_label,
             "#console-tools-label": state.tools_label,
             "#console-approvals-label": state.approvals_label,
-            "#console-provider-chip": state.provider_label,
-            "#console-model-chip": state.model_label,
-            "#console-persona-chip": state.persona_label,
-            "#console-rag-chip": state.rag_label,
-            "#console-sources-chip": state.sources_label,
-            "#console-tools-chip": state.tools_label,
-            "#console-approvals-chip": state.approvals_label,
         }
         for selector, label in label_values.items():
             try:
@@ -203,41 +160,6 @@ class ConsoleControlBar(Vertical):
             except NoMatches:
                 continue
             widget.update(label)
-            if selector.endswith("-chip"):
-                # Chips ellipsize at 22 cells; keep the full label on hover.
-                widget.tooltip = label
-        chip_emphasis = {
-            "#console-sources-chip": state.sources_active,
-            "#console-tools-chip": state.tools_active,
-            "#console-approvals-chip": state.approvals_active,
-        }
-        for selector, active in chip_emphasis.items():
-            try:
-                chip = self.query_one(selector, Static)
-            except NoMatches:
-                continue
-            chip.set_class(not active, "console-chip-dim")
-            chip.set_class(active, "console-chip-alert")
-
-    @staticmethod
-    def _chip(
-        label: str,
-        *,
-        id: str,
-        emphasis: bool | None = None,
-        chip_class: type[ConsoleChip] = ConsoleChip,
-    ) -> ConsoleChip:
-        classes = "console-control-chip"
-        if emphasis is False:
-            classes += " console-chip-dim"
-        elif emphasis is True:
-            classes += " console-chip-alert"
-        chip = chip_class(label, id=id, classes=classes)
-        # Chips ellipsize at 22 cells; the tooltip carries the full label so
-        # two models sharing a prefix stay distinguishable, and focusing the
-        # chip expands it to show the same full label (see ConsoleChip).
-        chip.tooltip = label
-        return chip
 
     @staticmethod
     def _action_widget_id(action: WorkbenchAction) -> str:
@@ -309,76 +231,75 @@ class ConsoleControlBar(Vertical):
                 self._sync_action_button(child, action)
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="console-control-chip-row", classes="console-control-chip-row"):
-            yield self._chip(self.state.provider_label, id="console-provider-chip")
-            yield self._chip(self.state.model_label, id="console-model-chip")
-            yield self._chip(self.state.persona_label, id="console-persona-chip")
-            yield self._chip(self.state.rag_label, id="console-rag-chip")
-            yield self._chip(
-                self.state.sources_label,
-                id="console-sources-chip",
-                emphasis=self.state.sources_active,
-            )
-            yield self._chip(
-                self.state.tools_label,
-                id="console-tools-chip",
-                emphasis=self.state.tools_active,
-            )
-            yield self._chip(
-                self.state.approvals_label,
-                id="console-approvals-chip",
-                emphasis=self.state.approvals_active,
-                chip_class=ConsoleApprovalsChip,
-            )
-        with Horizontal(id="console-control-action-row", classes="console-control-action-row"):
+        with Horizontal(
+            id="console-control-action-row", classes="console-control-action-row"
+        ):
             for action in self._visible_actions():
                 yield self._action(action)
-        yield self._compatibility_layout_widget(Static(
-            _summary_line(self.state),
-            id="console-control-status-line",
-            classes="console-control-summary-line",
-        ))
-        yield self._compatibility_layout_widget(Static(
-            self.state.provider_label,
-            id="console-provider-label",
-            classes="console-control-label console-hidden-control",
-        ))
-        yield self._compatibility_layout_widget(Static(
-            self.state.model_label,
-            id="console-model-label",
-            classes="console-control-label console-hidden-control",
-        ))
-        yield self._compatibility_layout_widget(Static(
-            self.state.persona_label,
-            id="console-persona-label",
-            classes="console-control-label console-hidden-control",
-        ))
-        yield self._compatibility_layout_widget(Static(
-            self.state.rag_label,
-            id="console-rag-label",
-            classes="console-control-label console-hidden-control",
-        ))
-        yield self._compatibility_layout_widget(Static(
-            self.state.sources_label,
-            id="console-sources-label",
-            classes="console-control-label console-hidden-control",
-        ))
-        yield self._compatibility_layout_widget(Static(
-            self.state.tools_label,
-            id="console-tools-label",
-            classes="console-control-label console-hidden-control",
-        ))
-        yield self._compatibility_layout_widget(Static(
-            self.state.approvals_label,
-            id="console-approvals-label",
-            classes="console-control-label console-hidden-control",
-        ))
-        yield self._compatibility_layout_widget(CompactModelBar(
-            self.app_instance,
-            on_sidebar_toggle_requested=self.on_sidebar_toggle_requested,
-            id="console-compact-model-bar",
-            classes="console-compact-model-bar console-hidden-control",
-        ))
+        yield self._compatibility_layout_widget(
+            Static(
+                _summary_line(self.state),
+                id="console-control-status-line",
+                classes="console-control-summary-line",
+            )
+        )
+        yield self._compatibility_layout_widget(
+            Static(
+                self.state.provider_label,
+                id="console-provider-label",
+                classes="console-control-label console-hidden-control",
+            )
+        )
+        yield self._compatibility_layout_widget(
+            Static(
+                self.state.model_label,
+                id="console-model-label",
+                classes="console-control-label console-hidden-control",
+            )
+        )
+        yield self._compatibility_layout_widget(
+            Static(
+                self.state.persona_label,
+                id="console-persona-label",
+                classes="console-control-label console-hidden-control",
+            )
+        )
+        yield self._compatibility_layout_widget(
+            Static(
+                self.state.rag_label,
+                id="console-rag-label",
+                classes="console-control-label console-hidden-control",
+            )
+        )
+        yield self._compatibility_layout_widget(
+            Static(
+                self.state.sources_label,
+                id="console-sources-label",
+                classes="console-control-label console-hidden-control",
+            )
+        )
+        yield self._compatibility_layout_widget(
+            Static(
+                self.state.tools_label,
+                id="console-tools-label",
+                classes="console-control-label console-hidden-control",
+            )
+        )
+        yield self._compatibility_layout_widget(
+            Static(
+                self.state.approvals_label,
+                id="console-approvals-label",
+                classes="console-control-label console-hidden-control",
+            )
+        )
+        yield self._compatibility_layout_widget(
+            CompactModelBar(
+                self.app_instance,
+                on_sidebar_toggle_requested=self.on_sidebar_toggle_requested,
+                id="console-compact-model-bar",
+                classes="console-compact-model-bar console-hidden-control",
+            )
+        )
 
     @on(Button.Pressed, ".console-control-action")
     def on_console_control_action_pressed(self, event: Button.Pressed) -> None:
@@ -388,40 +309,3 @@ class ConsoleControlBar(Vertical):
             return
         event.stop()
         self.post_message(WorkbenchActionRequested(action_id))
-
-    @on(ConsoleApprovalsChip.ReviewRequested)
-    def on_approval_review_requested(self, event: ConsoleApprovalsChip.ReviewRequested) -> None:
-        """Focus the pending approval card in the transcript.
-
-        Falls back to the run inspector's notification seam when no approval
-        is pending, so the keyboard-only path never dead-ends silently.
-        """
-        event.stop()
-        self._focus_pending_approval_card()
-
-    def _focus_pending_approval_card(self) -> None:
-        """Scroll the displayed approval card into view and focus its action."""
-        try:
-            cards = list(self.screen.query("#chat-approval-card"))
-        except Exception:
-            cards = []
-        card = next(
-            (candidate for candidate in cards if isinstance(candidate, ChatApprovalCard) and candidate.display),
-            None,
-        )
-        if card is None:
-            self.app.notify(CONSOLE_INSPECTOR_NO_APPROVAL_REASON, severity="warning")
-            return
-        try:
-            card.scroll_visible(animate=False)
-        except Exception:
-            pass
-        try:
-            batch_visible = card.query_one("#approval-batch-body").display
-        except NoMatches:
-            batch_visible = False
-        target_id = "#approval-submit" if batch_visible else "#approval-allow-once"
-        try:
-            card.query_one(target_id, Button).focus()
-        except NoMatches:
-            pass

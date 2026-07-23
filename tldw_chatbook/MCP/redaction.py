@@ -109,4 +109,6 @@ def redact_url(url: str) -> str:
         (key, REDACTED if is_secret_key(key) else value)
         for key, value in parse_qsl(parts.query, keep_blank_values=True)
     ]
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+    return urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
+    )

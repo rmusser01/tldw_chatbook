@@ -1,4 +1,5 @@
 """The controller send path runs the agent loop when the bridge is wired."""
+
 import asyncio
 import json
 import threading
@@ -13,17 +14,27 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Agents.agent_models import (
-    AgentStep, RunOutcome, RUN_DONE, RUN_ERROR, RUN_STUCK, SPAWN_TOOL_NAME,
-    STEP_ERROR, STEP_TOOL_RESULT,
+    AgentStep,
+    RunOutcome,
+    RUN_DONE,
+    RUN_ERROR,
+    RUN_STUCK,
+    SPAWN_TOOL_NAME,
+    STEP_ERROR,
+    STEP_TOOL_RESULT,
 )
 from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
-from Tests.Agents.test_mcp_tool_provider import FakeMCPService, _catalog_record, _tool_dict
+from Tests.Agents.test_mcp_tool_provider import (
+    FakeMCPService,
+    _catalog_record,
+    _tool_dict,
+)
 
 
 def _fence(name, args):
-    return f'{FENCE_OPEN}\n{json.dumps({"name": name, "arguments": args})}\n```'
+    return f"{FENCE_OPEN}\n{json.dumps({'name': name, 'arguments': args})}\n```"
 
 
 class _Gateway:
@@ -36,6 +47,7 @@ class _Gateway:
             ready = True
             provider = "llama_cpp"
             visible_copy = ""
+
         return _R()
 
     async def stream_chat(self, resolution, messages):
@@ -51,8 +63,13 @@ def _controller(tmp_path, scripts, *, enabled=True):
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
-        store=store, provider_gateway=gateway, provider="llama_cpp", model="test-model",
-        agent_bridge=bridge, agent_runtime_enabled=enabled)
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="test-model",
+        agent_bridge=bridge,
+        agent_runtime_enabled=enabled,
+    )
     return controller, store, db
 
 
@@ -75,23 +92,28 @@ async def test_agent_send_no_tools_streams_like_today(tmp_path):
 @pytest.mark.asyncio
 async def test_agent_tool_turn_renders_marker_not_prose(tmp_path):
     controller, store, _db = _controller(
-        tmp_path, [[_fence("calculator", {"expression": "6*7"})], ["It is ", "42."]])
+        tmp_path, [[_fence("calculator", {"expression": "6*7"})], ["It is ", "42."]]
+    )
     await controller.submit_draft("what is 6*7?")
     messages = store.messages_for_session(store.active_session_id)
     assert any(m.role is ConsoleMessageRole.TOOL for m in messages)
-    assert all(FENCE_OPEN not in m.content for m in messages
-               if m.role is ConsoleMessageRole.ASSISTANT)
+    assert all(
+        FENCE_OPEN not in m.content
+        for m in messages
+        if m.role is ConsoleMessageRole.ASSISTANT
+    )
 
 
 @pytest.mark.asyncio
 async def test_stop_cancels_tree_and_persists_cancelled(tmp_path):
     controller, store, db = _controller(
-        tmp_path, [[_fence("calculator", {"expression": "1"})], ["late"]])
+        tmp_path, [[_fence("calculator", {"expression": "1"})], ["late"]]
+    )
 
     original = controller._agent_bridge.run_reply
 
     def cancel_after_first(*args, **kwargs):
-        controller._stop_requested = True         # simulate Stop during the run
+        controller._stop_requested = True  # simulate Stop during the run
         return original(*args, **kwargs)
 
     controller._agent_bridge.run_reply = cancel_after_first
@@ -154,8 +176,13 @@ async def test_stop_during_parked_bridge_thread_persists_cancelled_not_done(tmp_
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
-        store=store, provider_gateway=gateway, provider="llama_cpp", model="test-model",
-        agent_bridge=bridge, agent_runtime_enabled=True)
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="test-model",
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+    )
 
     send_task = asyncio.ensure_future(controller.submit_draft("hello"))
 
@@ -163,7 +190,9 @@ async def test_stop_during_parked_bridge_thread_persists_cancelled_not_done(tmp_
         if gateway.started.is_set():
             break
         await asyncio.sleep(0.01)
-    assert gateway.started.is_set(), "bridge thread never reached the parked gateway call"
+    assert gateway.started.is_set(), (
+        "bridge thread never reached the parked gateway call"
+    )
 
     # Stop while the bridge's worker thread is genuinely mid-turn -- a
     # real cross-task cancellation, not a manually-flipped test flag.
@@ -173,7 +202,8 @@ async def test_stop_during_parked_bridge_thread_persists_cancelled_not_done(tmp_
 
     session_id = store.active_session_id
     assistant = next(
-        m for m in store.messages_for_session(session_id)
+        m
+        for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
     )
     assert assistant.status == "stopped"
@@ -228,7 +258,8 @@ async def test_finalize_after_already_stopped_is_a_benign_noop(tmp_path):
 
     session_id = store.active_session_id
     assistant = next(
-        m for m in store.messages_for_session(session_id)
+        m
+        for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
     )
     assert assistant.status == "stopped"
@@ -260,7 +291,8 @@ async def test_finalize_after_already_stopped_regenerate_no_phantom_variant(tmp_
     assert first.accepted is True
     session_id = store.active_session_id
     assistant = next(
-        m for m in store.messages_for_session(session_id)
+        m
+        for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
     )
     assert assistant.status == "complete"
@@ -311,7 +343,8 @@ async def test_finalize_after_already_stopped_regenerate_error_no_wedge(tmp_path
     assert first.accepted is True
     session_id = store.active_session_id
     assistant = next(
-        m for m in store.messages_for_session(session_id)
+        m
+        for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
     )
     assert assistant.status == "complete"
@@ -321,7 +354,9 @@ async def test_finalize_after_already_stopped_regenerate_error_no_wedge(tmp_path
         store.mark_message_stopped(assistant_message_id)
         return RunOutcome(
             status=RUN_ERROR,
-            steps=[AgentStep(index=0, kind=STEP_ERROR, summary="late regenerate error")],
+            steps=[
+                AgentStep(index=0, kind=STEP_ERROR, summary="late regenerate error")
+            ],
         )
 
     controller._agent_bridge.run_reply = parked_regenerate_error_reply
@@ -377,7 +412,8 @@ async def test_stop_before_first_token_persists_cancelled_no_agent_run_failed(tm
         # (slow) provider is still silent.
         session_id = store.active_session_id
         assistant_message_id = next(
-            m.id for m in reversed(store.messages_for_session(session_id))
+            m.id
+            for m in reversed(store.messages_for_session(session_id))
             if m.role is ConsoleMessageRole.ASSISTANT
         )
         store.mark_message_stopped(assistant_message_id)
@@ -457,11 +493,15 @@ async def test_bridge_exception_fails_message_and_unwedges_controller(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_error_via_submit_is_failed_retryable_and_excluded_from_context(tmp_path):
+async def test_run_error_via_submit_is_failed_retryable_and_excluded_from_context(
+    tmp_path,
+):
     controller, store, _db = _controller(tmp_path, [["unused"]])
 
     def erroring_run_reply(*, assistant_message_id, **_kwargs):
-        store.append_stream_chunk(assistant_message_id, "partial answer before erroring")
+        store.append_stream_chunk(
+            assistant_message_id, "partial answer before erroring"
+        )
         return RunOutcome(
             status=RUN_ERROR,
             steps=[AgentStep(index=0, kind=STEP_ERROR, summary="tool exploded")],
@@ -473,7 +513,8 @@ async def test_run_error_via_submit_is_failed_retryable_and_excluded_from_contex
 
     session_id = store.active_session_id
     assistant = next(
-        m for m in store.messages_for_session(session_id)
+        m
+        for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
     )
     assert assistant.status == "failed"
@@ -506,7 +547,9 @@ async def test_run_stuck_outcome_is_visibly_failed_not_silent_complete(tmp_path)
         store.append_stream_chunk(assistant_message_id, "still thinking about it")
         return RunOutcome(
             status=RUN_STUCK,
-            steps=[AgentStep(index=0, kind=STEP_ERROR, summary="step budget exhausted")],
+            steps=[
+                AgentStep(index=0, kind=STEP_ERROR, summary="step budget exhausted")
+            ],
         )
 
     controller._agent_bridge.run_reply = stuck_run_reply
@@ -538,7 +581,8 @@ async def test_run_error_via_regenerate_preserves_original_answer_and_status(tmp
     assert first.accepted is True
     session_id = store.active_session_id
     assistant = next(
-        m for m in store.messages_for_session(session_id)
+        m
+        for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
     )
     assert assistant.content == "good original answer."
@@ -562,7 +606,8 @@ async def test_run_error_via_regenerate_preserves_original_answer_and_status(tmp
     # never touched the persisted message at all.
     assert restored.variants is None
     system_rows = [
-        m for m in store.messages_for_session(session_id)
+        m
+        for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.SYSTEM
     ]
     assert system_rows and "regenerate exploded" in system_rows[-1].content
@@ -586,7 +631,8 @@ async def test_retry_through_agent_path_uses_bridge_and_completes(tmp_path):
     assert first.accepted is True
     session_id = store.active_session_id
     assistant = next(
-        m for m in store.messages_for_session(session_id)
+        m
+        for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
     )
     assert assistant.status == "failed"
@@ -607,14 +653,17 @@ async def test_retry_through_agent_path_uses_bridge_and_completes(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_continue_through_agent_path_uses_bridge_and_appends_new_message(tmp_path):
+async def test_continue_through_agent_path_uses_bridge_and_appends_new_message(
+    tmp_path,
+):
     controller, store, _db = _controller(
         tmp_path, [["Paris is the capital."], [" It has the Eiffel Tower."]]
     )
     await controller.submit_draft("tell me about France")
     session_id = store.active_session_id
     first_assistant = next(
-        m for m in store.messages_for_session(session_id)
+        m
+        for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
     )
     assert first_assistant.content == "Paris is the capital."
@@ -639,14 +688,17 @@ async def test_continue_through_agent_path_uses_bridge_and_appends_new_message(t
 
 
 @pytest.mark.asyncio
-async def test_regenerate_through_agent_path_uses_bridge_and_selects_new_variant(tmp_path):
+async def test_regenerate_through_agent_path_uses_bridge_and_selects_new_variant(
+    tmp_path,
+):
     controller, store, _db = _controller(
         tmp_path, [["first answer."], ["second answer."]]
     )
     await controller.submit_draft("hi")
     session_id = store.active_session_id
     assistant = next(
-        m for m in store.messages_for_session(session_id)
+        m
+        for m in store.messages_for_session(session_id)
         if m.role is ConsoleMessageRole.ASSISTANT
     )
     assert assistant.content == "first answer."
@@ -749,6 +801,7 @@ def _capturing_run_reply(captured, *, final_text="ok."):
     def run_reply(**kwargs):
         captured.append(kwargs)
         return RunOutcome(status=RUN_DONE, steps=[], final_text=final_text)
+
     return run_reply
 
 
@@ -804,7 +857,9 @@ async def test_mcp_provider_wired_when_eligible(tmp_path):
     controller, store, _db = _controller(tmp_path, [["ok."]])
     captured = []
     controller._agent_bridge.run_reply = _capturing_run_reply(captured)
-    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
     controller.app = _fake_app(service)
 
     result = await controller.submit_draft("hi")
@@ -842,7 +897,9 @@ async def test_mcp_tool_call_executes_end_to_end_when_state_allows(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_mcp_tool_call_ask_state_routes_through_review_hook_and_approves(tmp_path):
+async def test_mcp_tool_call_ask_state_routes_through_review_hook_and_approves(
+    tmp_path,
+):
     """The T4/T6 review hook collects the pending call, makes ONE
     `request_mcp_approvals` round trip, and a UI-thread approval lets the
     call actually execute -- full worker-thread <-> UI-thread round trip
@@ -853,7 +910,9 @@ async def test_mcp_tool_call_ask_state_routes_through_review_hook_and_approves(t
     ]
     controller, store, _db = _controller(tmp_path, scripts)
     received: list[dict | None] = []
-    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
     controller.app = _fake_app(service)
     controller.set_pending_approval = received.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
@@ -874,7 +933,9 @@ async def test_mcp_tool_call_ask_state_routes_through_review_hook_and_approves(t
     messages = store.messages_for_session(store.active_session_id)
     assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
     assert assistant.content == "approved and done."
-    assert service.execute_calls == [("local:srv", "run", {"x": 1}, "agent", "approved")]
+    assert service.execute_calls == [
+        ("local:srv", "run", {"x": 1}, "agent", "approved")
+    ]
     assert received[-1] is None  # the card is always cleared afterwards
 
 
@@ -894,7 +955,9 @@ async def test_mcp_tool_call_session_approval_suppresses_card_on_next_turn(tmp_p
     ]
     controller, store, _db = _controller(tmp_path, scripts)
     received: list[dict | None] = []
-    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
     controller.app = _fake_app(service)
     controller.set_pending_approval = received.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
@@ -941,7 +1004,9 @@ async def test_mcp_tool_call_ask_state_times_out_denies(tmp_path):
         ["it was refused."],
     ]
     controller, store, _db = _controller(tmp_path, scripts)
-    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
     controller.app = _fake_app(service)
     controller.mcp_approval_timeout_seconds = lambda: 0.05
 
@@ -1006,7 +1071,9 @@ async def test_compose_mcp_provider_publishes_none_counts_when_catalog_empty(tmp
 
 
 @pytest.mark.asyncio
-async def test_compose_mcp_provider_publishes_none_counts_when_get_kill_switch_raises(tmp_path):
+async def test_compose_mcp_provider_publishes_none_counts_when_get_kill_switch_raises(
+    tmp_path,
+):
     controller, _store, _db = _controller(tmp_path, [["ok."]])
 
     class _RaisingService:
@@ -1047,7 +1114,9 @@ async def test_compose_mcp_provider_publishes_counts_when_eligible(tmp_path):
     assert callable(hook)
     assert controller.app.console_mcp_tool_count == len(provider.list_catalog())
     assert controller.app.console_mcp_tool_count == 2
-    assert controller.app.console_mcp_not_connected_count == provider.not_connected_count
+    assert (
+        controller.app.console_mcp_not_connected_count == provider.not_connected_count
+    )
     assert controller.app.console_mcp_not_connected_count == 1
 
 
@@ -1068,12 +1137,14 @@ async def test_mcp_tool_call_gates_subagent_call_same_as_primary(tmp_path):
     child's own `LoopDeps`/`invoke_tool`, not a bespoke unwired path."""
     scripts = [
         [_fence(SPAWN_TOOL_NAME, {"task": "please run it"})],  # primary: spawn a child
-        [_fence("mcp__srv__run", {"x": 1})],                    # child: call the MCP tool
-        ["child refused."],                                      # child: final answer
-        ["primary done."],                                        # primary: final answer
+        [_fence("mcp__srv__run", {"x": 1})],  # child: call the MCP tool
+        ["child refused."],  # child: final answer
+        ["primary done."],  # primary: final answer
     ]
     controller, store, db = _controller(tmp_path, scripts)
-    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
     controller.app = _fake_app(service)
     controller.mcp_approval_timeout_seconds = lambda: 0.05
 
@@ -1087,7 +1158,9 @@ async def test_mcp_tool_call_gates_subagent_call_same_as_primary(tmp_path):
     child_steps = json.loads(subagent_runs[0]["steps"])
     tool_result_steps = [s for s in child_steps if s["kind"] == STEP_TOOL_RESULT]
     assert tool_result_steps, "the child never attempted the gated MCP tool call"
-    assert "user did not approve within the time limit" in tool_result_steps[0]["result"]
+    assert (
+        "user did not approve within the time limit" in tool_result_steps[0]["result"]
+    )
 
     messages = store.messages_for_session(store.active_session_id)
     assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
@@ -1109,7 +1182,9 @@ async def test_mcp_review_hook_raise_fails_open_but_invoke_gate_still_refuses(tm
         ["it was refused too."],
     ]
     controller, store, _db = _controller(tmp_path, scripts)
-    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
     controller.app = _fake_app(service)
 
     def _raise(_pending):
@@ -1123,4 +1198,6 @@ async def test_mcp_review_hook_raise_fails_open_but_invoke_gate_still_refuses(tm
     messages = store.messages_for_session(store.active_session_id)
     assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
     assert assistant.content == "it was refused too."
-    assert service.execute_calls == []  # never invoked -- refused by invoke()'s own gate
+    assert (
+        service.execute_calls == []
+    )  # never invoked -- refused by invoke()'s own gate

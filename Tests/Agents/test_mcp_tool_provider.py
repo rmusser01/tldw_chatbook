@@ -9,7 +9,6 @@ rather than being hidden by a permissive fake.
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import threading
 import time
 from types import SimpleNamespace
@@ -29,7 +28,9 @@ from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
 
-def _catalog_record(profile_id: str, tools: list[dict], *, is_connected: bool = True) -> dict:
+def _catalog_record(
+    profile_id: str, tools: list[dict], *, is_connected: bool = True
+) -> dict:
     return {
         "profile_id": profile_id,
         "is_connected": is_connected,
@@ -37,7 +38,9 @@ def _catalog_record(profile_id: str, tools: list[dict], *, is_connected: bool = 
     }
 
 
-def _tool_dict(name: str, description: str = "", input_schema: dict | None = None) -> dict:
+def _tool_dict(
+    name: str, description: str = "", input_schema: dict | None = None
+) -> dict:
     raw = {"name": name, "description": description}
     if input_schema is not None:
         raw["inputSchema"] = input_schema
@@ -64,10 +67,13 @@ class FakeMCPService:
         self.catalog_records = catalog_records or []
         self.inventory = inventory if inventory is not None else {"tools": []}
         self.states = states or {}
-        self.default_state = default_state or EffectiveToolState(state="ask", origin="global_default")
+        self.default_state = default_state or EffectiveToolState(
+            state="ask", origin="global_default"
+        )
         self.tool_call_timeout = tool_call_timeout
         self.execute_result = (
-            execute_result if execute_result is not None
+            execute_result
+            if execute_result is not None
             else {"content": [{"type": "text", "text": "ok"}]}
         )
         self.execute_raises = execute_raises
@@ -86,9 +92,13 @@ class FakeMCPService:
     async def local_external_catalog(self) -> list[dict]:
         return self.catalog_records
 
-    def effective_tool_states(self, tools: list[HubTool]) -> dict[tuple[str, str], EffectiveToolState]:
+    def effective_tool_states(
+        self, tools: list[HubTool]
+    ) -> dict[tuple[str, str], EffectiveToolState]:
         return {
-            (t.server_key, t.name): self.states.get((t.server_key, t.name), self.default_state)
+            (t.server_key, t.name): self.states.get(
+                (t.server_key, t.name), self.default_state
+            )
             for t in tools
         }
 
@@ -102,23 +112,40 @@ class FakeMCPService:
     def is_session_approved(self, server_key: str, tool_name: str) -> bool:
         return (server_key, tool_name) in self.session_approvals
 
-    def set_tool_state(self, server_key: str, tool_name: str, ui_state, *, tool=None) -> None:
+    def set_tool_state(
+        self, server_key: str, tool_name: str, ui_state, *, tool=None
+    ) -> None:
         self.set_tool_state_calls.append((server_key, tool_name, ui_state, tool))
 
     def record_tool_decision(
-        self, server_key: str, tool_name: str, *, decision: str,
-        initiator: str = "agent", error: str | None = None,
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        decision: str,
+        initiator: str = "agent",
+        error: str | None = None,
     ) -> None:
-        self.record_tool_decision_calls.append((server_key, tool_name, decision, initiator, error))
+        self.record_tool_decision_calls.append(
+            (server_key, tool_name, decision, initiator, error)
+        )
 
     def _tool_call_timeout(self) -> float:
         return self.tool_call_timeout
 
     async def execute_hub_tool(
-        self, server_key: str, tool_name: str, arguments: dict | None = None, *,
-        initiator: str = "test", decision: str = "allowed", timeout_seconds: float | None = None,
+        self,
+        server_key: str,
+        tool_name: str,
+        arguments: dict | None = None,
+        *,
+        initiator: str = "test",
+        decision: str = "allowed",
+        timeout_seconds: float | None = None,
     ) -> dict:
-        self.execute_calls.append((server_key, tool_name, dict(arguments or {}), initiator, decision))
+        self.execute_calls.append(
+            (server_key, tool_name, dict(arguments or {}), initiator, decision)
+        )
         if self.execute_delay:
             await asyncio.sleep(self.execute_delay)
         if self.execute_raises is not None:
@@ -154,6 +181,7 @@ def _compose(provider: MCPToolProvider) -> None:
 # compose_catalog
 # ---------------------------------------------------------------------------
 
+
 def test_compose_catalog_kill_switch_on_yields_empty_catalog():
     service = FakeMCPService(
         kill_switch=True,
@@ -167,10 +195,16 @@ def test_compose_catalog_kill_switch_on_yields_empty_catalog():
 
 def test_compose_catalog_filters_deny_state():
     service = FakeMCPService(
-        catalog_records=[_catalog_record("srv", [_tool_dict("keep"), _tool_dict("drop")])],
+        catalog_records=[
+            _catalog_record("srv", [_tool_dict("keep"), _tool_dict("drop")])
+        ],
         states={
-            ("local:srv", "keep"): EffectiveToolState(state="allow", origin="tool_override"),
-            ("local:srv", "drop"): EffectiveToolState(state="deny", origin="tool_override"),
+            ("local:srv", "keep"): EffectiveToolState(
+                state="allow", origin="tool_override"
+            ),
+            ("local:srv", "drop"): EffectiveToolState(
+                state="deny", origin="tool_override"
+            ),
         },
     )
     provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
@@ -181,7 +215,9 @@ def test_compose_catalog_filters_deny_state():
 
 
 def test_compose_catalog_includes_builtin_inventory():
-    service = FakeMCPService(inventory={"tools": [{"name": "calc", "description": "adds"}]})
+    service = FakeMCPService(
+        inventory={"tools": [{"name": "calc", "description": "adds"}]}
+    )
     provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
     _compose(provider)
     names = {e.name for e in provider.list_catalog()}
@@ -193,10 +229,12 @@ def test_compose_catalog_dedupes_colliding_llm_names():
     # post-sanitization collision, exercising the T1 handoff requirement:
     # names are computed for ALL tools first, then ONE dedupe_names() pass
     # runs over the whole list.
-    service = FakeMCPService(catalog_records=[
-        _catalog_record("server.1", [_tool_dict("run")]),
-        _catalog_record("server_1", [_tool_dict("run")]),
-    ])
+    service = FakeMCPService(
+        catalog_records=[
+            _catalog_record("server.1", [_tool_dict("run")]),
+            _catalog_record("server_1", [_tool_dict("run")]),
+        ]
+    )
     provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
     _compose(provider)
     names = [e.name for e in provider.list_catalog()]
@@ -213,7 +251,9 @@ def test_not_connected_count_counts_distinct_eligible_stale_servers():
             _catalog_record("b", [_tool_dict("t2")], is_connected=False),
             _catalog_record("c", [_tool_dict("t3")], is_connected=True),
         ],
-        states={("local:b", "t2"): EffectiveToolState(state="deny", origin="tool_override")},
+        states={
+            ("local:b", "t2"): EffectiveToolState(state="deny", origin="tool_override")
+        },
     )
     provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
     _compose(provider)
@@ -226,8 +266,11 @@ def test_not_connected_count_counts_distinct_eligible_stale_servers():
 # list_catalog / load_schema
 # ---------------------------------------------------------------------------
 
+
 def test_load_schema_defaults_missing_input_schema_to_empty_object():
-    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
     provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
@@ -238,9 +281,15 @@ def test_load_schema_defaults_missing_input_schema_to_empty_object():
 
 
 def test_load_schema_passes_through_existing_input_schema():
-    raw_schema = {"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"]}
+    raw_schema = {
+        "type": "object",
+        "properties": {"q": {"type": "string"}},
+        "required": ["q"],
+    }
     service = FakeMCPService(
-        catalog_records=[_catalog_record("srv", [_tool_dict("run", input_schema=raw_schema)])]
+        catalog_records=[
+            _catalog_record("srv", [_tool_dict("run", input_schema=raw_schema)])
+        ]
     )
     provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
     _compose(provider)
@@ -250,7 +299,9 @@ def test_load_schema_passes_through_existing_input_schema():
 
 
 def test_load_schema_unknown_id_raises_key_error():
-    provider = MCPToolProvider(service=FakeMCPService(), main_loop=asyncio.new_event_loop())
+    provider = MCPToolProvider(
+        service=FakeMCPService(), main_loop=asyncio.new_event_loop()
+    )
     with pytest.raises(KeyError):
         provider.load_schema("mcp__nope__run")
 
@@ -259,11 +310,14 @@ def test_load_schema_unknown_id_raises_key_error():
 # apply_batch_decisions / stamped_decision
 # ---------------------------------------------------------------------------
 
+
 def test_apply_batch_decisions_then_stamped_decision_is_a_peek_not_a_pop():
     # Finding F1: stamped_decision() must NOT consume the stamp -- every
     # call sharing an llm_name within the same turn has to see the same
     # verdict, so reading it twice must return the same value both times.
-    provider = MCPToolProvider(service=FakeMCPService(), main_loop=asyncio.new_event_loop())
+    provider = MCPToolProvider(
+        service=FakeMCPService(), main_loop=asyncio.new_event_loop()
+    )
     provider.apply_batch_decisions({"mcp__srv__run": "deny"})
     assert provider.stamped_decision("mcp__srv__run") == "deny"
     assert provider.stamped_decision("mcp__srv__run") == "deny"
@@ -273,7 +327,9 @@ def test_apply_batch_decisions_replaces_rather_than_merges_prior_stamps():
     # Finding F1: apply_batch_decisions is called once per turn (even with
     # `{}` when nothing needed gating) specifically so a stamp from an
     # earlier turn can never survive into a later one via a stale merge.
-    provider = MCPToolProvider(service=FakeMCPService(), main_loop=asyncio.new_event_loop())
+    provider = MCPToolProvider(
+        service=FakeMCPService(), main_loop=asyncio.new_event_loop()
+    )
     provider.apply_batch_decisions({"mcp__srv__run": "approve_once"})
     assert provider.stamped_decision("mcp__srv__run") == "approve_once"
 
@@ -304,6 +360,7 @@ def test_compose_catalog_clears_stale_stamped_decisions():
 # pending_gate_for
 # ---------------------------------------------------------------------------
 
+
 def test_pending_gate_for_returns_none_for_allow_and_deny():
     # Both tools start "ask" (the default) so BOTH survive compose_catalog's
     # own deny-filter and land in the catalog. pending_gate_for() re-resolves
@@ -311,7 +368,11 @@ def test_pending_gate_for_returns_none_for_allow_and_deny():
     # mutating state after compose is exactly what this observes, and
     # mirrors invoke()'s own fresh-gate design.
     service = FakeMCPService(
-        catalog_records=[_catalog_record("srv", [_tool_dict("allowed_tool"), _tool_dict("denied_tool")])],
+        catalog_records=[
+            _catalog_record(
+                "srv", [_tool_dict("allowed_tool"), _tool_dict("denied_tool")]
+            )
+        ],
     )
     provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
     _compose(provider)
@@ -319,8 +380,12 @@ def test_pending_gate_for_returns_none_for_allow_and_deny():
     allow_id = next(v for k, v in by_name.items() if "allowed_tool" in k)
     deny_id = next(v for k, v in by_name.items() if "denied_tool" in k)
 
-    service.states[("local:srv", "allowed_tool")] = EffectiveToolState(state="allow", origin="tool_override")
-    service.states[("local:srv", "denied_tool")] = EffectiveToolState(state="deny", origin="tool_override")
+    service.states[("local:srv", "allowed_tool")] = EffectiveToolState(
+        state="allow", origin="tool_override"
+    )
+    service.states[("local:srv", "denied_tool")] = EffectiveToolState(
+        state="deny", origin="tool_override"
+    )
 
     assert provider.pending_gate_for(allow_id, {}) is None
     assert provider.pending_gate_for(deny_id, {}) is None
@@ -328,12 +393,16 @@ def test_pending_gate_for_returns_none_for_allow_and_deny():
 
 def test_pending_gate_for_ask_reports_config_changed_and_risk_floored_reasons():
     service = FakeMCPService(
-        catalog_records=[_catalog_record("srv", [_tool_dict("cfg"), _tool_dict("risky")])],
+        catalog_records=[
+            _catalog_record("srv", [_tool_dict("cfg"), _tool_dict("risky")])
+        ],
         states={
             ("local:srv", "cfg"): EffectiveToolState(
-                state="ask", origin="tool_override", config_changed=True),
+                state="ask", origin="tool_override", config_changed=True
+            ),
             ("local:srv", "risky"): EffectiveToolState(
-                state="ask", origin="server_default", risk_floored=True),
+                state="ask", origin="server_default", risk_floored=True
+            ),
         },
     )
     provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
@@ -352,7 +421,9 @@ def test_pending_gate_for_ask_reports_config_changed_and_risk_floored_reasons():
 
 
 def test_pending_gate_for_plain_ask_reason():
-    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
     provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
@@ -361,7 +432,9 @@ def test_pending_gate_for_plain_ask_reason():
 
 
 def test_pending_gate_for_unknown_name_returns_none():
-    provider = MCPToolProvider(service=FakeMCPService(), main_loop=asyncio.new_event_loop())
+    provider = MCPToolProvider(
+        service=FakeMCPService(), main_loop=asyncio.new_event_loop()
+    )
     assert provider.pending_gate_for("mcp__nope__run", {}) is None
 
 
@@ -372,7 +445,9 @@ def test_pending_gate_for_returns_none_when_session_approved():
     # here: it never consults `session_approvals`), so `pending_gate_for`
     # itself must consult `is_session_approved` -- without this, the tool
     # re-prompts on every turn even after a session approval.
-    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
     provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
@@ -385,8 +460,11 @@ def test_pending_gate_for_returns_none_when_session_approved():
 # invoke() -- unknown tool
 # ---------------------------------------------------------------------------
 
+
 def test_invoke_unknown_tool_id_returns_error():
-    provider = MCPToolProvider(service=FakeMCPService(), main_loop=asyncio.new_event_loop())
+    provider = MCPToolProvider(
+        service=FakeMCPService(), main_loop=asyncio.new_event_loop()
+    )
     result = provider.invoke("mcp__nope__run", {})
     assert result.ok is False
 
@@ -395,10 +473,15 @@ def test_invoke_unknown_tool_id_returns_error():
 # invoke() -- allow path
 # ---------------------------------------------------------------------------
 
+
 def test_invoke_allow_executes_and_returns_content(running_loop):
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
-        states={("local:srv", "run"): EffectiveToolState(state="allow", origin="tool_override")},
+        states={
+            ("local:srv", "run"): EffectiveToolState(
+                state="allow", origin="tool_override"
+            )
+        },
         execute_result={"content": [{"type": "text", "text": "42"}]},
     )
     provider = MCPToolProvider(service=service, main_loop=running_loop)
@@ -415,7 +498,11 @@ def test_invoke_allow_executes_and_returns_content(running_loop):
 def test_invoke_non_text_result_returns_placeholder(running_loop):
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
-        states={("local:srv", "run"): EffectiveToolState(state="allow", origin="tool_override")},
+        states={
+            ("local:srv", "run"): EffectiveToolState(
+                state="allow", origin="tool_override"
+            )
+        },
         execute_result={"content": [{"type": "image", "data": "base64=="}]},
     )
     provider = MCPToolProvider(service=service, main_loop=running_loop)
@@ -432,8 +519,15 @@ def test_invoke_result_truncated_and_redacted(running_loop):
     huge_text = "x" * 5000
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
-        states={("local:srv", "run"): EffectiveToolState(state="allow", origin="tool_override")},
-        execute_result={"content": [{"type": "text", "text": huge_text}], "api_key": "sekrit"},
+        states={
+            ("local:srv", "run"): EffectiveToolState(
+                state="allow", origin="tool_override"
+            )
+        },
+        execute_result={
+            "content": [{"type": "text", "text": huge_text}],
+            "api_key": "sekrit",
+        },
     )
     provider = MCPToolProvider(service=service, main_loop=running_loop)
     _compose(provider)
@@ -450,6 +544,7 @@ def test_invoke_result_truncated_and_redacted(running_loop):
 # invoke() -- deny path
 # ---------------------------------------------------------------------------
 
+
 def test_invoke_deny_refuses_and_records_decision(running_loop):
     # Compose with "allow" so the tool actually lands in the catalog, then
     # flip the store to "deny" before invoking -- invoke() must gate FRESH
@@ -462,13 +557,17 @@ def test_invoke_deny_refuses_and_records_decision(running_loop):
     provider = MCPToolProvider(service=service, main_loop=running_loop)
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
-    service.states[("local:srv", "run")] = EffectiveToolState(state="deny", origin="tool_override")
+    service.states[("local:srv", "run")] = EffectiveToolState(
+        state="deny", origin="tool_override"
+    )
 
     result = provider.invoke(tool_id, {})
 
     assert result.ok is False
     assert result.error == DENY_REFUSAL
-    assert service.record_tool_decision_calls == [("local:srv", "run", "denied", "agent", None)]
+    assert service.record_tool_decision_calls == [
+        ("local:srv", "run", "denied", "agent", None)
+    ]
     assert service.execute_calls == []
 
 
@@ -476,9 +575,14 @@ def test_invoke_deny_refuses_and_records_decision(running_loop):
 # invoke() -- ask path
 # ---------------------------------------------------------------------------
 
+
 def test_invoke_ask_without_callback_fails_closed(running_loop):
-    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
-    provider = MCPToolProvider(service=service, main_loop=running_loop)  # no approval_callback
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    provider = MCPToolProvider(
+        service=service, main_loop=running_loop
+    )  # no approval_callback
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
 
@@ -487,18 +591,24 @@ def test_invoke_ask_without_callback_fails_closed(running_loop):
     assert result.ok is False
     assert result.error == DENY_REFUSAL
     assert service.execute_calls == []
-    assert service.record_tool_decision_calls == [("local:srv", "run", "denied", "agent", None)]
+    assert service.record_tool_decision_calls == [
+        ("local:srv", "run", "denied", "agent", None)
+    ]
 
 
 def test_invoke_ask_callback_approve_once_executes_and_records_approved(running_loop):
-    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
     captured: dict = {}
 
     def approval_callback(pending: list[MCPPendingCall]) -> dict[str, str]:
         captured["pending"] = pending
         return {p.llm_name: "approve_once" for p in pending}
 
-    provider = MCPToolProvider(service=service, main_loop=running_loop, approval_callback=approval_callback)
+    provider = MCPToolProvider(
+        service=service, main_loop=running_loop, approval_callback=approval_callback
+    )
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
 
@@ -507,20 +617,33 @@ def test_invoke_ask_callback_approve_once_executes_and_records_approved(running_
     assert result.ok is True
     assert len(captured["pending"]) == 1
     assert captured["pending"][0] == MCPPendingCall(
-        llm_name=tool_id, server_key="local:srv", tool_name="run",
-        server_label="srv", arguments={"q": "hi"}, reason="ask",
+        llm_name=tool_id,
+        server_key="local:srv",
+        tool_name="run",
+        server_label="srv",
+        arguments={"q": "hi"},
+        reason="ask",
     )
-    assert service.execute_calls == [("local:srv", "run", {"q": "hi"}, "agent", "approved")]
+    assert service.execute_calls == [
+        ("local:srv", "run", {"q": "hi"}, "agent", "approved")
+    ]
     # approve_once has no persisted side effect.
     assert service.set_tool_state_calls == []
     assert service.approve_for_session_calls == []
 
 
-def test_invoke_ask_callback_approve_session_persists_and_short_circuits_next_call(running_loop):
-    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+def test_invoke_ask_callback_approve_session_persists_and_short_circuits_next_call(
+    running_loop,
+):
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
     provider = MCPToolProvider(
-        service=service, main_loop=running_loop,
-        approval_callback=lambda pending: {p.llm_name: "approve_session" for p in pending},
+        service=service,
+        main_loop=running_loop,
+        approval_callback=lambda pending: {
+            p.llm_name: "approve_session" for p in pending
+        },
     )
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
@@ -542,10 +665,15 @@ def test_invoke_ask_callback_approve_session_persists_and_short_circuits_next_ca
     assert service.execute_calls[1][4] == "approved"
 
 
-def test_invoke_ask_callback_always_allow_sets_tool_state_with_live_hub_tool(running_loop):
-    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+def test_invoke_ask_callback_always_allow_sets_tool_state_with_live_hub_tool(
+    running_loop,
+):
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
     provider = MCPToolProvider(
-        service=service, main_loop=running_loop,
+        service=service,
+        main_loop=running_loop,
         approval_callback=lambda pending: {p.llm_name: "always_allow" for p in pending},
     )
     _compose(provider)
@@ -563,9 +691,12 @@ def test_invoke_ask_callback_always_allow_sets_tool_state_with_live_hub_tool(run
 
 
 def test_invoke_ask_callback_deny_refuses(running_loop):
-    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
     provider = MCPToolProvider(
-        service=service, main_loop=running_loop,
+        service=service,
+        main_loop=running_loop,
         approval_callback=lambda pending: {p.llm_name: "deny" for p in pending},
     )
     _compose(provider)
@@ -579,9 +710,12 @@ def test_invoke_ask_callback_deny_refuses(running_loop):
 
 
 def test_invoke_ask_callback_missing_verdict_fails_closed(running_loop):
-    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
     provider = MCPToolProvider(
-        service=service, main_loop=running_loop,
+        service=service,
+        main_loop=running_loop,
         approval_callback=lambda pending: {},  # decisions dict lacks this call's name
     )
     _compose(provider)
@@ -594,12 +728,16 @@ def test_invoke_ask_callback_missing_verdict_fails_closed(running_loop):
 
 
 def test_invoke_ask_callback_raises_returns_error_never_raises(running_loop):
-    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
 
     def bad_callback(pending):
         raise RuntimeError("card crashed")
 
-    provider = MCPToolProvider(service=service, main_loop=running_loop, approval_callback=bad_callback)
+    provider = MCPToolProvider(
+        service=service, main_loop=running_loop, approval_callback=bad_callback
+    )
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
 
@@ -613,12 +751,15 @@ def test_invoke_ask_callback_raises_returns_error_never_raises(running_loop):
 # invoke() -- stamped verdicts (T6's batch-review closure path)
 # ---------------------------------------------------------------------------
 
+
 def test_invoke_stamped_deny_wins_for_every_call_this_turn_until_cleared(running_loop):
     """F1: a stamped verdict is PEEKED, not popped -- every call this turn
     sharing the tool id sees the same stamp. It only stops applying once
     `apply_batch_decisions` is called again (T6's closure does this every
     turn, even with `{}` when nothing needed gating)."""
-    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
     provider = MCPToolProvider(service=service, main_loop=running_loop)
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
@@ -647,7 +788,9 @@ def test_invoke_stamped_deny_wins_for_every_call_this_turn_until_cleared(running
 
 
 def test_invoke_stamped_timeout_uses_exact_model_facing_copy(running_loop):
-    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
     provider = MCPToolProvider(service=service, main_loop=running_loop)
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
@@ -662,7 +805,9 @@ def test_invoke_stamped_timeout_uses_exact_model_facing_copy(running_loop):
 
 
 def test_invoke_stamped_approve_once_executes(running_loop):
-    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
     provider = MCPToolProvider(service=service, main_loop=running_loop)
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
@@ -674,13 +819,17 @@ def test_invoke_stamped_approve_once_executes(running_loop):
     assert service.execute_calls[0][4] == "approved"
 
 
-def test_invoke_stamped_approve_once_applies_to_every_same_name_call_this_turn(running_loop):
+def test_invoke_stamped_approve_once_applies_to_every_same_name_call_this_turn(
+    running_loop,
+):
     """F1 (Qodo): a turn with TWO calls to the same llm_name must have
     BOTH execute off the single batch verdict -- pre-fix, `consume_
     decision` popped the stamp on first read, so only the first of two
     same-name calls executed and the second silently re-gated (and, with
     no approval_callback wired here, failed closed to deny instead)."""
-    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
     provider = MCPToolProvider(service=service, main_loop=running_loop)
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
@@ -704,10 +853,15 @@ def test_invoke_stamped_approve_once_applies_to_every_same_name_call_this_turn(r
 # invoke() -- execute-path failure modes (must never raise, never hang)
 # ---------------------------------------------------------------------------
 
+
 def test_invoke_execute_timeout_returns_error_within_bound(running_loop):
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
-        states={("local:srv", "run"): EffectiveToolState(state="allow", origin="tool_override")},
+        states={
+            ("local:srv", "run"): EffectiveToolState(
+                state="allow", origin="tool_override"
+            )
+        },
         execute_delay=999,
         # bound = tool_call_timeout() + 5s slack; a negative value keeps
         # this test fast (~0.1s) while still exercising the real formula.
@@ -733,7 +887,11 @@ def test_invoke_execute_timeout_still_records_an_audit_decision(running_loop):
     it failed, not silently lose it."""
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
-        states={("local:srv", "run"): EffectiveToolState(state="allow", origin="tool_override")},
+        states={
+            ("local:srv", "run"): EffectiveToolState(
+                state="allow", origin="tool_override"
+            )
+        },
         execute_delay=999,
         tool_call_timeout=-4.9,
     )
@@ -759,7 +917,11 @@ def test_invoke_execute_timeout_still_records_an_audit_decision(running_loop):
 def test_invoke_execute_exception_from_coroutine_returns_error(running_loop):
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
-        states={("local:srv", "run"): EffectiveToolState(state="allow", origin="tool_override")},
+        states={
+            ("local:srv", "run"): EffectiveToolState(
+                state="allow", origin="tool_override"
+            )
+        },
         execute_raises=RuntimeError("boom from execute_hub_tool"),
     )
     provider = MCPToolProvider(service=service, main_loop=running_loop)
@@ -783,7 +945,11 @@ def test_invoke_execute_on_closed_loop_returns_error_never_raises():
     closed_loop.close()
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
-        states={("local:srv", "run"): EffectiveToolState(state="allow", origin="tool_override")},
+        states={
+            ("local:srv", "run"): EffectiveToolState(
+                state="allow", origin="tool_override"
+            )
+        },
     )
     provider = MCPToolProvider(service=service, main_loop=closed_loop)
     _compose(provider)
@@ -822,6 +988,7 @@ def test_invoke_execute_on_closed_loop_returns_error_never_raises():
 # for a single logical failure.
 # ---------------------------------------------------------------------------
 
+
 class RealContractFakeMCPService:
     """`execute_hub_tool` double that records-then-raises exactly like the
     real service (unified_control_plane_service.py:1973-2059): wraps an
@@ -831,9 +998,13 @@ class RealContractFakeMCPService:
     then re-raises/returns exactly as the real method does.
     """
 
-    def __init__(self, *, inner_delay: float = 0.0,
-                 inner_raises: Exception | None = None,
-                 tool_call_timeout: float = 5.0) -> None:
+    def __init__(
+        self,
+        *,
+        inner_delay: float = 0.0,
+        inner_raises: Exception | None = None,
+        tool_call_timeout: float = 5.0,
+    ) -> None:
         self.audit_log: list[tuple] = []
         self.record_tool_decision_calls: list[tuple] = []
         self._inner_delay = inner_delay
@@ -847,9 +1018,15 @@ class RealContractFakeMCPService:
     async def local_external_catalog(self) -> list[dict]:
         return [_catalog_record("srv", [_tool_dict("run")])]
 
-    def effective_tool_states(self, tools: list[HubTool]) -> dict[tuple[str, str], EffectiveToolState]:
-        return {(t.server_key, t.name): EffectiveToolState(state="allow", origin="tool_override")
-                for t in tools}
+    def effective_tool_states(
+        self, tools: list[HubTool]
+    ) -> dict[tuple[str, str], EffectiveToolState]:
+        return {
+            (t.server_key, t.name): EffectiveToolState(
+                state="allow", origin="tool_override"
+            )
+            for t in tools
+        }
 
     def gate_tool_test(self, tool: HubTool) -> EffectiveToolState:
         return EffectiveToolState(state="allow", origin="tool_override")
@@ -858,21 +1035,38 @@ class RealContractFakeMCPService:
         return False
 
     def record_tool_decision(
-        self, server_key: str, tool_name: str, *, decision: str,
-        initiator: str = "agent", error: str | None = None,
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        decision: str,
+        initiator: str = "agent",
+        error: str | None = None,
     ) -> None:
         # Bridge-failure record path (MCPToolProvider._record_decision_safe).
-        self.record_tool_decision_calls.append((server_key, tool_name, decision, initiator, error))
+        self.record_tool_decision_calls.append(
+            (server_key, tool_name, decision, initiator, error)
+        )
         self.audit_log.append(("bridge_decision", decision, error))
 
     def _tool_call_timeout(self) -> float:
         return self._timeout_value
 
     async def execute_hub_tool(
-        self, server_key: str, tool_name: str, arguments: dict | None = None, *,
-        initiator: str = "test", decision: str = "allowed", timeout_seconds: float | None = None,
+        self,
+        server_key: str,
+        tool_name: str,
+        arguments: dict | None = None,
+        *,
+        initiator: str = "test",
+        decision: str = "allowed",
+        timeout_seconds: float | None = None,
     ) -> dict:
-        timeout = timeout_seconds if timeout_seconds is not None else self._tool_call_timeout()
+        timeout = (
+            timeout_seconds
+            if timeout_seconds is not None
+            else self._tool_call_timeout()
+        )
 
         async def _inner() -> dict:
             if self._inner_delay:
@@ -948,7 +1142,9 @@ def test_execute_submit_raise_closed_loop_records_exactly_once_real_contract():
     assert len(service.audit_log) == 1, service.audit_log
 
 
-def test_execute_outer_timeout_wedged_loop_records_exactly_once_real_contract(running_loop, monkeypatch):
+def test_execute_outer_timeout_wedged_loop_records_exactly_once_real_contract(
+    running_loop, monkeypatch
+):
     """(d) The wedged-loop case: the OUTER slack wait on the worker thread
     times out (`concurrent.futures.TimeoutError` from `future.result()`)
     while the coroutine is still running and has not reached its OWN inner
@@ -973,10 +1169,15 @@ def test_execute_outer_timeout_wedged_loop_records_exactly_once_real_contract(ru
 # invoke() -- kill switch checked at call time (Minor 5)
 # ---------------------------------------------------------------------------
 
+
 def test_invoke_refuses_when_kill_switch_flips_between_compose_and_invoke(running_loop):
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
-        states={("local:srv", "run"): EffectiveToolState(state="allow", origin="tool_override")},
+        states={
+            ("local:srv", "run"): EffectiveToolState(
+                state="allow", origin="tool_override"
+            )
+        },
     )
     provider = MCPToolProvider(service=service, main_loop=running_loop)
     _compose(provider)
@@ -992,11 +1193,15 @@ def test_invoke_refuses_when_kill_switch_flips_between_compose_and_invoke(runnin
     assert service.record_tool_decision_calls[-1][2] == "denied"
 
 
-def test_invoke_refuses_when_kill_switch_flips_even_with_a_stamped_verdict(running_loop):
+def test_invoke_refuses_when_kill_switch_flips_even_with_a_stamped_verdict(
+    running_loop,
+):
     """The kill-switch check wins over an earlier-this-turn stamp too --
     the T6 batch-review closure could have stamped `approve_once` before
     the kill switch flipped between review and dispatch."""
-    service = FakeMCPService(catalog_records=[_catalog_record("srv", [_tool_dict("run")])])
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
     provider = MCPToolProvider(service=service, main_loop=running_loop)
     _compose(provider)
     tool_id = provider.list_catalog()[0].id
@@ -1016,7 +1221,11 @@ def test_invoke_kill_switch_check_survives_getter_exception(running_loop):
     fails open, same as any other best-effort read in this provider."""
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
-        states={("local:srv", "run"): EffectiveToolState(state="allow", origin="tool_override")},
+        states={
+            ("local:srv", "run"): EffectiveToolState(
+                state="allow", origin="tool_override"
+            )
+        },
     )
     provider = MCPToolProvider(service=service, main_loop=running_loop)
     _compose(provider)  # kill_switch is still False here -- compose must succeed

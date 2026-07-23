@@ -18,6 +18,7 @@ In OpenTelemetry, labels are called 'attributes'. The same warning applies:
 attributes should only be used for values with low cardinality. Do not use
 user IDs, request IDs, etc., as attributes.
 """
+
 #
 # Imports
 import functools
@@ -25,6 +26,7 @@ import os
 import threading
 import time
 import logging
+
 #
 # Third-Party Libraries
 try:
@@ -33,10 +35,13 @@ try:
     from opentelemetry.instrumentation.system_metrics import SystemMetricsInstrumentor
     from opentelemetry.sdk.metrics import MeterProvider
     from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION
+
     OTEL_AVAILABLE = True
 except ImportError:
     OTEL_AVAILABLE = False
-    logging.warning("OpenTelemetry not installed. Advanced metrics features will be disabled.")
+    logging.warning(
+        "OpenTelemetry not installed. Advanced metrics features will be disabled."
+    )
 #
 # Local Imports
 #
@@ -66,17 +71,19 @@ def init_metrics():
     if not OTEL_AVAILABLE:
         logging.warning("OpenTelemetry not available. Metrics initialization skipped.")
         return
-        
+
     global _meter
 
     # Use standard OTel env vars for configuration.
     service_name = os.getenv("OTEL_SERVICE_NAME", "unknown_service")
     service_version = os.getenv("OTEL_SERVICE_VERSION", "0.1.0")
 
-    resource = Resource(attributes={
-        SERVICE_NAME: service_name,
-        SERVICE_VERSION: service_version,
-    })
+    resource = Resource(
+        attributes={
+            SERVICE_NAME: service_name,
+            SERVICE_VERSION: service_version,
+        }
+    )
 
     # The reader is the "exporter" for metrics.
     # This one starts a Prometheus-compatible server.
@@ -100,7 +107,9 @@ def _get_meter():
     if not OTEL_AVAILABLE:
         return None
     if not _meter:
-        logging.warning("Metrics not explicitly initialized. Calling init_metrics() with defaults.")
+        logging.warning(
+            "Metrics not explicitly initialized. Calling init_metrics() with defaults."
+        )
         init_metrics()
     return _meter
 
@@ -112,7 +121,7 @@ def _get_or_create_instrument(instrument_type, name, unit="", description=""):
     """
     if not OTEL_AVAILABLE:
         return None
-        
+
     if name in _instrument_registry:
         return _instrument_registry[name]
 
@@ -123,12 +132,14 @@ def _get_or_create_instrument(instrument_type, name, unit="", description=""):
         meter = _get_meter()
         if not meter:
             return None
-            
+
         instrument = None
-        if instrument_type == 'counter':
+        if instrument_type == "counter":
             instrument = meter.create_counter(name, unit=unit, description=description)
-        elif instrument_type == 'histogram':
-            instrument = meter.create_histogram(name, unit=unit, description=description)
+        elif instrument_type == "histogram":
+            instrument = meter.create_histogram(
+                name, unit=unit, description=description
+            )
         else:
             raise ValueError(f"Unsupported instrument type: {instrument_type}")
 
@@ -142,11 +153,13 @@ def log_counter(metric_name, value=1, labels=None, documentation=""):
     In OTel, 'labels' are called 'attributes'.
     """
     if not OTEL_AVAILABLE:
-        logging.debug(f"OpenTelemetry not available. Would have logged counter: {metric_name}")
+        logging.debug(
+            f"OpenTelemetry not available. Would have logged counter: {metric_name}"
+        )
         return
     try:
         counter = _get_or_create_instrument(
-            'counter', metric_name, unit="1", description=documentation
+            "counter", metric_name, unit="1", description=documentation
         )
         if counter:
             counter.add(value, attributes=(labels or {}))
@@ -159,11 +172,13 @@ def log_histogram(metric_name, value, labels=None, documentation=""):
     Records a value in a histogram. Documentation is used only on first creation.
     """
     if not OTEL_AVAILABLE:
-        logging.debug(f"OpenTelemetry not available. Would have logged histogram: {metric_name} = {value}")
+        logging.debug(
+            f"OpenTelemetry not available. Would have logged histogram: {metric_name} = {value}"
+        )
         return
     try:
         histogram = _get_or_create_instrument(
-            'histogram', metric_name, unit="s", description=documentation
+            "histogram", metric_name, unit="s", description=documentation
         )
         if histogram:
             histogram.record(value, attributes=(labels or {}))
@@ -171,7 +186,9 @@ def log_histogram(metric_name, value, labels=None, documentation=""):
         logging.error(f"Failed to log OTel histogram {metric_name}: {e}")
 
 
-def timeit(metric_name=None, documentation="Execution time and call count of a function."):
+def timeit(
+    metric_name=None, documentation="Execution time and call count of a function."
+):
     """
     Decorator that times a function.
 
@@ -206,12 +223,12 @@ def timeit(metric_name=None, documentation="Execution time and call count of a f
                     metric_name=f"{base_name}_duration_seconds",
                     value=elapsed_time,
                     labels=common_attributes,
-                    documentation="Duration of function execution in seconds."
+                    documentation="Duration of function execution in seconds.",
                 )
                 log_counter(
                     metric_name=f"{base_name}_calls_total",
                     labels=common_attributes,
-                    documentation=f"Total calls to the function."
+                    documentation="Total calls to the function.",
                 )
 
                 # 2. Add a precise event to the active trace for debugging
@@ -221,13 +238,12 @@ def timeit(metric_name=None, documentation="Execution time and call count of a f
                         attributes={
                             "duration_sec": round(elapsed_time, 4),
                             "status": status,
-                        }
+                        },
                     )
 
         return wrapper
 
     return decorator
-
 
 
 # --- Example Usage ----

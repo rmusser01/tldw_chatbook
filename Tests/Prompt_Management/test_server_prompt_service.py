@@ -17,15 +17,25 @@ class FakePromptClient:
         return {"prompts": []}
 
     async def create_prompt(self, request_data):
-        self.calls.append(("create_prompt", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            ("create_prompt", request_data.model_dump(exclude_none=True, mode="json"))
+        )
         return {"id": 7, "name": request_data.name}
 
     async def preview_prompt(self, request_data):
-        self.calls.append(("preview_prompt", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            ("preview_prompt", request_data.model_dump(exclude_none=True, mode="json"))
+        )
         return {"rendered": "Hello Ada"}
 
     async def update_prompt(self, prompt_id, request_data):
-        self.calls.append(("update_prompt", prompt_id, request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "update_prompt",
+                prompt_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {"id": prompt_id, "name": request_data.name}
 
     async def delete_prompt(self, prompt_id):
@@ -38,7 +48,12 @@ class FakePromptClient:
 
     async def restore_prompt_version(self, prompt_id, version):
         self.calls.append(("restore_prompt_version", prompt_id, version))
-        return {"id": prompt_id, "uuid": "prompt-uuid", "version": version, "name": "Restored"}
+        return {
+            "id": prompt_id,
+            "uuid": "prompt-uuid",
+            "version": version,
+            "name": "Restored",
+        }
 
     async def get_prompts_health(self):
         self.calls.append(("get_prompts_health",))
@@ -144,17 +159,26 @@ def test_server_prompt_service_module_does_not_reference_legacy_config_client_bu
 
 
 @pytest.mark.asyncio
-async def test_server_prompt_service_from_config_uses_shared_provider_lazily(monkeypatch):
+async def test_server_prompt_service_from_config_uses_shared_provider_lazily(
+    monkeypatch,
+):
     sentinel_client = FakePromptClient()
-    direct_builder = Mock(side_effect=AssertionError("service should not call direct legacy builder"))
+    direct_builder = Mock(
+        side_effect=AssertionError("service should not call direct legacy builder")
+    )
     provider_builder = Mock(return_value=sentinel_client)
-    monkeypatch.setattr("tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client", direct_builder)
+    monkeypatch.setattr(
+        "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client",
+        direct_builder,
+    )
     monkeypatch.setattr(
         "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client_from_config",
         provider_builder,
     )
 
-    service = ServerPromptService.from_config({"tldw_api": {"base_url": "https://example.com"}})
+    service = ServerPromptService.from_config(
+        {"tldw_api": {"base_url": "https://example.com"}}
+    )
 
     assert isinstance(service, ServerPromptService)
     assert service.client is None
@@ -166,12 +190,18 @@ async def test_server_prompt_service_from_config_uses_shared_provider_lazily(mon
 
     assert result == {"status": "healthy"}
     assert service.client is None
-    provider_builder.assert_called_once_with({"tldw_api": {"base_url": "https://example.com"}})
+    provider_builder.assert_called_once_with(
+        {"tldw_api": {"base_url": "https://example.com"}}
+    )
 
 
 @pytest.mark.asyncio
-async def test_server_prompt_service_from_config_can_use_provider_backed_client(monkeypatch):
-    build_client = Mock(side_effect=AssertionError("legacy config builder should not run"))
+async def test_server_prompt_service_from_config_can_use_provider_backed_client(
+    monkeypatch,
+):
+    build_client = Mock(
+        side_effect=AssertionError("legacy config builder should not run")
+    )
     monkeypatch.setattr(
         "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client",
         build_client,
@@ -192,7 +222,9 @@ async def test_server_prompt_service_from_config_can_use_provider_backed_client(
     assert service.client is None
     assert service.client_provider is provider
     assert provider.build_calls == 1
-    policy.require_allowed.assert_called_once_with(action_id="prompts.health.detail.server")
+    policy.require_allowed.assert_called_once_with(
+        action_id="prompts.health.detail.server"
+    )
 
 
 @pytest.mark.asyncio
@@ -220,7 +252,9 @@ async def test_server_prompt_service_enforces_policy_actions():
     await service.update_prompt(7, name="Greeting", user_prompt="Hello {{name}}")
     await service.delete_prompt(7)
 
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "prompts.list.server",
         "prompts.create.server",
         "prompts.preview.server",
@@ -244,7 +278,9 @@ async def test_server_prompt_service_routes_prompt_version_controls():
         ("list_prompt_versions", "prompt-uuid"),
         ("restore_prompt_version", "prompt-uuid", 3),
     ]
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list][-2:] == [
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list][
+        -2:
+    ] == [
         "prompts.versions.list.server",
         "prompts.versions.restore.server",
     ]
@@ -279,11 +315,17 @@ async def test_server_prompt_service_routes_server_prompt_utility_surfaces():
     assert client.calls[-19:] == [
         ("get_prompts_health",),
         ("get_prompt_sync_log", {"since_change_id": 5, "limit": 25}),
-        ("search_prompts", {"search_query": "rag", "search_fields": ["name"], "page": 2}),
+        (
+            "search_prompts",
+            {"search_query": "rag", "search_fields": ["name"], "page": 2},
+        ),
         ("create_prompt_keyword", "Drafting"),
         ("list_prompt_keywords",),
         ("delete_prompt_keyword", "Drafting"),
-        ("export_prompts", {"export_format": "markdown", "filter_keywords": ["drafting"]}),
+        (
+            "export_prompts",
+            {"export_format": "markdown", "filter_keywords": ["drafting"]},
+        ),
         ("export_prompt_keywords",),
         ("import_prompts", {"prompts": [{"name": "Draft", "content": "Body"}]}),
         ("extract_prompt_template_variables", "Hello {{name}}"),
@@ -297,7 +339,9 @@ async def test_server_prompt_service_routes_server_prompt_utility_surfaces():
         ("get_prompt_collection", 7),
         ("update_prompt_collection", 7, {"name": "Updated"}),
     ]
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list][-19:] == [
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list][
+        -19:
+    ] == [
         "prompts.health.detail.server",
         "prompts.sync_log.list.server",
         "prompts.search.list.server",

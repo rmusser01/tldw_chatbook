@@ -14,11 +14,20 @@ class FakeVoiceAssistantService:
 
     async def list_commands(self, **kwargs):
         self.calls.append(("list_commands", kwargs))
-        return {"backend": "server", "record_id": "server:voice_commands", "commands": [], "total": 0}
+        return {
+            "backend": "server",
+            "record_id": "server:voice_commands",
+            "commands": [],
+            "total": 0,
+        }
 
     async def create_command(self, request_data):
         self.calls.append(("create_command", request_data))
-        return {"backend": "server", "record_id": "server:voice_command:cmd-1", "id": "cmd-1"}
+        return {
+            "backend": "server",
+            "record_id": "server:voice_command:cmd-1",
+            "id": "cmd-1",
+        }
 
     async def get_command(self, command_id, **kwargs):
         self.calls.append(("get_command", command_id, kwargs))
@@ -34,19 +43,34 @@ class FakeVoiceAssistantService:
 
     async def validate_command(self, command_id, **kwargs):
         self.calls.append(("validate_command", command_id, kwargs))
-        return {"backend": "server", "record_id": f"server:voice_command_validation:{command_id}"}
+        return {
+            "backend": "server",
+            "record_id": f"server:voice_command_validation:{command_id}",
+        }
 
     async def get_command_usage(self, command_id, **kwargs):
         self.calls.append(("get_command_usage", command_id, kwargs))
-        return {"backend": "server", "record_id": f"server:voice_command_usage:{command_id}"}
+        return {
+            "backend": "server",
+            "record_id": f"server:voice_command_usage:{command_id}",
+        }
 
     async def delete_command(self, command_id, **kwargs):
         self.calls.append(("delete_command", command_id, kwargs))
-        return {"backend": "server", "record_id": f"server:voice_command:{command_id}", "deleted": True}
+        return {
+            "backend": "server",
+            "record_id": f"server:voice_command:{command_id}",
+            "deleted": True,
+        }
 
     async def list_sessions(self, **kwargs):
         self.calls.append(("list_sessions", kwargs))
-        return {"backend": "server", "record_id": "server:voice_sessions", "sessions": [], "total": 0}
+        return {
+            "backend": "server",
+            "record_id": "server:voice_sessions",
+            "sessions": [],
+            "total": 0,
+        }
 
     async def get_session(self, session_id):
         self.calls.append(("get_session", session_id))
@@ -54,7 +78,11 @@ class FakeVoiceAssistantService:
 
     async def delete_session(self, session_id):
         self.calls.append(("delete_session", session_id))
-        return {"backend": "server", "record_id": f"server:voice_session:{session_id}", "deleted": True}
+        return {
+            "backend": "server",
+            "record_id": f"server:voice_session:{session_id}",
+            "deleted": True,
+        }
 
     async def get_analytics(self, **kwargs):
         self.calls.append(("get_analytics", kwargs))
@@ -103,8 +131,12 @@ async def test_voice_assistant_scope_service_routes_server_rest_surface():
     await scope.list_commands(mode="server", include_system=False)
     await scope.create_command(COMMAND_DEFINITION, mode="server")
     await scope.get_command("cmd-1", mode="server", persona_id="persona-1")
-    await scope.update_command("cmd-1", COMMAND_DEFINITION, mode="server", persona_id="persona-1")
-    await scope.toggle_command("cmd-1", {"enabled": False}, mode="server", persona_id="persona-1")
+    await scope.update_command(
+        "cmd-1", COMMAND_DEFINITION, mode="server", persona_id="persona-1"
+    )
+    await scope.toggle_command(
+        "cmd-1", {"enabled": False}, mode="server", persona_id="persona-1"
+    )
     await scope.validate_command("cmd-1", mode="server", persona_id="persona-1")
     await scope.get_command_usage("cmd-1", mode="server", days=7)
     await scope.delete_command("cmd-1", mode="server", persona_id="persona-1")
@@ -137,9 +169,13 @@ async def test_voice_assistant_scope_service_routes_server_rest_surface():
 @pytest.mark.asyncio
 async def test_voice_assistant_scope_service_honestly_rejects_local_mode():
     server = FakeVoiceAssistantService()
-    scope = VoiceAssistantScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer())
+    scope = VoiceAssistantScopeService(
+        server_service=server, policy_enforcer=FakePolicyEnforcer()
+    )
 
-    with pytest.raises(ValueError, match="Voice Assistant server REST operations are server-only"):
+    with pytest.raises(
+        ValueError, match="Voice Assistant server REST operations are server-only"
+    ):
         await scope.list_commands(mode="local")
 
     assert server.calls == []
@@ -210,7 +246,9 @@ def test_voice_assistant_scope_service_reports_known_unsupported_capabilities():
 
 
 def test_voice_assistant_scope_service_omits_websocket_gap_for_capable_adapter():
-    scope = VoiceAssistantScopeService(server_service=WebSocketCapableVoiceAssistantService())
+    scope = VoiceAssistantScopeService(
+        server_service=WebSocketCapableVoiceAssistantService()
+    )
 
     assert scope.list_unsupported_capabilities(mode="server") == [
         {

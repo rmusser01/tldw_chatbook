@@ -38,33 +38,40 @@ def source_env(tmp_path):
         "RAG": str(db_dir / "rag.db"),
     }
     db = CharactersRAGDB(db_paths["ChaChaNotes"], "test-source")
-    conv_id = db.add_conversation({
-        "title": "Image Round Trip",
-    })
-    db.add_message({
-        "conversation_id": conv_id,
-        "sender": "user",
-        "content": "look at these",
-        "timestamp": datetime.now().isoformat(),
-        "image_data": PNG_LEGACY,
-        "image_mime_type": "image/png",
-    })
+    conv_id = db.add_conversation(
+        {
+            "title": "Image Round Trip",
+        }
+    )
+    db.add_message(
+        {
+            "conversation_id": conv_id,
+            "sender": "user",
+            "content": "look at these",
+            "timestamp": datetime.now().isoformat(),
+            "image_data": PNG_LEGACY,
+            "image_mime_type": "image/png",
+        }
+    )
     messages = db.get_messages_for_conversation(conv_id)
     message_id = str(messages[0]["id"])
-    db.set_message_attachments(message_id, [
-        {
-            "position": 1,
-            "data": PNG_POS1,
-            "mime_type": "image/png",
-            "display_name": "second.png",
-        },
-        {
-            "position": 2,
-            "data": PNG_POS2,
-            "mime_type": "image/jpeg",
-            "display_name": "third.jpg",
-        },
-    ])
+    db.set_message_attachments(
+        message_id,
+        [
+            {
+                "position": 1,
+                "data": PNG_POS1,
+                "mime_type": "image/png",
+                "display_name": "second.png",
+            },
+            {
+                "position": 2,
+                "data": PNG_POS2,
+                "mime_type": "image/jpeg",
+                "display_name": "third.jpg",
+            },
+        ],
+    )
     return db_paths, conv_id
 
 
@@ -89,7 +96,8 @@ def test_export_writes_attachment_files_and_manifest_entries(source_env, tmp_pat
     with zipfile.ZipFile(output) as zf:
         names = zf.namelist()
         conv_json_name = next(
-            name for name in names
+            name
+            for name in names
             if name.startswith("content/conversations/") and name.endswith(".json")
         )
         conv_data = json.loads(zf.read(conv_json_name))
@@ -155,7 +163,9 @@ def test_import_skips_traversal_attachment_paths(source_env, tmp_path):
     with zipfile.ZipFile(output) as src, zipfile.ZipFile(tampered, "w") as dst:
         for item in src.infolist():
             payload = src.read(item.filename)
-            if item.filename.startswith("content/conversations/") and item.filename.endswith(".json"):
+            if item.filename.startswith(
+                "content/conversations/"
+            ) and item.filename.endswith(".json"):
                 conv_data = json.loads(payload)
                 conv_data["messages"][0]["attachments"][1]["file"] = "../../secret.bin"
                 payload = json.dumps(conv_data).encode()
@@ -181,9 +191,9 @@ def test_import_skips_traversal_attachment_paths(source_env, tmp_path):
     assert conversations
     imported_messages = dest_db.get_messages_for_conversation(conversations[0]["id"])
     assert len(imported_messages) == 1
-    rows = dest_db.get_attachments_for_messages(
-        [str(imported_messages[0]["id"])]
-    ).get(str(imported_messages[0]["id"]), [])
+    rows = dest_db.get_attachments_for_messages([str(imported_messages[0]["id"])]).get(
+        str(imported_messages[0]["id"]), []
+    )
     # position 1 (the tampered entry) skipped; position 0 and 2 restored
     assert [r["position"] for r in rows] == [2]
     assert imported_messages[0]["image_data"] == PNG_LEGACY
@@ -200,7 +210,9 @@ def test_chatbook_without_attachments_key_imports_unchanged(source_env, tmp_path
             if item.filename.startswith("content/conversations/attachments/"):
                 continue
             payload = src.read(item.filename)
-            if item.filename.startswith("content/conversations/") and item.filename.endswith(".json"):
+            if item.filename.startswith(
+                "content/conversations/"
+            ) and item.filename.endswith(".json"):
                 conv_data = json.loads(payload)
                 for message in conv_data["messages"]:
                     message.pop("attachments", None)

@@ -8,57 +8,56 @@ Tests security measures including:
 - API key protection
 - Input sanitization
 """
+
 import pytest
 import tempfile
 import os
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch
 import sqlite3
 
 from tldw_chatbook.Web_Scraping.cookie_scraping.cookie_cloner import (
     escape_sql_like_pattern,
     get_chrome_cookies,
-    get_firefox_cookies,
-    get_edge_cookies
 )
 
 
 class TestSQLInjectionPrevention:
     """Test SQL injection prevention measures."""
-    
+
     def test_escape_sql_like_pattern(self):
         """Test SQL LIKE pattern escaping."""
         # Normal domains
         assert escape_sql_like_pattern("example.com") == "example.com"
         assert escape_sql_like_pattern("sub.example.com") == "sub.example.com"
-        
+
         # Domains with special LIKE characters
         assert escape_sql_like_pattern("example%.com") == "example\\%.com"
         assert escape_sql_like_pattern("example_.com") == "example\\_.com"
         assert escape_sql_like_pattern("ex\\ample.com") == "ex\\\\ample.com"
         assert escape_sql_like_pattern("ex%am_ple.com") == "ex\\%am\\_ple.com"
-        
+
         # SQL injection attempts
         dangerous_inputs = [
             "'; DROP TABLE cookies; --",
             "' OR 1=1 --",
             "%' OR '1'='1",
             "_' OR '1'='1",
-            "\\'; DELETE FROM cookies; --"
+            "\\'; DELETE FROM cookies; --",
         ]
-        
+
         for dangerous in dangerous_inputs:
             escaped = escape_sql_like_pattern(dangerous)
             # Check that % and _ are escaped
-            assert escaped.count('\\%') == dangerous.count('%')
-            assert escaped.count('\\_') == dangerous.count('_')
+            assert escaped.count("\\%") == dangerous.count("%")
+            assert escaped.count("\\_") == dangerous.count("_")
             # The escaped pattern should be safe to use in LIKE query
-    
+
     def test_cookie_extraction_sql_safety(self):
         """Test that cookie extraction uses parameterized queries."""
         # Create a test database
-        with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
             tmp_path = tmp.name
-        
+
         try:
             # Create test cookie database
             conn = sqlite3.connect(tmp_path)
@@ -72,25 +71,28 @@ class TestSQLInjectionPrevention:
                     expires_utc INTEGER
                 )
             """)
-            
+
             # Insert test data with dangerous characters
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO cookies VALUES 
                 (?, ?, ?, ?, ?)
-            """, ("example%.com", "test_cookie", "/", b"encrypted", 0))
+            """,
+                ("example%.com", "test_cookie", "/", b"encrypted", 0),
+            )
             conn.commit()
             conn.close()
-            
+
             # Mock the cookie path discovery
-            with patch('os.path.expanduser') as mock_expand:
-                with patch('os.path.exists') as mock_exists:
-                    with patch('shutil.copyfile') as mock_copy:
-                        with patch('tempfile.mkstemp') as mock_mkstemp:
+            with patch("os.path.expanduser") as mock_expand:
+                with patch("os.path.exists") as mock_exists:
+                    with patch("shutil.copyfile"):
+                        with patch("tempfile.mkstemp") as mock_mkstemp:
                             # Set up mocks
                             mock_mkstemp.return_value = (999, tmp_path + "_temp")
                             mock_expand.return_value = "/fake/path"
                             mock_exists.return_value = True
-                            
+
                             # This should handle the dangerous domain safely
                             # We're testing that no SQL injection occurs
                             try:
@@ -107,21 +109,21 @@ class TestSQLInjectionPrevention:
 
 class TestPathTraversalPrevention:
     """Test path traversal prevention."""
-    
+
     def test_temp_file_security(self):
         """Test that temporary files are created securely."""
         from tldw_chatbook.Utils.secure_temp_files import create_secure_temp_file
-        
+
         # Test that file is created with secure permissions
         content = "test content"
         temp_path = create_secure_temp_file(content, suffix=".test")
-        
+
         try:
             # Check file exists and has correct content
             assert os.path.exists(temp_path)
-            with open(temp_path, 'r') as f:
+            with open(temp_path, "r") as f:
                 assert f.read() == content
-            
+
             # Check file permissions (owner read/write only)
             stat_info = os.stat(temp_path)
             mode = stat_info.st_mode
@@ -130,22 +132,22 @@ class TestPathTraversalPrevention:
         finally:
             if os.path.exists(temp_path):
                 os.unlink(temp_path)
-    
+
     def test_cookie_db_path_validation(self):
         """Test that cookie database paths are not vulnerable to traversal."""
         dangerous_paths = [
             "../../../etc/passwd",
             "..\\..\\..\\windows\\system32\\config\\sam",
             "/etc/passwd",
-            "C:\\Windows\\System32\\config\\SAM"
+            "C:\\Windows\\System32\\config\\SAM",
         ]
-        
-        with patch('os.path.expanduser') as mock_expand:
-            with patch('os.path.exists') as mock_exists:
+
+        with patch("os.path.expanduser") as mock_expand:
+            with patch("os.path.exists") as mock_exists:
                 for dangerous_path in dangerous_paths:
                     mock_expand.return_value = dangerous_path
                     mock_exists.return_value = True
-                    
+
                     # The function should not access arbitrary paths
                     try:
                         get_chrome_cookies("example.com")
@@ -156,18 +158,18 @@ class TestPathTraversalPrevention:
 
 class TestAPIKeySecurity:
     """Test API key handling security."""
-    
+
     def test_api_keys_not_logged(self):
         """Test that API keys are not logged."""
         # This is more of a code review test, but we can check patterns
-        
+
         # Mock the logging to capture what would be logged
-        with patch('logging.info') as mock_log_info:
-            with patch.dict(os.environ, {'SOME_API_KEY': 'secret_key_12345'}):
+        with patch("logging.info") as mock_log_info:
+            with patch.dict(os.environ, {"SOME_API_KEY": "secret_key_12345"}):
                 # Any function that uses API keys should not log them
                 # This is a pattern test - actual implementation may vary
-                api_key = os.environ.get('SOME_API_KEY')
-                
+                api_key = os.environ.get("SOME_API_KEY")
+
                 # Simulate what good code should do
                 if api_key:
                     # Check that the actual API key value was not logged
@@ -175,17 +177,17 @@ class TestAPIKeySecurity:
                     for call in mock_log_info.call_args_list:
                         if call[0]:  # If there are positional args
                             assert api_key not in str(call[0][0])
-    
+
     def test_api_key_masking(self):
         """Test that API keys are masked in any output."""
         api_key = "sk-1234567890abcdef"
-        
+
         # Good practice: mask API keys in logs/output
         def mask_api_key(key):
             if not key or len(key) < 8:
                 return "***"
             return key[:4] + "*" * (len(key) - 8) + key[-4:]
-        
+
         masked = mask_api_key(api_key)
         assert api_key not in masked
         # Check that it's properly masked
@@ -198,11 +200,11 @@ class TestAPIKeySecurity:
 
 class TestInputSanitization:
     """Test input sanitization in web scraping."""
-    
+
     def test_url_sanitization(self):
         """Test that URLs are properly sanitized."""
         from tldw_chatbook.Utils.input_validation import validate_url
-        
+
         # Malicious URLs that should be rejected
         malicious_urls = [
             "javascript:alert('xss')",
@@ -213,10 +215,10 @@ class TestInputSanitization:
             "about:blank",
             "chrome://settings",
         ]
-        
+
         for url in malicious_urls:
             assert validate_url(url) is False
-    
+
     def test_domain_name_sanitization(self):
         """Test domain name sanitization in cookie functions."""
         # Domain names with special characters
@@ -226,18 +228,18 @@ class TestInputSanitization:
             ("example.com\\test", "example.com\\\\test"),  # \ should be escaped
             ("example.com%_\\test", "example.com\\%\\_\\\\test"),  # All special chars
         ]
-        
+
         for domain, expected in domains:
             # The escape function should handle these safely
             escaped = escape_sql_like_pattern(domain)
             assert escaped == expected
-            
+
         # These domains contain SQL injection attempts but only %, _, \ are escaped
         sql_injection_domains = [
             "example.com' OR '1'='1",
-            "example.com\"; DROP TABLE cookies;--",
+            'example.com"; DROP TABLE cookies;--',
         ]
-        
+
         for domain in sql_injection_domains:
             escaped = escape_sql_like_pattern(domain)
             # The function doesn't escape quotes or other SQL chars
@@ -251,42 +253,42 @@ class TestInputSanitization:
 
 class TestCookieSecurity:
     """Test cookie handling security."""
-    
+
     def test_cookie_encryption_handling(self):
         """Test that encrypted cookies are handled securely."""
         # Test that we don't expose decrypted values in logs/errors
-        with patch('tldw_chatbook.Web_Scraping.cookie_scraping.cookie_cloner.logger') as mock_logger:
+        with patch(
+            "tldw_chatbook.Web_Scraping.cookie_scraping.cookie_cloner.logger"
+        ) as mock_logger:
             # Simulate cookie decryption
-            encrypted_value = b"encrypted_cookie_value"
-            
+
             # Good practice: never log decrypted cookie values
             # Check that sensitive data isn't logged
             mock_logger.debug.assert_not_called()
             mock_logger.info.assert_not_called()
-    
+
     def test_cookie_permission_check(self):
         """Test that cookie access requires appropriate permissions."""
         # In a real implementation, we should check:
         # 1. User has permission to access browser cookies
         # 2. Warning/consent before accessing cookies
         # 3. Audit log of cookie access
-        
+
         # This is more of a design consideration
         assert True  # Placeholder for permission system
 
 
 class TestSecureDefaults:
     """Test that secure defaults are used throughout."""
-    
+
     def test_request_timeouts(self):
         """Test that network requests have timeouts."""
         # Check that requests have reasonable timeouts to prevent DoS
-        import tldw_chatbook.Web_Scraping.Article_Extractor_Lib as extractor
-        
+
         # This is a pattern check - ensure timeouts are used
         # In actual code, all requests.get() should have timeout parameter
         assert True  # Placeholder - implement in code review
-    
+
     def test_resource_limits(self):
         """Test that resource consumption is limited."""
         # Check for:
@@ -294,7 +296,7 @@ class TestSecureDefaults:
         # 2. Max memory usage
         # 3. Max concurrent connections
         # 4. Rate limiting
-        
+
         # These should be implemented in the actual code
         assert True  # Placeholder
 

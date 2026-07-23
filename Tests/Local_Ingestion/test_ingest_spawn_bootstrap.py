@@ -78,9 +78,7 @@ def test_module_launcher_uses_delegated_value_as_exit_code(tmp_path: Path) -> No
     result = subprocess.run(
         [sys.executable, "-m", "tldw_chatbook"],
         cwd=REPO_ROOT,
-        env=_python_env(
-            pythonpath=os.pathsep.join((str(hook_dir), str(REPO_ROOT)))
-        ),
+        env=_python_env(pythonpath=os.pathsep.join((str(hook_dir), str(REPO_ROOT)))),
         text=True,
         capture_output=True,
         timeout=30,

@@ -50,17 +50,23 @@ class _PoisonMediaDB:
     """A media source that fails the test if touched -- for scope isolation checks."""
 
     def get_all_active_media_ids(self, media_type=None):
-        raise AssertionError("get_all_active_media_ids must not be called for a media-out-of-scope export")
+        raise AssertionError(
+            "get_all_active_media_ids must not be called for a media-out-of-scope export"
+        )
 
 
 class _PoisonChaChaNotesDB:
     """A ChaChaNotes source that fails the test if touched -- for scope isolation checks."""
 
     def get_all_conversation_ids(self):
-        raise AssertionError("get_all_conversation_ids must not be called for a conversations-out-of-scope export")
+        raise AssertionError(
+            "get_all_conversation_ids must not be called for a conversations-out-of-scope export"
+        )
 
     def get_all_note_ids(self):
-        raise AssertionError("get_all_note_ids must not be called for a notes-out-of-scope export")
+        raise AssertionError(
+            "get_all_note_ids must not be called for a notes-out-of-scope export"
+        )
 
 
 # --- ExportScope --------------------------------------------------------------
@@ -74,7 +80,9 @@ def test_export_scope_rejects_unknown_kind():
 # --- THE TRUNCATION LOCK ------------------------------------------------------
 
 
-def test_truncation_lock_everything_resolves_every_id_beyond_snapshot_caps(media_db, chachanotes_db):
+def test_truncation_lock_everything_resolves_every_id_beyond_snapshot_caps(
+    media_db, chachanotes_db
+):
     """Seed well past the Library's 50-row media/conversation snapshot caps.
 
     ``resolve_export_selections`` must return every seeded id, proving it
@@ -108,11 +116,19 @@ def test_truncation_lock_everything_resolves_every_id_beyond_snapshot_caps(media
 
 
 def test_media_scope_type_filter_excludes_deleted_and_trashed_rows(media_db):
-    video_id_1, _, _ = media_db.add_media_with_keywords(title="V1", content="c1", media_type="video")
-    video_id_2, _, _ = media_db.add_media_with_keywords(title="V2", content="c2", media_type="video")
+    video_id_1, _, _ = media_db.add_media_with_keywords(
+        title="V1", content="c1", media_type="video"
+    )
+    video_id_2, _, _ = media_db.add_media_with_keywords(
+        title="V2", content="c2", media_type="video"
+    )
     media_db.add_media_with_keywords(title="A1", content="c3", media_type="article")
-    deleted_video_id, _, _ = media_db.add_media_with_keywords(title="V-deleted", content="c4", media_type="video")
-    trashed_video_id, _, _ = media_db.add_media_with_keywords(title="V-trashed", content="c5", media_type="video")
+    deleted_video_id, _, _ = media_db.add_media_with_keywords(
+        title="V-deleted", content="c4", media_type="video"
+    )
+    trashed_video_id, _, _ = media_db.add_media_with_keywords(
+        title="V-trashed", content="c5", media_type="video"
+    )
     media_db.soft_delete_media(deleted_video_id)
     media_db.mark_as_trash(trashed_video_id)
 
@@ -125,9 +141,15 @@ def test_media_scope_type_filter_excludes_deleted_and_trashed_rows(media_db):
 
 
 @pytest.mark.parametrize("unfiltered_value", [None, "All"])
-def test_media_scope_type_none_or_all_sentinel_is_unfiltered(media_db, unfiltered_value):
-    video_id, _, _ = media_db.add_media_with_keywords(title="V1", content="c1", media_type="video")
-    article_id, _, _ = media_db.add_media_with_keywords(title="A1", content="c2", media_type="article")
+def test_media_scope_type_none_or_all_sentinel_is_unfiltered(
+    media_db, unfiltered_value
+):
+    video_id, _, _ = media_db.add_media_with_keywords(
+        title="V1", content="c1", media_type="video"
+    )
+    article_id, _, _ = media_db.add_media_with_keywords(
+        title="A1", content="c2", media_type="article"
+    )
 
     scope = ExportScope(kind="media", media_type=unfiltered_value)
     selections = resolve_export_selections(scope, media_db, _PoisonChaChaNotesDB())
@@ -138,7 +160,9 @@ def test_media_scope_type_none_or_all_sentinel_is_unfiltered(media_db, unfiltere
 # --- Empty scope --------------------------------------------------------------
 
 
-def test_empty_dbs_everything_scope_counts_zero_and_selections_empty(media_db, chachanotes_db):
+def test_empty_dbs_everything_scope_counts_zero_and_selections_empty(
+    media_db, chachanotes_db
+):
     scope = ExportScope(kind="everything")
 
     counts = count_export_scope(scope, media_db, chachanotes_db)
@@ -161,7 +185,9 @@ def test_count_export_scope_zeroes_out_of_scope_sources(media_db, chachanotes_db
     assert counts == {"media": 1, "conversations": 0, "notes": 0}
 
 
-def test_resolve_export_selections_conversations_scope_never_touches_media_db(chachanotes_db):
+def test_resolve_export_selections_conversations_scope_never_touches_media_db(
+    chachanotes_db,
+):
     conv_id = chachanotes_db.add_conversation({"title": "Conv"})
 
     scope = ExportScope(kind="conversations")
@@ -211,7 +237,9 @@ def test_export_scope_label_media_unfiltered_all_sentinel():
 
 def test_export_scope_label_conversations():
     scope = ExportScope(kind="conversations")
-    assert export_scope_label(scope, {"conversations": 542}) == "Conversations · 542 items"
+    assert (
+        export_scope_label(scope, {"conversations": 542}) == "Conversations · 542 items"
+    )
 
 
 def test_export_scope_label_notes():

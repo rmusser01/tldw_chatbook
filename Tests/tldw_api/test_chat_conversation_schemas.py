@@ -8,13 +8,8 @@ import pytest
 
 from tldw_chatbook.tldw_api.chat_conversation_schemas import (
     ALLOWED_CONVERSATION_STATES,
-    ConversationListItem,
-    ConversationListPagination,
     ConversationListResponse,
-    ConversationMetadata,
     ConversationScopeParams,
-    ConversationTreeNode,
-    ConversationTreePagination,
     ConversationTreeResponse,
     ConversationUpdateRequest,
 )
@@ -44,7 +39,9 @@ class TestChatConversationSchemas:
         assert request.keywords == ["Alpha", "beta"]
 
     def test_update_request_rejects_invalid_state(self):
-        with pytest.raises(ValueError, match="Allowed: in-progress, resolved, backlog, non-viable"):
+        with pytest.raises(
+            ValueError, match="Allowed: in-progress, resolved, backlog, non-viable"
+        ):
             ConversationUpdateRequest(version=1, state="unknown")
 
     def test_update_request_preserves_runtime_and_discovery_fields_in_model_dump(self):
@@ -90,7 +87,12 @@ class TestChatConversationSchemas:
         list_response = ConversationListResponse.model_validate(
             {
                 "items": [list_payload],
-                "pagination": {"limit": 10, "offset": 20, "total": 1, "has_more": False},
+                "pagination": {
+                    "limit": 10,
+                    "offset": 20,
+                    "total": 1,
+                    "has_more": False,
+                },
             }
         )
 
@@ -137,7 +139,12 @@ class TestChatConversationSchemas:
                         "truncated": True,
                     }
                 ],
-                "pagination": {"limit": 10, "offset": 20, "total_root_threads": 1, "has_more": False},
+                "pagination": {
+                    "limit": 10,
+                    "offset": 20,
+                    "total_root_threads": 1,
+                    "has_more": False,
+                },
                 "depth_cap": 4,
             }
         )

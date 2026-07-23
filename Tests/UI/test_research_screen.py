@@ -56,7 +56,9 @@ class FakeResearchScopeService:
 
     async def pause_run(self, run_id, *, mode):
         self.calls.append(("pause_run", mode, run_id))
-        return SimpleNamespace(id=run_id, query="Paused", status="running", control_state="paused")
+        return SimpleNamespace(
+            id=run_id, query="Paused", status="running", control_state="paused"
+        )
 
     async def get_bundle(self, run_id, *, mode):
         self.calls.append(("get_bundle", mode, run_id))
@@ -75,10 +77,16 @@ class FakeResearchScopeService:
             artifact_version=1,
         )
 
-    async def patch_and_approve_checkpoint(self, run_id, checkpoint_id, *, mode, patch_payload=None):
-        self.calls.append(("patch_and_approve_checkpoint", mode, run_id, checkpoint_id, patch_payload))
+    async def patch_and_approve_checkpoint(
+        self, run_id, checkpoint_id, *, mode, patch_payload=None
+    ):
+        self.calls.append(
+            ("patch_and_approve_checkpoint", mode, run_id, checkpoint_id, patch_payload)
+        )
         if mode == "local":
-            raise ValueError("Local research checkpoints are not available in this slice.")
+            raise ValueError(
+                "Local research checkpoints are not available in this slice."
+            )
         return SimpleNamespace(
             id=run_id,
             query="Server query",
@@ -92,7 +100,9 @@ class FakeResearchScopeService:
     async def stream_run_events(self, run_id, *, mode, after_id=0):
         self.calls.append(("stream_run_events", mode, run_id, after_id))
         if mode == "local":
-            raise ValueError("Local research live events are not available in this slice.")
+            raise ValueError(
+                "Local research live events are not available in this slice."
+            )
         yield {
             "event": "snapshot",
             "id": "3",
@@ -239,11 +249,19 @@ async def test_research_window_approves_selected_server_checkpoint():
     server_runs = await window.switch_source("server")
     window.select_run(server_runs[0])
 
-    updated = await window.approve_selected_checkpoint(patch_payload={"resolution": "accept"})
+    updated = await window.approve_selected_checkpoint(
+        patch_payload={"resolution": "accept"}
+    )
 
     assert updated.latest_checkpoint_id == "checkpoint-1"
     assert getattr(window.selected_run, "latest_checkpoint_id", None) == "checkpoint-1"
-    assert ("patch_and_approve_checkpoint", "server", "server-run", "checkpoint-1", {"resolution": "accept"}) in service.calls
+    assert (
+        "patch_and_approve_checkpoint",
+        "server",
+        "server-run",
+        "checkpoint-1",
+        {"resolution": "accept"},
+    ) in service.calls
 
 
 @pytest.mark.asyncio

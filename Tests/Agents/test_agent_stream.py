@@ -1,4 +1,5 @@
 """Pure streaming fence-gate: incremental visible text, fence suppression."""
+
 import pytest
 
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
@@ -22,10 +23,12 @@ def test_plain_text_streams_verbatim():
 
 
 def test_leading_fence_streams_nothing():
-    fence = FENCE_OPEN + '\n{"name": "calculator", "arguments": {"expression": "6*7"}}\n```'
+    fence = (
+        FENCE_OPEN + '\n{"name": "calculator", "arguments": {"expression": "6*7"}}\n```'
+    )
     streamed, full, visible, call = drain([fence[:6], fence[6:20], fence[20:]])
-    assert streamed == ""                       # nothing visible for a tool turn
-    assert full == fence                        # loop still gets the full text
+    assert streamed == ""  # nothing visible for a tool turn
+    assert full == fence  # loop still gets the full text
     assert call is not None and call.name == "calculator"
 
 
@@ -34,15 +37,17 @@ def test_leading_fence_split_across_chunks_is_never_partially_shown():
     gate = StreamGate()
     # First chunk is only "``" — undecided, must not stream.
     assert gate.feed("``") == ""
-    assert gate.feed("`tool_call") == ""        # still undecided (could be tool_calls)
-    rest = "".join(gate.feed(c) for c in [fence[len(FENCE_OPEN):]])
+    assert gate.feed("`tool_call") == ""  # still undecided (could be tool_calls)
+    rest = "".join(gate.feed(c) for c in [fence[len(FENCE_OPEN) :]])
     assert rest == "" and gate.flush_tail() == ""
 
 
 def test_mid_stream_fence_truncates_visible_at_fence():
-    tail = FENCE_OPEN + '\n{"name": "calculator", "arguments": {"expression": "1"}}\n```'
+    tail = (
+        FENCE_OPEN + '\n{"name": "calculator", "arguments": {"expression": "1"}}\n```'
+    )
     streamed, full, visible, call = drain(["Let me compute. ", tail])
-    assert streamed == "Let me compute."        # rstripped prefix, fence content withheld
+    assert streamed == "Let me compute."  # rstripped prefix, fence content withheld
     assert visible == "Let me compute." and call is not None
     assert full == "Let me compute. " + tail
 
@@ -50,7 +55,7 @@ def test_mid_stream_fence_truncates_visible_at_fence():
 def test_holdback_prevents_streaming_a_fence_prefix_then_completes():
     # A message ending in text whose tail coincidentally starts like a fence prefix.
     streamed, full, visible, call = drain(["answer ", "``"])
-    assert streamed == "answer ``"              # no real fence → tail flushed at end
+    assert streamed == "answer ``"  # no real fence → tail flushed at end
     assert call is None and visible == "answer ``"
 
 
@@ -63,6 +68,7 @@ def test_lookalike_fence_is_treated_as_visible_text():
 # --- Reviewer repro 1: a whole-turn look-alike fence must never seal the
 # gate. `buf.find(FENCE_OPEN)` alone matches "```tool_calls" (plural) and
 # "```tool_call_schema", neither of which is a real fence.
+
 
 def test_lookalike_whole_turn_streams_everything_single_chunk():
     text = "```tool_calls\nSome explanation of the tools available.\n```"
@@ -84,6 +90,7 @@ def test_lookalike_whole_turn_streams_everything_char_by_char():
 # the JSON body doesn't parse) must not drop the text that follows it —
 # `split_visible_text_and_tool_call` scans past it and finds no real fence,
 # so the whole turn is visible.
+
 
 def test_malformed_mid_stream_fence_flushes_everything_single_chunk():
     text = "Before text. ```tool_call\nnot json\n``` after text."
@@ -109,17 +116,19 @@ def test_malformed_mid_stream_fence_flushes_everything_char_by_char():
 _INVARIANT_TEXTS = [
     "Tokyo is the capital.",
     FENCE_OPEN + '\n{"name": "x", "arguments": {}}\n```',
-    FENCE_OPEN + '\nnot json\n```',
-    "Let me compute. " + FENCE_OPEN
-        + '\n{"name": "calculator", "arguments": {"expression": "1"}}\n```',
+    FENCE_OPEN + "\nnot json\n```",
+    "Let me compute. "
+    + FENCE_OPEN
+    + '\n{"name": "calculator", "arguments": {"expression": "1"}}\n```',
     "Before text. ```tool_call\nnot json\n``` after text.",
     "```tool_calls\nSome explanation of the tools available.\n```",
     "```python\nprint(1)\n```",
     "answer ``",
     # A disproven look-alike immediately followed by a genuine confirmed
     # fence — stresses whitespace-holdback interacting with two candidates.
-    "```tool_calls\n``` Actually, let me call it: " + FENCE_OPEN
-        + '\n{"name": "x", "arguments": {}}\n```',
+    "```tool_calls\n``` Actually, let me call it: "
+    + FENCE_OPEN
+    + '\n{"name": "x", "arguments": {}}\n```',
 ]
 
 

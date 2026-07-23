@@ -168,7 +168,9 @@ def _extra_tags(raw_tool: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(tags[:_MAX_TAGS])
 
 
-def server_tools_from_inventory(payload: dict, *, target_id: str, target_label: str) -> list[HubTool]:
+def server_tools_from_inventory(
+    payload: dict, *, target_id: str, target_label: str
+) -> list[HubTool]:
     """Derive `HubTool`s from a remote server's raw tool-inventory payload.
 
     Reads defensively since the payload comes straight off the wire: skips
@@ -181,7 +183,7 @@ def server_tools_from_inventory(payload: dict, *, target_id: str, target_label: 
 
     Returns:
         One `HubTool` per valid tool entry. Never executable — server-
-        source execution ships in Phase 4 — and never stale (a payload
+        source tools are display-only — and never stale (a payload
         that was fetched at all implies a live connection at fetch time).
     """
     raw_tools = payload.get("tools") if isinstance(payload, Mapping) else None

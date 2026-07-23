@@ -58,7 +58,9 @@ async def test_feedback_client_routes_submit_list_update_delete(monkeypatch):
     listed = await client.list_feedback("conv-1")
     updated = await client.update_feedback(
         "fb-1",
-        FeedbackUpdateRequest(issues=["missing_details"], user_notes="Needs more detail"),
+        FeedbackUpdateRequest(
+            issues=["missing_details"], user_notes="Needs more detail"
+        ),
     )
     deleted = await client.delete_feedback("fb-1")
 

@@ -18,7 +18,9 @@ class FakeLLMProviderClient:
         return {"status": "healthy", "service": "llm_inference"}
 
     async def list_llm_providers(self, *, include_deprecated=False):
-        self.calls.append(("list_llm_providers", {"include_deprecated": include_deprecated}))
+        self.calls.append(
+            ("list_llm_providers", {"include_deprecated": include_deprecated})
+        )
         return {
             "providers": [
                 {
@@ -121,7 +123,9 @@ async def test_server_llm_provider_catalog_service_routes_catalog_discovery_with
             },
         ),
     ]
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "llm.catalog.health.observe.server",
         "llm.catalog.providers.list.server",
         "llm.catalog.providers.detail.server",

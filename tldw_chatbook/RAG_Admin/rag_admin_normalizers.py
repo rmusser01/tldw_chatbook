@@ -19,7 +19,15 @@ def _to_mapping(value: Any) -> dict[str, Any]:
         return dict(value)
 
     payload: dict[str, Any] = {}
-    for attribute in ("id", "name", "description", "template_json", "metadata", "count", "embedding_dimension"):
+    for attribute in (
+        "id",
+        "name",
+        "description",
+        "template_json",
+        "metadata",
+        "count",
+        "embedding_dimension",
+    ):
         if hasattr(value, attribute):
             payload[attribute] = getattr(value, attribute)
     return payload
@@ -51,7 +59,9 @@ def _safe_int(value: Any) -> int | None:
 def normalize_template_record(backend: str, payload: Any) -> dict[str, Any]:
     data = _to_mapping(payload)
     name = str(data.get("name") or data.get("template_name") or "").strip()
-    template = _parse_template_payload(data.get("template") or data.get("template_json"))
+    template = _parse_template_payload(
+        data.get("template") or data.get("template_json")
+    )
     template_json = data.get("template_json")
     if not isinstance(template_json, str):
         template_json = json.dumps(template or {})

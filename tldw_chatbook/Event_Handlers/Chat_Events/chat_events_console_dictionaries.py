@@ -24,7 +24,9 @@ from tldw_chatbook.Character_Chat import Chat_Dictionary_Lib as cdl
 from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError
 
 
-async def handle_console_dictionary_attach(app: Any, conversation_id: Any, dictionary_id: Any) -> bool:
+async def handle_console_dictionary_attach(
+    app: Any, conversation_id: Any, dictionary_id: Any
+) -> bool:
     """Attach ``dictionary_id`` to ``conversation_id`` via the scope service.
 
     Never raises -- every failure path notifies the user and returns False.
@@ -38,7 +40,9 @@ async def handle_console_dictionary_attach(app: Any, conversation_id: Any, dicti
         app.notify("Chat dictionaries are not available right now.", severity="warning")
         return False
     try:
-        await service.attach_to_conversation(int(dictionary_id), str(conversation_id), mode="local")
+        await service.attach_to_conversation(
+            int(dictionary_id), str(conversation_id), mode="local"
+        )
     except ConflictError:
         app.notify("Dictionaries changed since loaded. Try again.", severity="warning")
         return False
@@ -51,7 +55,9 @@ async def handle_console_dictionary_attach(app: Any, conversation_id: Any, dicti
     return True
 
 
-async def handle_console_dictionary_detach(app: Any, conversation_id: Any, dictionary_id: Any) -> bool:
+async def handle_console_dictionary_detach(
+    app: Any, conversation_id: Any, dictionary_id: Any
+) -> bool:
     """Detach ``dictionary_id`` from ``conversation_id`` via the scope service.
 
     Mirrors :func:`handle_console_dictionary_attach` exactly, over
@@ -65,7 +71,9 @@ async def handle_console_dictionary_detach(app: Any, conversation_id: Any, dicti
         app.notify("Chat dictionaries are not available right now.", severity="warning")
         return False
     try:
-        await service.detach_from_conversation(int(dictionary_id), str(conversation_id), mode="local")
+        await service.detach_from_conversation(
+            int(dictionary_id), str(conversation_id), mode="local"
+        )
     except ConflictError:
         app.notify("Dictionaries changed since loaded. Try again.", severity="warning")
         return False
@@ -91,17 +99,26 @@ def console_attachable_dictionaries(db: Any, conversation_id: Any) -> list[dict]
     try:
         attached = set(cdl.conversation_dictionary_ids(db, conversation_id))
         rows: list[dict] = []
-        for row in cdl.list_chat_dictionaries(db, limit=1000, include_disabled=True) or []:
+        for row in (
+            cdl.list_chat_dictionaries(db, limit=1000, include_disabled=True) or []
+        ):
             try:
                 dictionary_id = int(row.get("id"))
             except (TypeError, ValueError):
                 continue
             if dictionary_id in attached:
                 continue
-            rows.append({"dictionary_id": dictionary_id, "name": str(row.get("name") or "(unnamed)")})
+            rows.append(
+                {
+                    "dictionary_id": dictionary_id,
+                    "name": str(row.get("name") or "(unnamed)"),
+                }
+            )
         return rows
     except Exception:
-        logger.opt(exception=True).warning("Could not list attachable dictionaries for the Console picker.")
+        logger.opt(exception=True).warning(
+            "Could not list attachable dictionaries for the Console picker."
+        )
         return []
 
 
@@ -124,10 +141,17 @@ def console_attached_dictionaries(db: Any, conversation_id: Any) -> list[dict]:
                 continue
             if not record:
                 continue
-            rows.append({"dictionary_id": int(dictionary_id), "name": str(record.get("name") or "(unnamed)")})
+            rows.append(
+                {
+                    "dictionary_id": int(dictionary_id),
+                    "name": str(record.get("name") or "(unnamed)"),
+                }
+            )
         return rows
     except Exception:
-        logger.opt(exception=True).warning("Could not list attached dictionaries for the Console picker.")
+        logger.opt(exception=True).warning(
+            "Could not list attached dictionaries for the Console picker."
+        )
         return []
 
 

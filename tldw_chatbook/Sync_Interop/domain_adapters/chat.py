@@ -33,5 +33,11 @@ class ChatSyncAdapter:
                     message="A chat message with this stable ID already has different content.",
                 )
         payload = decrypt_envelope_payload(envelope, dataset_key=dataset_key)
-        call_if_present(local_store, "append_chat_message", stable_key, payload, envelope.payload_hash)
+        call_if_present(
+            local_store,
+            "append_chat_message",
+            stable_key,
+            payload,
+            envelope.payload_hash,
+        )
         return {"status": "applied"}

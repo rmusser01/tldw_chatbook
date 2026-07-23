@@ -23,7 +23,11 @@ class LocalMediaReadingService:
     """Thin wrapper around the local media DB methods used by the media seam."""
 
     _SUPPORTED_METADATA_FIELDS = {"title", "media_type", "author", "url", "keywords"}
-    _SUPPORTED_INGESTION_SOURCE_TYPES = {"local_directory", "archive_snapshot", "git_repository"}
+    _SUPPORTED_INGESTION_SOURCE_TYPES = {
+        "local_directory",
+        "archive_snapshot",
+        "git_repository",
+    }
     _SUPPORTED_INGESTION_SINK_TYPES = {"media", "notes"}
     _SUPPORTED_INGESTION_POLICIES = {"canonical", "import_only"}
 
@@ -64,9 +68,13 @@ class LocalMediaReadingService:
             normalized.append(self._coerce_media_id(media_id))
         return normalized
 
-    def _enrich_with_read_it_later_state(self, row: Mapping[str, Any]) -> dict[str, Any]:
+    def _enrich_with_read_it_later_state(
+        self, row: Mapping[str, Any]
+    ) -> dict[str, Any]:
         enriched = dict(row)
-        state = self._require_db().get_media_read_it_later_state(self._coerce_media_id(row["id"]))
+        state = self._require_db().get_media_read_it_later_state(
+            self._coerce_media_id(row["id"])
+        )
         if state is None:
             return enriched
         enriched["is_read_it_later"] = state.get("is_read_it_later")
@@ -74,7 +82,9 @@ class LocalMediaReadingService:
         enriched["read_it_later_saved_at"] = state.get("saved_at")
         return enriched
 
-    def _enrich_rows_with_read_it_later_state(self, rows: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    def _enrich_rows_with_read_it_later_state(
+        self, rows: list[Mapping[str, Any]]
+    ) -> list[dict[str, Any]]:
         return [self._enrich_with_read_it_later_state(row) for row in rows]
 
     def search_media(
@@ -98,7 +108,11 @@ class LocalMediaReadingService:
             )
             if caller_media_ids_filter is not None:
                 saved_id_set = set(saved_media_ids)
-                media_ids_filter = [media_id for media_id in media_ids_filter if media_id in saved_id_set]
+                media_ids_filter = [
+                    media_id
+                    for media_id in media_ids_filter
+                    if media_id in saved_id_set
+                ]
             else:
                 media_ids_filter = saved_media_ids
             if not media_ids_filter:
@@ -111,14 +125,18 @@ class LocalMediaReadingService:
 
         results_per_page = max(limit + offset, limit)
         fts_match_query = filters.get("fts_match_query")
-        fts_match_kwargs = {"fts_match_query": fts_match_query} if fts_match_query is not None else {}
+        fts_match_kwargs = (
+            {"fts_match_query": fts_match_query} if fts_match_query is not None else {}
+        )
         rows, total = db.search_media_db(
             search_query=query,
             search_fields=filters.get("fields"),
             media_types=filters.get("media_types"),
             date_range=filters.get("date_range"),
-            must_have_keywords=filters.get("must_have") or filters.get("must_have_keywords"),
-            must_not_have_keywords=filters.get("must_not") or filters.get("must_not_have_keywords"),
+            must_have_keywords=filters.get("must_have")
+            or filters.get("must_have_keywords"),
+            must_not_have_keywords=filters.get("must_not")
+            or filters.get("must_not_have_keywords"),
             sort_by=filters.get("sort_by", "last_modified_desc"),
             media_ids_filter=media_ids_filter,
             page=1,
@@ -127,7 +145,9 @@ class LocalMediaReadingService:
             include_deleted=bool(filters.get("include_deleted", False)),
             **fts_match_kwargs,
         )
-        items = self._enrich_rows_with_read_it_later_state(list(rows)[offset:offset + limit])
+        items = self._enrich_rows_with_read_it_later_state(
+            list(rows)[offset : offset + limit]
+        )
         return {
             "items": items,
             "total": total,
@@ -135,7 +155,13 @@ class LocalMediaReadingService:
             "limit": limit,
         }
 
-    def get_media_detail(self, media_id: Any, *, include_deleted: bool = False, include_trash: bool = False) -> Any:
+    def get_media_detail(
+        self,
+        media_id: Any,
+        *,
+        include_deleted: bool = False,
+        include_trash: bool = False,
+    ) -> Any:
         db = self._require_db()
         detail = db.get_media_by_id(
             self._coerce_media_id(media_id),
@@ -147,12 +173,15 @@ class LocalMediaReadingService:
     def update_media_metadata(self, media_id: Any, **metadata: Any) -> Any:
         db = self._require_db()
         unsupported = sorted(
-            key for key, value in metadata.items()
+            key
+            for key, value in metadata.items()
             if value is not None and key not in self._SUPPORTED_METADATA_FIELDS
         )
         if unsupported:
             unsupported_text = ", ".join(unsupported)
-            raise ValueError(f"Unsupported local media metadata fields: {unsupported_text}")
+            raise ValueError(
+                f"Unsupported local media metadata fields: {unsupported_text}"
+            )
         return db.update_media_metadata(self._coerce_media_id(media_id), **metadata)
 
     def list_media_items(
@@ -176,12 +205,18 @@ class LocalMediaReadingService:
             include_keywords=include_keywords,
         )
 
-    def list_media_keywords(self, *, query: str | None = None, limit: int = 100) -> dict[str, Any]:
+    def list_media_keywords(
+        self, *, query: str | None = None, limit: int = 100
+    ) -> dict[str, Any]:
         keywords = list(self._require_db().fetch_all_keywords())
         normalized_query = str(query or "").strip().lower()
         if normalized_query:
-            keywords = [keyword for keyword in keywords if normalized_query in str(keyword).lower()]
-        return {"keywords": keywords[:max(int(limit or 100), 0)]}
+            keywords = [
+                keyword
+                for keyword in keywords
+                if normalized_query in str(keyword).lower()
+            ]
+        return {"keywords": keywords[: max(int(limit or 100), 0)]}
 
     def list_media_trash(
         self,
@@ -194,20 +229,31 @@ class LocalMediaReadingService:
         normalized_page = max(int(page or 1), 1)
         normalized_results_per_page = max(int(results_per_page or 10), 1)
         offset = (normalized_page - 1) * normalized_results_per_page
-        total = db.get_connection().execute(
-            "SELECT COUNT(*) FROM Media WHERE deleted = 0 AND is_trash = 1"
-        ).fetchone()[0]
-        rows = db.get_connection().execute(
-            """
+        total = (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM Media WHERE deleted = 0 AND is_trash = 1")
+            .fetchone()[0]
+        )
+        rows = (
+            db.get_connection()
+            .execute(
+                """
             SELECT id, title, type
             FROM Media
             WHERE deleted = 0 AND is_trash = 1
             ORDER BY trash_date DESC, last_modified DESC, id DESC
             LIMIT ? OFFSET ?
             """,
-            (normalized_results_per_page, offset),
-        ).fetchall()
-        total_pages = (int(total) + normalized_results_per_page - 1) // normalized_results_per_page if total else 0
+                (normalized_results_per_page, offset),
+            )
+            .fetchall()
+        )
+        total_pages = (
+            (int(total) + normalized_results_per_page - 1)
+            // normalized_results_per_page
+            if total
+            else 0
+        )
         return self._build_local_media_list_response(
             rows,
             page=normalized_page,
@@ -221,9 +267,11 @@ class LocalMediaReadingService:
         from tldw_chatbook.DB.Client_Media_DB_v2 import permanently_delete_item
 
         db = self._require_db()
-        rows = db.get_connection().execute(
-            "SELECT id FROM Media WHERE deleted = 0 AND is_trash = 1"
-        ).fetchall()
+        rows = (
+            db.get_connection()
+            .execute("SELECT id FROM Media WHERE deleted = 0 AND is_trash = 1")
+            .fetchall()
+        )
         failed_ids: list[int] = []
         deleted_count = 0
         for row in rows:
@@ -235,9 +283,11 @@ class LocalMediaReadingService:
                     failed_ids.append(media_id)
             except Exception:
                 failed_ids.append(media_id)
-        remaining = db.get_connection().execute(
-            "SELECT COUNT(*) FROM Media WHERE deleted = 0 AND is_trash = 1"
-        ).fetchone()[0]
+        remaining = (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM Media WHERE deleted = 0 AND is_trash = 1")
+            .fetchone()[0]
+        )
         return {
             "deleted_count": deleted_count,
             "failed_count": len(failed_ids),
@@ -276,7 +326,9 @@ class LocalMediaReadingService:
             raise KeyError(f"Local media item not found: {media_id}")
         if not current.get("is_trash"):
             if not db.mark_as_trash(normalized_media_id):
-                raise ValueError(f"Local media item could not be moved to trash: {media_id}")
+                raise ValueError(
+                    f"Local media item could not be moved to trash: {media_id}"
+                )
         return {"ok": True, "media_id": normalized_media_id}
 
     def restore_media_item(
@@ -293,7 +345,9 @@ class LocalMediaReadingService:
         if current is None:
             raise KeyError(f"Local media item not found: {media_id}")
         if current.get("is_trash") and not db.restore_from_trash(normalized_media_id):
-            raise ValueError(f"Local media item could not be restored from trash: {media_id}")
+            raise ValueError(
+                f"Local media item could not be restored from trash: {media_id}"
+            )
         restored = db.get_media_by_id(normalized_media_id)
         if restored is None:
             raise KeyError(f"Local media item not found after restore: {media_id}")
@@ -313,13 +367,19 @@ class LocalMediaReadingService:
         if current is None:
             raise KeyError(f"Local media item not found: {media_id}")
         if not current.get("is_trash"):
-            raise ValueError("Local media item must be in trash before permanent deletion.")
+            raise ValueError(
+                "Local media item must be in trash before permanent deletion."
+            )
         deleted = permanently_delete_item(db, normalized_media_id)
         if not deleted:
-            raise ValueError(f"Local media item could not be permanently deleted: {media_id}")
+            raise ValueError(
+                f"Local media item could not be permanently deleted: {media_id}"
+            )
         return {"ok": True, "media_id": normalized_media_id}
 
-    def update_media_keywords(self, media_id: Any, *, keywords: list[str], mode: str = "add") -> dict[str, Any]:
+    def update_media_keywords(
+        self, media_id: Any, *, keywords: list[str], mode: str = "add"
+    ) -> dict[str, Any]:
         normalized_media_id = self._coerce_media_id(media_id)
         incoming = self._normalize_bulk_tags(keywords)
         current = self._local_keywords_for_media(normalized_media_id)
@@ -330,20 +390,31 @@ class LocalMediaReadingService:
             next_keywords = sorted(set(current + incoming))
         elif normalized_mode in {"remove", "delete"}:
             remove_set = set(incoming)
-            next_keywords = [keyword for keyword in current if keyword not in remove_set]
+            next_keywords = [
+                keyword for keyword in current if keyword not in remove_set
+            ]
         else:
             raise ValueError(f"Unsupported local keyword update mode: {mode}")
         self.update_media_metadata(normalized_media_id, keywords=next_keywords)
-        return {"media_id": normalized_media_id, "keywords": self._local_keywords_for_media(normalized_media_id)}
+        return {
+            "media_id": normalized_media_id,
+            "keywords": self._local_keywords_for_media(normalized_media_id),
+        }
 
     def search_media_metadata(self, **filters: Any) -> dict[str, Any]:
         page = max(int(filters.get("page") or 1), 1)
-        per_page = max(int(filters.get("per_page") or filters.get("results_per_page") or 20), 1)
+        per_page = max(
+            int(filters.get("per_page") or filters.get("results_per_page") or 20), 1
+        )
         query = filters.get("q") or filters.get("value")
         field = str(filters.get("field") or "").strip()
-        search_fields = [field] if field in {"title", "content", "author", "type"} else None
+        search_fields = (
+            [field] if field in {"title", "content", "author", "type"} else None
+        )
         if field in {"url", "uuid", "content_hash"} and query is not None:
-            return self._search_local_media_column(field, str(query), page=page, per_page=per_page)
+            return self._search_local_media_column(
+                field, str(query), page=page, per_page=per_page
+            )
         result = self.search_media(
             query=str(query) if query is not None else None,
             limit=per_page,
@@ -388,7 +459,9 @@ class LocalMediaReadingService:
             "group_by_media": bool(identifiers.get("group_by_media", True)),
         }
 
-    def check_media_file(self, media_id: Any, *, file_type: str = "original") -> dict[str, Any]:
+    def check_media_file(
+        self, media_id: Any, *, file_type: str = "original"
+    ) -> dict[str, Any]:
         row = self.get_media_detail(media_id)
         source = self._resolve_local_media_file_source(row, file_type=file_type)
         if source is None:
@@ -404,7 +477,9 @@ class LocalMediaReadingService:
         if source_kind == "file_path":
             path = payload
             size = path.stat().st_size
-            content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            content_type = (
+                mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            )
         else:
             size = len(payload)
             content_type = "text/plain; charset=utf-8"
@@ -417,17 +492,23 @@ class LocalMediaReadingService:
             "content_type": content_type,
         }
 
-    def download_media_file(self, media_id: Any, *, file_type: str = "original") -> dict[str, Any]:
+    def download_media_file(
+        self, media_id: Any, *, file_type: str = "original"
+    ) -> dict[str, Any]:
         row = self.get_media_detail(media_id)
         source = self._resolve_local_media_file_source(row, file_type=file_type)
         if source is None:
-            raise FileNotFoundError(f"Local media file is unavailable for media item: {media_id}")
+            raise FileNotFoundError(
+                f"Local media file is unavailable for media item: {media_id}"
+            )
         source_kind, payload = source
         if source_kind == "file_path":
             path = payload
             content = path.read_bytes()
             filename = path.name or f"media_{media_id}"
-            content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+            content_type = (
+                mimetypes.guess_type(filename)[0] or "application/octet-stream"
+            )
         else:
             content = payload
             filename = self._safe_local_media_filename(row)
@@ -453,7 +534,9 @@ class LocalMediaReadingService:
         db = self._require_db()
         normalized_media_type = str(media_type or "unknown").strip() or "unknown"
         normalized_urls = [str(url).strip() for url in urls or [] if str(url).strip()]
-        normalized_file_paths = [str(path).strip() for path in file_paths or [] if str(path).strip()]
+        normalized_file_paths = [
+            str(path).strip() for path in file_paths or [] if str(path).strip()
+        ]
         if not normalized_urls and not normalized_file_paths:
             raise ValueError("Local media add requires at least one URL or file path.")
 
@@ -462,8 +545,14 @@ class LocalMediaReadingService:
         author = str(options.get("author") or "").strip() or None
         prompt = options.get("custom_prompt") or options.get("prompt")
         analysis_content = options.get("analysis_content") or options.get("summary")
-        overwrite = bool(options.get("overwrite_existing") if options.get("overwrite_existing") is not None else options.get("overwrite"))
-        supplied_content = self._first_present_text(options, "content", "text", "body", "markdown")
+        overwrite = bool(
+            options.get("overwrite_existing")
+            if options.get("overwrite_existing") is not None
+            else options.get("overwrite")
+        )
+        supplied_content = self._first_present_text(
+            options, "content", "text", "body", "markdown"
+        )
 
         items: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
@@ -477,12 +566,16 @@ class LocalMediaReadingService:
                 content=str(content),
                 keywords=keywords,
                 prompt=str(prompt) if prompt not in (None, "") else None,
-                analysis_content=str(analysis_content) if analysis_content not in (None, "") else None,
+                analysis_content=str(analysis_content)
+                if analysis_content not in (None, "")
+                else None,
                 author=author,
                 overwrite=overwrite,
             )
             if media_id is None:
-                errors.append({"source": "url", "url": url, "message": str(message or "skipped")})
+                errors.append(
+                    {"source": "url", "url": url, "message": str(message or "skipped")}
+                )
                 continue
             items.append(
                 {
@@ -498,7 +591,13 @@ class LocalMediaReadingService:
         for file_path in normalized_file_paths:
             path = Path(file_path).expanduser()
             if not path.exists() or not path.is_file():
-                errors.append({"source": "file_path", "file_path": file_path, "message": "file not found"})
+                errors.append(
+                    {
+                        "source": "file_path",
+                        "file_path": file_path,
+                        "message": "file not found",
+                    }
+                )
                 continue
             resolved_path = path.resolve()
             content = resolved_path.read_text(encoding="utf-8", errors="replace")
@@ -510,12 +609,20 @@ class LocalMediaReadingService:
                 content=content,
                 keywords=keywords,
                 prompt=str(prompt) if prompt not in (None, "") else None,
-                analysis_content=str(analysis_content) if analysis_content not in (None, "") else None,
+                analysis_content=str(analysis_content)
+                if analysis_content not in (None, "")
+                else None,
                 author=author,
                 overwrite=overwrite,
             )
             if media_id is None:
-                errors.append({"source": "file_path", "file_path": file_path, "message": str(message or "skipped")})
+                errors.append(
+                    {
+                        "source": "file_path",
+                        "file_path": file_path,
+                        "message": str(message or "skipped"),
+                    }
+                )
                 continue
             items.append(
                 {
@@ -634,21 +741,38 @@ class LocalMediaReadingService:
         accept_mbox: bool = True,
         **options: Any,
     ) -> dict[str, Any]:
-        normalized_files = [str(path).strip() for path in file_paths or [] if str(path).strip()]
+        normalized_files = [
+            str(path).strip() for path in file_paths or [] if str(path).strip()
+        ]
         results: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
         if not normalized_files:
-            errors.append({"source": "input", "message": "At least one local email file path is required."})
+            errors.append(
+                {
+                    "source": "input",
+                    "message": "At least one local email file path is required.",
+                }
+            )
 
         for file_path in normalized_files:
             path = Path(file_path).expanduser()
             if not path.exists() or not path.is_file():
-                errors.append({"source": "file_path", "file_path": file_path, "message": "file not found"})
+                errors.append(
+                    {
+                        "source": "file_path",
+                        "file_path": file_path,
+                        "message": "file not found",
+                    }
+                )
                 continue
             try:
-                messages = self._parse_local_email_path(path.resolve(), accept_mbox=accept_mbox)
+                messages = self._parse_local_email_path(
+                    path.resolve(), accept_mbox=accept_mbox
+                )
             except Exception as exc:
-                errors.append({"source": "file_path", "file_path": file_path, "message": str(exc)})
+                errors.append(
+                    {"source": "file_path", "file_path": file_path, "message": str(exc)}
+                )
                 continue
             for index, message in enumerate(messages):
                 subject = str(message.get("subject") or "").strip()
@@ -674,7 +798,11 @@ class LocalMediaReadingService:
                 )
 
         return {
-            "status": "success" if results and not errors else "partial_success" if results else "failed",
+            "status": "success"
+            if results and not errors
+            else "partial_success"
+            if results
+            else "failed",
             "backend": "local",
             "persisted": False,
             "processed_count": len(results),
@@ -698,7 +826,12 @@ class LocalMediaReadingService:
         results: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
         if not urls:
-            errors.append({"source": "input", "message": "At least one URL is required for local web scraping."})
+            errors.append(
+                {
+                    "source": "input",
+                    "message": "At least one URL is required for local web scraping.",
+                }
+            )
 
         scraper = self.url_article_scraper or self._default_url_article_scraper
         title_candidates = self._split_title_input(custom_titles)
@@ -708,8 +841,15 @@ class LocalMediaReadingService:
                 if not isinstance(scraped, Mapping):
                     raise ValueError("Local URL article scraper must return a mapping.")
                 if scraped.get("extraction_successful") is False:
-                    raise ValueError(str(scraped.get("error") or "URL article extraction failed."))
-                content = self._first_present_text(scraped, "content", "text", "markdown", "body") or ""
+                    raise ValueError(
+                        str(scraped.get("error") or "URL article extraction failed.")
+                    )
+                content = (
+                    self._first_present_text(
+                        scraped, "content", "text", "markdown", "body"
+                    )
+                    or ""
+                )
                 title = (
                     title_candidates[index]
                     if index < len(title_candidates)
@@ -726,7 +866,9 @@ class LocalMediaReadingService:
                         "title": title,
                         "content": content,
                         "author": scraped.get("author"),
-                        "keywords": self._merge_keyword_values(keywords, scraped.get("keywords")),
+                        "keywords": self._merge_keyword_values(
+                            keywords, scraped.get("keywords")
+                        ),
                         "media_type": "web_scraping",
                         "scrape_method": scrape_method,
                         "requested_mode": mode,
@@ -736,8 +878,14 @@ class LocalMediaReadingService:
                 errors.append({"source": "url", "url": url, "message": str(exc)})
 
         return {
-            "status": "success" if results and not errors else "partial_success" if results else "failed",
-            "message": "Local web content processed" if results else "Local web content processing failed",
+            "status": "success"
+            if results and not errors
+            else "partial_success"
+            if results
+            else "failed",
+            "message": "Local web content processed"
+            if results
+            else "Local web content processing failed",
             "backend": "local",
             "persisted": False,
             "count": len(results),
@@ -755,7 +903,9 @@ class LocalMediaReadingService:
     ) -> dict[str, Any]:
         inputs = self._combine_url_file_inputs(urls=urls, file_paths=file_paths)
         if not inputs:
-            return self._failed_local_no_db_processing_result("audio", "At least one URL or local audio file path is required.")
+            return self._failed_local_no_db_processing_result(
+                "audio", "At least one URL or local audio file path is required."
+            )
         processor = self._build_local_audio_processor()
         payload = processor.process_audio_files(
             inputs=inputs,
@@ -772,9 +922,13 @@ class LocalMediaReadingService:
     ) -> dict[str, Any]:
         inputs = self._combine_url_file_inputs(urls=urls, file_paths=file_paths)
         if not inputs:
-            return self._failed_local_no_db_processing_result("video", "At least one URL or local video file path is required.")
+            return self._failed_local_no_db_processing_result(
+                "video", "At least one URL or local video file path is required."
+            )
         processor = self._build_local_video_processor()
-        download_video_flag = bool(options.pop("download_video_flag", options.pop("download_video", False)))
+        download_video_flag = bool(
+            options.pop("download_video_flag", options.pop("download_video", False))
+        )
         payload = processor.process_videos(
             inputs=inputs,
             download_video_flag=download_video_flag,
@@ -813,15 +967,26 @@ class LocalMediaReadingService:
                     continue
                 title = self._xml_child_text(page, "title") or "Untitled"
                 namespace = self._xml_child_text(page, "ns") or "0"
-                if allowed_namespaces is not None and namespace not in allowed_namespaces:
+                if (
+                    allowed_namespaces is not None
+                    and namespace not in allowed_namespaces
+                ):
                     page.clear()
                     continue
-                if skip_redirects and any(self._xml_local_name(child.tag) == "redirect" for child in page):
+                if skip_redirects and any(
+                    self._xml_local_name(child.tag) == "redirect" for child in page
+                ):
                     page.clear()
                     continue
                 revision = self._xml_child(page, "revision")
-                text_node = self._xml_child(revision, "text") if revision is not None else None
-                content = text_node.text if text_node is not None and text_node.text is not None else ""
+                text_node = (
+                    self._xml_child(revision, "text") if revision is not None else None
+                )
+                content = (
+                    text_node.text
+                    if text_node is not None and text_node.text is not None
+                    else ""
+                )
                 yield {
                     "status": "Success",
                     "backend": "local",
@@ -854,7 +1019,9 @@ class LocalMediaReadingService:
         **options: Any,
     ):
         db = self._require_db()
-        keywords = self._normalize_import_tags(options.get("keywords") or options.get("tags"))
+        keywords = self._normalize_import_tags(
+            options.get("keywords") or options.get("tags")
+        )
         overwrite = bool(
             options.get("overwrite_existing")
             if options.get("overwrite_existing") is not None
@@ -876,7 +1043,9 @@ class LocalMediaReadingService:
 
             title = str(page.get("title") or "Untitled")
             namespace = str(page.get("namespace") or "0")
-            url = self._mediawiki_page_url(wiki_name=wiki_name, namespace=namespace, title=title)
+            url = self._mediawiki_page_url(
+                wiki_name=wiki_name, namespace=namespace, title=title
+            )
             media_id, media_uuid, message = db.add_media_with_keywords(
                 url=url,
                 title=title,
@@ -911,7 +1080,9 @@ class LocalMediaReadingService:
 
         yield {
             "type": "summary",
-            "status": "Success" if failed == 0 else ("Partial" if processed else "Error"),
+            "status": "Success"
+            if failed == 0
+            else ("Partial" if processed else "Error"),
             "backend": "local",
             "persisted": processed > 0,
             "processed": processed,
@@ -953,7 +1124,9 @@ class LocalMediaReadingService:
         text_extractor: Any = None,
         **options: Any,
     ) -> dict[str, Any]:
-        normalized_files = [str(path).strip() for path in file_paths or [] if str(path).strip()]
+        normalized_files = [
+            str(path).strip() for path in file_paths or [] if str(path).strip()
+        ]
         normalized_urls = [str(url).strip() for url in urls or [] if str(url).strip()]
         results: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
@@ -970,16 +1143,26 @@ class LocalMediaReadingService:
         for file_path in normalized_files:
             path = Path(file_path).expanduser()
             if not path.exists() or not path.is_file():
-                errors.append({"source": "file_path", "file_path": file_path, "message": "file not found"})
+                errors.append(
+                    {
+                        "source": "file_path",
+                        "file_path": file_path,
+                        "message": "file not found",
+                    }
+                )
                 continue
             resolved_path = path.resolve()
             try:
                 if callable(text_extractor):
                     content = text_extractor(resolved_path)
                 else:
-                    content = resolved_path.read_text(encoding="utf-8", errors="replace")
+                    content = resolved_path.read_text(
+                        encoding="utf-8", errors="replace"
+                    )
             except Exception as exc:
-                errors.append({"source": "file_path", "file_path": file_path, "message": str(exc)})
+                errors.append(
+                    {"source": "file_path", "file_path": file_path, "message": str(exc)}
+                )
                 continue
             results.append(
                 {
@@ -1002,10 +1185,19 @@ class LocalMediaReadingService:
             )
 
         if not normalized_files and not normalized_urls:
-            errors.append({"source": "input", "message": "At least one local file path is required."})
+            errors.append(
+                {
+                    "source": "input",
+                    "message": "At least one local file path is required.",
+                }
+            )
 
         return {
-            "status": "success" if results and not errors else "partial_success" if results else "failed",
+            "status": "success"
+            if results and not errors
+            else "partial_success"
+            if results
+            else "failed",
             "backend": "local",
             "persisted": False,
             "processed_count": len(results),
@@ -1030,9 +1222,7 @@ class LocalMediaReadingService:
                 pass
         decoded = path.read_bytes().decode("utf-8", errors="ignore")
         lines = [
-            line
-            for line in decoded.splitlines()
-            if line and not line.startswith("%")
+            line for line in decoded.splitlines() if line and not line.startswith("%")
         ]
         return "\n".join(lines) + ("\n" if lines else "")
 
@@ -1126,7 +1316,11 @@ class LocalMediaReadingService:
             "keep_original",
             "author",
         }
-        normalized = {key: value for key, value in options.items() if key in supported_options and value is not None}
+        normalized = {
+            key: value
+            for key, value in options.items()
+            if key in supported_options and value is not None
+        }
         if "title" in options and options["title"] is not None:
             normalized["custom_title"] = options["title"]
         if "chunk_size" in options and options["chunk_size"] is not None:
@@ -1145,7 +1339,9 @@ class LocalMediaReadingService:
         return result
 
     @staticmethod
-    def _failed_local_no_db_processing_result(media_type: str, message: str) -> dict[str, Any]:
+    def _failed_local_no_db_processing_result(
+        media_type: str, message: str
+    ) -> dict[str, Any]:
         return {
             "processed_count": 0,
             "errors_count": 1,
@@ -1168,7 +1364,9 @@ class LocalMediaReadingService:
     def _parse_mediawiki_namespaces(namespaces_str: str | None) -> set[str] | None:
         if namespaces_str in (None, ""):
             return None
-        namespaces = {part.strip() for part in str(namespaces_str).split(",") if part.strip()}
+        namespaces = {
+            part.strip() for part in str(namespaces_str).split(",") if part.strip()
+        }
         return namespaces or None
 
     @staticmethod
@@ -1201,14 +1399,18 @@ class LocalMediaReadingService:
         return child.text.strip()
 
     @classmethod
-    def _parse_local_email_path(cls, path: Path, *, accept_mbox: bool) -> list[dict[str, Any]]:
+    def _parse_local_email_path(
+        cls, path: Path, *, accept_mbox: bool
+    ) -> list[dict[str, Any]]:
         from email import policy
         from email.parser import BytesParser
         import mailbox
 
         suffix = path.suffix.lower()
         if accept_mbox and suffix in {".mbox", ".mbx"}:
-            return [cls._email_message_to_payload(message) for message in mailbox.mbox(path)]
+            return [
+                cls._email_message_to_payload(message) for message in mailbox.mbox(path)
+            ]
         message = BytesParser(policy=policy.default).parsebytes(path.read_bytes())
         return [cls._email_message_to_payload(message)]
 
@@ -1238,7 +1440,9 @@ class LocalMediaReadingService:
                     content = part.get_content()
                 except Exception:
                     payload = part.get_payload(decode=True) or b""
-                    content = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
+                    content = payload.decode(
+                        part.get_content_charset() or "utf-8", errors="replace"
+                    )
                 if content_type == "text/plain":
                     plain_parts.append(str(content))
                 elif content_type == "text/html":
@@ -1248,13 +1452,17 @@ class LocalMediaReadingService:
                 content = message.get_content()
             except Exception:
                 payload = message.get_payload(decode=True) or b""
-                content = payload.decode(message.get_content_charset() or "utf-8", errors="replace")
+                content = payload.decode(
+                    message.get_content_charset() or "utf-8", errors="replace"
+                )
             if message.get_content_type() == "text/html":
                 html_parts.append(cls._html_to_plain_text(str(content)))
             else:
                 plain_parts.append(str(content))
         selected_parts = plain_parts or html_parts
-        return "\n\n".join(part.strip() for part in selected_parts if part and part.strip())
+        return "\n\n".join(
+            part.strip() for part in selected_parts if part and part.strip()
+        )
 
     @staticmethod
     def _chunk_text(
@@ -1340,10 +1548,14 @@ class LocalMediaReadingService:
     def get_file_artifact(self, file_id: Any) -> dict[str, Any]:
         db = self._require_db()
         self._ensure_local_reading_aux_schema(db)
-        row = db.get_connection().execute(
-            "SELECT * FROM local_file_artifacts WHERE id = ? AND deleted = 0",
-            (self._coerce_media_id(file_id),),
-        ).fetchone()
+        row = (
+            db.get_connection()
+            .execute(
+                "SELECT * FROM local_file_artifacts WHERE id = ? AND deleted = 0",
+                (self._coerce_media_id(file_id),),
+            )
+            .fetchone()
+        )
         if row is None:
             raise KeyError(f"Local file artifact not found: {file_id}")
         return {"artifact": self._file_artifact_row_to_response(row)}
@@ -1351,13 +1563,17 @@ class LocalMediaReadingService:
     def list_reference_images(self) -> dict[str, Any]:
         db = self._require_db()
         self._ensure_local_reading_aux_schema(db)
-        rows = db.get_connection().execute(
-            """
+        rows = (
+            db.get_connection()
+            .execute(
+                """
             SELECT * FROM local_file_artifacts
             WHERE deleted = 0 AND LOWER(file_type) IN ('reference_image', 'reference-image', 'image')
             ORDER BY created_at DESC, id DESC
             """
-        ).fetchall()
+            )
+            .fetchall()
+        )
         return {
             "items": [self._reference_image_row_to_response(row) for row in rows],
             "total": len(rows),
@@ -1366,11 +1582,17 @@ class LocalMediaReadingService:
     def export_file_artifact(self, file_id: Any, *, format: str) -> dict[str, Any]:
         artifact = self.get_file_artifact(file_id)["artifact"]
         export_payload = dict(artifact.get("export") or {})
-        normalized_format = str(format or export_payload.get("format") or "json").strip().lower() or "json"
+        normalized_format = (
+            str(format or export_payload.get("format") or "json").strip().lower()
+            or "json"
+        )
         content = export_payload.get("content")
         if content is None:
             content = self._json_dumps(dict(artifact.get("structured") or {}))
-        filename = str(export_payload.get("filename") or f"artifact-{artifact['file_id']}.{normalized_format}")
+        filename = str(
+            export_payload.get("filename")
+            or f"artifact-{artifact['file_id']}.{normalized_format}"
+        )
         content_type = {
             "md": "text/markdown",
             "markdown": "text/markdown",
@@ -1384,14 +1606,19 @@ class LocalMediaReadingService:
             "filename": filename,
         }
 
-    def delete_file_artifact(self, file_id: Any, *, hard: bool = False, delete_file: bool = False) -> dict[str, Any]:
+    def delete_file_artifact(
+        self, file_id: Any, *, hard: bool = False, delete_file: bool = False
+    ) -> dict[str, Any]:
         db = self._require_db()
         self._ensure_local_reading_aux_schema(db)
         self.get_file_artifact(file_id)
         normalized_file_id = self._coerce_media_id(file_id)
         with db.transaction() as conn:
             if hard:
-                conn.execute("DELETE FROM local_file_artifacts WHERE id = ?", (normalized_file_id,))
+                conn.execute(
+                    "DELETE FROM local_file_artifacts WHERE id = ?",
+                    (normalized_file_id,),
+                )
             else:
                 now = db._get_current_utc_timestamp_str()
                 conn.execute(
@@ -1410,7 +1637,9 @@ class LocalMediaReadingService:
         db = self._require_db()
         self._ensure_local_reading_aux_schema(db)
         with db.transaction() as conn:
-            rows = conn.execute("SELECT id FROM local_file_artifacts WHERE deleted = 1").fetchall()
+            rows = conn.execute(
+                "SELECT id FROM local_file_artifacts WHERE deleted = 1"
+            ).fetchall()
             removed = len(rows)
             conn.execute("DELETE FROM local_file_artifacts WHERE deleted = 1")
         return {"removed": removed, "files_deleted": removed if delete_files else 0}
@@ -1424,14 +1653,22 @@ class LocalMediaReadingService:
     def get_reading_progress(self, media_id: Any) -> Any:
         return self._require_db().get_reading_progress(self._coerce_media_id(media_id))
 
-    def update_reading_progress(self, media_id: Any, progress_data: Mapping[str, Any]) -> Any:
-        return self._require_db().upsert_reading_progress(self._coerce_media_id(media_id), dict(progress_data))
+    def update_reading_progress(
+        self, media_id: Any, progress_data: Mapping[str, Any]
+    ) -> Any:
+        return self._require_db().upsert_reading_progress(
+            self._coerce_media_id(media_id), dict(progress_data)
+        )
 
     def delete_reading_progress(self, media_id: Any) -> Any:
-        return self._require_db().delete_reading_progress(self._coerce_media_id(media_id))
+        return self._require_db().delete_reading_progress(
+            self._coerce_media_id(media_id)
+        )
 
     def save_to_read_it_later(self, media_id: Any) -> Any:
-        return self._require_db().save_media_to_read_it_later(self._coerce_media_id(media_id))
+        return self._require_db().save_media_to_read_it_later(
+            self._coerce_media_id(media_id)
+        )
 
     def remove_from_read_it_later(self, media_id: Any) -> Any:
         db = self._require_db()
@@ -1470,15 +1707,21 @@ class LocalMediaReadingService:
         if not normalized_url:
             raise ValueError("url is required for local reading item creation.")
         if str(archive_mode or "use_default") != "use_default":
-            raise ValueError("Local reading item creation does not support custom archive_mode.")
+            raise ValueError(
+                "Local reading item creation does not support custom archive_mode."
+            )
         if favorite:
-            raise ValueError("Local reading item creation does not support favorite=True.")
+            raise ValueError(
+                "Local reading item creation does not support favorite=True."
+            )
         if notes not in (None, ""):
             raise ValueError("Local reading item creation does not support notes.")
 
         normalized_status = str(status or "saved").strip().lower()
         if normalized_status not in {"saved", "archived", "unread", "read"}:
-            raise ValueError(f"Unsupported local reading item status: {normalized_status}")
+            raise ValueError(
+                f"Unsupported local reading item status: {normalized_status}"
+            )
 
         article: Mapping[str, Any] = {}
         body = content
@@ -1488,12 +1731,18 @@ class LocalMediaReadingService:
             if not isinstance(scraped, Mapping):
                 raise ValueError("Local URL article scraper must return a mapping.")
             if scraped.get("extraction_successful") is False:
-                raise ValueError(str(scraped.get("error") or "URL article extraction failed."))
+                raise ValueError(
+                    str(scraped.get("error") or "URL article extraction failed.")
+                )
             article = scraped
-            body = self._first_present_text(scraped, "content", "text", "markdown", "body")
+            body = self._first_present_text(
+                scraped, "content", "text", "markdown", "body"
+            )
 
         if not body or not str(body).strip():
-            raise ValueError("Local reading item creation requires content or extractable URL content.")
+            raise ValueError(
+                "Local reading item creation requires content or extractable URL content."
+            )
 
         final_title = str(title or article.get("title") or normalized_url)
         author = article.get("author")
@@ -1511,7 +1760,9 @@ class LocalMediaReadingService:
             overwrite=True,
         )
         if media_id is None:
-            raise ValueError("Local reading item creation did not produce a media record.")
+            raise ValueError(
+                "Local reading item creation did not produce a media record."
+            )
         if normalized_status == "saved":
             db.save_media_to_read_it_later(self._coerce_media_id(media_id))
         else:
@@ -1741,7 +1992,10 @@ class LocalMediaReadingService:
 
         updates["updated_at"] = db._get_current_utc_timestamp_str()
         assignments = ", ".join(f"{key} = ?" for key in updates)
-        values = list(updates.values()) + [normalized_media_id, normalized_annotation_id]
+        values = list(updates.values()) + [
+            normalized_media_id,
+            normalized_annotation_id,
+        ]
         with db.transaction() as conn:
             conn.execute(
                 f"""
@@ -1803,7 +2057,7 @@ class LocalMediaReadingService:
         if client_ids:
             id_mapping = {
                 str(client_id): created[index]["id"]
-                for index, client_id in enumerate(client_ids[:len(created)])
+                for index, client_id in enumerate(client_ids[: len(created)])
             }
         return {
             "media_id": normalized_media_id,
@@ -1833,11 +2087,15 @@ class LocalMediaReadingService:
             "total_pages": self._estimate_local_page_count(text),
         }
 
-    def get_document_figures(self, media_id: Any, *, min_size: int = 50) -> dict[str, Any]:
+    def get_document_figures(
+        self, media_id: Any, *, min_size: int = 50
+    ) -> dict[str, Any]:
         normalized_media_id, text = self._local_document_text(media_id)
         size = max(int(min_size or 50), 1)
         figures: list[dict[str, Any]] = []
-        for index, match in enumerate(re.finditer(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)", text), start=1):
+        for index, match in enumerate(
+            re.finditer(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)", text), start=1
+        ):
             source = match.group(2).strip()
             image_format = self._local_figure_format(source)
             figures.append(
@@ -1872,10 +2130,12 @@ class LocalMediaReadingService:
         normalized_media_id, text = self._local_document_text(media_id)
         references = self._extract_local_references(text)
         if parse_cap is not None:
-            references = references[:max(int(parse_cap), 0)]
+            references = references[: max(int(parse_cap), 0)]
         if search:
             needle = str(search).strip().lower()
-            references = [ref for ref in references if needle in ref["raw_text"].lower()]
+            references = [
+                ref for ref in references if needle in ref["raw_text"].lower()
+            ]
         total_detected = len(references)
         if reference_index is not None:
             index = int(reference_index)
@@ -1885,10 +2145,16 @@ class LocalMediaReadingService:
         else:
             normalized_offset = max(int(offset or 0), 0)
             normalized_limit = max(int(limit or 50), 0)
-            references = references[normalized_offset:normalized_offset + normalized_limit]
+            references = references[
+                normalized_offset : normalized_offset + normalized_limit
+            ]
         returned_count = len(references)
         total_available = total_detected
-        next_offset = normalized_offset + returned_count if normalized_offset + returned_count < total_available else None
+        next_offset = (
+            normalized_offset + returned_count
+            if normalized_offset + returned_count < total_available
+            else None
+        )
         return {
             "media_id": normalized_media_id,
             "has_references": total_available > 0,
@@ -1917,7 +2183,7 @@ class LocalMediaReadingService:
     ) -> dict[str, Any]:
         normalized_media_id, text = self._local_document_text(media_id)
         if max_content_length is not None:
-            text = text[:max(int(max_content_length), 0)]
+            text = text[: max(int(max_content_length), 0)]
         selected_categories = categories or ["summary"]
         insights = []
         summary = self._extractive_summary(text)
@@ -1954,18 +2220,31 @@ class LocalMediaReadingService:
             include_generated_fallback=include_generated_fallback,
         )
         filtered_nodes = [
-            node for node in nodes
+            node
+            for node in nodes
             if int(node.get("level", 0)) <= max(int(max_depth or 0), 0)
         ]
         if parent_id:
-            filtered_nodes = [node for node in filtered_nodes if node.get("parent_id") == parent_id]
-            filtered_nodes.sort(key=lambda node: (int(node["order"]), str(node["title"]).lower(), str(node["id"])))
+            filtered_nodes = [
+                node for node in filtered_nodes if node.get("parent_id") == parent_id
+            ]
+            filtered_nodes.sort(
+                key=lambda node: (
+                    int(node["order"]),
+                    str(node["title"]).lower(),
+                    str(node["id"]),
+                )
+            )
 
-        max_depth_seen = max((int(node.get("level", 0)) for node in filtered_nodes), default=0)
+        max_depth_seen = max(
+            (int(node.get("level", 0)) for node in filtered_nodes), default=0
+        )
         node_count = len(filtered_nodes)
         normalized_max_nodes = max(int(max_nodes or 0), 0)
         truncated = normalized_max_nodes > 0 and node_count > normalized_max_nodes
-        returned_nodes = filtered_nodes[:normalized_max_nodes] if normalized_max_nodes else []
+        returned_nodes = (
+            filtered_nodes[:normalized_max_nodes] if normalized_max_nodes else []
+        )
         return {
             "media_id": normalized_media_id,
             "available": bool(nodes),
@@ -1999,13 +2278,17 @@ class LocalMediaReadingService:
             text,
             include_generated_fallback=True,
         )
-        node = next((candidate for candidate in nodes if candidate["id"] == node_id), None)
+        node = next(
+            (candidate for candidate in nodes if candidate["id"] == node_id), None
+        )
         if node is None:
             raise ValueError(f"local_navigation_node_not_found:{node_id}")
 
         start = int(node["target_start"]) if node.get("target_start") is not None else 0
-        end = int(node["target_end"]) if node.get("target_end") is not None else len(text)
-        selected_text = text[max(start, 0):max(end, start)].strip() or text.strip()
+        end = (
+            int(node["target_end"]) if node.get("target_end") is not None else len(text)
+        )
+        selected_text = text[max(start, 0) : max(end, start)].strip() or text.strip()
         variants = {
             "markdown": selected_text,
             "plain": self._local_markdown_to_plain(selected_text),
@@ -2058,7 +2341,10 @@ class LocalMediaReadingService:
             raise ValueError("status_required")
         if normalized_action == "set_favorite" and favorite is None:
             raise ValueError("favorite_required")
-        if normalized_action in {"add_tags", "remove_tags", "replace_tags"} and not tags:
+        if (
+            normalized_action in {"add_tags", "remove_tags", "replace_tags"}
+            and not tags
+        ):
             raise ValueError("tags_required")
 
         results: list[dict[str, Any]] = []
@@ -2075,10 +2361,14 @@ class LocalMediaReadingService:
                     hard=hard,
                 )
             except KeyError:
-                results.append({"item_id": media_id, "success": False, "error": "item_not_found"})
+                results.append(
+                    {"item_id": media_id, "success": False, "error": "item_not_found"}
+                )
                 failed += 1
             except ValueError as exc:
-                results.append({"item_id": media_id, "success": False, "error": str(exc)})
+                results.append(
+                    {"item_id": media_id, "success": False, "error": str(exc)}
+                )
                 failed += 1
             else:
                 results.append({"item_id": media_id, "success": True, "error": None})
@@ -2107,7 +2397,9 @@ class LocalMediaReadingService:
         include_notes: bool = True,
         format: str = "jsonl",
     ) -> Any:
-        normalized_statuses = {str(value).strip().lower() for value in (status or ["saved"]) if value}
+        normalized_statuses = {
+            str(value).strip().lower() for value in (status or ["saved"]) if value
+        }
         if normalized_statuses and "saved" not in normalized_statuses:
             rows: list[dict[str, Any]] = []
         elif favorite is True:
@@ -2125,7 +2417,8 @@ class LocalMediaReadingService:
             if domain:
                 normalized_domain = str(domain).strip().lower()
                 rows = [
-                    row for row in rows
+                    row
+                    for row in rows
                     if normalized_domain in str(row.get("url") or "").lower()
                 ]
         if include_metadata or include_text or include_clean_html or include_notes:
@@ -2175,7 +2468,9 @@ class LocalMediaReadingService:
         if job.get("status") in {"completed", "failed", "cancelled"}:
             return self._reading_import_job_status_from_ingest_job(job)
 
-        self._mark_ingest_job_started(job_id, progress_message="Importing reading items")
+        self._mark_ingest_job_started(
+            job_id, progress_message="Importing reading items"
+        )
         try:
             result = self._execute_reading_import_job(job)
         except Exception as exc:
@@ -2186,7 +2481,11 @@ class LocalMediaReadingService:
                 progress_message="Failed",
                 error_message=str(exc),
                 result={
-                    "source": str((job.get("result") or {}).get("source") or job.get("source_kind") or "local"),
+                    "source": str(
+                        (job.get("result") or {}).get("source")
+                        or job.get("source_kind")
+                        or "local"
+                    ),
                     "imported": 0,
                     "updated": 0,
                     "skipped": 0,
@@ -2236,7 +2535,9 @@ class LocalMediaReadingService:
             extension=extension,
         )
         storage_path = f"local://reading-archives/{uuid.uuid4().hex}/{filename}"
-        resolved_retention_until = retention_until or self._retention_until_from_days(retention_days)
+        resolved_retention_until = retention_until or self._retention_until_from_days(
+            retention_days
+        )
         metadata = {
             "item_id": normalized_item_id,
             "url": detail.get("url"),
@@ -2293,7 +2594,9 @@ class LocalMediaReadingService:
             raise ValueError("reading_summary_invalid_strategy")
         normalized_provider = str(provider or "local-extractive").strip().lower()
         if normalized_provider not in {"local", "local-extractive"}:
-            raise ValueError("Local reading summaries only support the local-extractive provider.")
+            raise ValueError(
+                "Local reading summaries only support the local-extractive provider."
+            )
         detail = self.get_media_detail(item_id)
         text = self._local_text_from_row(detail)
         if not text or not text.strip():
@@ -2371,22 +2674,32 @@ class LocalMediaReadingService:
         if status is not None:
             where += " AND status = ?"
             params.append(str(status))
-        total = db.get_connection().execute(
-            f"SELECT COUNT(*) FROM local_ingestion_jobs WHERE {where}",
-            params,
-        ).fetchone()[0]
-        rows = db.get_connection().execute(
-            f"""
+        total = (
+            db.get_connection()
+            .execute(
+                f"SELECT COUNT(*) FROM local_ingestion_jobs WHERE {where}",
+                params,
+            )
+            .fetchone()[0]
+        )
+        rows = (
+            db.get_connection()
+            .execute(
+                f"""
             SELECT * FROM local_ingestion_jobs
             WHERE {where}
             ORDER BY id DESC
             LIMIT ? OFFSET ?
             """,
-            params + [int(limit), int(offset)],
-        ).fetchall()
+                params + [int(limit), int(offset)],
+            )
+            .fetchall()
+        )
         return {
             "jobs": [
-                self._reading_import_job_status_from_ingest_job(self._ingest_job_row_to_dict(row))
+                self._reading_import_job_status_from_ingest_job(
+                    self._ingest_job_row_to_dict(row)
+                )
                 for row in rows
             ],
             "total": total,
@@ -2450,22 +2763,30 @@ class LocalMediaReadingService:
             )
         return self.get_reading_digest_schedule(schedule_id)
 
-    def list_reading_digest_schedules(self, *, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+    def list_reading_digest_schedules(
+        self, *, limit: int = 50, offset: int = 0
+    ) -> dict[str, Any]:
         db = self._require_db()
         self._ensure_local_reading_aux_schema(db)
         normalized_limit = max(int(limit or 50), 0)
         normalized_offset = max(int(offset or 0), 0)
-        total = db.get_connection().execute(
-            "SELECT COUNT(*) FROM local_reading_digest_schedules"
-        ).fetchone()[0]
-        rows = db.get_connection().execute(
-            """
+        total = (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM local_reading_digest_schedules")
+            .fetchone()[0]
+        )
+        rows = (
+            db.get_connection()
+            .execute(
+                """
             SELECT * FROM local_reading_digest_schedules
             ORDER BY created_at DESC, id DESC
             LIMIT ? OFFSET ?
             """,
-            (normalized_limit, normalized_offset),
-        ).fetchall()
+                (normalized_limit, normalized_offset),
+            )
+            .fetchall()
+        )
         return {
             "items": [self._reading_digest_schedule_row_to_dict(row) for row in rows],
             "total": total,
@@ -2476,15 +2797,21 @@ class LocalMediaReadingService:
     def get_reading_digest_schedule(self, schedule_id: str) -> dict[str, Any]:
         db = self._require_db()
         self._ensure_local_reading_aux_schema(db)
-        row = db.get_connection().execute(
-            "SELECT * FROM local_reading_digest_schedules WHERE id = ?",
-            (str(schedule_id),),
-        ).fetchone()
+        row = (
+            db.get_connection()
+            .execute(
+                "SELECT * FROM local_reading_digest_schedules WHERE id = ?",
+                (str(schedule_id),),
+            )
+            .fetchone()
+        )
         if row is None:
             raise KeyError(f"Local reading digest schedule not found: {schedule_id}")
         return self._reading_digest_schedule_row_to_dict(row)
 
-    def update_reading_digest_schedule(self, schedule_id: str, **changes: Any) -> dict[str, Any]:
+    def update_reading_digest_schedule(
+        self, schedule_id: str, **changes: Any
+    ) -> dict[str, Any]:
         db = self._require_db()
         self._ensure_local_reading_aux_schema(db)
         self.get_reading_digest_schedule(schedule_id)
@@ -2527,7 +2854,7 @@ class LocalMediaReadingService:
                 conn.execute(
                     f"""
                     UPDATE local_reading_digest_schedules
-                    SET {', '.join(assignments)}
+                    SET {", ".join(assignments)}
                     WHERE id = ?
                     """,
                     tuple(values),
@@ -2539,7 +2866,10 @@ class LocalMediaReadingService:
         self._ensure_local_reading_aux_schema(db)
         self.get_reading_digest_schedule(schedule_id)
         with db.transaction() as conn:
-            conn.execute("DELETE FROM local_reading_digest_schedules WHERE id = ?", (str(schedule_id),))
+            conn.execute(
+                "DELETE FROM local_reading_digest_schedules WHERE id = ?",
+                (str(schedule_id),),
+            )
         return {"ok": True, "id": str(schedule_id)}
 
     def list_reading_digest_outputs(
@@ -2558,19 +2888,27 @@ class LocalMediaReadingService:
         if schedule_id is not None:
             where += " AND schedule_id = ?"
             params.append(str(schedule_id))
-        total = db.get_connection().execute(
-            f"SELECT COUNT(*) FROM local_reading_digest_outputs WHERE {where}",
-            params,
-        ).fetchone()[0]
-        rows = db.get_connection().execute(
-            f"""
+        total = (
+            db.get_connection()
+            .execute(
+                f"SELECT COUNT(*) FROM local_reading_digest_outputs WHERE {where}",
+                params,
+            )
+            .fetchone()[0]
+        )
+        rows = (
+            db.get_connection()
+            .execute(
+                f"""
             SELECT * FROM local_reading_digest_outputs
             WHERE {where}
             ORDER BY created_at DESC, id DESC
             LIMIT ? OFFSET ?
             """,
-            params + [normalized_limit, normalized_offset],
-        ).fetchall()
+                params + [normalized_limit, normalized_offset],
+            )
+            .fetchall()
+        )
         return {
             "items": [self._reading_digest_output_row_to_dict(row) for row in rows],
             "total": total,
@@ -2586,12 +2924,16 @@ class LocalMediaReadingService:
         db = self._require_db()
         self._ensure_local_reading_aux_schema(db)
         run_at = self._normalize_digest_datetime(now)
-        rows = db.get_connection().execute(
-            """
+        rows = (
+            db.get_connection()
+            .execute(
+                """
             SELECT * FROM local_reading_digest_schedules
             ORDER BY created_at ASC, id ASC
             """
-        ).fetchall()
+            )
+            .fetchall()
+        )
 
         results: list[dict[str, Any]] = []
         executed = 0
@@ -2603,16 +2945,22 @@ class LocalMediaReadingService:
             reason = self._reading_digest_schedule_skip_reason(schedule, run_at)
             if reason is not None:
                 skipped += 1
-                results.append({"schedule_id": schedule_id, "status": "skipped", "reason": reason})
+                results.append(
+                    {"schedule_id": schedule_id, "status": "skipped", "reason": reason}
+                )
                 continue
             try:
                 output = self._create_reading_digest_output(schedule, run_at=run_at)
             except Exception as exc:
                 failed += 1
-                results.append({"schedule_id": schedule_id, "status": "failed", "error": str(exc)})
+                results.append(
+                    {"schedule_id": schedule_id, "status": "failed", "error": str(exc)}
+                )
                 continue
             executed += 1
-            results.append({"schedule_id": schedule_id, "status": "executed", "output": output})
+            results.append(
+                {"schedule_id": schedule_id, "status": "executed", "output": output}
+            )
 
         return {
             "status": "completed",
@@ -2625,8 +2973,12 @@ class LocalMediaReadingService:
 
     def _execute_reading_import_job(self, job: Mapping[str, Any]) -> dict[str, Any]:
         options = dict(job.get("options") or {})
-        requested_source = str(options.get("source") or job.get("source_kind") or "auto")
-        rows, resolved_source = self._load_reading_import_rows(str(job.get("source") or ""), requested_source)
+        requested_source = str(
+            options.get("source") or job.get("source_kind") or "auto"
+        )
+        rows, resolved_source = self._load_reading_import_rows(
+            str(job.get("source") or ""), requested_source
+        )
         merge_tags = bool(options.get("merge_tags", True))
         result = {
             "source": resolved_source,
@@ -2637,7 +2989,9 @@ class LocalMediaReadingService:
         }
         for row_number, row in enumerate(rows, start=1):
             try:
-                materialized = self._materialize_reading_import_row(row, merge_tags=merge_tags)
+                materialized = self._materialize_reading_import_row(
+                    row, merge_tags=merge_tags
+                )
             except Exception as exc:
                 result["skipped"] += 1
                 result["errors"].append({"row": row_number, "error": str(exc)})
@@ -2645,10 +2999,14 @@ class LocalMediaReadingService:
             result[materialized] += 1
         return result
 
-    def _load_reading_import_rows(self, import_path: str, source: str) -> tuple[list[dict[str, Any]], str]:
+    def _load_reading_import_rows(
+        self, import_path: str, source: str
+    ) -> tuple[list[dict[str, Any]], str]:
         path = Path(import_path).expanduser()
         if not path.exists():
-            raise FileNotFoundError(f"Local reading import file not found: {import_path}")
+            raise FileNotFoundError(
+                f"Local reading import file not found: {import_path}"
+            )
         resolved_source = self._resolve_reading_import_source(source, path)
         if resolved_source == "jsonl":
             return self._load_reading_import_jsonl(path), resolved_source
@@ -2670,12 +3028,16 @@ class LocalMediaReadingService:
             return "json"
         if suffix == ".csv":
             return "csv"
-        raise ValueError(f"Unsupported local reading import file type: {suffix or '<none>'}")
+        raise ValueError(
+            f"Unsupported local reading import file type: {suffix or '<none>'}"
+        )
 
     @staticmethod
     def _load_reading_import_jsonl(path: Path) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
-        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        for line_number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
             stripped = line.strip()
             if not stripped:
                 continue
@@ -2691,9 +3053,13 @@ class LocalMediaReadingService:
         if isinstance(value, list):
             rows = value
         elif isinstance(value, Mapping):
-            rows = value.get("items") or value.get("rows") or value.get("data") or [value]
+            rows = (
+                value.get("items") or value.get("rows") or value.get("data") or [value]
+            )
         else:
-            raise ValueError("JSON reading import must be an object or list of objects.")
+            raise ValueError(
+                "JSON reading import must be an object or list of objects."
+            )
         normalized: list[dict[str, Any]] = []
         for index, row in enumerate(rows, start=1):
             if not isinstance(row, Mapping):
@@ -2707,22 +3073,46 @@ class LocalMediaReadingService:
             reader = csv.DictReader(handle)
             return [dict(row) for row in reader]
 
-    def _materialize_reading_import_row(self, row: Mapping[str, Any], *, merge_tags: bool) -> str:
+    def _materialize_reading_import_row(
+        self, row: Mapping[str, Any], *, merge_tags: bool
+    ) -> str:
         db = self._require_db()
         url = self._first_import_string(row, "url", "canonical_url", "href", "link")
-        title = self._first_import_string(row, "title", "name", "resolved_title") or url or "Untitled"
-        content = self._first_import_string(row, "text", "content", "body_text", "clean_html", "summary", "notes") or ""
-        media_type = self._first_import_string(row, "origin_type", "media_type", "type") or "article"
+        title = (
+            self._first_import_string(row, "title", "name", "resolved_title")
+            or url
+            or "Untitled"
+        )
+        content = (
+            self._first_import_string(
+                row, "text", "content", "body_text", "clean_html", "summary", "notes"
+            )
+            or ""
+        )
+        media_type = (
+            self._first_import_string(row, "origin_type", "media_type", "type")
+            or "article"
+        )
         author = self._first_import_string(row, "author", "byline")
-        ingestion_date = self._first_import_string(row, "created_at", "updated_at", "published_at", "time_added")
-        tags = self._normalize_import_tags(row.get("tags") or row.get("keywords") or row.get("labels"))
-        status = (self._first_import_string(row, "status", "state") or "saved").strip().lower()
+        ingestion_date = self._first_import_string(
+            row, "created_at", "updated_at", "published_at", "time_added"
+        )
+        tags = self._normalize_import_tags(
+            row.get("tags") or row.get("keywords") or row.get("labels")
+        )
+        status = (
+            (self._first_import_string(row, "status", "state") or "saved")
+            .strip()
+            .lower()
+        )
 
         existing = db.get_media_by_url(url) if url else None
         if existing is not None:
             media_id = int(existing["id"])
             if merge_tags and tags:
-                merged_tags = self._merge_import_tags(self._local_keywords_for_media(media_id), tags)
+                merged_tags = self._merge_import_tags(
+                    self._local_keywords_for_media(media_id), tags
+                )
                 db.update_keywords_for_media(media_id, merged_tags)
             if self._reading_import_status_should_save(status):
                 self.save_to_read_it_later(media_id)
@@ -2776,7 +3166,9 @@ class LocalMediaReadingService:
         return normalized
 
     @staticmethod
-    def _merge_import_tags(existing_tags: list[str], imported_tags: list[str]) -> list[str]:
+    def _merge_import_tags(
+        existing_tags: list[str], imported_tags: list[str]
+    ) -> list[str]:
         merged: list[str] = []
         seen: set[str] = set()
         for tag in [*existing_tags, *imported_tags]:
@@ -2820,15 +3212,23 @@ class LocalMediaReadingService:
         self._ensure_local_reading_aux_schema(db)
         normalized_limit = max(int(limit), 0)
         normalized_offset = max(int(offset), 0)
-        total = db.get_connection().execute("SELECT COUNT(*) FROM local_reading_saved_searches").fetchone()[0]
-        rows = db.get_connection().execute(
-            """
+        total = (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM local_reading_saved_searches")
+            .fetchone()[0]
+        )
+        rows = (
+            db.get_connection()
+            .execute(
+                """
             SELECT * FROM local_reading_saved_searches
             ORDER BY updated_at DESC, id DESC
             LIMIT ? OFFSET ?
             """,
-            (normalized_limit, normalized_offset),
-        ).fetchall()
+                (normalized_limit, normalized_offset),
+            )
+            .fetchall()
+        )
         return {
             "items": [self._saved_search_row_to_dict(row) for row in rows],
             "total": total,
@@ -2860,7 +3260,10 @@ class LocalMediaReadingService:
         assignments = ", ".join(f"{column} = ?" for column in updates)
         values = list(updates.values()) + [int(search_id)]
         with db.transaction() as conn:
-            conn.execute(f"UPDATE local_reading_saved_searches SET {assignments} WHERE id = ?", values)
+            conn.execute(
+                f"UPDATE local_reading_saved_searches SET {assignments} WHERE id = ?",
+                values,
+            )
         return self._get_saved_search(search_id)
 
     def delete_saved_search(self, search_id: Any) -> Any:
@@ -2890,27 +3293,39 @@ class LocalMediaReadingService:
                     ?
                 ))
                 """,
-                (normalized_item_id, normalized_note_id, normalized_item_id, normalized_note_id, now),
+                (
+                    normalized_item_id,
+                    normalized_note_id,
+                    normalized_item_id,
+                    normalized_note_id,
+                    now,
+                ),
             )
         return self._note_link_row_to_dict(
-            db.get_connection().execute(
+            db.get_connection()
+            .execute(
                 "SELECT * FROM local_reading_note_links WHERE item_id = ? AND note_id = ?",
                 (normalized_item_id, normalized_note_id),
-            ).fetchone()
+            )
+            .fetchone()
         )
 
     def list_note_links(self, item_id: Any) -> Any:
         db = self._require_db()
         self._ensure_local_reading_aux_schema(db)
         normalized_item_id = self._coerce_media_id(item_id)
-        rows = db.get_connection().execute(
-            """
+        rows = (
+            db.get_connection()
+            .execute(
+                """
             SELECT * FROM local_reading_note_links
             WHERE item_id = ?
             ORDER BY created_at DESC, note_id ASC
             """,
-            (normalized_item_id,),
-        ).fetchall()
+                (normalized_item_id,),
+            )
+            .fetchall()
+        )
         return {
             "item_id": normalized_item_id,
             "links": [self._note_link_row_to_dict(row) for row in rows],
@@ -2929,7 +3344,11 @@ class LocalMediaReadingService:
                 """,
                 (normalized_item_id, normalized_note_id),
             )
-        return {"deleted": cursor.rowcount > 0, "item_id": normalized_item_id, "note_id": normalized_note_id}
+        return {
+            "deleted": cursor.rowcount > 0,
+            "item_id": normalized_item_id,
+            "note_id": normalized_note_id,
+        }
 
     def list_ingestion_sources(self) -> Any:
         db = self._require_db()
@@ -2998,10 +3417,14 @@ class LocalMediaReadingService:
     def get_ingestion_source(self, source_id: Any) -> Any:
         db = self._require_db()
         self._ensure_local_ingestion_schema(db)
-        row = db.get_connection().execute(
-            "SELECT * FROM local_ingestion_sources WHERE id = ?",
-            (int(source_id),),
-        ).fetchone()
+        row = (
+            db.get_connection()
+            .execute(
+                "SELECT * FROM local_ingestion_sources WHERE id = ?",
+                (int(source_id),),
+            )
+            .fetchone()
+        )
         if row is None:
             raise KeyError(f"Local ingestion source not found: {source_id}")
         return self._ingestion_source_row_to_dict(row)
@@ -3053,7 +3476,9 @@ class LocalMediaReadingService:
         assignments = ", ".join(f"{column} = ?" for column in updates)
         values = list(updates.values()) + [int(source_id)]
         with db.transaction() as conn:
-            conn.execute(f"UPDATE local_ingestion_sources SET {assignments} WHERE id = ?", values)
+            conn.execute(
+                f"UPDATE local_ingestion_sources SET {assignments} WHERE id = ?", values
+            )
         return self.get_ingestion_source(source_id)
 
     def delete_ingestion_source(self, source_id: Any) -> Any:
@@ -3079,7 +3504,9 @@ class LocalMediaReadingService:
             """,
             (int(source_id),),
         )
-        return [self._ingestion_source_item_row_to_dict(row) for row in cursor.fetchall()]
+        return [
+            self._ingestion_source_item_row_to_dict(row) for row in cursor.fetchall()
+        ]
 
     def reattach_ingestion_source_item(self, source_id: Any, item_id: Any) -> Any:
         db = self._require_db()
@@ -3117,7 +3544,11 @@ class LocalMediaReadingService:
         job = self._create_ingest_job(
             job_type="ingestion_source_sync",
             media_type=str(source.get("sink_type") or "media"),
-            source=str(source.get("config", {}).get("path") or source.get("config", {}).get("repo_url") or source_id),
+            source=str(
+                source.get("config", {}).get("path")
+                or source.get("config", {}).get("repo_url")
+                or source_id
+            ),
             source_kind=str(source.get("source_type") or "ingestion_source"),
             source_id=int(source_id),
         )
@@ -3133,7 +3564,9 @@ class LocalMediaReadingService:
     def upload_ingestion_source_archive(self, source_id: Any, archive_path: str) -> Any:
         source = self.get_ingestion_source(source_id)
         if str(source.get("source_type") or "") != "archive_snapshot":
-            raise ValueError("Archive upload is only supported for archive_snapshot sources.")
+            raise ValueError(
+                "Archive upload is only supported for archive_snapshot sources."
+            )
         job = self._create_ingest_job(
             job_type="ingestion_source_archive",
             media_type=str(source.get("sink_type") or "media"),
@@ -3147,7 +3580,9 @@ class LocalMediaReadingService:
             "status": executed.get("status"),
             "source_id": int(source_id),
             "job_id": job["id"],
-            "snapshot_status": "materialized" if executed.get("status") == "completed" else "failed",
+            "snapshot_status": "materialized"
+            if executed.get("status") == "completed"
+            else "failed",
             "result": executed.get("result"),
         }
 
@@ -3178,16 +3613,22 @@ class LocalMediaReadingService:
             )
             jobs.append(self.execute_ingest_job(job["id"]))
         if not jobs:
-            raise ValueError("At least one URL or file path is required for local ingest jobs.")
+            raise ValueError(
+                "At least one URL or file path is required for local ingest jobs."
+            )
         return {"batch_id": batch_id, "jobs": jobs, "errors": []}
 
     def get_ingest_job(self, job_id: Any) -> Any:
         db = self._require_db()
         self._ensure_local_ingestion_schema(db)
-        row = db.get_connection().execute(
-            "SELECT * FROM local_ingestion_jobs WHERE id = ?",
-            (int(job_id),),
-        ).fetchone()
+        row = (
+            db.get_connection()
+            .execute(
+                "SELECT * FROM local_ingestion_jobs WHERE id = ?",
+                (int(job_id),),
+            )
+            .fetchone()
+        )
         if row is None:
             raise KeyError(f"Local ingestion job not found: {job_id}")
         return self._ingest_job_row_to_dict(row)
@@ -3199,8 +3640,14 @@ class LocalMediaReadingService:
         supported_job = (
             job.get("job_type") == "ingestion_source_sync"
             or job.get("job_type") == "ingestion_source_archive"
-            or (job.get("job_type") == "media_ingest" and job.get("source_kind") == "file")
-            or (job.get("job_type") == "media_ingest" and job.get("source_kind") == "url")
+            or (
+                job.get("job_type") == "media_ingest"
+                and job.get("source_kind") == "file"
+            )
+            or (
+                job.get("job_type") == "media_ingest"
+                and job.get("source_kind") == "url"
+            )
         )
         if not supported_job:
             return job
@@ -3258,7 +3705,9 @@ class LocalMediaReadingService:
             )
         return completed
 
-    def _execute_local_file_media_ingest_job(self, job: Mapping[str, Any]) -> dict[str, Any]:
+    def _execute_local_file_media_ingest_job(
+        self, job: Mapping[str, Any]
+    ) -> dict[str, Any]:
         from tldw_chatbook.Local_Ingestion.local_file_ingestion import ingest_local_file
 
         options = dict(job.get("options") or {})
@@ -3289,7 +3738,9 @@ class LocalMediaReadingService:
             return self._execute_url_article_media_ingest_job(job)
         return self._execute_url_file_download_media_ingest_job(job)
 
-    def _execute_url_article_media_ingest_job(self, job: Mapping[str, Any]) -> dict[str, Any]:
+    def _execute_url_article_media_ingest_job(
+        self, job: Mapping[str, Any]
+    ) -> dict[str, Any]:
         from tldw_chatbook.DB.Client_Media_DB_v2 import ingest_article_to_db_new
 
         options = dict(job.get("options") or {})
@@ -3298,23 +3749,31 @@ class LocalMediaReadingService:
             raise ValueError("Local URL ingest job is missing a URL.")
         media_type = str(job.get("media_type") or "").strip().lower()
         if media_type not in {"article", "web_article", "webpage", "html"}:
-            raise ValueError(f"Local URL ingest is currently implemented for article/web content, not {media_type}.")
+            raise ValueError(
+                f"Local URL ingest is currently implemented for article/web content, not {media_type}."
+            )
 
         scraper = self.url_article_scraper or self._default_url_article_scraper
         article = scraper(source_url, custom_cookies=options.get("custom_cookies"))
         if not isinstance(article, Mapping):
             raise ValueError("Local URL article scraper must return a mapping.")
         if article.get("extraction_successful") is False:
-            raise ValueError(str(article.get("error") or "URL article extraction failed."))
+            raise ValueError(
+                str(article.get("error") or "URL article extraction failed.")
+            )
 
-        content = self._first_present_text(article, "content", "text", "markdown", "body")
+        content = self._first_present_text(
+            article, "content", "text", "markdown", "body"
+        )
         if not content or not content.strip():
             raise ValueError("URL article extraction returned no content.")
         title = str(article.get("title") or source_url)
         author = article.get("author")
         if author is not None:
             author = str(author)
-        keywords = self._merge_keyword_values(options.get("keywords"), article.get("keywords"))
+        keywords = self._merge_keyword_values(
+            options.get("keywords"), article.get("keywords")
+        )
         media_id, media_uuid, message = ingest_article_to_db_new(
             self._require_db(),
             url=str(article.get("url") or source_url),
@@ -3323,7 +3782,9 @@ class LocalMediaReadingService:
             author=author,
             keywords=keywords,
             summary=article.get("summary"),
-            ingestion_date=article.get("date") or article.get("published_at") or article.get("published_date"),
+            ingestion_date=article.get("date")
+            or article.get("published_at")
+            or article.get("published_date"),
             custom_prompt=options.get("custom_prompt"),
             overwrite=bool(options.get("overwrite", False)),
         )
@@ -3341,7 +3802,9 @@ class LocalMediaReadingService:
             "errors": [],
         }
 
-    def _execute_url_file_download_media_ingest_job(self, job: Mapping[str, Any]) -> dict[str, Any]:
+    def _execute_url_file_download_media_ingest_job(
+        self, job: Mapping[str, Any]
+    ) -> dict[str, Any]:
         from tldw_chatbook.Local_Ingestion.local_file_ingestion import ingest_local_file
 
         options = dict(job.get("options") or {})
@@ -3398,7 +3861,9 @@ class LocalMediaReadingService:
                     pass
 
     @staticmethod
-    def _default_url_article_scraper(url: str, *, custom_cookies: Any = None) -> Mapping[str, Any]:
+    def _default_url_article_scraper(
+        url: str, *, custom_cookies: Any = None
+    ) -> Mapping[str, Any]:
         from tldw_chatbook.Web_Scraping.Article_Extractor_Lib import scrape_article_sync
 
         try:
@@ -3411,7 +3876,9 @@ class LocalMediaReadingService:
         from concurrent.futures import ThreadPoolExecutor
 
         with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(scrape_article_sync, url, custom_cookies=custom_cookies)
+            future = executor.submit(
+                scrape_article_sync, url, custom_cookies=custom_cookies
+            )
             return future.result()
 
     @classmethod
@@ -3432,7 +3899,11 @@ class LocalMediaReadingService:
         timeout = float(opts.get("timeout") or 30)
         response = requests.get(url, stream=True, timeout=timeout)
         response.raise_for_status()
-        suffix = cls._download_suffix_for_url(url, media_type=media_type, content_type=response.headers.get("content-type"))
+        suffix = cls._download_suffix_for_url(
+            url,
+            media_type=media_type,
+            content_type=response.headers.get("content-type"),
+        )
         fd, path = tempfile.mkstemp(prefix="tldw_url_ingest_", suffix=suffix)
         try:
             with os.fdopen(fd, "wb") as handle:
@@ -3445,7 +3916,9 @@ class LocalMediaReadingService:
         return {"path": path, "cleanup": True, "source_path": urlparse(url).path}
 
     @staticmethod
-    def _download_suffix_for_url(url: str, *, media_type: str, content_type: str | None = None) -> str:
+    def _download_suffix_for_url(
+        url: str, *, media_type: str, content_type: str | None = None
+    ) -> str:
         from urllib.parse import urlparse
 
         suffix = Path(urlparse(url).path).suffix
@@ -3461,7 +3934,9 @@ class LocalMediaReadingService:
             "audio/wav": ".wav",
             "video/mp4": ".mp4",
         }
-        normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
+        normalized_content_type = (
+            str(content_type or "").split(";", 1)[0].strip().lower()
+        )
         if normalized_content_type in content_type_suffixes:
             return content_type_suffixes[normalized_content_type]
         media_type_suffixes = {
@@ -3477,7 +3952,9 @@ class LocalMediaReadingService:
         return media_type_suffixes.get(str(media_type or "").strip().lower(), ".bin")
 
     @staticmethod
-    def _failed_local_ingest_result(job: Mapping[str, Any], exc: Exception) -> dict[str, Any]:
+    def _failed_local_ingest_result(
+        job: Mapping[str, Any], exc: Exception
+    ) -> dict[str, Any]:
         if job.get("job_type") == "ingestion_source_sync":
             return {
                 "source_id": job.get("source_id"),
@@ -3498,7 +3975,9 @@ class LocalMediaReadingService:
             "errors": [str(exc)],
         }
 
-    def _execute_ingestion_source_sync_job(self, job: Mapping[str, Any]) -> dict[str, Any]:
+    def _execute_ingestion_source_sync_job(
+        self, job: Mapping[str, Any]
+    ) -> dict[str, Any]:
         source_id = job.get("source_id")
         if source_id is None:
             raise ValueError("Local ingestion source sync job is missing source_id.")
@@ -3506,10 +3985,16 @@ class LocalMediaReadingService:
         source_type = str(source.get("source_type") or "")
         config = dict(source.get("config") or {})
         if source_type == "archive_snapshot":
-            archive_path = config.get("archive_path") or config.get("path") or config.get("last_archive_path")
+            archive_path = (
+                config.get("archive_path")
+                or config.get("path")
+                or config.get("last_archive_path")
+            )
             if not archive_path:
                 raise ValueError("Archive snapshot source is missing archive_path.")
-            result = self._sync_archive_snapshot_source_items(int(source_id), Path(str(archive_path)).expanduser())
+            result = self._sync_archive_snapshot_source_items(
+                int(source_id), Path(str(archive_path)).expanduser()
+            )
             return {
                 "source_id": int(source_id),
                 "source_type": source_type,
@@ -3523,10 +4008,14 @@ class LocalMediaReadingService:
                 **result,
             }
         if source_type != "local_directory":
-            raise ValueError(f"Local ingestion source execution is not implemented for {source_type}.")
+            raise ValueError(
+                f"Local ingestion source execution is not implemented for {source_type}."
+            )
         root = Path(str(config.get("path") or "")).expanduser()
         if not root.is_dir():
-            raise FileNotFoundError(f"Local ingestion source path is not a directory: {root}")
+            raise FileNotFoundError(
+                f"Local ingestion source path is not a directory: {root}"
+            )
         result = self._sync_local_directory_source_items(int(source_id), root)
         return {
             "source_id": int(source_id),
@@ -3534,14 +4023,18 @@ class LocalMediaReadingService:
             **result,
         }
 
-    def _execute_archive_snapshot_ingest_job(self, job: Mapping[str, Any]) -> dict[str, Any]:
+    def _execute_archive_snapshot_ingest_job(
+        self, job: Mapping[str, Any]
+    ) -> dict[str, Any]:
         source_id = job.get("source_id")
         if source_id is None:
             raise ValueError("Local archive snapshot job is missing source_id.")
         source = self.get_ingestion_source(source_id)
         source_type = str(source.get("source_type") or "")
         if source_type != "archive_snapshot":
-            raise ValueError("Archive snapshot jobs require an archive_snapshot source.")
+            raise ValueError(
+                "Archive snapshot jobs require an archive_snapshot source."
+            )
         archive_path = Path(str(job.get("source") or "")).expanduser()
         result = self._sync_archive_snapshot_source_items(int(source_id), archive_path)
         return {
@@ -3550,25 +4043,39 @@ class LocalMediaReadingService:
             **result,
         }
 
-    def _sync_local_directory_source_items(self, source_id: int, root: Path) -> dict[str, Any]:
+    def _sync_local_directory_source_items(
+        self, source_id: int, root: Path
+    ) -> dict[str, Any]:
         return self._sync_filesystem_source_items(source_id, root)
 
-    def _sync_git_repository_source_items(self, source_id: int, config: Mapping[str, Any]) -> dict[str, Any]:
+    def _sync_git_repository_source_items(
+        self, source_id: int, config: Mapping[str, Any]
+    ) -> dict[str, Any]:
         repo_url = str(config.get("repo_url") or config.get("path") or "").strip()
         if not repo_url:
             raise ValueError("Git repository source is missing repo_url.")
         local_root = self._local_git_repository_path(repo_url)
         if local_root is not None and local_root.is_dir():
-            result = self._sync_filesystem_source_items(source_id, local_root, exclude_dirs={".git"})
+            result = self._sync_filesystem_source_items(
+                source_id, local_root, exclude_dirs={".git"}
+            )
             return {"repo_url": repo_url, "repository_path": str(local_root), **result}
 
         import tempfile
 
         with tempfile.TemporaryDirectory(prefix="tldw_git_source_") as checkout_dir:
             checkout_path = Path(checkout_dir)
-            self._clone_git_repository(repo_url, checkout_path, ref=config.get("branch") or config.get("ref"))
-            result = self._sync_filesystem_source_items(source_id, checkout_path, exclude_dirs={".git"})
-            return {"repo_url": repo_url, "repository_path": str(checkout_path), **result}
+            self._clone_git_repository(
+                repo_url, checkout_path, ref=config.get("branch") or config.get("ref")
+            )
+            result = self._sync_filesystem_source_items(
+                source_id, checkout_path, exclude_dirs={".git"}
+            )
+            return {
+                "repo_url": repo_url,
+                "repository_path": str(checkout_path),
+                **result,
+            }
 
     def _sync_filesystem_source_items(
         self,
@@ -3579,16 +4086,21 @@ class LocalMediaReadingService:
     ) -> dict[str, Any]:
         excluded = exclude_dirs or set()
         path_hashes = {
-            file_path.relative_to(root).as_posix(): self._hash_local_ingestion_file(file_path)
+            file_path.relative_to(root).as_posix(): self._hash_local_ingestion_file(
+                file_path
+            )
             for file_path in sorted(
                 path
                 for path in root.rglob("*")
-                if path.is_file() and not any(part in excluded for part in path.relative_to(root).parts)
+                if path.is_file()
+                and not any(part in excluded for part in path.relative_to(root).parts)
             )
         }
         return self._sync_source_item_hashes(source_id, path_hashes)
 
-    def _sync_archive_snapshot_source_items(self, source_id: int, archive_path: Path) -> dict[str, Any]:
+    def _sync_archive_snapshot_source_items(
+        self, source_id: int, archive_path: Path
+    ) -> dict[str, Any]:
         if not archive_path.is_file():
             raise FileNotFoundError(f"Archive snapshot file not found: {archive_path}")
         path_hashes: dict[str, str] = {}
@@ -3604,7 +4116,9 @@ class LocalMediaReadingService:
         result = self._sync_source_item_hashes(source_id, path_hashes)
         return {"archive_path": str(archive_path), **result}
 
-    def _sync_source_item_hashes(self, source_id: int, path_hashes: Mapping[str, str]) -> dict[str, Any]:
+    def _sync_source_item_hashes(
+        self, source_id: int, path_hashes: Mapping[str, str]
+    ) -> dict[str, Any]:
         db = self._require_db()
         self._ensure_local_ingestion_schema(db)
         now = db._get_current_utc_timestamp_str()
@@ -3630,11 +4144,22 @@ class LocalMediaReadingService:
                         )
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        (source_id, relative_path, content_hash, "pending", "{}", 1, now, now),
+                        (
+                            source_id,
+                            relative_path,
+                            content_hash,
+                            "pending",
+                            "{}",
+                            1,
+                            now,
+                            now,
+                        ),
                     )
                     created += 1
                     continue
-                if row["content_hash"] != content_hash or not bool(row["present_in_source"]):
+                if row["content_hash"] != content_hash or not bool(
+                    row["present_in_source"]
+                ):
                     updated += 1
                 conn.execute(
                     """
@@ -3656,7 +4181,8 @@ class LocalMediaReadingService:
             missing_ids = [
                 row["id"]
                 for row in existing_rows
-                if row["normalized_relative_path"] not in seen_paths and bool(row["present_in_source"])
+                if row["normalized_relative_path"] not in seen_paths
+                and bool(row["present_in_source"])
             ]
             if missing_ids:
                 placeholders = ",".join("?" for _ in missing_ids)
@@ -3703,7 +4229,9 @@ class LocalMediaReadingService:
         return Path(repo_url).expanduser()
 
     @staticmethod
-    def _clone_git_repository(repo_url: str, checkout_path: Path, *, ref: Any = None) -> None:
+    def _clone_git_repository(
+        repo_url: str, checkout_path: Path, *, ref: Any = None
+    ) -> None:
         import subprocess
 
         command = ["git", "clone", "--depth", "1"]
@@ -3712,7 +4240,11 @@ class LocalMediaReadingService:
         command.extend([repo_url, str(checkout_path)])
         completed = subprocess.run(command, capture_output=True, text=True, check=False)
         if completed.returncode != 0:
-            message = completed.stderr.strip() or completed.stdout.strip() or "git clone failed"
+            message = (
+                completed.stderr.strip()
+                or completed.stdout.strip()
+                or "git clone failed"
+            )
             raise RuntimeError(message)
 
     @staticmethod
@@ -3730,18 +4262,27 @@ class LocalMediaReadingService:
     def list_ingest_jobs(self, batch_id: str, *, limit: int = 100) -> Any:
         db = self._require_db()
         self._ensure_local_ingestion_schema(db)
-        rows = db.get_connection().execute(
-            """
+        rows = (
+            db.get_connection()
+            .execute(
+                """
             SELECT * FROM local_ingestion_jobs
             WHERE batch_id = ?
             ORDER BY id DESC
             LIMIT ?
             """,
-            (batch_id, int(limit)),
-        ).fetchall()
-        return {"batch_id": batch_id, "jobs": [self._ingest_job_row_to_dict(row) for row in rows]}
+                (batch_id, int(limit)),
+            )
+            .fetchall()
+        )
+        return {
+            "batch_id": batch_id,
+            "jobs": [self._ingest_job_row_to_dict(row) for row in rows],
+        }
 
-    def stream_ingest_job_events(self, *, batch_id: str | None = None, after_id: int = 0) -> Any:
+    def stream_ingest_job_events(
+        self, *, batch_id: str | None = None, after_id: int = 0
+    ) -> Any:
         db = self._require_db()
         self._ensure_local_ingestion_schema(db)
         params: list[Any] = [int(after_id)]
@@ -3749,14 +4290,18 @@ class LocalMediaReadingService:
         if batch_id is not None:
             where += " AND batch_id = ?"
             params.append(batch_id)
-        rows = db.get_connection().execute(
-            f"""
+        rows = (
+            db.get_connection()
+            .execute(
+                f"""
             SELECT * FROM local_ingestion_jobs
             WHERE {where}
             ORDER BY id ASC
             """,
-            params,
-        ).fetchall()
+                params,
+            )
+            .fetchall()
+        )
         return [
             {
                 "event": "status",
@@ -3789,7 +4334,12 @@ class LocalMediaReadingService:
                 }
         cancelled_job = self.get_ingest_job(job_id)
         self._dispatch_terminal_ingest_job_notification(cancelled_job)
-        return {"success": True, "job_id": int(job_id), "status": "cancelled", "message": reason}
+        return {
+            "success": True,
+            "job_id": int(job_id),
+            "status": "cancelled",
+            "message": reason,
+        }
 
     def cancel_ingest_batch(
         self,
@@ -3829,9 +4379,15 @@ class LocalMediaReadingService:
             source_kind="media",
             options={"media_id": self._coerce_media_id(media_id), **options},
         )
-        return {"status": "queued", "media_id": self._coerce_media_id(media_id), "job_id": job["id"]}
+        return {
+            "status": "queued",
+            "media_id": self._coerce_media_id(media_id),
+            "job_id": job["id"],
+        }
 
-    def list_document_versions(self, media_id: Any, *, include_deleted: bool = False) -> Any:
+    def list_document_versions(
+        self, media_id: Any, *, include_deleted: bool = False
+    ) -> Any:
         return self._require_db().get_all_document_versions(
             self._coerce_media_id(media_id),
             include_content=True,
@@ -3897,16 +4453,28 @@ class LocalMediaReadingService:
 
     @staticmethod
     def _local_text_from_row(row: Mapping[str, Any]) -> str | None:
-        for key in ("content", "text", "transcription", "transcript", "content_text", "summary", "notes"):
+        for key in (
+            "content",
+            "text",
+            "transcription",
+            "transcript",
+            "content_text",
+            "summary",
+            "notes",
+        ):
             value = row.get(key)
             if value not in (None, ""):
                 return str(value)
         return None
 
-    def _local_tts_text_from_detail(self, detail: Mapping[str, Any], *, text_source: str | None) -> str | None:
+    def _local_tts_text_from_detail(
+        self, detail: Mapping[str, Any], *, text_source: str | None
+    ) -> str | None:
         normalized_source = str(text_source or "text").strip().lower()
         if normalized_source == "summary":
-            return self._first_present_text(detail, "summary", "analysis_content", "analysis")
+            return self._first_present_text(
+                detail, "summary", "analysis_content", "analysis"
+            )
         if normalized_source == "notes":
             return self._first_present_text(detail, "notes")
         return self._local_text_from_row(detail)
@@ -3944,7 +4512,10 @@ class LocalMediaReadingService:
         stack: list[tuple[int, str, str]] = []
         for index, match in enumerate(matches):
             level = max(0, len(match.group(1)) - min_heading_level)
-            title = self._clean_local_navigation_title(match.group(2)) or f"Section {index + 1}"
+            title = (
+                self._clean_local_navigation_title(match.group(2))
+                or f"Section {index + 1}"
+            )
             node_id = f"heading-{index}"
             parent_id = None
             parent_path = None
@@ -3955,7 +4526,7 @@ class LocalMediaReadingService:
                 parent_path = stack[-1][2]
             path_label = f"{parent_path} / {title}" if parent_path else title
             target_end = len(text)
-            for later_match in matches[index + 1:]:
+            for later_match in matches[index + 1 :]:
                 later_level = max(0, len(later_match.group(1)) - min_heading_level)
                 if later_level <= level:
                     target_end = later_match.start()
@@ -3979,7 +4550,9 @@ class LocalMediaReadingService:
             stack.append((level, node_id, path_label))
         return nodes
 
-    def _build_local_chunk_navigation_nodes(self, media_id: int) -> list[dict[str, Any]]:
+    def _build_local_chunk_navigation_nodes(
+        self, media_id: int
+    ) -> list[dict[str, Any]]:
         db = self._require_db()
         cursor = db.get_connection().execute(
             """
@@ -4000,7 +4573,9 @@ class LocalMediaReadingService:
                     "id": f"chunk-{order}",
                     "parent_id": None,
                     "level": 0,
-                    "title": self._chunk_navigation_title(chunk_text, fallback=f"Chunk {order + 1}"),
+                    "title": self._chunk_navigation_title(
+                        chunk_text, fallback=f"Chunk {order + 1}"
+                    ),
                     "order": order,
                     "path_label": f"Chunk {order + 1}",
                     "target_type": "char_range",
@@ -4039,8 +4614,12 @@ class LocalMediaReadingService:
 
     @classmethod
     def _chunk_navigation_title(cls, text: str, *, fallback: str) -> str:
-        first_line = next((line.strip() for line in str(text).splitlines() if line.strip()), "")
-        title = cls._clean_local_navigation_title(re.sub(r"^[#>\-\*\d.\s]+", "", first_line))
+        first_line = next(
+            (line.strip() for line in str(text).splitlines() if line.strip()), ""
+        )
+        title = cls._clean_local_navigation_title(
+            re.sub(r"^[#>\-\*\d.\s]+", "", first_line)
+        )
         if not title:
             return fallback
         if len(title) <= 80:
@@ -4122,7 +4701,9 @@ class LocalMediaReadingService:
             speed=speed or 1.0,
         )
         chunks: list[bytes] = []
-        async for chunk in service.generate_audio_stream(request, self._tts_internal_model_id(model)):
+        async for chunk in service.generate_audio_stream(
+            request, self._tts_internal_model_id(model)
+        ):
             chunks.append(bytes(chunk))
         return b"".join(chunks)
 
@@ -4190,7 +4771,11 @@ class LocalMediaReadingService:
         db = self._require_db()
         fetch_batch = getattr(db, "fetch_keywords_for_media_batch", None)
         if callable(fetch_batch):
-            return [str(value).strip().lower() for value in fetch_batch([media_id]).get(media_id, []) if value]
+            return [
+                str(value).strip().lower()
+                for value in fetch_batch([media_id]).get(media_id, [])
+                if value
+            ]
         return []
 
     def _resolve_local_media_file_source(
@@ -4222,7 +4807,9 @@ class LocalMediaReadingService:
     @staticmethod
     def _safe_local_media_filename(row: Mapping[str, Any]) -> str:
         title = str(row.get("title") or row.get("id") or "media").strip()
-        safe = "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in title)
+        safe = "".join(
+            char if char.isalnum() or char in {"-", "_", "."} else "_" for char in title
+        )
         safe = "_".join(part for part in safe.split("_") if part) or "media"
         if "." not in safe:
             safe += ".txt"
@@ -4265,10 +4852,14 @@ class LocalMediaReadingService:
         keywords_available: bool | None = None
         if include_keywords:
             keywords_available = True
-            fetch_batch = getattr(self._require_db(), "fetch_keywords_for_media_batch", None)
+            fetch_batch = getattr(
+                self._require_db(), "fetch_keywords_for_media_batch", None
+            )
             if callable(fetch_batch) and media_ids:
                 keywords_map = {
-                    int(media_id): [str(value).strip().lower() for value in values if value]
+                    int(media_id): [
+                        str(value).strip().lower() for value in values if value
+                    ]
                     for media_id, values in fetch_batch(media_ids).items()
                 }
             for item in items:
@@ -4311,29 +4902,39 @@ class LocalMediaReadingService:
             payload["versions"] = versions
         return payload
 
-    def _search_local_media_column(self, field: str, value: str, *, page: int, per_page: int) -> dict[str, Any]:
+    def _search_local_media_column(
+        self, field: str, value: str, *, page: int, per_page: int
+    ) -> dict[str, Any]:
         db = self._require_db()
         offset = (page - 1) * per_page
         normalized_field = field if field in {"url", "uuid", "content_hash"} else "url"
         like_value = f"%{value}%"
-        total = db.get_connection().execute(
-            f"""
+        total = (
+            db.get_connection()
+            .execute(
+                f"""
             SELECT COUNT(*)
             FROM Media
             WHERE deleted = 0 AND is_trash = 0 AND {normalized_field} LIKE ?
             """,
-            (like_value,),
-        ).fetchone()[0]
-        rows = db.get_connection().execute(
-            f"""
+                (like_value,),
+            )
+            .fetchone()[0]
+        )
+        rows = (
+            db.get_connection()
+            .execute(
+                f"""
             SELECT *
             FROM Media
             WHERE deleted = 0 AND is_trash = 0 AND {normalized_field} LIKE ?
             ORDER BY last_modified DESC, id DESC
             LIMIT ? OFFSET ?
             """,
-            (like_value, per_page, offset),
-        ).fetchall()
+                (like_value, per_page, offset),
+            )
+            .fetchall()
+        )
         return {
             "items": [self._enrich_with_read_it_later_state(dict(row)) for row in rows],
             "pagination": {
@@ -4392,9 +4993,11 @@ class LocalMediaReadingService:
         if len(normalized) <= max_chars:
             return normalized
         candidate = normalized[:max_chars].rstrip()
-        sentence_end = max(candidate.rfind("."), candidate.rfind("!"), candidate.rfind("?"))
+        sentence_end = max(
+            candidate.rfind("."), candidate.rfind("!"), candidate.rfind("?")
+        )
         if sentence_end >= max_chars // 3:
-            return candidate[:sentence_end + 1]
+            return candidate[: sentence_end + 1]
         return candidate.rstrip(" ,;:") + "..."
 
     @staticmethod
@@ -4428,13 +5031,16 @@ class LocalMediaReadingService:
                 reference_lines.append(line)
         if not reference_lines:
             reference_lines = [
-                line for line in lines
+                line
+                for line in lines
                 if "doi.org/" in line.lower() or re.search(r"\b10\.\d{4,9}/", line)
             ]
 
         references: list[dict[str, Any]] = []
         for line in reference_lines:
-            doi_match = re.search(r"\b(10\.\d{4,9}/[-._;()/:A-Z0-9]+)", line, flags=re.IGNORECASE)
+            doi_match = re.search(
+                r"\b(10\.\d{4,9}/[-._;()/:A-Z0-9]+)", line, flags=re.IGNORECASE
+            )
             urls = [url.rstrip(".,;)") for url in re.findall(r"https?://[^\s)]+", line)]
             doi = doi_match.group(1).rstrip(".,;)") if doi_match else None
             non_doi_urls = [url for url in urls if "doi.org/" not in url.lower()]
@@ -4448,7 +5054,9 @@ class LocalMediaReadingService:
                     "venue": None,
                     "doi": doi,
                     "arxiv_id": None,
-                    "url": non_doi_urls[0] if non_doi_urls else (urls[0] if urls else None),
+                    "url": non_doi_urls[0]
+                    if non_doi_urls
+                    else (urls[0] if urls else None),
                     "citation_count": None,
                     "semantic_scholar_id": None,
                     "open_access_pdf": None,
@@ -4481,11 +5089,16 @@ class LocalMediaReadingService:
 
     @staticmethod
     def _safe_archive_filename_part(value: str) -> str:
-        safe = "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in value.strip())
+        safe = "".join(
+            char if char.isalnum() or char in {"-", "_"} else "_"
+            for char in value.strip()
+        )
         safe = "_".join(part for part in safe.split("_") if part)
         return (safe[:80] or "reading_archive").lower()
 
-    def _archive_filename(self, *, item_id: int, title: str, created_at: str, extension: str) -> str:
+    def _archive_filename(
+        self, *, item_id: int, title: str, created_at: str, extension: str
+    ) -> str:
         safe_title = self._safe_archive_filename_part(title)
         safe_ts = self._safe_archive_filename_part(created_at)
         return f"reading_archive_{item_id}_{safe_title}_{safe_ts}.{extension}"
@@ -4494,7 +5107,9 @@ class LocalMediaReadingService:
     def _retention_until_from_days(retention_days: int | None) -> str | None:
         if retention_days is None:
             return None
-        return (datetime.now(timezone.utc) + timedelta(days=int(retention_days))).isoformat()
+        return (
+            datetime.now(timezone.utc) + timedelta(days=int(retention_days))
+        ).isoformat()
 
     def _render_local_reading_archive(
         self,
@@ -4546,7 +5161,9 @@ class LocalMediaReadingService:
 
     @staticmethod
     def _strip_basic_html(value: str) -> str:
-        stripped = value.replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n")
+        stripped = (
+            value.replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n")
+        )
         result: list[str] = []
         in_tag = False
         for char in stripped:
@@ -4568,8 +5185,14 @@ class LocalMediaReadingService:
         body_html: str | None = None,
         body_text: str | None = None,
     ) -> str:
-        body = body_html if body_html is not None else f"<pre>{html_escape(body_text or '')}</pre>"
-        url_html = f'<p><a href="{html_escape(url)}">{html_escape(url)}</a></p>' if url else ""
+        body = (
+            body_html
+            if body_html is not None
+            else f"<pre>{html_escape(body_text or '')}</pre>"
+        )
+        url_html = (
+            f'<p><a href="{html_escape(url)}">{html_escape(url)}</a></p>' if url else ""
+        )
         return (
             "<!doctype html>\n"
             "<html><head>"
@@ -4630,9 +5253,13 @@ class LocalMediaReadingService:
         return payload
 
     @staticmethod
-    def _build_reading_export_response(rows: list[dict[str, Any]], *, format: str) -> dict[str, Any]:
+    def _build_reading_export_response(
+        rows: list[dict[str, Any]], *, format: str
+    ) -> dict[str, Any]:
         normalized_format = str(format or "jsonl").strip().lower()
-        payload = "".join(json.dumps(row, ensure_ascii=False, default=str) + "\n" for row in rows)
+        payload = "".join(
+            json.dumps(row, ensure_ascii=False, default=str) + "\n" for row in rows
+        )
         if normalized_format == "zip":
             buffer = io.BytesIO()
             with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -4790,10 +5417,14 @@ class LocalMediaReadingService:
     def _get_highlight(self, highlight_id: Any) -> dict[str, Any]:
         db = self._require_db()
         self._ensure_local_reading_aux_schema(db)
-        row = db.get_connection().execute(
-            "SELECT * FROM local_reading_highlights WHERE id = ?",
-            (int(highlight_id),),
-        ).fetchone()
+        row = (
+            db.get_connection()
+            .execute(
+                "SELECT * FROM local_reading_highlights WHERE id = ?",
+                (int(highlight_id),),
+            )
+            .fetchone()
+        )
         if row is None:
             raise KeyError(f"Local reading highlight not found: {highlight_id}")
         return self._highlight_row_to_dict(row)
@@ -4829,13 +5460,17 @@ class LocalMediaReadingService:
         self._ensure_local_reading_aux_schema(db)
         normalized_media_id = self._coerce_media_id(media_id)
         normalized_annotation_id = self._parse_local_annotation_id(annotation_id)
-        row = db.get_connection().execute(
-            """
+        row = (
+            db.get_connection()
+            .execute(
+                """
             SELECT * FROM local_document_annotations
             WHERE media_id = ? AND id = ?
             """,
-            (normalized_media_id, normalized_annotation_id),
-        ).fetchone()
+                (normalized_media_id, normalized_annotation_id),
+            )
+            .fetchone()
+        )
         if row is None:
             raise KeyError(f"Local document annotation not found: {annotation_id}")
         return self._annotation_row_to_dict(row)
@@ -4919,10 +5554,15 @@ class LocalMediaReadingService:
             )
 
     def _get_saved_search(self, search_id: Any) -> dict[str, Any]:
-        row = self._require_db().get_connection().execute(
-            "SELECT * FROM local_reading_saved_searches WHERE id = ?",
-            (int(search_id),),
-        ).fetchone()
+        row = (
+            self._require_db()
+            .get_connection()
+            .execute(
+                "SELECT * FROM local_reading_saved_searches WHERE id = ?",
+                (int(search_id),),
+            )
+            .fetchone()
+        )
         if row is None:
             raise KeyError(f"Local reading saved search not found: {search_id}")
         return self._saved_search_row_to_dict(row)
@@ -4938,7 +5578,9 @@ class LocalMediaReadingService:
             "updated_at": payload.get("updated_at"),
         }
 
-    def _reading_digest_schedule_row_to_dict(self, row: Mapping[str, Any]) -> dict[str, Any]:
+    def _reading_digest_schedule_row_to_dict(
+        self, row: Mapping[str, Any]
+    ) -> dict[str, Any]:
         payload = dict(row)
         return {
             "id": payload["id"],
@@ -4956,7 +5598,9 @@ class LocalMediaReadingService:
             "updated_at": payload.get("updated_at"),
         }
 
-    def _reading_digest_output_row_to_dict(self, row: Mapping[str, Any]) -> dict[str, Any]:
+    def _reading_digest_output_row_to_dict(
+        self, row: Mapping[str, Any]
+    ) -> dict[str, Any]:
         payload = dict(row)
         return {
             "output_id": payload["id"],
@@ -4979,9 +5623,15 @@ class LocalMediaReadingService:
             return "disabled"
         if bool(schedule.get("require_online")):
             return "requires_online"
-        if not self._cron_matches_run_at(str(schedule.get("cron") or ""), run_at, str(schedule.get("timezone") or "UTC")):
+        if not self._cron_matches_run_at(
+            str(schedule.get("cron") or ""),
+            run_at,
+            str(schedule.get("timezone") or "UTC"),
+        ):
             return "not_due"
-        if self._reading_digest_already_executed_for_minute(str(schedule["id"]), run_at):
+        if self._reading_digest_already_executed_for_minute(
+            str(schedule["id"]), run_at
+        ):
             return "already_executed_for_current_minute"
         return None
 
@@ -5030,14 +5680,24 @@ class LocalMediaReadingService:
                 ),
             )
             output_id = int(cursor.lastrowid)
-        row = db.get_connection().execute(
-            "SELECT * FROM local_reading_digest_outputs WHERE id = ?",
-            (output_id,),
-        ).fetchone()
+        row = (
+            db.get_connection()
+            .execute(
+                "SELECT * FROM local_reading_digest_outputs WHERE id = ?",
+                (output_id,),
+            )
+            .fetchone()
+        )
         return self._reading_digest_output_row_to_dict(row)
 
-    def _reading_digest_matching_items(self, filters: Mapping[str, Any]) -> list[dict[str, Any]]:
-        statuses = {str(value).strip().lower() for value in filters.get("status", ["saved"]) if value}
+    def _reading_digest_matching_items(
+        self, filters: Mapping[str, Any]
+    ) -> list[dict[str, Any]]:
+        statuses = {
+            str(value).strip().lower()
+            for value in filters.get("status", ["saved"])
+            if value
+        }
         if statuses and "saved" not in statuses:
             return []
         if filters.get("favorite") is True:
@@ -5073,7 +5733,7 @@ class LocalMediaReadingService:
             return self._json_dumps(payload)
         if format == "html":
             items = "\n".join(
-                f"<li><a href=\"{html_escape(str(row.get('url') or ''))}\">"
+                f'<li><a href="{html_escape(str(row.get("url") or ""))}">'
                 f"{html_escape(str(row.get('title') or 'Untitled'))}</a></li>"
                 for row in rows
             )
@@ -5093,8 +5753,12 @@ class LocalMediaReadingService:
             return "\n".join(lines)
         for index, row in enumerate(rows, start=1):
             detail = self.get_media_detail(row["id"])
-            summary = self._extractive_summary(self._local_text_from_row(detail), max_chars=240)
-            lines.append(f"{index}. [{row.get('title') or 'Untitled'}]({row.get('url') or ''})")
+            summary = self._extractive_summary(
+                self._local_text_from_row(detail), max_chars=240
+            )
+            lines.append(
+                f"{index}. [{row.get('title') or 'Untitled'}]({row.get('url') or ''})"
+            )
             if summary:
                 lines.append(f"   - {summary}")
         return "\n".join(lines)
@@ -5105,20 +5769,32 @@ class LocalMediaReadingService:
             "id": row.get("id"),
             "title": row.get("title"),
             "url": row.get("url"),
-            "summary": self._extractive_summary(self._local_text_from_row(detail), max_chars=240),
+            "summary": self._extractive_summary(
+                self._local_text_from_row(detail), max_chars=240
+            ),
         }
 
     @staticmethod
-    def _reading_digest_output_title(schedule: Mapping[str, Any], *, run_at: datetime) -> str:
+    def _reading_digest_output_title(
+        schedule: Mapping[str, Any], *, run_at: datetime
+    ) -> str:
         name = str(schedule.get("name") or "Reading Digest").strip() or "Reading Digest"
-        return f"{name} - {run_at.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
+        return (
+            f"{name} - {run_at.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
+        )
 
-    def _reading_digest_already_executed_for_minute(self, schedule_id: str, run_at: datetime) -> bool:
+    def _reading_digest_already_executed_for_minute(
+        self, schedule_id: str, run_at: datetime
+    ) -> bool:
         db = self._require_db()
-        rows = db.get_connection().execute(
-            "SELECT created_at FROM local_reading_digest_outputs WHERE schedule_id = ?",
-            (schedule_id,),
-        ).fetchall()
+        rows = (
+            db.get_connection()
+            .execute(
+                "SELECT created_at FROM local_reading_digest_outputs WHERE schedule_id = ?",
+                (schedule_id,),
+            )
+            .fetchall()
+        )
         minute_start = run_at.astimezone(timezone.utc).replace(second=0, microsecond=0)
         minute_end = minute_start + timedelta(minutes=1)
         for row in rows:
@@ -5128,33 +5804,51 @@ class LocalMediaReadingService:
                 return True
         return False
 
-    def _purge_expired_reading_digest_outputs(self, schedule: Mapping[str, Any], *, run_at: datetime) -> None:
+    def _purge_expired_reading_digest_outputs(
+        self, schedule: Mapping[str, Any], *, run_at: datetime
+    ) -> None:
         retention_days = schedule.get("retention_days")
         if retention_days is None:
             return
-        cutoff = run_at.astimezone(timezone.utc) - timedelta(days=max(int(retention_days), 0))
+        cutoff = run_at.astimezone(timezone.utc) - timedelta(
+            days=max(int(retention_days), 0)
+        )
         db = self._require_db()
-        rows = db.get_connection().execute(
-            "SELECT id, created_at FROM local_reading_digest_outputs WHERE schedule_id = ?",
-            (str(schedule.get("id")),),
-        ).fetchall()
+        rows = (
+            db.get_connection()
+            .execute(
+                "SELECT id, created_at FROM local_reading_digest_outputs WHERE schedule_id = ?",
+                (str(schedule.get("id")),),
+            )
+            .fetchall()
+        )
         expired_ids = [
             int(dict(row)["id"])
             for row in rows
-            if self._normalize_digest_datetime(dict(row).get("created_at")).astimezone(timezone.utc) < cutoff
+            if self._normalize_digest_datetime(dict(row).get("created_at")).astimezone(
+                timezone.utc
+            )
+            < cutoff
         ]
         if not expired_ids:
             return
         placeholders = ", ".join("?" for _ in expired_ids)
         with db.transaction() as conn:
-            conn.execute(f"DELETE FROM local_reading_digest_outputs WHERE id IN ({placeholders})", expired_ids)
+            conn.execute(
+                f"DELETE FROM local_reading_digest_outputs WHERE id IN ({placeholders})",
+                expired_ids,
+            )
 
     @staticmethod
     def _normalize_digest_datetime(value: str | datetime | None) -> datetime:
         if value is None:
             return datetime.now(timezone.utc)
         if isinstance(value, datetime):
-            return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+            return (
+                value
+                if value.tzinfo is not None
+                else value.replace(tzinfo=timezone.utc)
+            )
         normalized = str(value).strip()
         if not normalized:
             return datetime.now(timezone.utc)
@@ -5162,10 +5856,14 @@ class LocalMediaReadingService:
             parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
         except ValueError:
             return datetime.now(timezone.utc)
-        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+        return (
+            parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+        )
 
     @classmethod
-    def _cron_matches_run_at(cls, cron: str, run_at: datetime, timezone_name: str) -> bool:
+    def _cron_matches_run_at(
+        cls, cron: str, run_at: datetime, timezone_name: str
+    ) -> bool:
         fields = str(cron or "").strip().split()
         if len(fields) < 5:
             return False
@@ -5207,7 +5905,10 @@ class LocalMediaReadingService:
                     end = int(end_text)
                 except ValueError:
                     return False
-                if minimum <= start <= value <= end <= maximum and (value - start) % step == 0:
+                if (
+                    minimum <= start <= value <= end <= maximum
+                    and (value - start) % step == 0
+                ):
                     return True
                 continue
             try:
@@ -5234,7 +5935,9 @@ class LocalMediaReadingService:
             "updated_at": payload.get("updated_at"),
         }
 
-    def _reference_image_row_to_response(self, row: Mapping[str, Any]) -> dict[str, Any]:
+    def _reference_image_row_to_response(
+        self, row: Mapping[str, Any]
+    ) -> dict[str, Any]:
         artifact = self._file_artifact_row_to_response(row)
         structured = dict(artifact.get("structured") or {})
         return {
@@ -5256,14 +5959,21 @@ class LocalMediaReadingService:
             "created_at": payload.get("created_at"),
         }
 
-    def _get_ingestion_source_item(self, source_id: Any, item_id: Any) -> dict[str, Any]:
-        row = self._require_db().get_connection().execute(
-            """
+    def _get_ingestion_source_item(
+        self, source_id: Any, item_id: Any
+    ) -> dict[str, Any]:
+        row = (
+            self._require_db()
+            .get_connection()
+            .execute(
+                """
             SELECT * FROM local_ingestion_source_items
             WHERE source_id = ? AND id = ?
             """,
-            (int(source_id), int(item_id)),
-        ).fetchone()
+                (int(source_id), int(item_id)),
+            )
+            .fetchone()
+        )
         if row is None:
             raise KeyError(f"Local ingestion source item not found: {item_id}")
         return self._ingestion_source_item_row_to_dict(row)
@@ -5290,7 +6000,9 @@ class LocalMediaReadingService:
             "updated_at": payload.get("updated_at"),
         }
 
-    def _ingestion_source_item_row_to_dict(self, row: Mapping[str, Any]) -> dict[str, Any]:
+    def _ingestion_source_item_row_to_dict(
+        self, row: Mapping[str, Any]
+    ) -> dict[str, Any]:
         payload = dict(row)
         return {
             "id": payload["id"],
@@ -5330,7 +6042,9 @@ class LocalMediaReadingService:
         }
 
     @staticmethod
-    def _reading_import_result_from_ingest_job(job: Mapping[str, Any]) -> dict[str, Any] | None:
+    def _reading_import_result_from_ingest_job(
+        job: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
         result = job.get("result")
         if not isinstance(result, Mapping):
             return None
@@ -5342,7 +6056,9 @@ class LocalMediaReadingService:
             "errors": list(result.get("errors") or []),
         }
 
-    def _reading_import_job_status_from_ingest_job(self, job: Mapping[str, Any]) -> dict[str, Any]:
+    def _reading_import_job_status_from_ingest_job(
+        self, job: Mapping[str, Any]
+    ) -> dict[str, Any]:
         return {
             "job_id": job.get("id"),
             "job_uuid": job.get("uuid"),
@@ -5399,7 +6115,9 @@ class LocalMediaReadingService:
             job_id = cursor.lastrowid
         return self.get_ingest_job(job_id)
 
-    def _dispatch_terminal_ingest_job_notification(self, job: Mapping[str, Any]) -> None:
+    def _dispatch_terminal_ingest_job_notification(
+        self, job: Mapping[str, Any]
+    ) -> None:
         status = str(job.get("status") or "").strip()
         if status not in {"completed", "failed", "cancelled"}:
             return
@@ -5440,7 +6158,9 @@ class LocalMediaReadingService:
             },
         )
 
-    def _mark_ingest_job_started(self, job_id: Any, *, progress_message: str) -> dict[str, Any]:
+    def _mark_ingest_job_started(
+        self, job_id: Any, *, progress_message: str
+    ) -> dict[str, Any]:
         db = self._require_db()
         now = db._get_current_utc_timestamp_str()
         with db.transaction() as conn:
@@ -5489,7 +6209,9 @@ class LocalMediaReadingService:
         self._dispatch_terminal_ingest_job_notification(job)
         return job
 
-    def _set_ingestion_source_active_job(self, source_id: Any, job_id: Any, *, status: str) -> None:
+    def _set_ingestion_source_active_job(
+        self, source_id: Any, job_id: Any, *, status: str
+    ) -> None:
         db = self._require_db()
         now = db._get_current_utc_timestamp_str()
         with db.transaction() as conn:

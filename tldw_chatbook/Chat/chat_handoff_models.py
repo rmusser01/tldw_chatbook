@@ -9,7 +9,9 @@ from typing import Any, Dict, Optional
 from .answer_citations import format_evidence_for_cited_answer
 
 
-SECRET_CONTRACT_KEYS = frozenset({"credential_source", "token", "secret", "api_key", "password"})
+SECRET_CONTRACT_KEYS = frozenset(
+    {"credential_source", "token", "secret", "api_key", "password"}
+)
 HANDOFF_BODY_CHAR_LIMIT = 80_000
 
 
@@ -57,8 +59,12 @@ class ChatHandoffPayload:
             "discovery_entity_id": self.discovery_entity_id,
             "scope_type": self.scope_type,
             "workspace_id": self.workspace_id,
-            "backend_contracts": _json_safe_contract_snapshot(self.backend_contracts or {}),
-            "unsupported_reports": _json_safe_contract_snapshot(self.unsupported_reports or []),
+            "backend_contracts": _json_safe_contract_snapshot(
+                self.backend_contracts or {}
+            ),
+            "unsupported_reports": _json_safe_contract_snapshot(
+                self.unsupported_reports or []
+            ),
             "sync_dry_run_report": (
                 _json_safe_contract_snapshot(self.sync_dry_run_report)
                 if self.sync_dry_run_report
@@ -90,7 +96,9 @@ class ChatHandoffPayload:
         )
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any] | "ChatHandoffPayload" | None) -> Optional["ChatHandoffPayload"]:
+    def from_dict(
+        cls, data: Dict[str, Any] | "ChatHandoffPayload" | None
+    ) -> Optional["ChatHandoffPayload"]:
         if data is None:
             return None
         if isinstance(data, cls):
@@ -110,15 +118,21 @@ class ChatHandoffPayload:
             runtime_backend=str(data.get("runtime_backend") or "local"),
             source_owner=str(data.get("source_owner") or "local"),
             source_selector_state=str(
-                data.get("source_selector_state") or data.get("runtime_backend") or "local"
+                data.get("source_selector_state")
+                or data.get("runtime_backend")
+                or "local"
             ),
             active_server_profile_id=data.get("active_server_profile_id"),
             discovery_owner=str(data.get("discovery_owner") or "general_chat"),
             discovery_entity_id=data.get("discovery_entity_id"),
             scope_type=data.get("scope_type"),
             workspace_id=data.get("workspace_id"),
-            backend_contracts=_json_safe_contract_snapshot(data.get("backend_contracts") or {}),
-            unsupported_reports=_json_safe_contract_snapshot(data.get("unsupported_reports") or []),
+            backend_contracts=_json_safe_contract_snapshot(
+                data.get("backend_contracts") or {}
+            ),
+            unsupported_reports=_json_safe_contract_snapshot(
+                data.get("unsupported_reports") or []
+            ),
             sync_dry_run_report=(
                 _json_safe_contract_snapshot(data["sync_dry_run_report"])
                 if data.get("sync_dry_run_report")
@@ -140,7 +154,9 @@ class ChatHandoffPayload:
             if value not in (None, ""):
                 metadata_lines.append(f"- {key}: {value}")
         metadata = "\n".join(metadata_lines)
-        evidence = format_evidence_for_cited_answer(metadata_snapshot.get("evidence_bundle"))
+        evidence = format_evidence_for_cited_answer(
+            metadata_snapshot.get("evidence_bundle")
+        )
         return (
             "[Staged context]\n"
             f"Source: {self.source}\n"
@@ -172,7 +188,9 @@ def _json_safe_contract_snapshot(value: Any) -> Any:
             if item is not None and not _is_secret_contract_key(str(key))
         }
     if isinstance(value, (list, tuple, set)):
-        return [_json_safe_contract_snapshot(item) for item in value if item is not None]
+        return [
+            _json_safe_contract_snapshot(item) for item in value if item is not None
+        ]
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     if hasattr(value, "to_payload"):

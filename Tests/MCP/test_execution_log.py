@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from tldw_chatbook.MCP.execution_log import ExecutionRecord, MCPExecutionLog, build_record
+from tldw_chatbook.MCP.execution_log import (
+    ExecutionRecord,
+    MCPExecutionLog,
+    build_record,
+)
 
 
 @pytest.fixture()
@@ -14,8 +18,14 @@ def log(tmp_path: Path) -> MCPExecutionLog:
 
 
 def _record(tool: str = "search_docs", **kw) -> ExecutionRecord:
-    defaults = dict(server_key="local:docs", tool_name=tool, initiator="test",
-                    ok=True, duration_ms=12, arguments={"query": "x"})
+    defaults = dict(
+        server_key="local:docs",
+        tool_name=tool,
+        initiator="test",
+        ok=True,
+        duration_ms=12,
+        arguments={"query": "x"},
+    )
     defaults.update(kw)
     return build_record(**defaults)
 
@@ -37,20 +47,31 @@ def test_rotation_keeps_two_generations(log, tmp_path):
     rotated = tmp_path / "mcp_execution_log.jsonl.1"
     assert active.exists() and rotated.exists()
     names = [r["tool_name"] for r in log.read_recent(limit=100)]
-    assert names[0] == "t6"          # newest first
-    assert len(names) <= 6           # bounded: at most two generations
-    assert "t0" not in names         # oldest generation dropped
+    assert names[0] == "t6"  # newest first
+    assert len(names) <= 6  # bounded: at most two generations
+    assert "t0" not in names  # oldest generation dropped
 
 
 def test_arguments_redacted_and_capture_off_drops_them():
-    kept = build_record(server_key="local:docs", tool_name="t", initiator="test",
-                        ok=True, duration_ms=1,
-                        arguments={"api_key": "sk-123", "query": "ok"})
+    kept = build_record(
+        server_key="local:docs",
+        tool_name="t",
+        initiator="test",
+        ok=True,
+        duration_ms=1,
+        arguments={"api_key": "sk-123", "query": "ok"},
+    )
     assert kept.arguments["api_key"] == "***"
     assert kept.arguments["query"] == "ok"
-    dropped = build_record(server_key="local:docs", tool_name="t", initiator="test",
-                           ok=True, duration_ms=1,
-                           arguments={"api_key": "sk-123"}, capture_args=False)
+    dropped = build_record(
+        server_key="local:docs",
+        tool_name="t",
+        initiator="test",
+        ok=True,
+        duration_ms=1,
+        arguments={"api_key": "sk-123"},
+        capture_args=False,
+    )
     assert dropped.arguments is None
 
 

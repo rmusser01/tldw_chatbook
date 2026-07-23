@@ -14,6 +14,7 @@ from .config_search_widget import ConfigSearchResult, UIElementSearchEngine
 # Optional imports
 try:
     from .MindmapViewer import MindmapViewer, MindmapNodeSelected
+
     MINDMAP_AVAILABLE = True
 except ImportError:
     MINDMAP_AVAILABLE = False
@@ -21,12 +22,12 @@ except ImportError:
     MindmapNodeSelected = None
 
 __all__ = [
-    'SmartContentTree',
-    'ContentNodeData',
-    'ContentSelectionChanged',
-    'ConfigSearchResult',
-    'UIElementSearchEngine',
+    "SmartContentTree",
+    "ContentNodeData",
+    "ContentSelectionChanged",
+    "ConfigSearchResult",
+    "UIElementSearchEngine",
 ]
 
 if MINDMAP_AVAILABLE:
-    __all__.extend(['MindmapViewer', 'MindmapNodeSelected'])
+    __all__.extend(["MindmapViewer", "MindmapNodeSelected"])

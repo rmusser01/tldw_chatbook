@@ -2,7 +2,7 @@
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input, Static, TextArea
+from textual.widgets import Button, Input, Select, Static, Switch, TextArea
 
 from tldw_chatbook.tldw_api import PersonaProfileCreate
 from tldw_chatbook.Widgets.Persona_Widgets.persona_profile_card_widget import (
@@ -12,6 +12,7 @@ from tldw_chatbook.Widgets.Persona_Widgets.persona_profile_editor_widget import 
     PersonaProfileEditorWidget,
 )
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+    EditorContentChanged,
     EditPersonaRequested,
     PersonaProfileSaveRequested,
 )
@@ -77,7 +78,9 @@ async def test_card_hides_empty_rows():
         card.show_persona({"id": "p-1", "name": "Archivist", "description": ""})
         await pilot.pause()
         assert pilot.app.query_one("#personas-card-name", Static).display is True
-        assert pilot.app.query_one("#personas-card-description", Static).display is False
+        assert (
+            pilot.app.query_one("#personas-card-description", Static).display is False
+        )
         assert (
             pilot.app.query_one("#personas-card-system-prompt", Static).display is False
         )
@@ -156,6 +159,86 @@ async def test_editor_roundtrips_version():
         assert "version" not in editor.collect()
 
 
+async def test_editor_load_collect_roundtrip_new_fields():
+    """Roleplay P3b Task 5: is_active/mode/personality_traits populate on
+    load and round-trip through collect()."""
+    app = WidgetApp()
+    async with app.run_test() as pilot:
+        editor = pilot.app.query_one(PersonaProfileEditorWidget)
+        editor.load_persona(
+            {
+                "id": "p-1",
+                "name": "Archivist",
+                "is_active": False,
+                "mode": "persistent_scoped",
+                "personality_traits": "meticulous, dry wit",
+            }
+        )
+        await pilot.pause()
+        assert pilot.app.query_one("#personas-editor-enabled", Switch).value is False
+        assert (
+            pilot.app.query_one("#personas-editor-mode", Select).value
+            == "persistent_scoped"
+        )
+        assert (
+            pilot.app.query_one(
+                "#personas-editor-personality-traits", TextArea
+            ).text
+            == "meticulous, dry wit"
+        )
+        data = editor.collect()
+        assert data["is_active"] is False
+        assert data["mode"] == "persistent_scoped"
+        assert data["personality_traits"] == "meticulous, dry wit"
+
+
+async def test_editor_new_persona_defaults_enabled_and_session_scoped():
+    """A fresh/new persona defaults Enabled=True, mode=session_scoped, and
+    an empty personality-traits field - matching PersonaProfileCreate's
+    defaults."""
+    app = WidgetApp()
+    async with app.run_test() as pilot:
+        editor = pilot.app.query_one(PersonaProfileEditorWidget)
+        editor.new_persona()
+        await pilot.pause()
+        assert pilot.app.query_one("#personas-editor-enabled", Switch).value is True
+        assert (
+            pilot.app.query_one("#personas-editor-mode", Select).value
+            == "session_scoped"
+        )
+        assert (
+            pilot.app.query_one(
+                "#personas-editor-personality-traits", TextArea
+            ).text
+            == ""
+        )
+        data = editor.collect()
+        assert data["is_active"] is True
+        assert data["mode"] == "session_scoped"
+        assert data["personality_traits"] == ""
+
+
+async def test_toggling_enabled_switch_marks_dirty():
+    """The Enabled Switch participates in dirty tracking exactly like a text
+    field: toggling it after a load posts EditorContentChanged."""
+    received = []
+
+    class CaptureApp(EditorOnlyApp):
+        def on_editor_content_changed(self, message: EditorContentChanged) -> None:
+            received.append(message)
+
+    app = CaptureApp()
+    async with app.run_test() as pilot:
+        editor = pilot.app.query_one(PersonaProfileEditorWidget)
+        editor.load_persona(PROFILE)
+        await pilot.pause()
+        assert received == []
+
+        pilot.app.query_one("#personas-editor-enabled", Switch).value = False
+        await pilot.pause()
+    assert len(received) == 1
+
+
 async def test_persona_profile_create_schema_accepts_description():
     profile = PersonaProfileCreate(name="x", description="d")
     assert profile.description == "d"
@@ -165,7 +248,9 @@ async def test_editor_save_posts_collected_data():
     received = []
 
     class CaptureApp(EditorOnlyApp):
-        def on_persona_profile_save_requested(self, message: PersonaProfileSaveRequested) -> None:
+        def on_persona_profile_save_requested(
+            self, message: PersonaProfileSaveRequested
+        ) -> None:
             received.append(message.data)
 
     app = CaptureApp()
@@ -183,7 +268,9 @@ async def test_editor_save_with_empty_name_blocks_and_shows_error():
     received = []
 
     class CaptureApp(EditorOnlyApp):
-        def on_persona_profile_save_requested(self, message: PersonaProfileSaveRequested) -> None:
+        def on_persona_profile_save_requested(
+            self, message: PersonaProfileSaveRequested
+        ) -> None:
             received.append(message.data)
 
     app = CaptureApp()

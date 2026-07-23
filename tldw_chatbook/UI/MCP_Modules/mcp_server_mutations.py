@@ -25,10 +25,14 @@ from textual.widgets import Button, Checkbox, Input, Select, Static
 from tldw_chatbook.Utils.input_validation import validate_url
 
 _TRANSPORT_OPTIONS: list[tuple[str, str]] = [
-    ("HTTP", "http"), ("SSE", "sse"), ("stdio", "stdio"),
+    ("HTTP", "http"),
+    ("SSE", "sse"),
+    ("stdio", "stdio"),
 ]
 _SECRET_KIND_OPTIONS: list[tuple[str, str]] = [
-    ("Bearer token", "bearer_token"), ("API key", "api_key"), ("Client secret", "client_secret"),
+    ("Bearer token", "bearer_token"),
+    ("API key", "api_key"),
+    ("Client secret", "client_secret"),
 ]
 _PRIVILEGE_OPTIONS: list[tuple[str, str]] = [("Read", "read"), ("Write", "write")]
 
@@ -86,39 +90,60 @@ class MCPServerMutationsPanel(Vertical):
 
         yield Static("Server id", classes="form-label")
         id_input = Input(
-            value=str(record.get("server_id") or ""), id="mcp-srv-id",
-            placeholder="web-search", compact=True,
+            value=str(record.get("server_id") or ""),
+            id="mcp-srv-id",
+            placeholder="web-search",
+            compact=True,
         )
         id_input.disabled = self.is_edit
         yield id_input
 
         yield Static("Name", classes="form-label")
-        yield Input(value=str(record.get("name") or ""), id="mcp-srv-name",
-                    placeholder="Web Search", compact=True)
+        yield Input(
+            value=str(record.get("name") or ""),
+            id="mcp-srv-name",
+            placeholder="Web Search",
+            compact=True,
+        )
 
         if not self.is_edit:
             yield Static("Transport", classes="form-label")
             yield Select(
-                _TRANSPORT_OPTIONS, id="mcp-srv-transport", allow_blank=False,
-                value="http", compact=True,
+                _TRANSPORT_OPTIONS,
+                id="mcp-srv-transport",
+                allow_blank=False,
+                value="http",
+                compact=True,
             )
             yield Static("URL", classes="form-label")
-            yield Input(value="", id="mcp-srv-url", placeholder="https://mcp.example/api",
-                        compact=True)
+            yield Input(
+                value="",
+                id="mcp-srv-url",
+                placeholder="https://mcp.example/api",
+                compact=True,
+            )
 
         yield Checkbox(
-            "Enabled", value=bool(record.get("enabled", True)), id="mcp-srv-enabled",
+            "Enabled",
+            value=bool(record.get("enabled", True)),
+            id="mcp-srv-enabled",
             compact=True,
         )
 
         yield Static("", id="mcp-srv-error", classes="ds-field-row", markup=False)
         with Horizontal(classes="ds-toolbar"):
             yield Button(
-                "Save", id="mcp-srv-save", classes="console-action-primary", compact=True,
+                "Save",
+                id="mcp-srv-save",
+                classes="console-action-primary",
+                compact=True,
                 tooltip="Validate and save this external server.",
             )
             yield Button(
-                "Cancel", id="mcp-srv-cancel", classes="console-action-secondary", compact=True,
+                "Cancel",
+                id="mcp-srv-cancel",
+                classes="console-action-secondary",
+                compact=True,
                 tooltip="Discard changes.",
             )
 
@@ -129,7 +154,9 @@ class MCPServerMutationsPanel(Vertical):
         yield Static("Credentials", classes="destination-section", markup=False)
         server_id = str(record.get("server_id") or "")
         if not self._slots:
-            yield Static("No credential slots yet.", classes="ds-field-row", markup=False)
+            yield Static(
+                "No credential slots yet.", classes="ds-field-row", markup=False
+            )
         for index, slot in enumerate(self._slots):
             slot_name = str(slot.get("slot_name") or "")
             display_name = str(slot.get("display_name") or slot_name)
@@ -140,48 +167,72 @@ class MCPServerMutationsPanel(Vertical):
             safe_display_name = escape_markup(display_name)
             with Vertical(classes="mcp-slot-row"):
                 yield Static(
-                    f"{display_name} ({slot_name})", classes="ds-field-row", markup=False,
+                    f"{display_name} ({slot_name})",
+                    classes="ds-field-row",
+                    markup=False,
                 )
                 secret_input = Input(
-                    value="", id=f"mcp-slot-secret-{index}", password=True,
-                    placeholder="New secret value", compact=True,
+                    value="",
+                    id=f"mcp-slot-secret-{index}",
+                    password=True,
+                    placeholder="New secret value",
+                    compact=True,
                 )
                 yield secret_input
                 with Horizontal(classes="ds-toolbar"):
                     yield Button(
-                        "Set secret", id=f"mcp-slot-secret-set-{index}",
-                        classes="console-action-secondary", compact=True,
+                        "Set secret",
+                        id=f"mcp-slot-secret-set-{index}",
+                        classes="console-action-secondary",
+                        compact=True,
                         tooltip=f"Set the secret for {safe_display_name}.",
                     )
                     yield Button(
-                        "Clear secret", id=f"mcp-slot-secret-clear-{index}",
-                        classes="console-action-secondary", compact=True,
+                        "Clear secret",
+                        id=f"mcp-slot-secret-clear-{index}",
+                        classes="console-action-secondary",
+                        compact=True,
                         tooltip=f"Clear the stored secret for {safe_display_name}.",
                     )
                     yield Button(
-                        "Delete slot", id=f"mcp-slot-delete-{index}",
-                        classes="console-action-secondary", compact=True,
+                        "Delete slot",
+                        id=f"mcp-slot-delete-{index}",
+                        classes="console-action-secondary",
+                        compact=True,
                         tooltip=f"Delete the {safe_display_name} credential slot.",
                     )
 
         yield Static("Add credential slot", classes="destination-section", markup=False)
         yield Static("Slot name", classes="form-label")
-        yield Input(value="", id="mcp-slot-name", placeholder="token_readonly", compact=True)
+        yield Input(
+            value="", id="mcp-slot-name", placeholder="token_readonly", compact=True
+        )
         yield Static("Display name", classes="form-label")
-        yield Input(value="", id="mcp-slot-display", placeholder="Read-only token", compact=True)
+        yield Input(
+            value="", id="mcp-slot-display", placeholder="Read-only token", compact=True
+        )
         yield Static("Secret kind", classes="form-label")
         yield Select(
-            _SECRET_KIND_OPTIONS, id="mcp-slot-kind", allow_blank=False, value="bearer_token",
+            _SECRET_KIND_OPTIONS,
+            id="mcp-slot-kind",
+            allow_blank=False,
+            value="bearer_token",
             compact=True,
         )
         yield Static("Privilege class", classes="form-label")
         yield Select(
-            _PRIVILEGE_OPTIONS, id="mcp-slot-privilege", allow_blank=False, value="read",
+            _PRIVILEGE_OPTIONS,
+            id="mcp-slot-privilege",
+            allow_blank=False,
+            value="read",
             compact=True,
         )
         yield Checkbox("Required", value=False, id="mcp-slot-required", compact=True)
         yield Button(
-            "Add slot", id="mcp-slot-add", classes="console-action-secondary", compact=True,
+            "Add slot",
+            id="mcp-slot-add",
+            classes="console-action-secondary",
+            compact=True,
             tooltip=f"Add a new credential slot for {escape_markup(server_id) or 'this server'}.",
         )
 
@@ -212,7 +263,9 @@ class MCPServerMutationsPanel(Vertical):
         if self.is_edit:
             return {"server_id": server_id, "name": name, "enabled": bool(enabled)}
         transport_select = self.query_one("#mcp-srv-transport", Select)
-        transport = "" if _blank(transport_select.value) else str(transport_select.value)
+        transport = (
+            "" if _blank(transport_select.value) else str(transport_select.value)
+        )
         if not transport:
             raise ValueError("Transport is required.")
         url = self.query_one("#mcp-srv-url", Input).value.strip()
@@ -243,7 +296,9 @@ class MCPServerMutationsPanel(Vertical):
         kind_select = self.query_one("#mcp-slot-kind", Select)
         secret_kind = "" if _blank(kind_select.value) else str(kind_select.value)
         privilege_select = self.query_one("#mcp-slot-privilege", Select)
-        privilege_class = "" if _blank(privilege_select.value) else str(privilege_select.value)
+        privilege_class = (
+            "" if _blank(privilege_select.value) else str(privilege_select.value)
+        )
         is_required = self.query_one("#mcp-slot-required", Checkbox).value
         return {
             "server_id": self._server_id(),
@@ -277,7 +332,9 @@ class MCPServerMutationsPanel(Vertical):
             except ValueError as exc:
                 self.show_error(str(exc))
                 return
-            action = "external_server.update" if self.is_edit else "external_server.create"
+            action = (
+                "external_server.update" if self.is_edit else "external_server.create"
+            )
             # Disable while the host's save is in flight -- same
             # state-driven-button discipline as MCPProfileForm.Save.
             event.button.disabled = True
@@ -294,7 +351,9 @@ class MCPServerMutationsPanel(Vertical):
             except ValueError as exc:
                 self.show_error(str(exc))
                 return
-            self.post_message(self.SubmitRequested("external_server.slot.create", payload))
+            self.post_message(
+                self.SubmitRequested("external_server.slot.create", payload)
+            )
             return
         if button_id.startswith("mcp-slot-secret-set-"):
             event.stop()
@@ -332,7 +391,11 @@ class MCPServerMutationsPanel(Vertical):
         self.post_message(
             self.SubmitRequested(
                 "external_server.slot.secret.set",
-                {"server_id": self._server_id(), "slot_name": slot_name, "secret": secret},
+                {
+                    "server_id": self._server_id(),
+                    "slot_name": slot_name,
+                    "secret": secret,
+                },
             )
         )
         # Never let the plaintext secret linger in the field once posted.
@@ -343,5 +406,7 @@ class MCPServerMutationsPanel(Vertical):
         if slot_name is None:
             return
         self.post_message(
-            self.SubmitRequested(action, {"server_id": self._server_id(), "slot_name": slot_name})
+            self.SubmitRequested(
+                action, {"server_id": self._server_id(), "slot_name": slot_name}
+            )
         )

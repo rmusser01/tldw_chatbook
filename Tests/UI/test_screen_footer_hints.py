@@ -104,7 +104,9 @@ async def test_console_registration_updates_the_screens_own_footer():
         # used to target) must be left untouched at its default text.
         default_screen_footer = host.query_one(AppFooterStatus)
         assert default_screen_footer is not screen_footer
-        assert default_screen_footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+        assert (
+            default_screen_footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+        )
 
 
 @pytest.mark.asyncio
@@ -127,7 +129,9 @@ async def test_mcp_registration_updates_the_screens_own_footer():
 
         default_screen_footer = host.query_one(AppFooterStatus)
         assert default_screen_footer is not screen_footer
-        assert default_screen_footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+        assert (
+            default_screen_footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+        )
 
 
 @pytest.mark.asyncio
@@ -260,11 +264,15 @@ def _default_css_divergences(bundle_blocks: dict[str, dict[str, str]]) -> list[s
     the bundle is drift.
     """
     divergences = []
-    for selector, declarations in _parse_css_blocks(AppFooterStatus.DEFAULT_CSS).items():
+    for selector, declarations in _parse_css_blocks(
+        AppFooterStatus.DEFAULT_CSS
+    ).items():
         bundle_selector = selector.replace("AppFooterStatus #", "#")
         bundle_declarations = bundle_blocks.get(bundle_selector)
         if bundle_declarations is None:
-            divergences.append(f"selector {bundle_selector!r} missing from footer section")
+            divergences.append(
+                f"selector {bundle_selector!r} missing from footer section"
+            )
             continue
         for prop, value in declarations.items():
             bundle_value = bundle_declarations.get(prop)

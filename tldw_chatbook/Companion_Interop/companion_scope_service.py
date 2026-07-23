@@ -59,7 +59,9 @@ class CompanionScopeService:
 
     def _require_server_service(self, mode: CompanionBackend) -> Any:
         if mode == CompanionBackend.LOCAL:
-            raise ValueError("Companion server operations are server-only; switch to server mode.")
+            raise ValueError(
+                "Companion server operations are server-only; switch to server mode."
+            )
         if self.server_service is None:
             raise ValueError("Server Companion backend is unavailable.")
         return self.server_service
@@ -97,7 +99,9 @@ class CompanionScopeService:
         normalized_mode = self._normalize_mode(mode)
         service = self._require_server_service(normalized_mode)
         self._enforce_policy(action_id)
-        return await self._maybe_await(getattr(service, method_name)(*args, **(kwargs or {})))
+        return await self._maybe_await(
+            getattr(service, method_name)(*args, **(kwargs or {}))
+        )
 
     async def create_activity(
         self,

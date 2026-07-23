@@ -56,13 +56,19 @@ def chat_window_settings(monkeypatch):
 
     providers = {"openai": ["gpt-4.1"]}
 
-    monkeypatch.setattr("tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting", get_setting)
-    monkeypatch.setattr("tldw_chatbook.Widgets.compact_model_bar.get_cli_setting", get_setting)
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting", get_setting
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Widgets.compact_model_bar.get_cli_setting", get_setting
+    )
     monkeypatch.setattr(
         "tldw_chatbook.Widgets.compact_model_bar.get_cli_providers_and_models",
         lambda: providers,
     )
-    monkeypatch.setattr("tldw_chatbook.Widgets.enhanced_settings_sidebar.get_cli_setting", get_setting)
+    monkeypatch.setattr(
+        "tldw_chatbook.Widgets.enhanced_settings_sidebar.get_cli_setting", get_setting
+    )
     monkeypatch.setattr(
         "tldw_chatbook.Widgets.enhanced_settings_sidebar.get_cli_providers_and_models",
         lambda: providers,
@@ -87,7 +93,10 @@ def test_chat_screen_state_round_trip_preserves_task_resume_and_pending_approval
 
     assert restored.task_resume_state.summary == "Continue the UX rescue work"
     assert restored.task_resume_state.last_step == "Landed the study dashboard shell"
-    assert restored.task_resume_state.next_action == "Review the privileged file-write diff"
+    assert (
+        restored.task_resume_state.next_action
+        == "Review the privileged file-write diff"
+    )
     assert restored.task_resume_state.diff_summary == "3 files changed in chat UI"
     assert restored.task_resume_state.pending_approval == {
         "summary": "Allow workspace write for chat task cards",

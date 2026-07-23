@@ -135,7 +135,9 @@ def policy_denied_recovery_state(
         getattr(exc, "reason_code", None)
     )
     why = _clause(
-        policy_message if policy_message is not None else getattr(exc, "user_message", None),
+        policy_message
+        if policy_message is not None
+        else getattr(exc, "user_message", None),
         "Runtime policy blocked this action",
     )
     authority_owner = _clause(getattr(exc, "authority_owner", None), "runtime policy")
@@ -199,9 +201,7 @@ def optional_dependency_recovery_state(
     dependency_names = _dependency_names(missing_dependencies)
     why = f"Missing optional dependencies: {dependency_names}."
     install_target_list = [
-        str(target).strip()
-        for target in (install_targets or ())
-        if str(target).strip()
+        str(target).strip() for target in (install_targets or ()) if str(target).strip()
     ]
     if install_target_list:
         if len(install_target_list) >= 2:

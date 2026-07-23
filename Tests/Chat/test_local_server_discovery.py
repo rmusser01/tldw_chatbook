@@ -34,7 +34,10 @@ def test_candidates_include_wellknown_defaults_first() -> None:
         DEFAULT_LLAMACPP_DISCOVERY_URL,
         DEFAULT_OLLAMA_DISCOVERY_URL,
     ]
-    assert [candidate.provider_key for candidate in candidates] == ["llama_cpp", "ollama"]
+    assert [candidate.provider_key for candidate in candidates] == [
+        "llama_cpp",
+        "ollama",
+    ]
 
 
 def test_candidates_add_configured_local_endpoints_and_strip_api_paths() -> None:
@@ -88,7 +91,9 @@ def test_candidates_dedupe_repeated_urls() -> None:
 
 def test_normalize_and_localhost_helpers() -> None:
     assert normalize_probe_base_url("127.0.0.1:8080") == "http://127.0.0.1:8080"
-    assert normalize_probe_base_url("http://127.0.0.1:8080/v1/") == "http://127.0.0.1:8080"
+    assert (
+        normalize_probe_base_url("http://127.0.0.1:8080/v1/") == "http://127.0.0.1:8080"
+    )
     assert normalize_probe_base_url("ftp://127.0.0.1:8080") is None
     assert normalize_probe_base_url("") is None
     assert is_localhost_url("http://localhost:1234") is True

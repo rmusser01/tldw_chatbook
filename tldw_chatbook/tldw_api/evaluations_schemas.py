@@ -178,7 +178,12 @@ class RAGEvaluationRequest(BaseModel):
     generated_response: str = Field(..., min_length=1, max_length=50000)
     ground_truth: str | None = Field(default=None, max_length=50000)
     metrics: list[str] = Field(
-        default_factory=lambda: ["relevance", "faithfulness", "answer_similarity", "context_precision"]
+        default_factory=lambda: [
+            "relevance",
+            "faithfulness",
+            "answer_similarity",
+            "context_precision",
+        ]
     )
     api_name: str | None = "openai"
 
@@ -716,11 +721,15 @@ class EvaluationRecipeRunRecord(BaseModel):
     recipe_id: Optional[str] = None
     recipe_version: Optional[str] = None
     status: str
-    review_state: EvaluationRecipeReviewState | str = EvaluationRecipeReviewState.NOT_REQUIRED
+    review_state: EvaluationRecipeReviewState | str = (
+        EvaluationRecipeReviewState.NOT_REQUIRED
+    )
     dataset_snapshot_ref: Optional[str] = None
     dataset_content_hash: Optional[str] = None
     confidence_summary: Optional[EvaluationRecipeConfidenceSummary] = None
-    recommendation_slots: dict[str, EvaluationRecipeRecommendationSlot] = Field(default_factory=dict)
+    recommendation_slots: dict[str, EvaluationRecipeRecommendationSlot] = Field(
+        default_factory=dict
+    )
     child_run_ids: list[str] = Field(default_factory=list)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -732,7 +741,9 @@ class EvaluationRecipeRunRecord(BaseModel):
 class EvaluationRecipeRunReport(BaseModel):
     run: EvaluationRecipeRunRecord
     confidence_summary: Optional[EvaluationRecipeConfidenceSummary] = None
-    recommendation_slots: dict[str, EvaluationRecipeRecommendationSlot] = Field(default_factory=dict)
+    recommendation_slots: dict[str, EvaluationRecipeRecommendationSlot] = Field(
+        default_factory=dict
+    )
 
     model_config = ConfigDict(extra="ignore", from_attributes=True)
 

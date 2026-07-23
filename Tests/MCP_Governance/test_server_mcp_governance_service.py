@@ -12,10 +12,14 @@ class FakeMCPGovernanceClient:
 
     async def list_mcp_external_servers(self, **kwargs):
         self.calls.append(("list_mcp_external_servers", kwargs))
-        return [{"server_id": "github", "owner_scope_type": "team", "owner_scope_id": 7}]
+        return [
+            {"server_id": "github", "owner_scope_type": "team", "owner_scope_id": 7}
+        ]
 
     async def create_mcp_external_server(self, request_data):
-        self.calls.append(("create_mcp_external_server", request_data.model_dump(mode="json")))
+        self.calls.append(
+            ("create_mcp_external_server", request_data.model_dump(mode="json"))
+        )
         return {"server_id": "github", "name": "GitHub"}
 
     async def list_mcp_team_tool_catalogs(self, team_id):
@@ -23,7 +27,9 @@ class FakeMCPGovernanceClient:
         return [{"id": 3, "team_id": team_id, "name": "Team Tools"}]
 
     async def create_mcp_approval_decision(self, request_data):
-        self.calls.append(("create_mcp_approval_decision", request_data.model_dump(mode="json")))
+        self.calls.append(
+            ("create_mcp_approval_decision", request_data.model_dump(mode="json"))
+        )
         return {"id": 5, "decision": "approved"}
 
     async def get_mcp_effective_policy(self, **kwargs):
@@ -49,7 +55,9 @@ async def test_server_mcp_governance_service_enforces_action_level_policy_and_ro
     policy = Mock()
     service = ServerMCPGovernanceService(client=client, policy_enforcer=policy)
 
-    servers = await service.list_external_servers(owner_scope_type="team", owner_scope_id=7)
+    servers = await service.list_external_servers(
+        owner_scope_type="team", owner_scope_id=7
+    )
     created = await service.create_external_server(
         {
             "server_id": "github",
@@ -62,7 +70,12 @@ async def test_server_mcp_governance_service_enforces_action_level_policy_and_ro
     )
     catalogs = await service.list_team_tool_catalogs(team_id=7)
     decision = await service.create_approval_decision(
-        {"context_key": "user:1:tool:search", "tool_name": "search", "decision": "approved", "duration": "once"}
+        {
+            "context_key": "user:1:tool:search",
+            "tool_name": "search",
+            "decision": "approved",
+            "duration": "once",
+        }
     )
     effective = await service.get_effective_policy(team_id=7)
 
@@ -72,7 +85,10 @@ async def test_server_mcp_governance_service_enforces_action_level_policy_and_ro
     assert decision["decision"] == "approved"
     assert effective["policy"] == {"allowed_tools": ["search"]}
     assert client.calls == [
-        ("list_mcp_external_servers", {"owner_scope_type": "team", "owner_scope_id": 7}),
+        (
+            "list_mcp_external_servers",
+            {"owner_scope_type": "team", "owner_scope_id": 7},
+        ),
         (
             "create_mcp_external_server",
             {
@@ -98,9 +114,14 @@ async def test_server_mcp_governance_service_enforces_action_level_policy_and_ro
                 "duration": "once",
             },
         ),
-        ("get_mcp_effective_policy", {"persona_id": None, "group_id": None, "org_id": None, "team_id": 7}),
+        (
+            "get_mcp_effective_policy",
+            {"persona_id": None, "group_id": None, "org_id": None, "team_id": 7},
+        ),
     ]
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "mcp.governance.external_servers.list.server",
         "mcp.governance.external_servers.create.server",
         "mcp.governance.catalogs.list.server",
@@ -251,4 +272,7 @@ async def test_server_mcp_governance_service_streams_events_with_policy_gate():
             "replay": True,
         },
     )
-    assert policy.require_allowed.call_args_list[-1].kwargs["action_id"] == "mcp.governance.events.observe.server"
+    assert (
+        policy.require_allowed.call_args_list[-1].kwargs["action_id"]
+        == "mcp.governance.events.observe.server"
+    )

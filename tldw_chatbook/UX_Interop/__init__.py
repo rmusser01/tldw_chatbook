@@ -6,15 +6,30 @@ from typing import Any
 _EXPORTS = {
     "CONTRACT_ID": (".server_parity_contracts", "CONTRACT_ID"),
     "CONTRACT_VERSION": (".server_parity_contracts", "CONTRACT_VERSION"),
-    "ActiveServerStatusContract": (".server_parity_contracts", "ActiveServerStatusContract"),
-    "FutureSyncStatusContract": (".server_parity_contracts", "FutureSyncStatusContract"),
-    "NotificationFeedItemContract": (".server_parity_contracts", "NotificationFeedItemContract"),
-    "SourceSelectorStateContract": (".server_parity_contracts", "SourceSelectorStateContract"),
+    "ActiveServerStatusContract": (
+        ".server_parity_contracts",
+        "ActiveServerStatusContract",
+    ),
+    "FutureSyncStatusContract": (
+        ".server_parity_contracts",
+        "FutureSyncStatusContract",
+    ),
+    "NotificationFeedItemContract": (
+        ".server_parity_contracts",
+        "NotificationFeedItemContract",
+    ),
+    "SourceSelectorStateContract": (
+        ".server_parity_contracts",
+        "SourceSelectorStateContract",
+    ),
     "UnsupportedActionPresentationContract": (
         ".server_parity_contracts",
         "UnsupportedActionPresentationContract",
     ),
-    "WorkspaceIsolationContract": (".server_parity_contracts", "WorkspaceIsolationContract"),
+    "WorkspaceIsolationContract": (
+        ".server_parity_contracts",
+        "WorkspaceIsolationContract",
+    ),
     "build_server_parity_fixture_payloads": (
         ".server_parity_contracts",
         "build_server_parity_fixture_payloads",
@@ -28,7 +43,10 @@ _EXPORTS = {
         "notification_feed_item_from_payload",
     ),
     "sync_status_contract": (".server_parity_contracts", "sync_status_contract"),
-    "workspace_isolation_contract": (".server_parity_contracts", "workspace_isolation_contract"),
+    "workspace_isolation_contract": (
+        ".server_parity_contracts",
+        "workspace_isolation_contract",
+    ),
 }
 
 __all__ = sorted(_EXPORTS)

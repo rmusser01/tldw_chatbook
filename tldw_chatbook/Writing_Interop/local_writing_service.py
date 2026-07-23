@@ -105,7 +105,9 @@ class LocalWritingService:
     def _normalize_aux_record(self, kind: str, row: dict[str, Any]) -> dict[str, Any]:
         payload = dict(row)
         if "custom_fields_json" in payload:
-            payload["custom_fields"] = self._json_loads(payload.pop("custom_fields_json"), {})
+            payload["custom_fields"] = self._json_loads(
+                payload.pop("custom_fields_json"), {}
+            )
         if "properties_json" in payload:
             payload["properties"] = self._json_loads(payload.pop("properties_json"), {})
         if "tags_json" in payload:
@@ -486,7 +488,9 @@ class LocalWritingService:
             ).fetchone()
         return dict(row) if row else None
 
-    def _require_deleted_one(self, table: str, item_id: str, label: str) -> dict[str, Any]:
+    def _require_deleted_one(
+        self, table: str, item_id: str, label: str
+    ) -> dict[str, Any]:
         row = self._fetch_deleted_one(table, item_id)
         if not row:
             raise ValueError(f"{label} not found in trash")
@@ -494,7 +498,9 @@ class LocalWritingService:
 
     @staticmethod
     def _check_version(row: dict[str, Any], expected_version: int | None) -> None:
-        if expected_version is not None and int(row["version"]) != int(expected_version):
+        if expected_version is not None and int(row["version"]) != int(
+            expected_version
+        ):
             raise ValueError("version conflict")
 
     def _update_row(
@@ -521,7 +527,9 @@ class LocalWritingService:
             )
         return self._require_one(table, item_id, label)
 
-    def _soft_delete(self, table: str, item_id: str, label: str, expected_version: int | None) -> bool:
+    def _soft_delete(
+        self, table: str, item_id: str, label: str, expected_version: int | None
+    ) -> bool:
         row = self._require_one(table, item_id, label)
         self._check_version(row, expected_version)
         with self._connect() as conn:
@@ -551,7 +559,9 @@ class LocalWritingService:
         try:
             return _VERSION_TABLES[entity_type]
         except KeyError as exc:
-            raise ValueError(f"Unsupported writing version entity type: {entity_type}") from exc
+            raise ValueError(
+                f"Unsupported writing version entity type: {entity_type}"
+            ) from exc
 
     @staticmethod
     def _validate_entity_type(entity_type: str) -> tuple[str, str]:
@@ -586,14 +596,21 @@ class LocalWritingService:
                 "word_count": row["word_count"],
                 "status": row["status"],
                 "scene_ids": [scene["id"] for scene in scenes],
-                "rendered_markdown": "\n\n".join(scene.get("content_markdown") or "" for scene in scenes).strip(),
+                "rendered_markdown": "\n\n".join(
+                    scene.get("content_markdown") or "" for scene in scenes
+                ).strip(),
             }
         chapters = self.list_chapters(row["project_id"], manuscript_id=entity_id)
         direct_scenes = self.list_scenes(manuscript_id=entity_id)
         rendered_parts: list[str] = []
         for chapter in chapters:
-            rendered_parts.extend(scene.get("content_markdown") or "" for scene in self.list_scenes(chapter["id"]))
-        rendered_parts.extend(scene.get("content_markdown") or "" for scene in direct_scenes)
+            rendered_parts.extend(
+                scene.get("content_markdown") or ""
+                for scene in self.list_scenes(chapter["id"])
+            )
+        rendered_parts.extend(
+            scene.get("content_markdown") or "" for scene in direct_scenes
+        )
         return {
             "title": row["title"],
             "project_id": row["project_id"],
@@ -617,7 +634,9 @@ class LocalWritingService:
             ).fetchone()
         return int(current["max_version"] or 0) + 1
 
-    def create_version(self, entity_type: str, entity_id: str, *, label: str | None = None) -> dict[str, Any]:
+    def create_version(
+        self, entity_type: str, entity_id: str, *, label: str | None = None
+    ) -> dict[str, Any]:
         self._validate_version_entity_type(entity_type)
         version_id = self._new_id()
         now = self._now()
@@ -655,7 +674,9 @@ class LocalWritingService:
             ).fetchall()
         return [self._normalize_version(dict(row)) for row in rows]
 
-    def get_version(self, entity_type: str, entity_id: str, version_number: int) -> dict[str, Any]:
+    def get_version(
+        self, entity_type: str, entity_id: str, version_number: int
+    ) -> dict[str, Any]:
         self._validate_version_entity_type(entity_type)
         with self._connect() as conn:
             row = conn.execute(
@@ -681,10 +702,9 @@ class LocalWritingService:
         payload = version["payload"]
         if entity_type == "scene":
             current = self._require_one("writing_scenes", entity_id, "scene")
-            if (
-                payload.get("chapter_id") != current["chapter_id"]
-                or payload.get("manuscript_id") != current.get("manuscript_id")
-            ):
+            if payload.get("chapter_id") != current["chapter_id"] or payload.get(
+                "manuscript_id"
+            ) != current.get("manuscript_id"):
                 raise ValueError("cannot restore scene version across parents")
             return self.update_scene(
                 entity_id,
@@ -725,7 +745,9 @@ class LocalWritingService:
                 rows = conn.execute(
                     f"SELECT * FROM {table} WHERE deleted = 1 ORDER BY last_modified DESC"
                 ).fetchall()
-                records.extend(normalize_writing_record("local", kind, dict(row)) for row in rows)
+                records.extend(
+                    normalize_writing_record("local", kind, dict(row)) for row in rows
+                )
         return records
 
     def restore_trash(
@@ -749,7 +771,9 @@ class LocalWritingService:
             self._require_one(table, entity_id, label),
         )
 
-    def reorder_entities(self, project_id: str, entity_type: str, items: list[dict[str, Any]]) -> bool:
+    def reorder_entities(
+        self, project_id: str, entity_type: str, items: list[dict[str, Any]]
+    ) -> bool:
         self._require_one("writing_projects", project_id, "project")
         normalized_type = _REORDER_ENTITY_TYPES.get(entity_type)
         if normalized_type is None:
@@ -783,9 +807,13 @@ class LocalWritingService:
                 if "new_parent_id" in item:
                     new_parent_id = item.get("new_parent_id")
                     if new_parent_id is not None:
-                        manuscript = self._require_one("writing_manuscripts", new_parent_id, "manuscript")
+                        manuscript = self._require_one(
+                            "writing_manuscripts", new_parent_id, "manuscript"
+                        )
                         if manuscript["project_id"] != project_id:
-                            raise ValueError("target manuscript does not belong to project")
+                            raise ValueError(
+                                "target manuscript does not belong to project"
+                            )
                     fields["manuscript_id"] = new_parent_id
                 self._update_row(
                     table="writing_chapters",
@@ -801,7 +829,9 @@ class LocalWritingService:
                 raise ValueError("scene does not belong to project")
             fields = {"sort_order": sort_order}
             if "new_parent_id" in item:
-                chapter = self._require_one("writing_chapters", item["new_parent_id"], "chapter")
+                chapter = self._require_one(
+                    "writing_chapters", item["new_parent_id"], "chapter"
+                )
                 if chapter["project_id"] != project_id:
                     raise ValueError("target chapter does not belong to project")
                 fields["chapter_id"] = item["new_parent_id"]
@@ -839,9 +869,15 @@ class LocalWritingService:
                     now,
                 ),
             )
-        return normalize_writing_record("local", "project", self._require_one("writing_projects", project_id, "project"))
+        return normalize_writing_record(
+            "local",
+            "project",
+            self._require_one("writing_projects", project_id, "project"),
+        )
 
-    def list_projects(self, *, limit: int = 100, offset: int = 0, status: str | None = None) -> list[dict[str, Any]]:
+    def list_projects(
+        self, *, limit: int = 100, offset: int = 0, status: str | None = None
+    ) -> list[dict[str, Any]]:
         sql = "SELECT * FROM writing_projects WHERE deleted = 0"
         params: list[Any] = []
         if status:
@@ -857,7 +893,9 @@ class LocalWritingService:
         row = self._fetch_one("writing_projects", project_id)
         return normalize_writing_record("local", "project", row) if row else None
 
-    def update_project(self, project_id: str, *, expected_version: int | None = None, **fields: Any) -> dict[str, Any]:
+    def update_project(
+        self, project_id: str, *, expected_version: int | None = None, **fields: Any
+    ) -> dict[str, Any]:
         row = self._update_row(
             table="writing_projects",
             item_id=project_id,
@@ -867,10 +905,16 @@ class LocalWritingService:
         )
         return normalize_writing_record("local", "project", row)
 
-    def delete_project(self, project_id: str, *, expected_version: int | None = None) -> bool:
-        return self._soft_delete("writing_projects", project_id, "project", expected_version)
+    def delete_project(
+        self, project_id: str, *, expected_version: int | None = None
+    ) -> bool:
+        return self._soft_delete(
+            "writing_projects", project_id, "project", expected_version
+        )
 
-    def create_manuscript(self, project_id: str, *, title: str, **kwargs: Any) -> dict[str, Any]:
+    def create_manuscript(
+        self, project_id: str, *, title: str, **kwargs: Any
+    ) -> dict[str, Any]:
         self._require_one("writing_projects", project_id, "project")
         manuscript_id = kwargs.get("id") or self._new_id()
         now = self._now()
@@ -907,7 +951,9 @@ class LocalWritingService:
                 """,
                 (project_id,),
             ).fetchall()
-        return [normalize_writing_record("local", "manuscript", dict(row)) for row in rows]
+        return [
+            normalize_writing_record("local", "manuscript", dict(row)) for row in rows
+        ]
 
     def get_manuscript(self, manuscript_id: str) -> dict[str, Any] | None:
         row = self._fetch_one("writing_manuscripts", manuscript_id)
@@ -929,10 +975,21 @@ class LocalWritingService:
         )
         return normalize_writing_record("local", "manuscript", row)
 
-    def delete_manuscript(self, manuscript_id: str, *, expected_version: int | None = None) -> bool:
-        return self._soft_delete("writing_manuscripts", manuscript_id, "manuscript", expected_version)
+    def delete_manuscript(
+        self, manuscript_id: str, *, expected_version: int | None = None
+    ) -> bool:
+        return self._soft_delete(
+            "writing_manuscripts", manuscript_id, "manuscript", expected_version
+        )
 
-    def create_chapter(self, project_id: str, *, title: str, manuscript_id: str | None = None, **kwargs: Any) -> dict[str, Any]:
+    def create_chapter(
+        self,
+        project_id: str,
+        *,
+        title: str,
+        manuscript_id: str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         self._require_one("writing_projects", project_id, "project")
         if manuscript_id is not None:
             self._require_one("writing_manuscripts", manuscript_id, "manuscript")
@@ -964,7 +1021,9 @@ class LocalWritingService:
             self._require_one("writing_chapters", chapter_id, "chapter"),
         )
 
-    def list_chapters(self, project_id: str, manuscript_id: str | None = None) -> list[dict[str, Any]]:
+    def list_chapters(
+        self, project_id: str, manuscript_id: str | None = None
+    ) -> list[dict[str, Any]]:
         sql = "SELECT * FROM writing_chapters WHERE project_id = ? AND deleted = 0"
         params: list[Any] = [project_id]
         if manuscript_id is not None:
@@ -998,8 +1057,12 @@ class LocalWritingService:
         )
         return normalize_writing_record("local", "chapter", row)
 
-    def delete_chapter(self, chapter_id: str, *, expected_version: int | None = None) -> bool:
-        return self._soft_delete("writing_chapters", chapter_id, "chapter", expected_version)
+    def delete_chapter(
+        self, chapter_id: str, *, expected_version: int | None = None
+    ) -> bool:
+        return self._soft_delete(
+            "writing_chapters", chapter_id, "chapter", expected_version
+        )
 
     def create_scene(
         self,
@@ -1018,7 +1081,9 @@ class LocalWritingService:
             chapter = self._require_one("writing_chapters", chapter_id, "chapter")
             project_id = chapter["project_id"]
         else:
-            manuscript = self._require_one("writing_manuscripts", manuscript_id, "manuscript")
+            manuscript = self._require_one(
+                "writing_manuscripts", manuscript_id, "manuscript"
+            )
             project_id = manuscript["project_id"]
         scene_id = kwargs.get("id") or self._new_id()
         now = self._now()
@@ -1045,7 +1110,9 @@ class LocalWritingService:
                     now,
                 ),
             )
-        return normalize_writing_record("local", "scene", self._require_one("writing_scenes", scene_id, "scene"))
+        return normalize_writing_record(
+            "local", "scene", self._require_one("writing_scenes", scene_id, "scene")
+        )
 
     def list_scenes(
         self,
@@ -1056,7 +1123,9 @@ class LocalWritingService:
         if chapter_id is None and manuscript_id is None:
             raise ValueError("scene listing requires a chapter_id or manuscript_id")
         if chapter_id is not None and manuscript_id is not None:
-            raise ValueError("scene listing cannot specify both chapter_id and manuscript_id")
+            raise ValueError(
+                "scene listing cannot specify both chapter_id and manuscript_id"
+            )
         if chapter_id is not None:
             sql = """
                 SELECT * FROM writing_scenes
@@ -1079,7 +1148,9 @@ class LocalWritingService:
         row = self._fetch_one("writing_scenes", scene_id)
         return normalize_writing_record("local", "scene", row) if row else None
 
-    def update_scene(self, scene_id: str, *, expected_version: int | None = None, **fields: Any) -> dict[str, Any]:
+    def update_scene(
+        self, scene_id: str, *, expected_version: int | None = None, **fields: Any
+    ) -> dict[str, Any]:
         if "content_markdown" in fields and fields["content_markdown"] is not None:
             fields["word_count"] = self._word_count(fields["content_markdown"])
         row = self._update_row(
@@ -1091,7 +1162,9 @@ class LocalWritingService:
         )
         return normalize_writing_record("local", "scene", row)
 
-    def delete_scene(self, scene_id: str, *, expected_version: int | None = None) -> bool:
+    def delete_scene(
+        self, scene_id: str, *, expected_version: int | None = None
+    ) -> bool:
         return self._soft_delete("writing_scenes", scene_id, "scene", expected_version)
 
     def get_structure(self, project_id: str) -> dict[str, Any]:
@@ -1119,7 +1192,9 @@ class LocalWritingService:
             },
         )
 
-    def create_character(self, project_id: str, *, name: str, **kwargs: Any) -> dict[str, Any]:
+    def create_character(
+        self, project_id: str, *, name: str, **kwargs: Any
+    ) -> dict[str, Any]:
         self._require_one("writing_projects", project_id, "project")
         character_id = kwargs.get("id") or self._new_id()
         now = self._now()
@@ -1195,8 +1270,12 @@ class LocalWritingService:
             fields=fields,
         )
 
-    def delete_character(self, character_id: str, *, expected_version: int | None = None) -> bool:
-        return self._soft_delete("writing_characters", character_id, "character", expected_version)
+    def delete_character(
+        self, character_id: str, *, expected_version: int | None = None
+    ) -> bool:
+        return self._soft_delete(
+            "writing_characters", character_id, "character", expected_version
+        )
 
     def create_relationship(self, project_id: str, **fields: Any) -> dict[str, Any]:
         self._require_one("writing_projects", project_id, "project")
@@ -1251,14 +1330,22 @@ class LocalWritingService:
             ).fetchall()
         return [self._normalize_aux_record("relationship", dict(row)) for row in rows]
 
-    def delete_relationship(self, relationship_id: str, *, expected_version: int | None = None) -> bool:
-        return self._soft_delete("writing_relationships", relationship_id, "relationship", expected_version)
+    def delete_relationship(
+        self, relationship_id: str, *, expected_version: int | None = None
+    ) -> bool:
+        return self._soft_delete(
+            "writing_relationships", relationship_id, "relationship", expected_version
+        )
 
-    def create_world_info(self, project_id: str, *, kind: str, name: str, **kwargs: Any) -> dict[str, Any]:
+    def create_world_info(
+        self, project_id: str, *, kind: str, name: str, **kwargs: Any
+    ) -> dict[str, Any]:
         self._require_one("writing_projects", project_id, "project")
         parent_id = kwargs.get("parent_id")
         if parent_id is not None:
-            self._require_project_match("writing_world_info", parent_id, "world info parent", project_id)
+            self._require_project_match(
+                "writing_world_info", parent_id, "world info parent", project_id
+            )
         item_id = kwargs.get("id") or self._new_id()
         now = self._now()
         with self._connect() as conn:
@@ -1285,7 +1372,9 @@ class LocalWritingService:
             )
         return self.get_world_info(item_id)
 
-    def list_world_info(self, project_id: str, *, kind: str | None = None) -> list[dict[str, Any]]:
+    def list_world_info(
+        self, project_id: str, *, kind: str | None = None
+    ) -> list[dict[str, Any]]:
         sql = "SELECT * FROM writing_world_info WHERE project_id = ? AND deleted = 0"
         params: list[Any] = [project_id]
         if kind is not None:
@@ -1310,7 +1399,9 @@ class LocalWritingService:
         row = self._require_one("writing_world_info", item_id, "world info")
         parent_id = fields.get("parent_id", _UNSET)
         if parent_id not in (_UNSET, None):
-            self._require_project_match("writing_world_info", parent_id, "world info parent", row["project_id"])
+            self._require_project_match(
+                "writing_world_info", parent_id, "world info parent", row["project_id"]
+            )
         return self._update_aux_row(
             table="writing_world_info",
             item_id=item_id,
@@ -1320,10 +1411,16 @@ class LocalWritingService:
             fields=fields,
         )
 
-    def delete_world_info(self, item_id: str, *, expected_version: int | None = None) -> bool:
-        return self._soft_delete("writing_world_info", item_id, "world info", expected_version)
+    def delete_world_info(
+        self, item_id: str, *, expected_version: int | None = None
+    ) -> bool:
+        return self._soft_delete(
+            "writing_world_info", item_id, "world info", expected_version
+        )
 
-    def create_plot_line(self, project_id: str, *, title: str, **kwargs: Any) -> dict[str, Any]:
+    def create_plot_line(
+        self, project_id: str, *, title: str, **kwargs: Any
+    ) -> dict[str, Any]:
         self._require_one("writing_projects", project_id, "project")
         plot_line_id = kwargs.get("id") or self._new_id()
         now = self._now()
@@ -1381,18 +1478,28 @@ class LocalWritingService:
             fields=fields,
         )
 
-    def delete_plot_line(self, plot_line_id: str, *, expected_version: int | None = None) -> bool:
-        return self._soft_delete("writing_plot_lines", plot_line_id, "plot line", expected_version)
+    def delete_plot_line(
+        self, plot_line_id: str, *, expected_version: int | None = None
+    ) -> bool:
+        return self._soft_delete(
+            "writing_plot_lines", plot_line_id, "plot line", expected_version
+        )
 
-    def _validate_plot_event_refs(self, project_id: str, fields: dict[str, Any]) -> None:
+    def _validate_plot_event_refs(
+        self, project_id: str, fields: dict[str, Any]
+    ) -> None:
         scene_id = fields.get("scene_id", _UNSET)
         chapter_id = fields.get("chapter_id", _UNSET)
         if scene_id not in (_UNSET, None):
             self._require_project_match("writing_scenes", scene_id, "scene", project_id)
         if chapter_id not in (_UNSET, None):
-            self._require_project_match("writing_chapters", chapter_id, "chapter", project_id)
+            self._require_project_match(
+                "writing_chapters", chapter_id, "chapter", project_id
+            )
 
-    def create_plot_event(self, plot_line_id: str, *, title: str, **kwargs: Any) -> dict[str, Any]:
+    def create_plot_event(
+        self, plot_line_id: str, *, title: str, **kwargs: Any
+    ) -> dict[str, Any]:
         plot_line = self._require_one("writing_plot_lines", plot_line_id, "plot line")
         project_id = plot_line["project_id"]
         self._validate_plot_event_refs(project_id, kwargs)
@@ -1455,8 +1562,12 @@ class LocalWritingService:
             fields=fields,
         )
 
-    def delete_plot_event(self, plot_event_id: str, *, expected_version: int | None = None) -> bool:
-        return self._soft_delete("writing_plot_events", plot_event_id, "plot event", expected_version)
+    def delete_plot_event(
+        self, plot_event_id: str, *, expected_version: int | None = None
+    ) -> bool:
+        return self._soft_delete(
+            "writing_plot_events", plot_event_id, "plot event", expected_version
+        )
 
     def _validate_plot_hole_refs(self, project_id: str, fields: dict[str, Any]) -> None:
         scene_id = fields.get("scene_id", _UNSET)
@@ -1465,11 +1576,17 @@ class LocalWritingService:
         if scene_id not in (_UNSET, None):
             self._require_project_match("writing_scenes", scene_id, "scene", project_id)
         if chapter_id not in (_UNSET, None):
-            self._require_project_match("writing_chapters", chapter_id, "chapter", project_id)
+            self._require_project_match(
+                "writing_chapters", chapter_id, "chapter", project_id
+            )
         if plot_line_id not in (_UNSET, None):
-            self._require_project_match("writing_plot_lines", plot_line_id, "plot line", project_id)
+            self._require_project_match(
+                "writing_plot_lines", plot_line_id, "plot line", project_id
+            )
 
-    def create_plot_hole(self, project_id: str, *, title: str, **kwargs: Any) -> dict[str, Any]:
+    def create_plot_hole(
+        self, project_id: str, *, title: str, **kwargs: Any
+    ) -> dict[str, Any]:
         self._require_one("writing_projects", project_id, "project")
         self._validate_plot_hole_refs(project_id, kwargs)
         plot_hole_id = kwargs.get("id") or self._new_id()
@@ -1504,7 +1621,9 @@ class LocalWritingService:
             self._require_one("writing_plot_holes", plot_hole_id, "plot hole"),
         )
 
-    def list_plot_holes(self, project_id: str, *, status: str | None = None) -> list[dict[str, Any]]:
+    def list_plot_holes(
+        self, project_id: str, *, status: str | None = None
+    ) -> list[dict[str, Any]]:
         sql = "SELECT * FROM writing_plot_holes WHERE project_id = ? AND deleted = 0"
         params: list[Any] = [project_id]
         if status is not None:
@@ -1533,8 +1652,12 @@ class LocalWritingService:
             fields=fields,
         )
 
-    def delete_plot_hole(self, plot_hole_id: str, *, expected_version: int | None = None) -> bool:
-        return self._soft_delete("writing_plot_holes", plot_hole_id, "plot hole", expected_version)
+    def delete_plot_hole(
+        self, plot_hole_id: str, *, expected_version: int | None = None
+    ) -> bool:
+        return self._soft_delete(
+            "writing_plot_holes", plot_hole_id, "plot hole", expected_version
+        )
 
     def link_scene_character(
         self,
@@ -1544,7 +1667,9 @@ class LocalWritingService:
         is_pov: bool = False,
     ) -> list[dict[str, Any]]:
         scene = self._require_one("writing_scenes", scene_id, "scene")
-        self._require_project_match("writing_characters", character_id, "character", scene["project_id"])
+        self._require_project_match(
+            "writing_characters", character_id, "character", scene["project_id"]
+        )
         now = self._now()
         with self._connect() as conn:
             conn.execute(
@@ -1572,7 +1697,10 @@ class LocalWritingService:
                 """,
                 (scene_id,),
             ).fetchall()
-        return [self._normalize_aux_record("scene_character_link", dict(row)) for row in rows]
+        return [
+            self._normalize_aux_record("scene_character_link", dict(row))
+            for row in rows
+        ]
 
     def unlink_scene_character(self, scene_id: str, character_id: str) -> bool:
         with self._connect() as conn:
@@ -1582,9 +1710,13 @@ class LocalWritingService:
             )
         return True
 
-    def link_scene_world_info(self, scene_id: str, *, world_info_id: str) -> list[dict[str, Any]]:
+    def link_scene_world_info(
+        self, scene_id: str, *, world_info_id: str
+    ) -> list[dict[str, Any]]:
         scene = self._require_one("writing_scenes", scene_id, "scene")
-        self._require_project_match("writing_world_info", world_info_id, "world info", scene["project_id"])
+        self._require_project_match(
+            "writing_world_info", world_info_id, "world info", scene["project_id"]
+        )
         now = self._now()
         with self._connect() as conn:
             conn.execute(
@@ -1611,7 +1743,10 @@ class LocalWritingService:
                 """,
                 (scene_id,),
             ).fetchall()
-        return [self._normalize_aux_record("scene_world_info_link", dict(row)) for row in rows]
+        return [
+            self._normalize_aux_record("scene_world_info_link", dict(row))
+            for row in rows
+        ]
 
     def unlink_scene_world_info(self, scene_id: str, world_info_id: str) -> bool:
         with self._connect() as conn:
@@ -1621,7 +1756,9 @@ class LocalWritingService:
             )
         return True
 
-    def create_citation(self, scene_id: str, *, source_type: str, **kwargs: Any) -> dict[str, Any]:
+    def create_citation(
+        self, scene_id: str, *, source_type: str, **kwargs: Any
+    ) -> dict[str, Any]:
         scene = self._require_one("writing_scenes", scene_id, "scene")
         citation_id = kwargs.get("id") or self._new_id()
         now = self._now()
@@ -1664,8 +1801,12 @@ class LocalWritingService:
             ).fetchall()
         return [self._normalize_aux_record("citation", dict(row)) for row in rows]
 
-    def delete_citation(self, citation_id: str, *, expected_version: int | None = None) -> bool:
-        return self._soft_delete("writing_citations", citation_id, "citation", expected_version)
+    def delete_citation(
+        self, citation_id: str, *, expected_version: int | None = None
+    ) -> bool:
+        return self._soft_delete(
+            "writing_citations", citation_id, "citation", expected_version
+        )
 
     @staticmethod
     def _search_terms(query: str) -> list[str]:
@@ -1750,7 +1891,9 @@ class LocalWritingService:
                     "source_id": data["id"],
                     "title": data["title"],
                     "text": "\n\n".join(
-                        part for part in [data.get("synopsis"), data.get("content_markdown")] if part
+                        part
+                        for part in [data.get("synopsis"), data.get("content_markdown")]
+                        if part
                     ),
                 }
             )
@@ -1789,15 +1932,21 @@ class LocalWritingService:
                 {
                     "source_type": "citation",
                     "source_id": data["id"],
-                    "title": data.get("source_title") or data.get("source_id") or data["id"],
+                    "title": data.get("source_title")
+                    or data.get("source_id")
+                    or data["id"],
                     "text": "\n\n".join(
-                        part for part in [data.get("excerpt"), data.get("query_used")] if part
+                        part
+                        for part in [data.get("excerpt"), data.get("query_used")]
+                        if part
                     ),
                 }
             )
         return corpus
 
-    def research_scene(self, scene_id: str, *, query: str, top_k: int = 5) -> dict[str, Any]:
+    def research_scene(
+        self, scene_id: str, *, query: str, top_k: int = 5
+    ) -> dict[str, Any]:
         scene = self._require_one("writing_scenes", scene_id, "scene")
         terms = self._search_terms(query)
         ranked_results: list[dict[str, Any]] = []
@@ -1812,8 +1961,15 @@ class LocalWritingService:
                 "excerpt": self._excerpt_for_terms(item.get("text") or "", terms),
                 "score": score,
             }
-            ranked_results.append(normalize_writing_record("local", "research_result", result))
-        ranked_results.sort(key=lambda result: (-float(result.get("score") or 0), str(result.get("title") or "")))
+            ranked_results.append(
+                normalize_writing_record("local", "research_result", result)
+            )
+        ranked_results.sort(
+            key=lambda result: (
+                -float(result.get("score") or 0),
+                str(result.get("title") or ""),
+            )
+        )
         return {
             "source": "local",
             "scene_id": scene_id,
@@ -1849,8 +2005,12 @@ class LocalWritingService:
     @staticmethod
     def _analysis_metrics(text: str) -> dict[str, Any]:
         words = [word for word in re.findall(r"\b\w+\b", text or "") if word.strip()]
-        sentence_count = len([part for part in re.split(r"[.!?]+", text or "") if part.strip()])
-        paragraph_count = len([part for part in str(text or "").split("\n\n") if part.strip()])
+        sentence_count = len(
+            [part for part in re.split(r"[.!?]+", text or "") if part.strip()]
+        )
+        paragraph_count = len(
+            [part for part in str(text or "").split("\n\n") if part.strip()]
+        )
         return {
             "word_count": len(words),
             "sentence_count": sentence_count,
@@ -1858,7 +2018,9 @@ class LocalWritingService:
         }
 
     @staticmethod
-    def _analysis_summary(scope_type: str, analysis_type: str, metrics: dict[str, Any]) -> tuple[str, list[str]]:
+    def _analysis_summary(
+        scope_type: str, analysis_type: str, metrics: dict[str, Any]
+    ) -> tuple[str, list[str]]:
         word_count = metrics["word_count"]
         sentence_count = metrics["sentence_count"]
         if word_count == 0:
@@ -2021,7 +2183,9 @@ class LocalWritingService:
         provider: str | None = None,
         model: str | None = None,
     ) -> list[dict[str, Any]]:
-        resolved_project_id, scope_type, text = self._analysis_text_for_project(project_id)
+        resolved_project_id, scope_type, text = self._analysis_text_for_project(
+            project_id
+        )
         return self._analyze_scope(
             project_id=resolved_project_id,
             scope_type=scope_type,
@@ -2040,7 +2204,9 @@ class LocalWritingService:
         provider: str | None = None,
         model: str | None = None,
     ) -> list[dict[str, Any]]:
-        resolved_project_id, scope_type, text = self._analysis_text_for_project(project_id)
+        resolved_project_id, scope_type, text = self._analysis_text_for_project(
+            project_id
+        )
         return self._analyze_scope(
             project_id=resolved_project_id,
             scope_type=scope_type,
@@ -2073,8 +2239,5 @@ class LocalWritingService:
         sql += " ORDER BY created_at DESC"
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
-        analyses = [
-            self._normalize_aux_record("analysis", dict(row))
-            for row in rows
-        ]
+        analyses = [self._normalize_aux_record("analysis", dict(row)) for row in rows]
         return {"analyses": analyses, "total": len(analyses)}

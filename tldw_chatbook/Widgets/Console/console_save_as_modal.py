@@ -101,13 +101,17 @@ class ConsoleSaveAsModal(ModalScreen[str | None]):
             self.dismiss(None)
             return
         for destination in self.destinations:
-            if destination.available and event.button.id == _destination_id(destination.label):
+            if destination.available and event.button.id == _destination_id(
+                destination.label
+            ):
                 event.stop()
                 self.dismiss(destination.label)
                 return
 
 
 def _destination_id(label: str, prefix: str = "destination") -> str:
-    safe_label = "".join(character.lower() if character.isalnum() else "-" for character in label)
+    safe_label = "".join(
+        character.lower() if character.isalnum() else "-" for character in label
+    )
     safe_label = "-".join(part for part in safe_label.split("-") if part)
     return f"console-save-as-{prefix}-{safe_label}"

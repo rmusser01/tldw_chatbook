@@ -10,6 +10,7 @@ from textual.widgets import Button, DataTable, Input, Select, Static
 import tldw_chatbook
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
 from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
 
 _CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
@@ -69,16 +70,25 @@ async def test_rows_render_grouped_sorted_with_tags_and_schema_columns():
         canvas = app.query_one(MCPToolsMode)
         tools = [
             _tool(
-                server_key="server:main", server_label="Main", name="web_search",
+                server_key="server:main",
+                server_label="Main",
+                name="web_search",
                 tags=("high", "network"),
                 input_schema={"type": "object", "properties": {}},
             ),
             _tool(
-                server_key="local:docs", server_label="docs", name="search",
-                input_schema={"type": "object", "properties": {"q": {"type": "string"}}},
+                server_key="local:docs",
+                server_label="docs",
+                name="search",
+                input_schema={
+                    "type": "object",
+                    "properties": {"q": {"type": "string"}},
+                },
             ),
             _tool(
-                server_key="local:docs", server_label="docs", name="bare",
+                server_key="local:docs",
+                server_label="docs",
+                name="bare",
                 input_schema=None,
             ),
         ]
@@ -127,8 +137,12 @@ async def test_state_column_renders_marker_labels_from_states_dict():
             _tool(server_key="local:docs", server_label="docs", name="risk_floored"),
         ]
         states = {
-            ("local:docs", "allowed"): EffectiveToolState(state="allow", origin="tool_override"),
-            ("local:docs", "asked"): EffectiveToolState(state="ask", origin="global_default"),
+            ("local:docs", "allowed"): EffectiveToolState(
+                state="allow", origin="tool_override"
+            ),
+            ("local:docs", "asked"): EffectiveToolState(
+                state="ask", origin="global_default"
+            ),
             ("local:docs", "rug_pulled"): EffectiveToolState(
                 state="ask", origin="tool_override", config_changed=True
             ),
@@ -140,7 +154,10 @@ async def test_state_column_renders_marker_labels_from_states_dict():
         await pilot.pause()
 
         table = app.query_one("#mcp-tools-table", DataTable)
-        rows_by_tool = {_row_texts(table, i)[0]: _row_texts(table, i)[1] for i in range(table.row_count)}
+        rows_by_tool = {
+            _row_texts(table, i)[0]: _row_texts(table, i)[1]
+            for i in range(table.row_count)
+        }
         assert rows_by_tool["allowed"] == "Allow •"
         assert rows_by_tool["asked"] == "Ask"
         assert rows_by_tool["rug_pulled"] == "Ask ⚠"
@@ -168,10 +185,17 @@ async def test_state_column_renders_em_dash_when_states_none_or_missing():
         assert _row_texts(table, 1)[1] == "—"
 
         # states present but missing an entry for "unknown".
-        states = {("local:docs", "known"): EffectiveToolState(state="allow", origin="tool_override")}
+        states = {
+            ("local:docs", "known"): EffectiveToolState(
+                state="allow", origin="tool_override"
+            )
+        }
         await canvas.update_tools(tools, empty_diagnosis=None, states=states)
         await pilot.pause()
-        rows_by_tool = {_row_texts(table, i)[0]: _row_texts(table, i)[1] for i in range(table.row_count)}
+        rows_by_tool = {
+            _row_texts(table, i)[0]: _row_texts(table, i)[1]
+            for i in range(table.row_count)
+        }
         assert rows_by_tool["known"] == "Allow •"
         assert rows_by_tool["unknown"] == "—"
 
@@ -182,7 +206,14 @@ async def test_stale_tool_gets_stale_suffix_on_server_cell():
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPToolsMode)
         await canvas.update_tools(
-            [_tool(server_key="local:docs", server_label="docs", name="search", stale=True)],
+            [
+                _tool(
+                    server_key="local:docs",
+                    server_label="docs",
+                    name="search",
+                    stale=True,
+                )
+            ],
             empty_diagnosis=None,
         )
         await pilot.pause()
@@ -337,7 +368,11 @@ async def test_empty_diagnosis_renders_message_and_action_button_posts():
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPToolsMode)
         await canvas.update_tools(
-            [], empty_diagnosis=("No servers configured — add one to see its tools.", "add_server")
+            [],
+            empty_diagnosis=(
+                "No servers configured — add one to see its tools.",
+                "add_server",
+            ),
         )
         await pilot.pause()
 
@@ -364,7 +399,11 @@ async def test_empty_diagnosis_connect_action_key_round_trips():
     async with app.run_test() as pilot:
         canvas = app.query_one(MCPToolsMode)
         await canvas.update_tools(
-            [], empty_diagnosis=("No tools discovered yet — connect or refresh a server.", "connect")
+            [],
+            empty_diagnosis=(
+                "No tools discovered yet — connect or refresh a server.",
+                "connect",
+            ),
         )
         await pilot.pause()
         await pilot.click("#mcp-tools-empty-action")
@@ -536,7 +575,9 @@ async def test_tags_column_shown_when_any_tool_has_tags():
             [
                 _tool(server_key="local:docs", server_label="docs", name="bare"),
                 _tool(
-                    server_key="local:docs", server_label="docs", name="tagged",
+                    server_key="local:docs",
+                    server_label="docs",
+                    name="tagged",
                     tags=("network",),
                 ),
             ],
@@ -562,7 +603,9 @@ async def test_tags_column_stays_stable_while_filtering_to_a_tagless_subset():
             [
                 _tool(server_key="local:docs", server_label="docs", name="bare"),
                 _tool(
-                    server_key="local:docs", server_label="docs", name="tagged",
+                    server_key="local:docs",
+                    server_label="docs",
+                    name="tagged",
                     tags=("network",),
                 ),
             ],
@@ -605,8 +648,12 @@ def test_tools_table_height_rule_pinned_in_bundle_source_and_bundle() -> None:
         assert start != -1, f"{label} is missing {selector!r}"
         end = text.find("}", start)
         block = text[start:end]
-        assert "height: auto;" in block, f"{label}'s {selector!r} block is missing 'height: auto;'"
-        assert "max-height: 70%;" in block, f"{label}'s {selector!r} block is missing 'max-height: 70%;'"
+        assert "height: auto;" in block, (
+            f"{label}'s {selector!r} block is missing 'height: auto;'"
+        )
+        assert "max-height: 70%;" in block, (
+            f"{label}'s {selector!r} block is missing 'max-height: 70%;'"
+        )
 
 
 def test_filter_server_select_width_rule_pinned_in_bundle_source_and_bundle() -> None:
@@ -635,7 +682,9 @@ def test_filter_server_select_width_rule_pinned_in_bundle_source_and_bundle() ->
         assert start != -1, f"{label} is missing {selector!r}"
         end = text.find("}", start)
         block = text[start:end]
-        assert "width: 28;" in block, f"{label}'s {selector!r} block is missing 'width: 28;'"
+        assert "width: 28;" in block, (
+            f"{label}'s {selector!r} block is missing 'width: 28;'"
+        )
 
 
 class ToolsModeAppWithBundledCSS(App):
@@ -663,8 +712,16 @@ async def test_filter_server_select_has_nonzero_geometry_with_bundled_css():
         canvas = app.query_one(MCPToolsMode)
         await canvas.update_tools(
             [
-                _tool(server_key="local:docs", server_label="docs-server", name="search_docs"),
-                _tool(server_key="server:weather", server_label="weather-api", name="get_forecast"),
+                _tool(
+                    server_key="local:docs",
+                    server_label="docs-server",
+                    name="search_docs",
+                ),
+                _tool(
+                    server_key="server:weather",
+                    server_label="weather-api",
+                    name="get_forecast",
+                ),
             ],
             empty_diagnosis=None,
         )
@@ -678,3 +735,50 @@ async def test_filter_server_select_has_nonzero_geometry_with_bundled_css():
             "is clobbering MCPToolsMode's own DEFAULT_CSS override again."
         )
         assert select.size.height > 0, "filter-server Select collapsed to zero height"
+
+
+# -- Task 1 (MCP Hub Phase 6): semantic state colors ------------------------
+
+
+@pytest.mark.asyncio
+async def test_state_column_cells_carry_semantic_color_by_effective_state():
+    """The State cell's `Text.style` is resolved from the tool's own
+    `EffectiveToolState.state` via `tool_state_kind()`/`state_text()` --
+    allow -> ready/green, ask -> warning/amber (including a rug-pull/
+    risk-floor downgrade, both of which already resolve to "ask" -- see
+    `tool_state_kind()`'s docstring), deny -> error/red. A tool absent from
+    `states` renders the "—" placeholder at the `muted` weight -- no verdict
+    to color."""
+    app = ToolsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        tools = [
+            _tool(server_key="local:docs", server_label="docs", name="allowed"),
+            _tool(server_key="local:docs", server_label="docs", name="asked"),
+            _tool(server_key="local:docs", server_label="docs", name="denied"),
+            _tool(server_key="local:docs", server_label="docs", name="unresolved"),
+        ]
+        states = {
+            ("local:docs", "allowed"): EffectiveToolState(state="allow", origin="tool_override"),
+            ("local:docs", "asked"): EffectiveToolState(state="ask", origin="global_default"),
+            ("local:docs", "denied"): EffectiveToolState(state="deny", origin="tool_override"),
+        }
+        await canvas.update_tools(tools, empty_diagnosis=None, states=states)
+        await pilot.pause()
+
+        table = app.query_one("#mcp-tools-table", DataTable)
+        rows_by_tool = {
+            _row_texts(table, i)[0]: i for i in range(table.row_count)
+        }
+        assert table.get_cell_at((rows_by_tool["allowed"], 1)).style == state_text(
+            "Allow •", "ready"
+        ).style
+        assert table.get_cell_at((rows_by_tool["asked"], 1)).style == state_text(
+            "Ask", "warning"
+        ).style
+        assert table.get_cell_at((rows_by_tool["denied"], 1)).style == state_text(
+            "Off •", "error"
+        ).style
+        assert table.get_cell_at((rows_by_tool["unresolved"], 1)).style == state_text(
+            "—", "muted"
+        ).style

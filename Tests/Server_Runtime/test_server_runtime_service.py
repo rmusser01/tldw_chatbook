@@ -34,7 +34,11 @@ class FakeServerRuntimeClient:
 
     async def get_server_docs_info(self):
         self.calls.append(("get_server_docs_info",))
-        return {"configured": True, "auth_mode": "multi_user", "capabilities": {"hasAudio": True}}
+        return {
+            "configured": True,
+            "auth_mode": "multi_user",
+            "capabilities": {"hasAudio": True},
+        }
 
     async def get_flashcards_import_limits(self):
         self.calls.append(("get_flashcards_import_limits",))
@@ -45,7 +49,9 @@ class FakeServerRuntimeClient:
         return {"mode": "whitespace", "divisor": 4}
 
     async def update_tokenizer_config(self, request_data):
-        self.calls.append(("update_tokenizer_config", request_data.model_dump(mode="json")))
+        self.calls.append(
+            ("update_tokenizer_config", request_data.model_dump(mode="json"))
+        )
         return {"mode": request_data.mode, "divisor": request_data.divisor}
 
     async def get_jobs_config(self):
@@ -54,10 +60,20 @@ class FakeServerRuntimeClient:
 
     async def list_config_providers(self):
         self.calls.append(("list_config_providers",))
-        return {"providers": [{"name": "openai", "configured": True, "requires_api_key": True}], "any_configured": True}
+        return {
+            "providers": [
+                {"name": "openai", "configured": True, "requires_api_key": True}
+            ],
+            "any_configured": True,
+        }
 
     async def validate_provider_key(self, request_data):
-        self.calls.append(("validate_provider_key", request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "validate_provider_key",
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return {"provider": request_data.provider, "valid": True, "error": None}
 
 
@@ -149,7 +165,9 @@ async def test_server_runtime_service_denied_policy_does_not_build_provider_clie
         )
     )
     provider = ExplodingProvider()
-    service = ServerRuntimeService.from_server_context_provider(provider, policy_enforcer=policy)
+    service = ServerRuntimeService.from_server_context_provider(
+        provider, policy_enforcer=policy
+    )
 
     with pytest.raises(PolicyDeniedError):
         await service.get_health()
@@ -219,7 +237,9 @@ async def test_server_runtime_service_routes_runtime_config_surface_with_policy_
     updated = await service.update_tokenizer_config(mode="char_approx", divisor=5)
     jobs = await service.get_jobs_config()
     providers = await service.list_config_providers()
-    validation = await service.validate_provider_key(provider="openai", api_key="sk-test")
+    validation = await service.validate_provider_key(
+        provider="openai", api_key="sk-test"
+    )
 
     assert health["auth_mode"] == "multi_user"
     assert liveness["status"] == "alive"
@@ -247,7 +267,9 @@ async def test_server_runtime_service_routes_runtime_config_surface_with_policy_
         ("list_config_providers",),
         ("validate_provider_key", {"provider": "openai", "api_key": "sk-test"}),
     ]
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "server.runtime.health.list.server",
         "server.runtime.health.observe.server",
         "server.runtime.health.observe.server",

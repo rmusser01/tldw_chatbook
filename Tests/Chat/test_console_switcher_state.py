@@ -1,7 +1,6 @@
 """Pure Console session-switcher result contracts."""
 
 from tldw_chatbook.Chat.console_switcher_state import (
-    ConsoleSwitcherEntry,
     _matches,
     build_console_switcher_entries,
 )
@@ -29,12 +28,25 @@ def _row(**overrides) -> ConsoleConversationBrowserInputRow:
 
 def test_entries_are_recent_first_with_active_pinned():
     rows = [
-        _row(row_key="old", conversation_id="old", title="Old chat",
-             updated_sort="2026-06-01T00:00:00+00:00"),
-        _row(row_key="new", conversation_id="new", title="New chat",
-             updated_sort="2026-07-04T00:00:00+00:00"),
-        _row(row_key="active", conversation_id="active", title="Active chat",
-             selected=True, updated_sort="2026-05-01T00:00:00+00:00"),
+        _row(
+            row_key="old",
+            conversation_id="old",
+            title="Old chat",
+            updated_sort="2026-06-01T00:00:00+00:00",
+        ),
+        _row(
+            row_key="new",
+            conversation_id="new",
+            title="New chat",
+            updated_sort="2026-07-04T00:00:00+00:00",
+        ),
+        _row(
+            row_key="active",
+            conversation_id="active",
+            title="Active chat",
+            selected=True,
+            updated_sort="2026-05-01T00:00:00+00:00",
+        ),
     ]
     titles = [entry.title for entry in build_console_switcher_entries(rows)]
     assert titles == ["Active chat", "New chat", "Old chat"]
@@ -48,21 +60,30 @@ def test_query_tokens_all_must_match_case_insensitive():
     ]
     hits = build_console_switcher_entries(rows, query="groq test")
     assert [e.title for e in hits] == ["Groq testing"]
-    assert build_console_switcher_entries(rows, query="REFACTOR")[0].title == "API refactor plan"
+    assert (
+        build_console_switcher_entries(rows, query="REFACTOR")[0].title
+        == "API refactor plan"
+    )
     # Token can match workspace label or status, not just title.
-    assert [e.title for e in build_console_switcher_entries(rows, query="workspace 1 api")] == [
-        "API refactor plan"
-    ]
+    assert [
+        e.title for e in build_console_switcher_entries(rows, query="workspace 1 api")
+    ] == ["API refactor plan"]
 
 
 def test_entries_dedupe_by_row_key_and_cap_at_limit():
-    rows = [_row(row_key="dup", conversation_id="dup", title="First wins"),
-            _row(row_key="dup", conversation_id="dup", title="Second loses")]
+    rows = [
+        _row(row_key="dup", conversation_id="dup", title="First wins"),
+        _row(row_key="dup", conversation_id="dup", title="Second loses"),
+    ]
     hits = build_console_switcher_entries(rows)
     assert len(hits) == 1 and hits[0].title == "First wins"
     many = [
-        _row(row_key=f"k{i}", conversation_id=f"k{i}", title=f"Chat {i}",
-             updated_sort=f"2026-07-04T{i:02d}:00:00+00:00")
+        _row(
+            row_key=f"k{i}",
+            conversation_id=f"k{i}",
+            title=f"Chat {i}",
+            updated_sort=f"2026-07-04T{i:02d}:00:00+00:00",
+        )
         for i in range(30)
     ]
     assert len(build_console_switcher_entries(many, limit=20)) == 20
@@ -74,9 +95,10 @@ def test_limit_zero_returns_no_entries():
 
 def test_subtitle_joins_available_parts():
     entry = build_console_switcher_entries([_row()])[0]
-    assert entry.subtitle == "Workspace 1 - workspace-thread - 2m"
+    # TASK-356: the switcher shows the shared friendly vocabulary, not raw status.
+    assert entry.subtitle == "Workspace 1 - saved chat - 2m"
     bare = build_console_switcher_entries(
-        [_row(row_key="x", workspace_label="", status="", updated_label="")]
+        [_row(row_key="x", workspace_label="", status="", updated_label="", updated_sort="")]
     )[0]
     assert bare.subtitle == ""
 
@@ -93,3 +115,56 @@ def test_matcher_tolerates_none_fields_without_raising():
     )
     assert _matches(none_row, []) is True
     assert _matches(none_row, ["anything"]) is False
+
+
+def test_switcher_status_uses_saved_chat_vocabulary_not_in_progress():
+    """TASK-356: the switcher must not label idle saved conversations
+    'in-progress' (raw status) — it must use the same friendly vocabulary
+    the rail shows ('saved chat'), so the two surfaces don't contradict."""
+    entries = build_console_switcher_entries(
+        [_row(status="in-progress", updated_label="")]
+    )
+    subtitle = entries[0].subtitle
+    assert "in-progress" not in subtitle
+    assert "saved chat" in subtitle
+
+
+def test_switcher_status_maps_membership_and_session_states():
+    saved = build_console_switcher_entries(
+        [_row(row_key="a", status="workspace-thread", updated_label="")]
+    )[0].subtitle
+    active = build_console_switcher_entries(
+        [_row(row_key="b", status="active", updated_label="")]
+    )[0].subtitle
+    assert "saved chat" in saved
+    assert "active session" in active
+
+
+def test_switcher_shows_recency_when_updated_label_absent():
+    """TASK-356: the rail carries age labels; the switcher must too. When a
+    row lacks a precomputed updated_label, derive it from updated_sort so
+    recognition works where it matters most."""
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 7, 4, 12, 0, 0, tzinfo=timezone.utc)
+    entries = build_console_switcher_entries(
+        [_row(updated_label="", updated_sort="2026-07-04T11:58:00+00:00")],
+        now=now,
+    )
+    # 2 minutes before `now`.
+    assert "2m" in entries[0].subtitle
+
+
+def test_search_matches_the_friendly_status_label_now_shown():
+    """TASK-356 follow-up (Qodo #4): the subtitle now shows the friendly status
+    ('saved chat'), so a query for the VISIBLE word must match — searching the
+    raw 'in-progress' string would silently return nothing for the exact states
+    this change made user-facing. The raw status stays searchable too."""
+    rows = [_row(row_key="a", conversation_id="a", status="in-progress")]
+    assert [e.row_key for e in build_console_switcher_entries(rows, query="saved")] == [
+        "a"
+    ]
+    # Back-compat: the underlying status token still matches.
+    assert [
+        e.row_key for e in build_console_switcher_entries(rows, query="in-progress")
+    ] == ["a"]

@@ -1,3 +1,4 @@
+# ruff: noqa: F811
 import pytest
 
 from tldw_chatbook.Study_Interop.study_scope_service import StudyScopeService
@@ -73,10 +74,22 @@ class FakeLocalStudyService:
 
     def list_flashcards(self, *, deck_id=None, q=None, limit=100, offset=0):
         self.calls.append(("list_flashcards", deck_id, q, limit, offset))
-        return [{"id": "card-local-1", "deck_id": deck_id, "front": "Question", "back": "Answer", "tags": "science"}]
+        return [
+            {
+                "id": "card-local-1",
+                "deck_id": deck_id,
+                "front": "Question",
+                "back": "Answer",
+                "tags": "science",
+            }
+        ]
 
-    def create_flashcard(self, *, deck_id, front, back, tags=None, notes=None, extra=None):
-        self.calls.append(("create_flashcard", deck_id, front, back, tags, notes, extra))
+    def create_flashcard(
+        self, *, deck_id, front, back, tags=None, notes=None, extra=None
+    ):
+        self.calls.append(
+            ("create_flashcard", deck_id, front, back, tags, notes, extra)
+        )
         return {
             "id": "card-local-1",
             "deck_id": deck_id,
@@ -127,7 +140,15 @@ class FakeLocalStudyService:
 
     def get_next_review_candidate(self, *, deck_id=None):
         self.calls.append(("get_next_review_candidate", deck_id))
-        return {"card": {"id": "card-local-1", "deck_id": deck_id, "front": "Question", "back": "Answer"}, "selection_reason": "due"}
+        return {
+            "card": {
+                "id": "card-local-1",
+                "deck_id": deck_id,
+                "front": "Question",
+                "back": "Answer",
+            },
+            "selection_reason": "due",
+        }
 
     def submit_flashcard_review(self, card_id, *, rating):
         self.calls.append(("submit_flashcard_review", card_id, rating))
@@ -176,22 +197,65 @@ class FakeLocalStudyService:
         self.calls.append(("list_flashcard_tag_suggestions", q, limit))
         return {"items": [{"tag": "biology", "count": 3}], "count": 1}
 
-    def preview_structured_qa_import(self, content, *, max_lines=None, max_line_length=None, max_field_length=None):
-        self.calls.append(("preview_structured_qa_import", content, max_lines, max_line_length, max_field_length))
+    def preview_structured_qa_import(
+        self, content, *, max_lines=None, max_line_length=None, max_field_length=None
+    ):
+        self.calls.append(
+            (
+                "preview_structured_qa_import",
+                content,
+                max_lines,
+                max_line_length,
+                max_field_length,
+            )
+        )
         return {
-            "drafts": [{"front": "What powers cells?", "back": "ATP", "tags": ["biology"]}],
+            "drafts": [
+                {"front": "What powers cells?", "back": "ATP", "tags": ["biology"]}
+            ],
             "errors": [],
             "detected_format": "qa_labels",
             "skipped_blocks": 0,
         }
 
-    def import_flashcards_tsv(self, content, *, delimiter="\t", has_header=False, max_lines=None, max_line_length=None, max_field_length=None):
-        self.calls.append(("import_flashcards_tsv", content, delimiter, has_header, max_lines, max_line_length, max_field_length))
-        return {"imported": 1, "items": [{"uuid": "card-local-1", "deck_id": "deck-local-1"}], "errors": []}
+    def import_flashcards_tsv(
+        self,
+        content,
+        *,
+        delimiter="\t",
+        has_header=False,
+        max_lines=None,
+        max_line_length=None,
+        max_field_length=None,
+    ):
+        self.calls.append(
+            (
+                "import_flashcards_tsv",
+                content,
+                delimiter,
+                has_header,
+                max_lines,
+                max_line_length,
+                max_field_length,
+            )
+        )
+        return {
+            "imported": 1,
+            "items": [{"uuid": "card-local-1", "deck_id": "deck-local-1"}],
+            "errors": [],
+        }
 
-    def import_flashcards_json_file(self, file_path, *, max_items=None, max_field_length=None):
-        self.calls.append(("import_flashcards_json_file", str(file_path), max_items, max_field_length))
-        return {"imported": 1, "items": [{"uuid": "card-local-1", "deck_id": "deck-local-1"}], "errors": []}
+    def import_flashcards_json_file(
+        self, file_path, *, max_items=None, max_field_length=None
+    ):
+        self.calls.append(
+            ("import_flashcards_json_file", str(file_path), max_items, max_field_length)
+        )
+        return {
+            "imported": 1,
+            "items": [{"uuid": "card-local-1", "deck_id": "deck-local-1"}],
+            "errors": [],
+        }
 
     def export_flashcards(self, **kwargs):
         self.calls.append(("export_flashcards", kwargs))
@@ -335,7 +399,14 @@ class FakeServerStudyService:
 
     async def list_decks(self, *, limit=100, offset=0):
         self.calls.append(("list_decks", limit, offset))
-        return [{"id": 7, "name": "Biology", "description": "Cell review", "scheduler_type": "fsrs"}]
+        return [
+            {
+                "id": 7,
+                "name": "Biology",
+                "description": "Cell review",
+                "scheduler_type": "fsrs",
+            }
+        ]
 
     async def update_deck(self, deck_id, **request):
         self.calls.append(("update_deck", deck_id, request))
@@ -361,7 +432,11 @@ class FakeServerStudyService:
 
     async def get_flashcard_asset_content(self, asset_uuid):
         self.calls.append(("get_flashcard_asset_content", asset_uuid))
-        return {"content": b"pngdata", "content_type": "image/png", "filename": "cell.png"}
+        return {
+            "content": b"pngdata",
+            "content_type": "image/png",
+            "filename": "cell.png",
+        }
 
     async def create_flashcards_bulk(self, cards):
         self.calls.append(("create_flashcards_bulk", cards))
@@ -477,22 +552,43 @@ class FakeServerStudyService:
 
     async def import_flashcards(self, content, **request):
         self.calls.append(("import_flashcards", content, request))
-        return {"imported": 1, "items": [{"uuid": CARD_UUID, "deck_id": 7}], "errors": []}
+        return {
+            "imported": 1,
+            "items": [{"uuid": CARD_UUID, "deck_id": 7}],
+            "errors": [],
+        }
 
     async def import_flashcards_json(self, file, **limits):
         self.calls.append(("import_flashcards_json", file, limits))
-        return {"imported": 1, "items": [{"uuid": CARD_UUID, "deck_id": 7}], "errors": []}
+        return {
+            "imported": 1,
+            "items": [{"uuid": CARD_UUID, "deck_id": 7}],
+            "errors": [],
+        }
 
     async def import_flashcards_apkg(self, file, **limits):
         self.calls.append(("import_flashcards_apkg", file, limits))
-        return {"imported": 1, "items": [{"uuid": CARD_UUID, "deck_id": 7}], "errors": []}
+        return {
+            "imported": 1,
+            "items": [{"uuid": CARD_UUID, "deck_id": 7}],
+            "errors": [],
+        }
 
     async def list_flashcard_tag_suggestions(self, *, q=None, limit=50):
         self.calls.append(("list_flashcard_tag_suggestions", q, limit))
         return {"items": [{"tag": "science", "count": 12}], "count": 1}
 
-    async def get_flashcard_analytics_summary(self, *, deck_id=None, workspace_id=None, include_workspace_items=None):
-        self.calls.append(("get_flashcard_analytics_summary", deck_id, workspace_id, include_workspace_items))
+    async def get_flashcard_analytics_summary(
+        self, *, deck_id=None, workspace_id=None, include_workspace_items=None
+    ):
+        self.calls.append(
+            (
+                "get_flashcard_analytics_summary",
+                deck_id,
+                workspace_id,
+                include_workspace_items,
+            )
+        )
         return {
             "reviewed_today": 4,
             "study_streak_days": 3,
@@ -500,15 +596,31 @@ class FakeServerStudyService:
             "decks": [{"deck_id": deck_id or 7, "deck_name": "Biology", "total": 10}],
         }
 
-    async def list_review_sessions(self, *, deck_id=None, scope_key=None, status=None, limit=20):
+    async def list_review_sessions(
+        self, *, deck_id=None, scope_key=None, status=None, limit=20
+    ):
         self.calls.append(("list_review_sessions", deck_id, scope_key, status, limit))
-        return [{"id": 77, "deck_id": deck_id, "scope_key": scope_key or "deck:7", "status": status or "active"}]
+        return [
+            {
+                "id": 77,
+                "deck_id": deck_id,
+                "scope_key": scope_key or "deck:7",
+                "status": status or "active",
+            }
+        ]
 
     async def get_flashcard_assistant(self, card_id):
         self.calls.append(("get_flashcard_assistant", card_id))
         return {
             "thread": {"id": 88, "flashcard_uuid": card_id, "version": 1},
-            "messages": [{"id": 1, "thread_id": 88, "role": "assistant", "content": "Explanation"}],
+            "messages": [
+                {
+                    "id": 1,
+                    "thread_id": 88,
+                    "role": "assistant",
+                    "content": "Explanation",
+                }
+            ],
             "available_actions": ["explain", "follow_up"],
         }
 
@@ -516,14 +628,26 @@ class FakeServerStudyService:
         self.calls.append(("respond_flashcard_assistant", card_id, request))
         return {
             "thread": {"id": 88, "flashcard_uuid": card_id, "version": 2},
-            "user_message": {"id": 2, "thread_id": 88, "role": "user", "content": request.get("message")},
-            "assistant_message": {"id": 3, "thread_id": 88, "role": "assistant", "content": "Because."},
+            "user_message": {
+                "id": 2,
+                "thread_id": 88,
+                "role": "user",
+                "content": request.get("message"),
+            },
+            "assistant_message": {
+                "id": 3,
+                "thread_id": 88,
+                "role": "assistant",
+                "content": "Because.",
+            },
         }
 
     async def generate_flashcards(self, **request):
         self.calls.append(("generate_flashcards", request))
         return {
-            "flashcards": [{"front": "Generated Q", "back": "Generated A", "tags": ["generated"]}],
+            "flashcards": [
+                {"front": "Generated Q", "back": "Generated A", "tags": ["generated"]}
+            ],
             "count": 1,
         }
 
@@ -674,8 +798,31 @@ class FakeServerStudyService:
         self.calls.append(("delete_deck", deck_id, expected_version, hard_delete))
         return {"deleted": True}
 
-    async def update_deck(self, deck_id, *, name=None, description=None, workspace_id=None, review_prompt_side=None, scheduler_type=None, scheduler_settings=None, expected_version=None):
-        self.calls.append(("update_deck", deck_id, name, description, workspace_id, review_prompt_side, scheduler_type, scheduler_settings, expected_version))
+    async def update_deck(
+        self,
+        deck_id,
+        *,
+        name=None,
+        description=None,
+        workspace_id=None,
+        review_prompt_side=None,
+        scheduler_type=None,
+        scheduler_settings=None,
+        expected_version=None,
+    ):
+        self.calls.append(
+            (
+                "update_deck",
+                deck_id,
+                name,
+                description,
+                workspace_id,
+                review_prompt_side,
+                scheduler_type,
+                scheduler_settings,
+                expected_version,
+            )
+        )
         return {
             "id": int(deck_id),
             "name": name or "Biology v2",
@@ -723,8 +870,17 @@ class FakeServerStudyService:
         self.calls.append(("get_flashcard_tags", card_id))
         return {"items": ["science", "biology"], "count": 2}
 
-    async def get_flashcard_analytics_summary(self, *, deck_id=None, workspace_id=None, include_workspace_items=False):
-        self.calls.append(("get_flashcard_analytics_summary", deck_id, workspace_id, include_workspace_items))
+    async def get_flashcard_analytics_summary(
+        self, *, deck_id=None, workspace_id=None, include_workspace_items=False
+    ):
+        self.calls.append(
+            (
+                "get_flashcard_analytics_summary",
+                deck_id,
+                workspace_id,
+                include_workspace_items,
+            )
+        )
         return {
             "reviewed_today": 3,
             "study_streak_days": 4,
@@ -734,7 +890,11 @@ class FakeServerStudyService:
 
     async def create_flashcards_bulk(self, cards):
         self.calls.append(("create_flashcards_bulk", cards))
-        card_uuid = CARD_UUID if "science" in list(cards[0].get("tags") or []) else "card-server-1"
+        card_uuid = (
+            CARD_UUID
+            if "science" in list(cards[0].get("tags") or [])
+            else "card-server-1"
+        )
         return {
             "items": [
                 {
@@ -793,8 +953,18 @@ class FakeServerStudyService:
         self.calls.append(("list_flashcard_tag_suggestions", q, limit))
         return {"items": [{"tag": "biology", "count": 3}], "count": 1}
 
-    async def preview_structured_qa_import(self, content, *, max_lines=None, max_line_length=None, max_field_length=None):
-        self.calls.append(("preview_structured_qa_import", content, max_lines, max_line_length, max_field_length))
+    async def preview_structured_qa_import(
+        self, content, *, max_lines=None, max_line_length=None, max_field_length=None
+    ):
+        self.calls.append(
+            (
+                "preview_structured_qa_import",
+                content,
+                max_lines,
+                max_line_length,
+                max_field_length,
+            )
+        )
         return {
             "drafts": [
                 {
@@ -810,17 +980,49 @@ class FakeServerStudyService:
             "skipped_blocks": 0,
         }
 
-    async def import_flashcards_tsv(self, content, *, delimiter="\t", has_header=False, max_lines=None, max_line_length=None, max_field_length=None):
-        self.calls.append(("import_flashcards_tsv", content, delimiter, has_header, max_lines, max_line_length, max_field_length))
-        return {"imported": 1, "items": [{"uuid": "card-server-1", "deck_id": 7}], "errors": []}
+    async def import_flashcards_tsv(
+        self,
+        content,
+        *,
+        delimiter="\t",
+        has_header=False,
+        max_lines=None,
+        max_line_length=None,
+        max_field_length=None,
+    ):
+        self.calls.append(
+            (
+                "import_flashcards_tsv",
+                content,
+                delimiter,
+                has_header,
+                max_lines,
+                max_line_length,
+                max_field_length,
+            )
+        )
+        return {
+            "imported": 1,
+            "items": [{"uuid": "card-server-1", "deck_id": 7}],
+            "errors": [],
+        }
 
     async def export_flashcards(self, **kwargs):
         self.calls.append(("export_flashcards", kwargs))
         return b"Deck\tFront\tBack\nBiology\tQ\tA\n"
 
     async def upload_flashcard_asset(self, file_path):
-        self.calls.append(("upload_flashcard_asset", file_path if isinstance(file_path, tuple) else str(file_path)))
-        asset_uuid = CARD_UUID if isinstance(file_path, tuple) else "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb"
+        self.calls.append(
+            (
+                "upload_flashcard_asset",
+                file_path if isinstance(file_path, tuple) else str(file_path),
+            )
+        )
+        asset_uuid = (
+            CARD_UUID
+            if isinstance(file_path, tuple)
+            else "87ca2b3f-7e3a-47d7-a52f-8debc86c03cb"
+        )
         return {
             "asset_uuid": asset_uuid,
             "reference": f"flashcard-asset://{asset_uuid}",
@@ -836,13 +1038,29 @@ class FakeServerStudyService:
         self.calls.append(("get_flashcard_asset_content", asset_uuid))
         return b"fake-png"
 
-    async def import_flashcards_json_file(self, file_path, *, max_items=None, max_field_length=None):
-        self.calls.append(("import_flashcards_json_file", str(file_path), max_items, max_field_length))
-        return {"imported": 1, "items": [{"uuid": "card-server-1", "deck_id": 7}], "errors": []}
+    async def import_flashcards_json_file(
+        self, file_path, *, max_items=None, max_field_length=None
+    ):
+        self.calls.append(
+            ("import_flashcards_json_file", str(file_path), max_items, max_field_length)
+        )
+        return {
+            "imported": 1,
+            "items": [{"uuid": "card-server-1", "deck_id": 7}],
+            "errors": [],
+        }
 
-    async def import_flashcards_apkg(self, file_path, *, max_items=None, max_field_length=None):
-        self.calls.append(("import_flashcards_apkg", str(file_path), max_items, max_field_length))
-        return {"imported": 1, "items": [{"uuid": "card-server-1", "deck_id": 7}], "errors": []}
+    async def import_flashcards_apkg(
+        self, file_path, *, max_items=None, max_field_length=None
+    ):
+        self.calls.append(
+            ("import_flashcards_apkg", str(file_path), max_items, max_field_length)
+        )
+        return {
+            "imported": 1,
+            "items": [{"uuid": "card-server-1", "deck_id": 7}],
+            "errors": [],
+        }
 
     async def get_flashcard_study_assistant_context(self, card_id):
         self.calls.append(("get_flashcard_study_assistant_context", card_id))
@@ -1029,7 +1247,11 @@ class FakeServerStudyService:
 
     async def get_study_document(self, document_id):
         self.calls.append(("get_study_document", document_id))
-        return {"id": document_id, "document_type": "study_guide", "content": "Study guide"}
+        return {
+            "id": document_id,
+            "document_type": "study_guide",
+            "content": "Study guide",
+        }
 
     async def delete_study_document(self, document_id):
         self.calls.append(("delete_study_document", document_id))
@@ -1041,7 +1263,11 @@ class FakeServerStudyService:
 
     async def get_study_document_prompt_config(self, document_type):
         self.calls.append(("get_study_document_prompt_config", document_type))
-        return {"document_type": document_type, "system_prompt": "System", "user_prompt": "User"}
+        return {
+            "document_type": document_type,
+            "system_prompt": "System",
+            "user_prompt": "User",
+        }
 
     async def bulk_generate_study_documents(self, payload):
         self.calls.append(("bulk_generate_study_documents", payload))
@@ -1113,7 +1339,12 @@ class FakeServerStudyService:
 
     async def get_study_suggestion_status(self, *, anchor_type, anchor_id):
         self.calls.append(("get_study_suggestion_status", anchor_type, anchor_id))
-        return {"anchor_type": anchor_type, "anchor_id": anchor_id, "status": "ready", "snapshot_id": 11}
+        return {
+            "anchor_type": anchor_type,
+            "anchor_id": anchor_id,
+            "status": "ready",
+            "snapshot_id": 11,
+        }
 
     async def get_study_suggestion_snapshot(self, snapshot_id):
         self.calls.append(("get_study_suggestion_snapshot", snapshot_id))
@@ -1147,9 +1378,18 @@ class PagedFakeServerStudyService:
             raise RuntimeError("deck page load failed")
         return list(self.pages.get(offset, []))
 
-    async def create_deck(self, *, name, description=None, workspace_id=None, scheduler_type=None):
-        self.calls.append(("create_deck", name, description, workspace_id, scheduler_type))
-        return {"id": "deck-created", "name": name, "description": description, "workspace_id": workspace_id}
+    async def create_deck(
+        self, *, name, description=None, workspace_id=None, scheduler_type=None
+    ):
+        self.calls.append(
+            ("create_deck", name, description, workspace_id, scheduler_type)
+        )
+        return {
+            "id": "deck-created",
+            "name": name,
+            "description": description,
+            "workspace_id": workspace_id,
+        }
 
 
 class FakePolicyEnforcer:
@@ -1273,12 +1513,20 @@ async def test_scope_service_routes_server_flashcard_helper_methods_and_normaliz
         expected_version=3,
     )
     card = await scope.get_flashcard(mode="server", card_id=CARD_UUID)
-    reset = await scope.reset_flashcard_scheduling(mode="server", card_id=CARD_UUID, expected_version=3)
-    tagged = await scope.set_flashcard_tags(mode="server", card_id=CARD_UUID, tags=["science", "biology"])
+    reset = await scope.reset_flashcard_scheduling(
+        mode="server", card_id=CARD_UUID, expected_version=3
+    )
+    tagged = await scope.set_flashcard_tags(
+        mode="server", card_id=CARD_UUID, tags=["science", "biology"]
+    )
     tags = await scope.get_flashcard_tags(mode="server", card_id=CARD_UUID)
-    suggestions = await scope.list_flashcard_tag_suggestions(mode="server", q="sci", limit=5)
+    suggestions = await scope.list_flashcard_tag_suggestions(
+        mode="server", q="sci", limit=5
+    )
     analytics = await scope.get_flashcard_analytics_summary(mode="server", deck_id=7)
-    sessions = await scope.list_review_sessions(mode="server", deck_id=7, status="active", limit=2)
+    sessions = await scope.list_review_sessions(
+        mode="server", deck_id=7, status="active", limit=2
+    )
     assistant = await scope.get_flashcard_assistant(mode="server", card_id=CARD_UUID)
     assistant_response = await scope.respond_flashcard_assistant(
         mode="server",
@@ -1303,8 +1551,13 @@ async def test_scope_service_routes_server_flashcard_helper_methods_and_normaliz
     assert analytics["record_id"] == "server:study_flashcard_analytics:deck:7"
     assert sessions[0]["record_id"] == "server:study_review_session:77"
     assert assistant["record_id"] == f"server:study_flashcard_assistant:{CARD_UUID}"
-    assert assistant["thread"]["record_id"] == "server:study_flashcard_assistant_thread:88"
-    assert assistant_response["assistant_message"]["record_id"] == "server:study_flashcard_assistant_message:3"
+    assert (
+        assistant["thread"]["record_id"] == "server:study_flashcard_assistant_thread:88"
+    )
+    assert (
+        assistant_response["assistant_message"]["record_id"]
+        == "server:study_flashcard_assistant_message:3"
+    )
     assert generated["record_id"] == "server:study_flashcard_generation:transient"
     assert policy_enforcer.calls == [
         "study.deck.update.server",
@@ -1335,10 +1588,14 @@ async def test_scope_service_routes_server_flashcard_bulk_import_export_and_asse
         mode="server",
         file=("cell.png", b"pngdata", "image/png"),
     )
-    content = await scope.get_flashcard_asset_content(mode="server", asset_uuid=CARD_UUID)
+    content = await scope.get_flashcard_asset_content(
+        mode="server", asset_uuid=CARD_UUID
+    )
     created_bulk = await scope.create_flashcards_bulk(
         mode="server",
-        cards=[{"deck_id": 7, "front": "Question", "back": "Answer", "tags": ["science"]}],
+        cards=[
+            {"deck_id": 7, "front": "Question", "back": "Answer", "tags": ["science"]}
+        ],
     )
     updated_bulk = await scope.update_flashcards_bulk(
         mode="server",
@@ -1374,9 +1631,14 @@ async def test_scope_service_routes_server_flashcard_bulk_import_export_and_asse
     assert uploaded["record_id"] == f"server:study_flashcard_asset:{CARD_UUID}"
     assert content["record_id"] == f"server:study_flashcard_asset_content:{CARD_UUID}"
     assert created_bulk["record_id"] == "server:study_flashcard_bulk_create:transient"
-    assert created_bulk["items"][0]["record_id"] == f"server:study_flashcard:{CARD_UUID}"
+    assert (
+        created_bulk["items"][0]["record_id"] == f"server:study_flashcard:{CARD_UUID}"
+    )
     assert updated_bulk["record_id"] == "server:study_flashcard_bulk_update:transient"
-    assert updated_bulk["results"][0]["flashcard"]["record_id"] == f"server:study_flashcard:{CARD_UUID}"
+    assert (
+        updated_bulk["results"][0]["flashcard"]["record_id"]
+        == f"server:study_flashcard:{CARD_UUID}"
+    )
     assert preview["record_id"] == "server:study_flashcard_import_preview:transient"
     assert imported["record_id"] == "server:study_flashcard_import:structured"
     assert imported_json["record_id"] == "server:study_flashcard_import:json"
@@ -1414,7 +1676,14 @@ async def test_scope_service_routes_local_flashcard_tags_and_bulk_helpers():
     tags = await scope.get_flashcard_tags(mode="local", card_id="card-local-1")
     created_bulk = await scope.create_flashcards_bulk(
         mode="local",
-        cards=[{"deck_id": "deck-local-1", "front": "Question", "back": "Answer", "tags": ["science"]}],
+        cards=[
+            {
+                "deck_id": "deck-local-1",
+                "front": "Question",
+                "back": "Answer",
+                "tags": ["science"],
+            }
+        ],
     )
     updated_bulk = await scope.update_flashcards_bulk(
         mode="local",
@@ -1428,7 +1697,10 @@ async def test_scope_service_routes_local_flashcard_tags_and_bulk_helpers():
     assert created_bulk["record_id"] == "local:study_flashcard_bulk_create:transient"
     assert created_bulk["items"][0]["record_id"] == "local:study_flashcard:card-local-1"
     assert updated_bulk["record_id"] == "local:study_flashcard_bulk_update:transient"
-    assert updated_bulk["results"][0]["flashcard"]["record_id"] == "local:study_flashcard:card-local-1"
+    assert (
+        updated_bulk["results"][0]["flashcard"]["record_id"]
+        == "local:study_flashcard:card-local-1"
+    )
     assert policy_enforcer.calls == [
         "study.flashcard.tags.update.local",
         "study.flashcard.tags.list.local",
@@ -1438,8 +1710,21 @@ async def test_scope_service_routes_local_flashcard_tags_and_bulk_helpers():
     assert local.calls == [
         ("set_flashcard_tags", "card-local-1", ["science", "biology"]),
         ("get_flashcard_tags", "card-local-1"),
-        ("create_flashcards_bulk", [{"deck_id": "deck-local-1", "front": "Question", "back": "Answer", "tags": ["science"]}]),
-        ("update_flashcards_bulk", [{"uuid": "card-local-1", "front": "Updated", "expected_version": 1}]),
+        (
+            "create_flashcards_bulk",
+            [
+                {
+                    "deck_id": "deck-local-1",
+                    "front": "Question",
+                    "back": "Answer",
+                    "tags": ["science"],
+                }
+            ],
+        ),
+        (
+            "update_flashcards_bulk",
+            [{"uuid": "card-local-1", "front": "Updated", "expected_version": 1}],
+        ),
     ]
 
 
@@ -1467,7 +1752,9 @@ async def test_scope_service_routes_server_flashcard_template_crud_and_normalize
         name="Updated science",
         expected_version=1,
     )
-    deleted = await scope.delete_flashcard_template(mode="server", template_id=3, expected_version=2)
+    deleted = await scope.delete_flashcard_template(
+        mode="server", template_id=3, expected_version=2
+    )
 
     assert created["record_id"] == "server:study_flashcard_template:3"
     assert listed["record_id"] == "server:study_flashcard_template_list:5:1"
@@ -1491,14 +1778,22 @@ async def test_scope_service_routes_server_flashcard_template_crud_and_normalize
         ("get_flashcard_analytics_summary", {"deck_id": "deck-local-1"}),
         ("import_flashcards", {"content": "Deck\tFront\tBack\nBio\tQ\tA"}),
         ("import_flashcards_json", {"file": ("cards.json", b"[]", "application/json")}),
-        ("import_flashcards_apkg", {"file": ("cards.apkg", b"apkg", "application/octet-stream")}),
+        (
+            "import_flashcards_apkg",
+            {"file": ("cards.apkg", b"apkg", "application/octet-stream")},
+        ),
         ("list_review_sessions", {"deck_id": "deck-local-1"}),
         ("get_flashcard_assistant", {"card_id": "card-local-1"}),
-        ("respond_flashcard_assistant", {"card_id": "card-local-1", "action": "follow_up", "message": "Why?"}),
+        (
+            "respond_flashcard_assistant",
+            {"card_id": "card-local-1", "action": "follow_up", "message": "Why?"},
+        ),
         ("generate_flashcards", {"text": "Cells divide by mitosis."}),
     ],
 )
-async def test_scope_service_rejects_remote_only_flashcard_helpers_in_local_mode(method_name, kwargs):
+async def test_scope_service_rejects_remote_only_flashcard_helpers_in_local_mode(
+    method_name, kwargs
+):
     scope = StudyScopeService(
         local_service=FakeLocalStudyService(),
         server_service=FakeServerStudyService(),
@@ -1581,9 +1876,13 @@ async def test_scope_service_filters_global_and_workspace_decks_without_mixing()
             ],
         }
     )
-    scope = StudyScopeService(local_service=FakeLocalStudyService(), server_service=server)
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(), server_service=server
+    )
 
-    global_decks = await scope.list_decks(mode="server", scope_type="global", limit=2, offset=0)
+    global_decks = await scope.list_decks(
+        mode="server", scope_type="global", limit=2, offset=0
+    )
     workspace_decks = await scope.list_decks(
         mode="server",
         scope_type="workspace",
@@ -1592,8 +1891,14 @@ async def test_scope_service_filters_global_and_workspace_decks_without_mixing()
         offset=0,
     )
 
-    assert [deck["record_id"] for deck in global_decks] == ["server:study_deck:1", "server:study_deck:4"]
-    assert [deck["record_id"] for deck in workspace_decks] == ["server:study_deck:2", "server:study_deck:5"]
+    assert [deck["record_id"] for deck in global_decks] == [
+        "server:study_deck:1",
+        "server:study_deck:4",
+    ]
+    assert [deck["record_id"] for deck in workspace_decks] == [
+        "server:study_deck:2",
+        "server:study_deck:5",
+    ]
     assert server.calls == [
         ("list_decks", 2, 0),
         ("list_decks", 2, 2),
@@ -1621,9 +1926,13 @@ async def test_scope_service_applies_offset_after_client_side_deck_scope_filteri
             ],
         }
     )
-    scope = StudyScopeService(local_service=FakeLocalStudyService(), server_service=server)
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(), server_service=server
+    )
 
-    global_decks = await scope.list_decks(mode="server", scope_type="global", limit=2, offset=1)
+    global_decks = await scope.list_decks(
+        mode="server", scope_type="global", limit=2, offset=1
+    )
     workspace_decks = await scope.list_decks(
         mode="server",
         scope_type="workspace",
@@ -1643,11 +1952,18 @@ async def test_scope_service_applies_offset_after_client_side_deck_scope_filteri
         ("list_decks", {"mode": "server", "scope_type": "invalid", "limit": 1}),
         (
             "create_deck",
-            {"mode": "server", "scope_type": "invalid", "name": "Workspace deck", "description": None},
+            {
+                "mode": "server",
+                "scope_type": "invalid",
+                "name": "Workspace deck",
+                "description": None,
+            },
         ),
     ],
 )
-async def test_scope_service_rejects_invalid_scope_type_for_scoped_methods(method_name, kwargs):
+async def test_scope_service_rejects_invalid_scope_type_for_scoped_methods(
+    method_name, kwargs
+):
     scope = StudyScopeService(
         local_service=FakeLocalStudyService(),
         server_service=FakeServerStudyService(),
@@ -1664,17 +1980,26 @@ async def test_scope_service_rejects_invalid_scope_type_for_scoped_methods(metho
         ("list_decks", {"mode": "server", "scope_type": "workspace", "limit": 1}),
         (
             "create_deck",
-            {"mode": "server", "scope_type": "workspace", "name": "Workspace deck", "description": None},
+            {
+                "mode": "server",
+                "scope_type": "workspace",
+                "name": "Workspace deck",
+                "description": None,
+            },
         ),
     ],
 )
-async def test_scope_service_rejects_missing_workspace_id_for_workspace_scope(method_name, kwargs):
+async def test_scope_service_rejects_missing_workspace_id_for_workspace_scope(
+    method_name, kwargs
+):
     scope = StudyScopeService(
         local_service=FakeLocalStudyService(),
         server_service=FakeServerStudyService(),
     )
 
-    with pytest.raises(ValueError, match="workspace_id is required when scope_type='workspace'"):
+    with pytest.raises(
+        ValueError, match="workspace_id is required when scope_type='workspace'"
+    ):
         await getattr(scope, method_name)(**kwargs)
 
 
@@ -1685,10 +2010,16 @@ async def test_scope_service_rejects_workspace_scope_in_local_mode():
         server_service=FakeServerStudyService(),
     )
 
-    with pytest.raises(ValueError, match="Workspace Study is unavailable in local mode"):
-        await scope.list_decks(mode="local", scope_type="workspace", workspace_id="ws-1")
+    with pytest.raises(
+        ValueError, match="Workspace Study is unavailable in local mode"
+    ):
+        await scope.list_decks(
+            mode="local", scope_type="workspace", workspace_id="ws-1"
+        )
 
-    with pytest.raises(ValueError, match="Workspace Study is unavailable in local mode"):
+    with pytest.raises(
+        ValueError, match="Workspace Study is unavailable in local mode"
+    ):
         await scope.create_deck(
             mode="local",
             scope_type="workspace",
@@ -1705,7 +2036,9 @@ async def test_scope_service_rejects_workspace_scope_for_local_review_calls():
         server_service=FakeServerStudyService(),
     )
 
-    with pytest.raises(ValueError, match="Workspace Study is unavailable in local mode"):
+    with pytest.raises(
+        ValueError, match="Workspace Study is unavailable in local mode"
+    ):
         await scope.get_next_review_candidate(
             mode="local",
             scope_type="workspace",
@@ -1713,7 +2046,9 @@ async def test_scope_service_rejects_workspace_scope_for_local_review_calls():
             deck_id="deck-local-1",
         )
 
-    with pytest.raises(ValueError, match="Workspace Study is unavailable in local mode"):
+    with pytest.raises(
+        ValueError, match="Workspace Study is unavailable in local mode"
+    ):
         await scope.submit_flashcard_review(
             mode="local",
             scope_type="workspace",
@@ -1726,7 +2061,9 @@ async def test_scope_service_rejects_workspace_scope_for_local_review_calls():
 @pytest.mark.asyncio
 async def test_scope_service_forwards_workspace_id_on_server_create_and_nulls_global_create():
     server = PagedFakeServerStudyService({0: []})
-    scope = StudyScopeService(local_service=FakeLocalStudyService(), server_service=server)
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(), server_service=server
+    )
 
     await scope.create_deck(
         mode="server",
@@ -1761,16 +2098,26 @@ async def test_scope_service_keeps_workspace_load_errors_scoped():
         },
         fail_on_offset=2,
     )
-    scope = StudyScopeService(local_service=FakeLocalStudyService(), server_service=server)
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(), server_service=server
+    )
 
     with pytest.raises(RuntimeError, match="deck page load failed"):
-        await scope.list_decks(mode="server", scope_type="workspace", workspace_id="ws-1", limit=2, offset=0)
+        await scope.list_decks(
+            mode="server",
+            scope_type="workspace",
+            workspace_id="ws-1",
+            limit=2,
+            offset=0,
+        )
 
 
 @pytest.mark.asyncio
 async def test_scope_service_routes_flashcard_create_and_list_by_backend():
     local = FakeLocalStudyService()
-    scope = StudyScopeService(local_service=local, server_service=FakeServerStudyService())
+    scope = StudyScopeService(
+        local_service=local, server_service=FakeServerStudyService()
+    )
 
     created = await scope.create_flashcard(
         mode="local",
@@ -1779,18 +2126,30 @@ async def test_scope_service_routes_flashcard_create_and_list_by_backend():
         back="Answer",
         tags=["science", "biology"],
     )
-    listed = await scope.list_flashcards(mode="local", deck_id="deck-local-1", q="bio", limit=10, offset=1)
+    listed = await scope.list_flashcards(
+        mode="local", deck_id="deck-local-1", q="bio", limit=10, offset=1
+    )
 
     assert created["record_id"] == "local:study_flashcard:card-local-1"
     assert listed[0]["deck_record_id"] == "local:study_deck:deck-local-1"
-    assert local.calls[0] == ("create_flashcard", "deck-local-1", "Question", "Answer", ["science", "biology"], None, None)
+    assert local.calls[0] == (
+        "create_flashcard",
+        "deck-local-1",
+        "Question",
+        "Answer",
+        ["science", "biology"],
+        None,
+        None,
+    )
     assert local.calls[1] == ("list_flashcards", "deck-local-1", "bio", 10, 1)
 
 
 @pytest.mark.asyncio
 async def test_scope_service_merges_server_review_outcome_with_current_card():
     server = FakeServerStudyService()
-    scope = StudyScopeService(local_service=FakeLocalStudyService(), server_service=server)
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(), server_service=server
+    )
 
     candidate = await scope.get_next_review_candidate(mode="server", deck_id=7)
     outcome = await scope.submit_flashcard_review(
@@ -1862,7 +2221,9 @@ async def test_scope_service_routes_move_delete_and_local_deck_delete():
 @pytest.mark.asyncio
 async def test_scope_service_routes_local_flashcard_management_actions():
     local = FakeLocalStudyService()
-    scope = StudyScopeService(local_service=local, server_service=FakeServerStudyService())
+    scope = StudyScopeService(
+        local_service=local, server_service=FakeServerStudyService()
+    )
 
     deck = await scope.update_deck(
         mode="local",
@@ -1907,12 +2268,17 @@ async def test_scope_service_routes_local_flashcard_management_actions():
         tags=["biology", "cell"],
     )
     tags = await scope.get_flashcard_tags(mode="local", card_id="card-local-1")
-    suggestions = await scope.list_flashcard_tag_suggestions(mode="local", q="bio", limit=10)
+    suggestions = await scope.list_flashcard_tag_suggestions(
+        mode="local", q="bio", limit=10
+    )
 
     assert deck["record_id"] == "local:study_deck:deck-local-1"
     assert created["source"] == "local"
     assert created["items"][0]["record_id"] == "local:study_flashcard:card-local-1"
-    assert updated["results"][0]["flashcard"]["record_id"] == "local:study_flashcard:card-local-1"
+    assert (
+        updated["results"][0]["flashcard"]["record_id"]
+        == "local:study_flashcard:card-local-1"
+    )
     assert reset["record_id"] == "local:study_flashcard:card-local-1"
     assert tagged["tags"] == ["biology", "cell"]
     assert tags == {"items": ["science", "biology"], "count": 2}
@@ -1938,11 +2304,25 @@ async def test_scope_service_routes_local_flashcard_management_actions():
         ),
         (
             "create_flashcards_bulk",
-            [{"deck_id": "deck-local-1", "front": "Question", "back": "Answer", "tags": ["biology"]}],
+            [
+                {
+                    "deck_id": "deck-local-1",
+                    "front": "Question",
+                    "back": "Answer",
+                    "tags": ["biology"],
+                }
+            ],
         ),
         (
             "update_flashcards_bulk",
-            [{"id": "card-local-1", "front": "Question v2", "tags": ["biology", "cell"], "expected_version": 2}],
+            [
+                {
+                    "id": "card-local-1",
+                    "front": "Question v2",
+                    "tags": ["biology", "cell"],
+                    "expected_version": 2,
+                }
+            ],
         ),
         ("reset_flashcard_scheduling", "card-local-1", 2),
         ("set_flashcard_tags", "card-local-1", ["biology", "cell"]),
@@ -1954,7 +2334,9 @@ async def test_scope_service_routes_local_flashcard_management_actions():
 @pytest.mark.asyncio
 async def test_scope_service_routes_server_flashcard_management_actions():
     server = FakeServerStudyService()
-    scope = StudyScopeService(local_service=FakeLocalStudyService(), server_service=server)
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(), server_service=server
+    )
 
     deck = await scope.update_deck(
         mode="server",
@@ -2008,7 +2390,9 @@ async def test_scope_service_routes_server_flashcard_management_actions():
 @pytest.mark.asyncio
 async def test_scope_service_routes_server_flashcard_template_actions():
     server = FakeServerStudyService()
-    scope = StudyScopeService(local_service=FakeLocalStudyService(), server_service=server)
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(), server_service=server
+    )
 
     created = await scope.create_flashcard_template(
         mode="server",
@@ -2025,7 +2409,9 @@ async def test_scope_service_routes_server_flashcard_template_actions():
         notes_template="Updated focus: {{topic}}",
         expected_version=1,
     )
-    deleted = await scope.delete_flashcard_template(mode="server", template_id=12, expected_version=2)
+    deleted = await scope.delete_flashcard_template(
+        mode="server", template_id=12, expected_version=2
+    )
 
     assert created["record_id"] == "server:study_flashcard_template:12"
     assert listed["source"] == "server"
@@ -2034,10 +2420,30 @@ async def test_scope_service_routes_server_flashcard_template_actions():
     assert updated["notes_template"] == "Updated focus: {{topic}}"
     assert deleted is True
     assert server.calls == [
-        ("create_flashcard_template", "Cloze Drill", "cloze", "{{statement}}", None, "Focus: {{topic}}", None, None),
+        (
+            "create_flashcard_template",
+            "Cloze Drill",
+            "cloze",
+            "{{statement}}",
+            None,
+            "Focus: {{topic}}",
+            None,
+            None,
+        ),
         ("list_flashcard_templates", 25, 5),
         ("get_flashcard_template", 12),
-        ("update_flashcard_template", 12, None, None, None, None, "Updated focus: {{topic}}", None, None, 1),
+        (
+            "update_flashcard_template",
+            12,
+            None,
+            None,
+            None,
+            None,
+            "Updated focus: {{topic}}",
+            None,
+            None,
+            1,
+        ),
         ("delete_flashcard_template", 12, 2),
     ]
 
@@ -2045,7 +2451,9 @@ async def test_scope_service_routes_server_flashcard_template_actions():
 @pytest.mark.asyncio
 async def test_scope_service_routes_local_flashcard_template_actions():
     local = FakeLocalStudyService()
-    scope = StudyScopeService(local_service=local, server_service=FakeServerStudyService())
+    scope = StudyScopeService(
+        local_service=local, server_service=FakeServerStudyService()
+    )
 
     created = await scope.create_flashcard_template(
         mode="local",
@@ -2055,26 +2463,52 @@ async def test_scope_service_routes_local_flashcard_template_actions():
         notes_template="Focus: {{topic}}",
     )
     listed = await scope.list_flashcard_templates(mode="local", limit=25, offset=5)
-    fetched = await scope.get_flashcard_template(mode="local", template_id="tmpl-local-1")
+    fetched = await scope.get_flashcard_template(
+        mode="local", template_id="tmpl-local-1"
+    )
     updated = await scope.update_flashcard_template(
         mode="local",
         template_id="tmpl-local-1",
         notes_template="Updated focus: {{topic}}",
         expected_version=1,
     )
-    deleted = await scope.delete_flashcard_template(mode="local", template_id="tmpl-local-1", expected_version=2)
+    deleted = await scope.delete_flashcard_template(
+        mode="local", template_id="tmpl-local-1", expected_version=2
+    )
 
     assert created["record_id"] == "local:study_flashcard_template:tmpl-local-1"
     assert listed["source"] == "local"
-    assert listed["items"][0]["record_id"] == "local:study_flashcard_template:tmpl-local-1"
+    assert (
+        listed["items"][0]["record_id"] == "local:study_flashcard_template:tmpl-local-1"
+    )
     assert fetched["record_id"] == "local:study_flashcard_template:tmpl-local-1"
     assert updated["notes_template"] == "Updated focus: {{topic}}"
     assert deleted is True
     assert local.calls == [
-        ("create_flashcard_template", "Cloze Drill", "cloze", "{{statement}}", None, "Focus: {{topic}}", None, None),
+        (
+            "create_flashcard_template",
+            "Cloze Drill",
+            "cloze",
+            "{{statement}}",
+            None,
+            "Focus: {{topic}}",
+            None,
+            None,
+        ),
         ("list_flashcard_templates", 25, 5),
         ("get_flashcard_template", "tmpl-local-1"),
-        ("update_flashcard_template", "tmpl-local-1", None, None, None, None, "Updated focus: {{topic}}", None, None, 1),
+        (
+            "update_flashcard_template",
+            "tmpl-local-1",
+            None,
+            None,
+            None,
+            None,
+            "Updated focus: {{topic}}",
+            None,
+            None,
+            1,
+        ),
         ("delete_flashcard_template", "tmpl-local-1", 2),
     ]
 
@@ -2082,7 +2516,9 @@ async def test_scope_service_routes_local_flashcard_template_actions():
 @pytest.mark.asyncio
 async def test_scope_service_routes_server_flashcard_bulk_and_tag_suggestion_actions():
     server = FakeServerStudyService()
-    scope = StudyScopeService(local_service=FakeLocalStudyService(), server_service=server)
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(), server_service=server
+    )
 
     created = await scope.create_flashcards_bulk(
         mode="server",
@@ -2105,20 +2541,38 @@ async def test_scope_service_routes_server_flashcard_bulk_and_tag_suggestion_act
             }
         ],
     )
-    suggestions = await scope.list_flashcard_tag_suggestions(mode="server", q="bio", limit=10)
+    suggestions = await scope.list_flashcard_tag_suggestions(
+        mode="server", q="bio", limit=10
+    )
 
     assert created["source"] == "server"
     assert created["items"][0]["record_id"] == "server:study_flashcard:card-server-1"
-    assert updated["results"][0]["flashcard"]["record_id"] == "server:study_flashcard:card-server-1"
+    assert (
+        updated["results"][0]["flashcard"]["record_id"]
+        == "server:study_flashcard:card-server-1"
+    )
     assert suggestions["items"][0]["tag"] == "biology"
     assert server.calls == [
         (
             "create_flashcards_bulk",
-            [{"deck_id": 7, "front": "Question", "back": "Answer", "tags": ["biology"]}],
+            [
+                {
+                    "deck_id": 7,
+                    "front": "Question",
+                    "back": "Answer",
+                    "tags": ["biology"],
+                }
+            ],
         ),
         (
             "update_flashcards_bulk",
-            [{"uuid": "card-server-1", "tags": ["biology", "cell"], "expected_version": 1}],
+            [
+                {
+                    "uuid": "card-server-1",
+                    "tags": ["biology", "cell"],
+                    "expected_version": 1,
+                }
+            ],
         ),
         ("list_flashcard_tag_suggestions", "bio", 10),
     ]
@@ -2127,7 +2581,9 @@ async def test_scope_service_routes_server_flashcard_bulk_and_tag_suggestion_act
 @pytest.mark.asyncio
 async def test_scope_service_routes_server_flashcard_import_export_actions():
     server = FakeServerStudyService()
-    scope = StudyScopeService(local_service=FakeLocalStudyService(), server_service=server)
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(), server_service=server
+    )
 
     preview = await scope.preview_structured_qa_import(
         mode="server",
@@ -2139,7 +2595,9 @@ async def test_scope_service_routes_server_flashcard_import_export_actions():
         content="Deck\tFront\tBack\tTags\tNotes\nBiology\tQ\tA\tbio\tN",
         has_header=True,
     )
-    exported = await scope.export_flashcards(mode="server", deck_id=7, export_format="csv", include_header=True)
+    exported = await scope.export_flashcards(
+        mode="server", deck_id=7, export_format="csv", include_header=True
+    )
 
     assert preview["source"] == "server"
     assert preview["entity_kind"] == "flashcard_import_preview"
@@ -2147,7 +2605,13 @@ async def test_scope_service_routes_server_flashcard_import_export_actions():
     assert imported["items"][0]["uuid"] == "card-server-1"
     assert exported.startswith(b"Deck\tFront")
     assert server.calls == [
-        ("preview_structured_qa_import", "Q: What powers cells?\nA: ATP", 25, None, None),
+        (
+            "preview_structured_qa_import",
+            "Q: What powers cells?\nA: ATP",
+            25,
+            None,
+            None,
+        ),
         (
             "import_flashcards_tsv",
             "Deck\tFront\tBack\tTags\tNotes\nBiology\tQ\tA\tbio\tN",
@@ -2174,10 +2638,13 @@ async def test_scope_service_routes_server_flashcard_import_export_actions():
         ),
     ]
 
+
 @pytest.mark.asyncio
 async def test_scope_service_routes_local_flashcard_import_export_actions():
     local = FakeLocalStudyService()
-    scope = StudyScopeService(local_service=local, server_service=FakeServerStudyService())
+    scope = StudyScopeService(
+        local_service=local, server_service=FakeServerStudyService()
+    )
 
     preview = await scope.preview_structured_qa_import(
         mode="local",
@@ -2195,7 +2662,9 @@ async def test_scope_service_routes_local_flashcard_import_export_actions():
         max_items=25,
         max_field_length=2048,
     )
-    exported = await scope.export_flashcards(mode="local", deck_id="deck-local-1", include_header=True)
+    exported = await scope.export_flashcards(
+        mode="local", deck_id="deck-local-1", include_header=True
+    )
 
     assert preview["source"] == "local"
     assert preview["entity_kind"] == "flashcard_import_preview"
@@ -2206,7 +2675,13 @@ async def test_scope_service_routes_local_flashcard_import_export_actions():
     assert json_import["items"][0]["uuid"] == "card-local-1"
     assert exported.startswith(b"Deck\tFront")
     assert local.calls == [
-        ("preview_structured_qa_import", "Q: What powers cells?\nA: ATP", 25, None, None),
+        (
+            "preview_structured_qa_import",
+            "Q: What powers cells?\nA: ATP",
+            25,
+            None,
+            None,
+        ),
         (
             "import_flashcards_tsv",
             "Deck\tFront\tBack\tTags\tNotes\nBiology\tQ\tA\tbio\tN",
@@ -2236,9 +2711,13 @@ async def test_scope_service_routes_local_flashcard_import_export_actions():
 
 
 @pytest.mark.asyncio
-async def test_scope_service_routes_server_flashcard_asset_and_file_import_actions(tmp_path):
+async def test_scope_service_routes_server_flashcard_asset_and_file_import_actions(
+    tmp_path,
+):
     server = FakeServerStudyService()
-    scope = StudyScopeService(local_service=FakeLocalStudyService(), server_service=server)
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(), server_service=server
+    )
     image_path = tmp_path / "cell.png"
     image_path.write_bytes(b"fake-png")
     json_path = tmp_path / "cards.json"
@@ -2251,7 +2730,9 @@ async def test_scope_service_routes_server_flashcard_asset_and_file_import_actio
         mode="server",
         asset_uuid="87ca2b3f-7e3a-47d7-a52f-8debc86c03cb",
     )
-    json_import = await scope.import_flashcards_json_file(mode="server", file_path=json_path, max_items=25)
+    json_import = await scope.import_flashcards_json_file(
+        mode="server", file_path=json_path, max_items=25
+    )
     apkg_import = await scope.import_flashcards_apkg(
         mode="server",
         file_path=apkg_path,
@@ -2278,12 +2759,16 @@ async def test_scope_service_routes_server_flashcard_asset_and_file_import_actio
 @pytest.mark.asyncio
 async def test_scope_service_routes_local_flashcard_asset_actions(tmp_path):
     local = FakeLocalStudyService()
-    scope = StudyScopeService(local_service=local, server_service=FakeServerStudyService())
+    scope = StudyScopeService(
+        local_service=local, server_service=FakeServerStudyService()
+    )
     image_path = tmp_path / "cell.png"
     image_path.write_bytes(b"fake-png")
 
     asset = await scope.upload_flashcard_asset(mode="local", file_path=image_path)
-    content = await scope.get_flashcard_asset_content(mode="local", asset_uuid="asset-local-1")
+    content = await scope.get_flashcard_asset_content(
+        mode="local", asset_uuid="asset-local-1"
+    )
 
     assert asset["source"] == "local"
     assert asset["entity_kind"] == "flashcard_asset"
@@ -2298,9 +2783,13 @@ async def test_scope_service_routes_local_flashcard_asset_actions(tmp_path):
 @pytest.mark.asyncio
 async def test_scope_service_routes_server_study_assistant_actions():
     server = FakeServerStudyService()
-    scope = StudyScopeService(local_service=FakeLocalStudyService(), server_service=server)
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(), server_service=server
+    )
 
-    context = await scope.get_flashcard_study_assistant_context(mode="server", card_id="card-server-1")
+    context = await scope.get_flashcard_study_assistant_context(
+        mode="server", card_id="card-server-1"
+    )
     response = await scope.respond_flashcard_study_assistant(
         mode="server",
         card_id="card-server-1",
@@ -2330,7 +2819,9 @@ async def test_scope_service_routes_server_study_assistant_actions():
     ]
 
     with pytest.raises(ValueError, match="server-only"):
-        await scope.get_flashcard_study_assistant_context(mode="local", card_id="card-local-1")
+        await scope.get_flashcard_study_assistant_context(
+            mode="local", card_id="card-local-1"
+        )
 
 
 @pytest.mark.asyncio
@@ -2354,7 +2845,9 @@ async def test_scope_service_routes_server_study_document_actions_with_policy():
     )
     status = await scope.get_study_document_job_status(mode="server", job_id="job-1")
     cancelled = await scope.cancel_study_document_job(mode="server", job_id="job-1")
-    documents = await scope.list_study_documents(mode="server", conversation_id="conv-1", document_type="study_guide", limit=25)
+    documents = await scope.list_study_documents(
+        mode="server", conversation_id="conv-1", document_type="study_guide", limit=25
+    )
     document = await scope.get_study_document(mode="server", document_id=11)
     deleted = await scope.delete_study_document(mode="server", document_id=11)
     saved_prompt = await scope.save_study_document_prompt_config(
@@ -2367,7 +2860,9 @@ async def test_scope_service_routes_server_study_document_actions_with_policy():
             "max_tokens": 2000,
         },
     )
-    prompt_config = await scope.get_study_document_prompt_config(mode="server", document_type="study_guide")
+    prompt_config = await scope.get_study_document_prompt_config(
+        mode="server", document_type="study_guide"
+    )
     bulk = await scope.bulk_generate_study_documents(
         mode="server",
         payload={
@@ -2402,7 +2897,10 @@ async def test_scope_service_routes_server_study_document_actions_with_policy():
         ),
         ("get_study_document_job_status", "job-1"),
         ("cancel_study_document_job", "job-1"),
-        ("list_study_documents", {"conversation_id": "conv-1", "document_type": "study_guide", "limit": 25}),
+        (
+            "list_study_documents",
+            {"conversation_id": "conv-1", "document_type": "study_guide", "limit": 25},
+        ),
         ("get_study_document", 11),
         ("delete_study_document", 11),
         (
@@ -2461,7 +2959,9 @@ async def test_scope_service_rejects_missing_expected_version_for_server_delete(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("expected_version", [0, -1])
-async def test_scope_service_rejects_non_positive_expected_version_for_server_delete(expected_version):
+async def test_scope_service_rejects_non_positive_expected_version_for_server_delete(
+    expected_version,
+):
     server = FakeServerStudyService()
     scope = StudyScopeService(
         local_service=FakeLocalStudyService(),
@@ -2564,7 +3064,12 @@ async def test_scope_service_routes_study_pack_jobs_to_server_with_policy():
         "study.packs.jobs.launch.server",
     ]
     assert server.calls[-5:] == [
-        ("create_study_pack_job", "Cell biology pack", "ws-1", [{"source_type": "note", "source_id": "note-1"}]),
+        (
+            "create_study_pack_job",
+            "Cell biology pack",
+            "ws-1",
+            [{"source_type": "note", "source_id": "note-1"}],
+        ),
         ("list_study_pack_jobs", "queued", 25),
         ("get_study_pack_job_status", 42),
         ("get_study_pack", 9),
@@ -2599,9 +3104,13 @@ async def test_scope_service_routes_study_suggestions_to_server_with_policy():
         policy_enforcer=policy_enforcer,
     )
 
-    status = await scope.get_study_suggestion_status(mode="server", anchor_type="deck", anchor_id=7)
+    status = await scope.get_study_suggestion_status(
+        mode="server", anchor_type="deck", anchor_id=7
+    )
     snapshot = await scope.get_study_suggestion_snapshot(mode="server", snapshot_id=11)
-    refresh = await scope.refresh_study_suggestion_snapshot(mode="server", snapshot_id=11, reason="manual")
+    refresh = await scope.refresh_study_suggestion_snapshot(
+        mode="server", snapshot_id=11, reason="manual"
+    )
     action = await scope.trigger_study_suggestion_action(
         mode="server",
         snapshot_id=11,
@@ -2655,7 +3164,9 @@ async def test_scope_service_rejects_study_suggestions_in_local_mode_before_disp
     scope = StudyScopeService(local_service=local, server_service=server)
 
     with pytest.raises(ValueError, match="Study suggestions are server-only"):
-        await scope.get_study_suggestion_status(mode="local", anchor_type="deck", anchor_id=7)
+        await scope.get_study_suggestion_status(
+            mode="local", anchor_type="deck", anchor_id=7
+        )
 
     assert local.calls == []
     assert server.calls == []

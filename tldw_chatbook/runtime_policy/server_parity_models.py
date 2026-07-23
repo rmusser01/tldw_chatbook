@@ -5,7 +5,9 @@ from math import isfinite
 from typing import Any, Iterable, Literal, Mapping
 
 SourceAuthority = Literal["local", "server"]
-EventTransportType = Literal["local_producer", "sse", "websocket", "polling", "manual_refresh"]
+EventTransportType = Literal[
+    "local_producer", "sse", "websocket", "polling", "manual_refresh"
+]
 NotificationDeliveryState = Literal["pending", "delivered", "failed", "suppressed"]
 ServerNotificationReadState = Literal["unknown", "unread", "read"]
 ServerNotificationDismissState = Literal["unknown", "active", "dismissed"]
@@ -15,7 +17,13 @@ JsonValue = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 FrozenJsonValue = JsonScalar | tuple[Any, ...] | dict[str, Any]
 
 _SOURCE_AUTHORITIES = {"local", "server"}
-_EVENT_TRANSPORT_TYPES = {"local_producer", "sse", "websocket", "polling", "manual_refresh"}
+_EVENT_TRANSPORT_TYPES = {
+    "local_producer",
+    "sse",
+    "websocket",
+    "polling",
+    "manual_refresh",
+}
 _NOTIFICATION_DELIVERY_STATES = {"pending", "delivered", "failed", "suppressed"}
 _SERVER_NOTIFICATION_READ_STATES = {"unknown", "unread", "read"}
 _SERVER_NOTIFICATION_DISMISS_STATES = {"unknown", "active", "dismissed"}
@@ -26,7 +34,9 @@ class FrozenJSONDict(dict[str, FrozenJsonValue]):
         frozen_items: list[tuple[str, FrozenJsonValue]] = []
         for key, value in data.items():
             if not isinstance(key, str):
-                raise TypeError(f"JSON mapping keys must be str, got {type(key).__name__}")
+                raise TypeError(
+                    f"JSON mapping keys must be str, got {type(key).__name__}"
+                )
             frozen_items.append((key, _freeze_json_value(value)))
         dict.__init__(self, frozen_items)
 
@@ -72,7 +82,9 @@ def _validate_literal(value: str, *, field_name: str, allowed_values: set[str]) 
 
 
 def _validate_source_authority(value: str) -> None:
-    _validate_literal(value, field_name="source_authority", allowed_values=_SOURCE_AUTHORITIES)
+    _validate_literal(
+        value, field_name="source_authority", allowed_values=_SOURCE_AUTHORITIES
+    )
 
 
 def _freeze_string_tuple(value: Iterable[Any], *, field_name: str) -> tuple[str, ...]:
@@ -84,7 +96,9 @@ def _freeze_string_tuple(value: Iterable[Any], *, field_name: str) -> tuple[str,
     items = tuple(value)
     for item in items:
         if not isinstance(item, str):
-            raise TypeError(f"{field_name} items must be str, got {type(item).__name__}")
+            raise TypeError(
+                f"{field_name} items must be str, got {type(item).__name__}"
+            )
     return items
 
 
@@ -110,8 +124,14 @@ class EventCursor:
             raise ValueError("server_profile_id is required for server event cursors")
 
     def storage_key(self) -> str:
-        server_key = self.server_profile_id if self.server_profile_id is not None else "none"
-        principal_key = self.authenticated_principal_id if self.authenticated_principal_id is not None else "none"
+        server_key = (
+            self.server_profile_id if self.server_profile_id is not None else "none"
+        )
+        principal_key = (
+            self.authenticated_principal_id
+            if self.authenticated_principal_id is not None
+            else "none"
+        )
         return f"{self.source_authority}:{server_key}:{principal_key}:{self.stream_name}:{self.stream_instance_id}"
 
 
@@ -141,7 +161,9 @@ class NormalizedEventRecord:
             allowed_values=_EVENT_TRANSPORT_TYPES,
         )
         if self.source_authority == "server" and not self.server_profile_id:
-            raise ValueError("server_profile_id is required for server normalized events")
+            raise ValueError(
+                "server_profile_id is required for server normalized events"
+            )
         object.__setattr__(self, "entity_ref", _freeze_json_mapping(self.entity_ref))
         object.__setattr__(self, "payload", _freeze_json_mapping(self.payload))
 
@@ -234,7 +256,11 @@ class SyncReadinessReport:
     details: Mapping[str, FrozenJsonValue] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "reason_codes", _freeze_string_tuple(self.reason_codes, field_name="reason_codes"))
+        object.__setattr__(
+            self,
+            "reason_codes",
+            _freeze_string_tuple(self.reason_codes, field_name="reason_codes"),
+        )
         object.__setattr__(self, "details", _freeze_json_mapping(self.details))
 
 
@@ -248,4 +274,6 @@ class ProviderMigrationStatus:
     notes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "notes", _freeze_string_tuple(self.notes, field_name="notes"))
+        object.__setattr__(
+            self, "notes", _freeze_string_tuple(self.notes, field_name="notes")
+        )

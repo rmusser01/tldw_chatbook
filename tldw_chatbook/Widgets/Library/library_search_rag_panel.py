@@ -639,7 +639,9 @@ class LibrarySearchRagInspectorPanel(Vertical):
                 detail = self.query_one(f"#{widget_id}", Static)
                 detail.update("")
                 detail.display = False
-            empty_state.update("Blocked: select usable evidence before Console handoff.")
+            empty_state.update(
+                "Blocked: select usable evidence before Console handoff."
+            )
             empty_state.display = True
 
         console_action = state.use_in_console_action

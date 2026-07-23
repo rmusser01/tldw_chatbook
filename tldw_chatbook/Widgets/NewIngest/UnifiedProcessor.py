@@ -98,7 +98,11 @@ class ProcessingStarted(Message):
 class ProcessingComplete(Message):
     def __init__(self, job_id_or_results: Any, results: Any | None = None) -> None:
         super().__init__()
-        self.job_id = job_id_or_results if isinstance(job_id_or_results, str) and results is not None else None
+        self.job_id = (
+            job_id_or_results
+            if isinstance(job_id_or_results, str) and results is not None
+            else None
+        )
         self.results = results if results is not None else job_id_or_results
 
 
@@ -191,7 +195,10 @@ class MediaSpecificOptions(Widget):
             content.mount(Static("No specific options"))
 
     def get_config_data(self) -> dict[str, Any]:
-        return {"media_type": self.media_type, "processing_mode": self.processing_mode.value}
+        return {
+            "media_type": self.media_type,
+            "processing_mode": self.processing_mode.value,
+        }
 
 
 class UnifiedProcessor(Widget):
@@ -232,7 +239,9 @@ class UnifiedProcessor(Widget):
         self._media_type = value
         if self.is_mounted:
             try:
-                self.query_one("#media-options", MediaSpecificOptions).media_type = value
+                self.query_one(
+                    "#media-options", MediaSpecificOptions
+                ).media_type = value
             except Exception:
                 pass
 
@@ -245,7 +254,9 @@ class UnifiedProcessor(Widget):
         self._processing_mode = value
         if self.is_mounted:
             try:
-                self.query_one("#media-options", MediaSpecificOptions).processing_mode = value
+                self.query_one(
+                    "#media-options", MediaSpecificOptions
+                ).processing_mode = value
             except Exception:
                 pass
 
@@ -269,9 +280,13 @@ class UnifiedProcessor(Widget):
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Static("Unified Processor", classes="processor-title")
-            yield Static("Configure and process selected media", classes="processor-subtitle")
+            yield Static(
+                "Configure and process selected media", classes="processor-subtitle"
+            )
             yield Static("", id="status-container")
-            yield Button("Process", id="process-button", disabled=not self.selected_files)
+            yield Button(
+                "Process", id="process-button", disabled=not self.selected_files
+            )
             with VerticalScroll(classes="processor-content"):
                 with Horizontal():
                     with Vertical(classes="file-panel"):
@@ -280,7 +295,9 @@ class UnifiedProcessor(Widget):
                         yield Input(id="title-input", placeholder="Title")
                         yield Input(id="author-input", placeholder="Author")
                         yield Input(id="keywords-input", placeholder="Keywords")
-                        yield ModeToggle(id="mode-toggle", button_id_prefix="processor-")
+                        yield ModeToggle(
+                            id="mode-toggle", button_id_prefix="processor-"
+                        )
                         yield MediaSpecificOptions(id="media-options")
 
     def _detect_media_type(self, files: list[Path]) -> str:

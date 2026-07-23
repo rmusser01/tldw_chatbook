@@ -35,7 +35,10 @@ class FakeConnectorsClient:
 
     async def authorize_connector_provider(self, provider, **kwargs):
         self.calls.append(("authorize_connector_provider", provider, kwargs))
-        return {"auth_url": "https://accounts.example.test/oauth", "state": kwargs.get("state")}
+        return {
+            "auth_url": "https://accounts.example.test/oauth",
+            "state": kwargs.get("state"),
+        }
 
     async def complete_connector_oauth_callback(self, provider, **kwargs):
         self.calls.append(("complete_connector_oauth_callback", provider, kwargs))
@@ -54,7 +57,9 @@ class FakeConnectorsClient:
         return {"items": [{"id": "root", "name": "Root"}], "next_cursor": None}
 
     async def create_connector_source(self, request_data):
-        self.calls.append(("create_connector_source", request_data.model_dump(mode="json")))
+        self.calls.append(
+            ("create_connector_source", request_data.model_dump(mode="json"))
+        )
         return _source_payload()
 
     async def list_connector_sources(self):
@@ -62,16 +67,32 @@ class FakeConnectorsClient:
         return [_source_payload()]
 
     async def update_connector_source(self, source_id, request_data):
-        self.calls.append(("update_connector_source", source_id, request_data.model_dump(exclude_none=True, mode="json")))
+        self.calls.append(
+            (
+                "update_connector_source",
+                source_id,
+                request_data.model_dump(exclude_none=True, mode="json"),
+            )
+        )
         return _source_payload(id=source_id, enabled=False)
 
     async def import_connector_source(self, source_id):
         self.calls.append(("import_connector_source", source_id))
-        return {"id": "import-1", "source_id": source_id, "type": "import", "status": "queued"}
+        return {
+            "id": "import-1",
+            "source_id": source_id,
+            "type": "import",
+            "status": "queued",
+        }
 
     async def get_connector_source_sync_status(self, source_id):
         self.calls.append(("get_connector_source_sync_status", source_id))
-        return {"source_id": source_id, "provider": "drive", "enabled": True, "state": "idle"}
+        return {
+            "source_id": source_id,
+            "provider": "drive",
+            "enabled": True,
+            "state": "idle",
+        }
 
     async def trigger_connector_source_sync(self, source_id):
         self.calls.append(("trigger_connector_source_sync", source_id))
@@ -79,7 +100,12 @@ class FakeConnectorsClient:
             "source_id": source_id,
             "provider": "drive",
             "status": "queued",
-            "job": {"id": "sync-1", "source_id": source_id, "type": "incremental_sync", "status": "queued"},
+            "job": {
+                "id": "sync-1",
+                "source_id": source_id,
+                "type": "incremental_sync",
+                "status": "queued",
+            },
         }
 
     async def get_connector_job_status(self, job_id):
@@ -94,11 +120,17 @@ async def test_server_connectors_service_routes_user_connector_surface_with_poli
     service = ServerConnectorsService(client=client, policy_enforcer=policy)
 
     providers = await service.list_providers()
-    authorize = await service.authorize_provider("drive", state="state-1", scopes=["drive.readonly"])
-    account = await service.complete_oauth_callback("drive", code="code-1", state="state-1")
+    authorize = await service.authorize_provider(
+        "drive", state="state-1", scopes=["drive.readonly"]
+    )
+    account = await service.complete_oauth_callback(
+        "drive", code="code-1", state="state-1"
+    )
     accounts = await service.list_accounts()
     deleted = await service.delete_account(7)
-    browsed = await service.browse_sources("drive", account_id=7, parent_remote_id="root")
+    browsed = await service.browse_sources(
+        "drive", account_id=7, parent_remote_id="root"
+    )
     created = await service.create_source(
         account_id=7,
         provider="drive",
@@ -127,7 +159,9 @@ async def test_server_connectors_service_routes_user_connector_surface_with_poli
     assert sync_status["source_id"] == 11
     assert sync_trigger["job"]["id"] == "sync-1"
     assert job_status["id"] == 99
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "connectors.providers.list.server",
         "connectors.providers.launch.server",
         "connectors.providers.launch.server",

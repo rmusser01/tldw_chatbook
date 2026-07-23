@@ -49,6 +49,17 @@ Tree:focus > .tree--cursor {
     text-style: bold underline;
 }
 
+/* TASK-430 AC#1: the file picker's list must show a clearly-visible selected
+   row. The generic OptionList rule above paints $surface (≈ dialog
+   background), which is near-invisible; scope a higher-contrast focus token
+   to the picker list only, using the sanctioned non-obscuring focus color
+   (TASK-345). */
+#file-list-pane .option-list--option-highlighted {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
 OptionList > .option-list--option-hover,
 Tree > .tree--highlight-line {
     background: $surface-lighten-1;

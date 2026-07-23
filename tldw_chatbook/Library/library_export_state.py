@@ -173,10 +173,7 @@ def build_library_export_form_state(
         else ""
     )
     export_enabled = (
-        not running
-        and not counts_loading
-        and total > 0
-        and bool(destination_clean)
+        not running and not counts_loading and total > 0 and bool(destination_clean)
     )
     return LibraryExportFormState(
         scope=scope,

@@ -68,7 +68,9 @@ def test_lab_screen_composes_mode_strip_under_destination_header(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("route", "class_name", "module", "active_chip"), _LAB_SCREENS)
-async def test_active_chip_reflects_current_screen(route, class_name, module, active_chip):
+async def test_active_chip_reflects_current_screen(
+    route, class_name, module, active_chip
+):
     app = _StripHarness(route)
 
     async with app.run_test() as pilot:
@@ -77,7 +79,11 @@ async def test_active_chip_reflects_current_screen(route, class_name, module, ac
             chip = app.query_one(f"#lab-mode-{mode_id}", Button)
             assert chip.has_class("is-active") == (mode_route == route), mode_id
         # Exactly one chip is active, and it is the owning screen's.
-        active = [button.id for button in app.query(".lab-mode-chip") if button.has_class("is-active")]
+        active = [
+            button.id
+            for button in app.query(".lab-mode-chip")
+            if button.has_class("is-active")
+        ]
         assert active == [active_chip]
 
 
@@ -141,7 +147,9 @@ async def _wait_until(
     if condition():
         return
     context_suffix = f" for {context}" if context else ""
-    raise AssertionError(f"condition was not met within {timeout_seconds:.1f}s{context_suffix}")
+    raise AssertionError(
+        f"condition was not met within {timeout_seconds:.1f}s{context_suffix}"
+    )
 
 
 @pytest.mark.asyncio
@@ -180,21 +188,39 @@ async def test_lab_route_and_mode_strip_navigate_the_real_shell(
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(160, 45)) as pilot:
-            await _wait_until(pilot, lambda: isinstance(app.screen, HomeScreen), context="initial home")
+            await _wait_until(
+                pilot,
+                lambda: isinstance(app.screen, HomeScreen),
+                context="initial home",
+            )
 
             # The critique repro: the "lab" destination id must seat Lab's
             # primary route (Models) instead of leaving the app on MCP.
             app.post_message(NavigateToScreen("lab"))
-            await _wait_until(pilot, lambda: isinstance(app.screen, LLMScreen), context="lab -> llm")
-            assert app.screen.query_one("#lab-mode-models", Button).has_class("is-active")
+            await _wait_until(
+                pilot, lambda: isinstance(app.screen, LLMScreen), context="lab -> llm"
+            )
+            assert app.screen.query_one("#lab-mode-models", Button).has_class(
+                "is-active"
+            )
             assert app.screen.query_one("#nav-lab", Button).has_class("is-active")
 
             app.screen.query_one("#lab-mode-evals", Button).press()
-            await _wait_until(pilot, lambda: isinstance(app.screen, EvalsScreen), context="chip -> evals")
-            assert app.screen.query_one("#lab-mode-evals", Button).has_class("is-active")
+            await _wait_until(
+                pilot,
+                lambda: isinstance(app.screen, EvalsScreen),
+                context="chip -> evals",
+            )
+            assert app.screen.query_one("#lab-mode-evals", Button).has_class(
+                "is-active"
+            )
             assert app.screen.query_one("#nav-lab", Button).has_class("is-active")
 
             app.screen.query_one("#lab-mode-models", Button).press()
-            await _wait_until(pilot, lambda: isinstance(app.screen, LLMScreen), context="chip -> llm")
-            assert app.screen.query_one("#lab-mode-models", Button).has_class("is-active")
+            await _wait_until(
+                pilot, lambda: isinstance(app.screen, LLMScreen), context="chip -> llm"
+            )
+            assert app.screen.query_one("#lab-mode-models", Button).has_class(
+                "is-active"
+            )
             assert app.screen.query_one("#nav-lab", Button).has_class("is-active")

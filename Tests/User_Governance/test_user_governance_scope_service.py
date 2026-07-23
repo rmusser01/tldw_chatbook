@@ -1,6 +1,8 @@
 import pytest
 
-from tldw_chatbook.User_Governance_Interop.user_governance_scope_service import UserGovernanceScopeService
+from tldw_chatbook.User_Governance_Interop.user_governance_scope_service import (
+    UserGovernanceScopeService,
+)
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
@@ -29,7 +31,12 @@ class FakeUserGovernanceService:
 
     async def withdraw_consent(self, purpose):
         self.calls.append(("withdraw_consent", purpose))
-        return {"id": 10, "user_id": 42, "purpose": purpose, "withdrawn_at": "2026-04-25T12:05:00Z"}
+        return {
+            "id": 10,
+            "user_id": 42,
+            "purpose": purpose,
+            "withdrawn_at": "2026-04-25T12:05:00Z",
+        }
 
     async def get_self_privilege_map(self, **kwargs):
         self.calls.append(("get_self_privilege_map", kwargs))
@@ -93,17 +100,27 @@ async def test_user_governance_scope_service_routes_server_operations_and_normal
     preferences = await scope.get_consent_preferences(mode="server")
     granted = await scope.grant_consent("personalization", mode="server")
     withdrawn = await scope.withdraw_consent("analytics", mode="server")
-    self_privileges = await scope.get_self_privilege_map(mode="server", resource="notes")
-    user_privileges = await scope.get_user_privilege_map("42", mode="server", page=1, page_size=25)
+    self_privileges = await scope.get_self_privilege_map(
+        mode="server", resource="notes"
+    )
+    user_privileges = await scope.get_user_privilege_map(
+        "42", mode="server", page=1, page_size=25
+    )
 
     assert preferences["record_id"] == "server:consent_preferences:42"
     assert preferences["consents"][0]["record_id"] == "server:consent:10"
     assert granted["record_id"] == "server:consent:11"
     assert withdrawn["record_id"] == "server:consent:10"
     assert self_privileges["record_id"] == "server:privilege_map:self"
-    assert self_privileges["items"][0]["record_id"] == "server:privilege:notes.read:GET:/api/v1/notes"
+    assert (
+        self_privileges["items"][0]["record_id"]
+        == "server:privilege:notes.read:GET:/api/v1/notes"
+    )
     assert user_privileges["record_id"] == "server:privilege_map:42"
-    assert user_privileges["items"][0]["record_id"] == "server:privilege:42:notes.read:GET:/api/v1/notes"
+    assert (
+        user_privileges["items"][0]["record_id"]
+        == "server:privilege:42:notes.read:GET:/api/v1/notes"
+    )
     assert server.calls == [
         ("get_consent_preferences",),
         ("grant_consent", "personalization"),
@@ -123,7 +140,9 @@ async def test_user_governance_scope_service_routes_server_operations_and_normal
 @pytest.mark.asyncio
 async def test_user_governance_scope_service_honestly_rejects_local_mode_as_remote_only():
     server = FakeUserGovernanceService()
-    scope = UserGovernanceScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer())
+    scope = UserGovernanceScopeService(
+        server_service=server, policy_enforcer=FakePolicyEnforcer()
+    )
 
     with pytest.raises(ValueError, match="User governance is server-only"):
         await scope.get_consent_preferences(mode="local")

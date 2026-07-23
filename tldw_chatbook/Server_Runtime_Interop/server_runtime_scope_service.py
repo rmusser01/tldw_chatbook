@@ -42,7 +42,9 @@ class ServerRuntimeScopeService:
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
 
-    def _normalize_mode(self, mode: ServerRuntimeBackend | str | None) -> ServerRuntimeBackend:
+    def _normalize_mode(
+        self, mode: ServerRuntimeBackend | str | None
+    ) -> ServerRuntimeBackend:
         if mode is None:
             return ServerRuntimeBackend.SERVER
         if isinstance(mode, ServerRuntimeBackend):
@@ -73,14 +75,18 @@ class ServerRuntimeScopeService:
         self.policy_enforcer.require_allowed(action_id=action_id)
 
     @staticmethod
-    def _normalize_record(mode: ServerRuntimeBackend, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_record(
+        mode: ServerRuntimeBackend, kind: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         record = dict(payload or {})
         record.setdefault("backend", mode.value)
         record.setdefault("record_id", f"{mode.value}:runtime:{kind}")
         return record
 
     @staticmethod
-    def _normalize_provider_records(mode: ServerRuntimeBackend, payload: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_provider_records(
+        mode: ServerRuntimeBackend, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         record = dict(payload or {})
         record.setdefault("backend", mode.value)
         record.setdefault("record_id", f"{mode.value}:runtime:providers")
@@ -94,18 +100,24 @@ class ServerRuntimeScopeService:
                 provider.setdefault("backend", mode.value)
                 name = provider.get("name") or provider.get("provider")
                 if name is not None:
-                    provider.setdefault("record_id", f"{mode.value}:runtime_provider:{name}")
+                    provider.setdefault(
+                        "record_id", f"{mode.value}:runtime_provider:{name}"
+                    )
                 providers.append(provider)
             record["providers"] = providers
         return record
 
     @staticmethod
-    def _normalize_provider_validation(mode: ServerRuntimeBackend, payload: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_provider_validation(
+        mode: ServerRuntimeBackend, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         record = dict(payload or {})
         record.setdefault("backend", mode.value)
         provider = record.get("provider")
         if provider is not None:
-            record.setdefault("record_id", f"{mode.value}:runtime_provider_validation:{provider}")
+            record.setdefault(
+                "record_id", f"{mode.value}:runtime_provider_validation:{provider}"
+            )
         return record
 
     def list_unsupported_capabilities(
@@ -129,10 +141,14 @@ class ServerRuntimeScopeService:
         normalized_mode = self._normalize_mode(mode)
         service = self._require_server_service(normalized_mode)
         self._enforce_policy(action_id)
-        result = await self._maybe_await(getattr(service, method_name)(**(kwargs or {})))
+        result = await self._maybe_await(
+            getattr(service, method_name)(**(kwargs or {}))
+        )
         return normalized_mode, result
 
-    async def get_health(self, *, mode: ServerRuntimeBackend | str | None = None) -> dict[str, Any]:
+    async def get_health(
+        self, *, mode: ServerRuntimeBackend | str | None = None
+    ) -> dict[str, Any]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="server.runtime.health.list.server",
@@ -140,7 +156,9 @@ class ServerRuntimeScopeService:
         )
         return self._normalize_record(normalized_mode, "health", result)
 
-    async def get_liveness(self, *, mode: ServerRuntimeBackend | str | None = None) -> dict[str, Any]:
+    async def get_liveness(
+        self, *, mode: ServerRuntimeBackend | str | None = None
+    ) -> dict[str, Any]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="server.runtime.health.observe.server",
@@ -148,7 +166,9 @@ class ServerRuntimeScopeService:
         )
         return self._normalize_record(normalized_mode, "liveness", result)
 
-    async def get_readiness(self, *, mode: ServerRuntimeBackend | str | None = None) -> dict[str, Any]:
+    async def get_readiness(
+        self, *, mode: ServerRuntimeBackend | str | None = None
+    ) -> dict[str, Any]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="server.runtime.health.observe.server",
@@ -156,7 +176,9 @@ class ServerRuntimeScopeService:
         )
         return self._normalize_record(normalized_mode, "readiness", result)
 
-    async def get_metrics(self, *, mode: ServerRuntimeBackend | str | None = None) -> dict[str, Any]:
+    async def get_metrics(
+        self, *, mode: ServerRuntimeBackend | str | None = None
+    ) -> dict[str, Any]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="server.runtime.health.observe.server",
@@ -164,7 +186,9 @@ class ServerRuntimeScopeService:
         )
         return self._normalize_record(normalized_mode, "metrics", result)
 
-    async def get_security_health(self, *, mode: ServerRuntimeBackend | str | None = None) -> dict[str, Any]:
+    async def get_security_health(
+        self, *, mode: ServerRuntimeBackend | str | None = None
+    ) -> dict[str, Any]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="server.runtime.health.observe.server",
@@ -172,7 +196,9 @@ class ServerRuntimeScopeService:
         )
         return self._normalize_record(normalized_mode, "security", result)
 
-    async def get_docs_info(self, *, mode: ServerRuntimeBackend | str | None = None) -> dict[str, Any]:
+    async def get_docs_info(
+        self, *, mode: ServerRuntimeBackend | str | None = None
+    ) -> dict[str, Any]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="server.runtime.config.list.server",
@@ -190,9 +216,13 @@ class ServerRuntimeScopeService:
             action_id="server.runtime.config.list.server",
             method_name="get_flashcards_import_limits",
         )
-        return self._normalize_record(normalized_mode, "flashcards_import_limits", result)
+        return self._normalize_record(
+            normalized_mode, "flashcards_import_limits", result
+        )
 
-    async def get_tokenizer_config(self, *, mode: ServerRuntimeBackend | str | None = None) -> dict[str, Any]:
+    async def get_tokenizer_config(
+        self, *, mode: ServerRuntimeBackend | str | None = None
+    ) -> dict[str, Any]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="server.runtime.config.list.server",
@@ -215,7 +245,9 @@ class ServerRuntimeScopeService:
         )
         return self._normalize_record(normalized_mode, "tokenizer", result)
 
-    async def get_jobs_config(self, *, mode: ServerRuntimeBackend | str | None = None) -> dict[str, Any]:
+    async def get_jobs_config(
+        self, *, mode: ServerRuntimeBackend | str | None = None
+    ) -> dict[str, Any]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="server.runtime.config.list.server",
@@ -223,7 +255,9 @@ class ServerRuntimeScopeService:
         )
         return self._normalize_record(normalized_mode, "jobs", result)
 
-    async def list_config_providers(self, *, mode: ServerRuntimeBackend | str | None = None) -> dict[str, Any]:
+    async def list_config_providers(
+        self, *, mode: ServerRuntimeBackend | str | None = None
+    ) -> dict[str, Any]:
         normalized_mode, result = await self._call(
             mode=mode,
             action_id="server.runtime.providers.list.server",
