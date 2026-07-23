@@ -145,6 +145,11 @@ class PersonasPreviewPane(Vertical):
         """
         self._greeting = str(text or "")
 
+    @property
+    def greeting_text(self) -> str:
+        """The greeting a Reset restores (transcript line 0), for state capture."""
+        return self._greeting
+
     def append_user(self, text: str) -> None:
         """Append a "you: ..." transcript line."""
         self._append_line(f"you: {text}", "personas-preview-line-you")
