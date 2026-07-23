@@ -66,7 +66,29 @@ def _prefer(existing_name: str, new_name: str) -> bool:
     return new_name.lower() < existing_name.lower()  # first alphabetically
 
 
-def _candidate_pairs(paths: list[Path]) -> tuple[list[tuple[str, bytes]], list[tuple[str, str]], list[str]]:
+def _detect_vpack(zf: zipfile.ZipFile) -> str | None:
+    """Detect a persona visual pack by CONTENT (never by file extension).
+
+    Returns the member prefix to use for lookups: "" for a root-level pack,
+    "Root/" when the pack sits under a single shared top-level directory
+    (the extract-and-re-zip papercut), or None when the archive is not a
+    pack (deeper nesting and multiple roots fall through to stem mapping).
+    The sniff reads the namelist only -- zero member reads.
+    """
+    names = set(zf.namelist())
+    if "manifest.json" in names and "metadata/assets.json" in names:
+        return ""
+    roots = {n.split("/", 1)[0] for n in names if n and not n.startswith("/")}
+    if len(roots) == 1:
+        root = next(iter(roots))
+        if f"{root}/manifest.json" in names and f"{root}/metadata/assets.json" in names:
+            return f"{root}/"
+    return None
+
+
+def _candidate_pairs(
+    paths: list[Path], start_total: int = 0
+) -> tuple[list[tuple[str, bytes]], list[tuple[str, str]], list[str], int]:
     """Yield (base_name, bytes) for every candidate file across the inputs.
 
     Handles a .zip (in-memory, security-capped), a directory, or standalone
@@ -74,12 +96,14 @@ def _candidate_pairs(paths: list[Path]) -> tuple[list[tuple[str, bytes]], list[t
     front -- against each entry's on-disk/declared size, before any bytes
     are read -- using a single running total shared across every input in
     ``paths`` (a zip, a directory, and standalone files all draw from the
-    same total-size budget).
+    same total-size budget), starting from ``start_total`` so callers can
+    thread a budget already partially consumed elsewhere (e.g. by vpack
+    reads earlier in the same resolver call).
     """
     pairs: list[tuple[str, bytes]] = []
     skipped: list[tuple[str, str]] = []
     notes: list[str] = []
-    total = 0
+    total = start_total
     for path in paths:
         try:
             if path.is_dir():
@@ -128,11 +152,16 @@ def _candidate_pairs(paths: list[Path]) -> tuple[list[tuple[str, bytes]], list[t
                 skipped.append((str(path), "not found"))
         except Exception as exc:   # broken/encrypted zip, unreadable dir, etc.
             skipped.append((str(path), f"could not read: {exc}"))
-    return pairs, skipped, notes
+    return pairs, skipped, notes, total
 
 
 def resolve_local_expression_set(paths: list[Path]) -> ExpressionSetResolution:
     """Resolve selected inputs into a validated {state: bytes} set.
+
+    Any input that is a persona visual pack (``.tldw-persona-vpack`` or a
+    plain ``.zip`` -- detected by CONTENT via ``_detect_vpack``, never by
+    file extension) is resolved through the targeted vpack extractor;
+    everything else is batched into the generic stem-mapping path below.
 
     Args:
         paths: Filesystem paths to resolve -- any mix of a single ``.zip``
@@ -145,30 +174,56 @@ def resolve_local_expression_set(paths: list[Path]) -> ExpressionSetResolution:
         images, plus the candidates that were skipped and any informational
         notes. Never raises.
     """
-    pairs, skipped, notes = _candidate_pairs(paths)
-    chosen: dict[str, tuple[str, bytes]] = {}   # state -> (name, bytes)
-    for name, data in pairs:
-        state = Path(name).stem.lower()
-        if state not in _STATE_SET:
-            skipped.append((name, "filename is not a known state"))
-            continue
-        if not _valid_image(data):
-            skipped.append((name, "not a valid image"))
-            continue
-        if state in chosen:
-            keep = chosen[state][0]
-            if _prefer(keep, name):
-                notes.append(f"Multiple files for {state}; used {name}.")
-                chosen[state] = (name, data)
-            else:
-                notes.append(f"Multiple files for {state}; used {keep}.")
-            continue
-        chosen[state] = (name, data)
-    return ExpressionSetResolution(
-        images={state: data for state, (_, data) in chosen.items()},
-        skipped=skipped,
-        notes=notes,
-    )
+    images: dict[str, bytes] = {}
+    skipped: list[tuple[str, str]] = []
+    notes: list[str] = []
+    total = 0
+    generic: list[Path] = []
+    for path in paths:
+        handled = False
+        try:
+            if path.is_file() and zipfile.is_zipfile(path):
+                with zipfile.ZipFile(path) as zf:
+                    vprefix = _detect_vpack(zf)
+                    if vprefix is not None:
+                        res, total = _resolve_vpack_expression_set(
+                            zf, prefix=vprefix, start_total=total
+                        )
+                        for state, data in res.images.items():
+                            images.setdefault(state, data)   # first-writer-wins
+                        skipped.extend(res.skipped)
+                        notes.extend(res.notes)
+                        handled = True
+        except Exception as exc:
+            skipped.append((str(path), f"could not read: {exc}"))
+            handled = True
+        if not handled:
+            generic.append(path)
+    if generic:
+        pairs, g_skipped, g_notes, total = _candidate_pairs(generic, start_total=total)
+        skipped.extend(g_skipped)
+        notes.extend(g_notes)
+        chosen: dict[str, tuple[str, bytes]] = {}   # state -> (name, bytes)
+        for name, data in pairs:
+            state = Path(name).stem.lower()
+            if state not in _STATE_SET:
+                skipped.append((name, "filename is not a known state"))
+                continue
+            if not _valid_image(data):
+                skipped.append((name, "not a valid image"))
+                continue
+            if state in chosen:
+                keep = chosen[state][0]
+                if _prefer(keep, name):
+                    notes.append(f"Multiple files for {state}; used {name}.")
+                    chosen[state] = (name, data)
+                else:
+                    notes.append(f"Multiple files for {state}; used {keep}.")
+                continue
+            chosen[state] = (name, data)
+        for state, (_, data) in chosen.items():
+            images.setdefault(state, data)   # vpack states win over generic
+    return ExpressionSetResolution(images=images, skipped=skipped, notes=notes)
 
 
 _FORMAT_TO_EXT = {"PNG": "png", "JPEG": "jpg", "WEBP": "webp", "GIF": "gif"}

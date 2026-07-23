@@ -499,3 +499,82 @@ def test_vpack_broken_manifest_never_raises():
     res = _extract(data)   # must not raise
     assert res.images == {}
     assert res.notes or res.skipped
+
+
+# ---------- P3d-3 Task 2: content-based detection + dispatch ----------
+
+
+def test_dispatch_vpack_renamed_zip_autodetects(tmp_path):
+    z = tmp_path / "pack.zip"   # wrong extension on purpose
+    z.write_bytes(simple_vpack({"idle": _png(), "speaking": _png()}))
+    res = resolve_local_expression_set([z])
+    assert set(res.images) == {"idle", "speaking"}
+
+
+def test_dispatch_plain_zip_named_vpack_falls_back_to_stems(tmp_path):
+    z = tmp_path / "set.tldw-persona-vpack"   # plain stem zip, wrong extension
+    z.write_bytes(_zip({"idle.png": _png()}))
+    res = resolve_local_expression_set([z])
+    assert set(res.images) == {"idle"}   # stem mapping still works
+
+
+def test_dispatch_nested_single_root_extracts(tmp_path):
+    z = tmp_path / "pack.tldw-persona-vpack"
+    z.write_bytes(simple_vpack({"thinking": _png()}, prefix="MyPack/"))
+    res = resolve_local_expression_set([z])
+    assert "thinking" in res.images
+
+
+def test_dispatch_two_roots_falls_through(tmp_path):
+    # Two top-level roots -> not detected as a pack -> stem mapping (no matches).
+    buf = io.BytesIO(simple_vpack({"idle": _png()}, prefix="A/"))
+    with zipfile.ZipFile(buf, "a") as zf:
+        zf.writestr("B/stray.txt", b"x")   # a second root breaks single-prefix detection
+    z = tmp_path / "two-roots.tldw-persona-vpack"
+    z.write_bytes(buf.getvalue())
+    res = resolve_local_expression_set([z])
+    assert res.images == {}   # fell through to stem mapping, nothing matched
+
+
+def test_dispatch_manifest_beyond_member_64(tmp_path):
+    """RED against enumerate-and-slice dispatch: manifest.json written LAST,
+    after 70 filler members, must still be found (targeted reads only)."""
+    filler = {f"assets/persona_visuals/filler{i}.bin": b"x" for i in range(70)}
+    data = make_vpack_bytes(
+        manifest={"states": {"idle": "a"},
+                  "animations": {"a": {"frames": [{"asset_id": "x"}]}}},
+        assets_entries=[{"source_asset_id": "x",
+                         "asset_path": "assets/persona_visuals/x.png",
+                         "asset_bytes_status": "present"}],
+        asset_files={"assets/persona_visuals/x.png": _png()},
+        extra_members=filler,
+        manifest_last=True,
+    )
+    z = tmp_path / "big.tldw-persona-vpack"
+    z.write_bytes(data)
+    res = resolve_local_expression_set([z])
+    assert "idle" in res.images
+
+
+def test_dispatch_mixed_inputs_share_budget(tmp_path, monkeypatch):
+    import tldw_chatbook.Character_Chat.expression_set_io as mod
+    vp = simple_vpack({"idle": _png()})
+    z = tmp_path / "pack.tldw-persona-vpack"
+    z.write_bytes(vp)
+    loose = tmp_path / "speaking.png"
+    loose.write_bytes(_png())
+    # Budget covers exactly the vpack's targeted reads (manifest.json +
+    # metadata/assets.json + the one asset it extracts) plus a small slack
+    # -- NOT the loose file on top. A generous margin here (e.g. the asset
+    # size plus a few KB of slack) leaves so much headroom that the loose
+    # file fits regardless of whether the budget is actually shared, so the
+    # cap is derived from MEASURED member sizes to keep the test load-bearing.
+    with zipfile.ZipFile(io.BytesIO(vp)) as zf:
+        sizes = {i.filename: i.file_size for i in zf.infolist()}
+    cap = (sizes["manifest.json"] + sizes["metadata/assets.json"]
+           + sizes["assets/persona_visuals/asset-idle.png"] + 16)
+    monkeypatch.setattr(mod, "MAX_TOTAL_BYTES", cap)
+    res = resolve_local_expression_set([z, loose])
+    assert "idle" in res.images          # vpack consumed the budget
+    assert "speaking" not in res.images  # loose file hit the shared cap
+    assert res.notes or res.skipped
