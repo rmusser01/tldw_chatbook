@@ -1457,12 +1457,27 @@ class ConsoleChatStore:
         conversation_id = self.persist_session_if_needed(session_id)
         if conversation_id is None:
             return
+        # Thread the real tree parent through to persistence: look up this
+        # node's in-memory parent (Task 3's ``_native_parent_by_message``)
+        # and use ITS persisted id. If the parent hasn't been persisted yet
+        # (or doesn't exist -- this is the root), fall back to None rather
+        # than writing a dangling id.
+        parent_native_id = self._native_parent_by_message.get(message.id)
+        parent_persisted_id = None
+        if parent_native_id is not None:
+            parent_node = self._nodes_by_session.get(session_id, {}).get(
+                parent_native_id
+            )
+            parent_persisted_id = (
+                parent_node.persisted_message_id if parent_node is not None else None
+            )
+        message.parent_message_id = parent_persisted_id
         create_kwargs: dict[str, Any] = dict(
             conversation_id=conversation_id,
             sender=message.role.value,
             content=message.content,
             message_id=None,
-            parent_message_id=None,
+            parent_message_id=parent_persisted_id,
             feedback=message.feedback,
         )
         # Only engage split addressing when there is something beyond the
