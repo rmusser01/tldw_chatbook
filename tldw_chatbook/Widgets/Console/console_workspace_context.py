@@ -1152,7 +1152,10 @@ class ConsoleWorkspaceContextTray(Vertical):
 
             star_disabled = not marks_available or not row.star_enabled
             star_button = Button(
-                "*" if row.starred else ".",
+                # TASK-357: a recognizable filled/hollow star pair — the old
+                # one-cell '*'/'.' distinction was nearly invisible and led to
+                # accidental silent toggles.
+                "★" if row.starred else "☆",
                 id=f"console-conversation-star-{index}",
                 classes="console-workspace-action console-conversation-star",
                 compact=True,
@@ -1176,6 +1179,9 @@ class ConsoleWorkspaceContextTray(Vertical):
             star_button.row_key = row.row_key
             star_button.conversation_id = row.conversation_id
             star_button.starred = row.starred
+            # TASK-357: carry the title so the press handler can confirm the
+            # toggle ("Starred <title>") instead of changing state silently.
+            star_button.conversation_title = row.title
             yield star_button
 
     def _workspace_selector_label(self) -> str:

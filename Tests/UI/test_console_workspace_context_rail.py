@@ -362,6 +362,73 @@ async def test_console_workspace_context_renders_grouped_conversation_browser() 
 
 
 @pytest.mark.asyncio
+async def test_console_conversation_star_uses_recognizable_star_glyphs():
+    """TASK-357: the star toggle must use a recognizable ★/☆ pair, not the
+    near-invisible one-cell '*'/'.' distinction."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+
+        for star in console.query(".console-conversation-star"):
+            label = str(star.label)
+            assert "*" not in label and label.strip() != "."
+            if getattr(star, "starred", False):
+                assert "★" in label
+            else:
+                assert "☆" in label
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_star_press_confirms_the_toggle():
+    """TASK-357: starring must confirm the change ('Starred "<title>"') rather
+    than toggle state silently (the review saw an accidental star go unnoticed)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+
+        star = next(
+            s
+            for s in console.query(".console-conversation-star")
+            if not getattr(s, "starred", False)
+        )
+        star.conversation_title = "My planning chat"
+
+        class _Marks:
+            def is_starred(self, conversation_id):
+                return False
+
+            def star_conversation(self, conversation_id):
+                return None
+
+            def unstar_conversation(self, conversation_id):
+                return None
+
+        console.app_instance.conversation_local_marks_service = _Marks()
+        notes: list[str] = []
+        console.app_instance.notify = lambda message, **kwargs: notes.append(message)
+
+        await console.on_button_pressed(Button.Pressed(star))
+
+        assert any("Starred" in note and "My planning chat" in note for note in notes)
+
+
+@pytest.mark.asyncio
 async def test_console_workspace_context_preserves_duplicate_starred_workspace_row_keys() -> (
     None
 ):

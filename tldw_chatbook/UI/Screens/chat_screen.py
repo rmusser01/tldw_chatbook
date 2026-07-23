@@ -14817,6 +14817,16 @@ class ChatScreen(BaseAppScreen):
                     severity="warning",
                 )
                 return
+            # TASK-357: confirm the toggle so a star/unstar is not a silent state
+            # change (the review saw an accidental star go unnoticed).
+            title = str(
+                getattr(event.button, "conversation_title", "") or ""
+            ).splitlines()[0].strip()
+            title_suffix = f' "{title}"' if title else ""
+            if star_action == "star":
+                self.app_instance.notify(f"Starred{title_suffix}.")
+            elif star_action == "unstar":
+                self.app_instance.notify(f"Unstarred{title_suffix}.")
             self._sync_console_workspace_context()
             return
         if button_id == "console-workspace-conversations-toggle":
