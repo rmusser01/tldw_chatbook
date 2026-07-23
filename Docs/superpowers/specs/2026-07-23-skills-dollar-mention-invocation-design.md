@@ -113,11 +113,12 @@ Accepted consequences (documented, not bugs):
 - **Historical transcript turns** whose raw persisted text is an old
   `/skill-name args` command no longer re-expand on retry/continue/regenerate
   — they are sent as literal text (only `$` forms render-fresh now).
-- The composer-level **pre-send blocked-skill hint** (the `KIND_UNKNOWN`
-  blocked-match response that told a user a typed skill was needs-review
-  before sending) goes away with the fallback resolver; an untrusted leading
-  `$name` is still refused at payload build with `SKILL_UNTRUSTED_REFUSE`
-  (a system row), which remains the authoritative gate.
+- The composer-level **pre-send blocked-skill hint** SURVIVES (corrected on
+  verification: it lives in the `KIND_UNKNOWN` branch, independent of the
+  fallback resolver — a typed `/blocked-name` still gets the needs-review
+  response). Its copy updates to teach the `$name` convention. The
+  authoritative gate remains the payload-build refusal
+  (`SKILL_UNTRUSTED_REFUSE`) for a leading `$name`.
 
 **`/skills` stays** as the registered browse command in its **bare** form
 (list the available skills). Its `/skills <name> [args]` *run* form is removed
