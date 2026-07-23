@@ -157,7 +157,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 24  # Adds conversations.active_leaf_message_id (Console branching Phase A).
+    _CURRENT_SCHEMA_VERSION = 25  # Adds message_generation_metadata sidecar (image-gen P2a). NOT sync-integrated (deliberate, v19/v24 precedent); prompts NOT in FTS.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -2494,6 +2494,29 @@ UPDATE db_schema_version
 """
 
     # Keep this runner SQL aligned with
+    # tldw_chatbook/DB/migrations/chachanotes_v24_to_v25_message_generation_metadata.sql.
+    _MIGRATE_V24_TO_V25_SQL = """
+CREATE TABLE IF NOT EXISTS message_generation_metadata(
+  message_id      TEXT    NOT NULL REFERENCES messages(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  position        INTEGER NOT NULL CHECK (position >= 0),
+  prompt          TEXT    NOT NULL,
+  negative_prompt TEXT    NOT NULL DEFAULT '',
+  backend         TEXT    NOT NULL,
+  model           TEXT,
+  seed            INTEGER,
+  style           TEXT,
+  params_json     TEXT    NOT NULL DEFAULT '{}',
+  created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (message_id, position)
+);
+CREATE INDEX IF NOT EXISTS idx_msg_gen_meta_message ON message_generation_metadata(message_id);
+UPDATE db_schema_version
+   SET version = 25
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 24;
+"""
+
+    # Keep this runner SQL aligned with
     # tldw_chatbook/DB/migrations/chachanotes_v18_to_v19_message_attachments.sql.
     _MIGRATE_V18_TO_V19_SQL = """
 CREATE TABLE IF NOT EXISTS message_attachments(
@@ -3884,6 +3907,27 @@ UPDATE db_schema_version
             logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V23→V24] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V23 to V24 for '{self._SCHEMA_NAME}': {e}") from e
 
+    def _migrate_from_v24_to_v25(self, conn: sqlite3.Connection):
+        """Migrate schema V24→V25: add the ``message_generation_metadata`` sidecar
+        table for storing image generation metadata (prompts, backend, model, etc.).
+        No sync triggers are added; this table is local-only (v19/v24 precedent)."""
+        logger.info(f"Migrating schema from V24 to V25 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            conn.executescript(self._MIGRATE_V24_TO_V25_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V24→V25] Migration script executed.")
+            final_version = self._get_db_version(conn)
+            if final_version != 25:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V24→V25] Migration version check failed. Expected 25, got: {final_version}"
+                )
+            logger.info(f"[{self._SCHEMA_NAME} V24→V25] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V24→V25] Migration failed: {e}")
+            raise SchemaError(f"Migration from V24 to V25 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V24→V25] Unexpected error during migration: {e}")
+            raise SchemaError(f"Unexpected error migrating from V24 to V25 for '{self._SCHEMA_NAME}': {e}") from e
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -4038,6 +4082,7 @@ UPDATE db_schema_version
                     21: self._migrate_from_v21_to_v22,
                     22: self._migrate_from_v22_to_v23,
                     23: self._migrate_from_v23_to_v24,
+                    24: self._migrate_from_v24_to_v25,
                 }
 
                 if current_db_version == 0:
@@ -7289,6 +7334,92 @@ UPDATE db_schema_version
                             "data": row["data"],
                             "mime_type": row["mime_type"],
                             "display_name": row["display_name"],
+                        }
+                    )
+        return result
+
+    def set_message_generation_metadata(self, message_id: str, rows: list[dict]) -> None:
+        """Set the authoritative generation metadata for a message.
+
+        Performs a full rewrite (DELETE then INSERT) in one transaction.
+        Mirrors the set_message_attachments pattern.
+
+        Args:
+            message_id: Target message UUID.
+            rows: Dicts with keys: ``position`` (int >= 0), ``prompt`` (str),
+                ``negative_prompt`` (str), ``backend`` (str), ``model`` (str|None),
+                ``seed`` (int|None), ``style`` (str|None), ``params_json`` (str).
+
+        Raises:
+            ValueError: If any row has position < 0.
+            CharactersRAGDBError: On database errors.
+        """
+        for row in rows:
+            if int(row.get("position", 0)) < 0:
+                raise ValueError("message_generation_metadata positions must be >= 0.")
+        with self.transaction() as cursor:
+            cursor.execute(
+                "DELETE FROM message_generation_metadata WHERE message_id = ?",
+                (message_id,),
+            )
+            cursor.executemany(
+                "INSERT INTO message_generation_metadata"
+                " (message_id, position, prompt, negative_prompt, backend, model, seed, style, params_json)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        message_id,
+                        int(row["position"]),
+                        row["prompt"],
+                        row.get("negative_prompt", ""),
+                        row["backend"],
+                        row.get("model"),
+                        row.get("seed"),
+                        row.get("style"),
+                        row.get("params_json", "{}"),
+                    )
+                    for row in rows
+                ],
+            )
+
+    def get_generation_metadata_for_messages(
+        self, message_ids: "Sequence[str]"
+    ) -> dict[str, list[dict]]:
+        """Batch-fetch generation metadata for messages.
+
+        Args:
+            message_ids: Message UUIDs to fetch for.
+
+        Returns:
+            Mapping of message_id to position-ordered metadata row dicts
+            (position, prompt, negative_prompt, backend, model, seed, style,
+            params_json); ids with no rows are absent. created_at is omitted.
+        """
+        ids = [str(m) for m in message_ids if m]
+        if not ids:
+            return {}
+        result: dict[str, list[dict]] = {}
+        with self.transaction() as cursor:
+            for start in range(0, len(ids), 500):
+                chunk = ids[start : start + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                cursor.execute(
+                    "SELECT message_id, position, prompt, negative_prompt, backend, model, seed, style, params_json"
+                    f" FROM message_generation_metadata WHERE message_id IN ({placeholders})"
+                    " ORDER BY message_id, position",
+                    chunk,
+                )
+                for row in cursor.fetchall():
+                    result.setdefault(row["message_id"], []).append(
+                        {
+                            "position": row["position"],
+                            "prompt": row["prompt"],
+                            "negative_prompt": row["negative_prompt"],
+                            "backend": row["backend"],
+                            "model": row["model"],
+                            "seed": row["seed"],
+                            "style": row["style"],
+                            "params_json": row["params_json"],
                         }
                     )
         return result
