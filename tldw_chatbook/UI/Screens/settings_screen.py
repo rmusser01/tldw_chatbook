@@ -19,6 +19,7 @@ from textual.events import DescendantFocus, Key
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.strip import Strip
+from textual.validation import ValidationResult, Validator
 from textual.widgets import (
     Button,
     Checkbox,
@@ -786,6 +787,24 @@ def _textual_web_safe_url_display_index(value: str, index: int) -> int:
         if index >= insertion_index:
             display_index += len(TEXTUAL_WEB_URL_AUTOLINK_BREAK)
     return display_index
+
+
+class ProviderEndpointURLValidator(Validator):
+    """TASK-367: inline endpoint URL validation, run on blur/submit.
+
+    An empty endpoint is allowed (not every provider needs one); a non-empty
+    value must be a well-formed http/https URL. Surfacing this on blur flags a
+    malformed URL (e.g. a dropped scheme character) at the field itself instead
+    of only when the user later saves or runs Discover.
+    """
+
+    def validate(self, value: str) -> ValidationResult:
+        text = str(value or "").strip()
+        if not text or validate_url(text):
+            return self.success()
+        return self.failure(
+            "Enter a full http:// or https:// URL, e.g. http://127.0.0.1:9099/v1."
+        )
 
 
 class SettingsURLInput(Input):
@@ -5319,10 +5338,15 @@ class SettingsScreen(BaseAppScreen):
         kind = str(getattr(error, "kind", "") or "")
         if kind == "ambiguous_provider_key":
             return MODEL_DISCOVERY_AMBIGUOUS_PROVIDER_COPY
-        if kind == "unsupported_endpoint":
-            return MODEL_DISCOVERY_UNSUPPORTED_ENDPOINT_COPY
         message = str(getattr(error, "message", "") or "").strip()
         recovery = str(getattr(error, "recovery_hint", "") or "").strip()
+        # TASK-367: surface the discovery client's DISTINCT message for endpoint
+        # problems — a malformed URL and a valid-but-unsupported path now read
+        # differently instead of collapsing into the single generic /v1 copy.
+        if kind in {"unsupported_endpoint", "malformed_endpoint"}:
+            if message or recovery:
+                return redact_secret_text(f"{message} {recovery}".strip())
+            return MODEL_DISCOVERY_UNSUPPORTED_ENDPOINT_COPY
         if recovery:
             return redact_secret_text(f"{message} {recovery}".strip())
         if message:
@@ -6493,6 +6517,8 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-provider-endpoint-value",
                     classes="settings-compact-input",
                     placeholder=self._provider_endpoint_placeholder(provider),
+                    validators=[ProviderEndpointURLValidator()],
+                    validate_on={"blur", "submitted"},
                 )
             yield Static("Credentials", classes="destination-section")
             yield Static(

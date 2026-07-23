@@ -252,6 +252,47 @@ def test_mark_provider_test_result_stale_invalidates_prior_verdict():
     assert screen._provider_test_result == SettingsScreen._PROVIDER_TEST_NOT_RUN_COPY
 
 
+def test_discovery_status_distinguishes_malformed_from_unsupported():
+    """TASK-367: the model-discovery status surfaces DISTINCT copy for a
+    malformed URL vs a valid-but-unsupported path, instead of collapsing both
+    into the same generic /v1 message."""
+    from types import SimpleNamespace
+
+    screen = _bare_settings_screen({})
+    malformed = SimpleNamespace(
+        error=SimpleNamespace(
+            kind="malformed_endpoint",
+            message="This endpoint is not a valid URL.",
+            recovery_hint="Enter a full http:// or https:// address.",
+        )
+    )
+    unsupported = SimpleNamespace(
+        error=SimpleNamespace(
+            kind="unsupported_endpoint",
+            message="This endpoint is not an OpenAI-compatible models endpoint.",
+            recovery_hint="Configure an explicit /v1 or /v1/models endpoint.",
+        )
+    )
+
+    malformed_status = screen._discovery_status_from_error(malformed)
+    unsupported_status = screen._discovery_status_from_error(unsupported)
+
+    assert "not a valid URL" in malformed_status
+    assert "not an OpenAI-compatible" in unsupported_status
+    assert malformed_status != unsupported_status
+
+
+def test_provider_endpoint_url_validator_flags_malformed_only():
+    """TASK-367: inline (blur) validation passes an empty or well-formed URL and
+    fails a malformed one, e.g. a dropped scheme character."""
+    from tldw_chatbook.UI.Screens.settings_screen import ProviderEndpointURLValidator
+
+    validator = ProviderEndpointURLValidator()
+    assert validator.validate("").is_valid
+    assert validator.validate("http://127.0.0.1:9099/v1").is_valid
+    assert not validator.validate("ttp://127.0.0.1:9099/v1").is_valid
+
+
 # --- Pilot tests: the clickable Test button path (AC#2/AC#3) + widget wiring ---
 #
 # These drive the real SettingsScreen through the harness
