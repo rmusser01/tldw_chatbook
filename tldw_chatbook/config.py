@@ -2756,6 +2756,16 @@ wezterm = "regular"
 iterm2 = "regular"
 default = "pixels"
 
+[web_security]
+# Egress guard (SSRF protection) for web scraping / ingestion / subscription
+# fetches. When enabled, content-derived URLs (redirects, sitemap/crawl
+# discoveries, feed items) must resolve to public IPs; URLs you explicitly
+# configure (feed sources, Confluence base_url, ingest URLs) may be private.
+# Cloud metadata endpoints (169.254.169.254 etc.) are always blocked unless
+# the exact host is listed in allowed_hosts.
+enabled = true
+allowed_hosts = []
+
 [image_generation]
 default_backend = "swarmui"          # local SwarmUI instance is the friendliest zero-key default
 enabled_backends = ["swarmui"]

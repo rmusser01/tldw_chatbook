@@ -1,0 +1,203 @@
+"""App-wide egress policy for outbound URL fetching (SSRF protection).
+
+One rule: a URL is allowed iff every resolved IP is public and not a cloud
+metadata endpoint, OR its hostname is in ``trusted_origins`` (a host the USER
+explicitly typed/configured), OR its hostname is in the ``[web_security]
+allowed_hosts`` config allowlist. Metadata endpoints are stricter: blocked
+even for trusted origins; only the config allowlist overrides them.
+
+Shared pipeline code must NEVER auto-trust its own input URL — trust is
+seeded only at boundaries where user intent is known and threaded down
+(see Docs/superpowers/specs/2026-07-23-web-fetch-hardening-design.md).
+
+Non-goals (documented residual risk): DNS-rebinding IP pinning (we
+resolve-and-check; the HTTP client re-resolves to connect), proxy-aware
+policy (env-var proxies keep working; the target URL is what's validated),
+and DNS caching (OS resolver caches suffice).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import ipaddress
+import socket
+from dataclasses import dataclass
+from typing import Iterable, List
+from urllib.parse import urlparse
+
+from loguru import logger
+
+from ..config import get_cli_setting
+from ..Metrics.metrics_logger import log_counter
+
+# Cloud metadata endpoints: blocked even for trusted origins.
+_METADATA_IPS = frozenset(
+    {
+        ipaddress.ip_address("169.254.169.254"),  # AWS/GCP/Azure IPv4
+        ipaddress.ip_address("fd00:ec2::254"),  # AWS IPv6
+        ipaddress.ip_address("100.100.100.200"),  # Alibaba Cloud
+    }
+)
+METADATA_HOSTNAMES = frozenset({"metadata.google.internal", "metadata.azure.com"})
+
+MAX_REDIRECT_HOPS = 10
+MAX_FETCH_BYTES_PAGE = 10 * 1024 * 1024
+MAX_FETCH_BYTES_SITEMAP = 50 * 1024 * 1024  # sitemap protocol allows 50MB uncompressed
+MAX_FETCH_BYTES_GITHUB_FILE = 20 * 1024 * 1024
+MAX_FETCH_BYTES_MEDIA = 500 * 1024 * 1024
+
+
+class EgressBlockedError(Exception):
+    """URL blocked by the egress policy (SSRF guard)."""
+
+    def __init__(self, url: str, reason: str, detail: str = ""):
+        self.url = url
+        self.reason = reason
+        self.detail = detail
+        super().__init__(
+            f"Egress blocked ({reason}) for {url}"
+            + (f": {detail}" if detail else "")
+            + " [remedy: add the host to [web_security] allowed_hosts in"
+            " config.toml, or set [web_security] enabled = false]"
+        )
+
+
+@dataclass(frozen=True)
+class EgressDecision:
+    allowed: bool
+    reason: str  # "ok" | "scheme" | "metadata" | "private" | "dns_failure" | "disabled"
+    host: str
+    resolved_ips: tuple = ()
+
+
+def _resolve(host: str) -> List[str]:
+    """Resolve every A/AAAA record for ``host`` (test seam — monkeypatched)."""
+    infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    return sorted({info[4][0] for info in infos})
+
+
+async def _resolve_async(host: str) -> List[str]:
+    """Async resolution via the event loop (test seam — monkeypatched)."""
+    loop = asyncio.get_running_loop()
+    infos = await loop.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    return sorted({info[4][0] for info in infos})
+
+
+def _config_enabled() -> bool:
+    value = get_cli_setting("web_security", "enabled", True)
+    if isinstance(value, str):
+        return value.strip().lower() not in ("false", "0", "no", "off")
+    return bool(value)
+
+
+def _config_allowed_hosts() -> frozenset:
+    value = get_cli_setting("web_security", "allowed_hosts", [])
+    if not isinstance(value, (list, tuple, set)):
+        return frozenset()
+    return frozenset(str(h).strip().lower() for h in value if str(h).strip())
+
+
+def _classify_ip(ip_str: str) -> str:
+    """Classify one resolved IP: "metadata" | "private" | "public"."""
+    ip = ipaddress.ip_address(ip_str)
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        ip = mapped
+    if ip in _METADATA_IPS:
+        return "metadata"
+    return "public" if ip.is_global else "private"
+
+
+def _blocked(url: str, reason: str, host: str, detail: str = "") -> EgressDecision:
+    logger.warning(f"Egress blocked ({reason}): {url} {detail}".rstrip())
+    log_counter("egress_blocked", labels={"reason": reason})
+    return EgressDecision(allowed=False, reason=reason, host=host)
+
+
+def _pre_resolution(url: str, trusted_origins: frozenset):
+    """Checks that need no DNS. Returns EgressDecision, or the host to resolve."""
+    if not _config_enabled():
+        logger.debug(f"Egress check disabled by [web_security] for {url}")
+        log_counter("egress_check_skipped")
+        return EgressDecision(allowed=True, reason="disabled", host="")
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname
+    except ValueError:
+        return _blocked(url, "scheme", "", "unparseable URL")
+    if parsed.scheme not in ("http", "https") or not host:
+        return _blocked(url, "scheme", host or "", "only http/https with a host")
+    h = host.lower()
+    allowed_hosts = _config_allowed_hosts()
+    if h in allowed_hosts:
+        return EgressDecision(allowed=True, reason="ok", host=h)
+    if h in METADATA_HOSTNAMES:
+        return _blocked(url, "metadata", h, "cloud metadata hostname")
+    try:
+        ipaddress.ip_address(h)
+    except ValueError:
+        return h  # hostname — caller resolves and calls _post_resolution
+    # IP-literal host (incl. bracketed IPv6): classify directly, no DNS.
+    return _post_resolution(url, h, (h,), trusted_origins)
+
+
+def _post_resolution(
+    url: str, host: str, ips: Iterable[str], trusted_origins: frozenset
+) -> EgressDecision:
+    ips = tuple(ips)
+    classes = {_classify_ip(ip) for ip in ips}
+    if "metadata" in classes:
+        return _blocked(url, "metadata", host, f"resolves to metadata IP ({ips})")
+    if host in trusted_origins:
+        return EgressDecision(allowed=True, reason="ok", host=host, resolved_ips=ips)
+    if "private" in classes:
+        return _blocked(url, "private", host, f"resolves to private IP ({ips})")
+    return EgressDecision(allowed=True, reason="ok", host=host, resolved_ips=ips)
+
+
+def _normalize_trusted(trusted_origins) -> frozenset:
+    return frozenset(str(h).strip().lower() for h in (trusted_origins or ()) if h)
+
+
+def evaluate_url_policy(url: str, *, trusted_origins=frozenset()) -> EgressDecision:
+    """Evaluate the egress policy for ``url`` (sync — blocking DNS).
+
+    Never call from an asyncio event loop; use
+    :func:`evaluate_url_policy_async` there.
+    """
+    trusted = _normalize_trusted(trusted_origins)
+    pre = _pre_resolution(url, trusted)
+    if isinstance(pre, EgressDecision):
+        return pre
+    try:
+        ips = _resolve(pre)
+    except (OSError, socket.gaierror) as exc:
+        return _blocked(url, "dns_failure", pre, str(exc))
+    return _post_resolution(url, pre, ips, trusted)
+
+
+async def evaluate_url_policy_async(
+    url: str, *, trusted_origins=frozenset()
+) -> EgressDecision:
+    """Async variant of :func:`evaluate_url_policy` (event-loop DNS)."""
+    trusted = _normalize_trusted(trusted_origins)
+    pre = _pre_resolution(url, trusted)
+    if isinstance(pre, EgressDecision):
+        return pre
+    try:
+        ips = await _resolve_async(pre)
+    except (OSError, socket.gaierror) as exc:
+        return _blocked(url, "dns_failure", pre, str(exc))
+    return _post_resolution(url, pre, ips, trusted)
+
+
+def check_url_or_raise(url: str, *, trusted_origins=frozenset()) -> None:
+    decision = evaluate_url_policy(url, trusted_origins=trusted_origins)
+    if not decision.allowed:
+        raise EgressBlockedError(url, decision.reason)
+
+
+async def check_url_or_raise_async(url: str, *, trusted_origins=frozenset()) -> None:
+    decision = await evaluate_url_policy_async(url, trusted_origins=trusted_origins)
+    if not decision.allowed:
+        raise EgressBlockedError(url, decision.reason)
