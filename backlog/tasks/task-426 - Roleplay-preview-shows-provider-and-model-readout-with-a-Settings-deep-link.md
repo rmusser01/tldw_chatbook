@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-21 09:38'
-updated_date: '2026-07-23 14:08'
+updated_date: '2026-07-23 15:57'
 labels:
   - roleplay
   - ux
@@ -45,13 +45,13 @@ Reason: This is corrective normalization, documentation, and UI verification wit
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Rebased the task-426 feature directly onto current dev after task-425 merged, so PR #746 contains only the provider/model preview readout, Settings deep-link, and review remediation. Preserved the final task-425 readiness gateway shape while resolving the stacked-branch conflict.
+Rebased the task-426 feature directly onto current dev after task-425 merged, so PR #746 contains only the provider/model preview readout, Settings deep-link, and review remediation. Replayed cleanly across the later TASK-433 endpoint and TASK-434 Personas preview-persistence merges, preserving their reviewed final behavior.
 
 Review remediation: added Google-style Args documentation to PersonasPreviewPane.set_provider_readout(). Provider and model normalization now happens in the shared _selection_from_defaults send path, and provider_readout derives both character and Console-default labels from those effective selections. This keeps display text, Settings navigation, logs, and actual sends aligned, including whitespace-only defaults and models inherited from api_settings.
 
 TDD evidence: the whitespace end-to-end and inherited-provider-model cases both failed before the shared-path fix, then passed after it. The tests submit real preview requests through ReadinessMapPreviewGateway and assert the normalized/effective ConsoleProviderSelection values, fallback behavior, rendered readout, and Configure target.
 
-Verification: Tests/UI/test_personas_workbench.py + Tests/UI/test_personas_preview.py = 197 passed; Ruff passed on all changed test/controller/widget files; mypy passed for personas_preview_controller.py; compileall and git diff --check passed; Backlog Guard found no duplicate IDs across 593 task files. Independent pre-merge review found no Critical issues; its two Important alignment findings were fixed and covered by the new end-to-end assertions.
+Verification on dev 0f5904e6: Tests/UI/test_personas_workbench.py + Tests/UI/test_personas_preview.py = 198 passed; Ruff passed on all changed test/controller/widget files; mypy passed for personas_preview_controller.py; compileall and git diff --check passed; Backlog Guard found no duplicate IDs across 595 task files. Independent pre-merge review and post-rebase integration review found no remaining Critical or Important issues.
 
 ADR required: no. Existing boundaries remain governed by backlog/decisions/004-personas-destination-native-workbench.md, 006-provider-aware-generation-settings.md, 007-personas-workbench-route-consolidation.md, and 012-provider-credential-settings-boundary.md.
 
