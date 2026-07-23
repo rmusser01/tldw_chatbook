@@ -181,6 +181,10 @@ from ...Chat.console_live_work import (
     ConsoleLiveWorkStatusCardState,
 )
 from ...Chat.console_glyphs import GLYPH_COLLAPSE_LEFT, GLYPH_COLLAPSE_RIGHT
+from ...Chat.console_expression_state import (
+    EXPRESSION_IMAGE_STATES,
+    resolve_console_expression_state,
+)
 from ...Chat.console_image_view import (
     IMAGE_CACHE_MAX_ENTRIES,
     ConsoleImageRenderCache,
@@ -189,6 +193,7 @@ from ...Chat.console_image_view import (
     fit_image_cell_size,
     next_view_mode,
     resolve_default_mode,
+    resolve_react_character_expressions,
     resolve_show_character_avatar,
 )
 from ...Chat.console_paste_attach import (
@@ -432,6 +437,12 @@ CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
 # smaller for the rail's narrower column).
 CHARACTER_AVATAR_COLS = 16
 CHARACTER_AVATAR_LINES = 8
+# P3d-1 Task 3 (review fix): bound `_console_expression_spec_cache` so a
+# long session visiting many characters/states doesn't retain unbounded PIL
+# image references (the spec dicts hold their own `PILImage.Image`, so the
+# `_console_image_cache` LRU cap below does not protect this cache). Matches
+# the render cache's bound.
+_EXPRESSION_SPEC_CACHE_MAX = 16
 CONSOLE_FOCUS_REGISTRY = WorkbenchFocusRegistry(
     (
         "console-left-rail",
@@ -2008,6 +2019,11 @@ class ChatScreen(BaseAppScreen):
         self._active_character_avatar: dict | None = None
         self._active_character_avatar_name: str | None = None
         self._last_console_avatar_scope: Any | None = None
+        # P3d-1: per-(character_id, state) decode cache so revisiting an
+        # expression state already seen this session is served instantly
+        # (no re-fetch/re-decode). Keyed on the full scope tuple, mirroring
+        # `_last_console_avatar_scope`.
+        self._console_expression_spec_cache: dict[tuple[int, str], dict] = {}
         self.ui_state = UIState()
         self._load_sidebar_state()
 
@@ -4077,8 +4093,34 @@ class ChatScreen(BaseAppScreen):
             logger.opt(exception=True).debug("avatar: character fetch failed")
             return None
 
+    def _fetch_expression_image_bytes(self, character_id: int, state: str) -> bytes | None:
+        """Return the image bytes for (character, state): the expression-table
+        image for a non-idle state, else the character's idle avatar. Runs
+        off-thread (called via asyncio.to_thread). Never raises -> None on any error."""
+        try:
+            db = getattr(self.app_instance, "chachanotes_db", None)
+            if db is None:
+                return None
+            if state in EXPRESSION_IMAGE_STATES:
+                img = db.get_character_expression_image(character_id, state)
+                if img:
+                    return img
+            card = self._fetch_character_card_for_avatar(character_id)  # idle fallback
+            image = (card or {}).get("image")
+            return bytes(image) if isinstance(image, (bytes, bytearray)) and image else None
+        except Exception:
+            logger.opt(exception=True).debug("avatar: expression fetch failed")
+            return None
+
     async def _refresh_active_character_avatar_if_scope_changed(self) -> None:
-        """Refresh the cached character avatar only when the active character changed."""
+        """Refresh the cached character avatar only when the active
+        (character, expression state) scope changed.
+
+        P3d-1: widens the P3c `(character_id,)` scope to `(character_id,
+        state)` so the avatar reacts to the character thinking/speaking, via
+        `resolve_console_expression_state` (pure, DB-free, reads only the
+        active native Console session's live message statuses).
+        """
         if not resolve_show_character_avatar(
             getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
         ):
@@ -4095,7 +4137,14 @@ class ChatScreen(BaseAppScreen):
             self._last_console_avatar_scope = None
             return
         character_id = self._current_console_rail_character_id()
-        scope = (character_id,)
+        controller = getattr(self, "_console_chat_controller", None)
+        store = getattr(controller, "store", None) if controller is not None else None
+        active_session_id = getattr(store, "active_session_id", None) if store is not None else None
+        react = resolve_react_character_expressions(
+            getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
+        )
+        state = resolve_console_expression_state(store, active_session_id, react_enabled=react)
+        scope = (character_id, state)
         if scope == self._last_console_avatar_scope:
             return
         self._last_console_avatar_scope = scope
@@ -4105,25 +4154,44 @@ class ChatScreen(BaseAppScreen):
             self._active_character_avatar = None
             await self._render_character_avatar_into_section()
             return
+        # Serve from the per-state cache when this (character, state) scope
+        # was already decoded this session -- no re-fetch/re-decode.
+        cached = self._console_expression_spec_cache.get((character_id, state))
+        if cached is not None:
+            self._active_character_avatar = cached
+            await self._render_character_avatar_into_section()
+            return
         _, cache = self._ensure_console_image_view()
         mode = getattr(self, "_console_image_default_mode", "pixels")
-        key = f"character:{character_id}"
-        spec = {"character_id": character_id, "name": name, "mode": mode, "pil": None, "pixels": None}
+        key = f"character:{character_id}:{state}"
+        spec = {"character_id": character_id, "state": state, "name": name,
+                "mode": mode, "pil": None, "pixels": None}
         try:
-            card = await asyncio.to_thread(self._fetch_character_card_for_avatar, character_id)
-            image = (card or {}).get("image")
-            if isinstance(image, (bytes, bytearray)) and image:
-                ok = await asyncio.to_thread(cache.prepare, key, bytes(image))
+            image = await asyncio.to_thread(self._fetch_expression_image_bytes, character_id, state)
+            if image:
+                ok = await asyncio.to_thread(cache.prepare, key, image)
                 if ok:
                     if mode == "graphics":
                         spec["pil"] = cache.get_pil(key)
                     else:
                         spec["pixels"] = cache.get_pixels(key)
         except Exception:
-            logger.opt(exception=True).debug("avatar: refresh failed")
-        # Drop a stale render if the active character changed during decode.
-        if (self._current_console_rail_character_id(),) != scope or not self.is_mounted:
+            logger.opt(exception=True).debug("avatar: expression decode failed")
+        # Post-await staleness re-check on the FULL (character_id, state)
+        # scope: the state can flip mid-decode while streaming, so recompute
+        # it live -- both the session id and the state -- rather than reusing
+        # the `active_session_id` captured before the await, so two tabs
+        # sharing one character can't paint a stale render.
+        current_session_id = getattr(store, "active_session_id", None) if store is not None else None
+        current_state = resolve_console_expression_state(store, current_session_id, react_enabled=react)
+        if (self._current_console_rail_character_id(), current_state) != scope or not self.is_mounted:
             return
+        self._console_expression_spec_cache[(character_id, state)] = spec
+        # Bound the cache: evict oldest insertion-ordered entries (dicts
+        # preserve insertion order) so a long session visiting many
+        # characters/states doesn't retain unbounded PIL image references.
+        while len(self._console_expression_spec_cache) > _EXPRESSION_SPEC_CACHE_MAX:
+            del self._console_expression_spec_cache[next(iter(self._console_expression_spec_cache))]
         self._active_character_avatar = spec
         await self._render_character_avatar_into_section()
 
