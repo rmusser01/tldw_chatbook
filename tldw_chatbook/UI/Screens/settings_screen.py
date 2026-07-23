@@ -993,10 +993,16 @@ class SettingsScreen(BaseAppScreen):
     manual_sync_rows = reactive((), recompose=True)
     theme_editor_modified = reactive(False, recompose=True)
 
+    #: TASK-366: sentinel copies for the provider Test result row.
+    _PROVIDER_TEST_NOT_RUN_COPY = "Provider test has not run."
+    _PROVIDER_TEST_STALE_COPY = (
+        "Provider settings changed since the last test — re-run Test Provider."
+    )
+
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "settings", **kwargs)
         self._settings_drafts: dict[SettingsCategoryId, SettingsDraft] = {}
-        self._provider_test_result = "Provider test has not run."
+        self._provider_test_result = self._PROVIDER_TEST_NOT_RUN_COPY
         self._provider_save_result = (
             "Provider settings have not been saved this session."
         )
@@ -4647,6 +4653,8 @@ class SettingsScreen(BaseAppScreen):
         draft.set_value(key, original, value)
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
+        # TASK-366: any edit to a provider field outdates the last Test result.
+        self._mark_provider_test_result_stale()
 
     def _provider_config_entry(
         self, provider: str
@@ -5661,7 +5669,16 @@ class SettingsScreen(BaseAppScreen):
             Tuple of (redacted detail line, redacted toast summary, passed).
         """
         provider_key = provider_config_key(provider)
-        findings: list[str] = ["Provider test", readiness.user_message]
+        passed = bool(readiness.ready and model)
+        display_name = self._provider_display_name(provider) if provider else "Provider"
+        # TASK-366: lead with ONE verdict consistent with the status line below.
+        # A config-ready provider with no default model is still blocked, so it
+        # must not read "<provider> is ready" next to "status=blocked".
+        if readiness.ready and not model:
+            verdict_message = f"{display_name} is configured, but no default model is set."
+        else:
+            verdict_message = readiness.user_message
+        findings: list[str] = ["Provider test", verdict_message]
 
         if not model:
             findings.append("model=missing")
@@ -5710,11 +5727,9 @@ class SettingsScreen(BaseAppScreen):
             endpoint_summary = f"{endpoint_summary} (draft)"
         findings.append(endpoint_summary)
 
-        passed = bool(readiness.ready and model)
         findings.append(f"status={'ready' if passed else 'blocked'}")
 
         # task-185: the toast must state the outcome, not just "finished".
-        display_name = self._provider_display_name(provider) if provider else "Provider"
         if passed:
             summary = f"Provider test passed: {display_name} is ready; model {model}."
         elif not readiness.ready:
@@ -5801,8 +5816,29 @@ class SettingsScreen(BaseAppScreen):
             self.query_one("#settings-provider-test-result", Static).update(
                 self._provider_test_result
             )
-        except QueryError:
+        except (QueryError, AttributeError):
+            # QueryError: widget not mounted yet. AttributeError: called on an
+            # unmounted screen (no DOM) — the state is still updated for the next
+            # render either way.
             pass
+
+    def _mark_provider_test_result_stale(self) -> None:
+        """Invalidate a prior Test Provider result when provider inputs change.
+
+        TASK-366: a stale ``ready``/``blocked`` verdict that no longer reflects
+        the draft in the form is misleading (the review saw a ``blocked`` line
+        persist after a successful save until Test was re-run). Once any provider
+        field is edited or saved, the last result is replaced with a re-run
+        prompt. A no-op when nothing has run yet or it is already marked stale, so
+        it never clobbers the not-run sentinel or thrashes on every keystroke.
+        """
+        if self._provider_test_result in (
+            self._PROVIDER_TEST_NOT_RUN_COPY,
+            self._PROVIDER_TEST_STALE_COPY,
+        ):
+            return
+        self._provider_test_result = self._PROVIDER_TEST_STALE_COPY
+        self._update_provider_test_result()
 
     def _update_provider_dynamic_widgets(self) -> None:
         try:
@@ -9738,6 +9774,9 @@ class SettingsScreen(BaseAppScreen):
                 self._set_static_text(
                     "#settings-provider-save-result", self._provider_save_result
                 )
+                # TASK-366: the last Test verdict described the pre-save draft;
+                # don't let a stale ready/blocked line persist after saving.
+                self._mark_provider_test_result_stale()
                 self._sync_provider_credential_widget(provider)
                 self._update_provider_dynamic_widgets()
                 self._update_draft_status_widgets(category)

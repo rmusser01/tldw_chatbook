@@ -193,6 +193,65 @@ def test_findings_no_draft_has_no_tags():
     assert "http://localhost:8080" in detail
 
 
+def test_findings_avoid_ready_claim_when_blocked_on_missing_model():
+    """TASK-366: a config-ready provider with no default model must not read
+    'is ready' next to 'status=blocked' — the detail leads with one verdict
+    consistent with the final status line, and still explains the block."""
+    app_config = {"api_settings": {"openai": {"api_key": "sk-test-fake"}}}
+    screen = _bare_settings_screen(app_config)
+    readiness = get_provider_readiness("OpenAI", app_config, environ={})
+    assert readiness.ready is True  # config-level readiness is fine...
+
+    detail, summary, passed = screen._build_provider_readiness_findings(
+        "OpenAI", "", readiness,
+        draft_endpoint="", dirty=set(),
+    )
+
+    assert passed is False
+    assert "status=blocked" in detail
+    assert "is ready" not in detail  # no contradictory ready claim
+    assert "model" in detail.lower()  # verdict still explains the block
+
+
+def test_findings_keep_ready_verdict_when_passing():
+    """TASK-366 guard: a genuine pass must still read 'ready' / status=ready."""
+    app_config = {"api_settings": {"openai": {"api_key": "sk-test-fake"}}}
+    screen = _bare_settings_screen(app_config)
+    readiness = get_provider_readiness("OpenAI", app_config, environ={})
+
+    detail, summary, passed = screen._build_provider_readiness_findings(
+        "OpenAI", "gpt-4o", readiness,
+        draft_endpoint="", dirty=set(),
+    )
+
+    assert passed is True
+    assert "status=ready" in detail
+    assert "ready" in summary.lower()
+
+
+def test_mark_provider_test_result_stale_invalidates_prior_verdict():
+    """TASK-366: editing a provider input must invalidate a prior Test result so
+    a stale 'ready'/'blocked' verdict cannot linger while the form has changed.
+    No-op when nothing has run or it is already stale."""
+    screen = _bare_settings_screen({})
+    screen._provider_test_result = (
+        "Provider test | llama.cpp is ready | model=llama-3 | status=ready"
+    )
+
+    screen._mark_provider_test_result_stale()
+    assert "re-run" in screen._provider_test_result.lower()
+
+    # Idempotent: a second edit does not re-flag or accumulate.
+    stale = screen._provider_test_result
+    screen._mark_provider_test_result_stale()
+    assert screen._provider_test_result == stale
+
+    # No-op on the never-run sentinel.
+    screen._provider_test_result = SettingsScreen._PROVIDER_TEST_NOT_RUN_COPY
+    screen._mark_provider_test_result_stale()
+    assert screen._provider_test_result == SettingsScreen._PROVIDER_TEST_NOT_RUN_COPY
+
+
 # --- Pilot tests: the clickable Test button path (AC#2/AC#3) + widget wiring ---
 #
 # These drive the real SettingsScreen through the harness

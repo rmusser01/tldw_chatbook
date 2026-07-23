@@ -2519,7 +2519,9 @@ async def test_settings_provider_text_inputs_do_not_trigger_footer_shortcuts(
 
         assert model_input.value == "srt"
         assert saved == []
-        assert screen._provider_test_result is None
+        # TASK-366: editing a provider input (the model here) marks the last
+        # Test Provider result stale rather than leaving a now-inaccurate verdict.
+        assert screen._provider_test_result == screen._PROVIDER_TEST_STALE_COPY
         assert screen._settings_drafts
 
         screen.action_settings_save_category()
@@ -2528,7 +2530,9 @@ async def test_settings_provider_text_inputs_do_not_trigger_footer_shortcuts(
 
         assert saved == []
         assert model_input.value == "srt"
-        assert screen._provider_test_result is None
+        # TASK-366: editing a provider input (the model here) marks the last
+        # Test Provider result stale rather than leaving a now-inaccurate verdict.
+        assert screen._provider_test_result == screen._PROVIDER_TEST_STALE_COPY
         assert screen._settings_drafts
 
 
