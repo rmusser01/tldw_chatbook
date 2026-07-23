@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-21 09:38'
-updated_date: '2026-07-23 15:57'
+updated_date: '2026-07-23 16:08'
 labels:
   - roleplay
   - ux
@@ -45,15 +45,5 @@ Reason: This is corrective normalization, documentation, and UI verification wit
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Rebased the task-426 feature directly onto current dev after task-425 merged, so PR #746 contains only the provider/model preview readout, Settings deep-link, and review remediation. Replayed cleanly across the later TASK-433 endpoint and TASK-434 Personas preview-persistence merges, preserving their reviewed final behavior.
-
-Review remediation: added Google-style Args documentation to PersonasPreviewPane.set_provider_readout(). Provider and model normalization now happens in the shared _selection_from_defaults send path, and provider_readout derives both character and Console-default labels from those effective selections. This keeps display text, Settings navigation, logs, and actual sends aligned, including whitespace-only defaults and models inherited from api_settings.
-
-TDD evidence: the whitespace end-to-end and inherited-provider-model cases both failed before the shared-path fix, then passed after it. The tests submit real preview requests through ReadinessMapPreviewGateway and assert the normalized/effective ConsoleProviderSelection values, fallback behavior, rendered readout, and Configure target.
-
-Verification on dev 0f5904e6: Tests/UI/test_personas_workbench.py + Tests/UI/test_personas_preview.py = 198 passed; Ruff passed on all changed test/controller/widget files; mypy passed for personas_preview_controller.py; compileall and git diff --check passed; Backlog Guard found no duplicate IDs across 595 task files. Independent pre-merge review and post-rebase integration review found no remaining Critical or Important issues.
-
-ADR required: no. Existing boundaries remain governed by backlog/decisions/004-personas-destination-native-workbench.md, 006-provider-aware-generation-settings.md, 007-personas-workbench-route-consolidation.md, and 012-provider-credential-settings-boundary.md.
-
-Modified files: personas_preview_controller.py, personas_preview_pane.py, personas_pane_messages.py, personas_screen.py, Tests/UI/test_personas_workbench.py, and this task record.
+Implemented the Personas preview provider/model readout and Configure deep-link within the existing provider-aware Settings boundary. Centralized provider/model normalization so display, send resolution, navigation targeting, and logs share effective selections; added fallback/resolved-provider copy; documented the pane API; and covered whitespace-only defaults plus inherited provider models. After rebasing onto dev 0f5904e6, final integration review found TASK-434 could restore preview state without a character-load event, so restore_conversation now refreshes the readout directly and a no-load navigation-restore regression verifies both visible text and the Configure provider. Verification: 206 focused Personas workbench/preview/persistence tests passed; Ruff passed on all task code (the sole full-screen F821 is inherited unchanged from dev at personas_screen.py:4215); mypy passed for the controller; production files compile; git diff --check passed; duplicate guard passed across 595 task files. Independent re-review found no Critical or Important issues. ADR required: no. Existing ADR-004, ADR-006, ADR-007, and ADR-012 govern this corrective slice. Modified files: Personas preview controller/pane/messages/screen, focused UI tests including restore coverage, and TASK-426.
 <!-- SECTION:NOTES:END -->

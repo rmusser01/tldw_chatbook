@@ -133,6 +133,7 @@ class PersonasPreviewController:
             elif role == "assistant":
                 pane.append_reply(content)
         self.history = [dict(m) for m in history]
+        self.refresh_provider_readout()
 
     async def close_gateway(self) -> None:
         """Release the preview gateway's HTTP client if it was created."""
