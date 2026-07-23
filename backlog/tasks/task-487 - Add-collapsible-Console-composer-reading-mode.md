@@ -1,5 +1,5 @@
 ---
-id: TASK-398
+id: TASK-487
 title: Add collapsible Console composer reading mode
 status: Done
 assignee:
@@ -46,7 +46,7 @@ Reason: Focused Console presentation behavior within ADR-011 stable-compose-tree
 4. Implement ChatScreen-owned transient state, state-aware focus resolution, transcript reading-state restoration, setup blocking, and shared Stop routing.
 5. Harden with mounted tests for anchored/manual scroll, selection, rapid toggles, active/stale Stop, tab/workspace/navigation/recompose retention, setup, and 140x42 plus 100x32 layouts.
 6. Run focused and broader Console/Chat regressions, ruff, compile checks, and git diff checks.
-7. Capture and inspect live Textual-web evidence, obtain user approval, add implementation notes, check all acceptance criteria, and mark TASK-398 Done.
+7. Capture and inspect live Textual-web evidence, obtain user approval, add implementation notes, check all acceptance criteria, and mark TASK-487 Done.
 
 Detailed executable plan: Docs/superpowers/plans/2026-07-22-console-collapsible-composer.md
 <!-- SECTION:PLAN:END -->
