@@ -407,7 +407,8 @@ async def test_console_conversation_star_press_confirms_the_toggle():
             for s in console.query(".console-conversation-star")
             if not getattr(s, "starred", False)
         )
-        star.conversation_title = "My planning chat"
+        # A title with Rich markup must be escaped in the toast, not interpreted.
+        star.conversation_title = "[b]Plan[/b]"
 
         class _Marks:
             def is_starred(self, conversation_id):
@@ -425,7 +426,9 @@ async def test_console_conversation_star_press_confirms_the_toggle():
 
         await console.on_button_pressed(Button.Pressed(star))
 
-        assert any("Starred" in note and "My planning chat" in note for note in notes)
+        assert any("Starred" in note for note in notes)
+        # The markup is escaped (literal backslash-brackets), never interpreted.
+        assert any(r"\[b]Plan\[/b]" in note for note in notes)
 
 
 @pytest.mark.asyncio

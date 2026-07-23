@@ -14866,7 +14866,11 @@ class ChatScreen(BaseAppScreen):
             title = str(
                 getattr(event.button, "conversation_title", "") or ""
             ).splitlines()[0].strip()
-            title_suffix = f' "{title}"' if title else ""
+            # notify() interprets Rich markup, so escape the stored title before
+            # interpolating it (a title like "[red]x[/red]" would otherwise inject
+            # styling into the toast) — matches the escape_markup convention used
+            # for the attachment toasts above.
+            title_suffix = f' "{escape_markup(title)}"' if title else ""
             if star_action == "star":
                 self.app_instance.notify(f"Starred{title_suffix}.")
             elif star_action == "unstar":
