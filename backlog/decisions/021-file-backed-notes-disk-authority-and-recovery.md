@@ -9,12 +9,18 @@ Supersedes: N/A
 
 Existing linked Markdown/text files are the sole content authority for
 file-backed Notes. Chatbook will mutate them only through a hash-checked,
-journaled file coordinator; keep a derived projection and local UUID metadata in
-the main database; and keep mutation safety plus opt-in self-contained recovery
-replicas/history in a separate `notes_recovery.db`.
+journaled file coordinator that can preserve the atomically displaced target;
+keep a derived projection and local UUID metadata in the main database; and keep
+mutation safety plus opt-in self-contained recovery replicas/history in a
+separate `notes_recovery.db`.
 
 File-backed Notes remain in Library's Local Notes owner beside, but visibly
 separate from, existing Database notes.
+
+Writable roots additionally require pinned-root, no-follow path traversal,
+release-tested database/filesystem durability barriers, and process-wide root/
+storage ownership gates. If the local platform/filesystem cannot provide those
+capabilities, the root remains read-only.
 
 ## Context
 
@@ -36,8 +42,9 @@ SQLite, but not SQLite content authority.
 
 SQLite and a filesystem cannot share one atomic transaction. Safe direct file
 editing therefore needs a durable operation journal, exact-byte safety copies,
-expected raw hashes, atomic same-directory replacement, result verification,
-and startup reconciliation.
+versioned expected raw hashes, atomic same-directory replacement that preserves
+the displaced object, result verification, explicit commit/fsync ordering, and
+startup reconciliation.
 
 The user also wants recovery storage independent of the primary Notes
 projection for selected files/folders. A dedicated recovery database satisfies
@@ -69,15 +76,27 @@ backup.
 - Local UUIDs are not portable and are never injected into source files.
 - One process-wide coordinator is the only file mutation and internal projection
   authority.
-- Every mutation compare-checks a raw hash, journals its intent and any bytes
-  whose only accessible copy could be displaced, uses same-directory atomic
-  replacement/no-replace publication where applicable, and verifies the
-  resulting paths and hashes.
-- Normal operations remain pending until the idempotent main binding/projection
-  transition commits, then complete in the recovery journal last; explicit
-  recovery-only restores record a deferred main rebuild.
+- Versioned SHA-256 raw hashes authorize mutations; unknown hash versions fail
+  closed.
+- Every mutation journals intent, durably commits and round-trip verifies bytes
+  whose only accessible copy could be displaced, and uses no-replace publication
+  or atomic exchange/replace-with-backup. Delete first renames to an
+  operation-owned quarantine. An unexpected displaced version is retained in
+  Attention rather than silently lost.
+- Writable paths are traversed from a pinned root handle without following
+  symlink/reparse substitutions. Newly created Chatbook files begin owner-only;
+  displaced/quarantined originals retain their verified source security facts
+  until they can be safely narrowed or restored. Writes are capability-gated
+  where permissions cannot be preserved without broadening.
+- Recovery barriers use a release-tested full-synchronous SQLite durability
+  profile. Files and affected directories are durably flushed. Normal operations
+  remain pending until the idempotent main binding/projection transition durably
+  commits, then complete in the recovery journal last; explicit recovery-only
+  restores record a deferred main rebuild.
 - Watcher/poll events are hints; current filesystem state and hashes determine
-  truth. There is no timestamp winner or automatic merge.
+  truth. Stale body search is suppressed when a file becomes unreadable. There
+  is no timestamp winner or automatic merge; ambiguous moves require explicit
+  reassociation.
 - A separate `notes_recovery.db` contains self-contained revision and operation
   rows. Protected notes always have one verified current replica after a
   completed Chatbook save.
@@ -87,8 +106,18 @@ backup.
   triggers/envelopes, generic public DB update/delete paths, and MCP writes.
 - Database notes retain existing behavior and remain available if recovery
   storage fails.
-- The first rollout permits only one active writable root; this is a release
-  gate, not a schema limitation.
+- A global root registry serializes overlap/legacy ownership across processes
+  and profiles; kernel-held per-root leases elect one coordinator. A global
+  storage-maintenance lock fences pair migration/backup/restore.
+- First upgrade/activation also requires a continuously held, legacy-compatible
+  or platform-enforced cross-version exclusion because an older binary does not
+  honor new locks. The compatible version/launcher fence remains held for an
+  active root's lifetime. Pre-guard upgrades require true offline maintenance
+  plus a durable per-user version floor before activation. Pair migration/restore
+  closes every handle and swaps each SQLite database together with its WAL/SHM/
+  journal family under an external recovery marker.
+- The core rollout permits one linked active root; this is a release gate, not a
+  schema limitation.
 
 ### Accepted trade-offs
 
@@ -100,11 +129,18 @@ backup.
   file-backed commands read-only.
 - File and database state are repaired by journaling/reconciliation rather than
   a nonexistent cross-resource transaction.
-- The final compare/mutate race with an uncooperative external process cannot be
-  eliminated for every replace/move/unlink primitive; immediate verification
-  preserves evidence and surfaces Attention.
+- Platforms/filesystems without atomic displaced-target preservation,
+  beneath-root traversal, non-broadening permission handling, or the required
+  durability barriers remain read-only.
+- An uncooperative process may continue writing through an already-open
+  descriptor after Chatbook atomically displaces the file. Chatbook retains the
+  displaced object until stable bytes are captured, but cannot guarantee against
+  later writes through that foreign handle.
 - Symlinks, hardlink mutation, network/cloud mounts, ACL/xattr preservation, and
   multi-host writing are outside guarantees.
+- Recursive folder mutation, additional linked roots, recovery-only in-place
+  restore, database-pair backup, and optional RAG are outside the core completion
+  gate.
 - Git operations remain external until separately approved.
 
 ## Links
