@@ -132,9 +132,11 @@ the tool's existence is already CERTAIN:
 - **Bridge turn path:** `run_reply`, right where it seeds `SkillFileBindings`
   from `turn_skill_bindings`, appends the block to the trailing user message of
   its own `agent_messages` copy before `run_turn` — zero-race by construction
-  (run_reply only executes once bridge-vs-plain is decided). The
-  `reference_files` metadata for the bound skills is fetched via the skills
-  service at that point.
+  (run_reply only executes once bridge-vs-plain is decided). The block TEXT is
+  pre-rendered at substitution time as pure string work from the execute
+  results already in hand (`reference_files`, no re-execution) and threaded to
+  `run_reply` alongside the binding names; substitution itself never inserts it
+  into messages, so plain sends simply drop it unused.
 - **Fork path:** `SkillRunner.run` appends the block to the rendered body it
   passes to `spawn` (it already holds the `execute_skill` result carrying
   `reference_files`).
