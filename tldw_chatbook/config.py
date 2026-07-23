@@ -13,7 +13,7 @@ else:
 import os
 from pathlib import Path
 import toml
-from typing import Dict, Any, List, Optional, Mapping
+from typing import Dict, Any, List, Optional, Mapping, NamedTuple
 
 #
 # Third-Party Imports
@@ -36,6 +36,7 @@ from tldw_chatbook.Utils.private_paths import (
     create_private_text,
     lexical_path,
     open_private_binary,
+    secure_private_directory,
 )
 #
 #######################################################################################################################
@@ -61,17 +62,25 @@ def _get_effective_config_path() -> Path:
 
 
 def _application_owned_config_directory(config_path: Path) -> Path | None:
+    if os.environ.get("TLDW_CONFIG_PATH"):
+        return None
     default_path = lexical_path(DEFAULT_CONFIG_PATH)
     return default_path.parent if config_path == default_path else None
 
 
-def _report_config_path_posture(result: PrivatePathResult) -> None:
+def _report_config_path_posture(
+    result: PrivatePathResult,
+    *,
+    target_kind: str = "file",
+) -> None:
     if result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
         logger.warning(
-            "Config file permission posture is unverified on this platform."
+            f"Config {target_kind} permission posture is unverified on this platform."
         )
     elif result.status is PrivatePathStatus.HARDENED_PRIVATE:
-        logger.info("Hardened the effective config file to the private posture.")
+        logger.info(
+            f"Hardened the effective config {target_kind} to the private posture."
+        )
 
 
 # --- Encryption support ---
@@ -717,6 +726,8 @@ def load_settings(force_reload: bool = False) -> Dict:
         ):
             logger.debug("load_settings: Returning cached configuration (cache hit)")
             return _SETTINGS_CACHE
+        _SETTINGS_CACHE = None
+        _SETTINGS_CACHE_SOURCE = None
 
     current_file_path = Path(__file__).resolve()
     # config.py is in project_root/tldw_server_api/app/core/config.py
@@ -737,9 +748,8 @@ def load_settings(force_reload: bool = False) -> Dict:
     # the packaged app (no installer/build step writes it, and pyproject.toml
     # only packages *.json/*.md from that directory) so merging it was always
     # a no-op; dropping the probe changes nothing observable.
-    toml_config_data = copy.deepcopy(
-        load_cli_config_and_ensure_existence(force_reload=force_reload)
-    )
+    bootstrap = _load_cli_config_bootstrap(force_reload=force_reload)
+    toml_config_data = copy.deepcopy(bootstrap.config)
     # Idempotent no-op when already decrypted (or encryption disabled) --
     # kept so a session password entered *after* the CLI cache above was
     # primed with ciphertext still yields plaintext here. Without this,
@@ -2010,11 +2020,11 @@ def load_settings(force_reload: bool = False) -> Dict:
             f"Could not create chat dictionaries folder {chat_dicts_folder}: {e}"
         )
 
-    # Cache the configuration before returning
-    with _SETTINGS_CACHE_LOCK:
-        _SETTINGS_CACHE = config_dict
-        _SETTINGS_CACHE_SOURCE = active_config_path
-        logger.debug("load_settings: Configuration cached for future use")
+    if bootstrap.succeeded:
+        with _SETTINGS_CACHE_LOCK:
+            _SETTINGS_CACHE = config_dict
+            _SETTINGS_CACHE_SOURCE = active_config_path
+            logger.debug("load_settings: Configuration cached for future use")
 
     return config_dict
 
@@ -3482,14 +3492,14 @@ _CONFIG_CACHE: Optional[Dict[str, Any]] = None
 _CONFIG_CACHE_SOURCE: Optional[Path] = None
 
 
-def load_cli_config_and_ensure_existence(
+class _ConfigBootstrapResult(NamedTuple):
+    config: Dict[str, Any]
+    succeeded: bool
+
+
+def _load_cli_config_bootstrap(
     force_reload: bool = False,
-) -> Dict[str, Any]:  # Renamed from load_cli_config
-    """
-    Loads settings for the CLI application from ~/.config/tldw_cli/config.toml.
-    If the file doesn't exist, it's created with default values from CONFIG_TOML_CONTENT.
-    Uses programmatic defaults (from CONFIG_TOML_CONTENT) as a base.
-    """
+) -> _ConfigBootstrapResult:
     global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE
     config_path = _get_effective_config_path()
     if (
@@ -3497,7 +3507,7 @@ def load_cli_config_and_ensure_existence(
         and _CONFIG_CACHE_SOURCE == config_path
         and not force_reload
     ):
-        return _CONFIG_CACHE
+        return _ConfigBootstrapResult(_CONFIG_CACHE, True)
 
     _CONFIG_CACHE = None
     _CONFIG_CACHE_SOURCE = None
@@ -3506,6 +3516,13 @@ def load_cli_config_and_ensure_existence(
     loaded_config = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
     bootstrap_succeeded = False
     application_directory = _application_owned_config_directory(config_path)
+    if application_directory is not None:
+        directory_result = secure_private_directory(
+            application_directory,
+            create=True,
+            application_owned=True,
+        )
+        _report_config_path_posture(directory_result, target_kind="directory")
     logger.info(f"Attempting to load CLI config from: {config_path}")
     try:
         with open_private_binary(config_path) as opened:
@@ -3572,7 +3589,18 @@ def load_cli_config_and_ensure_existence(
             "  'api_settings' key NOT FOUND in the loaded configuration for load_cli_config_and_ensure_existence."
         )
 
-    return loaded_config
+    return _ConfigBootstrapResult(loaded_config, bootstrap_succeeded)
+
+
+def load_cli_config_and_ensure_existence(
+    force_reload: bool = False,
+) -> Dict[str, Any]:  # Renamed from load_cli_config
+    """
+    Loads settings for the CLI application from ~/.config/tldw_cli/config.toml.
+    If the file doesn't exist, it's created with default values from CONFIG_TOML_CONTENT.
+    Uses programmatic defaults (from CONFIG_TOML_CONTENT) as a base.
+    """
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
 
 
 def _is_sensitive_setting_key(key: Any) -> bool:

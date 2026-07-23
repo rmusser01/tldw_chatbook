@@ -12,6 +12,8 @@ from tldw_chatbook.Utils.private_paths import PrivatePathError
 def _clear_config_cache():
     config_module._CONFIG_CACHE = None
     config_module._CONFIG_CACHE_SOURCE = None
+    config_module._SETTINGS_CACHE = None
+    config_module._SETTINGS_CACHE_SOURCE = None
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX mode contract")
@@ -41,6 +43,27 @@ def test_default_application_config_directory_is_created_as_0700(
 
     config_module.load_cli_config_and_ensure_existence(force_reload=True)
 
+    assert stat.S_IMODE(target.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX mode contract")
+def test_existing_default_config_directory_is_hardened_before_read(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "application-config" / "config.toml"
+    target.parent.mkdir()
+    target.parent.chmod(0o755)
+    target.write_text("[chat_defaults]\ntemperature = 0.17\n", encoding="utf-8")
+    target.chmod(0o644)
+    monkeypatch.delenv("TLDW_CONFIG_PATH", raising=False)
+    monkeypatch.setattr(config_module, "DEFAULT_CONFIG_PATH", target)
+    _clear_config_cache()
+
+    loaded = config_module.load_cli_config_and_ensure_existence(force_reload=True)
+
+    assert loaded["chat_defaults"]["temperature"] == 0.17
     assert stat.S_IMODE(target.parent.stat().st_mode) == 0o700
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
 
@@ -152,6 +175,56 @@ def test_malformed_config_defaults_are_not_cached_and_repaired_file_is_reloaded(
     target.write_text("[chat_defaults]\ntemperature = 0.17\n", encoding="utf-8")
 
     repaired = config_module.load_cli_config_and_ensure_existence()
+
+    assert repaired["chat_defaults"]["temperature"] == 0.17
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX link contract")
+def test_failed_forced_settings_reload_clears_normalized_cache(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "config.toml"
+    target.write_text("[chat_defaults]\ntemperature = 0.17\n", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    _clear_config_cache()
+
+    loaded = config_module.load_settings(force_reload=True)
+    assert loaded["chat_defaults"]["temperature"] == 0.17
+
+    outside = tmp_path / "outside.toml"
+    outside.write_text("[chat_defaults]\ntemperature = 0.99\n", encoding="utf-8")
+    target.unlink()
+    target.symlink_to(outside)
+
+    with pytest.raises(PrivatePathError):
+        config_module.load_settings(force_reload=True)
+
+    assert config_module._SETTINGS_CACHE is None
+    assert config_module._SETTINGS_CACHE_SOURCE is None
+
+    with pytest.raises(PrivatePathError):
+        config_module.load_settings()
+
+
+def test_malformed_config_defaults_are_not_cached_by_load_settings(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "config.toml"
+    target.write_text("[chat_defaults\n", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    _clear_config_cache()
+
+    loaded = config_module.load_settings(force_reload=True)
+
+    assert loaded["chat_defaults"]["temperature"] == 0.6
+    assert config_module._SETTINGS_CACHE is None
+    assert config_module._SETTINGS_CACHE_SOURCE is None
+
+    target.write_text("[chat_defaults]\ntemperature = 0.17\n", encoding="utf-8")
+
+    repaired = config_module.load_settings()
 
     assert repaired["chat_defaults"]["temperature"] == 0.17
 
