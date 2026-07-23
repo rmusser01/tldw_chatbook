@@ -52,6 +52,43 @@ def test_imported_fingerprint_matches_sp1_adoption(monkeypatch, tmp_path):
     assert imported_fp == pre_fp
 
 
+@pytest.mark.parametrize(
+    "env_var,env_value,attr_path",
+    [
+        ("RAG_EMBEDDING_MODEL", "distinctive-env-model", "embedding.model"),
+        ("RAG_CHUNK_SIZE", "999", "chunking.chunk_size"),
+    ],
+)
+def test_imported_fingerprint_matches_sp1_adoption_with_env_override(
+    monkeypatch, tmp_path, env_var, env_value, attr_path
+):
+    """Cross-SP invariant, env-divergence case: the same guarantee as
+    test_imported_fingerprint_matches_sp1_adoption but with a fingerprint-
+    affecting env var set (RAG_EMBEDDING_MODEL / RAG_CHUNK_SIZE), the one case
+    that could actually orphan an index -- if the imported snapshot dropped
+    the env-applied layer, the imported profile's fingerprint would silently
+    diverge from what SP1 adopted the legacy collection under.
+
+    Also asserts the snapshot's resolved value equals the env value directly:
+    this documents that env IS captured into the imported profile (the import
+    reflects resolve_active_rag_config(), not a bare base profile)."""
+    from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile, resolve_active_rag_config
+    from tldw_chatbook.RAG_Search.simplified.collection_fingerprint import fingerprint_collection
+    mgr, ptr = _wire(monkeypatch, tmp_path)
+    monkeypatch.setenv(env_var, env_value)
+    # Capture BEFORE ensure_imported_profile() repoints the active pointer --
+    # same ordering rationale as test_imported_fingerprint_matches_sp1_adoption.
+    pre_fp = fingerprint_collection(resolve_active_rag_config())
+    new_id = ensure_imported_profile()
+    imported_cfg = mgr.get_profile(new_id).rag_config
+    assert fingerprint_collection(imported_cfg) == pre_fp
+    resolved = imported_cfg
+    for part in attr_path.split("."):
+        resolved = getattr(resolved, part)
+    expected = int(env_value) if attr_path == "chunking.chunk_size" else env_value
+    assert resolved == expected
+
+
 def test_ensure_imported_profile_heals_half_done_first_run(monkeypatch, tmp_path):
     """If a prior first run persisted the imported profile but crashed before
     (or otherwise failed to) flip the active pointer to it, the guard must not
