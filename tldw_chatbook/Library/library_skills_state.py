@@ -48,6 +48,10 @@ _SHADOWED_BUILTIN_NAMES = frozenset(
         "prefill",
         "system",
         "skills",
+        # The skill_file runtime tool (reference-file reachability; the
+        # drift-guard sync test flagged the gap when it joined
+        # RUNTIME_TOOL_NAMES).
+        "skill_file",
     )
 )
 
