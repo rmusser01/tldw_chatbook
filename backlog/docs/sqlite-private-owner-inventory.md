@@ -70,37 +70,41 @@ Classifications have these meanings:
 The disposition vocabulary is checked by the inventory test:
 `secure_default`, `remove_custom_creation`, `centralize_backup`,
 `remove_obsolete_creation`, or `justified_exclusion`.
+`current` rows must retain the exact qualified creator-call anchor shown
+below. A migration changes the row to `migrated`, after which the test requires
+that legacy anchor to be absent; rows are not deleted when their call is
+removed.
 
-| ID | Module | Symbol | Owner ID | Disposition | Rationale |
-| --- | --- | --- | --- | --- | --- |
-| P01 | tldw_chatbook/config | get_user_data_dir | config.user_data_directory | secure_default | This application-owned default data directory becomes the explicit `0700` creation boundary. |
-| P02 | tldw_chatbook/config | load_settings DATABASE_URL setup | config.server_sqlite_parent | remove_obsolete_creation | The legacy server-only value has no Chatbook connection consumer, so its stale mkdir side effect is removed. |
-| P03 | tldw_chatbook/config | load_settings USER_DB_BASE_DIR setup | config.server_user_db_base | remove_obsolete_creation | The legacy server-only value has no Chatbook connection consumer, so its stale mkdir side effect is removed. |
-| P04 | tldw_chatbook/Utils/paths | get_project_databases_dir | utils.project_databases_directory | justified_exclusion | Project template and executable demonstration storage is not a Chatbook-owned production SQLite target. |
-| P05 | tldw_chatbook/Utils/paths | get_user_database_path | utils.legacy_user_database_path | justified_exclusion | The unused legacy helper has no production connection owner. |
-| P06 | tldw_chatbook/DB/base_db | BaseDB.__init__ | db.base | remove_custom_creation | Constructors stop resolving selected paths or creating arbitrary parents. |
-| P07 | tldw_chatbook/DB/ChaChaNotes_DB | CharactersRAGDB.__init__ | db.chachanotes.primary | remove_custom_creation | The caller must supply an existing trusted custom parent or the secured default data directory. |
-| P08 | tldw_chatbook/DB/ChaChaNotes_DB | CharactersRAGDB.backup_database | db.chachanotes.backup | centralize_backup | The centralized backup seam owns target-parent validation. |
-| P09 | tldw_chatbook/DB/Client_Media_DB_v2 | MediaDatabase.__init__ | db.media.primary | remove_custom_creation | The caller must supply an existing trusted custom parent or the secured default data directory. |
-| P10 | tldw_chatbook/DB/Client_Media_DB_v2 | MediaDatabase.backup_database | db.media.backup | centralize_backup | The centralized backup seam owns target-parent validation. |
-| P11 | tldw_chatbook/DB/Prompts_DB | PromptsDatabase.__init__ | db.prompts.primary | remove_custom_creation | The caller must supply an existing trusted custom parent or the secured default data directory. |
-| P12 | tldw_chatbook/DB/Prompts_DB | PromptsDatabase.backup_database | db.prompts.backup | centralize_backup | The centralized backup seam owns target-parent validation. |
-| P13 | tldw_chatbook/DB/RAG_Indexing_DB | RAGIndexingDB.__init__ | db.rag_indexing | remove_custom_creation | Constructors stop creating arbitrary selected parents. |
-| P14 | tldw_chatbook/DB/Evals_DB | EvalsDB.__init__ | db.evals | remove_custom_creation | Constructors stop creating arbitrary selected parents. |
-| P15 | tldw_chatbook/DB/search_history_db | SearchHistoryDB.__init__ | db.search_history | remove_custom_creation | Constructors stop creating arbitrary selected parents. |
-| P16 | tldw_chatbook/Kanban_Interop/local_kanban_db | open_connection | kanban.local | remove_custom_creation | The connection helper stops creating arbitrary selected parents. |
-| P17 | tldw_chatbook/Research_Interop/local_research_service | LocalResearchService.__init__ | research.local | remove_custom_creation | The path-backed constructor stops creating arbitrary selected parents. |
-| P18 | tldw_chatbook/Writing_Interop/local_writing_service | LocalWritingService.__init__ | writing.local | remove_custom_creation | The constructor stops creating arbitrary selected parents. |
-| P19 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage | SQLiteStorage.__init__ | tamagotchi.sqlite | remove_custom_creation | The constructor stops creating arbitrary selected parents. |
-| P20 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_worker | settings.bulk_backup | centralize_backup | Settings secures the application-owned timestamp backup directory before centralized backup. |
-| P21 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_single_worker | settings.single_backup | centralize_backup | Settings secures the application-owned per-database backup directory before centralized backup. |
-| P22 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._restore_single_database | settings.restore | centralize_backup | Settings secures the application-owned restore picker directory before restore. |
-| P23 | tldw_chatbook/Evals/eval_orchestrator | EvaluationOrchestrator._initialize_database | eval.orchestrator_parent | secure_default | Secure only the application-owned default; custom parents must already be trusted. |
-| P24 | tldw_chatbook/Event_Handlers/eval_events | get_orchestrator | eval.events_parent | secure_default | Secure only the application-owned default; custom parents must already be trusted. |
-| P25 | tldw_chatbook/app | TldwCli._init_prompts_service | app.prompts_parent | remove_custom_creation | Startup delegates parent policy to the configured default/custom path boundary. |
-| P26 | tldw_chatbook/Notes/Notes_Library | NotesInteropService.__init__ | notes.library_parent | secure_default | Secure the application-owned per-user database root without changing a custom namespace. |
-| P27 | tldw_chatbook/DB/Sync_Client | executable example setup | db.sync_client_example | secure_default | The executable-adjacent default is secured and fails closed instead of teaching unsafe parent creation. |
-| P28 | tldw_chatbook/runtime_policy/server_parity_state | build_server_parity_state_repositories | runtime.server_parity_parent | secure_default | Preserve the lexical file-backed repository directory; secure the default and require a trusted custom namespace. |
+| ID | Module | Qualified containing symbol | Creator call | State | Owner ID | Disposition | Rationale |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| P01 | tldw_chatbook/config | get_user_data_dir | user_dir.mkdir(parents=True, exist_ok=True) | current | config.user_data_directory | secure_default | This application-owned default data directory becomes the explicit `0700` creation boundary. |
+| P02 | tldw_chatbook/config | load_settings | main_db_file_path_server.parent.mkdir(parents=True, exist_ok=True) | current | config.server_sqlite_parent | remove_obsolete_creation | The `DATABASE_URL` branch has no Chatbook connection consumer, so its stale mkdir side effect is removed. |
+| P03 | tldw_chatbook/config | load_settings | user_data_base_dir_server.mkdir(parents=True, exist_ok=True) | current | config.server_user_db_base | remove_obsolete_creation | The `USER_DB_BASE_DIR` branch has no Chatbook connection consumer, so its stale mkdir side effect is removed. |
+| P04 | tldw_chatbook/Utils/paths | get_project_databases_dir | PROJECT_DATABASES_DIR.mkdir(parents=True, exist_ok=True) | current | utils.project_databases_directory | justified_exclusion | Project template and executable demonstration storage is not a Chatbook-owned production SQLite target. |
+| P05 | tldw_chatbook/Utils/paths | get_user_database_path | USER_DB_DIR.mkdir(parents=True, exist_ok=True) | current | utils.legacy_user_database_path | justified_exclusion | The unused legacy helper has no production connection owner. |
+| P06 | tldw_chatbook/DB/base_db | BaseDB.__init__ | self.db_path.parent.mkdir(parents=True, exist_ok=True) | current | db.base | remove_custom_creation | Constructors stop resolving selected paths or creating arbitrary parents. |
+| P07 | tldw_chatbook/DB/ChaChaNotes_DB | CharactersRAGDB.__init__ | self.db_path.parent.mkdir(parents=True, exist_ok=True) | current | db.chachanotes.primary | remove_custom_creation | The caller must supply an existing trusted custom parent or the secured default data directory. |
+| P08 | tldw_chatbook/DB/ChaChaNotes_DB | CharactersRAGDB.backup_database | backup_db_path_obj.parent.mkdir(parents=True, exist_ok=True) | current | db.chachanotes.backup | centralize_backup | The centralized backup seam owns target-parent validation. |
+| P09 | tldw_chatbook/DB/Client_Media_DB_v2 | MediaDatabase.__init__ | self.db_path.parent.mkdir(parents=True, exist_ok=True) | current | db.media.primary | remove_custom_creation | The caller must supply an existing trusted custom parent or the secured default data directory. |
+| P10 | tldw_chatbook/DB/Client_Media_DB_v2 | MediaDatabase.backup_database | backup_db_path.parent.mkdir(parents=True, exist_ok=True) | current | db.media.backup | centralize_backup | The centralized backup seam owns target-parent validation. |
+| P11 | tldw_chatbook/DB/Prompts_DB | PromptsDatabase.__init__ | self.db_path.parent.mkdir(parents=True, exist_ok=True) | current | db.prompts.primary | remove_custom_creation | The caller must supply an existing trusted custom parent or the secured default data directory. |
+| P12 | tldw_chatbook/DB/Prompts_DB | PromptsDatabase.backup_database | backup_db_path_obj.parent.mkdir(parents=True, exist_ok=True) | current | db.prompts.backup | centralize_backup | The centralized backup seam owns target-parent validation. |
+| P13 | tldw_chatbook/DB/RAG_Indexing_DB | RAGIndexingDB.__init__ | self.db_path.parent.mkdir(parents=True, exist_ok=True) | current | db.rag_indexing | remove_custom_creation | Constructors stop creating arbitrary selected parents. |
+| P14 | tldw_chatbook/DB/Evals_DB | EvalsDB.__init__ | self.db_path.parent.mkdir(parents=True, exist_ok=True) | current | db.evals | remove_custom_creation | Constructors stop creating arbitrary selected parents. |
+| P15 | tldw_chatbook/DB/search_history_db | SearchHistoryDB.__init__ | self.db_path.parent.mkdir(parents=True, exist_ok=True) | current | db.search_history | remove_custom_creation | Constructors stop creating arbitrary selected parents. |
+| P16 | tldw_chatbook/Kanban_Interop/local_kanban_db | open_connection | Path(db_path).expanduser().parent.mkdir(parents=True, exist_ok=True) | current | kanban.local | remove_custom_creation | The connection helper stops creating arbitrary selected parents. |
+| P17 | tldw_chatbook/Research_Interop/local_research_service | LocalResearchService.__init__ | self.db_path.parent.mkdir(parents=True, exist_ok=True) | current | research.local | remove_custom_creation | The path-backed constructor stops creating arbitrary selected parents. |
+| P18 | tldw_chatbook/Writing_Interop/local_writing_service | LocalWritingService.__init__ | self.db_path.parent.mkdir(parents=True, exist_ok=True) | current | writing.local | remove_custom_creation | The constructor stops creating arbitrary selected parents. |
+| P19 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage | SQLiteStorage.__init__ | self.db_path.parent.mkdir(parents=True, exist_ok=True) | current | tamagotchi.sqlite | remove_custom_creation | The constructor stops creating arbitrary selected parents. |
+| P20 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_worker | backup_dir.mkdir(parents=True, exist_ok=True) | current | settings.bulk_backup | centralize_backup | Settings secures the application-owned timestamp backup directory before centralized backup. |
+| P21 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_single_worker | backup_dir.mkdir(parents=True, exist_ok=True) | current | settings.single_backup | centralize_backup | Settings secures the application-owned per-database backup directory before centralized backup. |
+| P22 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._restore_single_database | backup_dir.mkdir(parents=True, exist_ok=True) | current | settings.restore | centralize_backup | Settings secures the application-owned restore picker directory before restore. |
+| P23 | tldw_chatbook/Evals/eval_orchestrator | EvaluationOrchestrator._initialize_database | Path(db_path).parent.mkdir(parents=True, exist_ok=True) | current | eval.orchestrator_parent | secure_default | Secure only the application-owned default; custom parents must already be trusted. |
+| P24 | tldw_chatbook/Event_Handlers/eval_events | get_orchestrator | db_path.parent.mkdir(parents=True, exist_ok=True) | current | eval.events_parent | secure_default | Secure only the application-owned default; custom parents must already be trusted. |
+| P25 | tldw_chatbook/app | TldwCli._init_prompts_service | prompts_db_path.parent.mkdir(parents=True, exist_ok=True) | current | app.prompts_parent | remove_custom_creation | Startup delegates parent policy to the configured default/custom path boundary. |
+| P26 | tldw_chatbook/Notes/Notes_Library | NotesInteropService.__init__ | self.base_db_directory.mkdir(parents=True, exist_ok=True) | current | notes.library_parent | secure_default | Secure the application-owned per-user database root without changing a custom namespace. |
+| P27 | tldw_chatbook/DB/Sync_Client | <module> | os.makedirs(os.path.dirname(DATABASE_PATH) or '.', exist_ok=True) | current | db.sync_client_example | secure_default | The executable-adjacent default is secured and fails closed instead of teaching unsafe parent creation. |
+| P28 | tldw_chatbook/runtime_policy/server_parity_state | build_server_parity_state_repositories | resolved_data_dir.mkdir(parents=True, exist_ok=True) | current | runtime.server_parity_parent | secure_default | Preserve the lexical file-backed repository directory; secure the default and require a trusted custom namespace. |
 
 ## Explicit exclusions
 

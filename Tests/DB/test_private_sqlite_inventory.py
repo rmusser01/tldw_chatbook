@@ -29,60 +29,145 @@ ALLOWED_PARENT_DISPOSITIONS = {
 }
 
 EXPECTED_PARENT_CREATORS = {
-    ("tldw_chatbook/config", "get_user_data_dir"),
-    ("tldw_chatbook/config", "load_settings DATABASE_URL setup"),
-    ("tldw_chatbook/config", "load_settings USER_DB_BASE_DIR setup"),
-    ("tldw_chatbook/Utils/paths", "get_project_databases_dir"),
-    ("tldw_chatbook/Utils/paths", "get_user_database_path"),
-    ("tldw_chatbook/DB/base_db", "BaseDB.__init__"),
-    ("tldw_chatbook/DB/ChaChaNotes_DB", "CharactersRAGDB.__init__"),
-    ("tldw_chatbook/DB/ChaChaNotes_DB", "CharactersRAGDB.backup_database"),
-    ("tldw_chatbook/DB/Client_Media_DB_v2", "MediaDatabase.__init__"),
-    ("tldw_chatbook/DB/Client_Media_DB_v2", "MediaDatabase.backup_database"),
-    ("tldw_chatbook/DB/Prompts_DB", "PromptsDatabase.__init__"),
-    ("tldw_chatbook/DB/Prompts_DB", "PromptsDatabase.backup_database"),
-    ("tldw_chatbook/DB/RAG_Indexing_DB", "RAGIndexingDB.__init__"),
-    ("tldw_chatbook/DB/Evals_DB", "EvalsDB.__init__"),
-    ("tldw_chatbook/DB/search_history_db", "SearchHistoryDB.__init__"),
-    ("tldw_chatbook/Kanban_Interop/local_kanban_db", "open_connection"),
+    (
+        "tldw_chatbook/config",
+        "get_user_data_dir",
+        "user_dir.mkdir(parents=True, exist_ok=True)",
+    ),
+    (
+        "tldw_chatbook/config",
+        "load_settings",
+        "main_db_file_path_server.parent.mkdir(parents=True, exist_ok=True)",
+    ),
+    (
+        "tldw_chatbook/config",
+        "load_settings",
+        "user_data_base_dir_server.mkdir(parents=True, exist_ok=True)",
+    ),
+    (
+        "tldw_chatbook/Utils/paths",
+        "get_project_databases_dir",
+        "PROJECT_DATABASES_DIR.mkdir(parents=True, exist_ok=True)",
+    ),
+    (
+        "tldw_chatbook/Utils/paths",
+        "get_user_database_path",
+        "USER_DB_DIR.mkdir(parents=True, exist_ok=True)",
+    ),
+    (
+        "tldw_chatbook/DB/base_db",
+        "BaseDB.__init__",
+        "self.db_path.parent.mkdir(parents=True, exist_ok=True)",
+    ),
+    (
+        "tldw_chatbook/DB/ChaChaNotes_DB",
+        "CharactersRAGDB.__init__",
+        "self.db_path.parent.mkdir(parents=True, exist_ok=True)",
+    ),
+    (
+        "tldw_chatbook/DB/ChaChaNotes_DB",
+        "CharactersRAGDB.backup_database",
+        "backup_db_path_obj.parent.mkdir(parents=True, exist_ok=True)",
+    ),
+    (
+        "tldw_chatbook/DB/Client_Media_DB_v2",
+        "MediaDatabase.__init__",
+        "self.db_path.parent.mkdir(parents=True, exist_ok=True)",
+    ),
+    (
+        "tldw_chatbook/DB/Client_Media_DB_v2",
+        "MediaDatabase.backup_database",
+        "backup_db_path.parent.mkdir(parents=True, exist_ok=True)",
+    ),
+    (
+        "tldw_chatbook/DB/Prompts_DB",
+        "PromptsDatabase.__init__",
+        "self.db_path.parent.mkdir(parents=True, exist_ok=True)",
+    ),
+    (
+        "tldw_chatbook/DB/Prompts_DB",
+        "PromptsDatabase.backup_database",
+        "backup_db_path_obj.parent.mkdir(parents=True, exist_ok=True)",
+    ),
+    (
+        "tldw_chatbook/DB/RAG_Indexing_DB",
+        "RAGIndexingDB.__init__",
+        "self.db_path.parent.mkdir(parents=True, exist_ok=True)",
+    ),
+    (
+        "tldw_chatbook/DB/Evals_DB",
+        "EvalsDB.__init__",
+        "self.db_path.parent.mkdir(parents=True, exist_ok=True)",
+    ),
+    (
+        "tldw_chatbook/DB/search_history_db",
+        "SearchHistoryDB.__init__",
+        "self.db_path.parent.mkdir(parents=True, exist_ok=True)",
+    ),
+    (
+        "tldw_chatbook/Kanban_Interop/local_kanban_db",
+        "open_connection",
+        "Path(db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)",
+    ),
     (
         "tldw_chatbook/Research_Interop/local_research_service",
         "LocalResearchService.__init__",
+        "self.db_path.parent.mkdir(parents=True, exist_ok=True)",
     ),
     (
         "tldw_chatbook/Writing_Interop/local_writing_service",
         "LocalWritingService.__init__",
+        "self.db_path.parent.mkdir(parents=True, exist_ok=True)",
     ),
     (
         "tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage",
         "SQLiteStorage.__init__",
+        "self.db_path.parent.mkdir(parents=True, exist_ok=True)",
     ),
     (
         "tldw_chatbook/UI/Tools_Settings_Window",
         "ToolsSettingsWindow._backup_worker",
+        "backup_dir.mkdir(parents=True, exist_ok=True)",
     ),
     (
         "tldw_chatbook/UI/Tools_Settings_Window",
         "ToolsSettingsWindow._backup_single_worker",
+        "backup_dir.mkdir(parents=True, exist_ok=True)",
     ),
     (
         "tldw_chatbook/UI/Tools_Settings_Window",
         "ToolsSettingsWindow._restore_single_database",
+        "backup_dir.mkdir(parents=True, exist_ok=True)",
     ),
     (
         "tldw_chatbook/Evals/eval_orchestrator",
         "EvaluationOrchestrator._initialize_database",
+        "Path(db_path).parent.mkdir(parents=True, exist_ok=True)",
     ),
-    ("tldw_chatbook/Event_Handlers/eval_events", "get_orchestrator"),
-    ("tldw_chatbook/app", "TldwCli._init_prompts_service"),
+    (
+        "tldw_chatbook/Event_Handlers/eval_events",
+        "get_orchestrator",
+        "db_path.parent.mkdir(parents=True, exist_ok=True)",
+    ),
+    (
+        "tldw_chatbook/app",
+        "TldwCli._init_prompts_service",
+        "prompts_db_path.parent.mkdir(parents=True, exist_ok=True)",
+    ),
     (
         "tldw_chatbook/Notes/Notes_Library",
         "NotesInteropService.__init__",
+        "self.base_db_directory.mkdir(parents=True, exist_ok=True)",
     ),
-    ("tldw_chatbook/DB/Sync_Client", "executable example setup"),
+    (
+        "tldw_chatbook/DB/Sync_Client",
+        "<module>",
+        "os.makedirs(os.path.dirname(DATABASE_PATH) or '.', exist_ok=True)",
+    ),
     (
         "tldw_chatbook/runtime_policy/server_parity_state",
         "build_server_parity_state_repositories",
+        "resolved_data_dir.mkdir(parents=True, exist_ok=True)",
     ),
 }
 
@@ -118,6 +203,8 @@ def _inventory_rows(prefix: str) -> list[dict[str, str]]:
                 "id",
                 "module",
                 "symbol",
+                "creator_call",
+                "state",
                 "owner_id",
                 "disposition",
                 "rationale",
@@ -138,17 +225,77 @@ def _is_sqlite3_connect(call: ast.Call) -> bool:
     )
 
 
-def _current_direct_connect_modules() -> Counter[str]:
-    calls: Counter[str] = Counter()
+class _QualifiedCallVisitor(ast.NodeVisitor):
+    def __init__(self, predicate) -> None:
+        self.predicate = predicate
+        self.symbol_stack: list[str] = []
+        self.calls: Counter[str] = Counter()
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.symbol_stack.append(node.name)
+        self.generic_visit(node)
+        self.symbol_stack.pop()
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self.symbol_stack.append(node.name)
+        self.generic_visit(node)
+        self.symbol_stack.pop()
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if self.predicate(node):
+            symbol = ".".join(self.symbol_stack) if self.symbol_stack else "<module>"
+            self.calls[symbol] += 1
+        self.generic_visit(node)
+
+
+def _qualified_calls(source_path: Path, predicate) -> Counter[str]:
+    visitor = _QualifiedCallVisitor(predicate)
+    visitor.visit(_parse_source(source_path))
+    return visitor.calls
+
+
+def _qualified_sqlite_connect_calls(source_path: Path) -> Counter[str]:
+    tree = _parse_source(source_path)
+    module_aliases: set[str] = set()
+    connect_aliases: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in {"sqlite3", "sqlite3.dbapi2"}:
+                    module_aliases.add(alias.asname or alias.name.split(".", 1)[0])
+        elif isinstance(node, ast.ImportFrom) and node.module in {
+            "sqlite3",
+            "sqlite3.dbapi2",
+        }:
+            for alias in node.names:
+                if alias.name == "connect":
+                    connect_aliases.add(alias.asname or alias.name)
+                elif alias.name == "dbapi2":
+                    module_aliases.add(alias.asname or alias.name)
+
+    def is_raw_connect(call: ast.Call) -> bool:
+        if isinstance(call.func, ast.Name):
+            return call.func.id in connect_aliases
+        if not isinstance(call.func, ast.Attribute) or call.func.attr != "connect":
+            return False
+        root = call.func.value
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        return isinstance(root, ast.Name) and root.id in module_aliases
+
+    visitor = _QualifiedCallVisitor(is_raw_connect)
+    visitor.visit(tree)
+    return visitor.calls
+
+
+def _current_direct_connect_sites() -> Counter[tuple[str, str]]:
+    calls: Counter[tuple[str, str]] = Counter()
     for source_path in PRODUCTION_ROOT.rglob("*.py"):
-        tree = _parse_source(source_path)
-        count = sum(
-            isinstance(node, ast.Call) and _is_sqlite3_connect(node)
-            for node in ast.walk(tree)
-        )
-        if count:
-            module = source_path.relative_to(PROJECT_ROOT).with_suffix("").as_posix()
-            calls[module] = count
+        module = source_path.relative_to(PROJECT_ROOT).with_suffix("").as_posix()
+        for symbol, count in _qualified_sqlite_connect_calls(source_path).items():
+            calls[(module, symbol)] += count
     return calls
 
 
@@ -171,6 +318,26 @@ def _classifications(row: dict[str, str]) -> set[str]:
     return {value.strip() for value in row["classification"].split(",")}
 
 
+def _assert_raw_connection_census(
+    documented_legacy: Counter[tuple[str, str]],
+    current: Counter[tuple[str, str]],
+    *,
+    seam_exists: bool,
+) -> None:
+    seam_site = ("tldw_chatbook/DB/private_sqlite", "connect_private_sqlite")
+    if not seam_exists:
+        assert sum(current.values()) == 31
+        assert current == documented_legacy
+        return
+
+    assert current[seam_site] == 1
+    unexpected = set(current) - set(documented_legacy) - {seam_site}
+    assert not unexpected
+    for site, count in current.items():
+        if site != seam_site:
+            assert count <= documented_legacy[site]
+
+
 def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
     connection_rows = _inventory_rows("C")
     backup_rows = _inventory_rows("B")
@@ -183,13 +350,100 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
     ]
 
 
-def test_inventory_matches_every_current_raw_connection_module_and_count() -> None:
-    documented = Counter(row["module"] for row in _inventory_rows("C"))
-    current = _current_direct_connect_modules()
+def test_raw_connection_census_is_qualified_and_transition_aware() -> None:
+    documented_legacy = Counter(
+        (row["module"], row["symbol"]) for row in _inventory_rows("C")
+    )
+    current = _current_direct_connect_sites()
+    seam_module = "tldw_chatbook/DB/private_sqlite"
+    seam_tree = _parse_source(PROJECT_ROOT / f"{seam_module}.py")
+    seam_exists = any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "connect_private_sqlite"
+        for node in seam_tree.body
+    )
 
-    assert sum(current.values()) == 31
-    assert len(current) == 18
-    assert documented == current
+    if not seam_exists:
+        assert len({module for module, _symbol in current}) == 18
+    _assert_raw_connection_census(
+        documented_legacy,
+        current,
+        seam_exists=seam_exists,
+    )
+
+
+def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
+    legacy_site = ("tldw_chatbook/DB/legacy", "Owner.connect")
+    seam_site = ("tldw_chatbook/DB/private_sqlite", "connect_private_sqlite")
+    documented = Counter({legacy_site: 31})
+
+    _assert_raw_connection_census(
+        documented,
+        Counter({legacy_site: 31}),
+        seam_exists=False,
+    )
+    with pytest.raises(AssertionError):
+        _assert_raw_connection_census(
+            documented,
+            Counter({legacy_site: 30}),
+            seam_exists=False,
+        )
+
+    _assert_raw_connection_census(
+        documented,
+        Counter({legacy_site: 7, seam_site: 1}),
+        seam_exists=True,
+    )
+    with pytest.raises(AssertionError):
+        _assert_raw_connection_census(
+            documented,
+            Counter({legacy_site: 7, seam_site: 2}),
+            seam_exists=True,
+        )
+    with pytest.raises(AssertionError):
+        _assert_raw_connection_census(
+            documented,
+            Counter(
+                {
+                    legacy_site: 7,
+                    seam_site: 1,
+                    ("tldw_chatbook/new_owner", "open_database"): 1,
+                }
+            ),
+            seam_exists=True,
+        )
+
+
+def test_raw_connection_census_detects_sqlite_import_aliases(tmp_path: Path) -> None:
+    source_path = tmp_path / "aliased_sqlite.py"
+    source_path.write_text(
+        "\n".join(
+            (
+                "import sqlite3 as sql",
+                "import sqlite3.dbapi2 as dbapi",
+                "from sqlite3 import connect as direct_connect",
+                "",
+                "def first():",
+                "    return sql.connect(':memory:')",
+                "",
+                "class Owner:",
+                "    def second(self):",
+                "        return direct_connect(':memory:')",
+                "",
+                "def third():",
+                "    return dbapi.connect(':memory:')",
+                "",
+                "def fourth():",
+                "    from sqlite3 import connect as local_connect",
+                "    return local_connect(':memory:')",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    assert _qualified_sqlite_connect_calls(source_path) == Counter(
+        {"first": 1, "Owner.second": 1, "third": 1, "fourth": 1}
+    )
 
 
 def test_every_connection_and_backup_row_links_to_a_matching_policy() -> None:
@@ -265,15 +519,33 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
 def test_parent_creator_inventory_is_checked_and_has_a_disposition() -> None:
     parent_rows = _inventory_rows("P")
 
-    assert {(row["module"], row["symbol"]) for row in parent_rows} == (
-        EXPECTED_PARENT_CREATORS
-    )
+    assert {
+        (row["module"], row["symbol"], row["creator_call"]) for row in parent_rows
+    } == (EXPECTED_PARENT_CREATORS)
     assert len({row["id"] for row in parent_rows}) == len(parent_rows)
     assert all(row["disposition"] in ALLOWED_PARENT_DISPOSITIONS for row in parent_rows)
+    assert all(row["state"] in {"current", "migrated"} for row in parent_rows)
     assert all(row["rationale"].strip() for row in parent_rows)
     for row in parent_rows:
         policy = SQLITE_OWNER_REGISTRY[row["owner_id"]]
         assert policy.production_module == row["module"]
+
+    for module, creator_call in {
+        (row["module"], row["creator_call"]) for row in parent_rows
+    }:
+        source_path = PROJECT_ROOT / f"{module}.py"
+        creator_calls = _qualified_calls(
+            source_path,
+            lambda call: ast.unparse(call) == creator_call,
+        )
+        expected_calls = Counter(
+            row["symbol"]
+            for row in parent_rows
+            if row["module"] == module
+            and row["creator_call"] == creator_call
+            and row["state"] == "current"
+        )
+        assert creator_calls == expected_calls
 
 
 def test_legacy_memory_and_parent_semantics_are_preserved_explicitly() -> None:
