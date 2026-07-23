@@ -139,3 +139,34 @@ def test_build_zip_empty_set_is_valid_zip():
     blob = build_expression_set_zip("Ada", {})
     zf = zipfile.ZipFile(io.BytesIO(blob))
     assert zf.namelist() == ["expression_set.json"]
+
+
+@pytest.fixture
+def db(tmp_path):
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    return CharactersRAGDB(tmp_path / "expr.db", "test-client")   # file-backed, not :memory:
+
+
+def test_apply_images_to_db_writes_only_non_idle(db):
+    from tldw_chatbook.Character_Chat.expression_set_io import apply_expression_images_to_db
+    cid = db.add_character_card({"name": "Ada"})
+    applied, skipped = apply_expression_images_to_db(
+        db, cid, {"idle": _png(), "speaking": _png(), "thinking": _png()}
+    )
+    assert set(applied) == {"speaking", "thinking"}     # idle NOT written to the table
+    assert db.get_character_expression_image(cid, "speaking") is not None
+    assert db.get_character_expression_image(cid, "idle") is None
+
+
+def test_apply_images_to_db_best_effort(db, monkeypatch):
+    from tldw_chatbook.Character_Chat.expression_set_io import apply_expression_images_to_db
+    cid = db.add_character_card({"name": "Ada"})
+    orig = db.set_character_expression_image
+    def boom(c, s, i, m=None):
+        if s == "error":
+            raise RuntimeError("disk full")
+        return orig(c, s, i, m)
+    monkeypatch.setattr(db, "set_character_expression_image", boom)
+    applied, skipped = apply_expression_images_to_db(db, cid, {"speaking": _png(), "error": _png()})
+    assert applied == ["speaking"]
+    assert any(s == "error" for s, _ in skipped)

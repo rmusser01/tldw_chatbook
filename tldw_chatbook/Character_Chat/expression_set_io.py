@@ -151,3 +151,36 @@ def build_expression_set_zip(character_name: str, images: dict[str, bytes]) -> b
         }
         zf.writestr("expression_set.json", json.dumps(manifest, indent=2))
     return buf.getvalue()
+
+
+def apply_expression_images_to_db(db, character_id: int, images: dict[str, bytes]):
+    """Write the non-idle states to the expression table, best-effort.
+
+    Args:
+        db: a CharactersRAGDB-like object exposing ``set_character_expression_image``.
+        character_id: the owning character id.
+        images: {state: bytes}; only EXPRESSION_IMAGE_STATES are written (idle skipped).
+
+    Returns:
+        (applied_states, skipped[(state, reason)]).
+    """
+    applied: list[str] = []
+    skipped: list[tuple[str, str]] = []
+    for state in EXPRESSION_IMAGE_STATES:
+        data = images.get(state)
+        if not data:
+            continue
+        try:
+            db.set_character_expression_image(character_id, state, data, None)
+            applied.append(state)
+        except Exception as exc:
+            skipped.append((state, f"write failed: {exc}"))
+    return applied, skipped
+
+
+@dataclass(frozen=True)
+class ExpressionSetApplyResult:
+    """Outcome of applying a resolved expression set to a character:
+    idle staged in the editor, the reactive states written to the DB."""
+    applied: list[str] = field(default_factory=list)
+    skipped: list[tuple[str, str]] = field(default_factory=list)   # (state, reason)

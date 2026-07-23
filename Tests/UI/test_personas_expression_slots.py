@@ -109,3 +109,23 @@ async def test_clear_soft_deletes_expression_row(personas_editor_with_saved_char
     db.set_character_expression_image(char_id, "error", b"x")
     await screen._clear_expression_slot(char_id, "error")
     assert db.get_character_expression_image(char_id, "error") is None
+
+
+@pytest.mark.asyncio
+async def test_apply_expression_set_stages_idle_and_writes_three(personas_editor_with_saved_character):
+    app, screen, db, char_id = personas_editor_with_saved_character
+    import io as _io
+    from PIL import Image as _Img
+    def _png(c=(1, 2, 3)):
+        b = _io.BytesIO(); _Img.new("RGB", (8, 8), c).save(b, format="PNG"); return b.getvalue()
+
+    result = await screen._apply_expression_set(
+        char_id, {"idle": _png((9, 9, 9)), "speaking": _png(), "thinking": _png()}
+    )
+    # idle STAGED in the editor (not the table); three -> table
+    from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget import PersonasCharacterEditorWidget
+    editor = screen.query_one(PersonasCharacterEditorWidget)
+    assert editor.current_avatar_bytes() == _png((9, 9, 9))      # idle staged
+    assert db.get_character_expression_image(char_id, "speaking") is not None
+    assert db.get_character_expression_image(char_id, "idle") is None
+    assert set(result.applied) >= {"idle", "speaking", "thinking"}

@@ -4390,6 +4390,46 @@ class PersonasScreen(BaseAppScreen):
     # write straight to character_expression_images (Task 1's DB seam), never
     # to character_cards - no card save, no version bump.
 
+    async def _apply_expression_set(
+        self, character_id: int, images: dict
+    ) -> "ExpressionSetApplyResult":
+        """Apply a resolved expression set: idle staged in the editor (persists on
+        card save), the three reactive states written immediately. Bumps the render
+        token ONCE, then re-renders the affected slots + the avatar thumbnail.
+
+        Does NOT call ``_apply_expression_upload`` per state - that bumps the
+        generation token each time and would drop the prior slot's in-flight
+        render (the P3d-1 render-race). Every write here shares a single fresh
+        token before the (single) re-render pass.
+        """
+        from ...Character_Chat.expression_set_io import (
+            apply_expression_images_to_db,
+            ExpressionSetApplyResult,
+        )
+        applied: list[str] = []
+        skipped: list = []
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        # idle -> stage in the editor (like a manual avatar upload)
+        idle = images.get("idle")
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except QueryError:
+            editor = None
+        if idle and editor is not None:
+            editor.set_avatar_image(idle)
+            applied.append("idle")
+        # three -> DB (immediate), off-thread
+        if db is not None:
+            db_applied, db_skipped = await asyncio.to_thread(
+                apply_expression_images_to_db, db, character_id, images
+            )
+            applied.extend(db_applied)
+            skipped.extend(db_skipped)
+        # single generation bump, then ONE re-render of the avatar + all 3 slots
+        self._character_editor_generation += 1
+        await self._render_all_character_editor_thumbnails(character_id)
+        return ExpressionSetApplyResult(applied=applied, skipped=skipped)
+
     async def _apply_expression_upload(
         self, character_id: int, state: str, image: bytes, mime: str | None = None
     ) -> None:
