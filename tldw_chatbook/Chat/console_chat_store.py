@@ -2035,17 +2035,28 @@ class ConsoleChatStore:
         message forks a NEW root-level USER sibling (``create_sibling``
         parents the fork at the anchor's own parent, which is ``None`` for a
         root message) -- a genuine branch that legitimately has more than one
-        root thread. Legacy flat data, by construction, ALWAYS mixes roles at
-        the root (every message, both USER and ASSISTANT, was written with
-        ``parent_message_id=NULL``), whereas a genuine root-level fork's
-        siblings are ALWAYS all USER (an ASSISTANT node's native parent is
-        never ``None`` -- it always replies to a user turn, even the very
-        first one). So role-homogeneity is the distinguishing signal: when
-        every root shares one role, this is a genuine Phase-B branch and must
-        be left alone (chaining it would silently splice the newer branch
-        onto the older one as a fake parent-child link, corrupting the tree
-        so a swipe/resume shows the wrong content); only a role-MIXED root
-        set is unambiguously legacy data.
+        root thread. A genuine root-level fork's siblings are ALWAYS all USER
+        (an ASSISTANT node's native parent is never ``None`` -- it always
+        replies to a user turn, even the very first one), so a role-MIXED root
+        set (both USER and ASSISTANT at the root) can ONLY be legacy flat data
+        and is chained. Role-homogeneity is thus the distinguishing signal: a
+        single-role (all-USER) root set is treated as a genuine Phase-B branch
+        and left alone (chaining it would silently splice the newer branch onto
+        the older as a fake parent-child link, corrupting the tree so a
+        swipe/resume shows the wrong content).
+
+        KNOWN LIMITATION (not airtight): legacy flat data with at least one
+        assistant reply mixes roles and is chained correctly, but a DEGENERATE
+        legacy conversation whose 2+ user turns each got NO assistant reply
+        loads as all-USER roots and is (wrongly) left un-chained -- it resumes
+        showing only the last user message with a phantom sibling counter. This
+        is a narrow, non-data-loss regression (every message stays navigable via
+        ``siblings_at``/``set_active_leaf``): the all-USER-legacy and all-USER
+        genuine-fork shapes are provably indistinguishable from the persisted
+        tree alone, so no local heuristic can be perfect, and always-chaining
+        (the alternative) corrupts the common first-message-edit feature -- the
+        worse trade. A stronger legacy fingerprint (e.g. "conversation contains
+        a NULL-parent ASSISTANT row") is a filed follow-up.
 
         Roots are chained in their existing insertion order, which is the DB's
         timestamp-ASC order (``get_root_messages_for_conversation`` orders roots
