@@ -624,7 +624,7 @@ Expected: FAIL (`ModuleNotFoundError`).
 """Sync HTTP shim + light egress guard for the ported image adapters.
 
 Provides the exact surface the server's http_client exposed to Image_Generation,
-backed by httpx.Client. Full SSRF hardening is deferred to task-485; this guard
+backed by httpx.Client. Full SSRF hardening is deferred to task-498; this guard
 only rejects non-http(s) schemes and enforces a redirect cap, staying permissive
 for user-configured (incl. local) backend base URLs.
 """
@@ -644,7 +644,7 @@ def _validate_egress_or_raise(url: str) -> None:
     scheme = (urlparse(url).scheme or "").lower()
     if scheme not in ("http", "https"):
         raise ImageGenerationError(f"Refusing non-http(s) URL: {url!r}")
-    # task-485: private/link-local/metadata range blocking for API-returned URLs goes here.
+    # task-498: private/link-local/metadata range blocking for API-returned URLs goes here.
 
 
 def _resolve_redirect_url(base: str, location: str) -> str:
@@ -692,7 +692,7 @@ Expected: PASS (4 passed).
 
 ```bash
 git add tldw_chatbook/Image_Generation/http_client.py Tests/Image_Generation/test_http_client.py
-git commit -m "feat(imagegen): sync http shim + light egress guard (task-485 placeholder)"
+git commit -m "feat(imagegen): sync http shim + light egress guard (task-498 placeholder)"
 ```
 
 ---
@@ -1041,7 +1041,7 @@ def test_novita_submit_then_poll(monkeypatch):
 **Files:** Create `.../modelstudio_image_adapter.py`; Test `test_modelstudio_adapter.py`.
 **Interfaces:** Produces `ModelStudioImageAdapter` (`name="modelstudio"`, sync/async/auto modes).
 
-> **Egress note:** the ported adapter calls `evaluate_url_policy(url)` (no `allowed_hosts`), so under the Phase-1 stub it is permissive — ModelStudio's `aliyuncs` host allowlist is intentionally NOT enforced yet; that enforcement is part of **task-485**. Do not add allowlist logic here.
+> **Egress note:** the ported adapter calls `evaluate_url_policy(url)` (no `allowed_hosts`), so under the Phase-1 stub it is permissive — ModelStudio's `aliyuncs` host allowlist is intentionally NOT enforced yet; that enforcement is part of **task-498**. Do not add allowlist logic here.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1453,6 +1453,6 @@ Expected: all green.
 - [ ] Run the full package suite once more: `source .venv/bin/activate && pytest Tests/Image_Generation/ -q`.
 - [ ] `grep -rn "tldw_Server_API" tldw_chatbook/Image_Generation/` → must be empty (no server imports leaked).
 - [ ] Confirm the app still boots: `python3 -m tldw_chatbook.app` (splash → app, no import errors).
-- [ ] The design spec's later phases (chat card, `/generate-image`, character canvas, variants/TTS), the `Media_Creation` cleanup, and task-485 (egress hardening) are explicitly out of scope here.
+- [ ] The design spec's later phases (chat card, `/generate-image`, character canvas, variants/TTS), the `Media_Creation` cleanup, and task-498 (egress hardening) are explicitly out of scope here.
 
 **Optional — opt-in live integration tests (spec §8):** the mocked tests above are the automated proof; the *live* proof is Task 17 Step 6 (real backend, real image). If you want an automated live test per backend, add one parametrized test marked `@pytest.mark.optional` that reads creds from env (`OPENROUTER_API_KEY`, a running SwarmUI at `swarmui_base_url`, an `sd` binary path, …) and `pytest.skip(...)` when absent, calls `worker.run_generation(worker.build_request(backend=..., prompt="a red apple on a table"))`, and asserts `res.bytes_len > 0`. Keep these skipped by default so CI stays green without credentials.

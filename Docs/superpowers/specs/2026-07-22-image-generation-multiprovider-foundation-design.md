@@ -31,7 +31,7 @@ tldw_server's `tldw_Server_API/app/core/Image_Generation/` (~3,207 lines) is a c
 - Backend selection via a registry with lazy adapter imports.
 - Request validation, prompt refinement, and model listing (`is_configured` per backend).
 - A `[image_generation]` TOML config surface re-homed onto this app's conventions (TOML + env + keyring), with **identical flat field names** to the server dataclass so adapters need no edits.
-- A thin sync `fetch_json` / `create_client` HTTP shim on `httpx.Client`, plus a **light egress guard** (real SSRF hardening deferred to task-485).
+- A thin sync `fetch_json` / `create_client` HTTP shim on `httpx.Client`, plus a **light egress guard** (real SSRF hardening deferred to task-498).
 - A **throwaway in-app demo panel** (command-palette screen) to generate one image end-to-end and eyeball the result + raw metadata.
 - Tests: mocked per-adapter, request-validation bounds, registry logic, prompt-refinement table, config-loader round-trip + key precedence, opt-in live integration.
 
@@ -41,7 +41,7 @@ tldw_server's `tldw_Server_API/app/core/Image_Generation/` (~3,207 lines) is a c
 - Character-canvas generation, per-mood reaction images, persona visual packs.
 - Variant navigation (prev/next), regenerate, TTS.
 - Reference-image resolution (`reference_images.py` is dropped; ModelStudio's `reference_image` degrades to `None`).
-- Full SSRF/egress protection (tracked in **task-485**).
+- Full SSRF/egress protection (tracked in **task-498**).
 - Deleting the orphaned `Media_Creation` SwarmUI code (separate cleanup task).
 
 ---
@@ -187,7 +187,7 @@ Secrets are **never logged** (matches `[API]` handling per CLAUDE.md security ru
 
 ---
 
-## 5. HTTP shim & egress (findings §5 + task-485)
+## 5. HTTP shim & egress (findings §5 + task-498)
 
 New `Image_Generation/http_client.py` provides the sync surface the ported adapters expect:
 - `fetch_json(method, url, *, headers=None, json=None, params=None, cookies=None, timeout=None)` → parsed JSON, on `httpx.Client`.
@@ -196,7 +196,7 @@ New `Image_Generation/http_client.py` provides the sync surface the ported adapt
 - **Light egress guard** `_validate_egress_or_raise(url)`: reject non-`http(s)` schemes; enforce max redirects. It stays **permissive for user-configured `base_url`s** so local backends (127.0.0.1 SwarmUI, local sd.cpp) keep working. It does **not** block private/metadata ranges for API-returned URLs — that is the deferred hardening.
 - `evaluate_url_policy(url)` stub for ModelStudio → simple host allowlist (`aliyuncs.com` / base host), preserving the adapter's built-in check.
 
-Each adapter's own per-backend URL checks are preserved (SwarmUI same-origin resolution; ModelStudio host allowlist). **Full SSRF protection for API-returned image URLs is task-485**, and this light guard is its explicit placeholder.
+Each adapter's own per-backend URL checks are preserved (SwarmUI same-origin resolution; ModelStudio host allowlist). **Full SSRF protection for API-returned image URLs is task-498**, and this light guard is its explicit placeholder.
 
 ---
 
@@ -243,12 +243,12 @@ The demo panel is the manual proof surface; it does not persist anything.
 - **Phase 2:** the Console chat "Image Generation" card (matching the reference), the `/generate-image [:backend] <prompt>` trigger, DB storage of generation metadata + variants (introduces the schema migration deferred here), variant prev/next, regenerate, TTS, and the "Style" field wired to `generation_templates.py`.
 - **Phase 3:** character-canvas generation — auto-prompt from character appearance, per-mood reaction images.
 - **Cleanup task (parallel):** remove the orphaned `Media_Creation` SwarmUI chain once superseded.
-- **task-485 (parallel):** port the real egress/SSRF protections.
+- **task-498 (parallel):** port the real egress/SSRF protections.
 
 ---
 
 ## 10. Locked decisions & remaining detail
 
-**Locked** (from brainstorming): package `Image_Generation/` with `[image_generation]` config; 6 backends; port the server core; command-palette demo screen; light egress guard now with real SSRF port tracked in task-485; `default_backend = "swarmui"` / `enabled_backends = ["swarmui"]` first-run default; no schema migration in Phase 1; orphaned `Media_Creation` SwarmUI code left in place (separate cleanup task).
+**Locked** (from brainstorming): package `Image_Generation/` with `[image_generation]` config; 6 backends; port the server core; command-palette demo screen; light egress guard now with real SSRF port tracked in task-498; `default_backend = "swarmui"` / `enabled_backends = ["swarmui"]` first-run default; no schema migration in Phase 1; orphaned `Media_Creation` SwarmUI code left in place (separate cleanup task).
 
 **Remaining implementation detail** (settle during planning, not a blocker): the exact keyring account-naming scheme for image-backend secrets — it must be namespaced so it cannot collide with LLM-provider keyring accounts (e.g. an `imagegen:` prefix), per §4.3.

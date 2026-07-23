@@ -16,7 +16,7 @@ priority: low
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Non-blocking polish items surfaced by the whole-branch review of the image-generation multi-provider foundation (Phase 1, PR #800). None block that PR; group them into one cleanup pass. Separate from [[task-485]] (real egress/SSRF hardening) and the deferred Phase-2/3 feature work. See the Phase-1 design spec `Docs/superpowers/specs/2026-07-22-image-generation-multiprovider-foundation-design.md`.
+Non-blocking polish items surfaced by the whole-branch review of the image-generation multi-provider foundation (Phase 1, PR #800). None block that PR; group them into one cleanup pass. Separate from [[task-498]] (real egress/SSRF hardening) and the deferred Phase-2/3 feature work. See the Phase-1 design spec `Docs/superpowers/specs/2026-07-22-image-generation-multiprovider-foundation-design.md`.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

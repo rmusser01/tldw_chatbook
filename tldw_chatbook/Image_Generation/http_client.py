@@ -1,7 +1,7 @@
 """Sync HTTP shim + light egress guard for the ported image adapters.
 
 Provides the exact surface the server's http_client exposed to Image_Generation,
-backed by httpx.Client. Full SSRF hardening is deferred to task-485; this guard
+backed by httpx.Client. Full SSRF hardening is deferred to task-498; this guard
 rejects non-http(s) schemes, enforces a redirect cap, and re-validates every
 redirect hop, while staying permissive for user-configured (incl. local) backend
 base URLs.
@@ -47,7 +47,7 @@ def _validate_egress_or_raise(url: str) -> None:
     scheme = (urlparse(url).scheme or "").lower()
     if scheme not in ("http", "https"):
         raise ImageGenerationError(f"Refusing non-http(s) URL: {url!r}")
-    # task-485: private/link-local/metadata range blocking for API-returned URLs goes here.
+    # task-498: private/link-local/metadata range blocking for API-returned URLs goes here.
 
 
 def _resolve_redirect_url(base: str, location: str) -> str:

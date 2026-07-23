@@ -1,5 +1,5 @@
 ---
-id: TASK-485
+id: TASK-498
 title: >-
   Port image-generation egress/SSRF protections from tldw_server
 status: To Do
