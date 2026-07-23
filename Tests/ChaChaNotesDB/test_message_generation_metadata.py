@@ -47,3 +47,8 @@ def test_cascade_delete_with_message(db):
     with db.transaction() as cur:  # hard-delete to exercise ON DELETE CASCADE
         cur.execute("DELETE FROM messages WHERE id=?", (mid,))
     assert db.get_generation_metadata_for_messages([mid]) == {}
+
+def test_set_rejects_duplicate_positions(db):
+    _, mid = _mk_message(db)
+    with pytest.raises(ValueError):
+        db.set_message_generation_metadata(mid, [_row(0), _row(0)])

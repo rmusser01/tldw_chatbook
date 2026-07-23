@@ -7351,12 +7351,16 @@ UPDATE db_schema_version
                 ``seed`` (int|None), ``style`` (str|None), ``params_json`` (str).
 
         Raises:
-            ValueError: If any row has position < 0.
+            ValueError: If any row has position < 0, or if positions are not unique.
             CharactersRAGDBError: On database errors.
         """
-        for row in rows:
-            if int(row.get("position", 0)) < 0:
+        # Validate positions: >= 0 and unique
+        positions = [int(row.get("position", 0)) for row in rows]
+        for pos in positions:
+            if pos < 0:
                 raise ValueError("message_generation_metadata positions must be >= 0.")
+        if len(set(positions)) != len(positions):
+            raise ValueError("message_generation_metadata positions must be unique.")
         with self.transaction() as cursor:
             cursor.execute(
                 "DELETE FROM message_generation_metadata WHERE message_id = ?",
