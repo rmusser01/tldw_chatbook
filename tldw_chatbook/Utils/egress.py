@@ -201,3 +201,177 @@ async def check_url_or_raise_async(url: str, *, trusted_origins=frozenset()) -> 
     decision = await evaluate_url_policy_async(url, trusted_origins=trusted_origins)
     if not decision.allowed:
         raise EgressBlockedError(url, decision.reason)
+
+
+# ---------------------------------------------------------------------------
+# Guarded transport helpers
+# ---------------------------------------------------------------------------
+import json as _json
+from dataclasses import field
+from urllib.parse import urljoin
+
+_STRIP_HEADERS = ("authorization", "cookie", "proxy-authorization")
+
+
+class EgressFetchError(Exception):
+    """Guarded-fetch transport failure: size cap, hop cap, missing Location."""
+
+    def __init__(self, message: str, url: str = ""):
+        self.url = url
+        super().__init__(f"{message}" + (f" [{url}]" if url else ""))
+
+
+@dataclass
+class GuardedResponse:
+    """Stack-neutral capped-fetch result. Never raises on construction."""
+
+    status_code: int
+    headers: object
+    content: bytes
+    final_url: str
+    _response: object = field(default=None, repr=False)
+
+    @property
+    def text(self) -> str:
+        ctype = ""
+        try:
+            ctype = self.headers.get("content-type", "") or ""
+        except Exception:
+            pass
+        charset = "utf-8"
+        for part in ctype.split(";"):
+            part = part.strip()
+            if part.lower().startswith("charset="):
+                charset = part.split("=", 1)[1].strip().strip('"') or "utf-8"
+        try:
+            return self.content.decode(charset, errors="replace")
+        except LookupError:
+            return self.content.decode("utf-8", errors="replace")
+
+    def json(self):
+        return _json.loads(self.text)
+
+    def raise_for_status(self):
+        if self._response is not None:
+            return self._response.raise_for_status()
+        if self.status_code >= 400:
+            raise EgressFetchError(f"HTTP {self.status_code}", url=self.final_url)
+
+
+def _host_of(url: str) -> str:
+    try:
+        return (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def _hop_headers(headers, same_origin: bool) -> dict:
+    hop = {str(k): v for k, v in dict(headers or {}).items()}
+    if not same_origin:
+        for key in list(hop):
+            if key.lower() in _STRIP_HEADERS:
+                hop.pop(key)
+    return hop
+
+
+def guarded_fetch_httpx(
+    url,
+    *,
+    client,
+    max_bytes,
+    trusted_origins=frozenset(),
+    headers=None,
+    params=None,
+):
+    """Capped GET via httpx.Client with per-hop egress re-validation."""
+    first_host = _host_of(url)
+    current = url
+    for hop in range(MAX_REDIRECT_HOPS + 1):
+        check_url_or_raise(current, trusted_origins=trusted_origins)
+        same_origin = _host_of(current) == first_host
+        request = client.build_request(
+            "GET",
+            current,
+            headers=_hop_headers(headers, same_origin),
+            params=params if hop == 0 else None,
+        )
+        response = client.send(request, stream=True, follow_redirects=False)
+        try:
+            if response.is_redirect and response.status_code != 304:
+                location = response.headers.get("location")
+                if not location:
+                    raise EgressFetchError("redirect without Location", url=current)
+                current = urljoin(current, location)
+                continue
+            collected = bytearray()
+            for chunk in response.iter_bytes():
+                collected += chunk
+                if len(collected) > max_bytes:
+                    raise EgressFetchError(
+                        f"response exceeds {max_bytes} bytes", url=current
+                    )
+            return GuardedResponse(
+                status_code=response.status_code,
+                headers=response.headers,
+                content=bytes(collected),
+                final_url=str(response.url),
+                _response=response,
+            )
+        finally:
+            response.close()
+    raise EgressFetchError("too many redirects", url=url)
+
+
+async def guarded_fetch_httpx_async(
+    url,
+    *,
+    client,
+    max_bytes,
+    trusted_origins=frozenset(),
+    headers=None,
+    params=None,
+    auth=None,
+):
+    """Async capped GET via httpx.AsyncClient with per-hop re-validation.
+
+    ``auth`` is applied on same-origin hops only (credential-stripping rule).
+    """
+    first_host = _host_of(url)
+    current = url
+    for hop in range(MAX_REDIRECT_HOPS + 1):
+        await check_url_or_raise_async(current, trusted_origins=trusted_origins)
+        same_origin = _host_of(current) == first_host
+        request = client.build_request(
+            "GET",
+            current,
+            headers=_hop_headers(headers, same_origin),
+            params=params if hop == 0 else None,
+        )
+        send_kwargs = {"stream": True, "follow_redirects": False}
+        if auth is not None and same_origin:
+            send_kwargs["auth"] = auth
+        response = await client.send(request, **send_kwargs)
+        try:
+            if response.is_redirect and response.status_code != 304:
+                location = response.headers.get("location")
+                if not location:
+                    raise EgressFetchError("redirect without Location", url=current)
+                current = urljoin(current, location)
+                continue
+            collected = bytearray()
+            async for chunk in response.aiter_bytes():
+                collected += chunk
+                if len(collected) > max_bytes:
+                    raise EgressFetchError(
+                        f"response exceeds {max_bytes} bytes", url=current
+                    )
+            return GuardedResponse(
+                status_code=response.status_code,
+                headers=response.headers,
+                content=bytes(collected),
+                final_url=str(response.url),
+                _response=response,
+            )
+        finally:
+            await response.aclose()
+    raise EgressFetchError("too many redirects", url=url)

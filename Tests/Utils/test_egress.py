@@ -174,3 +174,156 @@ async def test_async_variant_same_policy(monkeypatch):
     monkeypatch.setattr(egress, "_resolve_async", _fake)
     d = await evaluate_url_policy_async("http://h.example/")
     assert not d.allowed and d.reason == "metadata"
+
+
+# ---------------------------------------------------------------------------
+# Guarded httpx helpers
+# ---------------------------------------------------------------------------
+import httpx
+
+from tldw_chatbook.Utils.egress import (
+    EgressFetchError,
+    GuardedResponse,
+    guarded_fetch_httpx,
+    guarded_fetch_httpx_async,
+)
+
+
+def _transport(routes, seen):
+    """MockTransport: routes = {url_prefix: (status, headers, body)}."""
+
+    def handler(request):
+        seen.append(request)
+        for prefix, (status, headers, body) in routes.items():
+            if str(request.url).startswith(prefix):
+                return httpx.Response(status, headers=headers, content=body)
+        return httpx.Response(404)
+
+    return httpx.MockTransport(handler)
+
+
+def test_httpx_basic_fetch_returns_guarded_response():
+    seen = []
+    routes = {"https://example.com/": (200, {"content-type": "text/html; charset=utf-8"}, b"<html>ok</html>")}
+    with httpx.Client(transport=_transport(routes, seen)) as client:
+        resp = guarded_fetch_httpx(
+            "https://example.com/page", client=client, max_bytes=1024
+        )
+    assert isinstance(resp, GuardedResponse)
+    assert resp.status_code == 200
+    assert resp.content == b"<html>ok</html>"
+    assert resp.text == "<html>ok</html>"
+    assert resp.final_url == "https://example.com/page"
+
+
+def test_httpx_redirect_to_internal_blocked(monkeypatch):
+    def fake_resolve(host):
+        return ["192.168.1.1"] if host == "internal.example" else ["93.184.216.34"]
+
+    monkeypatch.setattr(egress, "_resolve", fake_resolve)
+    seen = []
+    routes = {
+        "https://example.com/": (302, {"location": "http://internal.example/"}, b""),
+    }
+    with httpx.Client(transport=_transport(routes, seen)) as client:
+        with pytest.raises(EgressBlockedError) as exc:
+            guarded_fetch_httpx("https://example.com/r", client=client, max_bytes=1024)
+    assert exc.value.reason == "private"
+    # the internal host was never actually requested
+    assert all("internal.example" not in str(r.url) for r in seen)
+
+
+def test_httpx_same_origin_redirect_allowed_and_followed():
+    seen = []
+    routes = {
+        "https://example.com/old": (301, {"location": "/new"}, b""),
+        "https://example.com/new": (200, {"content-type": "text/html"}, b"moved"),
+    }
+    with httpx.Client(transport=_transport(routes, seen)) as client:
+        resp = guarded_fetch_httpx(
+            "https://example.com/old", client=client, max_bytes=1024
+        )
+    assert resp.status_code == 200 and resp.content == b"moved"
+    assert resp.final_url == "https://example.com/new"
+
+
+def test_httpx_cross_origin_hop_strips_credentials(monkeypatch):
+    _resolve_to(monkeypatch, ["93.184.216.34"])
+    seen = []
+    routes = {
+        "https://a.example/": (302, {"location": "https://b.example/x"}, b""),
+        "https://b.example/": (200, {}, b"done"),
+    }
+    with httpx.Client(transport=_transport(routes, seen)) as client:
+        resp = guarded_fetch_httpx(
+            "https://a.example/start",
+            client=client,
+            max_bytes=1024,
+            headers={"Authorization": "Bearer secret", "Cookie": "sid=1", "X-Keep": "y"},
+        )
+    assert resp.content == b"done"
+    first, second = seen[0], seen[1]
+    assert first.headers.get("authorization") == "Bearer secret"
+    assert "authorization" not in second.headers
+    assert "cookie" not in second.headers
+    assert second.headers.get("x-keep") == "y"
+
+
+def test_httpx_hop_cap():
+    seen = []
+    routes = {"https://example.com/": (302, {"location": "/loop"}, b"")}
+    with httpx.Client(transport=_transport(routes, seen)) as client:
+        with pytest.raises(EgressFetchError, match="redirect"):
+            guarded_fetch_httpx("https://example.com/loop", client=client, max_bytes=64)
+
+
+def test_httpx_redirect_without_location():
+    seen = []
+    routes = {"https://example.com/": (302, {}, b"")}
+    with httpx.Client(transport=_transport(routes, seen)) as client:
+        with pytest.raises(EgressFetchError, match="[Ll]ocation"):
+            guarded_fetch_httpx("https://example.com/x", client=client, max_bytes=64)
+
+
+def test_httpx_byte_cap_aborts():
+    seen = []
+    routes = {"https://example.com/": (200, {}, b"x" * 2048)}
+    with httpx.Client(transport=_transport(routes, seen)) as client:
+        with pytest.raises(EgressFetchError, match="exceeds"):
+            guarded_fetch_httpx("https://example.com/big", client=client, max_bytes=1024)
+
+
+def test_httpx_304_passes_through_without_raise():
+    seen = []
+    routes = {"https://example.com/": (304, {"etag": "abc"}, b"")}
+    with httpx.Client(transport=_transport(routes, seen)) as client:
+        resp = guarded_fetch_httpx("https://example.com/feed", client=client, max_bytes=64)
+    assert resp.status_code == 304
+
+
+def test_guarded_response_raise_for_status_delegates_httpx():
+    seen = []
+    routes = {"https://example.com/": (404, {}, b"nope")}
+    with httpx.Client(transport=_transport(routes, seen)) as client:
+        resp = guarded_fetch_httpx("https://example.com/x", client=client, max_bytes=64)
+    with pytest.raises(httpx.HTTPStatusError):
+        resp.raise_for_status()
+
+
+@pytest.mark.asyncio
+async def test_httpx_async_variant_and_auth_suppression(monkeypatch):
+    seen = []
+    routes = {
+        "https://a.example/": (302, {"location": "https://b.example/t"}, b""),
+        "https://b.example/": (200, {}, b"ok"),
+    }
+    async with httpx.AsyncClient(transport=_transport(routes, seen)) as client:
+        resp = await guarded_fetch_httpx_async(
+            "https://a.example/s",
+            client=client,
+            max_bytes=64,
+            auth=("user", "pw"),
+        )
+    assert resp.content == b"ok"
+    assert "authorization" in seen[0].headers
+    assert "authorization" not in seen[1].headers
