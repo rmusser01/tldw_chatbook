@@ -448,6 +448,7 @@ class ChatPersistenceService:
         parent_message_id: Optional[str] = None,
         feedback: Optional[str] = None,
         attachments: Optional[Sequence[Mapping[str, Any]]] = None,
+        generation_metadata: Optional[Sequence[Mapping[str, Any]]] = None,
     ) -> str:
         """Create a new message, optionally with a legacy image or a full attachment list.
 
@@ -491,13 +492,24 @@ class ChatPersistenceService:
                 supplied, this is the sole, authoritative source for both
                 the legacy image columns (position 0) and the
                 ``message_attachments`` table (positions >= 1).
+            generation_metadata: Optional full list of
+                ``message_generation_metadata`` rows (each a mapping with
+                ``position``, ``prompt``, ``negative_prompt``, ``backend``,
+                ``model``, ``seed``, ``style``, ``params_json``) to persist
+                alongside the message. Written via
+                ``CharactersRAGDB.set_message_generation_metadata`` inside
+                the same transaction as the row insert and the attachments
+                write, so a sidecar-write failure rolls back everything
+                (including the message row and any attachments already
+                written this call).
 
         Returns:
             The newly created message's id.
 
         Raises:
             CharactersRAGDBError: For database integrity errors during the
-                insert or the attachment-table write.
+                insert, the attachment-table write, or the
+                generation-metadata write.
         """
         # Split addressing: when ``attachments`` is supplied it covers ALL
         # positions (0..N-1) and is authoritative -- position 0 overrides the
@@ -540,15 +552,21 @@ class ChatPersistenceService:
             "image_mime_type": effective_image_mime_type,
             "client_id": self.db.client_id,
         }
-        if attachments is not None:
+        if attachments is not None or generation_metadata is not None:
             # One atomic unit: inside this outer transaction the nested
-            # add_message/set_message_attachments transactions are no-ops, so
-            # a failed table write rolls the message row back too. The table
-            # write always runs -- an empty list still clears any stale rows
-            # a prior attempt at this same message_id may have left behind.
+            # add_message/set_message_attachments/set_message_generation_metadata
+            # transactions are no-ops, so a failed table write rolls the
+            # message row (and any earlier write in this call) back too. The
+            # attachments write always runs when this branch is taken -- an
+            # empty list still clears any stale rows a prior attempt at this
+            # same message_id may have left behind.
             with self.db.transaction():
                 created_message_id = self.db.add_message(message_payload)
                 self.db.set_message_attachments(created_message_id, extra_rows)
+                if generation_metadata is not None:
+                    self.db.set_message_generation_metadata(
+                        created_message_id, list(generation_metadata)
+                    )
         else:
             created_message_id = self.db.add_message(message_payload)
         if feedback is not None:
@@ -559,6 +577,65 @@ class ChatPersistenceService:
                 expected_version=created_message["version"],
             )
         return created_message_id
+
+    def append_message_attachment(
+        self,
+        message_id: str,
+        *,
+        data: bytes,
+        mime_type: str,
+        display_name: str = "",
+        generation_metadata: Optional[Mapping[str, Any]] = None,
+    ) -> int:
+        """Append one new image variant to a message, in place.
+
+        Thin passthrough to
+        ``CharactersRAGDB.append_message_attachment_with_metadata`` -- the
+        narrow, additive counterpart to the full-list
+        ``update_message_content(attachments=...)`` rewrite. Use this when a
+        new variant (e.g. a regenerated image) should be added without
+        risking any existing attachment's bytes.
+
+        Args:
+            message_id: Target message id; must already have a position-0
+                image.
+            data: The new variant's image bytes.
+            mime_type: The new variant's MIME type.
+            display_name: Optional label for the new variant.
+            generation_metadata: Optional generation-metadata fields for the
+                new position.
+
+        Returns:
+            The position assigned to the new variant (>= 1).
+
+        Raises:
+            ValueError: If the message does not exist or has no position-0
+                image.
+        """
+        return self.db.append_message_attachment_with_metadata(
+            message_id,
+            data=data,
+            mime_type=mime_type,
+            display_name=display_name,
+            generation_metadata=generation_metadata,
+        )
+
+    def keep_message_attachment(self, message_id: str, position: int) -> None:
+        """Promote a stored variant to be the message's canonical image.
+
+        Thin passthrough to
+        ``CharactersRAGDB.swap_message_attachment_with_scalar``. Swaps the
+        variant at ``position`` with the message's current position-0 image,
+        byte-identical, touching only those two variants.
+
+        Args:
+            message_id: Target message id.
+            position: The attachment position (>= 1) to promote.
+
+        Raises:
+            ValueError: If ``position < 1`` or no attachment exists there.
+        """
+        self.db.swap_message_attachment_with_scalar(message_id, position)
 
     def get_attachments_for_messages(
         self, message_ids: Sequence[str]
