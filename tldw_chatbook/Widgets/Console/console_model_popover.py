@@ -16,6 +16,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_console_model_options,
     build_console_provider_options,
 )
+from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
 
@@ -60,6 +61,11 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
         padding: 1 2;
     }
 
+    .console-popover-field-label {
+        color: $text-muted;
+        margin: 1 0 0 0;
+    }
+
     #console-popover-actions {
         height: 3;
         min-height: 3;
@@ -90,13 +96,28 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
         self._settings = settings
         self._providers_models = providers_models
         self._streaming = bool(settings.streaming)
+        # TASK-364: the provider Select fires a mount-time Select.Changed for its
+        # initial value; without this tracker `_provider_changed` would rebuild
+        # the model options with current_model=None and wipe the prefilled model.
+        # Only a REAL provider change (value differs from what the model options
+        # currently reflect) should reset the model.
+        self._model_options_provider = settings.provider
+
+    def _provider_select_options(self) -> list[tuple[str, str]]:
+        """Provider options labeled with the shared catalog display names.
+
+        TASK-364: mirror ``ConsoleSettingsModal._provider_select_options`` so the
+        quick popover shows the same names as the full modal (``llama.cpp``, not
+        the raw ``llama_cpp`` key).
+        """
+        return [
+            (provider_display_name(option.value), option.value)
+            for option in build_console_provider_options(self._providers_models)
+        ]
 
     def compose(self) -> ComposeResult:
         """Build the provider, model, temperature, and streaming controls."""
-        provider_options = [
-            (option.label, option.value)
-            for option in build_console_provider_options(self._providers_models)
-        ]
+        provider_options = self._provider_select_options()
         model_options = [
             (option.label, option.value)
             for option in build_console_model_options(
@@ -120,6 +141,7 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
                 id="console-popover-model-search",
                 provider_select_id="#console-popover-provider",
             )
+            yield Static("Temperature", classes="console-popover-field-label")
             yield Input(
                 value=""
                 if self._settings.temperature is None
@@ -149,6 +171,12 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
         """
         event.stop()
         provider = str(event.value)
+        # TASK-364: ignore the mount-time echo and redundant same-provider events
+        # so the prefilled model survives; only a genuine provider change resets
+        # the model options (a stale model from another provider must not linger).
+        if provider == self._model_options_provider:
+            return
+        self._model_options_provider = provider
         options = [
             (option.label, option.value)
             for option in build_console_model_options(
