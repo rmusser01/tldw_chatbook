@@ -24,6 +24,8 @@ from ...Chat.console_expression_state import EXPRESSION_IMAGE_STATES
 from .personas_pane_messages import (
     CharacterEditorCancelled,
     CharacterExpressionClearRequested,
+    CharacterExpressionSetExportRequested,
+    CharacterExpressionSetImportRequested,
     CharacterExpressionUploadRequested,
     CharacterImageRemoveRequested,
     CharacterImageUploadRequested,
@@ -125,6 +127,24 @@ class PersonasCharacterEditorWidget(Container):
         max-width: 24;
         max-height: 10;
         padding: 0 1;
+    }
+
+    /* Import/export set buttons (Roleplay P3d-2 Task 4) - the "Expressions"
+       section header plus its two whole-set actions on one line. */
+    PersonasCharacterEditorWidget .personas-char-editor-expr-set-row {
+        height: auto;
+        min-height: 1;
+    }
+
+    PersonasCharacterEditorWidget #personas-char-editor-expr-import,
+    PersonasCharacterEditorWidget #personas-char-editor-expr-export {
+        width: auto;
+        min-width: 0;
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        margin-left: 1;
+        border: none;
     }
 
     /* Expression authoring slots (Roleplay P3d-1 Task 4) - one row per
@@ -335,7 +355,18 @@ class PersonasCharacterEditorWidget(Container):
                     classes="console-action-subdued",
                 )
             yield Container(id="personas-char-editor-avatar-thumb")
-            yield Static("Expressions", classes="destination-section")
+            with Horizontal(classes="personas-char-editor-expr-set-row"):
+                yield Static("Expressions", classes="destination-section")
+                yield Button(
+                    "Import set…",
+                    id="personas-char-editor-expr-import",
+                    classes="console-action-subdued",
+                )
+                yield Button(
+                    "Export set…",
+                    id="personas-char-editor-expr-export",
+                    classes="console-action-subdued",
+                )
             for state in EXPRESSION_IMAGE_STATES:
                 with Vertical(
                     id=f"char-expression-slot-{state}",
@@ -552,6 +583,8 @@ class PersonasCharacterEditorWidget(Container):
         """
         enabled = self.expression_character_id() is not None
         hint_text = "" if enabled else "Save the character to add expressions."
+        self.query_one("#personas-char-editor-expr-import", Button).disabled = not enabled
+        self.query_one("#personas-char-editor-expr-export", Button).disabled = not enabled
         for state in EXPRESSION_IMAGE_STATES:
             self.query_one(
                 f"#personas-char-editor-expr-{state}-upload", Button
@@ -1041,6 +1074,16 @@ class PersonasCharacterEditorWidget(Container):
         state = self._expression_state_from_button_id(event.button.id, suffix="-clear")
         if state is not None:
             self.post_message(CharacterExpressionClearRequested(state))
+
+    @on(Button.Pressed, "#personas-char-editor-expr-import")
+    def _expression_set_import_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(CharacterExpressionSetImportRequested())
+
+    @on(Button.Pressed, "#personas-char-editor-expr-export")
+    def _expression_set_export_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(CharacterExpressionSetExportRequested())
 
     @on(Button.Pressed, "#personas-char-editor-save")
     def _save_pressed(self, event: Button.Pressed) -> None:

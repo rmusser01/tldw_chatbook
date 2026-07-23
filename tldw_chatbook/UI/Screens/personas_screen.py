@@ -83,6 +83,8 @@ from ...Widgets.Persona_Widgets.tag_filter_picker import TagFilterPicker
 from ...Widgets.Persona_Widgets.personas_pane_messages import (
     CharacterEditorCancelled,
     CharacterExpressionClearRequested,
+    CharacterExpressionSetExportRequested,
+    CharacterExpressionSetImportRequested,
     CharacterExpressionUploadRequested,
     CharacterImageRemoveRequested,
     CharacterImageUploadRequested,
@@ -4390,6 +4392,53 @@ class PersonasScreen(BaseAppScreen):
     # write straight to character_expression_images (Task 1's DB seam), never
     # to character_cards - no card save, no version bump.
 
+    async def _apply_expression_set(
+        self, character_id: int, images: dict
+    ) -> "ExpressionSetApplyResult":
+        """Apply a resolved expression set: idle staged in the editor (persists on
+        card save), the three reactive states written immediately. Bumps the render
+        token ONCE, then re-renders the affected slots + the avatar thumbnail.
+
+        Does NOT call ``_apply_expression_upload`` per state - that bumps the
+        generation token each time and would drop the prior slot's in-flight
+        render (the P3d-1 render-race). Every write here shares a single fresh
+        token before the (single) re-render pass.
+        """
+        from ...Character_Chat.expression_set_io import (
+            apply_expression_images_to_db,
+            ExpressionSetApplyResult,
+        )
+        applied: list[str] = []
+        skipped: list = []
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        # idle -> stage in the editor (like a manual avatar upload)
+        idle = images.get("idle")
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except QueryError:
+            editor = None
+        if idle and editor is not None:
+            # Guard the stage so the orchestrator NEVER raises into its caller
+            # (the import worker runs with exit_on_error=True, and P3d-3's .vpack
+            # extractor will reuse this too). Callers are expected to pass
+            # PIL-validated bytes; a bad idle degrades to a skip, not a crash.
+            try:
+                editor.set_avatar_image(idle)
+                applied.append("idle")
+            except Exception as exc:
+                skipped.append(("idle", f"could not stage avatar: {exc}"))
+        # three -> DB (immediate), off-thread
+        if db is not None:
+            db_applied, db_skipped = await asyncio.to_thread(
+                apply_expression_images_to_db, db, character_id, images
+            )
+            applied.extend(db_applied)
+            skipped.extend(db_skipped)
+        # single generation bump, then ONE re-render of the avatar + all 3 slots
+        self._character_editor_generation += 1
+        await self._render_all_character_editor_thumbnails(character_id)
+        return ExpressionSetApplyResult(applied=applied, skipped=skipped)
+
     async def _apply_expression_upload(
         self, character_id: int, state: str, image: bytes, mime: str | None = None
     ) -> None:
@@ -4552,6 +4601,188 @@ class PersonasScreen(BaseAppScreen):
 
         mime = mimetypes.guess_type(path)[0]
         await self._apply_expression_upload(character_id, state, image_data, mime)
+
+    # ===== Expression SET import/export (Roleplay P3d-2 Task 4) =====
+    #
+    # Distinct from the per-slot upload/clear above: these move the whole
+    # idle/thinking/speaking/error set at once, as a .zip built by
+    # expression_set_io (Tasks 1-2) and applied via _apply_expression_set
+    # (Task 3). Same dialog-worker / dialog-free-path-method split as the
+    # rest of the screen's import/export flows.
+
+    @on(CharacterExpressionSetImportRequested)
+    def _handle_expression_set_import_requested(self, message) -> None:
+        message.stop()
+        if not self._character_editor_is_active():
+            self._notify(
+                "Open a character editor before importing an expression set.",
+                "warning",
+            )
+            return
+        editor = self.query_one(PersonasCharacterEditorWidget)
+        character_id = editor.expression_character_id()
+        if character_id is None:
+            self._notify("Save the character to import an expression set.", "warning")
+            return
+        if self._io_dialog_active:
+            logger.debug(
+                "Import/export dialog already active; ignoring expression "
+                "set import request."
+            )
+            return
+        self._io_dialog_active = True
+        self.run_worker(
+            self._expression_set_import_dialog_worker(character_id),
+            group="personas-io",
+        )
+
+    async def _expression_set_import_dialog_worker(self, character_id: int) -> None:
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+
+        try:
+            picker = EnhancedFileOpen(
+                title="Import Expression Set (.zip)",
+                filters=Filters(("Zip Archives", lambda p: p.suffix.lower() == ".zip")),
+                context="character_expression_set_import",
+            )
+            try:
+                file_path = await self.app.push_screen_wait(picker)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Could not show the expression-set import dialog."
+                )
+                return
+            if file_path:
+                await self._import_expression_set_from_path(character_id, str(file_path))
+        finally:
+            self._io_dialog_active = False
+
+    async def _import_expression_set_from_path(
+        self, character_id: int, path: str
+    ) -> None:
+        """Resolve a .zip at ``path`` into an expression set and apply it.
+
+        Dialog-free (directly testable): the path is validated at this
+        screen boundary (the pure ``expression_set_io`` module never imports
+        ``path_validation``), then resolution happens off-thread via
+        ``asyncio.to_thread`` since it decodes/validates images, then
+        delegates to ``_apply_expression_set`` (Task 3) for the actual
+        idle-staged/three-immediate application.
+        """
+        from ...Character_Chat.expression_set_io import resolve_local_expression_set
+
+        try:
+            candidate = validate_path_simple(path, require_exists=True)
+        except (ValueError, OSError) as exc:
+            self._notify(f"Import failed: {exc}", "error")
+            return
+
+        res = await asyncio.to_thread(resolve_local_expression_set, [candidate])
+        if not res.images:
+            reason = (
+                "; ".join(n for n, _ in res.skipped[:2])
+                or "; ".join(res.notes[:1])
+                or "no matching images"
+            )
+            self._notify(f"Nothing imported ({reason}).", "warning")
+            return
+        result = await self._apply_expression_set(character_id, res.images)
+        applied = ", ".join(result.applied) or "nothing"
+        note = " — save the character to keep idle" if "idle" in result.applied else ""
+        self._notify(f"Imported: {applied}.{note}", "information")
+
+    @on(CharacterExpressionSetExportRequested)
+    def _handle_expression_set_export_requested(self, message) -> None:
+        message.stop()
+        if not self._character_editor_is_active():
+            return
+        editor = self.query_one(PersonasCharacterEditorWidget)
+        character_id = editor.expression_character_id()
+        if character_id is None:
+            self._notify(
+                "Save the character before exporting its expression set.", "warning"
+            )
+            return
+        if self._io_dialog_active:
+            logger.debug(
+                "Import/export dialog already active; ignoring expression "
+                "set export request."
+            )
+            return
+        self._io_dialog_active = True
+        # Screen state, not the editor: the editor widget has no name
+        # accessor (mirrors _dictionary_export_worker's own name source).
+        name = str(self.state.selected_entity_name or "character")
+        self.run_worker(
+            self._export_expression_set_worker(character_id, name),
+            group="personas-io",
+            exit_on_error=False,
+        )
+
+    async def _export_expression_set_worker(self, character_id: int, name: str) -> None:
+        try:
+            target = await self._export_expression_set(character_id, name)
+            if target:
+                self._notify(f"Expression set exported to {target}.", "information")
+        except Exception as exc:
+            logger.opt(exception=True).error(f"Expression-set export failed: {exc}")
+            self._notify(f"Export failed: {exc}", "error")
+        finally:
+            self._io_dialog_active = False
+
+    async def _export_expression_set(
+        self, character_id: int, name: str
+    ) -> str | None:
+        """Build the export .zip and write it to the exports dir (atomic).
+
+        Dialog-free (directly testable). Collects the idle image from the
+        editor's staged/loaded avatar bytes plus the three reactive states
+        from the DB, then mirrors ``_dictionary_export_worker``'s exports-dir
+        + atomic temp-replace pattern (bytes here, not text, since this is a
+        zip archive).
+
+        Returns:
+            The written file's path, or ``None`` when there is nothing to
+            export (already surfaced via ``_notify``).
+        """
+        from ...Character_Chat.expression_set_io import build_expression_set_zip
+
+        images: dict[str, bytes] = {}
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+            idle = editor.current_avatar_bytes()
+            if idle:
+                images["idle"] = idle
+        except QueryError:
+            pass
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is not None:
+            for state in EXPRESSION_IMAGE_STATES:
+                data = await asyncio.to_thread(
+                    db.get_character_expression_image, character_id, state
+                )
+                if data:
+                    images[state] = data
+        if not images:
+            self._notify("This character has no expression images to export.", "warning")
+            return None
+        blob = await asyncio.to_thread(build_expression_set_zip, name, images)
+        slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "character"
+        # Microsecond precision (not _dictionary_export_worker's second
+        # precision): concurrent exports of the same character within one
+        # second would otherwise collide on the target/temp filenames.
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        exports_dir = get_user_data_dir() / "exports"
+        exports_dir.mkdir(parents=True, exist_ok=True)
+        target = exports_dir / f"{slug}-expressions-{stamp}.zip"
+        temp = exports_dir / f".{slug}-expressions-{stamp}.zip.tmp"
+        try:
+            temp.write_bytes(blob)
+            temp.replace(target)
+        except OSError:
+            temp.unlink(missing_ok=True)
+            raise
+        return str(target)
 
     # ===== Import / export =====
     #
