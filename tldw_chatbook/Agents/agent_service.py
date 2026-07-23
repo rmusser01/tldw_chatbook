@@ -137,12 +137,21 @@ def _usage_total_tokens(resp) -> int | None:
         return None
     if not isinstance(usage, dict):
         return None
+    # `type(x) is int` (not isinstance) rejects bool, which subclasses int;
+    # require positive/non-negative real ints so a malformed usage block can't
+    # corrupt or shrink the accumulated spend the runtime enforces on.
     total = usage.get("total_tokens")
-    if isinstance(total, int) and total > 0:
+    if type(total) is int and total > 0:
         return total
     prompt = usage.get("prompt_tokens")
     completion = usage.get("completion_tokens")
-    if isinstance(prompt, int) and isinstance(completion, int):
+    if (
+        type(prompt) is int
+        and type(completion) is int
+        and prompt >= 0
+        and completion >= 0
+        and prompt + completion > 0
+    ):
         return prompt + completion
     return None
 

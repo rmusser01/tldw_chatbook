@@ -1025,6 +1025,23 @@ def test_usage_total_tokens_none_when_absent_or_malformed():
     assert _usage_total_tokens("a string") is None
     assert _usage_total_tokens({"usage": "bad"}) is None
     assert _usage_total_tokens({"usage": {"prompt_tokens": 10}}) is None
+    # Malformed values must not corrupt spend accounting (Qodo review):
+    assert _usage_total_tokens({"usage": {"total_tokens": True}}) is None  # bool
+    assert _usage_total_tokens({"usage": {"total_tokens": 0}}) is None
+    assert _usage_total_tokens({"usage": {"total_tokens": -7}}) is None
+    assert _usage_total_tokens(
+        {"usage": {"prompt_tokens": -5, "completion_tokens": 10}}
+    ) is None
+    assert _usage_total_tokens(
+        {"usage": {"prompt_tokens": False, "completion_tokens": 5}}
+    ) is None
+    assert _usage_total_tokens(
+        {"usage": {"prompt_tokens": 0, "completion_tokens": 0}}
+    ) is None
+    # Valid non-negative sum still works.
+    assert _usage_total_tokens(
+        {"usage": {"prompt_tokens": 0, "completion_tokens": 5}}
+    ) == 5
 
 
 def _service_with_chat(db, chat_call):
