@@ -776,13 +776,18 @@ class ConsoleWorkspaceContextTray(Vertical):
             )
 
         scope_value = self.state.scope_label or ""
-        yield ConsoleWorkspaceStatusPair(
+        scope_pair = ConsoleWorkspaceStatusPair(
             "Scope",
             scope_value,
             label_id="console-active-scope-label",
             value_id="console-active-scope-value",
             id="console-active-scope",
         )
+        # TASK-373 AC#2: keep the raw conversation identifier available on hover
+        # rather than in the primary row.
+        if self.state.scope_detail:
+            scope_pair.tooltip = f"Conversation id: {self.state.scope_detail}"
+        yield scope_pair
 
         if self.state.recovery_copy:
             yield self._static(

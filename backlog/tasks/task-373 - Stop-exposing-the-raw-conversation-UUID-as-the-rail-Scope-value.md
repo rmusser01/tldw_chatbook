@@ -1,8 +1,9 @@
 ---
 id: TASK-373
 title: Stop exposing the raw conversation UUID as the rail Scope value
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
 labels: [console, ux]
 dependencies: []
@@ -25,6 +26,18 @@ Also observed independently in J6 keyboard-only/small-terminal as `j6-scope-raw-
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Human-readable scope ('This conversation') or omit
-- [ ] #2 Keep identifiers in a debug/details view
+- [x] #1 Human-readable scope ('This conversation') or omit
+- [x] #2 Keep identifiers in a debug/details view
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+`build_console_workspace_state` set `scope_label = str(current_conversation or "")`
+— the raw conversation UUID, wrapped mid-token across two rail lines. Now the
+label is "This conversation" (or "" when none), and the raw id is carried in a
+new `scope_detail` field surfaced only as the Scope row's hover tooltip
+("Conversation id: <uuid>") — human-readable primary row, identifier in a details
+view. RED->GREEN `test_console_scope_shows_readable_label_not_raw_uuid`; 63 tests
+green. (Also resolves the Scope-UUID part of task-387.)
+<!-- SECTION:NOTES:END -->

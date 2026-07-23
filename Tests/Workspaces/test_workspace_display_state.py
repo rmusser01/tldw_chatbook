@@ -46,6 +46,30 @@ def test_console_workspace_state_explains_missing_service() -> None:
     assert "service not ready" in state.recovery_copy.lower()
 
 
+def test_console_scope_shows_readable_label_not_raw_uuid(tmp_path: Path) -> None:
+    """TASK-373/387: the rail Scope shows a human-readable label with the raw
+    conversation id kept as a hover detail, not the raw UUID in the primary row."""
+    service = _registry(tmp_path)
+    service.ensure_default_workspace()
+    conversation_id = "d1ebe478-c825-46b6-83b3-d5901d7bb3a1"
+
+    state = build_console_workspace_state(
+        registry_service=service,
+        current_conversation=conversation_id,
+    )
+
+    assert state.scope_label == "This conversation"
+    assert conversation_id not in state.scope_label
+    assert state.scope_detail == conversation_id
+
+    empty = build_console_workspace_state(
+        registry_service=service,
+        current_conversation=None,
+    )
+    assert empty.scope_label == ""
+    assert empty.scope_detail == ""
+
+
 def test_console_workspace_state_explains_no_active_workspace(tmp_path: Path) -> None:
     service = _registry(tmp_path)
     service.ensure_default_workspace()
