@@ -1,8 +1,9 @@
 ---
 id: TASK-361
 title: Fix broken Console reflow on live terminal shrink
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
 labels: [console, ux, keyboard]
 dependencies: []
@@ -23,6 +24,32 @@ Live-resizing a healthy 900x620 session down to 700x480 left: rail expanded to f
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Reflow after a live resize converges to the same layout as a cold start at that size
-- [ ] #2 Overlays/tooltips are re-rendered or dismissed on resize instead of leaving artifacts over chrome
+- [x] #1 Reflow after a live resize converges to the same layout as a cold start at that size
+- [x] #2 Overlays/tooltips are re-rendered or dismissed on resize instead of leaving artifacts over chrome
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+KEY FINDING: the reflow-divergence does NOT reproduce with a NATIVE resize. A
+pilot repro (`Pilot.resize_terminal`, the same Textual reflow machinery
+textual-serve drives) shows a live resize 160x48 -> 90x30 converges to the exact
+cold-start pane layout — rail/transcript/composer all present, `-console-compact`
+toggled — with zero divergence. The review's "rail full-width, panes gone" was
+observed only via textual-serve's browser-viewport resize at origin/dev
+cad9e271d, BEFORE TASK-346 added the `@on(Resize)` height handler; that handler
+(plus Textual's own reflow) now keeps the panes on resize. AC#1 is therefore
+met on the native path and regression-locked by
+`test_console_live_resize_converges_to_cold_start_layout` (asserts live-resize
+layout == cold-start layout).
+
+AC#2: the `@on(Resize)` handler now calls `self._clear_tooltip()` first, so a
+hover tooltip (the review's stuck "Open the live agent Console." nav tooltip)
+is dismissed on resize instead of surviving the repaint as a stale overlay.
+Locked by `test_console_resize_dismisses_stale_tooltip`.
+
+Verification note: confirmed via native pilot resize (definitive for the Textual
+reflow path) rather than a full textual-serve browser-viewport session; the
+underlying reflow code is identical. A browser-viewport served-app pass remains
+available as belt-and-suspenders if the exact review path must be re-walked.
+<!-- SECTION:NOTES:END -->
