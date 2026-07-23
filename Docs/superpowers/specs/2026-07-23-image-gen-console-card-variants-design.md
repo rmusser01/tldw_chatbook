@@ -40,6 +40,7 @@ The handler resolves the backend (explicit `:backend` → else `default_backend`
 - Build requests via `worker.build_request` (Phase-1 engine; `run_generation` enforces validation). A batch of N = N sequential `run_generation` calls in one worker (adapters are blocking; per-variant seed recorded from the request/backend response).
 - Run on a thread worker with a distinct group (e.g. `group="imagegen-console"`, `exclusive=False`) + an **in-flight set keyed by message id** (and one for "new command in this conversation") to prevent double-triggering without cancelling running work.
 - On completion (marshalled back to the UI loop): append/update the assistant message, persist, register card specs, scroll. On failure: **append only on first success** — if the initial command fails outright, surface the error as a transient status/system line and create no assistant message (no orphan rows). A failed *append* (regenerate) leaves the existing message untouched and reports the error.
+- **Partial batch:** with `default_batch` = N, each variant generates sequentially; if some fail, the message is appended with the *k* successes (k ≥ 1) and the status line reports "k/N generated (last error: …)". Zero successes = the no-message failure path above.
 
 ## 5. Storage (schema v24 → v25) — the load-bearing design
 
@@ -66,15 +67,18 @@ CREATE INDEX IF NOT EXISTS idx_msg_gen_meta_message ON message_generation_metada
 ```
 
 - **Selected variant** needs no column: **the selected/kept variant IS position 0** (§5.2). A message "is a generation message" ⇔ it has sidecar rows.
+- **Deliberate non-use of `messages.variant_of`/`variant_number`/`is_selected_variant`/`total_variants`:** those columns model *text* regeneration as one-message-per-sibling (`create_sibling`). An image variant set is **one message with N attachments** — different shape, different columns. Do not wire image variants into the text-sibling columns. If a generation message ever also acquires text siblings (e.g. via edit flows), the generation-variant gating takes precedence for the `< >` actions (§7).
 
 ### 5.2 Keep semantics (decision: kept = canonical everywhere)
 
-The store's documented invariant (`console_chat_store.py:688-692`): scalar `image_data`/`image_mime_type` are strictly a mirror of `attachments[0]`, and **every attachments mutation flows through `_set_message_attachments`**, which re-bases positions from 0. Therefore keep is implemented as a **reorder**: move the kept variant to index 0 of the attachments tuple, persist via the authoritative attachments-list contract, and re-key the sidecar rows to the new positions atomically. No side-channel scalar writes.
+The store's documented invariant (`console_chat_store.py:688-692`): scalar `image_data`/`image_mime_type` are strictly a mirror of `attachments[0]`, and **every attachments mutation flows through `_set_message_attachments`**, which re-bases positions from 0. Therefore keep is implemented as a **reorder**: move the kept variant to index 0 of the attachments tuple in the store, persisted by a **targeted position swap** (below — deliberately NOT the full-list rewrite), with the sidecar rows re-keyed atomically. No side-channel scalar writes.
 
-**Verified seams (and one required extension):**
-- Persistence already supports the rewrite: `update_message_content(attachments=[...])` (`chat_persistence_service.py:292`) is an authoritative full-position rewrite — position 0 → messages row, ≥1 → `message_attachments`, row update + table rewrite in one transaction.
-- **The console store has no public API to mutate an existing message's attachments** (`_set_message_attachments` is a private append/sibling-time helper; the public attachment APIs are composer staging). P2a adds a store method (e.g. `update_message_attachments(session_id, message_id, attachments, *, persist)`) that flows through `_set_message_attachments` and persists via the contract above, passing the unchanged `content`.
-- **Atomicity requires extending the persistence seam:** `update_message_content` opens its own transaction, so the sidecar re-key must **join that transaction** — a generation-aware update path (e.g. an optional `generation_metadata` rows argument on the persistence call, or a sibling method sharing the transaction) rather than a second transaction. Two separate transactions (attachments then sidecar) would leave metadata misaligned with images on a crash between them; the spec requires the single-transaction form.
+**Verified seams — and why the full-list rewrite is explicitly NOT used:**
+- The obvious-looking path, `update_message_content(attachments=[...])` (`chat_persistence_service.py:292`), is an authoritative full-position rewrite — and a **data-loss footgun here**: `MessageAttachment.data` is `bytes | None` (`console_chat_models.py:191` — in-memory bytes may never have been rehydrated for a DB-loaded conversation), and the rewrite contract overwrites *"even when data is None, since supplying attachments at all means the caller intends to overwrite."* A keep on a rehydrated-without-bytes message would replace stored image bytes with NULL. It also churns all N BLOBs for what is logically a two-row change. **P2a therefore adds narrow, generation-aware persistence operations instead:**
+  - `append_message_attachment(message_id, position, data, mime_type, ...)` + the new variant's sidecar row, one INSERT-scoped transaction (regenerate-append; no rehydration of existing variants).
+  - `swap_attachment_positions(message_id, kept_position)` — a targeted swap of position 0 (messages-row scalar) with position *k* (`message_attachments` row) plus the matching sidecar re-key, all in **one transaction** (keep; touches only the two affected variants' bytes, reading them from the DB itself — in-memory byte presence is irrelevant).
+- **The console store has no public API to mutate an existing message's attachments** (`_set_message_attachments` is a private append/sibling-time helper; the public attachment APIs are composer staging). P2a adds store methods wrapping the two operations above, flowing the in-memory tuple through `_set_message_attachments` afterwards (using bytes just written/read, so the mirror stays truthful even when other variants remain byte-less in memory).
+- The sidecar writes **join the same transaction** as their attachment operation in both cases — two separate transactions would leave metadata misaligned with images on a crash between them.
 
 In-card `◀ ▶` **browsing does not reorder** — it's view state (selected index in the card spec, screen-state only, like image view modes). Only **Keep** commits the reorder. On reload, the card shows position 0 (the kept/canonical variant) — deliberate: browsing is ephemeral, keeping is durable.
 
@@ -107,9 +111,9 @@ Mirror the image-row pattern end to end:
 
 ## 9. Testing
 
-- **Migration/DB:** v24→v25 applies + idempotent guard; sidecar CRUD; variant append; keep-reorder re-keys sidecar atomically (attachments and sidecar agree after reorder); cascade delete.
-- **Parse:** `parse_generate_image_args` table (plain, `:backend`, empty, whitespace).
-- **Flow (mocked `run_generation`):** command → assistant message appended with attachments + sidecar rows persisted; batch N; regenerate appends + selects; cap refusal; in-flight guard; failure leaves no orphan message; backend-unconfigured refusal.
+- **Migration/DB:** v24→v25 applies + idempotent guard; sidecar CRUD; `append_message_attachment` (single-INSERT + sidecar, no other rows touched); `swap_attachment_positions` (scalar↔row-k swap + sidecar re-key atomic; other variants' bytes bit-identical after); **the footgun regression test: keep on a message whose in-memory attachment bytes are None must NOT null any stored bytes**; cascade delete.
+- **Parse:** `parse_generate_image_args` table (plain, leading `:backend`, `:backend` only, empty, whitespace).
+- **Flow (mocked `run_generation`):** command → assistant message appended with attachments + sidecar rows persisted; batch N; **partial batch (k of N succeed → message with k variants + status; 0 of N → no message)**; regenerate appends + browses; cap refusal; in-flight guard; failure leaves no orphan message; backend-unconfigured refusal.
 - **Renderer:** card row emitted for generation messages and image row suppressed; details block contents; `◀ ▶` updates selected variant + signature; keep commits position-0; reload renders from DB.
 - **Live TUI verify** (tmux recipe) against a real local backend for the end-to-end proof.
 
