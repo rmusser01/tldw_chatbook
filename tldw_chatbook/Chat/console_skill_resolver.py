@@ -90,8 +90,12 @@ def _code_span_mask(text: str) -> list[bool]:
 
     Fenced blocks: a line whose stripped form starts with ``````` toggles
     fence state; fence lines and everything inside are masked. Inline spans:
-    paired backticks within a non-fence line are masked inclusively; an
-    unpaired backtick masks nothing.
+    on a non-fence line with an EVEN backtick count, paired backticks are
+    masked inclusively (greedy left-to-right pairing — correct for well-
+    formed lines). A line with an ODD backtick count is unparseable inline
+    code: no pairing scheme is reliable (a stray tick shifts the pairing
+    and would un-mask a genuinely guarded span), so the ENTIRE line is
+    masked — failing safe, like an unclosed fence masking to end-of-text.
     """
     mask = [False] * len(text)
     in_fence = False
@@ -104,12 +108,21 @@ def _code_span_mask(text: str) -> list[bool]:
         elif in_fence:
             for i in range(pos, pos + len(line)):
                 mask[i] = True
+        elif line.count("`") % 2 == 1:
+            # Odd backtick count: pairing is ambiguous — fail safe by
+            # masking the whole line (over-mask, never under-mask).
+            for i in range(pos, pos + len(line)):
+                mask[i] = True
         else:
             i = 0
             while i < len(line):
                 if line[i] == "`":
                     close = line.find("`", i + 1)
                     if close == -1:
+                        # Unreachable on even-count lines (every opening
+                        # tick has a closer); kept as a guard because a
+                        # -1 falling through would set ``i = 0`` and loop
+                        # forever if the invariant ever broke.
                         break
                     for j in range(i, close + 1):
                         mask[pos + j] = True

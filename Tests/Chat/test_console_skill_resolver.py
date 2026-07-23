@@ -2,7 +2,9 @@ from tldw_chatbook.Chat.console_command_grammar import KIND_FALLBACK
 from tldw_chatbook.Chat.console_skill_resolver import (
     SKILLS_EMPTY_LIST_ROW,
     SkillCommandCandidate,
+    SkillMention,
     cap_skill_args,
+    find_embedded_mentions,
     format_skills_list,
     make_skill_fallback_resolver,
     resolve_skill_command,
@@ -89,11 +91,6 @@ def test_fallback_does_not_claim_a_bare_slash_draft():
     assert resolver("", " ") is None
 
 
-from tldw_chatbook.Chat.console_skill_resolver import (
-    SkillMention,
-    find_embedded_mentions,
-)
-
 _NAMES = frozenset({"code-review", "style-guide", "path"})
 
 
@@ -137,12 +134,28 @@ def test_code_spans_are_skipped():
 
 
 def test_skills_list_rows_use_dollar_sigil():
-    from tldw_chatbook.Chat.console_skill_resolver import (
-        SkillCommandCandidate,
-        format_skills_list,
-    )
     listing = format_skills_list(
         (SkillCommandCandidate(name="code-review", description="d"),)
     )
     assert "$code-review" in listing
     assert "/code-review" not in listing
+
+
+def test_odd_backtick_line_masks_entirely():
+    """A line with an ODD backtick count is unparseable inline code — no
+    pairing scheme is reliable (greedy pairing would let a stray tick
+    consume a real opening tick and un-mask a user-guarded span). Fail
+    SAFE: mask the whole line, mirroring the unclosed-fence philosophy."""
+    assert find_embedded_mentions("a ` b then `$path` here", frozenset({"path"})) == ()
+    # Well-formed control on the same skill: prose mentions still expand.
+    found = find_embedded_mentions("plain $path here", frozenset({"path"}))
+    assert [m.name for m in found] == ["path"]
+
+
+def test_unclosed_fence_masks_to_eof():
+    """An opening ``` fence with no closer masks everything after it — a
+    $mention on a later line stays literal (pins existing behavior)."""
+    text = "before $code-review\n```\necho $path on a later line"
+    mentions = find_embedded_mentions(text, _NAMES)
+    assert [m.name for m in mentions] == ["code-review"]
+    assert not any(m.name == "path" for m in mentions)
