@@ -87,3 +87,62 @@ def test_fallback_does_not_claim_a_bare_slash_draft():
     resolver = make_skill_fallback_resolver(lambda: _cands("summarize"))
     assert resolver("", "") is None
     assert resolver("", " ") is None
+
+
+from tldw_chatbook.Chat.console_skill_resolver import (
+    SkillMention,
+    find_embedded_mentions,
+)
+
+_NAMES = frozenset({"code-review", "style-guide", "path"})
+
+
+def test_embedded_mention_found_mid_prose():
+    text = "please $style-guide this draft"
+    mentions = find_embedded_mentions(text, _NAMES)
+    assert mentions == (SkillMention(start=7, end=19, name="style-guide"),)
+    assert text[7:19] == "$style-guide"
+
+
+def test_embedded_mention_trailing_punctuation_stays_prose():
+    mentions = find_embedded_mentions("run $style-guide.", _NAMES)
+    assert mentions[0].name == "style-guide"
+    assert mentions[0].end == 16  # the "." is not part of the token
+
+
+def test_case_sensitive_exact_match_only():
+    # $PATH stays literal even though a skill named "path" exists.
+    assert find_embedded_mentions("echo $PATH", _NAMES) == ()
+    assert find_embedded_mentions("echo $path", _NAMES)[0].name == "path"
+    # prefix / unknown / numeric stay literal
+    assert find_embedded_mentions("$style", _NAMES) == ()
+    assert find_embedded_mentions("$5 and $100", _NAMES) == ()
+
+
+def test_multiple_mentions_all_found_in_order():
+    text = "$code-review then $style-guide"
+    names = [m.name for m in find_embedded_mentions(text, _NAMES)]
+    assert names == ["code-review", "style-guide"]
+
+
+def test_code_spans_are_skipped():
+    fenced = "look:\n```sh\necho $path\n```\nand $path here"
+    mentions = find_embedded_mentions(fenced, _NAMES)
+    assert len(mentions) == 1
+    assert fenced[mentions[0].start :].startswith("$path here"[:5])
+    inline = "use `$path` literally but $path expands"
+    inline_mentions = find_embedded_mentions(inline, _NAMES)
+    assert len(inline_mentions) == 1
+    assert inline_mentions[0].start == inline.rindex("$path")
+
+
+def test_skills_list_rows_use_dollar_sigil():
+    from tldw_chatbook.Chat.console_skill_resolver import (
+        SkillCommandCandidate,
+        format_skills_list,
+    )
+    listing = format_skills_list(
+        (SkillCommandCandidate(name="code-review", description="d"),)
+    )
+    assert "$code-review" in listing
+    assert "/code-review" not in listing

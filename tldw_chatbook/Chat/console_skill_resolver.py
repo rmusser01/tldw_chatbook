@@ -20,6 +20,7 @@ resolved name is not currently trusted.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Callable
 
@@ -30,6 +31,16 @@ SKILL_ARGS_MAX = 4000
 
 SKILLS_LIST_COMMAND_NAME = "skills"
 """Canonical registered-command name for listing available skills."""
+
+MENTION_SIGIL = "$"
+"""Leading character of a Codex-style skill mention (``$skill-name``)."""
+
+_MENTION_TOKEN = re.compile(r"[A-Za-z0-9-]+")
+
+SKILL_MENTION_SKIPPED_NOTE = (
+    'Skipped "${name}" — this skill needs review before it can run. '
+    "Open /skills to review it."
+)
 
 SKILL_UNTRUSTED_REFUSE = (
     'Skill "{name}" isn\'t trusted ({reason}) — review and approve it in '
@@ -57,6 +68,89 @@ class SkillCommandCandidate:
 
     name: str
     description: str = ""
+
+
+@dataclass(frozen=True)
+class SkillMention:
+    """One embedded ``$skill-name`` mention found in a draft.
+
+    Args:
+        start: Index of the ``$`` sigil in the scanned text.
+        end: Index one past the last token character.
+        name: The matched canonical (lowercase) skill name.
+    """
+
+    start: int
+    end: int
+    name: str
+
+
+def _code_span_mask(text: str) -> list[bool]:
+    """Return a per-character mask, True inside markdown code spans.
+
+    Fenced blocks: a line whose stripped form starts with ``````` toggles
+    fence state; fence lines and everything inside are masked. Inline spans:
+    paired backticks within a non-fence line are masked inclusively; an
+    unpaired backtick masks nothing.
+    """
+    mask = [False] * len(text)
+    in_fence = False
+    pos = 0
+    for line in text.splitlines(keepends=True):
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+            for i in range(pos, pos + len(line)):
+                mask[i] = True
+        elif in_fence:
+            for i in range(pos, pos + len(line)):
+                mask[i] = True
+        else:
+            i = 0
+            while i < len(line):
+                if line[i] == "`":
+                    close = line.find("`", i + 1)
+                    if close == -1:
+                        break
+                    for j in range(i, close + 1):
+                        mask[pos + j] = True
+                    i = close + 1
+                else:
+                    i += 1
+        pos += len(line)
+    return mask
+
+
+def find_embedded_mentions(
+    text: str, names: frozenset[str]
+) -> tuple[SkillMention, ...]:
+    """Find embedded ``$skill-name`` mentions eligible for splicing.
+
+    Exact, case-SENSITIVE matching against ``names`` (canonical lowercase
+    skill names): ``$PATH`` stays literal even when a skill named ``path``
+    exists. Mentions inside markdown code spans are skipped. Single pass —
+    callers must never re-scan spliced output (no recursion).
+
+    Args:
+        text: The draft text to scan (the user's original message).
+        names: Canonical skill names eligible for expansion.
+
+    Returns:
+        Non-overlapping mentions in document order.
+    """
+    mask = _code_span_mask(text)
+    mentions: list[SkillMention] = []
+    index = 0
+    while index < len(text):
+        if text[index] == MENTION_SIGIL and not mask[index]:
+            match = _MENTION_TOKEN.match(text, index + 1)
+            if match is not None and match.group(0) in names:
+                mentions.append(
+                    SkillMention(start=index, end=match.end(), name=match.group(0))
+                )
+                index = match.end()
+                continue
+        index += 1
+    return tuple(mentions)
 
 
 @dataclass(frozen=True)
@@ -148,7 +242,7 @@ def format_skills_list(candidates: tuple[SkillCommandCandidate, ...]) -> str:
 
     Returns:
         `SKILLS_EMPTY_LIST_ROW` when ``candidates`` is empty; otherwise one
-        ``/name — description`` line per candidate (just ``/name`` when its
+        ``$name — description`` line per candidate (just ``$name`` when its
         description is empty), joined with newlines.
     """
     if not candidates:
@@ -157,9 +251,9 @@ def format_skills_list(candidates: tuple[SkillCommandCandidate, ...]) -> str:
     lines = []
     for candidate in candidates:
         if candidate.description:
-            lines.append(f"/{candidate.name} — {candidate.description}")
+            lines.append(f"${candidate.name} — {candidate.description}")
         else:
-            lines.append(f"/{candidate.name}")
+            lines.append(f"${candidate.name}")
     return "\n".join(lines)
 
 
