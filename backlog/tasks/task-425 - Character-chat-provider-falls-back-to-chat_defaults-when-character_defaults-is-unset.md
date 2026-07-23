@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-21 09:38'
-updated_date: '2026-07-23 04:58'
+updated_date: '2026-07-23 05:04'
 labels:
   - roleplay
   - ux
@@ -31,6 +31,7 @@ Filed from the RP/character-card UX review (Docs/superpowers/qa/rp-ux-review-202
 - [x] #3 When character-chat provider resolution fails, the error names the resolved provider source and points at an in-app remedy (not a raw TOML section for a different provider)
 - [x] #4 Fallback and primary preview selections preserve configured endpoint, streaming, and generation defaults.
 - [x] #5 Resolution failures retain safe structured provider/model/selection context, and changed test helpers satisfy the repository class-naming rule.
+- [x] #6 The default CI test environment installs the existing Markdown dependency required to collect subscription prompt tests on every matrix job.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -42,10 +43,11 @@ Filed from the RP/character-card UX review (Docs/superpowers/qa/rp-ux-review-202
 4. Reuse build_default_console_session_settings to derive each defaults section, map the effective snapshot into ConsoleProviderSelection, and log failures at the selection that raised.
 5. Rename the private test gateway helper to satisfy the PascalCase review rule.
 6. Run focused tests, the full affected Roleplay test pair, static checks, and git diff hygiene; update implementation notes and acceptance criteria.
+7. Reproduce the rebased dev matrix collection failure, align requirements-test.txt with the already-declared Markdown dependency imported by subscription prompt tests, and rerun the full GitHub matrix.
 
 ADR required: no
-ADR path: backlog/decisions/006-provider-aware-generation-settings.md (existing)
-Reason: This is a routine correctness/observability fix that applies the existing provider-settings ownership boundary; it introduces no new storage, runtime, security, or cross-module contract.
+ADR path: backlog/decisions/006-provider-aware-generation-settings.md (existing for the Roleplay settings change); N/A for the test-manifest correction
+Reason: The Roleplay fix applies an existing provider-settings boundary. The CI correction adds no dependency or runtime choice; it exposes the already-declared subscriptions Markdown dependency to the test environment that imports it.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -62,4 +64,6 @@ AC mapping: #1 and #4 are covered by test_unready_character_provider_falls_back_
 Verification: TDD red run produced the three expected failures (missing structured context, endpoint None, streaming True); the same focused set then passed 3/3. Tests/UI/test_personas_workbench.py plus Tests/UI/test_personas_preview.py passed 190/190 on rebased dev. Ruff passed both changed Python files; mypy passed personas_preview_controller.py; git diff --check and the 593-task duplicate-ID guard passed. The repository-wide command successfully collected 13,372 tests after installing the declared subscriptions extra locally, then the redundant serial run was stopped at 5%; the exact pushed SHA is gated by the repository's parallel GitHub unit/integration/UI jobs before merge.
 
 Files: tldw_chatbook/UI/Persona_Modules/personas_preview_controller.py, Tests/UI/test_personas_workbench.py, and this TASK-425 record.
+
+Rebase CI follow-up: the refreshed matrix reproduced the current dev baseline failure on every job during collection: Tests/Internal_Prompts/test_subscriptions_migration.py imports Subscriptions.briefing_generator, whose existing top-level markdown import was not installed by requirements-test.txt. Recent dev run 29952753854 failed for the same reason across unit/integration platforms, and no overlapping PR existed. Added markdown to requirements-test.txt, matching the already-declared subscriptions extra without changing runtime ownership. The focused subscription prompt suite passes 14/14 locally; the next pushed SHA reruns the full matrix. Local pip check still reports pre-existing textual-web/textual and uvloop version conflicts in the shared developer venv; those packages and constraints are unrelated to this PR and are not changed.
 <!-- SECTION:NOTES:END -->
