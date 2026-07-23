@@ -434,6 +434,12 @@ CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
 # smaller for the rail's narrower column).
 CHARACTER_AVATAR_COLS = 16
 CHARACTER_AVATAR_LINES = 8
+# P3d-1 Task 3 (review fix): bound `_console_expression_spec_cache` so a
+# long session visiting many characters/states doesn't retain unbounded PIL
+# image references (the spec dicts hold their own `PILImage.Image`, so the
+# `_console_image_cache` LRU cap below does not protect this cache). Matches
+# the render cache's bound.
+_EXPRESSION_SPEC_CACHE_MAX = 16
 CONSOLE_FOCUS_REGISTRY = WorkbenchFocusRegistry(
     (
         "console-left-rail",
@@ -4165,12 +4171,19 @@ class ChatScreen(BaseAppScreen):
             logger.opt(exception=True).debug("avatar: expression decode failed")
         # Post-await staleness re-check on the FULL (character_id, state)
         # scope: the state can flip mid-decode while streaming, so recompute
-        # it from the SAME store/session captured above and drop a stale
-        # render rather than mount an image for a scope we've moved past.
-        current_state = resolve_console_expression_state(store, active_session_id, react_enabled=react)
+        # it live -- both the session id and the state -- rather than reusing
+        # the `active_session_id` captured before the await, so two tabs
+        # sharing one character can't paint a stale render.
+        current_session_id = getattr(store, "active_session_id", None) if store is not None else None
+        current_state = resolve_console_expression_state(store, current_session_id, react_enabled=react)
         if (self._current_console_rail_character_id(), current_state) != scope or not self.is_mounted:
             return
         self._console_expression_spec_cache[(character_id, state)] = spec
+        # Bound the cache: evict oldest insertion-ordered entries (dicts
+        # preserve insertion order) so a long session visiting many
+        # characters/states doesn't retain unbounded PIL image references.
+        while len(self._console_expression_spec_cache) > _EXPRESSION_SPEC_CACHE_MAX:
+            del self._console_expression_spec_cache[next(iter(self._console_expression_spec_cache))]
         self._active_character_avatar = spec
         await self._render_character_avatar_into_section()
 

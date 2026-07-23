@@ -475,3 +475,43 @@ async def test_expression_state_falls_back_to_idle_image(console_screen_with_db,
     await screen._refresh_active_character_avatar_if_scope_changed()   # no thinking image -> idle image
     assert screen._active_character_avatar is not None   # rendered the idle fallback, did not crash
     assert screen._last_console_avatar_scope == (char_id, "thinking")
+
+
+# --- P3d-1 Task 3 review fixes ------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_expression_spec_cache_is_bounded(console_screen_with_db, monkeypatch):
+    """Review FIX 1: ``_console_expression_spec_cache`` is written on every
+    new ``(character_id, state)`` decode and never evicted -- over a long
+    session visiting many characters this retains unbounded ``PILImage.Image``
+    references (the ``_console_image_cache`` render LRU does NOT protect this
+    cache, since the spec dicts hold their own independent PIL references).
+    Visit 6 characters x 3 states each (18 distinct scopes, more than the
+    16-entry cap) and assert the cache never grows past the cap.
+    """
+    app, screen, db = console_screen_with_db
+    from PIL import Image as PILImage
+    from io import BytesIO
+
+    def _png(color):
+        buf = BytesIO()
+        PILImage.new("RGB", (32, 32), color).save(buf, format="PNG")
+        return buf.getvalue()
+
+    char_ids = [
+        db.add_character_card({"name": f"Char{i}", "image": _png((i * 10, 10, 10))})
+        for i in range(6)
+    ]
+
+    import tldw_chatbook.UI.Screens.chat_screen as cs
+    state_box = {"v": "idle"}
+    monkeypatch.setattr(cs, "resolve_console_expression_state", lambda *a, **k: state_box["v"])
+
+    for char_id in char_ids:
+        _set_active_console_character(screen, char_id, f"Char{char_id}")
+        for state in ("idle", "thinking", "speaking"):
+            state_box["v"] = state
+            await screen._refresh_active_character_avatar_if_scope_changed()
+
+    assert len(screen._console_expression_spec_cache) <= 16
