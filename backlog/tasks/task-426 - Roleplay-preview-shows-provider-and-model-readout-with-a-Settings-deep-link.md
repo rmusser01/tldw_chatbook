@@ -1,11 +1,11 @@
 ---
 id: TASK-426
 title: Roleplay preview shows provider and model readout with a Settings deep-link
-status: Done
+status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-07-21 09:38'
-updated_date: '2026-07-21 21:18'
+updated_date: '2026-07-23 13:46'
 labels:
   - roleplay
   - ux
@@ -29,13 +29,17 @@ Filed from the RP/character-card UX review (Docs/superpowers/qa/rp-ux-review-202
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-Stacked on task-425 branch (needs _resolve_selection_with_fallback).
-1. TDD in Tests/UI/test_personas_workbench.py: (a) provider_readout() sync formatting — char+distinct-chat shows fallback note; char-only no note; no-char-provider falls to chat/none; (b) readout Static populated after selecting a character; (c) Configure button posts NavigateToScreen settings/providers-models with char provider; (d) post-send readout reflects resolved (fallback) provider.
-2. Pane (personas_preview_pane.py): add #personas-preview-provider Static at top of body; set_provider_readout(text); 'Configure' Button in toolbar posting PreviewConfigureProviderRequested.
-3. Message: add PreviewConfigureProviderRequested to personas_pane_messages.py.
-4. Controller: provider_readout()->(text,nav_provider) sync from config using PROVIDER_DISPLAY_NAMES; refresh_provider_readout() sets pane; call from handle_character_loaded/reset_for_character/reset; open_provider_settings() posts NavigateToScreen; in _run_reply update readout to resolution.provider/model (+Console default when fallback).
-5. Screen: @on(PreviewConfigureProviderRequested)->preview.open_provider_settings().
-6. Scoped pytest + live-verify readout + Configure nav in real TUI.
+ADR required: no
+ADR path: backlog/decisions/004-personas-destination-native-workbench.md; backlog/decisions/007-personas-workbench-route-consolidation.md; backlog/decisions/006-provider-aware-generation-settings.md; backlog/decisions/012-provider-credential-settings-boundary.md
+Reason: This is corrective normalization, documentation, and UI verification within the existing Personas preview, provider-default, and Settings navigation boundaries; it introduces no new storage, runtime, security, dependency, or long-lived UX decision.
+
+1. Replay only the task-426 commit onto current origin/dev, preserving the merged task-425 implementation and resolving conflicts against its reviewed final shape.
+2. Retarget PR #746 from the retired stacked base branch to dev and verify the diff contains only task-426 work plus review remediation.
+3. Add a focused failing regression proving whitespace-only character provider/model values are treated as unset and the readout plus Configure target match actual send-path normalization.
+4. Implement the smallest controller normalization fix and add the required Google-style Args section to set_provider_readout.
+5. Run focused Personas preview/workbench tests, lint, type checks, diff checks, and task/backlog validation.
+6. Commit and push the rebased remediation, reply to and resolve every review thread, then request an independent code review.
+7. Monitor final GitHub checks, compare any inherited failures with the exact dev baseline, verify mergeability and unresolved-thread state, then merge through the normal GitHub path.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
