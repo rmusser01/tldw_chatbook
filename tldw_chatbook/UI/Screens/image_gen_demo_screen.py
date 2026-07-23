@@ -62,19 +62,27 @@ class ImageGenDemoScreen(BaseAppScreen):
             yield Static(id="imagegen-meta")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "imagegen-generate":
-            self._generate()
-
-    @work(thread=True, exclusive=True, group="imagegen-demo")
-    def _generate(self) -> None:
+        if event.button.id != "imagegen-generate":
+            return
+        # Read all inputs on the main (UI) thread, then hand them to the
+        # worker -- query_one() is not thread-safe against the DOM.
         backend = self.query_one("#imagegen-backend", Select).value
         prompt = self.query_one("#imagegen-prompt", TextArea).text
         negative = self.query_one("#imagegen-negative", TextArea).text or None
         seed_raw = self.query_one("#imagegen-seed", Input).value.strip()
-        seed = int(seed_raw) if seed_raw.lstrip("-").isdigit() else -1
-        self.app.call_from_thread(
-            self.query_one("#imagegen-status", Static).update, "Generating…"
-        )
+        try:
+            seed = int(seed_raw)
+        except ValueError:
+            seed = -1
+        self.query_one("#imagegen-status", Static).update("Generating…")
+        self._generate(backend, prompt, negative, seed)
+
+    @work(thread=True, exclusive=True, group="imagegen-demo")
+    def _generate(self, backend, prompt, negative, seed) -> None:
+        # Blocking generation on a worker thread; all DOM writes go through
+        # call_from_thread(). Everything (incl. the render/decode step) stays
+        # inside this try/except so no failure mode can crash the app --
+        # @work defaults to exit_on_error=True.
         try:
             req = build_request(
                 backend=backend,
@@ -84,13 +92,12 @@ class ImageGenDemoScreen(BaseAppScreen):
                 image_format="png",
             )
             res = run_generation(req)  # blocking; we are in a worker thread
-        except Exception as exc:  # surface the error clearly (incl. inline_max_bytes cap)
+            self.app.call_from_thread(self._render_result, res, req)
+        except Exception as exc:  # surface any failure (incl. render/decode) as status
             logger.warning("Image Gen (dev) generation failed: {}", exc)
             self.app.call_from_thread(
                 self.query_one("#imagegen-status", Static).update, f"Error: {exc}"
             )
-            return
-        self.app.call_from_thread(self._render_result, res, req)
 
     def _render_result(self, res, req) -> None:
         # Low-level render (rich-pixels), decoupled from the Console
