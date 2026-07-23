@@ -448,10 +448,49 @@ def test_vpack_shared_sheet_read_once_within_budget(monkeypatch):
                          "asset_bytes_status": "present"}],
         asset_files={"assets/persona_visuals/sheet.png": sheet},
     )
-    # Budget covers manifest + assets.json + ONE sheet read -- not four.
-    monkeypatch.setattr(mod, "MAX_TOTAL_BYTES", len(sheet) + 4096)
+    # Budget covers manifest + assets.json + exactly ONE sheet charge, plus a
+    # small slack -- NOT four sheet charges. A non-caching implementation
+    # would need 3 more sheet charges (each len(sheet) bytes) to satisfy all
+    # four states, which is far more than the 16-byte slack allows.
+    with _open_vpack(data) as zf:
+        sizes = {i.filename: i.file_size for i in zf.infolist()}
+    cap = (sizes["manifest.json"] + sizes["metadata/assets.json"]
+           + sizes["assets/persona_visuals/sheet.png"] + 16)
+    monkeypatch.setattr(mod, "MAX_TOTAL_BYTES", cap)
     res = _extract(data)
     assert set(res.images) == {"idle", "thinking", "speaking", "error"}
+
+
+def test_vpack_corrupt_manifest_member_never_raises(tmp_path):
+    # A vpack whose manifest.json member has a corrupted compressed payload
+    # (bad CRC) must be handled by the guarded zf.read() in
+    # _read_member_capped -- not raise BadZipFile straight through
+    # _resolve_vpack_expression_set (the manifest/assets.json reads happen
+    # BEFORE the per-state try/except loop, so nothing else guards this).
+    data = simple_vpack({s: _png() for s in ("idle", "thinking", "speaking", "error")})
+    with _open_vpack(data) as zf:
+        info = zf.getinfo("manifest.json")
+        header_offset = info.header_offset
+
+    raw = bytearray(data)
+    # Local file header: 30 fixed bytes, then filename, then extra field.
+    name_len = int.from_bytes(raw[header_offset + 26:header_offset + 28], "little")
+    extra_len = int.from_bytes(raw[header_offset + 28:header_offset + 30], "little")
+    data_start = header_offset + 30 + name_len + extra_len
+    # Flip a couple of bytes inside the compressed payload -- sizes/CRC in
+    # the header are left untouched, so this breaks decompression/CRC
+    # checking without breaking the zip's central directory.
+    raw[data_start] ^= 0xFF
+    raw[data_start + 1] ^= 0xFF
+    corrupted = bytes(raw)
+
+    bad = tmp_path / "corrupt.vpack"
+    bad.write_bytes(corrupted)
+
+    with _open_vpack(bad.read_bytes()) as zf:
+        from tldw_chatbook.Character_Chat.expression_set_io import _resolve_vpack_expression_set
+        res, _total = _resolve_vpack_expression_set(zf)   # must not raise
+    assert res.images == {}
 
 
 def test_vpack_broken_manifest_never_raises():

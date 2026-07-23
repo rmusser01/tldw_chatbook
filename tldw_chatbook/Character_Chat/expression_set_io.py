@@ -283,7 +283,11 @@ def _read_member_capped(
     if total + info.file_size > MAX_TOTAL_BYTES:
         skipped.append((member, "total size cap exceeded"))
         return None, total
-    data = zf.read(info)
+    try:
+        data = zf.read(info)
+    except Exception:
+        skipped.append((member, "could not be read"))
+        return None, total
     bytes_cache[member] = data
     return data, total + info.file_size
 
@@ -294,7 +298,7 @@ def _read_vpack_json(
     bytes_cache: dict[str, bytes],
     total: int,
     skipped: list[tuple[str, str]],
-):
+) -> tuple[dict | None, int]:
     """Parse a JSON member under the size caps. Returns (obj|None, total).
     Parse failures (bad JSON, RecursionError on pathological nesting) are
     caught -- the vpack path never raises."""
