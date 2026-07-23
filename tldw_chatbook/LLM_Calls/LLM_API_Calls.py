@@ -864,6 +864,26 @@ def _anthropic_block_index(event: dict) -> int | None:
     return None
 
 
+def _anthropic_supports_caching(model: str) -> bool:
+    """True for Claude models that support prompt caching (``cache_control``).
+
+    All modern Claude (3 / 3.5 / 3.7 / 4+) support it; legacy ``claude-2*`` and
+    ``claude-instant*`` do not.
+
+    Args:
+        model: The model identifier.
+
+    Returns:
+        True when the model accepts ``cache_control`` breakpoints.
+    """
+    m = (model or "").lower()
+    return (
+        m.startswith("claude-")
+        and not m.startswith("claude-2")
+        and "instant" not in m
+    )
+
+
 def _anthropic_tools_payload(tools: list) -> list:
     """Convert OpenAI function-format tool entries to Anthropic's format.
 
@@ -1107,7 +1127,20 @@ def chat_with_anthropic(
         "stream": current_streaming,
     }
     if system_prompt is not None:
-        data["system"] = system_prompt  # Anthropic uses 'system' at the top level
+        if _anthropic_supports_caching(current_model) and system_prompt:
+            # cache_control on the system prompt (the largest stable prefix)
+            # activates Anthropic prompt caching; per the tools->system->messages
+            # hierarchy this caches tools+system. Applied for both streaming and
+            # non-streaming (the payload is built before the streaming branch).
+            data["system"] = [
+                {
+                    "type": "text",
+                    "text": system_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+        else:
+            data["system"] = system_prompt  # unchanged for non-caching models
     if thinking_config is None:
         if temp is not None:
             data["temperature"] = current_temp
@@ -1128,7 +1161,15 @@ def chat_with_anthropic(
     if stop_sequences is not None:
         data["stop_sequences"] = stop_sequences
     if tools is not None:
-        data["tools"] = _anthropic_tools_payload(tools)
+        tools_payload = _anthropic_tools_payload(tools)
+        if _anthropic_supports_caching(current_model) and tools_payload:
+            # Optional second breakpoint on the last converted tool. A fresh dict
+            # so the caller's input `tools` are never mutated.
+            tools_payload[-1] = {
+                **tools_payload[-1],
+                "cache_control": {"type": "ephemeral"},
+            }
+        data["tools"] = tools_payload
     if thinking_config is not None:
         data["thinking"] = thinking_config
 

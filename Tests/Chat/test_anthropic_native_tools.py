@@ -22,6 +22,7 @@ import json
 from unittest.mock import Mock, patch
 
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+from tldw_chatbook.LLM_Calls.LLM_API_Calls import _anthropic_supports_caching
 
 
 def _anthropic_text_response(text="ok"):
@@ -84,6 +85,9 @@ def test_openai_tools_convert_to_anthropic_input_schema(mock_post):
             "name": "calculator",
             "description": "Evaluate math.",
             "input_schema": OPENAI_TOOLS[0]["function"]["parameters"],
+            # claude-3-opus (the fixture's default model) supports caching, so
+            # the last converted tool picks up a breakpoint (task-323).
+            "cache_control": {"type": "ephemeral"},
         }
     ]
 
@@ -742,3 +746,76 @@ def test_streaming_two_interleaved_tool_blocks_reassemble_distinctly(mock_post):
     ]
     assert json.loads(calls[0]["function"]["arguments"]) == {"expression": "2+2"}
     assert json.loads(calls[1]["function"]["arguments"]) == {}
+
+
+def _sent_anthropic(mock_post, model, **extra):
+    """Drive chat_with_anthropic with an explicit model; return the sent JSON."""
+    mock_response = Mock()
+    mock_response.json.return_value = _anthropic_text_response()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = Mock()
+    mock_post.return_value = mock_response
+    chat_api_call(
+        "anthropic",
+        messages_payload=[{"role": "user", "content": "hi"}],
+        api_key="test-key",
+        model=model,
+        streaming=False,
+        **extra,
+    )
+    return mock_post.call_args[1]["json"]
+
+
+def test_anthropic_supports_caching_gate():
+    assert _anthropic_supports_caching("claude-3-haiku-20240307") is True
+    assert _anthropic_supports_caching("claude-3-5-sonnet-20241022") is True
+    assert _anthropic_supports_caching("claude-sonnet-4-20250514") is True
+    assert _anthropic_supports_caching("claude-2.1") is False
+    assert _anthropic_supports_caching("claude-instant-1.2") is False
+    assert _anthropic_supports_caching("gpt-4o") is False
+    assert _anthropic_supports_caching("") is False
+
+
+@patch("requests.Session.post")
+def test_caching_model_system_gets_cache_control(mock_post):
+    sent = _sent_anthropic(
+        mock_post, "claude-3-opus-20240229", system_message="You are helpful."
+    )
+    assert isinstance(sent["system"], list)
+    assert sent["system"][0]["type"] == "text"
+    assert sent["system"][0]["text"] == "You are helpful."
+    assert sent["system"][0]["cache_control"] == {"type": "ephemeral"}
+
+
+@patch("requests.Session.post")
+def test_caching_model_last_tool_gets_cache_control(mock_post):
+    sent = _sent_anthropic(
+        mock_post, "claude-3-opus-20240229", tools=OPENAI_TOOLS
+    )
+    assert sent["tools"], "tools should convert and survive"
+    assert sent["tools"][-1]["cache_control"] == {"type": "ephemeral"}
+    # <=4 breakpoints total (system optional + one tool here)
+    n = sum(
+        1 for t in sent["tools"] if "cache_control" in t
+    ) + (
+        1 if isinstance(sent.get("system"), list) else 0
+    )
+    assert n <= 4
+
+
+@patch("requests.Session.post")
+def test_non_caching_model_unchanged(mock_post):
+    sent = _sent_anthropic(
+        mock_post, "claude-2.1", system_message="You are helpful.", tools=OPENAI_TOOLS
+    )
+    assert sent["system"] == "You are helpful."  # plain string, no blocks
+    assert all("cache_control" not in t for t in sent["tools"])
+
+
+@patch("requests.Session.post")
+def test_caching_model_no_tools_system_only(mock_post):
+    sent = _sent_anthropic(
+        mock_post, "claude-3-opus-20240229", system_message="Hi."
+    )
+    assert isinstance(sent["system"], list)
+    assert "tools" not in sent  # no tools passed -> no tools key
