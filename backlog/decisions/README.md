@@ -21,6 +21,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-016](016-palette-liveness-and-hotkey-layer.md) | Accepted | Palette commands must be live (notify-only commands deleted or wired); Ctrl+N destination hotkey layer zipped from `SHELL_DESTINATION_ORDER`; generic BINDINGS-driven F1 help. |
 | [ADR-018](018-watchlists-tui-screen.md) | Proposed | Replace the placeholder Watchlists destination shell with a full three-pane TUI screen reusing the local/server scope service and mirroring `tldw_server` Watchlists IA. |
 | [ADR-021](021-file-backed-notes-disk-authority-and-recovery.md) | Proposed | Keep linked note files disk-authoritative, project them locally, and store journaled safety plus opt-in recovery replicas in an independent recovery database. |
+| [ADR-022](022-local-private-data-boundary.md) | Accepted | Enforce owner-only POSIX storage for local private artifacts, make config persistence single-owner, keep persistent logs payload-free, and contain legacy Notes sync paths. |
 
 ## Historical Decision Material
 
