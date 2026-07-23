@@ -6,7 +6,7 @@
 
 ## Goal
 
-Make getting a character's expression images **in and out** fast and shareable: assign the whole set (idle + thinking + speaking + error) at once from a folder / multi-selected files / a `.zip`, and export a character's set as a `.zip` for backup or sharing — instead of P3d-1's three one-at-a-time file-dialog slots.
+Make getting a character's expression images **in and out** fast and shareable: assign the whole set (idle + thinking + speaking + error) at once by importing a `.zip`, and export a character's set as a `.zip` for backup or sharing — instead of P3d-1's three one-at-a-time file-dialog slots. (The `.zip` is the portable, shareable unit and is symmetric: an exported set re-imports directly. The importer's core is written to also accept a folder / multiple files, so a future picker upgrade can add loose-file import with no core change.)
 
 ## Context
 
@@ -17,7 +17,7 @@ P3d-2 adds **bulk local import** and **export** on top of that, with **no schema
 ## Verified ground truths (from code scout — use verbatim)
 
 1. **idle is staged, the three are immediate.** The main avatar is staged in the editor via `editor.set_avatar_image(bytes)` (`personas_screen.py:~3949`) and read back via `editor.current_avatar_bytes()` (`:~3979`); it persists only on **card save** (a version-bumping `update_character_card`). The three reactive states write immediately to the table via `db.set_character_expression_image(...)` (P3d-1, card-version-independent). So a bulk import must handle idle differently from the three.
-2. **File picker** (`Widgets/enhanced_file_picker.py`) supports **multi-select** (per-entry selection markers) and has an `EnhancedFileSave` save dialog (used elsewhere in `personas_screen.py`).
+2. **File picker** (`Widgets/enhanced_file_picker.py`): `EnhancedFileOpen` returns a **single file** — every real usage (`ccp_character_handler`, `chat_attachment_handler`, `ccp_dictionary_handler`, …) gets one `Path` from `push_screen_wait`; `_should_return(candidate: Path)` gates one file. There is **no reliable multi-file return** and no confirmed directory-select. `EnhancedFileSave` is the save dialog. So the import UI selects a **single `.zip`**; multi-select/folder are not available through the standard picker.
 3. **P3d-1 authoring surface** (to reuse): `_apply_expression_upload(character_id, state, image, mime)`, `_clear_expression_slot(...)`, the `char-expression-slot-{state}` slots, `_character_editor_generation` render token, the off-thread thumbnail render, `_avatar_upload_dialog_worker` (the file-dialog pattern), and `EXPRESSION_IMAGE_STATES = ("thinking","speaking","error")` from `Chat/console_expression_state.py`.
 4. **No migration** — `character_expression_images` and `character_cards.image` already exist (schema v23).
 
@@ -42,7 +42,7 @@ _apply_expression_set(character_id: int, images: dict[str, bytes]) -> Expression
 A pure helper does the DB-only part so it is unit-testable without the editor:
 `apply_expression_images_to_db(db, character_id, images_without_idle) -> (applied, skipped)`.
 
-### Unit 2 — Local importer (folder / multi-select / `.zip` → `dict[state, bytes]`)
+### Unit 2 — Local importer (`.zip` → `dict[state, bytes]`; resolver stays general)
 
 A pure function that resolves selected inputs to a validated set:
 
@@ -50,9 +50,9 @@ A pure function that resolves selected inputs to a validated set:
 resolve_local_expression_set(paths: list[Path]) -> ExpressionSetResolution
 ```
 
-- Input: a list of selected file paths (multi-selected images), a single directory path (folder), or a single `.zip` path.
+- **UI input is a single `.zip`** (ground truth #2 — the standard picker returns one file). The resolver is nonetheless written to accept a general `list[Path]` — a single `.zip`, a directory, or multiple image paths — so it is unit-testable without a zip and ready for a future folder/multi-select picker or P3d-3's needs. The UI passes `[selected_zip_path]`.
 - If a path is a `.zip`: read its members **into memory** (never extract attacker paths to disk); enforce the security caps (Unit 5); treat each member as a candidate file by its base name.
-- If a path is a directory: enumerate its image files (non-recursive).
+- If a path is a directory: enumerate its image files (non-recursive). If a path is an image file: use it directly.
 - **Filename → state:** the file's stem, **case-insensitive**, matched exactly against `{idle, thinking, speaking, error}`. Non-matching or non-image files are skipped. If two files match one state, prefer `.png`, else the first alphabetically (and record the tie in the resolution's notes).
 - Every candidate is **PIL-validated**; invalid → skipped with a reason.
 - Returns `ExpressionSetResolution{images: dict[str, bytes], skipped: list[(name, reason)], notes: list[str]}`.
@@ -64,14 +64,14 @@ build_expression_set_zip(character_name: str, images: dict[str, bytes]) -> bytes
 ```
 
 - Input: the character's current set — idle from `editor.current_avatar_bytes()` (the live on-screen avatar), the three from `db.get_character_expression_image(...)`.
-- Output: a `.zip` (bytes) containing one file per present state named `{state}.{ext}`, where `ext` is derived from the stored image format (PIL-detected, or the stored `mime`; default `png`) — so a JPEG-stored state exports as `speaking.jpg`, not a mislabeled `.png`. Plus a minimal self-describing `expression_set.json` (`{"format": "tldw-expression-set/1", "character": <name>, "states": [...]}`).
+- Output: a `.zip` (bytes) containing one file per present state named `{state}.{ext}`, where `ext` is derived by **PIL-detecting the format from the bytes** (`Image.open(BytesIO(b)).format` → `png`/`jpg`/`webp`; default `png`) — the stored `mime` is NOT readable (`get_character_expression_image` returns bytes only), so detection is from the bytes, not the column. So a JPEG-stored state exports as `speaking.jpg`, not a mislabeled `.png`. Plus a minimal self-describing `expression_set.json` (`{"format": "tldw-expression-set/1", "character": <name>, "states": [...]}`).
 - **Symmetric with Unit 2:** an exported zip re-imports directly — the importer maps by filename **stem** (extension-agnostic), so `{state}.{ext}` still resolves to `state`; `expression_set.json` is ignored on import (provenance only).
 - The screen writes these bytes to the path chosen via `EnhancedFileSave`.
 
 ### Unit 4 — UI (character editor)
 
 - An **"Import set…"** and **"Export set…"** button pair next to the P3d-1 expression slots. **Saved-character-only** (the three table writes need a `character_id`) and **characters-only** (personas have no images) — same gate as the P3d-1 slots.
-- **Import** opens the file picker (multi-select images, or a single `.zip`; a folder if the picker exposes directory selection cheaply), resolves via Unit 2, applies via Unit 1, and shows a **summary** notification: `Applied: idle (staged), speaking. Skipped: thinking, error (not found).` idle always reads as "staged — save the character to keep it."
+- **Import** opens `EnhancedFileOpen` filtered to `.zip`, gets one path, resolves via Unit 2 (`[zip_path]`), applies via Unit 1, and shows a **summary** notification: `Applied: idle (staged), speaking. Skipped: thinking, error (not found).` idle always reads as "staged — save the character to keep it." (A `.zip` is the bulk unit and is symmetric with Export; loose-folder / multi-select import is a future enhancement gated on picker capability, not this cycle.)
 - **Export** reads the current set, builds the zip (Unit 3), and saves via `EnhancedFileSave` (default filename `<character-name>-expressions.zip`).
 - Both run in the editor's IO worker group with the same guard pattern as `_avatar_upload_dialog_worker` (never let an exception escape into an `exit_on_error=True` worker).
 
@@ -85,9 +85,9 @@ Both the import `.zip` and (in P3d-3) the `.vpack` are untrusted archives. On re
 
 ## Data flow
 
-**Import:** pick files/zip → `resolve_local_expression_set(paths)` (in-memory, validated, security-capped) → `_apply_expression_set(character_id, images)` (idle staged in editor, 3 immediate to DB) → bump generation, re-render thumbnails → summary notification.
+**Import:** pick one `.zip` (`EnhancedFileOpen`, `.zip` filter) → `resolve_local_expression_set([zip_path])` (in-memory, validated, security-capped) → `_apply_expression_set(character_id, images)` (idle staged in editor, 3 immediate to DB) → bump generation, re-render thumbnails → summary notification.
 
-**Export:** read idle (`current_avatar_bytes()`) + 3 (`get_character_expression_image`) → `build_expression_set_zip(name, images)` → `EnhancedFileSave` → write bytes.
+**Export:** read idle (`current_avatar_bytes()`) + 3 (`get_character_expression_image`) → `build_expression_set_zip(name, images)` (extensions PIL-detected from bytes) → `EnhancedFileSave` → write bytes.
 
 ## Error handling / fail-soft
 
