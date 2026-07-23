@@ -119,14 +119,30 @@ Bindings are **per-turn** (a plain follow-up message gets no tool). The bridge's
 per-conversation snapshot dicts are the named seam if accumulation is ever
 wanted — explicitly out of scope now.
 
-### 4. Discovery metadata travels with capability
+### 4. Discovery metadata travels with capability (rendered where certainty exists)
 
 `execute_skill` gains an additive `reference_files` field (relative path, size,
-`is_text` — from Spec 2's `_read_bundle_manifest`). Only the two tool-injecting
-consumers render it into the prompt — a compact block appended to the rendered
-body: `Bundled files (readable via skill_file): references/api.md (2 KB), …`.
-Plain sends ignore the field (no dangling promise). Binaries are listed with a
-`(binary)` marker (listable, not readable).
+`is_text` — from Spec 2's `_read_bundle_manifest`). **Verified constraint:** the
+controller CANNOT know at substitution time whether the turn will run with
+native tools — `prefill` and `force_plain` are computed after substitution at
+every call site, and `force_plain` derives from a message that does not yet
+exist. Therefore the "Bundled files" block is rendered at the two points where
+the tool's existence is already CERTAIN:
+
+- **Bridge turn path:** `run_reply`, right where it seeds `SkillFileBindings`
+  from `turn_skill_bindings`, appends the block to the trailing user message of
+  its own `agent_messages` copy before `run_turn` — zero-race by construction
+  (run_reply only executes once bridge-vs-plain is decided). The
+  `reference_files` metadata for the bound skills is fetched via the skills
+  service at that point.
+- **Fork path:** `SkillRunner.run` appends the block to the rendered body it
+  passes to `spawn` (it already holds the `execute_skill` result carrying
+  `reference_files`).
+
+Block form: `Bundled files (readable via skill_file): references/api.md (2 KB),
+assets/logo.png (12 KB, binary), …`. Plain sends never see it (substitution
+does not render it). Binaries are listed with a `(binary)` marker (listable,
+not readable).
 
 ### 5. Bounds
 
@@ -140,7 +156,8 @@ into user prose, no recursion concerns.
 |------|------|----------------|
 | Read seam | `Skills_Interop/local_skills_service.py` | `read_skill_file` (policy → trust → validate → contained read → cap); reuses `_read_text_preserving_newlines` + `validate_supporting_file_path` + `_require_trusted_skill` |
 | Scope passthrough | `Skills_Interop/skills_scope_service.py` | local-only bespoke dispatch; clean server-mode rejection |
-| Bindings object + schema | `Agents/agent_models.py` (or sibling) | `SkillFileBindings`; `SKILL_FILE_TOOL_NAME`/schema constant |
+| Bindings object + constants | `Agents/agent_models.py` (NAME + `SkillFileBindings`) / `Agents/tool_catalog.py` (SCHEMA) | follows the existing split convention: `SPAWN_TOOL_NAME` et al. live in agent_models, `SPAWN_TOOL_SCHEMA` et al. in tool_catalog; `SKILL_FILE_TOOL_NAME` joins `RUNTIME_TOOL_NAMES` |
+| **Policy registry entry (REQUIRED)** | `runtime_policy/registry.py` (~:1019, the `server_skills` capability block) | add `_resource("skills.read_file", actions=(LAUNCH,))` — the policy engine FAILS CLOSED on unknown action ids, so without this entry every read is denied wherever an enforcer is wired |
 | Runtime dispatch | `Agents/agent_runtime.py` + `Agents/agent_service.py` | pin schema into `runtime_schemas` when bindings non-empty; `skill_file` name-branch → reader closure; sync |
 | Fork grant | `Chat/console_agent_bridge.py` (`_BridgeSkillRunner.run`) | add spawned skill's name to bindings before `spawn` |
 | Turn bindings | `Chat/console_chat_controller.py` | 4-tuple widening; thread `turn_skill_bindings` through the funnel to `run_reply` |
@@ -163,6 +180,12 @@ into user prose, no recursion concerns.
   (blocked/fork-literal mentions do NOT); plain send → no tool; 4-tuple threaded
   at all 4 call sites (mechanical unpack updates).
 - **Collision:** a skill named `skill_file` is not registered as a skill tool.
+- **Policy:** `skills.read_file.launch.local` evaluates ALLOWED by default with
+  a real enforcer wired (pins the required registry entry — the engine denies
+  unknown ids); a policy-disabled configuration denies the read cleanly.
+- **Bridge-side block:** the "Bundled files" block lands on the trailing user
+  message of `run_reply`'s `agent_messages` (never in the stored transcript,
+  never on plain sends); `SkillRunner.run` appends it to the spawned body.
 - **E2E:** fork skill whose body references `references/api.md` reads it on
   demand; the "Bundled files" block appears exactly where the tool exists.
 
