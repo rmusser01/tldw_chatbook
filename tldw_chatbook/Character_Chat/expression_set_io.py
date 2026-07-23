@@ -251,3 +251,192 @@ class ExpressionSetApplyResult:
     idle staged in the editor, the reactive states written to the DB."""
     applied: list[str] = field(default_factory=list)
     skipped: list[tuple[str, str]] = field(default_factory=list)   # (state, reason)
+
+
+# ---------- P3d-3: .tldw-persona-vpack extraction ----------
+
+
+def _read_member_capped(
+    zf: zipfile.ZipFile,
+    member: str,
+    bytes_cache: dict[str, bytes],
+    total: int,
+    skipped: list[tuple[str, str]],
+) -> tuple[bytes | None, int]:
+    """Read one zip member through the size caps, with a per-call cache.
+
+    ``member`` is only ever used as a zip-member KEY -- a traversal-shaped
+    value simply fails the ``getinfo`` lookup and is skipped; nothing here
+    touches the filesystem. A cache hit does not re-charge the budget (the
+    common pack shape is ONE sprite sheet referenced by every state).
+    """
+    if member in bytes_cache:
+        return bytes_cache[member], total
+    try:
+        info = zf.getinfo(member)
+    except KeyError:
+        skipped.append((member, "not found in archive"))
+        return None, total
+    if info.file_size > MAX_MEMBER_BYTES:
+        skipped.append((member, "file too large"))
+        return None, total
+    if total + info.file_size > MAX_TOTAL_BYTES:
+        skipped.append((member, "total size cap exceeded"))
+        return None, total
+    data = zf.read(info)
+    bytes_cache[member] = data
+    return data, total + info.file_size
+
+
+def _read_vpack_json(
+    zf: zipfile.ZipFile,
+    member: str,
+    bytes_cache: dict[str, bytes],
+    total: int,
+    skipped: list[tuple[str, str]],
+):
+    """Parse a JSON member under the size caps. Returns (obj|None, total).
+    Parse failures (bad JSON, RecursionError on pathological nesting) are
+    caught -- the vpack path never raises."""
+    data, total = _read_member_capped(zf, member, bytes_cache, total, skipped)
+    if data is None:
+        return None, total
+    try:
+        obj = json.loads(data)
+    except Exception:
+        skipped.append((member, "invalid JSON"))
+        return None, total
+    return obj if isinstance(obj, dict) else None, total
+
+
+def _resolve_vpack_expression_set(
+    zf: zipfile.ZipFile, *, prefix: str = "", start_total: int = 0
+) -> tuple[ExpressionSetResolution, int]:
+    """Extract one static image per expression state from a persona visual pack.
+
+    Per state: ``manifest.states[state]`` -> ``animations[id]`` (honoring the
+    ``asset_ids`` shorthand) -> ``frames[preview_frame]`` if that is a valid
+    in-range int else ``frames[0]`` -> assets-index (``source_asset_id`` ->
+    ``asset_path``; skip only on explicit ``asset_bytes_status == "missing"``)
+    -> capped cached member read -> optional ``region`` crop (bounds-checked,
+    re-encoded as PNG) -> ``_valid_image`` -> ``images[state]``.
+
+    Lenient/best-effort: every failure skips that state with a reason; a
+    broken manifest degrades to an empty resolution. NEVER raises.
+    ``frame_rate``/``duration_ms``/``fallbacks``/``alignment``/checksums are
+    inert (all four of our states are in the server's REQUIRED_VISUAL_STATES,
+    so any server-valid pack defines them directly).
+
+    Args:
+        zf: The open archive.
+        prefix: Member-path prefix ("" for a root-level pack; "Pack/" when
+            the pack sits under a single shared top-level directory).
+        start_total: The resolver call's running size total so far.
+
+    Returns:
+        (resolution, new_running_total).
+    """
+    skipped: list[tuple[str, str]] = []
+    notes: list[str] = []
+    total = start_total
+    bytes_cache: dict[str, bytes] = {}
+    image_cache: dict[str, Image.Image] = {}
+
+    manifest, total = _read_vpack_json(zf, f"{prefix}manifest.json", bytes_cache, total, skipped)
+    assets_doc, total = _read_vpack_json(zf, f"{prefix}metadata/assets.json", bytes_cache, total, skipped)
+    if manifest is None or assets_doc is None:
+        notes.append("Archive looks like a persona visual pack, but its manifest could not be read.")
+        return ExpressionSetResolution(images={}, skipped=skipped, notes=notes), total
+
+    states = manifest.get("states")
+    animations = manifest.get("animations")
+    states = states if isinstance(states, dict) else {}
+    animations = animations if isinstance(animations, dict) else {}
+    assets_index: dict[str, dict] = {}
+    entries = assets_doc.get("assets")
+    for entry in entries if isinstance(entries, list) else []:
+        if isinstance(entry, dict) and entry.get("source_asset_id"):
+            assets_index[str(entry["source_asset_id"])] = entry
+
+    images: dict[str, bytes] = {}
+    for state in EXPRESSION_STATES:
+        try:
+            animation_id = states.get(state)
+            if not animation_id:
+                skipped.append((state, "state not in pack"))
+                continue
+            animation = animations.get(animation_id) if isinstance(animation_id, str) else None
+            if not isinstance(animation, dict):
+                skipped.append((state, "unknown animation"))
+                continue
+            frames = animation.get("frames")
+            if not (isinstance(frames, list) and frames):
+                asset_ids = animation.get("asset_ids")
+                frames = (
+                    [{"asset_id": a} for a in asset_ids]
+                    if isinstance(asset_ids, list) and asset_ids
+                    else None
+                )
+            if not frames:
+                skipped.append((state, "animation has no frames"))
+                continue
+            idx = animation.get("preview_frame")
+            frame = frames[idx] if isinstance(idx, int) and 0 <= idx < len(frames) else frames[0]
+            if not isinstance(frame, dict):
+                skipped.append((state, "invalid frame"))
+                continue
+            asset_id = frame.get("asset_id")
+            entry = assets_index.get(str(asset_id)) if asset_id else None
+            if entry is None:
+                skipped.append((state, "unknown asset"))
+                continue
+            # Skip only an EXPLICIT "missing"; an absent status key is
+            # tolerated (mirrors the server's own defensive .get reads).
+            if entry.get("asset_bytes_status") == "missing":
+                skipped.append((state, "asset bytes missing from archive"))
+                continue
+            asset_path = str(entry.get("asset_path") or "")
+            if not asset_path:
+                skipped.append((state, "asset has no archive path"))
+                continue
+            member = f"{prefix}{asset_path}"
+            data, total = _read_member_capped(zf, member, bytes_cache, total, skipped)
+            if data is None:
+                skipped.append((state, "asset could not be read"))
+                continue
+            region = frame.get("region")
+            if region is not None:
+                img = image_cache.get(member)
+                if img is None:
+                    # Decoding an untrusted image: PIL's default
+                    # MAX_IMAGE_PIXELS decompression-bomb guard applies, and
+                    # any decode failure lands in this state's try/except.
+                    img = Image.open(io.BytesIO(data))
+                    img.load()
+                    image_cache[member] = img
+                if not (
+                    isinstance(region, dict)
+                    and all(isinstance(region.get(k), int) for k in ("x", "y", "width", "height"))
+                    and region["x"] >= 0 and region["y"] >= 0
+                    and region["width"] > 0 and region["height"] > 0
+                    and region["x"] + region["width"] <= img.width
+                    and region["y"] + region["height"] <= img.height
+                ):
+                    skipped.append((state, "invalid region"))
+                    continue
+                crop = img.crop((
+                    region["x"], region["y"],
+                    region["x"] + region["width"], region["y"] + region["height"],
+                ))
+                buf = io.BytesIO()
+                crop.save(buf, format="PNG")   # a crop must be standalone bytes
+                out = buf.getvalue()
+            else:
+                out = data   # whole-asset bytes pass through verbatim
+            if not _valid_image(out):
+                skipped.append((state, "not a valid image"))
+                continue
+            images[state] = out
+        except Exception as exc:
+            skipped.append((state, f"extraction failed: {exc}"))
+    return ExpressionSetResolution(images=images, skipped=skipped, notes=notes), total

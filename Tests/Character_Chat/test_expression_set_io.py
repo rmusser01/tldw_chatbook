@@ -204,3 +204,259 @@ def test_apply_images_to_db_best_effort(db, monkeypatch):
     applied, skipped = apply_expression_images_to_db(db, cid, {"speaking": _png(), "error": _png()})
     assert applied == ["speaking"]
     assert any(s == "error" for s, _ in skipped)
+
+
+# ---------- P3d-3: vpack builder + extractor ----------
+
+def make_vpack_bytes(
+    *,
+    manifest: dict | None,
+    assets_entries: list[dict],
+    asset_files: dict[str, bytes],
+    prefix: str = "",
+    manifest_override: bytes | None = None,
+    assets_json_override: bytes | None = None,
+    extra_members: dict[str, bytes] | None = None,
+    manifest_last: bool = False,
+) -> bytes:
+    """Craft a .tldw-persona-vpack archive in memory.
+
+    asset_files maps archive member path -> raw bytes. extra_members are
+    written FIRST (before manifest) when manifest_last is True.
+    """
+    import json as _json
+    members: list[tuple[str, bytes]] = []
+    manifest_bytes = (
+        manifest_override
+        if manifest_override is not None
+        else _json.dumps(manifest or {}).encode()
+    )
+    assets_bytes = (
+        assets_json_override
+        if assets_json_override is not None
+        else _json.dumps({"assets": assets_entries}).encode()
+    )
+    core = [
+        (f"{prefix}manifest.json", manifest_bytes),
+        (f"{prefix}metadata/pack.json", b"{}"),
+        (f"{prefix}metadata/assets.json", assets_bytes),
+        (f"{prefix}checksums/sha256.json", b"{}"),
+    ]
+    for path, data in (extra_members or {}).items():
+        members.append((f"{prefix}{path}", data))
+    if manifest_last:
+        members = members + core
+    else:
+        members = core + members
+    for path, data in asset_files.items():
+        members.append((f"{prefix}{path}", data))
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, data in members:
+            zf.writestr(name, data)
+    return buf.getvalue()
+
+
+def simple_vpack(images: dict[str, bytes], prefix: str = "") -> bytes:
+    """A standard pack: one standalone asset + one 1-frame animation per state."""
+    states, animations, entries, files = {}, {}, [], {}
+    for state, data in images.items():
+        aid = f"asset-{state}"
+        states[state] = f"anim-{state}"
+        animations[f"anim-{state}"] = {"frame_rate": 1, "frames": [{"asset_id": aid}]}
+        path = f"assets/persona_visuals/{aid}.png"
+        entries.append({"source_asset_id": aid, "asset_path": path,
+                        "asset_bytes_status": "present"})
+        files[path] = data
+    return make_vpack_bytes(
+        manifest={"manifest_version": 1, "renderer_type": "sprite_frames",
+                  "states": states, "animations": animations},
+        assets_entries=entries, asset_files=files, prefix=prefix,
+    )
+
+
+def _open_vpack(data: bytes) -> zipfile.ZipFile:
+    return zipfile.ZipFile(io.BytesIO(data))
+
+
+def _sheet_2x1(left=(255, 0, 0), right=(0, 255, 0)) -> bytes:
+    """A 16x8 sheet: left 8x8 solid `left`, right 8x8 solid `right`."""
+    img = Image.new("RGB", (16, 8), left)
+    for x in range(8, 16):
+        for y in range(8):
+            img.putpixel((x, y), right)
+    buf = io.BytesIO(); img.save(buf, format="PNG"); return buf.getvalue()
+
+
+def _extract(data: bytes, prefix: str = ""):
+    from tldw_chatbook.Character_Chat.expression_set_io import _resolve_vpack_expression_set
+    with _open_vpack(data) as zf:
+        res, _total = _resolve_vpack_expression_set(zf, prefix=prefix)
+    return res
+
+
+def test_vpack_simple_pack_extracts_all_four_states():
+    data = simple_vpack({s: _png() for s in ("idle", "thinking", "speaking", "error")})
+    res = _extract(data)
+    assert set(res.images) == {"idle", "thinking", "speaking", "error"}
+    for b in res.images.values():
+        assert b == _png()   # whole-asset bytes pass through verbatim
+
+
+def test_vpack_sprite_sheet_region_crop_pixel_checked():
+    sheet = _sheet_2x1()
+    manifest = {
+        "states": {"speaking": "talk"},
+        "animations": {"talk": {"frame_rate": 2, "frames": [
+            {"asset_id": "sheet", "region": {"x": 8, "y": 0, "width": 8, "height": 8}},
+        ]}},
+    }
+    data = make_vpack_bytes(
+        manifest=manifest,
+        assets_entries=[{"source_asset_id": "sheet",
+                         "asset_path": "assets/persona_visuals/sheet.png",
+                         "asset_bytes_status": "present"}],
+        asset_files={"assets/persona_visuals/sheet.png": sheet},
+    )
+    res = _extract(data)
+    out = Image.open(io.BytesIO(res.images["speaking"]))
+    assert out.size == (8, 8)
+    assert out.convert("RGB").getpixel((0, 0)) == (0, 255, 0)   # the RIGHT half
+
+
+def test_vpack_preview_frame_honored_and_invalid_falls_back():
+    frames = [
+        {"asset_id": "a0"},
+        {"asset_id": "a1"},
+    ]
+    def pack(preview):
+        anim = {"frame_rate": 1, "frames": frames}
+        if preview is not None:
+            anim["preview_frame"] = preview
+        return make_vpack_bytes(
+            manifest={"states": {"idle": "a"}, "animations": {"a": anim}},
+            assets_entries=[
+                {"source_asset_id": "a0", "asset_path": "assets/persona_visuals/a0.png",
+                 "asset_bytes_status": "present"},
+                {"source_asset_id": "a1", "asset_path": "assets/persona_visuals/a1.png",
+                 "asset_bytes_status": "present"},
+            ],
+            asset_files={
+                "assets/persona_visuals/a0.png": _png((1, 1, 1)),
+                "assets/persona_visuals/a1.png": _png((2, 2, 2)),
+            },
+        )
+    assert _extract(pack(1)).images["idle"] == _png((2, 2, 2))       # honored
+    assert _extract(pack(99)).images["idle"] == _png((1, 1, 1))      # out of range -> frames[0]
+    assert _extract(pack("x")).images["idle"] == _png((1, 1, 1))     # non-int -> frames[0]
+    assert _extract(pack(None)).images["idle"] == _png((1, 1, 1))    # absent -> frames[0]
+
+
+def test_vpack_asset_ids_shorthand():
+    data = make_vpack_bytes(
+        manifest={"states": {"thinking": "t"},
+                  "animations": {"t": {"frame_rate": 1, "asset_ids": ["b"]}}},
+        assets_entries=[{"source_asset_id": "b",
+                         "asset_path": "assets/persona_visuals/b.png",
+                         "asset_bytes_status": "present"}],
+        asset_files={"assets/persona_visuals/b.png": _png()},
+    )
+    assert "thinking" in _extract(data).images
+
+
+def test_vpack_per_state_skip_reasons():
+    # idle: absent from states; speaking: unknown animation; thinking: asset
+    # missing from archive; error: explicit asset_bytes_status missing.
+    data = make_vpack_bytes(
+        manifest={"states": {"speaking": "nope", "thinking": "t", "error": "e"},
+                  "animations": {
+                      "t": {"frames": [{"asset_id": "gone"}]},
+                      "e": {"frames": [{"asset_id": "m"}]},
+                  }},
+        assets_entries=[
+            {"source_asset_id": "gone", "asset_path": "assets/persona_visuals/gone.png",
+             "asset_bytes_status": "present"},   # entry exists; member does NOT
+            {"source_asset_id": "m", "asset_path": "assets/persona_visuals/m.png",
+             "asset_bytes_status": "missing"},
+        ],
+        asset_files={},
+    )
+    res = _extract(data)
+    assert res.images == {}
+    reasons = dict((s, r) for s, r in res.skipped)
+    assert "idle" in reasons and "speaking" in reasons
+    assert "thinking" in reasons and "error" in reasons
+
+
+def test_vpack_absent_status_key_tolerated():
+    data = make_vpack_bytes(
+        manifest={"states": {"idle": "a"},
+                  "animations": {"a": {"frames": [{"asset_id": "x"}]}}},
+        assets_entries=[{"source_asset_id": "x",
+                         "asset_path": "assets/persona_visuals/x.png"}],  # no status key
+        asset_files={"assets/persona_visuals/x.png": _png()},
+    )
+    assert "idle" in _extract(data).images
+
+
+def test_vpack_traversal_asset_path_fails_lookup_safely():
+    data = make_vpack_bytes(
+        manifest={"states": {"idle": "a"},
+                  "animations": {"a": {"frames": [{"asset_id": "x"}]}}},
+        assets_entries=[{"source_asset_id": "x",
+                         "asset_path": "../../etc/passwd",
+                         "asset_bytes_status": "present"}],
+        asset_files={"assets/persona_visuals/x.png": _png()},
+    )
+    res = _extract(data)   # member lookup fails -> skip; never touches the FS
+    assert res.images == {}
+    assert res.skipped
+
+
+def test_vpack_invalid_region_skipped():
+    data = make_vpack_bytes(
+        manifest={"states": {"idle": "a"},
+                  "animations": {"a": {"frames": [
+                      {"asset_id": "x", "region": {"x": 0, "y": 0, "width": 999, "height": 8}},
+                  ]}}},
+        assets_entries=[{"source_asset_id": "x",
+                         "asset_path": "assets/persona_visuals/x.png",
+                         "asset_bytes_status": "present"}],
+        asset_files={"assets/persona_visuals/x.png": _sheet_2x1()},
+    )
+    res = _extract(data)   # region exceeds the 16x8 image
+    assert "idle" not in res.images
+    assert res.skipped
+
+
+def test_vpack_shared_sheet_read_once_within_budget(monkeypatch):
+    """RED against a non-caching implementation: 4 states off ONE sheet must
+    charge the budget once, not four times."""
+    import tldw_chatbook.Character_Chat.expression_set_io as mod
+    sheet = _sheet_2x1()
+    regions = {"idle": 0, "thinking": 0, "speaking": 8, "error": 8}
+    manifest = {"states": {}, "animations": {}}
+    for state, x in regions.items():
+        manifest["states"][state] = f"anim-{state}"
+        manifest["animations"][f"anim-{state}"] = {"frames": [
+            {"asset_id": "sheet", "region": {"x": x, "y": 0, "width": 8, "height": 8}},
+        ]}
+    data = make_vpack_bytes(
+        manifest=manifest,
+        assets_entries=[{"source_asset_id": "sheet",
+                         "asset_path": "assets/persona_visuals/sheet.png",
+                         "asset_bytes_status": "present"}],
+        asset_files={"assets/persona_visuals/sheet.png": sheet},
+    )
+    # Budget covers manifest + assets.json + ONE sheet read -- not four.
+    monkeypatch.setattr(mod, "MAX_TOTAL_BYTES", len(sheet) + 4096)
+    res = _extract(data)
+    assert set(res.images) == {"idle", "thinking", "speaking", "error"}
+
+
+def test_vpack_broken_manifest_never_raises():
+    data = make_vpack_bytes(manifest=None, manifest_override=b"{not json",
+                            assets_entries=[], asset_files={})
+    res = _extract(data)   # must not raise
+    assert res.images == {}
+    assert res.notes or res.skipped
