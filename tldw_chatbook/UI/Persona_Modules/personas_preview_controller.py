@@ -89,6 +89,41 @@ class PersonasPreviewController:
         )
         await self.reset(greeting, seeded_for=character_id)
 
+    async def restore_conversation(
+        self, *, greeting: str, history: list[dict], seeded_for: str | None
+    ) -> None:
+        """Rebuild the preview (greeting + turns) from saved state (task-434).
+
+        Sets ``seeded_for`` before the first ``await``: ``invalidate`` cancels
+        only the preview worker group, so the character-load worker's
+        ``handle_character_loaded`` may still fire -- and must hit the
+        seeded-for guard (``:159``) rather than erase the restored turns.
+
+        Args:
+            greeting: Saved greeting text to reseed the preview pane with.
+            history: Saved user/assistant turns to replay into the pane.
+            seeded_for: Entity id the saved preview was seeded for, normalized
+                to ``str(seeded_for)`` (or ``None`` if falsy).
+
+        Returns:
+            None.
+        """
+        self.invalidate()
+        self.seeded_for = str(seeded_for) if seeded_for else None
+        try:
+            pane = self.screen.query_one(PersonasPreviewPane)
+        except QueryError:
+            return
+        await pane.seed_greeting(greeting)
+        for message in history:
+            role = message.get("role")
+            content = str(message.get("content") or "")
+            if role == "user":
+                pane.append_user(content)
+            elif role == "assistant":
+                pane.append_reply(content)
+        self.history = [dict(m) for m in history]
+
     async def close_gateway(self) -> None:
         """Release the preview gateway's HTTP client if it was created."""
         gateway = self.gateway

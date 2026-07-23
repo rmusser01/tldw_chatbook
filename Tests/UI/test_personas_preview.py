@@ -405,3 +405,13 @@ async def test_status_is_readable():
         status = str(pilot.app.query_one("#personas-preview-status", Static).renderable)
         assert status == "Running"
         assert "Traceback" not in status
+
+
+async def test_greeting_text_property_returns_seeded_greeting():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasPreviewPane)
+        await pane.seed_greeting("Hello, traveller.")
+        assert pane.greeting_text == "Hello, traveller."
+        pane.refresh_greeting_seed("Updated greeting.")
+        assert pane.greeting_text == "Updated greeting."
