@@ -1,11 +1,11 @@
 ---
 id: TASK-398
 title: Add collapsible Console composer reading mode
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-23 04:00'
-updated_date: '2026-07-23 04:14'
+updated_date: '2026-07-23 13:46'
 labels:
   - console
   - ui
@@ -26,11 +26,11 @@ Let Console users reclaim transcript height while reading long responses by manu
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Composer collapses manually from the expanded Composer control to an exact one-row status and Expand bar while the separate runtime status strip remains visible when present.
-- [ ] #2 Collapse and expansion preserve the active mounted composer's draft, paste segments, caret selection, and pending attachments; transient Unfurl and unknown-command send confirmations reset safely.
-- [ ] #3 Collapsed mode keeps active Stop control visible, blocks hidden draft input and paste, supports F6 and one-press Escape restoration, and preserves transcript selection plus anchored or manually scrolled reading position.
-- [ ] #4 Collapse state is Console-wide and retained across tab switches and in-app navigation, but resets to expanded for a new app instance and never changes automatically.
-- [ ] #5 Mounted tests cover expanded and collapsed geometry, focus and keyboard behavior, run and setup states, rapid toggles, state retention, and 140x42 plus 100x32 layouts; focused Console regressions pass.
+- [x] #1 Composer collapses manually from the expanded Composer control to an exact one-row status and Expand bar while the separate runtime status strip remains visible when present.
+- [x] #2 Collapse and expansion preserve the active mounted composer's draft, paste segments, caret selection, and pending attachments; transient Unfurl and unknown-command send confirmations reset safely.
+- [x] #3 Collapsed mode keeps active Stop control visible, blocks hidden draft input and paste, supports F6 and one-press Escape restoration, and preserves transcript selection plus anchored or manually scrolled reading position.
+- [x] #4 Collapse state is Console-wide and retained across tab switches and in-app navigation, but resets to expanded for a new app instance and never changes automatically.
+- [x] #5 Mounted tests cover expanded and collapsed geometry, focus and keyboard behavior, run and setup states, rapid toggles, state retention, and 140x42 plus 100x32 layouts; focused Console regressions pass.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,3 +50,16 @@ Reason: Focused Console presentation behavior within ADR-011 stable-compose-tree
 
 Detailed executable plan: Docs/superpowers/plans/2026-07-22-console-collapsible-composer.md
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+- Added stable, mounted expanded and collapsed composer presentations. The one-row collapsed bar retains the same editor state in memory while exposing privacy-safe draft, attachment, and generation status plus Expand and contextual Stop controls.
+- Kept collapse as transient, manual-only `ChatScreen` state across Console tab and in-app navigation changes. Dynamic priority Escape, F6, setup restoration, and forced focus all use state-aware targets so hidden composer input cannot regain focus.
+- Preserved anchored and manually scrolled transcript reading positions plus selection through semantic restoration, with revision and expected-state guards preventing stale rapid-toggle callbacks.
+- Reset transient Unfurl and unknown-command confirmations on collapse, blocked hidden input/paste and hidden paste-token geometry, and delegated collapsed Stop through the existing setup-aware run-control path.
+- Updated the CSS source and generated bundle, added a fail-closed CSS builder guard, and applied the live-QA toggle-legibility fix so full `Composer ▾`, `Stop`, and `Expand ▴` labels remain visible at compact geometry.
+- Added mounted behavior, lifecycle, race, focus, setup, run, and exact 140x42/100x32 geometry coverage. Focused gates passed; the mandatory broad evidence recorded 2023 passes with pre-existing failures reproduced at the pre-feature revision and loopback-denied setup nodes passing with permission.
+- Captured and individually inspected six synthetic-only live screenshots under `Docs/superpowers/qa/console-collapsible-composer-2026-07/`; the user explicitly approved the wide and compact expanded, retained-draft, and generating states on 2026-07-23 for commit `20aba85893a4bd06e8091389b2f57161877b154c`.
+- ADR required: no. Existing `backlog/decisions/011-chatbook-workbench-ui-system.md` applies because this work stays within its stable compose-tree and screen-orchestration boundaries.
+<!-- SECTION:NOTES:END -->
