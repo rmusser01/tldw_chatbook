@@ -722,8 +722,8 @@ class ConsoleChatStore:
         SIBLING of the anchor, not a child of it). Registering it via
         ``_register_tree_node`` adds it to the anchor's parent's ordered
         child list beside the anchor (so ``siblings_at`` reports both), then
-        ``set_active_leaf`` retargets the session's active leaf at the new
-        node and recomputes the active-path view (Task 3's single writer).
+        the session's active leaf is retargeted at the new node and the
+        active-path view is recomputed (Task 3's single writer).
 
         When the anchor is mid-conversation (has descendants of its own),
         that old tail drops off the now-recomputed active path -- it is not
@@ -739,12 +739,16 @@ class ConsoleChatStore:
                 receive stream chunks via ``append_stream_chunk``.
             persist: When True, write the new node through to durable
                 storage immediately, using the same persist path
-                ``append_message(persist=True)`` uses. Done BEFORE
-                ``set_active_leaf`` so that, when the session already owns a
-                persisted conversation, the active-leaf write-through
-                (``_persist_active_leaf``) observes the new node's freshly
-                assigned ``persisted_message_id`` instead of the pre-persist
-                ``None``.
+                ``append_message(persist=True)`` uses. Ordering is
+                deliberate: the active leaf is retargeted and the
+                active-path view recomputed BEFORE this write (so the Sync v2
+                sequence helper, which walks the active-path view, sees the
+                new node on-path and emits its real on-path ordinal instead
+                of ``None``), and the DB active-leaf pointer write-through
+                (``_persist_active_leaf``) runs AFTER it (so, when the
+                session already owns a persisted conversation, it observes
+                the new node's freshly assigned ``persisted_message_id``
+                instead of the pre-persist ``None``).
 
         Returns:
             A snapshot of the newly created sibling node.
@@ -762,9 +766,21 @@ class ConsoleChatStore:
         )
         self._sessions[session_id].updated_at = _utc_now_iso()
         self._register_tree_node(session_id, message, parent_native_id=parent_native_id)
+        # Retarget the active leaf and rematerialize the active-path view
+        # BEFORE persisting so the Sync v2 sequence helper (which walks the
+        # active-path VIEW) sees the new node on-path and emits its real
+        # on-path ordinal, not ``None``. This intentionally does NOT route
+        # through ``set_active_leaf``, whose bundled ordering also writes the
+        # DB active-leaf pointer -- that pointer write must happen AFTER
+        # persistence to capture the node's real ``persisted_message_id``.
+        self._active_leaf_by_session[session_id] = message.id
+        self._recompute_active_path(session_id)
         if persist:
             self._persist_new_message_or_defer(session_id=session_id, message=message)
-        self.set_active_leaf(session_id, message.id)
+        # Write-through the DB active-leaf pointer now that (for persist=True)
+        # the node owns a persisted id. For the persist=False path this mirrors
+        # the old ``set_active_leaf`` call with a still-``None`` id, which is fine.
+        self._persist_active_leaf(session_id, message.id)
         return self._snapshot(message)
 
     def messages_for_session(self, session_id: str) -> list[ConsoleChatMessage]:
@@ -1510,6 +1526,40 @@ class ConsoleChatStore:
             for parameter in parameters.values()
         )
 
+    def _nearest_persisted_ancestor_id(
+        self, session_id: str, message: ConsoleChatMessage
+    ) -> str | None:
+        """Return the persisted id of ``message``'s nearest PERSISTED ancestor.
+
+        Walks the native parent chain upward from ``message`` (via
+        ``_native_parent_by_message``), skipping any ancestor that is not
+        itself durably persisted (``persisted_message_id is None`` -- e.g. a
+        ``persist=False`` interstitial system note the controller appended
+        mid-chain), and returns the first persisted ancestor's persisted id.
+        Returns ``None`` when no ancestor is persisted (the message is a true
+        persisted root).
+
+        This keeps the persisted tree connected across non-persisted tree
+        nodes: without it, a message whose IMMEDIATE tree parent is a
+        non-persisted node would be written with ``parent_message_id=None``
+        and become a stray DB root, fragmenting the chain Task 8's leaf->root
+        resume walk depends on. For a plain linear conversation with no
+        interstitials the immediate parent IS the nearest persisted ancestor,
+        so the resolved id is unchanged.
+
+        A visited-set guards against a malformed cyclic parent chain.
+        """
+        nodes = self._nodes_by_session.get(session_id, {})
+        visited: set[str] = {message.id}
+        current = self._native_parent_by_message.get(message.id)
+        while current is not None and current not in visited:
+            visited.add(current)
+            ancestor = nodes.get(current)
+            if ancestor is not None and ancestor.persisted_message_id is not None:
+                return ancestor.persisted_message_id
+            current = self._native_parent_by_message.get(current)
+        return None
+
     def _persist_new_message(
         self, *, session_id: str, message: ConsoleChatMessage
     ) -> None:
@@ -1518,20 +1568,12 @@ class ConsoleChatStore:
         conversation_id = self.persist_session_if_needed(session_id)
         if conversation_id is None:
             return
-        # Thread the real tree parent through to persistence: look up this
-        # node's in-memory parent (Task 3's ``_native_parent_by_message``)
-        # and use ITS persisted id. If the parent hasn't been persisted yet
-        # (or doesn't exist -- this is the root), fall back to None rather
-        # than writing a dangling id.
-        parent_native_id = self._native_parent_by_message.get(message.id)
-        parent_persisted_id = None
-        if parent_native_id is not None:
-            parent_node = self._nodes_by_session.get(session_id, {}).get(
-                parent_native_id
-            )
-            parent_persisted_id = (
-                parent_node.persisted_message_id if parent_node is not None else None
-            )
+        # Thread the real tree parent through to persistence, resolving to the
+        # nearest PERSISTED ancestor (skipping non-persisted mid-chain nodes
+        # such as ``persist=False`` interstitial notes) so the persisted tree
+        # stays connected. ``None`` only when no ancestor is persisted (a true
+        # persisted root) -- never a dangling id.
+        parent_persisted_id = self._nearest_persisted_ancestor_id(session_id, message)
         message.parent_message_id = parent_persisted_id
         create_kwargs: dict[str, Any] = dict(
             conversation_id=conversation_id,
@@ -1700,26 +1742,28 @@ class ConsoleChatStore:
         )
 
     def _previous_persisted_message_id(self, message: ConsoleChatMessage) -> str | None:
-        """Return the persisted id of ``message``'s TREE parent, if any.
+        """Return the persisted id of ``message``'s nearest PERSISTED ancestor.
 
         Tree-aware (Task 5): previously this walked the flat message list
         looking for whatever came immediately before ``message`` with a
         persisted id -- a linear-history assumption that breaks the moment a
         branch forks (a sibling's "previous" message is not "whatever this
-        session last appended", it's specifically the shared parent). Using
-        ``_native_parent_by_message`` instead resolves the real tree parent
-        for ANY node -- on- or off- the active path -- and returns that
-        parent's own persisted id (``None`` when the parent is a root, is
-        unknown, or has not itself been durably persisted yet).
+        session last appended", it's specifically the shared parent).
+
+        Resolving the nearest persisted ancestor via
+        ``_nearest_persisted_ancestor_id`` (skipping non-persisted mid-chain
+        nodes) fixes the fork case AND keeps the Sync v2 parent connected
+        across a ``persist=False`` interstitial. Note this exactly restores
+        the OLD flat-list behavior for the interstitial case -- that walk also
+        skipped non-persisted messages -- and for a plain linear conversation
+        the immediate parent IS the nearest persisted ancestor, so the value
+        is unchanged. ``None`` when no ancestor is persisted (root, unknown
+        session, or nothing durably persisted above yet).
         """
-        parent_native_id = self._native_parent_by_message.get(message.id)
-        if parent_native_id is None:
-            return None
         session_id = self._message_session_index.get(message.id)
-        parent_node = self._nodes_by_session.get(session_id or "", {}).get(
-            parent_native_id
-        )
-        return parent_node.persisted_message_id if parent_node is not None else None
+        if session_id is None:
+            return None
+        return self._nearest_persisted_ancestor_id(session_id, message)
 
     @staticmethod
     def _sync_variant_metadata(
