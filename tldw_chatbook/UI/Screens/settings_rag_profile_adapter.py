@@ -11,7 +11,13 @@ from typing import Optional
 from loguru import logger
 
 from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig, get_profile_manager
-from tldw_chatbook.RAG_Search.simplified.active_config import _active_profile_id  # module seam
+# Both imported as module seams: tests monkeypatch `ad._active_profile_id` and
+# `ad.set_active_profile` directly (unqualified name lookup at call time),
+# the same pattern already used for `_active_profile_id` below.
+from tldw_chatbook.RAG_Search.simplified.active_config import (
+    _active_profile_id,
+    set_active_profile,
+)
 from .settings_library_rag_defaults import SettingsLibraryRagDefaults
 
 
@@ -83,3 +89,71 @@ def active_profile_info() -> dict:
     if profile is None:
         return {"id": _active_profile_id(), "name": "(missing)", "read_only": True}
     return {"id": profile.id, "name": profile.name, "read_only": bool(profile.read_only)}
+
+
+def list_profiles_grouped() -> dict:
+    """All profiles grouped by builtin/user for the profile-manager region.
+
+    Returns:
+        ``{"builtin": [{"id","name"}...], "user": [...], "active_id": str}``,
+        each group name-sorted.
+    """
+    manager = _manager()
+    builtin: list[dict] = []
+    user: list[dict] = []
+    for profile_id in manager.list_profiles():
+        profile = manager.get_profile(profile_id)
+        if profile is None:
+            continue
+        entry = {"id": profile.id, "name": profile.name}
+        (builtin if profile.read_only else user).append(entry)
+    builtin.sort(key=lambda p: p["name"])
+    user.sort(key=lambda p: p["name"])
+    return {"builtin": builtin, "user": user, "active_id": _active_profile_id()}
+
+
+def activate_profile(profile_id: str) -> tuple[bool, str]:
+    """Point the active-profile pointer at `profile_id` (SP2b `set_active_profile`).
+
+    Callers run this off-thread (it writes to the CLI config file and resets
+    the shared RAG service). Any failure -- invalid/unsafe id, config write
+    error -- is converted into ``(False, reason)`` rather than raised.
+    """
+    try:
+        set_active_profile(profile_id)
+        return True, ""
+    except Exception as e:  # pointer flip must never crash the settings screen
+        logger.error(f"activate_profile({profile_id!r}) failed: {e}")
+        return False, str(e)
+
+
+def clone_profile_as(source_id: str, new_name: str) -> tuple[bool, str]:
+    """Clone `source_id` (builtin or user) into a new writable profile.
+
+    Returns:
+        ``(True, new_profile_id)`` on success, ``(False, reason)`` if
+        `source_id` does not resolve to a registered profile.
+    """
+    try:
+        clone = _manager().clone_profile(source_id, new_name)
+        return True, clone.id
+    except ValueError as e:
+        return False, str(e)
+
+
+def rename_user_profile(profile_id: str, new_name: str) -> tuple[bool, str]:
+    """Rename a user profile's display name. (False, reason) for a builtin/missing id."""
+    try:
+        _manager().rename_profile(profile_id, new_name)
+        return True, ""
+    except ValueError as e:
+        return False, str(e)
+
+
+def delete_user_profile(profile_id: str) -> tuple[bool, str]:
+    """Delete a user profile. (False, reason) for a builtin id or on failure."""
+    try:
+        deleted = _manager().delete_profile(profile_id)
+        return (True, "") if deleted else (False, "not-found")
+    except ValueError as e:
+        return False, str(e)
