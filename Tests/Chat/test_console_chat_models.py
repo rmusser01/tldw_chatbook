@@ -165,3 +165,19 @@ def test_derive_console_session_title_empty_draft_returns_empty():
 def test_derive_console_session_title_handles_max_length_below_ellipsis_width():
     assert derive_console_session_title("hello world", max_length=2) == "he"
     assert derive_console_session_title("hello world", max_length=0) == ""
+
+
+def test_console_chat_message_has_parent_message_id_default_none():
+    msg = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi")
+    assert msg.parent_message_id is None
+    assert (msg.sibling_index, msg.sibling_count) == (0, 1)
+
+    msg2 = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="yo",
+        parent_message_id="p1",
+        sibling_index=1,
+        sibling_count=3,
+    )
+    assert msg2.parent_message_id == "p1"
+    assert (msg2.sibling_index, msg2.sibling_count) == (1, 3)

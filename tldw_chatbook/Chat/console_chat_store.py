@@ -232,8 +232,22 @@ class ConsoleChatStore:
         self.on_scope_flushed = on_scope_flushed
         self.active_session_id: str | None = None
         self._sessions: dict[str, ConsoleChatSession] = {}
+        #: Derived VIEW = the current active path only (root -> active leaf).
+        #: Written ONLY by ``_recompute_active_path`` (single-writer invariant);
+        #: every other reader/writer of the tree goes through the maps below.
         self._messages_by_session: dict[str, list[ConsoleChatMessage]] = {}
         self._message_session_index: dict[str, str] = {}
+        #: Full conversation tree -- ALL branches, on- and off-path. ``_nodes``
+        #: maps a native id to the LIVE ``ConsoleChatMessage`` (never a copy --
+        #: streaming mutates content in place and the derived view must observe
+        #: it). ``_children`` maps a native parent id (``None`` for roots) to the
+        #: ordered child native ids. ``_native_parent`` maps a native id to its
+        #: native parent id (``None`` for a root). Distinct from a message's
+        #: ``parent_message_id`` field, which is the *persisted* parent id.
+        self._nodes_by_session: dict[str, dict[str, ConsoleChatMessage]] = {}
+        self._children_by_parent: dict[str, dict[str | None, list[str]]] = {}
+        self._native_parent_by_message: dict[str, str | None] = {}
+        self._active_leaf_by_session: dict[str, str | None] = {}
         self._pending_persistence_message_ids: set[str] = set()
         self._stream_chunks_by_message: dict[str, list[str]] = {}
         self._stream_materialized_counts: dict[str, int] = {}
@@ -269,6 +283,9 @@ class ConsoleChatStore:
         )
         self._sessions[session.id] = session
         self._messages_by_session[session.id] = []
+        self._nodes_by_session[session.id] = {}
+        self._children_by_parent[session.id] = {}
+        self._active_leaf_by_session[session.id] = None
         self.active_session_id = session.id
         return session
 
@@ -278,17 +295,34 @@ class ConsoleChatStore:
         title: str,
         workspace_id: str | None,
         persisted_conversation_id: str,
-        messages: Iterable[ConsoleChatMessage],
+        all_nodes: Iterable[ConsoleChatMessage],
+        active_leaf_persisted_id: str | None = None,
         settings: ConsoleSessionSettings | None = None,
     ) -> ConsoleChatSession:
         """Create and activate a native session from persisted conversation data.
+
+        Task 8: a restored conversation arrives as the WHOLE persisted tree --
+        every branch, on- and off-path -- so off-path siblings are navigable
+        (swipe) immediately after resume. ``all_nodes`` is the flattened node
+        set (pre-order, every node), each carrying its own
+        ``persisted_message_id`` and its persisted ``parent_message_id``; the
+        full in-memory tree is rebuilt from those links and the active-path
+        VIEW is derived from ``active_leaf_persisted_id`` (falling back to the
+        most-recent-child leaf, repairing the durable pointer, when the pointer
+        is missing or dangling).
 
         Args:
             title: Display title for the restored Console session.
             workspace_id: Workspace scope recorded on the persisted conversation,
                 or ``None`` to use the current store workspace context.
             persisted_conversation_id: Durable Chat conversation identifier.
-            messages: Native Console messages reconstructed from persisted data.
+            all_nodes: Every native Console node reconstructed from the
+                persisted conversation tree (all branches), each carrying its
+                ``persisted_message_id`` and persisted ``parent_message_id``.
+            active_leaf_persisted_id: Persisted id of the stored active-leaf
+                pointer, or ``None``. Selects which branch is the active-path
+                view; ``None``/missing/dangling falls back to the most-recent
+                leaf and repairs the durable pointer.
             settings: Optional provider/model settings snapshot for the session.
 
         Returns:
@@ -300,13 +334,44 @@ class ConsoleChatStore:
             settings=settings,
         )
         session.persisted_conversation_id = str(persisted_conversation_id)
-        restored_messages: list[ConsoleChatMessage] = []
-        for message in messages:
-            restored = replace(message)
-            restored_messages.append(restored)
-            self._message_session_index[restored.id] = session.id
-        self._messages_by_session[session.id] = restored_messages
+        self._ingest_full_tree(
+            session.id,
+            all_nodes,
+            active_leaf_persisted_id=active_leaf_persisted_id,
+        )
         return session
+
+    def apply_resume_marker_overlay(
+        self, session_id: str, messages: Sequence[ConsoleChatMessage]
+    ) -> None:
+        """Overlay resume-derived, display-only TOOL markers onto the view.
+
+        The active-path VIEW (``_messages_by_session``) is normally the
+        single-writer output of ``_recompute_active_path`` (tree nodes only).
+        On resume, agent TOOL markers are re-derived from ``AgentRunsDB`` (they
+        are ``persist=False`` and never tree nodes) and interleaved into the
+        rendered transcript for display; this installs that interleaved list as
+        the current view. Real (non-marker) rows are re-resolved to their LIVE
+        tree nodes so a later render still observes them; TOOL markers are the
+        given snapshots and are registered in the session index so
+        ``close_session`` sweeps them.
+
+        The overlay is transient by design: the next ``_recompute_active_path``
+        (any tree mutation -- send, swipe, delete) rebuilds the view from live
+        tree nodes and drops the markers, exactly as live markers are ephemeral
+        in Phase A. When ``messages`` carries no markers (no agent runs) this is
+        equivalent to the freshly recomputed view.
+        """
+        self._session_or_raise(session_id)
+        nodes = self._nodes_by_session.get(session_id, {})
+        overlay: list[ConsoleChatMessage] = []
+        for message in messages:
+            if message.role is ConsoleMessageRole.TOOL:
+                self._message_session_index.setdefault(message.id, session_id)
+                overlay.append(message)
+            else:
+                overlay.append(nodes.get(message.id, message))
+        self._messages_by_session[session_id] = overlay
 
     def switch_session(self, session_id: str) -> ConsoleChatSession:
         """Activate an existing session."""
@@ -387,13 +452,27 @@ class ConsoleChatStore:
         session_ids = list(self._sessions.keys())
         closed_index = session_ids.index(session_id)
 
-        for message in self._messages_by_session.get(session_id, []):
-            self._message_session_index.pop(message.id, None)
-            self._stream_chunks_by_message.pop(message.id, None)
-            self._stream_materialized_counts.pop(message.id, None)
-            self._pending_persistence_message_ids.discard(message.id)
+        # Purge EVERY message the session owns, not just the active-path view:
+        # off-path tree nodes and dropped display-only TOOL markers both live in
+        # ``_message_session_index`` (a superset of ``_nodes_by_session`` for the
+        # session), so it is the authoritative set of owned ids to sweep.
+        owned_message_ids = [
+            message_id
+            for message_id, owner in list(self._message_session_index.items())
+            if owner == session_id
+        ]
+        for message_id in owned_message_ids:
+            self._message_session_index.pop(message_id, None)
+            self._stream_chunks_by_message.pop(message_id, None)
+            self._stream_materialized_counts.pop(message_id, None)
+            self._pending_persistence_message_ids.discard(message_id)
+            self._variant_stream_bases.pop(message_id, None)
+            self._native_parent_by_message.pop(message_id, None)
 
         self._messages_by_session.pop(session_id, None)
+        self._nodes_by_session.pop(session_id, None)
+        self._children_by_parent.pop(session_id, None)
+        self._active_leaf_by_session.pop(session_id, None)
         self._sessions.pop(session_id, None)
 
         if self.active_session_id != session_id:
@@ -577,16 +656,24 @@ class ConsoleChatStore:
         self._stream_chunks_by_message.clear()
         self._stream_materialized_counts.clear()
         self._sync_v2_message_versions.clear()
+        # Pre-existing bug fixed while here: the regenerate base snapshots were
+        # never cleared on restore, leaking across a state replacement.
+        self._variant_stream_bases.clear()
+        self._nodes_by_session.clear()
+        self._children_by_parent.clear()
+        self._native_parent_by_message.clear()
+        self._active_leaf_by_session.clear()
 
         messages_by_session = messages_by_session or {}
         for session in restored_sessions:
             self._sessions[session.id] = replace(session)
-            restored_messages: list[ConsoleChatMessage] = []
-            for message in messages_by_session.get(session.id, ()):
-                restored_message = replace(message)
-                restored_messages.append(restored_message)
-                self._message_session_index[restored_message.id] = session.id
-            self._messages_by_session[session.id] = restored_messages
+            self._nodes_by_session[session.id] = {}
+            self._children_by_parent[session.id] = {}
+            self._active_leaf_by_session[session.id] = None
+            self._messages_by_session[session.id] = []
+            self._ingest_linear_messages(
+                session.id, messages_by_session.get(session.id, ())
+            )
 
         if active_session_id in self._sessions:
             self.active_session_id = active_session_id
@@ -648,11 +735,99 @@ class ConsoleChatStore:
         self._set_message_attachments(message, effective)
         if attachment_label and effective and not effective[0].display_name:
             message.attachment_label = attachment_label
-        self._messages_by_session[session_id].append(message)
         self._sessions[session_id].updated_at = _utc_now_iso()
-        self._message_session_index[message.id] = session_id
+        if role is ConsoleMessageRole.TOOL:
+            # Display-only agent marker (TOOL-marker invariant): register the
+            # session index and append to the active-path view for display, but
+            # NEVER become a tree node, the active leaf, or a parent -- otherwise
+            # the next real message would parent at a marker and corrupt the
+            # chain even in linear agent chats. Returns without persisting.
+            self._message_session_index[message.id] = session_id
+            self._messages_by_session[session_id].append(message)
+            return self._snapshot(message)
+        old_leaf = self._active_leaf_by_session[session_id]
+        self._register_tree_node(session_id, message, parent_native_id=old_leaf)
+        self._active_leaf_by_session[session_id] = message.id
+        self._recompute_active_path(session_id)
         if persist:
             self._persist_new_message_or_defer(session_id=session_id, message=message)
+        return self._snapshot(message)
+
+    def create_sibling(
+        self,
+        anchor_message_id: str,
+        *,
+        role: ConsoleMessageRole,
+        content: str = "",
+        persist: bool = False,
+    ) -> ConsoleChatMessage:
+        """Fork a new node alongside ``anchor_message_id`` and make it active.
+
+        This is the primitive regenerate uses: unlike ``append_message`` --
+        which always parents the new node at the CURRENT active leaf -- the
+        new node here is parented at the anchor's OWN native parent (a
+        SIBLING of the anchor, not a child of it). Registering it via
+        ``_register_tree_node`` adds it to the anchor's parent's ordered
+        child list beside the anchor (so ``siblings_at`` reports both), then
+        the session's active leaf is retargeted at the new node and the
+        active-path view is recomputed (Task 3's single writer).
+
+        When the anchor is mid-conversation (has descendants of its own),
+        that old tail drops off the now-recomputed active path -- it is not
+        deleted, just no longer on the visible branch, and remains reachable
+        by swiping back (``set_active_leaf`` to any node in the old branch).
+
+        Args:
+            anchor_message_id: Native id of the node to fork alongside
+                (typically the assistant message being regenerated).
+            role: Role for the new sibling message.
+            content: Initial content. An empty-content assistant sibling
+                starts ``"pending"`` (mirrors ``append_message``), ready to
+                receive stream chunks via ``append_stream_chunk``.
+            persist: When True, write the new node through to durable
+                storage immediately, using the same persist path
+                ``append_message(persist=True)`` uses. Ordering is
+                deliberate: the active leaf is retargeted and the
+                active-path view recomputed BEFORE this write (so the Sync v2
+                sequence helper, which walks the active-path view, sees the
+                new node on-path and emits its real on-path ordinal instead
+                of ``None``), and the DB active-leaf pointer write-through
+                (``_persist_active_leaf``) runs AFTER it (so, when the
+                session already owns a persisted conversation, it observes
+                the new node's freshly assigned ``persisted_message_id``
+                instead of the pre-persist ``None``).
+
+        Returns:
+            A snapshot of the newly created sibling node.
+
+        Raises:
+            KeyError: If ``anchor_message_id`` is not a known tree node.
+        """
+        self._message_or_raise(anchor_message_id)
+        session_id = self._message_session_index[anchor_message_id]
+        parent_native_id = self._native_parent_by_message.get(anchor_message_id)
+        message = ConsoleChatMessage(
+            role=role,
+            content=content,
+            status=self._initial_status(role=role, content=content),
+        )
+        self._sessions[session_id].updated_at = _utc_now_iso()
+        self._register_tree_node(session_id, message, parent_native_id=parent_native_id)
+        # Retarget the active leaf and rematerialize the active-path view
+        # BEFORE persisting so the Sync v2 sequence helper (which walks the
+        # active-path VIEW) sees the new node on-path and emits its real
+        # on-path ordinal, not ``None``. This intentionally does NOT route
+        # through ``set_active_leaf``, whose bundled ordering also writes the
+        # DB active-leaf pointer -- that pointer write must happen AFTER
+        # persistence to capture the node's real ``persisted_message_id``.
+        self._active_leaf_by_session[session_id] = message.id
+        self._recompute_active_path(session_id)
+        if persist:
+            self._persist_new_message_or_defer(session_id=session_id, message=message)
+        # Write-through the DB active-leaf pointer now that (for persist=True)
+        # the node owns a persisted id. For the persist=False path this mirrors
+        # the old ``set_active_leaf`` call with a still-``None`` id, which is fine.
+        self._persist_active_leaf(session_id, message.id)
         return self._snapshot(message)
 
     def messages_for_session(self, session_id: str) -> list[ConsoleChatMessage]:
@@ -714,15 +889,34 @@ class ConsoleChatStore:
             raise ValueError(
                 "Wait for response to finish before deleting this message."
             )
-        session_id = self._message_session_index.pop(message_id)
-        messages = self._messages_by_session[session_id]
-        self._messages_by_session[session_id] = [
-            candidate for candidate in messages if candidate.id != message_id
-        ]
-        self._stream_chunks_by_message.pop(message_id, None)
-        self._stream_materialized_counts.pop(message_id, None)
-        self._pending_persistence_message_ids.discard(message_id)
-        self._variant_stream_bases.pop(message_id, None)
+        session_id = self._message_session_index[message_id]
+        parent_native_id = self._native_parent_by_message.get(message_id)
+        on_active_path = message_id in self.active_path_message_ids(session_id)
+        subtree_ids = self._subtree_ids(session_id, message_id)
+        children_map = self._children_by_parent.get(session_id, {})
+        nodes = self._nodes_by_session.get(session_id, {})
+        # Detach the deleted node from its parent's ordered child list.
+        siblings = children_map.get(parent_native_id)
+        if siblings is not None and message_id in siblings:
+            siblings.remove(message_id)
+            if not siblings:
+                children_map.pop(parent_native_id, None)
+        # Purge the deleted node AND its whole subtree from every structure --
+        # deleting a mid-conversation node drops the branch beneath it.
+        for node_id in subtree_ids:
+            nodes.pop(node_id, None)
+            children_map.pop(node_id, None)
+            self._native_parent_by_message.pop(node_id, None)
+            self._message_session_index.pop(node_id, None)
+            self._stream_chunks_by_message.pop(node_id, None)
+            self._stream_materialized_counts.pop(node_id, None)
+            self._pending_persistence_message_ids.discard(node_id)
+            self._variant_stream_bases.pop(node_id, None)
+        # Only when the deleted branch was on the active path does the leaf move
+        # (up to the deleted node's parent); an off-path delete leaves it alone.
+        if on_active_path:
+            self._active_leaf_by_session[session_id] = parent_native_id
+        self._recompute_active_path(session_id)
         return self._snapshot(message)
 
     def session_id_for_message(self, message_id: str) -> str:
@@ -730,6 +924,76 @@ class ConsoleChatStore:
         if message_id not in self._message_session_index:
             raise KeyError(f"Unknown Console message: {message_id}")
         return self._message_session_index[message_id]
+
+    def active_leaf(self, session_id: str) -> str | None:
+        """Return the native id of the session's active-leaf node (or ``None``)."""
+        self._session_or_raise(session_id)
+        return self._active_leaf_by_session.get(session_id)
+
+    def set_active_leaf(self, session_id: str, message_id: str | None) -> None:
+        """Point a session's active leaf at a node and recompute the active path.
+
+        Updates the in-memory pointer, rematerializes the active-path view via
+        the single writer, and -- when the session owns a persisted conversation
+        and the persistence adapter exposes a raw ``db`` seam -- write-throughs
+        the local-only ``conversations.active_leaf_message_id`` pointer (mapped
+        to the leaf node's *persisted* id, or ``None`` when the leaf is cleared
+        or not yet persisted). A durable write failure is logged, never raised:
+        the in-memory pointer is authoritative and already updated, matching
+        this store's persist-through convention elsewhere.
+
+        Args:
+            session_id: Native Console session ID.
+            message_id: Native id of the node to make the active leaf, or
+                ``None`` to clear the active path entirely.
+
+        Raises:
+            KeyError: If the session is unknown, or ``message_id`` is not
+                ``None`` and does not reference a node in the session's tree.
+        """
+        self._session_or_raise(session_id)
+        nodes = self._nodes_by_session.get(session_id, {})
+        if message_id is not None and message_id not in nodes:
+            raise KeyError(f"Unknown Console message: {message_id}")
+        self._active_leaf_by_session[session_id] = message_id
+        self._recompute_active_path(session_id)
+        self._persist_active_leaf(session_id, message_id)
+
+    def active_path_message_ids(self, session_id: str) -> list[str]:
+        """Return native ids along the active path, root -> active leaf."""
+        self._session_or_raise(session_id)
+        ids: list[str] = []
+        current = self._active_leaf_by_session.get(session_id)
+        while current is not None:
+            ids.append(current)
+            current = self._native_parent_by_message.get(current)
+        ids.reverse()
+        return ids
+
+    def siblings_at(
+        self, message_id: str
+    ) -> tuple[list[ConsoleChatMessage], int, int]:
+        """Return ``(ordered sibling snapshots, index of message_id, count)``.
+
+        Siblings are the children of ``message_id``'s native parent, in creation
+        order. Snapshots are independent copies so callers cannot mutate the
+        live tree nodes. Resolves from the full tree, so it works for off-path
+        nodes too.
+
+        Raises:
+            KeyError: If ``message_id`` is not a node in any session's tree.
+        """
+        session_id = self._message_session_index.get(message_id)
+        nodes = self._nodes_by_session.get(session_id or "", {})
+        if session_id is None or message_id not in nodes:
+            raise KeyError(f"Unknown Console message: {message_id}")
+        parent_native_id = self._native_parent_by_message.get(message_id)
+        sibling_ids = self._children_by_parent.get(session_id, {}).get(
+            parent_native_id, []
+        )
+        snapshots = [self._snapshot(nodes[sibling_id]) for sibling_id in sibling_ids]
+        index = sibling_ids.index(message_id) if message_id in sibling_ids else 0
+        return snapshots, index, len(sibling_ids)
 
     def append_stream_chunk(self, message_id: str, chunk: str) -> ConsoleChatMessage:
         """Append streamed assistant content to an existing message.
@@ -1334,6 +1598,40 @@ class ConsoleChatStore:
             for parameter in parameters.values()
         )
 
+    def _nearest_persisted_ancestor_id(
+        self, session_id: str, message: ConsoleChatMessage
+    ) -> str | None:
+        """Return the persisted id of ``message``'s nearest PERSISTED ancestor.
+
+        Walks the native parent chain upward from ``message`` (via
+        ``_native_parent_by_message``), skipping any ancestor that is not
+        itself durably persisted (``persisted_message_id is None`` -- e.g. a
+        ``persist=False`` interstitial system note the controller appended
+        mid-chain), and returns the first persisted ancestor's persisted id.
+        Returns ``None`` when no ancestor is persisted (the message is a true
+        persisted root).
+
+        This keeps the persisted tree connected across non-persisted tree
+        nodes: without it, a message whose IMMEDIATE tree parent is a
+        non-persisted node would be written with ``parent_message_id=None``
+        and become a stray DB root, fragmenting the chain Task 8's leaf->root
+        resume walk depends on. For a plain linear conversation with no
+        interstitials the immediate parent IS the nearest persisted ancestor,
+        so the resolved id is unchanged.
+
+        A visited-set guards against a malformed cyclic parent chain.
+        """
+        nodes = self._nodes_by_session.get(session_id, {})
+        visited: set[str] = {message.id}
+        current = self._native_parent_by_message.get(message.id)
+        while current is not None and current not in visited:
+            visited.add(current)
+            ancestor = nodes.get(current)
+            if ancestor is not None and ancestor.persisted_message_id is not None:
+                return ancestor.persisted_message_id
+            current = self._native_parent_by_message.get(current)
+        return None
+
     def _persist_new_message(
         self, *, session_id: str, message: ConsoleChatMessage
     ) -> None:
@@ -1342,12 +1640,19 @@ class ConsoleChatStore:
         conversation_id = self.persist_session_if_needed(session_id)
         if conversation_id is None:
             return
+        # Thread the real tree parent through to persistence, resolving to the
+        # nearest PERSISTED ancestor (skipping non-persisted mid-chain nodes
+        # such as ``persist=False`` interstitial notes) so the persisted tree
+        # stays connected. ``None`` only when no ancestor is persisted (a true
+        # persisted root) -- never a dangling id.
+        parent_persisted_id = self._nearest_persisted_ancestor_id(session_id, message)
+        message.parent_message_id = parent_persisted_id
         create_kwargs: dict[str, Any] = dict(
             conversation_id=conversation_id,
             sender=message.role.value,
             content=message.content,
             message_id=None,
-            parent_message_id=None,
+            parent_message_id=parent_persisted_id,
             feedback=message.feedback,
         )
         # Only engage split addressing when there is something beyond the
@@ -1381,6 +1686,17 @@ class ConsoleChatStore:
             create_kwargs["image_mime_type"] = message.image_mime_type
         message.persisted_message_id = self.persistence.create_message(**create_kwargs)
         self._pending_persistence_message_ids.discard(message.id)
+        # Carried-forward (Task 8): when this newly persisted message IS the
+        # session's active leaf, write the durable active-leaf pointer through
+        # NOW that it owns a persisted id. ``append_message`` advances the
+        # in-memory leaf but (unlike ``set_active_leaf``/``create_sibling``)
+        # never writes the DB pointer; without this, sending a new message on a
+        # swiped-back branch leaves the pointer at the pre-swipe leaf, so a
+        # later resume walks the wrong branch and drops the continuation. Also
+        # covers the deferred path (``_persist_pending_message_if_ready`` ->
+        # here) where the id only exists once streamed content arrives.
+        if message.id == self._active_leaf_by_session.get(session_id):
+            self._persist_active_leaf(session_id, message.id)
         self._enqueue_sync_v2_message_if_ready(message)
 
     def _persist_existing_message(
@@ -1475,6 +1791,20 @@ class ConsoleChatStore:
             ).exception("Failed to enqueue Sync v2 chat message after local mutation")
 
     def _sync_message_sequence(self, message: ConsoleChatMessage) -> int | None:
+        """Return ``message``'s 1-based sync-eligible position on the active path.
+
+        Tree-aware (Task 5): ``_messages_by_session[session_id]`` is no
+        longer a flat append-order history of every message ever created --
+        since Task 3 it is the derived active-path VIEW (root -> active
+        leaf), rebuilt by ``_recompute_active_path`` alone. Counting along it
+        therefore already counts along the current branch rather than across
+        every fork, which is what a sequence number for the visible
+        conversation should mean. A message that is currently off the active
+        path (e.g. an old sibling left behind by ``create_sibling``, or any
+        node reached only via ``get_message``/``select_variant`` while
+        another branch is active) is not found in this walk and returns
+        ``None``, same as before.
+        """
         session_id = self._message_session_index.get(message.id)
         if session_id is None:
             return None
@@ -1495,16 +1825,28 @@ class ConsoleChatStore:
         )
 
     def _previous_persisted_message_id(self, message: ConsoleChatMessage) -> str | None:
+        """Return the persisted id of ``message``'s nearest PERSISTED ancestor.
+
+        Tree-aware (Task 5): previously this walked the flat message list
+        looking for whatever came immediately before ``message`` with a
+        persisted id -- a linear-history assumption that breaks the moment a
+        branch forks (a sibling's "previous" message is not "whatever this
+        session last appended", it's specifically the shared parent).
+
+        Resolving the nearest persisted ancestor via
+        ``_nearest_persisted_ancestor_id`` (skipping non-persisted mid-chain
+        nodes) fixes the fork case AND keeps the Sync v2 parent connected
+        across a ``persist=False`` interstitial. Note this exactly restores
+        the OLD flat-list behavior for the interstitial case -- that walk also
+        skipped non-persisted messages -- and for a plain linear conversation
+        the immediate parent IS the nearest persisted ancestor, so the value
+        is unchanged. ``None`` when no ancestor is persisted (root, unknown
+        session, or nothing durably persisted above yet).
+        """
         session_id = self._message_session_index.get(message.id)
         if session_id is None:
             return None
-        previous: str | None = None
-        for candidate in self._messages_by_session.get(session_id, []):
-            if candidate.id == message.id:
-                return previous
-            if candidate.persisted_message_id is not None:
-                previous = candidate.persisted_message_id
-        return None
+        return self._nearest_persisted_ancestor_id(session_id, message)
 
     @staticmethod
     def _sync_variant_metadata(
@@ -1546,13 +1888,290 @@ class ConsoleChatStore:
             raise KeyError(f"Unknown Console chat session: {session_id}") from exc
 
     def _message_or_raise(self, message_id: str) -> ConsoleChatMessage:
+        # Resolve from the FULL tree, not the active-path view, so off-path
+        # nodes (siblings of the active branch) are findable. Display-only TOOL
+        # markers are intentionally NOT tree nodes, so they do not resolve here.
         session_id = self._message_session_index.get(message_id)
         if session_id is None:
             raise KeyError(f"Unknown Console message: {message_id}")
-        for message in self._messages_by_session[session_id]:
-            if message.id == message_id:
-                return message
+        node = self._nodes_by_session.get(session_id, {}).get(message_id)
+        if node is not None:
+            return node
         raise KeyError(f"Unknown Console message: {message_id}")
+
+    def _register_tree_node(
+        self,
+        session_id: str,
+        message: ConsoleChatMessage,
+        *,
+        parent_native_id: str | None,
+    ) -> None:
+        """Register a real message as a node in ALL tree structures.
+
+        The ONE place a node enters ``_nodes_by_session``,
+        ``_children_by_parent``, ``_native_parent_by_message``, and
+        ``_message_session_index`` together, so every registration path stays
+        consistent. Does NOT set the active leaf or recompute the view -- the
+        caller owns leaf placement and the follow-up ``_recompute_active_path``.
+        """
+        self._nodes_by_session.setdefault(session_id, {})[message.id] = message
+        self._native_parent_by_message[message.id] = parent_native_id
+        self._children_by_parent.setdefault(session_id, {}).setdefault(
+            parent_native_id, []
+        ).append(message.id)
+        self._message_session_index[message.id] = session_id
+
+    def _ingest_linear_messages(
+        self, session_id: str, messages: Iterable[ConsoleChatMessage]
+    ) -> None:
+        """Register a flat message list as a linear tree chain, then recompute.
+
+        Used by the restore paths (``restore_state`` /
+        ``restore_persisted_session``): each real message is parented at the
+        previous real message, the last real message becomes the active leaf,
+        and ``_recompute_active_path`` reproduces the exact restored list. TOOL
+        markers, being display-only, are never registered as tree nodes (they
+        would be dropped by the immediate recompute anyway -- the accepted
+        Phase A limitation; restore inputs do not carry them in practice).
+        """
+        parent_native_id: str | None = None
+        for message in messages:
+            restored = replace(message)
+            if restored.role is ConsoleMessageRole.TOOL:
+                self._message_session_index[restored.id] = session_id
+                continue
+            self._register_tree_node(
+                session_id, restored, parent_native_id=parent_native_id
+            )
+            parent_native_id = restored.id
+        self._active_leaf_by_session[session_id] = parent_native_id
+        self._recompute_active_path(session_id)
+
+    def _ingest_full_tree(
+        self,
+        session_id: str,
+        all_nodes: Iterable[ConsoleChatMessage],
+        *,
+        active_leaf_persisted_id: str | None,
+    ) -> None:
+        """Rebuild the FULL conversation tree (all branches) from persisted nodes.
+
+        Task 8 resume path. ``all_nodes`` is the flattened persisted tree in
+        pre-order (every node, siblings in the DB's timestamp order); each node
+        carries its own ``persisted_message_id`` and its persisted
+        ``parent_message_id``. The tree is reconnected by mapping persisted ids
+        to fresh native ids, so off-path siblings load as navigable nodes -- the
+        whole point of Task 8. The active-path VIEW is then derived from the
+        stored active-leaf pointer, falling back to the most-recent-child leaf
+        (``children[-1]`` walk) and repairing the durable pointer when the
+        pointer is ``None``, unknown, or dangling.
+
+        TOOL markers (display-only, never tree nodes) are not expected in
+        ``all_nodes`` -- resume re-derives them from ``AgentRunsDB`` and overlays
+        them onto the view afterward -- but any that slip in are registered in
+        the session index only, mirroring ``_ingest_linear_messages``.
+        """
+        registered: list[ConsoleChatMessage] = []
+        persisted_to_native: dict[str, str] = {}
+        for node in all_nodes:
+            restored = replace(node)
+            if restored.role is ConsoleMessageRole.TOOL:
+                self._message_session_index[restored.id] = session_id
+                continue
+            registered.append(restored)
+            if restored.persisted_message_id is not None:
+                # Last write wins on a (malformed) duplicate persisted id; the
+                # tree is still internally consistent, just under-linked.
+                persisted_to_native[restored.persisted_message_id] = restored.id
+        for restored in registered:
+            native_parent = persisted_to_native.get(restored.parent_message_id)
+            self._register_tree_node(
+                session_id, restored, parent_native_id=native_parent
+            )
+        # Legacy flat-data repair (C1): before branching, every message was
+        # persisted with parent_message_id=NULL, so an existing conversation
+        # loads as N separate roots (all siblings under None) with no children.
+        # Chain them into one linear spine so the active-leaf walk traverses the
+        # whole conversation instead of truncating to the last root.
+        self._chain_legacy_flat_roots(session_id)
+        # Resolve the active leaf from the stored pointer; fall back to the
+        # most-recent leaf when it is missing/unknown/dangling, and repair the
+        # durable pointer so the next resume is exact.
+        leaf_native: str | None = None
+        if active_leaf_persisted_id is not None:
+            leaf_native = persisted_to_native.get(active_leaf_persisted_id)
+        used_fallback = leaf_native is None
+        if used_fallback:
+            leaf_native = self._most_recent_leaf_native(session_id)
+        self._active_leaf_by_session[session_id] = leaf_native
+        self._recompute_active_path(session_id)
+        if used_fallback and leaf_native is not None:
+            # Map the fallback leaf back to its persisted id and write it
+            # through (``_persist_active_leaf`` no-ops without a durable seam).
+            self._persist_active_leaf(session_id, leaf_native)
+
+    def _chain_legacy_flat_roots(self, session_id: str) -> None:
+        """Chain multiple root-level threads into one linear spine (C1 repair).
+
+        Pre-feature Console persistence wrote EVERY message with
+        ``parent_message_id=NULL`` (the base ``_persist_new_message`` hardcoded
+        ``None``), so an existing conversation ``[U1, A1, U2, A2]`` is stored as
+        four separate roots -- all siblings under ``None``, none with children.
+        On resume the active-leaf fallback (``_most_recent_leaf_native``) then
+        walks only the LAST root, collapsing the transcript to its final message
+        and rendering a phantom ``n/n`` sibling counter on the survivor.
+
+        A GENUINE Console branch is ALWAYS a set of siblings under a shared
+        *non-None* parent (regenerate / create-sibling parent the new node at
+        the anchor's parent), NEVER two separate root threads -- a conversation's
+        real root is its single first message. Therefore more than one
+        root-level thread unambiguously means legacy flat data (fully flat, or a
+        flat prefix followed by post-feature branched messages), and it is
+        always correct to chain the roots into a single linear spine.
+
+        Roots are chained in their existing insertion order, which is the DB's
+        timestamp-ASC order (``get_root_messages_for_conversation`` orders roots
+        by timestamp; ``ConsoleChatMessage`` carries no timestamp of its own, so
+        insertion order is the ordering signal -- exactly the accepted fallback
+        for equal/absent timestamps). Each root ``r_i`` (i >= 1) is re-parented
+        onto ``r_{i-1}`` and moved out of the ``None`` bucket into
+        ``r_{i-1}``'s ordered child list; any real subtree already hanging off a
+        root (e.g. a post-feature message whose real parent is a flat row) is
+        left intact. After chaining there is exactly one root (``r_0``) and the
+        active-leaf ancestry walk traverses the full spine plus any subtrees.
+
+        A single-root (genuine) tree is left untouched -- the chaining branch
+        never triggers. This is an IN-MEMORY reconstruction only; durable
+        ``parent_message_id`` rows are never rewritten (the active-leaf pointer
+        repair on resume is the durable fix).
+        """
+        children = self._children_by_parent.get(session_id)
+        if children is None:
+            return
+        roots = children.get(None, [])
+        if len(roots) <= 1:
+            return
+        # Keep only the first root under None; chain the rest onto their
+        # predecessor, preserving each root's own existing subtree.
+        children[None] = [roots[0]]
+        previous = roots[0]
+        for root in roots[1:]:
+            self._native_parent_by_message[root] = previous
+            children.setdefault(previous, []).append(root)
+            previous = root
+
+    def _most_recent_leaf_native(self, session_id: str) -> str | None:
+        """Return the deepest ``children[-1]`` leaf under the most-recent root.
+
+        The fallback leaf resolver when a session has no usable active-leaf
+        pointer. Roots (and children) are ordered oldest-first, so the last
+        root and each step's last child track the most recently created branch
+        -- the same branch the pre-pointer ``children[-1]`` resume walk showed.
+        Returns ``None`` when the session has no tree nodes.
+        """
+        roots = self._children_by_parent.get(session_id, {}).get(None, [])
+        if not roots:
+            return None
+        return self._leaf_under(roots[-1])
+
+    def _recompute_active_path(self, session_id: str) -> None:
+        """Rebuild the active-path VIEW for a session from live tree nodes.
+
+        The SINGLE writer of ``_messages_by_session[session_id]``. Walks the
+        active leaf up to the root via ``_native_parent_by_message``, reverses
+        to root->leaf order, and materializes the view from the LIVE node
+        objects in ``_nodes_by_session`` (never copies -- streaming mutates node
+        content in place and the view must observe it). Each visited node's
+        transient ``sibling_index``/``sibling_count`` is filled from its native
+        parent's ordered child list so the renderer can show ``<``/``>`` + an
+        ``n/m`` counter without reaching into store internals.
+        """
+        nodes = self._nodes_by_session.get(session_id, {})
+        children = self._children_by_parent.get(session_id, {})
+        path_ids: list[str] = []
+        current = self._active_leaf_by_session.get(session_id)
+        while current is not None:
+            path_ids.append(current)
+            current = self._native_parent_by_message.get(current)
+        path_ids.reverse()
+        path: list[ConsoleChatMessage] = []
+        for native_id in path_ids:
+            node = nodes.get(native_id)
+            if node is None:
+                continue
+            siblings = children.get(self._native_parent_by_message.get(native_id), [])
+            node.sibling_count = len(siblings)
+            node.sibling_index = (
+                siblings.index(native_id) if native_id in siblings else 0
+            )
+            path.append(node)
+        self._messages_by_session[session_id] = path
+
+    def _subtree_ids(self, session_id: str, root_id: str) -> list[str]:
+        """Return ``root_id`` plus all its descendant native ids (pre-order)."""
+        children_map = self._children_by_parent.get(session_id, {})
+        collected: list[str] = []
+        stack = [root_id]
+        while stack:
+            node_id = stack.pop()
+            collected.append(node_id)
+            stack.extend(children_map.get(node_id, []))
+        return collected
+
+    def _leaf_under(self, node_id: str) -> str:
+        """Return the deepest descendant of ``node_id`` (always the last child).
+
+        Used by later swipe/select tasks to resolve which leaf a sibling switch
+        should land on. Walks ``_children_by_parent`` picking the last child at
+        each step; returns ``node_id`` itself when it has no children.
+        """
+        session_id = self._message_session_index.get(node_id)
+        children_map = (
+            self._children_by_parent.get(session_id, {}) if session_id else {}
+        )
+        current = node_id
+        while True:
+            children = children_map.get(current)
+            if not children:
+                return current
+            current = children[-1]
+
+    def _persist_active_leaf(
+        self, session_id: str, message_id: str | None
+    ) -> None:
+        """Write-through the local-only active-leaf pointer for a persisted conv.
+
+        No-op unless the session owns a persisted conversation AND the
+        persistence adapter exposes a raw ``db`` seam (mirrors the
+        ``persistence_db = getattr(self.persistence, "db", None)`` pattern in
+        ``persist_session_if_needed``). Maps the in-memory leaf to its persisted
+        message id (``None`` when cleared or not yet persisted).
+        """
+        session = self._sessions.get(session_id)
+        conversation_id = (
+            session.persisted_conversation_id if session is not None else None
+        )
+        if conversation_id is None:
+            return
+        persistence_db = getattr(self.persistence, "db", None)
+        if persistence_db is None:
+            return
+        leaf_persisted_id: str | None = None
+        if message_id is not None:
+            node = self._nodes_by_session.get(session_id, {}).get(message_id)
+            leaf_persisted_id = node.persisted_message_id if node is not None else None
+        try:
+            persistence_db.set_conversation_active_leaf(
+                conversation_id, leaf_persisted_id
+            )
+        except Exception:
+            logger.bind(
+                session_id=session_id,
+                conversation_id=conversation_id,
+            ).exception(
+                "Failed to persist Console active-leaf pointer; the in-memory "
+                "pointer keeps the applied value."
+            )
 
     def _materialize_stream_buffer(self, message: ConsoleChatMessage) -> None:
         """Fold buffered stream chunks into ``message.content`` if any are new.

@@ -1222,7 +1222,35 @@ class ConsoleChatController:
         )
 
     async def regenerate_message(self, message_id: str) -> ConsoleSubmitResult:
-        """Regenerate a selected assistant message into a newly selected variant."""
+        """Regenerate a selected assistant message by forking a sibling branch.
+
+        Unlike the pre-Task-6 behavior (streaming a replacement *variant*
+        into the SAME message via ``variant_mode=True`` /
+        ``begin_variant_stream``/``finalize_variant_stream``), this forks a
+        new assistant node alongside ``message_id`` under its own parent
+        (``store.create_sibling``) and streams into that NEW node normally
+        (``variant_mode=False``). The anchor (and any old tail beneath it,
+        for a mid-conversation regenerate) is left untouched and simply
+        drops off the active path -- still reachable via
+        ``store.set_active_leaf``, never deleted.
+
+        All validation/blocking checks (provider readiness, "nothing to
+        regenerate before the first message", a refusing skill) run BEFORE
+        the sibling is created, mirroring the old mutate-only-once-committed
+        discipline: a blocked regenerate must not leave a stray empty node
+        forked into the tree. Because the fork shares the anchor's own
+        parent, ``provider_messages`` computed with
+        ``before_message_id=message_id`` (while ``message_id`` is still on
+        the active path) is identical to computing it against the new
+        sibling's id afterward -- both yield the anchor's ancestor chain --
+        so it is safe to build once, up front.
+
+        On stream FAILURE, the new sibling node itself becomes a ``failed``
+        node on the active path (retryable via ``retry_message``), rather
+        than restoring the anchor's prior reply in place -- this is the
+        intended node-model behavior, not a regression: the anchor is a
+        completely separate node and was never touched.
+        """
         active_rejection = self._active_run_rejection()
         if active_rejection is not None:
             return active_rejection
@@ -1274,11 +1302,17 @@ class ConsoleChatController:
             provider_messages, session_id
         )
         prefill = self._pinned_prefill_for_session(session_id)
+        new_message = self.store.create_sibling(
+            message_id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="",
+            persist=self.store.persistence is not None,
+        )
         return await self._stream_assistant_response(
             resolution=resolution,
             provider_messages=provider_messages,
-            assistant_message_id=message_id,
-            variant_mode=True,
+            assistant_message_id=new_message.id,
+            variant_mode=False,
             prefill=prefill,
         )
 

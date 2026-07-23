@@ -157,7 +157,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 23  # Adds character_expression_images (P3d reaction avatars).
+    _CURRENT_SCHEMA_VERSION = 24  # Adds conversations.active_leaf_message_id (Console branching Phase A).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -2482,6 +2482,18 @@ UPDATE db_schema_version
 """
 
     # Keep this runner SQL aligned with
+    # tldw_chatbook/DB/migrations/chachanotes_v23_to_v24_conversation_active_leaf.sql.
+    # NOTE: no trigger DDL. `active_leaf_message_id` is a LOCAL-ONLY pointer that
+    # must never reach sync_log, so the conversations_sync_* triggers are left
+    # untouched and the column is never added to their payloads.
+    _MIGRATE_V23_TO_V24_SQL = """
+UPDATE db_schema_version
+   SET version = 24
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 23;
+"""
+
+    # Keep this runner SQL aligned with
     # tldw_chatbook/DB/migrations/chachanotes_v18_to_v19_message_attachments.sql.
     _MIGRATE_V18_TO_V19_SQL = """
 CREATE TABLE IF NOT EXISTS message_attachments(
@@ -3846,6 +3858,32 @@ UPDATE db_schema_version
             logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V22→V23] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V22 to V23 for '{self._SCHEMA_NAME}': {e}") from e
 
+    def _migrate_from_v23_to_v24(self, conn: sqlite3.Connection):
+        """Migrate schema V23→V24: add the local-only ``active_leaf_message_id``
+        pointer column to ``conversations``. No triggers change — the column is
+        never synced (see ``set_conversation_active_leaf``)."""
+        logger.info(f"Migrating schema from V23 to V24 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            existing_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()
+            }
+            if "active_leaf_message_id" not in existing_columns:
+                conn.execute("ALTER TABLE conversations ADD COLUMN active_leaf_message_id TEXT")
+            conn.executescript(self._MIGRATE_V23_TO_V24_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V23→V24] Migration script executed.")
+            final_version = self._get_db_version(conn)
+            if final_version != 24:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V23→V24] Migration version check failed. Expected 24, got: {final_version}"
+                )
+            logger.info(f"[{self._SCHEMA_NAME} V23→V24] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V23→V24] Migration failed: {e}")
+            raise SchemaError(f"Migration from V23 to V24 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V23→V24] Unexpected error during migration: {e}")
+            raise SchemaError(f"Unexpected error migrating from V23 to V24 for '{self._SCHEMA_NAME}': {e}") from e
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -3999,6 +4037,7 @@ UPDATE db_schema_version
                     20: self._migrate_from_v20_to_v21,
                     21: self._migrate_from_v21_to_v22,
                     22: self._migrate_from_v22_to_v23,
+                    23: self._migrate_from_v23_to_v24,
                 }
 
                 if current_db_version == 0:
@@ -6705,6 +6744,33 @@ UPDATE db_schema_version
             raise CharactersRAGDBError(
                 f"Unexpected error during update_conversation: {e}"
             ) from e
+
+    def set_conversation_active_leaf(
+        self, conversation_id: str, message_id: str | None
+    ) -> None:
+        """Set the local-only active-leaf pointer for a conversation.
+
+        Deliberately a bare UPDATE that does NOT bump ``version``/``last_modified``
+        and touches no column named in the ``conversations_sync_update`` trigger
+        WHEN clause, so it never emits a ``sync_log`` row. Last-write-wins; no
+        optimistic locking (this is a per-client view pointer, not synced state).
+        """
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE conversations SET active_leaf_message_id = ? "
+                "WHERE id = ? AND deleted = 0",
+                (message_id, conversation_id),
+            )
+
+    def get_conversation_active_leaf(self, conversation_id: str) -> str | None:
+        """Return the local-only active-leaf pointer, or ``None`` if unset/missing."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT active_leaf_message_id FROM conversations "
+                "WHERE id = ? AND deleted = 0",
+                (conversation_id,),
+            ).fetchone()
+        return row["active_leaf_message_id"] if row else None
 
     def soft_delete_conversation(
         self, conversation_id: str, expected_version: int

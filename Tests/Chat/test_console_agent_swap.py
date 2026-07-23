@@ -688,9 +688,12 @@ async def test_continue_through_agent_path_uses_bridge_and_appends_new_message(
 
 
 @pytest.mark.asyncio
-async def test_regenerate_through_agent_path_uses_bridge_and_selects_new_variant(
+async def test_regenerate_through_agent_path_uses_bridge_and_forks_sibling(
     tmp_path,
 ):
+    """TASK-6: regenerate forks a persisted sibling node and streams into it
+    (rather than replacing the anchor's content in place as an in-message
+    variant) even when the agent-runtime bridge is the reply engine."""
     controller, store, _db = _controller(
         tmp_path, [["first answer."], ["second answer."]]
     )
@@ -715,15 +718,21 @@ async def test_regenerate_through_agent_path_uses_bridge_and_selects_new_variant
     assert result.accepted is True
     assert calls["n"] == 1
 
-    regenerated = store.get_message(assistant.id)
+    # The anchor is untouched, off the active path -- a NEW sibling node
+    # carries the freshly generated answer and is the new active leaf.
+    unchanged_anchor = store.get_message(assistant.id)
+    assert unchanged_anchor.content == "first answer."
+    assert unchanged_anchor.variants is None
+    assert assistant.id not in store.active_path_message_ids(session_id)
+
+    siblings, _index, count = store.siblings_at(assistant.id)
+    assert count == 2
+    new_leaf_id = store.active_leaf(session_id)
+    assert new_leaf_id != assistant.id
+    regenerated = store.get_message(new_leaf_id)
     assert regenerated.content == "second answer."
     assert regenerated.status == "complete"
-    assert regenerated.variants is not None
-    assert regenerated.variants.selected_index == 1
-    assert [v.content for v in regenerated.variants.variants] == [
-        "first answer.",
-        "second answer.",
-    ]
+    assert regenerated.variants is None
 
 
 # -- Important 3: the agent-runtime gate + bridge must not be a boot snapshot --

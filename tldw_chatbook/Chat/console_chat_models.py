@@ -204,6 +204,15 @@ class ConsoleChatMessage:
     turn_id: str | None = None
     status: ConsoleMessageStatus = "complete"
     persisted_message_id: str | None = None
+    #: Persisted id of this node's PARENT in the conversation tree (None for a
+    #: root / not-yet-known parent). Distinct from ``persisted_message_id``
+    #: (this node's own persisted id). Used to reconstruct the active path.
+    parent_message_id: str | None = None
+    #: Transient (non-persisted) sibling-navigation hints the store fills in on
+    #: active-path snapshots so the renderer can show `<`/`>` + an `n/m` counter
+    #: without reaching into store internals. Default 0/1 = "no siblings".
+    sibling_index: int = 0
+    sibling_count: int = 1
     variants: "ConsoleVariantSet | None" = None
     feedback: ConsoleMessageFeedback | None = None
     image_data: bytes | None = None

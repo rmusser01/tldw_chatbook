@@ -375,7 +375,15 @@ def test_console_transcript_selected_message_explains_icon_actions():
 
 def test_console_transcript_variant_navigation_changes_displayed_content():
     message = ConsoleChatMessage(
-        role=ConsoleMessageRole.ASSISTANT, content="first", id="m1"
+        role=ConsoleMessageRole.ASSISTANT,
+        content="first",
+        id="m1",
+        # TASK-7: the `<`/`>` action row is now gated on sibling_count (a
+        # forked-branch read model), not on `.variants` -- this message
+        # still carries a `ConsoleVariantSet` below purely to exercise the
+        # (retired, test-only) in-message content cycling the assertions
+        # check; the action row's own visibility needs sibling_count > 1.
+        sibling_count=2,
     )
     message.variants = ConsoleVariantSet.from_contents(
         turn_id="turn-1",
@@ -398,11 +406,10 @@ def test_console_transcript_variant_navigation_changes_displayed_content():
 
 def test_console_transcript_variant_action_row_stays_within_terminal_width_budget():
     message = ConsoleChatMessage(
-        role=ConsoleMessageRole.ASSISTANT, content="first", id="m1"
-    )
-    message.variants = ConsoleVariantSet.from_contents(
-        turn_id="turn-1",
-        contents=["first", "second"],
+        role=ConsoleMessageRole.ASSISTANT,
+        content="first",
+        id="m1",
+        sibling_count=2,
     )
     transcript = ConsoleTranscript()
     transcript.set_messages([message])
@@ -829,6 +836,68 @@ def test_image_only_message_row_renders_chip_without_body():
     )
     rendered = _message_render_text(message, selected=False)
     assert "🖼" in rendered.plain
+
+
+def test_sibling_counter_rendered_for_message_with_siblings():
+    """TASK-7: a message with persisted siblings shows an `(n/m)` counter."""
+    from tldw_chatbook.Widgets.Console.console_transcript import _message_render_text
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="second answer",
+        id="m1",
+        sibling_index=1,
+        sibling_count=2,
+    )
+
+    rendered = _message_render_text(message, selected=False)
+
+    assert "(2/2)" in rendered.plain
+
+
+def test_sibling_counter_rendered_for_first_of_several_siblings():
+    from tldw_chatbook.Widgets.Console.console_transcript import _message_render_text
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="first answer",
+        id="m1",
+        sibling_index=0,
+        sibling_count=3,
+    )
+
+    rendered = _message_render_text(message, selected=False)
+
+    assert "(1/3)" in rendered.plain
+
+
+def test_no_sibling_counter_for_single_child_message():
+    """TASK-7: a linear (unforked) message renders no `(n/m)` counter."""
+    from tldw_chatbook.Widgets.Console.console_transcript import _message_render_text
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="only answer", id="m1"
+    )
+
+    rendered = _message_render_text(message, selected=False)
+
+    assert "(1/1)" not in rendered.plain
+    assert "(" not in rendered.plain
+
+
+def test_transcript_message_widget_shows_sibling_counter_via_row_construction():
+    """Counter reaches the actual mounted row (``ConsoleTranscriptMessage``),
+    not just the pure ``_message_render_text`` helper."""
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="second answer",
+        id="m1",
+        sibling_index=1,
+        sibling_count=2,
+    )
+    widget = ConsoleTranscriptMessage(message)
+
+    assert "(2/2)" in widget.renderable.plain
 
 
 def test_save_image_action_only_offered_for_image_messages():

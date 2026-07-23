@@ -22,7 +22,9 @@ def test_world_book_entries_regex_migrate_v21_to_v22(tmp_path):
         "SELECT version FROM db_schema_version WHERE schema_name = ?",
         (migrated._SCHEMA_NAME,),
     ).fetchone()
-    assert version["version"] == migrated._CURRENT_SCHEMA_VERSION == 22
+    # A simulated-V21 DB migrates all the way to the current version (which keeps
+    # advancing as later migrations are added), not a hardcoded 22.
+    assert version["version"] == migrated._CURRENT_SCHEMA_VERSION
     cols = {r[1] for r in mconn.execute("PRAGMA table_info(world_book_entries)").fetchall()}
     assert "regex" in cols
     for trig in ("world_book_entries_sync_create", "world_book_entries_sync_update"):

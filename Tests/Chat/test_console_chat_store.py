@@ -1804,7 +1804,8 @@ def test_rename_session_persists_conversation_title_when_saved():
         title="Old title",
         workspace_id=None,
         persisted_conversation_id="conv-77",
-        messages=[],
+        all_nodes=[],
+        active_leaf_persisted_id=None,
     )
 
     renamed, persisted = store.rename_session(session.id, "New title")
@@ -1826,7 +1827,8 @@ def test_rename_session_keeps_memory_title_when_persistence_fails():
         title="Old title",
         workspace_id=None,
         persisted_conversation_id="conv-88",
-        messages=[],
+        all_nodes=[],
+        active_leaf_persisted_id=None,
     )
 
     renamed, persisted = store.rename_session(session.id, "New title")
@@ -1857,7 +1859,8 @@ def test_rename_session_reports_unpersisted_when_update_returns_false():
         title="Old title",
         workspace_id=None,
         persisted_conversation_id="conv-99",
-        messages=[],
+        all_nodes=[],
+        active_leaf_persisted_id=None,
     )
 
     renamed, persisted = store.rename_session(session.id, "New title")
@@ -1875,7 +1878,8 @@ def test_rename_session_reports_unpersisted_when_seam_is_missing():
         title="Old title",
         workspace_id=None,
         persisted_conversation_id="conv-100",
-        messages=[],
+        all_nodes=[],
+        active_leaf_persisted_id=None,
     )
 
     renamed, persisted = store.rename_session(session.id, "New title")

@@ -157,12 +157,11 @@ def test_action_labels_fit_compact_terminal_width_budget():
 def test_variant_action_labels_use_symbolic_navigation():
     service = ConsoleMessageActionService()
     message = ConsoleChatMessage(
-        role=ConsoleMessageRole.ASSISTANT, content="first", id="m1"
-    )
-    message.variants = ConsoleVariantSet.from_contents(
-        turn_id="turn-1",
-        contents=["first", "second"],
-        selected_index=1,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="first",
+        id="m1",
+        sibling_index=1,
+        sibling_count=2,
     )
 
     actions = service.available_actions(message)
@@ -180,15 +179,61 @@ def test_variant_action_labels_use_symbolic_navigation():
     ]
 
 
+@pytest.mark.parametrize(
+    ("sibling_index", "sibling_count", "previous_enabled", "next_enabled"),
+    [
+        (0, 3, False, True),
+        (1, 3, True, True),
+        (2, 3, True, False),
+    ],
+)
+def test_variant_nav_actions_gate_on_sibling_position(
+    sibling_index: int,
+    sibling_count: int,
+    previous_enabled: bool,
+    next_enabled: bool,
+):
+    """TASK-7: `<`/`>` enable state follows the sibling position, not the
+    retired ``ConsoleVariantSet`` selection index."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="reply",
+        id="m1",
+        sibling_index=sibling_index,
+        sibling_count=sibling_count,
+    )
+
+    actions = {
+        action.action_id: action for action in service.available_actions(message)
+    }
+
+    assert actions["variant-previous"].enabled is previous_enabled
+    assert actions["variant-next"].enabled is next_enabled
+
+
+def test_variant_nav_actions_absent_for_linear_single_child_message():
+    """TASK-7: gate is now ``sibling_count > 1``, not ``variants is not None``
+    -- a linear (unforked) message offers no `<`/`>` at all."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="reply", id="m1"
+    )
+
+    action_ids = [action.action_id for action in service.available_actions(message)]
+
+    assert "variant-previous" not in action_ids
+    assert "variant-next" not in action_ids
+
+
 def test_variant_action_labels_fit_compact_terminal_width_budget():
     service = ConsoleMessageActionService()
     message = ConsoleChatMessage(
-        role=ConsoleMessageRole.ASSISTANT, content="first", id="m1"
-    )
-    message.variants = ConsoleVariantSet.from_contents(
-        turn_id="turn-1",
-        contents=["first", "second"],
-        selected_index=1,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="first",
+        id="m1",
+        sibling_index=1,
+        sibling_count=2,
     )
 
     labels = service.plain_action_labels(message)

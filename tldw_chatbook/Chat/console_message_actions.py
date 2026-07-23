@@ -104,7 +104,7 @@ class ConsoleMessageActionService:
         """Return canonical selected-message actions for a transcript message."""
         disabled_reason = self._disabled_reason(message)
         completed_actions = list(self._COMPLETED_ACTIONS)
-        if message.variants is not None:
+        if message.sibling_count > 1:
             completed_actions = self._base_actions_with(self._VARIANT_NAV_ACTIONS)
         if self._has_image(message):
             completed_actions = (
@@ -285,9 +285,9 @@ class ConsoleMessageActionService:
     @staticmethod
     def _variant_action_enabled(action_id: str, message: ConsoleChatMessage) -> bool:
         if action_id == "variant-previous":
-            return message.variants is not None and message.variants.can_go_previous
+            return message.sibling_index > 0
         if action_id == "variant-next":
-            return message.variants is not None and message.variants.can_go_next
+            return message.sibling_index < message.sibling_count - 1
         return True
 
     @staticmethod

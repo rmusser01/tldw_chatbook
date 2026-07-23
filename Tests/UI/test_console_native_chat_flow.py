@@ -3681,13 +3681,29 @@ async def test_console_regenerate_action_streams_selected_variant():
         await pilot.click(f"#console-message-action-regenerate-{source.id}")
         await _wait_for_text(console, pilot, "hello")
 
-        updated = store.get_message(source.id)
-        assert updated.variants.current.content == "hello"
-        assert updated.variants.can_go_previous is True
+        # TASK-6: regenerate forks a persisted SIBLING node and streams into
+        # it, rather than replacing the anchor's content in place as an
+        # in-message variant. The anchor is untouched and drops off the
+        # active path; the new sibling is the active leaf and carries the
+        # freshly streamed text.
+        unchanged_source = store.get_message(source.id)
+        assert unchanged_source.content == "seed"
+        assert unchanged_source.variants is None
+        assert source.id not in store.active_path_message_ids(session.id)
+
+        new_leaf_id = store.active_leaf(session.id)
+        assert new_leaf_id != source.id
+        new_sibling = store.get_message(new_leaf_id)
+        assert new_sibling.content == "hello"
+        assert new_sibling.variants is None
 
 
 @pytest.mark.asyncio
-async def test_console_regenerated_message_variant_controls_cycle_visible_content():
+async def test_console_sibling_swipe_buttons_navigate_between_regenerated_siblings():
+    """TASK-7: `<`/`>` navigate persisted SIBLING nodes (Task 6's regenerate
+    fork), not the old in-memory ``ConsoleVariantSet`` cycling this test used
+    to exercise via ``store.add_variant`` -- superseded now that the gate is
+    ``sibling_count``-based. Also pins the `(n/m)` counter this task adds."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -3696,57 +3712,76 @@ async def test_console_regenerated_message_variant_controls_cycle_visible_conten
         await _wait_for_selector(console, pilot, "#console-native-transcript")
         store = console._ensure_console_chat_store()
         session = store.ensure_session(title="Chat 1")
-        source = store.append_message(
+        a1 = store.append_message(
             session.id,
             role=ConsoleMessageRole.ASSISTANT,
             content="seed",
         )
-        store.add_variant(source.id, "updated answer")
+        a2 = store.create_sibling(
+            a1.id, role=ConsoleMessageRole.ASSISTANT, content="updated answer"
+        )
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
-        transcript.select_message(source.id)
+        transcript.select_message(a2.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
-            console, pilot, f"#console-message-action-variant-previous-{source.id}"
+            console, pilot, f"#console-message-action-variant-previous-{a2.id}"
         )
         await _wait_for_selector(
-            console, pilot, f"#console-message-action-variant-next-{source.id}"
+            console, pilot, f"#console-message-action-variant-next-{a2.id}"
         )
 
         previous_button = console.query_one(
-            f"#console-message-action-variant-previous-{source.id}", Button
+            f"#console-message-action-variant-previous-{a2.id}", Button
         )
         next_button = console.query_one(
-            f"#console-message-action-variant-next-{source.id}", Button
+            f"#console-message-action-variant-next-{a2.id}", Button
         )
         assert previous_button.disabled is False
         assert next_button.disabled is True
-        assert "updated answer" in _static_plain_text(
-            console.query_one(f"#console-message-{source.id}", Static)
+        row_text = _static_plain_text(
+            console.query_one(f"#console-message-{a2.id}", Static)
         )
+        assert "updated answer" in row_text
+        assert "(2/2)" in row_text
 
-        await pilot.click(f"#console-message-action-variant-previous-{source.id}")
+        await pilot.click(f"#console-message-action-variant-previous-{a2.id}")
         await _wait_for_text(console, pilot, "seed")
+        row_text = _static_plain_text(
+            console.query_one(f"#console-message-{a1.id}", Static)
+        )
+        assert "(1/2)" in row_text
+        # a2 drops off the active path, so its id is no longer in the
+        # transcript's message set and selection clears (same rule an
+        # existing test already pins for "continue": selection tracks a
+        # message ID, and that ID vanishing from view resets it -- swiping
+        # again requires re-selecting the now-active row, exactly like any
+        # other action that swaps which message is active).
+        assert transcript.selected_message_id is None
+        assert not list(console.query(f"#console-message-actions-{a1.id}"))
+
+        transcript.select_message(a1.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-variant-next-{a1.id}"
+        )
         previous_button = console.query_one(
-            f"#console-message-action-variant-previous-{source.id}", Button
+            f"#console-message-action-variant-previous-{a1.id}", Button
         )
         next_button = console.query_one(
-            f"#console-message-action-variant-next-{source.id}", Button
+            f"#console-message-action-variant-next-{a1.id}", Button
         )
         assert previous_button.disabled is True
         assert next_button.disabled is False
 
-        await pilot.click(f"#console-message-action-variant-next-{source.id}")
+        await pilot.click(f"#console-message-action-variant-next-{a1.id}")
         await _wait_for_text(console, pilot, "updated answer")
-        previous_button = console.query_one(
-            f"#console-message-action-variant-previous-{source.id}", Button
+        row_text = _static_plain_text(
+            console.query_one(f"#console-message-{a2.id}", Static)
         )
-        next_button = console.query_one(
-            f"#console-message-action-variant-next-{source.id}", Button
-        )
-        assert previous_button.disabled is False
-        assert next_button.disabled is True
+        assert "(2/2)" in row_text
+        assert transcript.selected_message_id is None
 
 
 @pytest.mark.asyncio
@@ -6027,7 +6062,14 @@ async def test_console_workspace_conversation_row_resumes_persisted_conversation
         assert "Resume state: restored from persisted-chat-1" in inspector_text
         assert "Workspace: Default" in inspector_text
         assert app.chat_conversation_scope_service.calls == [
-            {"conversation_id": "persisted-chat-1", "mode": "local"}
+            {
+                "conversation_id": "persisted-chat-1",
+                "mode": "local",
+                # Task 8: resume loads the full tree with raised caps so a long
+                # or branchy conversation is not truncated.
+                "depth_cap": 10_000,
+                "root_limit": 10_000,
+            }
         ]
 
 

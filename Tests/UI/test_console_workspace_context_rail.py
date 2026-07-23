@@ -1523,7 +1523,8 @@ async def test_console_workspace_context_syncs_active_conversation_marker() -> N
             title="Planning thread",
             workspace_id="ws-a",
             persisted_conversation_id="conv-1",
-            messages=(),
+            all_nodes=(),
+            active_leaf_persisted_id=None,
         )
 
         console.sync_shell_bar_from_session_data(
