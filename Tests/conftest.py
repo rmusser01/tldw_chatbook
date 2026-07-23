@@ -360,11 +360,13 @@ def isolate_test_environment(monkeypatch, tmp_path):
 
     # Common paths that need isolation
     monkeypatch.setenv("XDG_DATA_HOME", str(test_data_dir))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(test_data_dir / "config"))
+    test_config_dir = test_data_dir / "config"
+    test_config_dir.mkdir(mode=0o700)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(test_config_dir))
     monkeypatch.setenv("HOME", str(test_data_dir / "home"))
     monkeypatch.setenv(
         "TLDW_CONFIG_PATH",
-        str(test_data_dir / "config" / "config.toml"),
+        str(test_config_dir / "config.toml"),
     )
 
     # Patch common data directory paths if they're imported

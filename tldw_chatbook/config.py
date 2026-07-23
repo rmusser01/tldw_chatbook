@@ -29,6 +29,14 @@ from tldw_chatbook.Utils.console_background_effects import (
     normalize_console_background_effects,
 )
 from tldw_chatbook.Utils.path_validation import validate_path_simple
+from tldw_chatbook.Utils.private_paths import (
+    PrivatePathError,
+    PrivatePathResult,
+    PrivatePathStatus,
+    create_private_text,
+    lexical_path,
+    open_private_binary,
+)
 #
 #######################################################################################################################
 #
@@ -46,10 +54,24 @@ DEFAULT_CONFIG_PATH = Path.home() / ".config" / "tldw_cli" / "config.toml"
 
 
 def _get_effective_config_path() -> Path:
-    """Return the active CLI config path, honoring test/runtime overrides."""
+    """Return the lexical active CLI config path."""
     override = os.environ.get("TLDW_CONFIG_PATH")
     candidate = Path(override).expanduser() if override else DEFAULT_CONFIG_PATH
-    return validate_path_simple(candidate, require_exists=False).resolve()
+    return lexical_path(candidate)
+
+
+def _application_owned_config_directory(config_path: Path) -> Path | None:
+    default_path = lexical_path(DEFAULT_CONFIG_PATH)
+    return default_path.parent if config_path == default_path else None
+
+
+def _report_config_path_posture(result: PrivatePathResult) -> None:
+    if result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
+        logger.warning(
+            "Config file permission posture is unverified on this platform."
+        )
+    elif result.status is PrivatePathStatus.HARDENED_PRIVATE:
+        logger.info("Hardened the effective config file to the private posture.")
 
 
 # --- Encryption support ---
@@ -3479,71 +3501,55 @@ def load_cli_config_and_ensure_existence(
 
     # Start with the programmatic defaults defined in CONFIG_TOML_CONTENT
     loaded_config = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
-
-    if not config_path.exists():
+    application_directory = _application_owned_config_directory(config_path)
+    logger.info(f"Attempting to load CLI config from: {config_path}")
+    try:
+        with open_private_binary(config_path) as opened:
+            _report_config_path_posture(opened.result)
+            user_config_from_file = tomllib.load(opened.stream)
+        loaded_config = deep_merge_dicts(loaded_config, user_config_from_file)
+        logger.info(f"Successfully loaded and merged CLI config from {config_path}")
+        loaded_config = decrypt_config_section(loaded_config)
+    except FileNotFoundError:
         logger.info(
             f"CLI Config file not found at {config_path}. Creating with default values from CONFIG_TOML_CONTENT."
         )
-        try:
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(config_path, "w", encoding="utf-8") as f:
-                f.write(CONFIG_TOML_CONTENT)  # Write the raw TOML string
+        created = create_private_text(
+            config_path,
+            CONFIG_TOML_CONTENT,
+            application_owned_directory=application_directory,
+        )
+        _report_config_path_posture(created)
+        logger.info(f"Created default CLI config file at {config_path}")
+        loaded_config["_first_run"] = True
+    except PrivatePathError as exc:
+        if (
+            application_directory is not None
+            and exc.result.reason == "missing_parent"
+        ):
+            logger.info(
+                f"CLI Config file not found at {config_path}. Creating with default values from CONFIG_TOML_CONTENT."
+            )
+            created = create_private_text(
+                config_path,
+                CONFIG_TOML_CONTENT,
+                application_owned_directory=application_directory,
+            )
+            _report_config_path_posture(created)
             logger.info(f"Created default CLI config file at {config_path}")
-            # Set a flag to notify the user on first run
             loaded_config["_first_run"] = True
-            # loaded_config is already correct as it's from DEFAULT_CONFIG_FROM_TOML
-        except PermissionError as e:
-            # Try alternative location in user's home directory
-            logger.warning(f"Permission denied creating config at {config_path}: {e}")
-            alt_config_path = Path.home() / ".tldw_cli_config.toml"
-            logger.info(
-                f"Attempting to create config at alternative location: {alt_config_path}"
-            )
-            try:
-                with open(alt_config_path, "w", encoding="utf-8") as f:
-                    f.write(CONFIG_TOML_CONTENT)
-                logger.warning(
-                    f"Created config file at alternative location: {alt_config_path}"
-                )
-                logger.warning(
-                    "Please move this file to the standard location when possible."
-                )
-                # Note: We don't update the active config path here to maintain consistency
-            except Exception as alt_e:
-                logger.error(
-                    f"Could not create config file at alternative location either: {alt_e}"
-                )
-                logger.error("Application will use internal defaults only.")
-        except OSError as e:
-            logger.error(
-                f"Could not create default CLI config file {config_path}: {e}. Using internal defaults."
-            )
-            # Log more helpful information for the user
-            logger.info(
-                f"You may need to manually create the directory: {config_path.parent}"
-            )
-            logger.info("Or check that you have write permissions to this location.")
-    else:
-        logger.info(f"Attempting to load CLI config from: {config_path}")
-        try:
-            with open(config_path, "rb") as f:
-                user_config_from_file = tomllib.load(f)
-            # Merge user's file settings on top of the programmatic defaults
-            loaded_config = deep_merge_dicts(loaded_config, user_config_from_file)
-            logger.info(f"Successfully loaded and merged CLI config from {config_path}")
-
-            # Decrypt config if encryption is enabled
-            loaded_config = decrypt_config_section(loaded_config)
-        except tomllib.TOMLDecodeError as e:
-            logger.opt(exception=True).error(
-                f"Error decoding CLI TOML config file {config_path}: {e}. Using internal defaults + any previous successful load."
-            )
-            # `loaded_config` remains the programmatic defaults in this case.
-        except Exception as e:
-            logger.opt(exception=True).error(
-                f"An unexpected error occurred while loading CLI config {config_path}: {e}. Using internal defaults + any previous successful load."
-            )
-            # `loaded_config` remains the programmatic defaults.
+        else:
+            _CONFIG_CACHE = None
+            _CONFIG_CACHE_SOURCE = None
+            raise
+    except tomllib.TOMLDecodeError as e:
+        logger.opt(exception=True).error(
+            f"Error decoding CLI TOML config file {config_path}: {e}. Using internal defaults + any previous successful load."
+        )
+    except Exception as e:
+        logger.opt(exception=True).error(
+            f"An unexpected error occurred while loading CLI config {config_path}: {e}. Using internal defaults + any previous successful load."
+        )
 
     _CONFIG_CACHE = loaded_config
     _CONFIG_CACHE_SOURCE = config_path
