@@ -225,24 +225,26 @@ def test_create_private_text_retains_private_entry_on_failed_postcondition(
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX rollback race contract")
-def test_create_private_text_retains_postcondition_race_replacement(
+def test_create_private_text_never_unlinks_name_after_postcondition_failure(
     tmp_path,
     monkeypatch,
 ):
     target = tmp_path / "config.toml"
-    replacement = tmp_path / "replacement.toml"
-    created_residue = tmp_path / "created-residue.toml"
-    replacement.write_text("replacement", encoding="utf-8")
+    unlink_calls = []
 
-    def replace_during_postcondition(*args, **kwargs):
-        target.replace(created_residue)
-        replacement.replace(target)
-        return False
+    def record_unlink(*args, **kwargs):
+        unlink_calls.append((args, kwargs))
 
     monkeypatch.setattr(
         private_paths,
         "_private_file_postcondition_holds",
-        replace_during_postcondition,
+        lambda *args, **kwargs: False,
+    )
+    monkeypatch.setattr(private_paths.os, "unlink", record_unlink)
+    monkeypatch.setattr(
+        private_paths,
+        "_posix_guards_available",
+        lambda: True,
     )
 
     with pytest.raises(PrivatePathError) as caught:
@@ -250,9 +252,9 @@ def test_create_private_text_retains_postcondition_race_replacement(
 
     assert caught.value.result.status is PrivatePathStatus.OPERATION_FAILED
     assert caught.value.result.reason == "private_file_postcondition_failed"
-    assert target.read_text(encoding="utf-8") == "replacement"
-    assert created_residue.read_text(encoding="utf-8") == "[chat]\n"
-    assert stat.S_IMODE(created_residue.stat().st_mode) == 0o600
+    assert unlink_calls == []
+    assert target.read_text(encoding="utf-8") == "[chat]\n"
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX write contract")
