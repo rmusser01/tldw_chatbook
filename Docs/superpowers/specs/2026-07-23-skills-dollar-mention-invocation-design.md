@@ -55,17 +55,34 @@ Codex's own usage: `$skill-installer linear` (leading, args) vs. "use
 
 - A candidate token is `$` followed by the longest run of `[a-zA-Z0-9-]`.
   Trailing punctuation stays prose (`$style-guide.` → token `style-guide`).
-- A token expands **only** on an **exact, case-insensitive** match to a known,
-  **user-invocable** skill name. No prefix matching for mentions (the leading
-  form may keep the resolver's unique-prefix behavior; embedded never guesses).
+- An **embedded** token expands **only** on an **exact, case-SENSITIVE** match
+  to a known, **user-invocable** skill name. Skill names are guaranteed
+  lowercase (`SKILL_NAME_PATTERN`), so requiring the exact lowercase token
+  keeps the entire shell-variable class (`$PATH`, `$HOME`, `$USER`) literal
+  *even when* a skill shares the name (skill `path` ≠ prose `$PATH`). No
+  prefix matching for mentions. The **leading** form keeps the resolver's
+  forgiving behavior (case-insensitive, unique-prefix) — it is an explicit
+  command position.
 - Everything else stays literal text: `$5`, `$100`, `$PATH`, `$not-a-skill`.
-  (Residual edge, accepted: a skill literally named `5` or `path` would make
-  those tokens expand — the exact-match gate is the protection; an escape
-  syntax for a literal `$known-skill-name` is out of scope.)
+  (Residual edge, accepted: a skill literally named `5` would make `$5`
+  expand — the exact-match gate is the protection; an escape syntax for a
+  literal `$known-skill-name` is out of scope.)
+- **Code spans are skipped.** Mentions inside markdown fenced blocks
+  (``` ``` ```) and inline backtick spans stay literal — users routinely paste
+  shell/code full of `$vars`, and a pasted `$build`/`$test` must never splice
+  a skill body into their code. (Plain-prose pastes containing an exact
+  lowercase skill token can still expand — accepted, made rare by the
+  case-sensitive exact-match gate.)
+- **No recursive expansion.** Splicing is a single pass over the user's
+  original text; a `$mention` inside a spliced skill body is NOT expanded.
 - **Fork skills cannot be embedded.** A fork skill takes over the turn; there
   is nothing to splice into. An embedded mention of a fork skill is left
   **literal** (no expansion, no error). A *leading* `$fork-skill args` runs
-  fork as today.
+  fork as today. **Mode-detection mechanism:** `SkillCommandCandidate`
+  carries only `name`/`description` (no execution mode), so the embedded scan
+  calls `execute_skill` per mention — which it needs anyway for trust
+  re-verification — and leaves the mention literal when the result's
+  `execution_mode != "inline"` (the discarded fork render is side-effect-free).
 - **Trust.** Every expansion re-verifies through `execute_skill` at payload
   build time (today's discipline, per mention). A **leading** mention of an
   untrusted/blocked skill refuses the send with `SKILL_UNTRUSTED_REFUSE`
@@ -75,12 +92,32 @@ Codex's own usage: `$skill-installer linear` (leading, args) vs. "use
 
 ### 3. `/skill-name` invocation: hard remove
 
-The direct `/skill-name` invocation is removed outright. A message leading
-with `/pdf-processing …` is **no longer a skill invocation**: the skill claim
-in the command grammar (`console_skill_resolver`'s `CommandParse` claiming) is
-removed, and such text receives whatever treatment any other unknown
-slash-leading text gets today (it is NOT intercepted, NOT redirected, and NOT
-expanded). No transition shim, no redirect note — a clean break, per decision.
+The direct `/skill-name` invocation is removed outright — at **both** layers
+that claim it today (verified in code):
+
+1. **Composer layer:** the fallback resolver
+   (`console_skill_resolver.make_skill_fallback_resolver`, registered into
+   `console_command_grammar`'s `ConsoleCommandRegistry`) claims `/skill-name`
+   drafts as `KIND_FALLBACK` at parse time. This registration is removed.
+2. **Controller layer:** `_apply_skill_substitution`'s leading-`/` branch
+   (`content.startswith(COMMAND_PREFIX)` → `_split_skill_command_word` →
+   `resolve_skill_command`) is replaced by the `$` parsing of §1/§2.
+
+Post-removal UX (this is the grammar's existing unknown-command behavior, now
+precisely stated): a draft leading with `/former-skill-name` parses as
+`KIND_UNKNOWN` → the composer shows the standard **"Unknown command" hint**,
+and a **second Enter (armed)** sends the draft as literal text. Feedback, not
+silence — but no shim, no redirect note, per decision.
+
+Accepted consequences (documented, not bugs):
+- **Historical transcript turns** whose raw persisted text is an old
+  `/skill-name args` command no longer re-expand on retry/continue/regenerate
+  — they are sent as literal text (only `$` forms render-fresh now).
+- The composer-level **pre-send blocked-skill hint** (the `KIND_UNKNOWN`
+  blocked-match response that told a user a typed skill was needs-review
+  before sending) goes away with the fallback resolver; an untrusted leading
+  `$name` is still refused at payload build with `SKILL_UNTRUSTED_REFUSE`
+  (a system row), which remains the authoritative gate.
 
 **`/skills` stays** as the registered browse command in its **bare** form
 (list the available skills). Its `/skills <name> [args]` *run* form is removed
@@ -108,10 +145,22 @@ completion. `/`-completion continues to offer registered *commands* (including
   note.
 - `tldw_chatbook/UI/Screens/chat_screen.py` — `/skills` command handler:
   bare-list kept, `<name> [args]` run form removed; skill-pick submit path
-  composes `$name`; composer completion moves skill names to the `$` trigger.
+  composes `$name`; composer completion moves skill names to the `$` trigger;
+  the fallback-resolver registration is removed.
+- `console_skill_resolver.format_skills_list` — the `/skills` transcript
+  listing renders `/{name}` rows today; they become `$name` rows (any other
+  user-visible copy that teaches the `/name` form updates likewise).
 - The **model-invokes-skill-as-tool** path (`console_agent_bridge`,
   `_BridgeSkillRunner`) is untouched — that is Codex's *implicit* invocation
   equivalent and already exists.
+
+**Payload-pass ordering (verified, must be preserved):** all four send sites
+run `_apply_skill_substitution` → `_apply_chat_dictionaries` →
+`_apply_world_info`, so a spliced skill body is subject to the downstream
+dictionary/world-info passes exactly like today's replaced message. The one
+site that deliberately skips skill substitution ("may execute skills with
+side effects") continues to skip it — the embedded scan lives inside
+`_apply_skill_substitution`, so that site stays skill-free automatically.
 
 ### 6. Rendering details
 
@@ -130,22 +179,29 @@ completion. `/`-completion continues to offer registered *commands* (including
 ## Testing strategy
 
 - **Resolver/scanner unit:** token extraction (trailing punctuation, hyphens,
-  `$5`/`$PATH`/unknown → literal); exact-match-only for embedded; leading form
-  arg split preserved; case-insensitivity.
+  `$5`/`$100`/unknown → literal); embedded is exact-match **case-sensitive**
+  (`$PATH` stays literal even with a skill named `path`; `$path` expands);
+  leading form keeps case-insensitive/prefix resolution + arg split; code-span
+  skip (mentions inside ``` fences and inline backticks stay literal); no
+  recursion (a `$mention` inside a spliced body does not expand).
 - **Substitution unit:** single embedded mention splices in place preserving
-  surrounding text; multiple mentions all expand; embedded fork → literal;
-  embedded untrusted → literal + system note (prose not lost); leading
-  untrusted → refuse (unchanged); leading `$skill args` → `{{args}}`
-  substitution with inline-replace AND fork-takeover; `{{args}}` empty for
-  embedded.
-- **Removal:** `/skill-name` no longer resolves as a skill (message passes
-  through as ordinary text); `/skills` bare list unchanged; `/skills <name>`
-  run form removed; skill-pick submit composes `$name`.
+  surrounding text; multiple mentions all expand; embedded fork → literal
+  (via `execution_mode` from the per-mention `execute_skill`); embedded
+  untrusted → literal + system note (prose not lost); leading untrusted →
+  refuse (unchanged); leading `$skill args` → `{{args}}` substitution with
+  inline-replace AND fork-takeover; `{{args}}` empty for embedded.
+- **Removal:** the fallback-resolver registration is gone — a `/former-skill`
+  draft parses `KIND_UNKNOWN` (hint, then armed literal send); the
+  controller's leading-`/` branch no longer expands (a historical raw
+  `/name args` turn retried sends literally); `/skills` bare list unchanged;
+  `/skills <name>` run form removed; skill-pick submit composes `$name`;
+  `format_skills_list` rows render `$name`.
 - **Completion:** `$` surfaces skill candidates; `/` no longer offers skill
   names but still offers `/skills`.
 - **Regression:** existing tests that pin `/skill-name` invocation flip to the
-  `$` forms (they encode the removed convention); dictionary/lorebook
-  substitution ordering on the same payload path unaffected.
+  `$` forms (they encode the removed convention); the verified
+  skills → dictionaries → world-info payload-pass ordering is pinned; the
+  skip-skills send site stays skill-free.
 
 ## Out of scope (later specs)
 
