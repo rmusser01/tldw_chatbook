@@ -242,9 +242,17 @@ class AgentService:
                 # Provider reported no usage -> estimate from sent payload +
                 # response text (native tool_calls JSON is not separately
                 # counted here; the prompt term dominates the per-turn total).
-                tokens = count_tokens_messages(payload, config.model) + estimate_tokens(
-                    text, config.model
+                # Strip a provider prefix ("openai/gpt-4o-mini" -> "gpt-4o-mini")
+                # so the tokenizer's model-family framing detection matches, and
+                # pass the endpoint as the provider hint for the chars ratio.
+                est_model = (
+                    config.model.split("/", 1)[-1]
+                    if "/" in config.model
+                    else config.model
                 )
+                tokens = count_tokens_messages(
+                    payload, est_model, provider=api_endpoint
+                ) + estimate_tokens(text, est_model, provider=api_endpoint)
             if not native:
                 return ModelTurn(text=text, tokens=tokens)
             message = _response_message(resp)

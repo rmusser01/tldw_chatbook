@@ -1057,6 +1057,26 @@ def test_call_model_estimates_when_no_usage(db):
     assert turn.tokens > 0
 
 
+def test_call_model_estimate_strips_provider_prefix(db):
+    # A provider-qualified id (openai/gpt-4o-mini) must be normalized for token
+    # counting so the GPT framing overhead applies -> same estimate as the bare
+    # model. (Qodo review: prefixed models otherwise undercount.)
+    def chat(**kwargs):
+        return {"choices": [{"message": {"content": "hello there world"}}]}
+    service = _service_with_chat(db, chat)
+    msgs = [{"role": "user", "content": "count these tokens please"}]
+    prefixed = service._make_call_model(
+        AgentConfig(model="openai/gpt-4o-mini", system_prompt="s", native_tools=False),
+        "openai", [],
+    )(msgs, ())
+    bare = service._make_call_model(
+        AgentConfig(model="gpt-4o-mini", system_prompt="s", native_tools=False),
+        "openai", [],
+    )(msgs, ())
+    assert prefixed.tokens == bare.tokens
+    assert prefixed.tokens > 0
+
+
 def test_call_model_native_path_reports_provider_tokens(db):
     """Native tool-call return path (turn.tool_calls set) must also report
     real provider usage on .tokens -- the non-native tests above only cover
