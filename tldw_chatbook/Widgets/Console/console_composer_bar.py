@@ -91,12 +91,14 @@ class ConsoleComposerBar(Horizontal):
     def __init__(
         self,
         *,
+        collapsed: bool = False,
         collapse_large_pastes: bool = True,
         paste_collapse_threshold: int = DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
-        self.can_focus = True
+        self._collapsed = bool(collapsed)
+        self.can_focus = not self._collapsed
         self.styles.height = 5
         self.styles.min_height = 5
         self.styles.max_height = self.MAX_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS
@@ -132,6 +134,11 @@ class ConsoleComposerBar(Horizontal):
     def collapse_large_pastes_enabled(self) -> bool:
         """Return whether pasted chunks over the threshold should display compactly."""
         return self.collapse_large_pastes
+
+    @property
+    def collapsed(self) -> bool:
+        """Return whether the compact restore-only presentation is active."""
+        return self._collapsed
 
     @staticmethod
     def _bounded_button(label: str, *, width: int, **kwargs: Any) -> Button:
@@ -356,6 +363,7 @@ class ConsoleComposerBar(Horizontal):
         self._send_blocked = send_blocked
         self._setup_blocked_reason = setup_blocked_reason
         self._can_save_chatbook = can_save_chatbook
+        self._sync_collapsed_presentation()
 
         try:
             send_button = self.query_one("#console-send-message", Button)
@@ -714,6 +722,50 @@ class ConsoleComposerBar(Horizontal):
         self.styles.max_height = self.MAX_DRAFT_ROWS + self.COMPOSER_CHROME_ROWS
         self.refresh(layout=True)
 
+    def _apply_collapsed_geometry(self) -> None:
+        """Pin the compact presentation to exactly one terminal row."""
+        self.styles.height = 1
+        self.styles.min_height = 1
+        self.styles.max_height = 1
+        self.refresh(layout=True)
+
+    def _collapsed_status_text(self) -> str:
+        """Build presence-only status copy without exposing retained content."""
+        parts = ["Composer hidden"]
+        if self._run_active:
+            parts.append("Generating")
+        if bool(self.draft_text()):
+            parts.append("Draft retained")
+        if self._pending_attachment_label is not None:
+            parts.append("Attachment retained")
+        return " · ".join(parts)
+
+    def _sync_collapsed_presentation(self) -> None:
+        """Synchronize stable presentation containers from cached widget state."""
+        try:
+            expanded = self.query_one("#console-composer-expanded", Horizontal)
+            collapsed = self.query_one("#console-composer-collapsed", Horizontal)
+            status = self.query_one("#console-composer-collapsed-status", Static)
+            stop = self.query_one("#console-collapsed-stop-generation", Button)
+        except NoMatches:
+            return
+        expanded.styles.display = "none" if self._collapsed else "block"
+        collapsed.styles.display = "block" if self._collapsed else "none"
+        status.update(self._collapsed_status_text())
+        stop.styles.display = "block" if self._run_active else "none"
+        self.set_class(self._collapsed, "console-composer-collapsed")
+
+    def set_collapsed(self, collapsed: bool) -> None:
+        """Switch presentation without remounting or clearing editor state."""
+        self._collapsed = bool(collapsed)
+        self.can_focus = not self._collapsed
+        self._sync_collapsed_presentation()
+        self._sync_cursor_blink_state()
+        if self._collapsed:
+            self._apply_collapsed_geometry()
+        else:
+            self._refresh_visible_draft()
+
     def _insert_literal_at_cursor(self, text: str) -> None:
         """Splice literal text into the draft at the caret, coalescing segments.
 
@@ -856,6 +908,10 @@ class ConsoleComposerBar(Horizontal):
             return
 
     def _refresh_visible_draft(self) -> None:
+        if self._collapsed:
+            self._sync_collapsed_presentation()
+            self._apply_collapsed_geometry()
+            return
         try:
             # Any draft mutation or focus change shows a solid caret, matching
             # terminal cursor behavior (blink resets while actively editing).
@@ -882,7 +938,7 @@ class ConsoleComposerBar(Horizontal):
         self._cursor_visible = True
         if timer is None:
             return
-        if self.has_focus_within:
+        if self.has_focus_within and not self._collapsed:
             timer.resume()
         else:
             timer.pause()
@@ -1814,6 +1870,7 @@ class ConsoleComposerBar(Horizontal):
         """
         normalized = label.strip() if label else None
         self._pending_attachment_label = normalized
+        self._sync_collapsed_presentation()
         try:
             indicator = self.query_one("#console-attachment-indicator", Static)
             clear_button = self.query_one("#console-clear-attachment", Button)
@@ -1846,129 +1903,166 @@ class ConsoleComposerBar(Horizontal):
             )
 
     def compose(self) -> ComposeResult:
-        title = Static(
-            "Composer:", id="console-composer-title", classes="destination-section"
+        expanded = Horizontal(
+            id="console-composer-expanded",
+            classes="console-composer-presentation",
         )
-        title.styles.width = 10
-        title.styles.min_width = 10
-        yield title
-        visible_draft = Static(
-            self._draft_renderable(""),
-            id="console-command-visible-text",
-            classes="console-command-visible-text",
-        )
-        visible_draft.can_focus = False
-        visible_draft.styles.width = "1fr"
-        visible_draft.styles.min_width = 0
-        yield visible_draft
-        recovery = Static(
-            "",
-            id="console-composer-recovery",
-            classes="console-composer-recovery",
-        )
-        recovery.styles.display = "none"
-        recovery.styles.width = 0
-        recovery.styles.min_width = 0
-        recovery.styles.height = 0
-        recovery.styles.min_height = 0
-        yield recovery
-        attachment_indicator = Static(
-            "",
-            id="console-attachment-indicator",
-            classes="console-attachment-indicator",
-        )
-        attachment_indicator.styles.display = "none"
-        attachment_indicator.styles.width = 0
-        attachment_indicator.styles.min_width = 0
-        attachment_indicator.styles.height = 1
-        yield attachment_indicator
-        command_input = Input(
-            value="",
-            id="console-command-input",
-            classes="console-command-input",
-            placeholder=self.DRAFT_PLACEHOLDER,
-            compact=True,
-        )
-        command_input.can_focus = False
-        command_input.disabled = True
-        command_input.styles.display = "none"
-        command_input.styles.width = 0
-        command_input.styles.min_width = 0
-        command_input.styles.height = 1
-        command_input.styles.min_height = 1
-        yield command_input
-        status = Static(
-            self.DEFAULT_STATUS,
-            id="console-composer-status",
-            classes="console-composer-status console-hidden-control",
-        )
-        status.styles.display = "none"
-        status.styles.width = 0
-        status.styles.min_width = 0
-        status.styles.height = 0
-        status.styles.min_height = 0
-        yield status
-        disabled_reason = Static(
-            "",
-            id="console-send-disabled-reason",
-            classes="console-send-disabled-reason",
-        )
-        disabled_reason.styles.display = "none"
-        disabled_reason.styles.width = 0
-        disabled_reason.styles.min_width = 0
-        disabled_reason.styles.max_width = 0
-        disabled_reason.styles.height = 0
-        disabled_reason.styles.min_height = 0
-        disabled_reason.styles.text_overflow = "ellipsis"
-        disabled_reason.styles.text_wrap = "nowrap"
-        yield disabled_reason
-        actions = Horizontal(
-            id="console-composer-actions", classes="console-composer-actions"
-        )
-        actions.styles.width = 37
-        actions.styles.min_width = 37
-        actions.styles.max_width = 37
-        actions.styles.height = 1
-        actions.styles.min_height = 1
-        actions.styles.max_height = 1
-        with actions:
+        expanded.styles.display = "none" if self._collapsed else "block"
+        with expanded:
             yield self._bounded_button(
-                "Send",
-                width=8,
-                id="console-send-message",
-                classes="destination-action-button console-send-button",
-                variant="primary",
-                tooltip="Send the active Console session draft.",
+                "Composer ▾",
+                width=10,
+                id="console-composer-collapse",
+                classes="destination-action-button console-composer-toggle",
+                tooltip="Collapse composer for more transcript space.",
             )
-            stop_button = self._bounded_button(
+            visible_draft = Static(
+                self._draft_renderable(""),
+                id="console-command-visible-text",
+                classes="console-command-visible-text",
+            )
+            visible_draft.can_focus = False
+            visible_draft.styles.width = "1fr"
+            visible_draft.styles.min_width = 0
+            yield visible_draft
+            recovery = Static(
+                "",
+                id="console-composer-recovery",
+                classes="console-composer-recovery",
+            )
+            recovery.styles.display = "none"
+            recovery.styles.width = 0
+            recovery.styles.min_width = 0
+            recovery.styles.height = 0
+            recovery.styles.min_height = 0
+            yield recovery
+            attachment_indicator = Static(
+                "",
+                id="console-attachment-indicator",
+                classes="console-attachment-indicator",
+            )
+            attachment_indicator.styles.display = "none"
+            attachment_indicator.styles.width = 0
+            attachment_indicator.styles.min_width = 0
+            attachment_indicator.styles.height = 1
+            yield attachment_indicator
+            command_input = Input(
+                value="",
+                id="console-command-input",
+                classes="console-command-input",
+                placeholder=self.DRAFT_PLACEHOLDER,
+                compact=True,
+            )
+            command_input.can_focus = False
+            command_input.disabled = True
+            command_input.styles.display = "none"
+            command_input.styles.width = 0
+            command_input.styles.min_width = 0
+            command_input.styles.height = 1
+            command_input.styles.min_height = 1
+            yield command_input
+            status = Static(
+                self.DEFAULT_STATUS,
+                id="console-composer-status",
+                classes="console-composer-status console-hidden-control",
+            )
+            status.styles.display = "none"
+            status.styles.width = 0
+            status.styles.min_width = 0
+            status.styles.height = 0
+            status.styles.min_height = 0
+            yield status
+            disabled_reason = Static(
+                "",
+                id="console-send-disabled-reason",
+                classes="console-send-disabled-reason",
+            )
+            disabled_reason.styles.display = "none"
+            disabled_reason.styles.width = 0
+            disabled_reason.styles.min_width = 0
+            disabled_reason.styles.max_width = 0
+            disabled_reason.styles.height = 0
+            disabled_reason.styles.min_height = 0
+            disabled_reason.styles.text_overflow = "ellipsis"
+            disabled_reason.styles.text_wrap = "nowrap"
+            yield disabled_reason
+            actions = Horizontal(
+                id="console-composer-actions", classes="console-composer-actions"
+            )
+            actions.styles.width = 37
+            actions.styles.min_width = 37
+            actions.styles.max_width = 37
+            actions.styles.height = 1
+            actions.styles.min_height = 1
+            actions.styles.max_height = 1
+            with actions:
+                yield self._bounded_button(
+                    "Send",
+                    width=8,
+                    id="console-send-message",
+                    classes="destination-action-button console-send-button",
+                    variant="primary",
+                    tooltip="Send the active Console session draft.",
+                )
+                stop_button = self._bounded_button(
+                    "Stop",
+                    width=8,
+                    id="console-stop-generation",
+                    classes="destination-action-button console-stop-button",
+                    tooltip="Stop generation in the active Console session.",
+                )
+                stop_button.styles.display = "none"
+                yield stop_button
+                yield self._bounded_button(
+                    "Attach",
+                    width=10,
+                    id="console-attach-context",
+                    classes="destination-action-button console-attach-button",
+                    tooltip="Attach files or context through the active Console session.",
+                )
+                clear_attachment = self._bounded_button(
+                    "✕",
+                    width=4,
+                    id="console-clear-attachment",
+                    classes=(
+                        "destination-action-button console-clear-attachment-button"
+                    ),
+                    tooltip="Remove the pending attachment.",
+                )
+                clear_attachment.styles.display = "none"
+                yield clear_attachment
+                yield self._bounded_button(
+                    "Save",
+                    width=8,
+                    id="console-save-chatbook",
+                    classes=("destination-action-button console-save-chatbook-button"),
+                    tooltip="Open the available Chatbook artifact in Artifacts.",
+                )
+
+        collapsed = Horizontal(
+            id="console-composer-collapsed",
+            classes="console-composer-presentation",
+        )
+        collapsed.styles.display = "block" if self._collapsed else "none"
+        with collapsed:
+            yield Static(
+                self._collapsed_status_text(),
+                id="console-composer-collapsed-status",
+            )
+            collapsed_stop = self._bounded_button(
                 "Stop",
                 width=8,
-                id="console-stop-generation",
+                id="console-collapsed-stop-generation",
                 classes="destination-action-button console-stop-button",
+                variant="warning",
                 tooltip="Stop generation in the active Console session.",
             )
-            stop_button.styles.display = "none"
-            yield stop_button
+            collapsed_stop.styles.display = "block" if self._run_active else "none"
+            yield collapsed_stop
             yield self._bounded_button(
-                "Attach",
+                "Expand ▴",
                 width=10,
-                id="console-attach-context",
-                classes="destination-action-button console-attach-button",
-                tooltip="Attach files or context through the active Console session.",
-            )
-            clear_attachment = self._bounded_button(
-                "✕",
-                width=4,
-                id="console-clear-attachment",
-                classes="destination-action-button console-clear-attachment-button",
-                tooltip="Remove the pending attachment.",
-            )
-            clear_attachment.styles.display = "none"
-            yield clear_attachment
-            yield self._bounded_button(
-                "Save",
-                width=8,
-                id="console-save-chatbook",
-                classes="destination-action-button console-save-chatbook-button",
-                tooltip="Open the available Chatbook artifact in Artifacts.",
+                id="console-composer-expand",
+                classes="destination-action-button console-composer-toggle",
+                tooltip="Expand composer and return to the draft.",
             )
