@@ -343,6 +343,7 @@ INGEST_NAV_BUTTON_IDS: list[str] = []
 INGEST_VIEW_IDS: list[str] = []
 from .UI.Tools_Settings_Window import ToolsSettingsWindow  # noqa: E402
 from .UI.console_command_provider import ConsoleCommandProvider  # noqa: E402
+from .UI.image_gen_command_provider import ImageGenCommandProvider  # noqa: E402
 from tldw_chatbook.Chat_Grammars_Interop import (  # noqa: E402
     ChatGrammarsScopeService,
     LocalChatGrammarsService,
@@ -2747,6 +2748,7 @@ class TldwCli(
         LibraryIngestProvider,
         DeveloperProvider,
         ConsoleCommandProvider,
+        ImageGenCommandProvider,
     }
 
     ALL_INGEST_VIEW_IDS = INGEST_VIEW_IDS
