@@ -21,6 +21,9 @@ _PRIVATE_FILE_MODE = 0o600
 _PRIVATE_DIRECTORY_MODE = 0o700
 _DIRECTORY_OPEN_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_PRIVATE_FILE_OPEN_FLAGS = (
+    os.O_RDONLY | _NOFOLLOW | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOCTTY", 0)
+)
 _WINDOWS_PLATFORM = os.name == "nt"
 
 
@@ -101,6 +104,8 @@ def _classify_private_file_stat(
 ) -> PrivatePathStatus | None:
     if not stat.S_ISREG(file_stat.st_mode):
         return PrivatePathStatus.LINK_OR_NON_REGULAR
+    if file_stat.st_nlink != 1:
+        return PrivatePathStatus.LINK_OR_NON_REGULAR
     if file_stat.st_uid != expected_uid:
         return PrivatePathStatus.WRONG_OWNER
     return None
@@ -135,6 +140,8 @@ def _private_file_postcondition_holds(
         _same_identity(opened, expected_identity)
         and _same_identity(entry, expected_identity)
         and stat.S_ISREG(opened.st_mode)
+        and opened.st_nlink == 1
+        and entry.st_nlink == 1
         and opened.st_uid == os.geteuid()
         and stat.S_IMODE(opened.st_mode) == _PRIVATE_FILE_MODE
     )
@@ -328,9 +335,28 @@ def open_private_binary(path: PathInput) -> Iterator[PrivateBinaryFile]:
     file_fd = -1
     try:
         try:
-            file_fd = os.open(leaf, os.O_RDONLY | _NOFOLLOW, dir_fd=parent_fd)
+            entry_stat = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
         except FileNotFoundError:
             raise
+        except OSError as exc:
+            raise _private_path_error_from_oserror(selected, exc) from None
+
+        if not stat.S_ISREG(entry_stat.st_mode):
+            raise PrivatePathError(
+                PrivatePathResult(
+                    selected,
+                    PrivatePathStatus.LINK_OR_NON_REGULAR,
+                )
+            )
+
+        try:
+            file_fd = os.open(
+                leaf,
+                _PRIVATE_FILE_OPEN_FLAGS,
+                dir_fd=parent_fd,
+            )
+        except FileNotFoundError as exc:
+            raise _private_path_error_from_oserror(selected, exc) from None
         except OSError as exc:
             raise _private_path_error_from_oserror(selected, exc) from None
 

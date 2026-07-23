@@ -124,6 +124,41 @@ def test_open_private_binary_rejects_non_regular_leaf(tmp_path):
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX descriptor contract")
+@pytest.mark.timeout(2, method="signal")
+def test_open_private_binary_rejects_fifo_without_blocking(tmp_path):
+    target = tmp_path / "config.toml"
+    os.mkfifo(target, mode=0o644)
+
+    with pytest.raises(PrivatePathError) as caught:
+        with open_private_binary(target):
+            pass
+
+    assert caught.value.result.status is PrivatePathStatus.LINK_OR_NON_REGULAR
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX descriptor contract")
+def test_open_private_binary_rejects_multiply_linked_file_without_changing_alias(
+    tmp_path,
+):
+    target = tmp_path / "config.toml"
+    alias = tmp_path / "shared-alias.toml"
+    content = b"shared private data"
+    target.write_bytes(content)
+    target.chmod(0o644)
+    os.link(target, alias)
+
+    with pytest.raises(PrivatePathError) as caught:
+        with open_private_binary(target) as opened:
+            opened.stream.read()
+
+    assert caught.value.result.status is PrivatePathStatus.LINK_OR_NON_REGULAR
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644
+    assert stat.S_IMODE(alias.stat().st_mode) == 0o644
+    assert target.read_bytes() == content
+    assert alias.read_bytes() == content
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX descriptor contract")
 def test_open_private_binary_reports_hardening_failure(tmp_path, monkeypatch):
     target = tmp_path / "config.toml"
     target.write_bytes(b"config")
@@ -213,7 +248,7 @@ def test_stat_classification_rejects_wrong_owner():
     fake = type(
         "FakeStat",
         (),
-        {"st_mode": stat.S_IFREG | 0o600, "st_uid": 2222},
+        {"st_mode": stat.S_IFREG | 0o600, "st_nlink": 1, "st_uid": 2222},
     )()
 
     assert (
