@@ -106,6 +106,42 @@ def test_total_size_cap_rejects(tmp_path, monkeypatch):
     assert res.notes or res.skipped
 
 
+def test_directory_oversize_file_skipped_by_size_cap(tmp_path, monkeypatch):
+    # Qodo fix 5: the directory branch must cap per-file size BEFORE
+    # read_bytes(), same as the .zip branch already did.
+    import tldw_chatbook.Character_Chat.expression_set_io as mod
+    monkeypatch.setattr(mod, "MAX_MEMBER_BYTES", 1000)
+    d = tmp_path / "imgs"
+    d.mkdir()
+    (d / "idle.png").write_bytes(_png())          # small, valid -> resolves
+    (d / "speaking.png").write_bytes(b"X" * 5000)  # over the (patched) cap
+    res = resolve_local_expression_set([d])
+    assert "idle" in res.images
+    assert "speaking" not in res.images
+    assert ("speaking.png", "file too large") in res.skipped
+
+
+def test_standalone_file_oversize_skipped_by_size_cap(tmp_path, monkeypatch):
+    # Same cap, exercised via the standalone-file branch of _candidate_pairs.
+    import tldw_chatbook.Character_Chat.expression_set_io as mod
+    monkeypatch.setattr(mod, "MAX_MEMBER_BYTES", 1000)
+    big = tmp_path / "error.png"
+    big.write_bytes(b"X" * 5000)
+    res = resolve_local_expression_set([big])
+    assert "error" not in res.images
+    assert ("error.png", "file too large") in res.skipped
+
+
+def test_zip_member_backslash_path_normalized_to_basename(tmp_path):
+    # Qodo fix 6: a zip member written with Windows separators
+    # ("dir\\idle.png") must still map to the "idle" state.
+    z = tmp_path / "set.zip"
+    z.write_bytes(_zip({"dir\\idle.png": _png()}))
+    res = resolve_local_expression_set([z])
+    assert "idle" in res.images
+    assert res.images["idle"] == _png()
+
+
 def test_not_a_zip_fails_cleanly(tmp_path):
     bad = tmp_path / "broken.zip"
     bad.write_bytes(b"this is not a zip")

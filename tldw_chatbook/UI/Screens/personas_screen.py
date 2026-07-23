@@ -4662,14 +4662,22 @@ class PersonasScreen(BaseAppScreen):
     ) -> None:
         """Resolve a .zip at ``path`` into an expression set and apply it.
 
-        Dialog-free (directly testable): resolution happens off-thread via
+        Dialog-free (directly testable): the path is validated at this
+        screen boundary (the pure ``expression_set_io`` module never imports
+        ``path_validation``), then resolution happens off-thread via
         ``asyncio.to_thread`` since it decodes/validates images, then
         delegates to ``_apply_expression_set`` (Task 3) for the actual
         idle-staged/three-immediate application.
         """
         from ...Character_Chat.expression_set_io import resolve_local_expression_set
 
-        res = await asyncio.to_thread(resolve_local_expression_set, [Path(path)])
+        try:
+            candidate = validate_path_simple(path, require_exists=True)
+        except (ValueError, OSError) as exc:
+            self._notify(f"Import failed: {exc}", "error")
+            return
+
+        res = await asyncio.to_thread(resolve_local_expression_set, [candidate])
         if not res.images:
             reason = (
                 "; ".join(n for n, _ in res.skipped[:2])
@@ -4695,6 +4703,13 @@ class PersonasScreen(BaseAppScreen):
                 "Save the character before exporting its expression set.", "warning"
             )
             return
+        if self._io_dialog_active:
+            logger.debug(
+                "Import/export dialog already active; ignoring expression "
+                "set export request."
+            )
+            return
+        self._io_dialog_active = True
         # Screen state, not the editor: the editor widget has no name
         # accessor (mirrors _dictionary_export_worker's own name source).
         name = str(self.state.selected_entity_name or "character")
@@ -4712,6 +4727,8 @@ class PersonasScreen(BaseAppScreen):
         except Exception as exc:
             logger.opt(exception=True).error(f"Expression-set export failed: {exc}")
             self._notify(f"Export failed: {exc}", "error")
+        finally:
+            self._io_dialog_active = False
 
     async def _export_expression_set(
         self, character_id: int, name: str
@@ -4751,7 +4768,10 @@ class PersonasScreen(BaseAppScreen):
             return None
         blob = await asyncio.to_thread(build_expression_set_zip, name, images)
         slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "character"
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        # Microsecond precision (not _dictionary_export_worker's second
+        # precision): concurrent exports of the same character within one
+        # second would otherwise collide on the target/temp filenames.
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         exports_dir = get_user_data_dir() / "exports"
         exports_dir.mkdir(parents=True, exist_ok=True)
         target = exports_dir / f"{slug}-expressions-{stamp}.zip"

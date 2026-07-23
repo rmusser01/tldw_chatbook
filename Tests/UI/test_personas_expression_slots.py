@@ -242,6 +242,85 @@ async def test_import_export_buttons_disabled_for_unsaved_character():
         assert ed.query_one("#personas-char-editor-expr-export", Button).disabled is True
 
 
+# ===== Qodo review fix 1: _import_expression_set_from_path validates the
+# picked path at the screen boundary (mirrors _read_avatar_image_bytes'
+# use of validate_path_simple), instead of handing an unvalidated path
+# straight to the pure resolver. =====
+
+
+@pytest.mark.asyncio
+async def test_import_expression_set_nonexistent_path_notifies_and_does_not_crash(
+    personas_editor_with_saved_character,
+):
+    app, screen, db, char_id = personas_editor_with_saved_character
+    # Shadow the delegating test App's notify (like TestDictionaryImport's
+    # _capture_notifications) rather than mock_app_instance.notify --
+    # screen.app_instance is the PersonasTestApp, and its real (Textual App)
+    # notify() shadows the mock's via normal attribute lookup.
+    captured: list[tuple[str, str]] = []
+    app.notify = lambda message, severity="information", **kwargs: captured.append(
+        (str(message), severity)
+    )
+
+    # Must not raise -- the invalid path is rejected before it ever reaches
+    # resolve_local_expression_set.
+    await screen._import_expression_set_from_path(char_id, "/no/such/path/set.zip")
+
+    assert captured, "expected a notification for a rejected path"
+    assert captured[-1][1] == "error"
+
+
+# ===== Qodo review fix 7: the export handler must honor the same
+# _io_dialog_active gate as the import handler and _dictionary_export_worker,
+# so a queued export cannot race a second worker onto the same filename. =====
+
+
+@pytest.mark.asyncio
+async def test_export_handler_blocked_while_io_dialog_active(
+    personas_editor_with_saved_character, monkeypatch
+):
+    app, screen, db, char_id = personas_editor_with_saved_character
+    from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+        CharacterExpressionSetExportRequested,
+    )
+
+    calls: list[int] = []
+    monkeypatch.setattr(screen, "run_worker", lambda *a, **k: calls.append(1))
+    screen._io_dialog_active = True
+
+    screen._handle_expression_set_export_requested(
+        CharacterExpressionSetExportRequested()
+    )
+
+    assert calls == []  # gate blocked a second worker from starting
+
+
+@pytest.mark.asyncio
+async def test_export_handler_starts_worker_and_sets_gate_when_clear(
+    personas_editor_with_saved_character, monkeypatch
+):
+    app, screen, db, char_id = personas_editor_with_saved_character
+    from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+        CharacterExpressionSetExportRequested,
+    )
+
+    calls: list[int] = []
+
+    def _fake_run_worker(coro, *a, **k):
+        calls.append(1)
+        coro.close()  # avoid a "coroutine was never awaited" warning
+
+    monkeypatch.setattr(screen, "run_worker", _fake_run_worker)
+    screen._io_dialog_active = False
+
+    screen._handle_expression_set_export_requested(
+        CharacterExpressionSetExportRequested()
+    )
+
+    assert calls == [1]
+    assert screen._io_dialog_active is True  # gate set before the worker starts
+
+
 @pytest.mark.asyncio
 async def test_import_export_buttons_enabled_for_saved_character(
     personas_editor_with_saved_character,
