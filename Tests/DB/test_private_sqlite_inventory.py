@@ -250,6 +250,31 @@ class _QualifiedCallVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+class _QualifiedCallNodeVisitor(ast.NodeVisitor):
+    def __init__(self, predicate) -> None:
+        self.predicate = predicate
+        self.symbol_stack: list[str] = []
+        self.calls: list[tuple[str, ast.Call]] = []
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.symbol_stack.append(node.name)
+        self.generic_visit(node)
+        self.symbol_stack.pop()
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self.symbol_stack.append(node.name)
+        self.generic_visit(node)
+        self.symbol_stack.pop()
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if self.predicate(node):
+            symbol = ".".join(self.symbol_stack) if self.symbol_stack else "<module>"
+            self.calls.append((symbol, node))
+        self.generic_visit(node)
+
+
 def _qualified_calls(source_path: Path, predicate) -> Counter[str]:
     visitor = _QualifiedCallVisitor(predicate)
     visitor.visit(_parse_source(source_path))
@@ -290,6 +315,18 @@ def _qualified_sqlite_connect_calls(source_path: Path) -> Counter[str]:
             root = root.value
         return isinstance(root, ast.Name) and root.id in module_aliases
 
+    def is_raw_module(expression: ast.expr) -> bool:
+        if isinstance(expression, ast.Name):
+            return expression.id in module_aliases
+        if not isinstance(expression, ast.Attribute):
+            return False
+        root = expression
+        while isinstance(root, ast.Attribute):
+            if root.attr != "dbapi2":
+                return False
+            root = root.value
+        return isinstance(root, ast.Name) and root.id in module_aliases
+
     rebound_aliases: list[tuple[str, ast.expr]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
@@ -306,6 +343,9 @@ def _qualified_sqlite_connect_calls(source_path: Path) -> Counter[str]:
     while changed:
         changed = False
         for alias, expression in rebound_aliases:
+            if alias not in module_aliases and is_raw_module(expression):
+                module_aliases.add(alias)
+                changed = True
             if alias not in callable_aliases and is_raw_callable(expression):
                 callable_aliases.add(alias)
                 changed = True
@@ -316,6 +356,126 @@ def _qualified_sqlite_connect_calls(source_path: Path) -> Counter[str]:
     visitor = _QualifiedCallVisitor(is_raw_connect)
     visitor.visit(tree)
     return visitor.calls
+
+
+def _dotted_name(expression: ast.expr) -> str | None:
+    parts: list[str] = []
+    current = expression
+    while isinstance(current, ast.Attribute):
+        parts.append(current.attr)
+        current = current.value
+    if not isinstance(current, ast.Name):
+        return None
+    parts.append(current.id)
+    return ".".join(reversed(parts))
+
+
+def _qualified_private_sqlite_calls(
+    source_path: Path,
+) -> list[tuple[str, ast.Call]]:
+    tree = _parse_source(source_path)
+    module_aliases: set[str] = set()
+    callable_aliases: set[str] = set()
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "tldw_chatbook.DB.private_sqlite":
+                    module_aliases.add(alias.asname or alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            imported_module = node.module or ""
+            if imported_module.endswith("private_sqlite"):
+                for alias in node.names:
+                    if alias.name == "connect_private_sqlite":
+                        callable_aliases.add(alias.asname or "connect_private_sqlite")
+                    elif alias.name == "*":
+                        callable_aliases.add("connect_private_sqlite")
+            elif imported_module.endswith("DB") or (
+                node.level > 0 and not imported_module
+            ):
+                for alias in node.names:
+                    if alias.name == "private_sqlite":
+                        module_aliases.add(alias.asname or "private_sqlite")
+
+    def is_seam_callable(expression: ast.expr) -> bool:
+        if isinstance(expression, ast.Name):
+            return expression.id in callable_aliases
+        dotted = _dotted_name(expression)
+        if dotted is None or not dotted.endswith(".connect_private_sqlite"):
+            return False
+        return dotted.removesuffix(".connect_private_sqlite") in module_aliases
+
+    def is_seam_module(expression: ast.expr) -> bool:
+        dotted = _dotted_name(expression)
+        return dotted in module_aliases if dotted is not None else False
+
+    rebound_aliases: list[tuple[str, ast.expr]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            rebound_aliases.extend(
+                (target.id, node.value)
+                for target in node.targets
+                if isinstance(target, ast.Name)
+            )
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if node.value is not None:
+                rebound_aliases.append((node.target.id, node.value))
+
+    changed = True
+    while changed:
+        changed = False
+        for alias, expression in rebound_aliases:
+            if alias not in module_aliases and is_seam_module(expression):
+                module_aliases.add(alias)
+                changed = True
+            if alias not in callable_aliases and is_seam_callable(expression):
+                callable_aliases.add(alias)
+                changed = True
+
+    visitor = _QualifiedCallNodeVisitor(
+        lambda call: is_seam_callable(call.func),
+    )
+    visitor.visit(tree)
+    return visitor.calls
+
+
+def _literal_owner_id(call: ast.Call) -> str | None:
+    owner_expression: ast.expr | None = call.args[0] if call.args else None
+    if owner_expression is None:
+        owner_expression = next(
+            (keyword.value for keyword in call.keywords if keyword.arg == "owner_id"),
+            None,
+        )
+    if isinstance(owner_expression, ast.Constant) and isinstance(
+        owner_expression.value, str
+    ):
+        return owner_expression.value
+    return None
+
+
+def _private_sqlite_seam_violations(
+    source_path: Path,
+    production_module: str,
+) -> tuple[list[tuple[str, ast.Call]], list[str]]:
+    calls = _qualified_private_sqlite_calls(source_path)
+    violations: list[str] = []
+    for symbol, call in calls:
+        owner_id = _literal_owner_id(call)
+        if owner_id is None:
+            violations.append(f"{production_module}:{symbol}: non-literal owner")
+            continue
+        policy = SQLITE_OWNER_REGISTRY.get(owner_id)
+        if policy is None:
+            violations.append(
+                f"{production_module}:{symbol}: unknown owner {owner_id!r}"
+            )
+            continue
+        if policy.production_module != production_module:
+            violations.append(
+                f"{production_module}:{symbol}: owner {owner_id!r} belongs to "
+                f"{policy.production_module}"
+            )
+    return calls, violations
 
 
 def _current_direct_connect_sites() -> Counter[tuple[str, str]]:
@@ -359,11 +519,7 @@ def _assert_raw_connection_census(
         return
 
     assert current[seam_site] == 1
-    unexpected = set(current) - set(documented_legacy) - {seam_site}
-    assert not unexpected
-    for site, count in current.items():
-        if site != seam_site:
-            assert count <= documented_legacy[site]
+    assert current == Counter({seam_site: 1})
 
 
 def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
@@ -419,9 +575,15 @@ def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
 
     _assert_raw_connection_census(
         documented,
-        Counter({legacy_site: 7, seam_site: 1}),
+        Counter({seam_site: 1}),
         seam_exists=True,
     )
+    with pytest.raises(AssertionError):
+        _assert_raw_connection_census(
+            documented,
+            Counter({legacy_site: 7, seam_site: 1}),
+            seam_exists=True,
+        )
     with pytest.raises(AssertionError):
         _assert_raw_connection_census(
             documented,
@@ -440,6 +602,92 @@ def test_transition_census_rejects_unapproved_or_duplicate_raw_calls() -> None:
             ),
             seam_exists=True,
         )
+
+
+def test_private_sqlite_seam_calls_use_literal_module_owned_ids() -> None:
+    total_calls = 0
+    violations: list[str] = []
+    for source_path in PRODUCTION_ROOT.rglob("*.py"):
+        module = source_path.relative_to(PROJECT_ROOT).with_suffix("").as_posix()
+        calls, source_violations = _private_sqlite_seam_violations(
+            source_path,
+            module,
+        )
+        total_calls += len(calls)
+        violations.extend(source_violations)
+
+    assert total_calls > 0
+    assert violations == []
+
+
+def test_private_sqlite_seam_guard_detects_aliases_and_owner_bypasses(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "seam_bypasses.py"
+    source_path.write_text(
+        "\n".join(
+            (
+                "import tldw_chatbook.DB.private_sqlite as private_db",
+                "from tldw_chatbook.DB.private_sqlite import "
+                "connect_private_sqlite as checked_connect",
+                "from tldw_chatbook.DB.private_sqlite import *",
+                "from . import private_sqlite as relative_private_db",
+                "",
+                "rebound_connect = checked_connect",
+                "rebound_module = private_db",
+                "",
+                "def valid_alias():",
+                "    return checked_connect('writing.local', ':memory:')",
+                "",
+                "def valid_module_alias():",
+                "    return private_db.connect_private_sqlite("
+                "'writing.local', ':memory:')",
+                "",
+                "def star_import_owner():",
+                "    return connect_private_sqlite('research.local', ':memory:')",
+                "",
+                "def dynamic_owner(owner_id):",
+                "    return rebound_connect(owner_id, ':memory:')",
+                "",
+                "def rebound_module_owner(owner_id):",
+                "    return rebound_module.connect_private_sqlite("
+                "owner_id, ':memory:')",
+                "",
+                "def relative_module_owner(owner_id):",
+                "    return relative_private_db.connect_private_sqlite("
+                "owner_id, ':memory:')",
+                "",
+                "def unknown_owner():",
+                "    return checked_connect('unknown.owner', ':memory:')",
+                "",
+                "def mismatched_owner():",
+                "    return checked_connect('research.local', ':memory:')",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    calls, violations = _private_sqlite_seam_violations(
+        source_path,
+        "tldw_chatbook/Writing_Interop/local_writing_service",
+    )
+
+    assert [symbol for symbol, _call in calls] == [
+        "valid_alias",
+        "valid_module_alias",
+        "star_import_owner",
+        "dynamic_owner",
+        "rebound_module_owner",
+        "relative_module_owner",
+        "unknown_owner",
+        "mismatched_owner",
+    ]
+    assert len(violations) == 6
+    assert any("non-literal owner" in violation for violation in violations)
+    assert any("unknown owner 'unknown.owner'" in violation for violation in violations)
+    assert any(
+        "owner 'research.local' belongs to" in violation for violation in violations
+    )
 
 
 def test_raw_connection_census_detects_sqlite_import_aliases(tmp_path: Path) -> None:
@@ -537,6 +785,42 @@ def test_raw_connection_census_detects_constructor_and_rebound_bypasses(
             "rebound_constructor": 1,
             "star_connect": 1,
             "star_constructor": 1,
+        }
+    )
+
+
+def test_raw_connection_census_detects_rebound_module_aliases(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "rebound_sqlite_modules.py"
+    source_path.write_text(
+        "\n".join(
+            (
+                "import sqlite3 as sql",
+                "from sqlite3 import dbapi2 as dbapi",
+                "",
+                "raw_module = sql",
+                "second_module = raw_module",
+                "rebound_dbapi = dbapi",
+                "",
+                "def direct_rebound():",
+                "    return raw_module.connect(':memory:')",
+                "",
+                "def chained_rebound():",
+                "    return second_module.Connection(':memory:')",
+                "",
+                "def dbapi_rebound():",
+                "    return rebound_dbapi.connect(':memory:')",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    assert _qualified_sqlite_connect_calls(source_path) == Counter(
+        {
+            "direct_rebound": 1,
+            "chained_rebound": 1,
+            "dbapi_rebound": 1,
         }
     )
 
@@ -700,6 +984,20 @@ def test_task_four_parent_creators_are_recorded_as_migrated() -> None:
         "P13": "migrated",
         "P14": "migrated",
         "P15": "migrated",
+    }
+
+
+def test_task_five_parent_creators_are_recorded_as_migrated() -> None:
+    parent_rows = {row["id"]: row for row in _inventory_rows("P")}
+
+    assert {
+        parent_id: parent_rows[parent_id]["state"]
+        for parent_id in ("P16", "P17", "P18", "P19")
+    } == {
+        "P16": "migrated",
+        "P17": "migrated",
+        "P18": "migrated",
+        "P19": "migrated",
     }
 
 

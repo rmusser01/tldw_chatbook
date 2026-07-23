@@ -7,6 +7,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
 
 SCHEMA_VERSION = 1
 
@@ -28,9 +30,7 @@ _FTS5_PROBE_TABLE = "__tldw_kanban_fts5_probe"
 
 
 def open_connection(db_path: str | Path) -> sqlite3.Connection:
-    if str(db_path) != ":memory:":
-        Path(db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
+    conn = connect_private_sqlite("kanban.local", db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")

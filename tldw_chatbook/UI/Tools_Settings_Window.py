@@ -4,7 +4,6 @@
 # Imports
 from typing import TYPE_CHECKING, Optional, List, Dict, Any
 import shutil
-import sqlite3
 import json
 from datetime import datetime
 from pathlib import Path
@@ -54,6 +53,7 @@ from loguru import logger
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
+from ..DB.private_sqlite import connect_private_sqlite
 from .MCP_Modules.unified_mcp_panel import UnifiedMCPPanel
 from .Outputs_Panel import OutputsPanel
 from .Sharing_Panel import SharingPanel
@@ -6484,7 +6484,7 @@ Thank you for using tldw-chatbook! 🎉
             db_path = self._get_database_path(db_name, db_config)
 
             if db_path and db_path.exists():
-                conn = sqlite3.connect(str(db_path))
+                conn = connect_private_sqlite("settings.vacuum", db_path)
                 try:
                     original_size = db_path.stat().st_size
                     conn.execute("VACUUM")
@@ -6695,7 +6695,11 @@ Thank you for using tldw-chatbook! 🎉
             db_path = self._get_database_path(db_name, db_config)
 
             if db_path and db_path.exists():
-                conn = sqlite3.connect(str(db_path))
+                conn = connect_private_sqlite(
+                    "settings.integrity",
+                    db_path,
+                    read_only=True,
+                )
                 try:
                     cursor = conn.execute("PRAGMA integrity_check")
                     result = cursor.fetchone()
@@ -6753,7 +6757,11 @@ Thank you for using tldw-chatbook! 🎉
     def _get_schema_version(self, db_path: Path) -> Optional[int]:
         """Get the schema version from a database."""
         try:
-            conn = sqlite3.connect(str(db_path))
+            conn = connect_private_sqlite(
+                "settings.schema",
+                db_path,
+                read_only=True,
+            )
             try:
                 cursor = conn.execute("PRAGMA user_version")
                 return cursor.fetchone()[0]

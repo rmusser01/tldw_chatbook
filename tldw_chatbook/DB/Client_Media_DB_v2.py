@@ -7353,7 +7353,11 @@ def check_database_integrity(db_path):  # Standalone check is fine
     logger.info(f"Checking integrity of database: {db_path}")
     conn = None
     try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)  # Read-only mode
+        conn = connect_private_sqlite(
+            "db.media.integrity",
+            db_path,
+            read_only=True,
+        )
         cursor = conn.execute("PRAGMA integrity_check;")
         result = cursor.fetchone()
         if result and result[0].lower() == "ok":
@@ -7362,7 +7366,7 @@ def check_database_integrity(db_path):  # Standalone check is fine
         else:
             logger.error(f"Integrity check FAILED for {db_path}: {result}")
         return False
-    except sqlite3.Error as e:
+    except (sqlite3.Error, PrivatePathError, ValueError) as e:
         logger.opt(exception=True).error(
             f"Error during integrity check for {db_path}: {e}"
         )
