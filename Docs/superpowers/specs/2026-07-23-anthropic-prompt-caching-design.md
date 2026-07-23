@@ -102,27 +102,26 @@ before the streaming branch), so caching works for streamed chats too.
       labels={"model": final_model},
   )
   ```
-- **Anthropic:** `chat_with_anthropic` has *no* usage logging today. Add a block
-  right after the non-streaming `response_data = response.json()` (the existing
-  Anthropic non-streaming return path):
+- **Anthropic:** `chat_with_anthropic` **already** has a non-streaming usage
+  block that logs `anthropic_api_input_tokens` and `anthropic_api_output_tokens`
+  (inside `usage = response_data.get("usage", {}); if usage:`). Do **not**
+  duplicate those — **append** the two missing cache-field histograms to that
+  existing block (right after the `output_tokens` one):
   ```python
-  anth_usage = response_data.get("usage") or {}
-  if anth_usage:
-      log_histogram("anthropic_api_input_tokens",
-                    anth_usage.get("input_tokens", 0),
-                    labels={"model": current_model})
-      log_histogram("anthropic_api_output_tokens",
-                    anth_usage.get("output_tokens", 0),
-                    labels={"model": current_model})
-      log_histogram("anthropic_api_cache_read_input_tokens",
-                    anth_usage.get("cache_read_input_tokens", 0),
-                    labels={"model": current_model})
-      log_histogram("anthropic_api_cache_creation_input_tokens",
-                    anth_usage.get("cache_creation_input_tokens", 0),
-                    labels={"model": current_model})
+      log_histogram(
+          "anthropic_api_cache_read_input_tokens",
+          usage.get("cache_read_input_tokens", 0),
+          labels={"model": current_model},
+      )
+      log_histogram(
+          "anthropic_api_cache_creation_input_tokens",
+          usage.get("cache_creation_input_tokens", 0),
+          labels={"model": current_model},
+      )
   ```
-- All reads use `.get(..., 0)` / `or {}`, so absent/malformed `usage` degrades
-  gracefully (AC#3, 324-AC#3).
+- The existing block's `usage = response_data.get("usage", {})` / `if usage:`
+  guard and the `.get(..., 0)` reads already make absent/malformed `usage`
+  degrade gracefully (AC#3, 324-AC#3); the two new lines inherit that.
 
 ## Testing
 
@@ -146,8 +145,11 @@ harness), and monkeypatch/spy `log_histogram` to capture metrics.
     `openai_api_cached_tokens` logged with that value; absent details → 0, no
     crash.
   - Anthropic: a response with `usage.cache_read_input_tokens` /
-    `cache_creation_input_tokens` → the four `anthropic_api_*` histograms logged;
-    absent `usage` → no crash, no logging.
+    `cache_creation_input_tokens` → the two new `anthropic_api_cache_read_input_
+    tokens` / `anthropic_api_cache_creation_input_tokens` histograms logged with
+    those values (the pre-existing input/output histograms still fire); a
+    response whose `usage` omits the cache fields → those two log `0`; absent
+    `usage` → no crash, no logging.
 - **Non-Anthropic unchanged:** an OpenAI call's payload/behavior is unaffected
   by Unit A (it only touches `chat_with_anthropic`).
 
