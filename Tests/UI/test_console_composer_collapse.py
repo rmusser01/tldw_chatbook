@@ -632,6 +632,36 @@ async def test_console_collapsed_status_uses_presence_only(
 
 
 @pytest.mark.asyncio
+async def test_console_collapsed_status_sync_does_not_join_canonical_draft(
+    monkeypatch,
+):
+    host = _ready_console_host()
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("retained draft")
+        composer.set_collapsed(True)
+        await pilot.pause()
+
+        def _reject_draft_join(_composer: ConsoleComposerBar) -> str:
+            raise AssertionError("collapsed status must not materialize the draft")
+
+        monkeypatch.setattr(ConsoleComposerBar, "draft_text", _reject_draft_join)
+
+        composer.sync_action_state(
+            has_draft=True,
+            run_active=True,
+            can_save_chatbook=False,
+        )
+
+        status = composer.query_one("#console-composer-collapsed-status", Static)
+        assert str(status.renderable) == (
+            "Composer hidden · Generating · Draft retained"
+        )
+
+
+@pytest.mark.asyncio
 async def test_console_composer_round_trip_preserves_editor_and_attachment_state():
     host = _ready_console_host()
 

@@ -168,6 +168,15 @@ class ConsoleComposerBar(Horizontal):
         """Return the full payload represented by composer segments."""
         return "".join(segment.text for segment in self._segments)
 
+    def _has_any_draft_content(self) -> bool:
+        """Return whether the canonical draft contains at least one character."""
+        if self._segments_initialized:
+            return any(segment.text for segment in self._segments)
+        try:
+            return bool(self.query_one("#console-command-input", Input).value)
+        except NoMatches:
+            return False
+
     @property
     def cursor_index(self) -> int:
         """Return the caret offset into the canonical draft text.
@@ -317,13 +326,11 @@ class ConsoleComposerBar(Horizontal):
 
     def _sync_interaction_classes(self) -> None:
         """Mirror focus-within and draft presence onto stable CSS state classes."""
-        has_draft = (
-            any(segment.text for segment in self._segments)
-            if self._segments_initialized
-            else bool(self.draft_text())
-        )
         self.set_class(self.has_focus_within, "console-composer-focused")
-        self.set_class(has_draft, "console-composer-has-draft")
+        self.set_class(
+            self._has_any_draft_content(),
+            "console-composer-has-draft",
+        )
 
     def _sync_current_action_state(self) -> None:
         """Refresh action buttons from the current draft and cached run/save state."""
@@ -734,7 +741,7 @@ class ConsoleComposerBar(Horizontal):
         parts = ["Composer hidden"]
         if self._run_active:
             parts.append("Generating")
-        if bool(self.draft_text()):
+        if self._has_any_draft_content():
             parts.append("Draft retained")
         if self._pending_attachment_label is not None:
             parts.append("Attachment retained")
@@ -756,7 +763,11 @@ class ConsoleComposerBar(Horizontal):
         self.set_class(self._collapsed, "console-composer-collapsed")
 
     def set_collapsed(self, collapsed: bool) -> None:
-        """Switch presentation without remounting or clearing editor state."""
+        """Switch presentation without remounting or clearing editor state.
+
+        Args:
+            collapsed: Whether to show the one-row restore presentation.
+        """
         self._collapsed = bool(collapsed)
         self.can_focus = not self._collapsed
         self._sync_collapsed_presentation()

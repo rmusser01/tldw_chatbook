@@ -724,6 +724,16 @@ class ChatScreen(BaseAppScreen):
         action: str,
         parameters: tuple[object, ...],
     ) -> bool | None:
+        """Return whether a named screen action is currently available.
+
+        Args:
+            action: Textual action name being checked.
+            parameters: Parsed positional parameters for the action.
+
+        Returns:
+            The collapse-action availability, or the superclass result for
+            every other action.
+        """
         if action == "expand_collapsed_console_composer":
             return (
                 self._console_composer_collapsed
