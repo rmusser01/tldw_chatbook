@@ -796,12 +796,21 @@ class PersonasScreen(BaseAppScreen):
             elif kind == "lore":
                 await self._select_lore_entry(entity_id, name)
         except Exception:
-            # A stale/deleted entity must degrade to the blank center, not crash.
+            # A stale/deleted entity must degrade to a fully cleared selection,
+            # not just a blank center: leaving self.state's selection populated
+            # would let _console_action_allowed() keep attach/Start-Chat wrongly
+            # enabled and the inspector showing a stale selection.
             logger.opt(exception=True).warning(
                 f"Could not restore Personas selection {kind}/{entity_id}; "
-                "showing blank center."
+                "clearing selection."
             )
+            self.state.clear_selection()
+            try:
+                await self.query_one(PersonasInspectorPane).clear_selection()
+            except QueryError:
+                pass
             self._show_center(None)
+            self._sync_title_and_console_actions()
 
     async def on_mount(self) -> None:
         super().on_mount()

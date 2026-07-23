@@ -90,7 +90,7 @@ class PersonasPreviewController:
         await self.reset(greeting, seeded_for=character_id)
 
     async def restore_conversation(
-        self, *, greeting: str, history: list[dict], seeded_for
+        self, *, greeting: str, history: list[dict], seeded_for: str | None
     ) -> None:
         """Rebuild the preview (greeting + turns) from saved state (task-434).
 
@@ -98,6 +98,15 @@ class PersonasPreviewController:
         only the preview worker group, so the character-load worker's
         ``handle_character_loaded`` may still fire -- and must hit the
         seeded-for guard (``:159``) rather than erase the restored turns.
+
+        Args:
+            greeting: Saved greeting text to reseed the preview pane with.
+            history: Saved user/assistant turns to replay into the pane.
+            seeded_for: Entity id the saved preview was seeded for, normalized
+                to ``str(seeded_for)`` (or ``None`` if falsy).
+
+        Returns:
+            None.
         """
         self.invalidate()
         self.seeded_for = str(seeded_for) if seeded_for else None

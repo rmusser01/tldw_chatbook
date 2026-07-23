@@ -271,7 +271,9 @@ class TestPendingRestoreGuards:
         self, mock_app_instance, stub_characters, monkeypatch
     ):
         """A ``_select_*`` raising for a stale/deleted entity must not crash
-        ``on_mount``; the screen falls back to the blank center instead."""
+        ``on_mount``; the screen falls back to a fully cleared selection (not
+        just a blank center) so ``_console_action_allowed()`` cannot still
+        treat the stale entity as attachable."""
         mock_app_instance.chat_dictionary_scope_service = None
         saved = {
             "personas_workbench": {
@@ -293,6 +295,13 @@ class TestPendingRestoreGuards:
             screen = await _mounted(pilot)
             # Must not have crashed the app; center stays blank.
             assert screen.query_one("#ccp-character-card-view").display is False
+            # The workbench selection itself must degrade to NO selection -
+            # a lingering stale selected_entity_id would keep
+            # _console_action_allowed() (attach/Start-Chat) wrongly enabled
+            # and the inspector showing a stale name/kind.
+            assert screen.state.selected_entity_id is None
+            assert screen.state.selected_entity_kind is None
+            assert screen._console_action_allowed() is False
 
 
 class TestNonCharacterModeRestoreGate:
