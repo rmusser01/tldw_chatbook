@@ -6,9 +6,11 @@ import errno
 import os
 import sqlite3
 import stat
+import warnings
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path, PureWindowsPath
+from threading import Lock
 from types import MappingProxyType
 from typing import Any, Mapping
 from urllib.parse import quote
@@ -29,6 +31,10 @@ class SQLiteTargetKind(StrEnum):
     PRIVATE_FILE = "private_file"
     MEMORY = "memory"
     READ_ONLY_URI = "read_only_uri"
+
+
+class SQLitePrivacyUnverifiedWarning(RuntimeWarning):
+    """Warn that a successful SQLite file open lacks verified ACL privacy."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,9 +271,23 @@ SQLITE_OWNER_REGISTRY: Mapping[str, SQLiteOwnerPolicy] = MappingProxyType(
     _SQLITE_OWNER_POLICIES
 )
 
+_WARNED_UNVERIFIED_OWNER_IDS: set[str] = set()
+_UNVERIFIED_WARNING_LOCK = Lock()
 
 _PRIVATE_FILE_MODE = 0o600
 _SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+
+
+def _warn_unverified_platform(owner_id: str) -> None:
+    with _UNVERIFIED_WARNING_LOCK:
+        if owner_id in _WARNED_UNVERIFIED_OWNER_IDS:
+            return
+        warnings.warn(
+            "SQLite file privacy is unverified on this platform",
+            SQLitePrivacyUnverifiedWarning,
+            stacklevel=3,
+        )
+        _WARNED_UNVERIFIED_OWNER_IDS.add(owner_id)
 
 
 def _failure(
@@ -344,6 +364,7 @@ def _prepare_posix_artifact(
         missing_leaf_allowed=create_if_missing,
     )
     file_fd = -1
+    writable_fd = -1
     try:
         try:
             entry_stat = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
@@ -372,7 +393,7 @@ def _prepare_posix_artifact(
             file_fd = _open_artifact_fd(
                 parent_fd,
                 leaf,
-                writable=writable or created,
+                writable=created,
                 create=created,
             )
         except OSError as exc:
@@ -409,12 +430,51 @@ def _prepare_posix_artifact(
                 PrivatePathStatus.OPERATION_FAILED,
                 "private_sqlite_postcondition_failed",
             )
+
+        if writable and not created:
+            try:
+                writable_fd = _open_artifact_fd(
+                    parent_fd,
+                    leaf,
+                    writable=True,
+                    create=False,
+                )
+            except OSError as exc:
+                raise _path_error_from_oserror(selected, exc) from None
+
+            writable_stat = os.fstat(writable_fd)
+            rejected = private_paths._classify_private_file_stat(
+                writable_stat,
+                expected_uid=os.geteuid(),
+            )
+            if rejected is not None:
+                raise _failure(selected, rejected, "unsafe_sqlite_artifact")
+            if not private_paths._same_identity(opened_stat, writable_stat):
+                raise _failure(
+                    selected,
+                    PrivatePathStatus.OPERATION_FAILED,
+                    "private_sqlite_identity_changed",
+                )
+            if not _artifact_postcondition_holds(
+                writable_fd,
+                parent_fd,
+                leaf,
+                expected_identity=opened_stat,
+                selected=selected,
+            ):
+                raise _failure(
+                    selected,
+                    PrivatePathStatus.OPERATION_FAILED,
+                    "private_sqlite_postcondition_failed",
+                )
         return True
     except PrivatePathError:
         raise
     except OSError as exc:
         raise _path_error_from_oserror(selected, exc) from None
     finally:
+        if writable_fd >= 0:
+            os.close(writable_fd)
         if file_fd >= 0:
             os.close(file_fd)
         os.close(parent_fd)
@@ -563,9 +623,9 @@ def connect_private_sqlite(
     use_uri = False
     if target_kind is not SQLiteTargetKind.MEMORY:
         selected = lexical_path(raw)
-        verify_trusted_directory(
+        directory_result = verify_trusted_directory(
             selected.parent,
-            allow_shared_sticky=read_only,
+            allow_shared_sticky=False,
         )
         _prepare_artifact(
             selected,
@@ -585,6 +645,8 @@ def connect_private_sqlite(
                 windows=os.name == "nt",
             )
             use_uri = True
+        if directory_result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
+            _warn_unverified_platform(owner_id)
 
     return sqlite3.connect(connection_target, uri=use_uri, **kwargs)
 
@@ -592,6 +654,7 @@ def connect_private_sqlite(
 __all__ = [
     "SQLITE_OWNER_REGISTRY",
     "SQLiteOwnerPolicy",
+    "SQLitePrivacyUnverifiedWarning",
     "SQLiteTargetKind",
     "connect_private_sqlite",
 ]

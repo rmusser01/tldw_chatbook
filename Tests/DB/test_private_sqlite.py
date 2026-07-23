@@ -3,12 +3,16 @@ from __future__ import annotations
 import os
 import sqlite3
 import stat
+import warnings
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 
 import tldw_chatbook.DB.private_sqlite as private_sqlite
 from tldw_chatbook.DB.private_sqlite import (
+    SQLitePrivacyUnverifiedWarning,
     _build_read_only_uri,
     connect_private_sqlite,
 )
@@ -117,6 +121,27 @@ def test_existing_database_is_hardened_before_raw_connect(tmp_path, monkeypatch)
     target = tmp_path / "existing.sqlite"
     target.write_bytes(b"")
     target.chmod(0o644)
+    observed_modes = []
+
+    def observe_connect(database, **kwargs):
+        observed_modes.append(stat.S_IMODE(target.stat().st_mode))
+        return sqlite3.Connection(":memory:")
+
+    monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
+    connection = connect_private_sqlite("db.base", target)
+    connection.close()
+
+    assert observed_modes == [0o600]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX hardening contract")
+def test_existing_0400_database_is_hardened_before_writable_raw_connect(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "existing.sqlite"
+    target.write_bytes(b"")
+    target.chmod(0o400)
     observed_modes = []
 
     def observe_connect(database, **kwargs):
@@ -260,6 +285,45 @@ def test_database_replacement_between_classification_and_open_is_rejected(
     assert caught.value.result.reason == "private_sqlite_identity_changed"
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX reopen identity contract")
+def test_database_replacement_between_hardening_and_writable_reopen_is_rejected(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "db.sqlite"
+    replacement = tmp_path / "replacement.sqlite"
+    target.write_bytes(b"first")
+    target.chmod(0o400)
+    replacement.write_bytes(b"replacement")
+    real_open = private_sqlite._open_artifact_fd
+    target_open_count = 0
+
+    def replace_before_writable_reopen(parent_fd, leaf, *, writable, create):
+        nonlocal target_open_count
+        if leaf == target.name and not create:
+            target_open_count += 1
+            if target_open_count == 2:
+                replacement.replace(target)
+        return real_open(parent_fd, leaf, writable=writable, create=create)
+
+    monkeypatch.setattr(
+        private_sqlite,
+        "_open_artifact_fd",
+        replace_before_writable_reopen,
+    )
+    monkeypatch.setattr(
+        private_sqlite.sqlite3,
+        "connect",
+        lambda *args, **kwargs: pytest.fail("raw connect reached raced target"),
+    )
+
+    with pytest.raises(PrivatePathError) as caught:
+        connect_private_sqlite("db.base", target)
+
+    assert target_open_count == 2
+    assert caught.value.result.reason == "private_sqlite_identity_changed"
+
+
 @pytest.mark.skipif(os.name != "posix", reason="POSIX postcondition contract")
 def test_database_postcondition_failure_blocks_raw_connect(tmp_path, monkeypatch):
     target = tmp_path / "db.sqlite"
@@ -334,6 +398,32 @@ def test_existing_sidecars_are_hardened_before_raw_connect(
     sidecar = Path(f"{target}{suffix}")
     sidecar.write_bytes(b"historical")
     sidecar.chmod(0o644)
+    observed_modes = []
+
+    def observe_connect(database, **kwargs):
+        observed_modes.append(stat.S_IMODE(sidecar.stat().st_mode))
+        return sqlite3.Connection(":memory:")
+
+    monkeypatch.setattr(private_sqlite.sqlite3, "connect", observe_connect)
+    connection = connect_private_sqlite("db.base", target)
+    connection.close()
+
+    assert observed_modes == [0o600]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX sidecar hardening contract")
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_existing_0400_sidecars_are_hardened_before_writable_raw_connect(
+    tmp_path,
+    monkeypatch,
+    suffix,
+):
+    target = tmp_path / "db.sqlite"
+    target.write_bytes(b"")
+    target.chmod(0o600)
+    sidecar = Path(f"{target}{suffix}")
+    sidecar.write_bytes(b"historical")
+    sidecar.chmod(0o400)
     observed_modes = []
 
     def observe_connect(database, **kwargs):
@@ -450,6 +540,50 @@ def test_sidecar_replacement_blocks_raw_connect(
     with pytest.raises(PrivatePathError) as caught:
         connect_private_sqlite("db.base", target)
 
+    assert caught.value.result.reason == "private_sqlite_identity_changed"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX sidecar reopen contract")
+@pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])
+def test_sidecar_replacement_between_hardening_and_writable_reopen_is_rejected(
+    tmp_path,
+    monkeypatch,
+    suffix,
+):
+    target = tmp_path / "db.sqlite"
+    target.write_bytes(b"")
+    target.chmod(0o600)
+    sidecar = Path(f"{target}{suffix}")
+    sidecar.write_bytes(b"sidecar")
+    sidecar.chmod(0o400)
+    replacement = tmp_path / f"replacement{suffix}"
+    replacement.write_bytes(b"replacement")
+    real_open = private_sqlite._open_artifact_fd
+    sidecar_open_count = 0
+
+    def replace_before_writable_reopen(parent_fd, leaf, *, writable, create):
+        nonlocal sidecar_open_count
+        if leaf == sidecar.name and not create:
+            sidecar_open_count += 1
+            if sidecar_open_count == 2:
+                replacement.replace(sidecar)
+        return real_open(parent_fd, leaf, writable=writable, create=create)
+
+    monkeypatch.setattr(
+        private_sqlite,
+        "_open_artifact_fd",
+        replace_before_writable_reopen,
+    )
+    monkeypatch.setattr(
+        private_sqlite.sqlite3,
+        "connect",
+        lambda *args, **kwargs: pytest.fail("raw connect reached raced sidecar"),
+    )
+
+    with pytest.raises(PrivatePathError) as caught:
+        connect_private_sqlite("db.base", target)
+
+    assert sidecar_open_count == 2
     assert caught.value.result.reason == "private_sqlite_identity_changed"
 
 
@@ -595,7 +729,10 @@ def test_read_only_uri_preserves_special_filename_identity_and_rejects_writes(
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX shared-sticky contract")
-def test_read_only_owned_file_is_allowed_in_shared_sticky_parent(tmp_path):
+def test_read_only_owned_file_is_rejected_in_shared_sticky_parent(
+    tmp_path,
+    monkeypatch,
+):
     shared = tmp_path / "shared"
     shared.mkdir()
     target = shared / "db.sqlite"
@@ -604,13 +741,72 @@ def test_read_only_owned_file_is_allowed_in_shared_sticky_parent(tmp_path):
     source.close()
     target.chmod(0o600)
     shared.chmod(0o1777)
-
-    connection = connect_private_sqlite(
-        "settings.integrity",
-        target,
-        read_only=True,
+    monkeypatch.setattr(
+        private_sqlite.sqlite3,
+        "connect",
+        lambda *args, **kwargs: pytest.fail(
+            "raw SQLite connect reached shared-sticky namespace"
+        ),
     )
-    connection.close()
+
+    with pytest.raises(PrivatePathError) as caught:
+        connect_private_sqlite(
+            "settings.integrity",
+            target,
+            read_only=True,
+        )
+
+    assert caught.value.result.status is PrivatePathStatus.UNSAFE_PARENT
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX SQLite namespace contract")
+def test_read_only_wal_open_in_shared_sticky_parent_never_uses_or_creates_shm(
+    tmp_path,
+):
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    target = shared / "wal.sqlite"
+    source = sqlite3.connect(target)
+    source.execute("PRAGMA journal_mode=WAL")
+    source.execute("CREATE TABLE items (value TEXT)")
+    source.execute("INSERT INTO items VALUES ('private')")
+    source.commit()
+    shm = Path(f"{target}-shm")
+    public_shm = b"public replacement must remain untouched"
+    try:
+        shm.unlink()
+        shared.chmod(0o1777)
+
+        with pytest.raises(PrivatePathError):
+            connect_private_sqlite(
+                "settings.integrity",
+                target,
+                read_only=True,
+            )
+
+        assert not shm.exists()
+        shm.write_bytes(public_shm)
+        shm.chmod(0o666)
+        before = shm.stat()
+        try:
+            with pytest.raises(PrivatePathError):
+                connect_private_sqlite(
+                    "settings.integrity",
+                    target,
+                    read_only=True,
+                )
+            assert shm.read_bytes() == public_shm
+            assert stat.S_IMODE(shm.stat().st_mode) == 0o666
+            assert (shm.stat().st_dev, shm.stat().st_ino) == (
+                before.st_dev,
+                before.st_ino,
+            )
+        finally:
+            shm.unlink(missing_ok=True)
+    finally:
+        shared.chmod(0o700)
+        source.close()
+        shm.unlink(missing_ok=True)
 
 
 def test_read_only_missing_and_unsafe_sources_fail_closed(tmp_path):
@@ -694,16 +890,102 @@ def test_windows_read_only_uri_builder_percent_encodes_path(path, expected):
     assert _build_read_only_uri(path, windows=True) == expected
 
 
+def test_simulated_windows_file_open_warns_but_memory_is_filesystem_free(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        private_sqlite,
+        "_WARNED_UNVERIFIED_OWNER_IDS",
+        set(),
+    )
+    monkeypatch.setattr(
+        private_sqlite.private_paths,
+        "_posix_guards_available",
+        lambda: False,
+    )
+    monkeypatch.setattr(private_sqlite.private_paths, "_WINDOWS_PLATFORM", True)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        for name in ["first.sqlite", "second.sqlite"]:
+            connection = connect_private_sqlite("db.base", tmp_path / name)
+            connection.close()
+        other_owner = connect_private_sqlite("db.evals", tmp_path / "evals.sqlite")
+        other_owner.close()
+        memory = connect_private_sqlite("db.base", Path(":memory:"))
+        memory.close()
+    privacy_warnings = [
+        warning
+        for warning in caught
+        if warning.category is SQLitePrivacyUnverifiedWarning
+    ]
+    assert len(privacy_warnings) == 2
+    assert all(
+        "privacy is unverified" in str(warning.message) for warning in privacy_warnings
+    )
+
+
+def test_unverified_privacy_warning_is_thread_safe_per_owner(monkeypatch):
+    monkeypatch.setattr(
+        private_sqlite,
+        "_WARNED_UNVERIFIED_OWNER_IDS",
+        set(),
+    )
+    recorded = []
+    monkeypatch.setattr(
+        private_sqlite.warnings,
+        "warn",
+        lambda *args, **kwargs: recorded.append((args, kwargs)),
+    )
+    workers = 8
+    barrier = Barrier(workers)
+
+    def warn_together():
+        barrier.wait()
+        private_sqlite._warn_unverified_platform("db.base")
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        list(executor.map(lambda _: warn_together(), range(workers)))
+
+    assert len(recorded) == 1
+
+
+def test_unverified_warning_error_does_not_suppress_later_warning(monkeypatch):
+    warned_owner_ids: set[str] = set()
+    monkeypatch.setattr(
+        private_sqlite,
+        "_WARNED_UNVERIFIED_OWNER_IDS",
+        warned_owner_ids,
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", SQLitePrivacyUnverifiedWarning)
+        with pytest.raises(SQLitePrivacyUnverifiedWarning):
+            private_sqlite._warn_unverified_platform("db.base")
+
+    assert warned_owner_ids == set()
+    with pytest.warns(SQLitePrivacyUnverifiedWarning):
+        private_sqlite._warn_unverified_platform("db.base")
+    assert warned_owner_ids == {"db.base"}
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows functional posture")
-def test_windows_exact_memory_and_read_only_functionality(tmp_path):
+def test_windows_exact_memory_and_read_only_functionality(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        private_sqlite,
+        "_WARNED_UNVERIFIED_OWNER_IDS",
+        set(),
+    )
     memory = connect_private_sqlite("db.base", Path(":memory:"))
     memory.close()
     target = tmp_path / "source.sqlite"
     source = sqlite3.connect(target)
     source.close()
-    read_only = connect_private_sqlite(
-        "settings.integrity",
-        target,
-        read_only=True,
-    )
-    read_only.close()
+    with pytest.warns(SQLitePrivacyUnverifiedWarning):
+        read_only = connect_private_sqlite(
+            "settings.integrity",
+            target,
+            read_only=True,
+        )
+        read_only.close()
