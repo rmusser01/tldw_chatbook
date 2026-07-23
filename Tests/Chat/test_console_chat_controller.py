@@ -1136,7 +1136,12 @@ async def test_continue_from_user_message_preserves_user_final_payload():
 
 
 @pytest.mark.asyncio
-async def test_regenerate_message_streams_new_selected_variant():
+async def test_regenerate_message_streams_into_new_sibling_node():
+    """TASK-6: regenerate forks a persisted sibling node under the anchor's
+    own parent and streams into that NEW node -- the anchor is untouched and
+    drops off the active path, reachable via ``set_active_leaf`` (see
+    ``Tests/Chat/test_console_regenerate_branching.py`` for the full
+    controller-level branching contract)."""
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     session = store.ensure_session()
@@ -1153,10 +1158,17 @@ async def test_regenerate_message_streams_new_selected_variant():
 
     result = await controller.regenerate_message(source.id)
 
-    updated = store.get_message(source.id)
     assert result.accepted is True
-    assert updated.variants.current.content == "hello"
-    assert updated.variants.can_go_previous is True
+    unchanged_source = store.get_message(source.id)
+    assert unchanged_source.content == "seed"
+    assert unchanged_source.variants is None
+    assert source.id not in store.active_path_message_ids(session.id)
+
+    new_leaf_id = store.active_leaf(session.id)
+    assert new_leaf_id != source.id
+    new_sibling = store.get_message(new_leaf_id)
+    assert new_sibling.content == "hello"
+    assert new_sibling.variants is None
 
 
 @pytest.mark.asyncio
@@ -2589,7 +2601,7 @@ async def test_retry_applies_pinned_but_not_one_shot():
 
 
 @pytest.mark.asyncio
-async def test_regenerate_applies_pinned_into_variant():
+async def test_regenerate_applies_pinned_into_new_sibling():
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
@@ -2600,7 +2612,12 @@ async def test_regenerate_applies_pinned_into_variant():
 
     await controller.regenerate_message(original.id)
     assert gateway.messages_seen[-1] == {"role": "assistant", "content": "PINNED"}
-    regenerated = store.get_message(original.id)
+    # The anchor is untouched; the pinned prefill lands in the NEW sibling.
+    unchanged_original = store.get_message(original.id)
+    assert unchanged_original.content == "ok"
+    new_leaf_id = store.active_leaf(session.id)
+    assert new_leaf_id != original.id
+    regenerated = store.get_message(new_leaf_id)
     assert regenerated.content == "PINNEDok"
 
 

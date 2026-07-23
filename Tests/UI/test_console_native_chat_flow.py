@@ -3604,9 +3604,21 @@ async def test_console_regenerate_action_streams_selected_variant():
         await pilot.click(f"#console-message-action-regenerate-{source.id}")
         await _wait_for_text(console, pilot, "hello")
 
-        updated = store.get_message(source.id)
-        assert updated.variants.current.content == "hello"
-        assert updated.variants.can_go_previous is True
+        # TASK-6: regenerate forks a persisted SIBLING node and streams into
+        # it, rather than replacing the anchor's content in place as an
+        # in-message variant. The anchor is untouched and drops off the
+        # active path; the new sibling is the active leaf and carries the
+        # freshly streamed text.
+        unchanged_source = store.get_message(source.id)
+        assert unchanged_source.content == "seed"
+        assert unchanged_source.variants is None
+        assert source.id not in store.active_path_message_ids(session.id)
+
+        new_leaf_id = store.active_leaf(session.id)
+        assert new_leaf_id != source.id
+        new_sibling = store.get_message(new_leaf_id)
+        assert new_sibling.content == "hello"
+        assert new_sibling.variants is None
 
 
 @pytest.mark.asyncio
