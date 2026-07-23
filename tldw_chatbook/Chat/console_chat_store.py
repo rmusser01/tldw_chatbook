@@ -706,6 +706,67 @@ class ConsoleChatStore:
             self._persist_new_message_or_defer(session_id=session_id, message=message)
         return self._snapshot(message)
 
+    def create_sibling(
+        self,
+        anchor_message_id: str,
+        *,
+        role: ConsoleMessageRole,
+        content: str = "",
+        persist: bool = False,
+    ) -> ConsoleChatMessage:
+        """Fork a new node alongside ``anchor_message_id`` and make it active.
+
+        This is the primitive regenerate uses: unlike ``append_message`` --
+        which always parents the new node at the CURRENT active leaf -- the
+        new node here is parented at the anchor's OWN native parent (a
+        SIBLING of the anchor, not a child of it). Registering it via
+        ``_register_tree_node`` adds it to the anchor's parent's ordered
+        child list beside the anchor (so ``siblings_at`` reports both), then
+        ``set_active_leaf`` retargets the session's active leaf at the new
+        node and recomputes the active-path view (Task 3's single writer).
+
+        When the anchor is mid-conversation (has descendants of its own),
+        that old tail drops off the now-recomputed active path -- it is not
+        deleted, just no longer on the visible branch, and remains reachable
+        by swiping back (``set_active_leaf`` to any node in the old branch).
+
+        Args:
+            anchor_message_id: Native id of the node to fork alongside
+                (typically the assistant message being regenerated).
+            role: Role for the new sibling message.
+            content: Initial content. An empty-content assistant sibling
+                starts ``"pending"`` (mirrors ``append_message``), ready to
+                receive stream chunks via ``append_stream_chunk``.
+            persist: When True, write the new node through to durable
+                storage immediately, using the same persist path
+                ``append_message(persist=True)`` uses. Done BEFORE
+                ``set_active_leaf`` so that, when the session already owns a
+                persisted conversation, the active-leaf write-through
+                (``_persist_active_leaf``) observes the new node's freshly
+                assigned ``persisted_message_id`` instead of the pre-persist
+                ``None``.
+
+        Returns:
+            A snapshot of the newly created sibling node.
+
+        Raises:
+            KeyError: If ``anchor_message_id`` is not a known tree node.
+        """
+        self._message_or_raise(anchor_message_id)
+        session_id = self._message_session_index[anchor_message_id]
+        parent_native_id = self._native_parent_by_message.get(anchor_message_id)
+        message = ConsoleChatMessage(
+            role=role,
+            content=content,
+            status=self._initial_status(role=role, content=content),
+        )
+        self._sessions[session_id].updated_at = _utc_now_iso()
+        self._register_tree_node(session_id, message, parent_native_id=parent_native_id)
+        if persist:
+            self._persist_new_message_or_defer(session_id=session_id, message=message)
+        self.set_active_leaf(session_id, message.id)
+        return self._snapshot(message)
+
     def messages_for_session(self, session_id: str) -> list[ConsoleChatMessage]:
         """Return messages for a session in transcript order."""
         self._session_or_raise(session_id)
@@ -1605,6 +1666,20 @@ class ConsoleChatStore:
             ).exception("Failed to enqueue Sync v2 chat message after local mutation")
 
     def _sync_message_sequence(self, message: ConsoleChatMessage) -> int | None:
+        """Return ``message``'s 1-based sync-eligible position on the active path.
+
+        Tree-aware (Task 5): ``_messages_by_session[session_id]`` is no
+        longer a flat append-order history of every message ever created --
+        since Task 3 it is the derived active-path VIEW (root -> active
+        leaf), rebuilt by ``_recompute_active_path`` alone. Counting along it
+        therefore already counts along the current branch rather than across
+        every fork, which is what a sequence number for the visible
+        conversation should mean. A message that is currently off the active
+        path (e.g. an old sibling left behind by ``create_sibling``, or any
+        node reached only via ``get_message``/``select_variant`` while
+        another branch is active) is not found in this walk and returns
+        ``None``, same as before.
+        """
         session_id = self._message_session_index.get(message.id)
         if session_id is None:
             return None
@@ -1625,16 +1700,26 @@ class ConsoleChatStore:
         )
 
     def _previous_persisted_message_id(self, message: ConsoleChatMessage) -> str | None:
-        session_id = self._message_session_index.get(message.id)
-        if session_id is None:
+        """Return the persisted id of ``message``'s TREE parent, if any.
+
+        Tree-aware (Task 5): previously this walked the flat message list
+        looking for whatever came immediately before ``message`` with a
+        persisted id -- a linear-history assumption that breaks the moment a
+        branch forks (a sibling's "previous" message is not "whatever this
+        session last appended", it's specifically the shared parent). Using
+        ``_native_parent_by_message`` instead resolves the real tree parent
+        for ANY node -- on- or off- the active path -- and returns that
+        parent's own persisted id (``None`` when the parent is a root, is
+        unknown, or has not itself been durably persisted yet).
+        """
+        parent_native_id = self._native_parent_by_message.get(message.id)
+        if parent_native_id is None:
             return None
-        previous: str | None = None
-        for candidate in self._messages_by_session.get(session_id, []):
-            if candidate.id == message.id:
-                return previous
-            if candidate.persisted_message_id is not None:
-                previous = candidate.persisted_message_id
-        return None
+        session_id = self._message_session_index.get(message.id)
+        parent_node = self._nodes_by_session.get(session_id or "", {}).get(
+            parent_native_id
+        )
+        return parent_node.persisted_message_id if parent_node is not None else None
 
     @staticmethod
     def _sync_variant_metadata(
