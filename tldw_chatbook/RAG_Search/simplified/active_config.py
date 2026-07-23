@@ -1,0 +1,98 @@
+"""Active-profile config resolution — the single config source the RAG engine reads.
+
+resolve_active_rag_config() = the active profile's rag_config (deep copy) with
+the env-override layer applied. BOTH the search path (RAGConfig.from_settings)
+and the ingestion path (get_shared_rag_service) route through it, so ingestion
+and search never use divergent configs for the same active profile.
+See Docs/superpowers/specs/2026-07-21-rag-profile-system-design.md §5.
+"""
+from __future__ import annotations
+
+import copy
+import os
+from pathlib import Path
+from typing import Optional, Union
+
+from loguru import logger
+
+from tldw_chatbook.config import get_cli_setting
+from .config import RAGConfig
+from ..config_profiles import get_profile_manager
+
+DEFAULT_PROFILE = "hybrid_basic"
+
+
+def _manager():
+    return get_profile_manager()
+
+
+def _active_profile_id() -> str:
+    """The active-profile pointer: [rag.service].profile (reused, single pointer)."""
+    try:
+        svc = get_cli_setting("rag", "service", {}) or {}
+        if isinstance(svc, dict) and svc.get("profile"):
+            return str(svc["profile"])
+    except Exception as e:
+        logger.debug(f"Could not read active profile pointer: {e}")
+    return DEFAULT_PROFILE
+
+
+def _apply_env_overrides(config: RAGConfig,
+                         override_embedding_model: Optional[str] = None,
+                         override_persist_dir: Optional[Union[str, Path]] = None) -> RAGConfig:
+    """Apply the env / explicit-arg override layer onto `config` in place.
+
+    This is the SAME layer RAGConfig.from_settings applied — moved here so both
+    resolution paths apply env identically (parity). NOTE: this NO LONGER reads
+    the deprecated AppRAGSearchConfig.rag.* value keys — the profile is the base.
+    """
+    e = config.embedding
+    e.model = override_embedding_model or os.getenv("RAG_EMBEDDING_MODEL") or e.model
+    dev = os.getenv("RAG_DEVICE") or e.device
+    if dev == "auto":
+        try:
+            import torch
+            e.device = ("cuda" if torch.cuda.is_available()
+                        else "mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()
+                        else "cpu")
+        except ImportError:
+            e.device = "cpu"
+    else:
+        e.device = dev
+    cache = os.getenv("RAG_EMBEDDING_CACHE_SIZE")
+    if cache:
+        e.cache_size = int(cache)
+    e.api_key = os.getenv("OPENAI_API_KEY") or get_cli_setting("API", "openai_api_key") or e.api_key
+    e.base_url = os.getenv("RAG_EMBEDDING_BASE_URL") or e.base_url
+    persist = override_persist_dir or os.getenv("RAG_PERSIST_DIR")
+    if persist:
+        config.vector_store.persist_directory = Path(persist)
+    # vector_store.type: RAG_VECTOR_STORE env is honored by VectorStoreConfig.__post_init__
+
+    # Chunking overrides
+    chunk_size = os.getenv("RAG_CHUNK_SIZE")
+    if chunk_size:
+        config.chunking.chunk_size = int(chunk_size)
+    chunk_overlap = os.getenv("RAG_CHUNK_OVERLAP")
+    if chunk_overlap:
+        config.chunking.chunk_overlap = int(chunk_overlap)
+
+    # Search overrides
+    top_k = os.getenv("RAG_TOP_K")
+    if top_k:
+        config.search.default_top_k = int(top_k)
+    config.search.default_search_mode = os.getenv("RAG_SEARCH_MODE") or config.search.default_search_mode
+
+    # Pipeline overrides
+    config.pipeline.default_pipeline = os.getenv("RAG_DEFAULT_PIPELINE") or config.pipeline.default_pipeline
+
+    return config
+
+
+def resolve_active_rag_config(override_embedding_model: Optional[str] = None,
+                              override_persist_dir: Optional[Union[str, Path]] = None) -> RAGConfig:
+    """The active profile's rag_config (deep copy) + env overlay — the single source."""
+    active = _active_profile_id()
+    profile = _manager().get_profile(active) or _manager().get_profile(DEFAULT_PROFILE)
+    base = copy.deepcopy(profile.rag_config) if profile else RAGConfig()
+    return _apply_env_overrides(base, override_embedding_model, override_persist_dir)
