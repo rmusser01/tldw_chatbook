@@ -21,6 +21,6 @@ def test_resolved_reference_image_defined_locally():
 
 def test_adapter_is_structural_protocol():
     from tldw_chatbook.Image_Generation.adapters.base import ImageGenerationAdapter
-    from typing import runtime_checkable, Protocol
+    from typing import Protocol
     # It is a Protocol; a duck-typed object with name/supported_formats/generate satisfies it structurally.
     assert issubclass(ImageGenerationAdapter, Protocol)

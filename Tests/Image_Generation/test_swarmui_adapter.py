@@ -1,8 +1,10 @@
-import io, pytest
+import io
 from PIL import Image
 
 def _png_b64():
-    import base64; buf = io.BytesIO(); Image.new("RGB", (8, 8), (10, 10, 200)).save(buf, "PNG")
+    import base64
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), (10, 10, 200)).save(buf, "PNG")
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 def test_swarmui_generate_happy_path(monkeypatch):

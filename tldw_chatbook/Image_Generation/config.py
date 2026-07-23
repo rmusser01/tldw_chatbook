@@ -136,10 +136,10 @@ def _load_image_generation_section() -> dict:
     for k in _GLOBAL_KEYS:
         if k in raw:
             flat[k] = raw[k]
-    for (backend, toml_key), field in _NON_SECRET.items():
+    for (backend, toml_key), flat_field in _NON_SECRET.items():
         sub = raw.get(backend) or {}
         if toml_key in sub:
-            flat[field] = sub[toml_key]
+            flat[flat_field] = sub[toml_key]
     for backend in _SECRETS:
         field, value = _resolve_secret(backend, raw.get(backend) or {})
         if value:

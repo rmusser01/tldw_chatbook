@@ -10,7 +10,6 @@ import os
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 import httpx
-from loguru import logger
 from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
 
 DEFAULT_MAX_REDIRECTS = int(os.getenv("HTTP_MAX_REDIRECTS", "5"))
