@@ -15,7 +15,7 @@ Navigating Personas → Console → back resets the workbench to "Selected: none
 
 - `restore_state()` runs **before** the new screen mounts (`app.py:5682` precedes `switch_screen` at `:5703`). So it can seed `self.state` (which `on_mount`'s `set_mode(self.state.active_mode)` then honors) and stash a "pending restore" for `on_mount` to finish.
 - `PersonasWorkbenchState` (`personas_state.py:36`) is a flat `@dataclass` of primitives (`active_mode`, `sort_key`, `tag_filter`, `page_offset`, `selected_entity_kind/id/name`, `search_query`, `filter_text`, `has_unsaved_changes`, `status_message`, ...) — cleanly `asdict()`-serializable.
-- The preview conversation lives in `PersonasPreviewController.history` (`list[{"role","content"}]`) with `seeded_for` (the character id the greeting seeded). The pane renders via `append_user`/`append_reply`/`seed_greeting`; `transcript_text()` reads it back.
+- The preview conversation is split across two objects: `PersonasPreviewController.history` (`list[{"role","content"}]`) holds only the **sent turns** (user/assistant), while the **greeting is not in `history`** — it lives in `PersonasPreviewPane._greeting` (a string set by `seed_greeting`, rendered as transcript line 0). `seeded_for` (controller) is the character id the greeting seeded. So a faithful capture needs **both** `pane._greeting` and `controller.history`.
 - Selecting a character runs `_select_character` → sets state, marks the row, loads the record (thread worker), `_show_center("#ccp-character-card-view")`, updates the inspector + conversations, and `reset_for_character` → `reset` → `invalidate()` which **unconditionally clears** `history`. The async load worker later calls `handle_character_loaded`, which **preserves** an in-progress conversation when `seeded_for == character_id and pane.transcript_text()` (`personas_preview_controller.py:133`). This guard is what a restore leverages.
 
 ## Design
@@ -25,13 +25,21 @@ Navigating Personas → Console → back resets the workbench to "Selected: none
 def save_state(self) -> dict:
     state = dict(super().save_state() or {})
     state["personas_workbench"] = asdict(self.state)
-    state["personas_preview"] = {
-        "history": [dict(m) for m in self.preview.history],
-        "seeded_for": self.preview.seeded_for,
-    }
+    preview = getattr(self, "preview", None)
+    if preview is not None:
+        greeting = ""
+        try:
+            greeting = self.query_one(PersonasPreviewPane).greeting_text
+        except QueryError:
+            pass  # pane torn down / not mounted
+        state["personas_preview"] = {
+            "greeting": greeting,
+            "history": [dict(m) for m in preview.history],
+            "seeded_for": preview.seeded_for,
+        }
     return state
 ```
-Captures the whole workbench dataclass + the preview conversation. (History is character-scoped; for non-character selections it is empty/irrelevant and simply restores as empty.)
+Captures the whole workbench dataclass + **both** halves of the preview (greeting **and** turns). Add a small `PersonasPreviewPane.greeting_text` read-only property returning `self._greeting` (avoids reaching into a private attr from the screen). History is character-scoped; non-character selections restore an empty preview.
 
 ### 2. `restore_state()` override (`PersonasScreen`) — runs pre-mount
 ```python
@@ -76,13 +84,15 @@ async def _apply_pending_restore(self) -> None:
 The `_select_*` calls re-establish the selection, center pane, inspector, and conversations — AC#1. (Guard each in try/except-tolerant restore: a stale id whose entity was deleted must degrade to blank center, not crash — reuse the existing `_run_guarded`/selection error handling.)
 
 ### 4. Preview restore (AC#2) — new branch on `_select_character`
-Add an optional `restore_preview` parameter so restore does not lose the transcript to `reset_for_character`'s `invalidate()`:
+Add an optional `restore_preview` parameter so restore rebuilds the transcript itself instead of going through `reset_for_character` (which `invalidate()`s the turns and re-seeds the greeting):
 ```python
 async def _select_character(self, entity_id, entity_name, *, restore_preview=None):
-    ...  # state, mark row, load_character (schedules worker), show center, inspector, conversations
-    if restore_preview and restore_preview.get("history"):
-        await self.preview.restore_history(
-            restore_preview["history"], seeded_for=entity_id
+    ...  # state, mark row, load_character (schedules the char-load worker), show center, inspector, conversations
+    if restore_preview is not None:
+        await self.preview.restore_conversation(
+            greeting=restore_preview.get("greeting", ""),
+            history=restore_preview.get("history", []),
+            seeded_for=entity_id,
         )
     else:
         record = self._full_character_record(entity_id)
@@ -90,19 +100,25 @@ async def _select_character(self, entity_id, entity_name, *, restore_preview=Non
             character_id=entity_id, character_name=entity_name, record=record
         )
 ```
-New `PersonasPreviewController.restore_history`:
+New `PersonasPreviewController.restore_conversation` — rebuilds greeting **and** turns, and sets `seeded_for` **before** any `await` so the still-pending character-load worker's `handle_character_loaded` hits the `:133` guard (`refresh_greeting_seed`, no erase) even if it interleaves:
 ```python
-async def restore_history(self, history, *, seeded_for) -> None:
-    self.invalidate()                    # cancel workers + clear
+async def restore_conversation(self, *, greeting, history, seeded_for) -> None:
+    self.invalidate()                       # clears history, cancels only preview workers
+    self.seeded_for = str(seeded_for)       # set FIRST: invalidate does NOT cancel the char-load worker
     try:
         pane = self.screen.query_one(PersonasPreviewPane)
     except QueryError:
         return
-    await pane.restore_transcript(history)   # new pane method: reset + re-render each entry
+    await pane.seed_greeting(greeting)       # renders + stores pane._greeting (transcript now non-empty)
+    for m in history:
+        role, content = m.get("role"), str(m.get("content") or "")
+        if role == "user":
+            pane.append_user(content)
+        elif role == "assistant":
+            pane.append_reply(content)
     self.history = [dict(m) for m in history]
-    self.seeded_for = str(seeded_for)
 ```
-New `PersonasPreviewPane.restore_transcript(history)`: `await self.reset()` then render each entry — the first `assistant` entry via `seed_greeting` (preserves greeting styling), the rest via `append_user`/`append_reply`. Setting `seeded_for` + a non-empty transcript means the later `handle_character_loaded` worker hits the `:133` guard (`refresh_greeting_seed`, no erase) — the ordering holds because `_select_character` sets these synchronously within the coroutine before the thread worker's callback can run.
+The greeting comes from the saved `personas_preview["greeting"]`, so restore does not depend on the async record load; when the char-load worker later delivers, the `:133` guard (`seeded_for == id and transcript_text()`) just `refresh_greeting_seed`s the stored greeting (typically identical) without erasing the turns.
 
 ### Non-character selections and empty preview
 Persona/dictionary/lore restore only AC#1 (they have no preview transcript). A character with an empty saved history falls through to the normal `reset_for_character` greeting seed.
@@ -111,8 +127,8 @@ Persona/dictionary/lore restore only AC#1 (they have no preview transcript). A c
 
 Mirror `Tests/UI/test_chat_screen_state.py` / `test_chat_screen_suspend.py` (bare-ish screen or pilot harness for `save_state`/`restore_state`), plus the existing Personas pilot harness (`Tests/UI/test_personas_*`):
 - **save→restore round-trip (AC#1):** build a `PersonasScreen`, select a character, `state = screen.save_state()`; a fresh screen `restore_state(state)` then mounts → the restored screen shows the same selected id/kind/name, `active_mode`, and center pane (`#ccp-character-card-view`), not "Selected: none".
-- **preview survives (AC#2):** seed a preview with a multi-message `history`, save, restore → the restored preview's `controller.history` equals the saved list and `pane.transcript_text()` contains the earlier turns (not just the greeting); `seeded_for` restored.
-- **restore skips the greeting-reset:** assert `_select_character(..., restore_preview=...)` does NOT call `reset_for_character` (or that the restored transcript is intact after the character-load worker fires — drive the `handle_character_loaded` guard).
+- **preview survives incl. greeting (AC#2):** seed a preview with a greeting **and** a multi-turn `history`, save, restore → `controller.history` equals the saved turns, `pane.greeting_text` equals the saved greeting, `pane.transcript_text()` contains the greeting **and** the turns, and `seeded_for` is restored.
+- **restore survives the async char-load worker:** after restore, drive `handle_character_loaded(character_id=<id>, card_data=<record>)` and assert the transcript still has the turns (the `:133` guard `refresh_greeting_seed`s, does not `invalidate`) — this pins the "set `seeded_for` first" ordering.
 - **non-character selection restores center only:** a saved persona/dictionary/lore selection restores its center pane; no preview crash.
 - **stale/deleted entity:** a saved selection whose id no longer exists degrades to blank center without raising.
 - **no selection:** empty pending restore leaves today's blank-center behavior unchanged.
@@ -120,7 +136,8 @@ Mirror `Tests/UI/test_chat_screen_state.py` / `test_chat_screen_suspend.py` (bar
 
 ## Risks / mitigations
 
-- **Async greeting-seed race (AC#2):** the restore sets `seeded_for` + renders the transcript synchronously within `_select_character` before the thread worker's `handle_character_loaded` callback can run; the `:133` guard then preserves it. Tested by driving the loaded-callback after restore.
+- **Async char-load worker race (AC#2):** `_select_character` schedules the char-load worker (which `invalidate()` does **not** cancel — that only cancels the `personas-preview` group). `restore_conversation` therefore sets `self.seeded_for` **before its first `await`**, and the greeting render makes the transcript non-empty, so even if `handle_character_loaded` interleaves it hits the `:133` guard and preserves the turns. Directly tested by driving the loaded-callback after restore.
+- **Greeting not in `history`:** the greeting is captured separately (`pane.greeting_text`) and restored via `seed_greeting`, so it is not lost (a plain `history` capture would drop it).
 - **Version drift in saved state:** `restore_state` filters to known dataclass fields and guards non-dict payloads, so an old/foreign saved blob can't crash construction.
 - **Stale selection:** deleted-entity restore is guarded to fall back to blank center.
 - **`reconcile_saved_screen_state`:** our keys ride inside the same state dict the app already snapshots/reconciles; no change to that flow.
