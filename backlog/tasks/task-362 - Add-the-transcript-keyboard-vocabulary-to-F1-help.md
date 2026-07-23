@@ -1,8 +1,9 @@
 ---
 id: TASK-362
 title: Add the transcript keyboard vocabulary to F1 help
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
 labels: [console, ux, keyboard]
 dependencies: []
@@ -23,6 +24,22 @@ F1 replaces the whole 2050x1240 screen with ~15 lines of unstyled top-left text 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Help presents the full keyboard map (grouped: panes, transcript, composer, modals) in a styled panel sized to content
-- [ ] #2 The action-row guide teaches the single-key shortcuts
+- [x] #1 Help presents the full keyboard map (grouped: panes, transcript, composer, modals) in a styled panel sized to content
+- [x] #2 The action-row guide teaches the single-key shortcuts
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+AC#1: `WorkbenchHelpState` gained an optional `shortcut_groups` field (group ->
+(key,label) pairs) that `render_text` renders as a grouped map, replacing the
+flat list. The Console F1 panel now passes `CONSOLE_WORKBENCH_SHORTCUT_GROUPS`
+(Panes / Transcript / Composer / Global & modals) covering the transcript
+j/k/c/e/r keys, Enter, Escape, Shift+Enter, Ctrl+K/T/P, Alt+M and F2 — all
+previously undiscoverable. The flat `CONSOLE_WORKBENCH_SHORTCUTS` stays the
+compact footer set. AC#2: the transcript `SELECTED_MESSAGE_ACTION_GUIDE` line now
+names the single keys (`j/k select · c Copy · e Edit · r Regenerate ♻ · …`)
+instead of icons alone. RED->GREEN tests in test_workbench_focus_help.py (grouped
+render + full-vocabulary coverage) + updated transcript guide assertions; 63
+tests green.
+<!-- SECTION:NOTES:END -->
