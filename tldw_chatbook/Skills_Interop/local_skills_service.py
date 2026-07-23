@@ -54,6 +54,7 @@ _TEXT_FIELD_LIMITS = {
 }
 _TRUST_STATUS_SERVICE_UNAVAILABLE = "trust_locked"
 _TRUST_REASON_SERVICE_UNAVAILABLE = "trust_service_unavailable"
+SKILL_FILE_READ_CAP_CHARS = 100_000
 
 
 class LocalSkillsService:
@@ -1217,6 +1218,65 @@ class LocalSkillsService:
                 fork_output=None,
             )
         )
+
+    async def read_skill_file(
+        self, skill_name: str, relative_path: str
+    ) -> dict[str, Any]:
+        """Read one bundled supporting file of a trusted skill, contained + capped.
+
+        The runtime `skill_file` tool's single backing seam. Order is
+        load-bearing: policy gate, per-READ trust re-verification (a skill
+        revoked mid-run stops being readable immediately), path validation,
+        then the same containment discipline `_read_text_preserving_newlines`
+        already applies to the skill body.
+
+        Args:
+            skill_name: Canonical skill name.
+            relative_path: POSIX relative path within the skill's bundle.
+
+        Returns:
+            ``{"content", "truncated", "size"}``; a binary file yields a
+            clean refusal string as ``content`` (never bytes, never raises).
+
+        Raises:
+            SkillTrustBlockedError: Skill not currently trusted.
+            ValueError: Bad path, unknown skill, or missing file
+                (``local_skill_file_not_found:...``).
+        """
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.skills_schemas import validate_supporting_file_path
+
+        self._enforce("skills.read_file.launch.local")
+        self._require_trusted_skill(skill_name)
+        validate_supporting_file_path(relative_path)
+        skill_dir = self._skill_dir(skill_name)
+        if not skill_dir.is_dir():
+            raise ValueError(f"local_skill_not_found:{skill_name}")
+        path = skill_dir / PurePosixPath(relative_path)
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"local_skill_file_not_found:{relative_path}")
+        raw_size = path.stat().st_size
+        try:
+            text = self._read_text_preserving_newlines(path, base_dir=skill_dir)
+        except UnicodeDecodeError:
+            return {
+                "content": f"binary file — {raw_size} bytes; not readable as text",
+                "truncated": False,
+                "size": raw_size,
+            }
+        if "\x00" in text:
+            return {
+                "content": f"binary file — {raw_size} bytes; not readable as text",
+                "truncated": False,
+                "size": raw_size,
+            }
+        if len(text) > SKILL_FILE_READ_CAP_CHARS:
+            text = (
+                text[:SKILL_FILE_READ_CAP_CHARS]
+                + f"\n[truncated — file is {raw_size} bytes; showing first {SKILL_FILE_READ_CAP_CHARS} characters]"
+            )
+            return {"content": text, "truncated": True, "size": raw_size}
+        return {"content": text, "truncated": False, "size": raw_size}
 
     async def seed_builtin_skills(self, *, overwrite: bool = False) -> dict[str, Any]:
         self._enforce("skills.seed.launch.local")

@@ -1017,6 +1017,7 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("skills.import", actions=(LAUNCH,)),
             _resource("skills.export", actions=(LAUNCH,)),
             _resource("skills.execute", actions=(LAUNCH,)),
+            _resource("skills.read_file", actions=(LAUNCH,)),
             _resource("skills.seed", actions=(LAUNCH,)),
             _resource(
                 "skills.trust",
