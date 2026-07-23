@@ -64,8 +64,14 @@ def _real_prompt_scope_service(tmp_path):
     return db, service
 
 
-def _rail_system_line_text(console) -> str:
+def _rail_system_line_raw_text(console) -> str:
     return _static_plain_text(console.query_one("#console-rail-system-line", Static))
+
+
+def _rail_system_line_text(console) -> str:
+    # Content assertions target the semantic "System: <preview>" text; strip the
+    # TASK-365 trailing interactive affordance (▸) so those tests stay focused.
+    return _rail_system_line_raw_text(console).removesuffix(" ▸")
 
 
 def _rail_system_line_is_dim(console) -> bool:
@@ -116,6 +122,22 @@ async def test_console_rail_system_line_defaults_to_dim_none_state():
 
         assert _rail_system_line_text(console) == "System: none"
         assert _rail_system_line_is_dim(console)
+
+
+@pytest.mark.asyncio
+async def test_console_rail_system_line_shows_interactive_affordance():
+    """TASK-365: the clickable rail system-prompt line must carry a visible
+    interactive affordance (▸) so it does not read as inert label text like the
+    Provider/Model lines above it."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-system-line")
+
+        assert _rail_system_line_raw_text(console).endswith(" ▸")
 
 
 @pytest.mark.asyncio

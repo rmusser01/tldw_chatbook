@@ -347,6 +347,9 @@ CONSOLE_LIBRARY_RAG_QUERY_EMPTY_MESSAGE = (
 # Measured live: composer clips at <=34 rows, fits at 35; the freed header
 # lets it fit down to ~29-30 rows.
 CONSOLE_COMPACT_HEIGHT_ROWS = 35
+#: TASK-365: trailing affordance marking the clickable rail system-prompt line as
+#: interactive (matches the ▸ the rail uses for its other actionable controls).
+CONSOLE_RAIL_SYSTEM_EDIT_AFFORDANCE = "▸"
 CONSOLE_FRAME_COLOR = "#6f7782"
 CONSOLE_FRAME_BORDER = ("solid", CONSOLE_FRAME_COLOR)
 CONSOLE_QUIET_FRAME_BORDER = ("none", CONSOLE_FRAME_COLOR)
@@ -2513,6 +2516,11 @@ class ChatScreen(BaseAppScreen):
         """
         settings = self._ensure_active_console_session_settings()
         line_text = build_console_rail_system_line(settings.system_prompt)
+        # TASK-365: this rail line is clickable (opens the system-prompt editor)
+        # but otherwise reads as inert label text like the Provider/Model lines
+        # above it. A trailing affordance (the same ▸ the rail uses elsewhere for
+        # interactive controls) marks it as the one actionable row in the section.
+        line_text = f"{line_text} {CONSOLE_RAIL_SYSTEM_EDIT_AFFORDANCE}"
         is_dim = not str(settings.system_prompt or "").strip()
         return line_text, is_dim
 
