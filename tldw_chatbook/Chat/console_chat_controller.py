@@ -1833,6 +1833,10 @@ class ConsoleChatController:
         content = provider_messages[final_index].get("content")
         if not isinstance(content, str):
             return provider_messages, None, ()
+        if MENTION_SIGIL not in content:
+            # Fast path: no sigil anywhere means neither form can possibly
+            # apply -- plain-text sends never touch the skills service.
+            return provider_messages, None, ()
 
         context = await self._skills_service.get_context(mode="local")
         candidates = self._skill_candidates_from_context(context)

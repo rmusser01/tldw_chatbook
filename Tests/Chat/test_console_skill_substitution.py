@@ -17,27 +17,34 @@ from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedErr
 
 
 class _Skills:
-    def __init__(self, mode="inline", raise_trust=False):
+    def __init__(
+        self, mode="inline", raise_trust=False, raise_trust_for=(), extra_skills=()
+    ):
         self._mode = mode
         self._raise = raise_trust
+        self._raise_for = frozenset(raise_trust_for)
+        self._extra_skills = tuple(extra_skills)
         self.executions = []
+        self.get_context_calls = 0
 
     async def get_context(self, *, mode="local"):
+        self.get_context_calls += 1
         return {
             "available_skills": [
                 {
-                    "name": "code-review",
+                    "name": name,
                     "description": "d",
                     "user_invocable": True,
                     "trust_blocked": False,
                 }
+                for name in ("code-review", *self._extra_skills)
             ],
             "blocked_skills": [],
         }
 
     async def execute_skill(self, name, *, mode="local", args=None):
         self.executions.append((name, args))
-        if self._raise:
+        if self._raise or name in self._raise_for:
             raise SkillTrustBlockedError(
                 skill_name=name,
                 reason_code="skill_modified",
@@ -412,3 +419,55 @@ async def test_leading_unresolved_falls_through_to_embedded():
     content = out[0]["content"]
     assert content.startswith("$notaskill but RENDERED[")
     assert skills.executions == [("code-review", "")]
+
+
+@pytest.mark.asyncio
+async def test_plain_text_send_never_touches_skills_service():
+    """Fast path: a final user message with no `$` anywhere must return
+    unchanged WITHOUT consulting the skills service at all (no get_context,
+    no execute_skill) -- plain-text sends pay zero skills overhead."""
+    skills = _Skills("inline")
+    controller, _store = _controller(skills)
+    messages = [{"role": "user", "content": "just a plain question, no sigil"}]
+    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    assert out == messages
+    assert refuse is None
+    assert notes == ()
+    assert skills.executions == []
+    assert skills.get_context_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_same_skill_mentioned_twice_embedded_splices_both():
+    skills = _Skills("inline")
+    controller, _store = _controller(skills)
+    messages = [
+        {"role": "user", "content": "start $code-review mid $code-review end"}
+    ]
+    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    assert refuse is None and notes == ()
+    content = out[0]["content"]
+    # BOTH occurrences spliced, prose preserved.
+    assert content == "start RENDERED[] mid RENDERED[] end"
+    assert "$code-review" not in content
+    # Per-name cache: exactly ONE execution despite two mentions.
+    assert skills.executions == [("code-review", "")]
+
+
+@pytest.mark.asyncio
+async def test_mixed_spliced_and_blocked_mentions():
+    """One mention splices while a trust-blocked one stays literal with a
+    note -- and the blocked mention never aborts the send."""
+    skills = _Skills(
+        "inline", raise_trust_for={"danger-zone"}, extra_skills=("danger-zone",)
+    )
+    controller, _store = _controller(skills)
+    messages = [
+        {"role": "user", "content": "run $code-review then $danger-zone please"}
+    ]
+    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    assert refuse is None  # embedded never aborts
+    content = out[0]["content"]
+    assert content == "run RENDERED[] then $danger-zone please"
+    assert len(notes) == 1 and "danger-zone" in notes[0]
+    assert skills.executions == [("code-review", ""), ("danger-zone", "")]
