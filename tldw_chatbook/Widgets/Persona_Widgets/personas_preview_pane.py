@@ -29,6 +29,11 @@ from .personas_pane_messages import (
 #: while keeping pathological pastes out of the provider request.
 PREVIEW_MESSAGE_MAX_CHARS = 4000
 
+#: Neutral speaker labels used until a character is seeded (task-437). "you"
+#: stays the user label until TASK-442 introduces the active persona/user name.
+_DEFAULT_CHARACTER_LABEL = "character"
+_DEFAULT_USER_LABEL = "you"
+
 
 class PersonasPreviewPane(Vertical):
     """Collapsible test conversation: transcript, input, and actions."""
@@ -96,8 +101,8 @@ class PersonasPreviewPane(Vertical):
         self._partial_widget: Static | None = None
         self._partial_index: int | None = None
         self._partial_text: str = ""
-        self._character_label = "character"
-        self._user_label = "you"
+        self._character_label = _DEFAULT_CHARACTER_LABEL
+        self._user_label = _DEFAULT_USER_LABEL
 
     def compose(self) -> ComposeResult:
         yield Button(
@@ -185,6 +190,15 @@ class PersonasPreviewPane(Vertical):
             self._character_label = character
         if user:
             self._user_label = user
+
+    def reset_speakers(self) -> None:
+        """Reset speaker labels to their neutral defaults (no character context).
+
+        Called when the preview leaves a character context (e.g. a mode switch)
+        so a later reply never renders under a stale previous character's name.
+        """
+        self._character_label = _DEFAULT_CHARACTER_LABEL
+        self._user_label = _DEFAULT_USER_LABEL
 
     def append_user(self, text: str) -> None:
         """Append a "you: ..." transcript line."""

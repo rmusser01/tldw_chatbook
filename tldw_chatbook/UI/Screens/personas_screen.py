@@ -1665,6 +1665,10 @@ class PersonasScreen(BaseAppScreen):
         # clear_selection empties the conversations panel; drop the caches too.
         self.conversations.reset()
         await self.preview.reset("")
+        # A mode switch clears the character context; reset the transcript
+        # speaker labels so a later reply never renders under a stale previous
+        # character's name (task-437). A character selection re-sets them.
+        self.query_one(PersonasPreviewPane).reset_speakers()
         await self.query_one(PersonasInspectorPane).clear_selection()
         if mode == "characters":
             await self._render_library_rows()

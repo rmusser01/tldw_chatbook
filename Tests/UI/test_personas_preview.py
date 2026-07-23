@@ -457,20 +457,15 @@ async def test_set_speakers_ignores_empty_name():
         assert _line_texts(app) == ["character: Hi."]
 
 
-def test_styled_line_italicizes_action_and_escapes_markup():
-    # Pure-helper unit test — no app needed for the transform assertions.
+async def test_styled_line_italicizes_action_and_escapes_markup():
     app = PreviewApp()
-
-    async def run():
-        async with app.run_test() as pilot:
-            pane = app.query_one(PersonasPreviewPane)
-            waves = pane._styled_line("*waves*")
-            assert str(waves) == "waves"
-            assert any("italic" in str(span.style) for span in waves.spans)
-            assert str(pane._styled_line("[/oops]")) == "[/oops]"
-            assert str(pane._styled_line("you: 5 * 3")) == "you: 5 * 3"
-    import asyncio
-    asyncio.run(run())
+    async with app.run_test():
+        pane = app.query_one(PersonasPreviewPane)
+        waves = pane._styled_line("*waves*")
+        assert str(waves) == "waves"
+        assert any("italic" in str(span.style) for span in waves.spans)
+        assert str(pane._styled_line("[/oops]")) == "[/oops]"
+        assert str(pane._styled_line("you: 5 * 3")) == "you: 5 * 3"
 
 
 async def test_action_span_renders_italic_not_literal_asterisks():
@@ -483,3 +478,17 @@ async def test_action_span_renders_italic_not_literal_asterisks():
         assert "*" not in str(line.renderable)
         assert "smiles warmly" in str(line.renderable)
         assert any("italic" in str(s.style) for s in line.renderable.spans)
+
+
+async def test_reset_speakers_restores_defaults():
+    # task-437: leaving a character context must drop the stale name so a later
+    # reply renders under the neutral default, not the previous character's name.
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.set_speakers(character="Alice")
+        pane.reset_speakers()
+        pane.append_user("Hi")
+        pane.append_reply("Hello.")
+        await pilot.pause()
+        assert _line_texts(app) == ["you: Hi", "character: Hello."]

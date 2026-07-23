@@ -2890,6 +2890,25 @@ class TestPreviewIntegration:
             work_area = screen.query_one("#personas-work-area")
             assert pane in work_area.children
 
+    async def test_mode_switch_resets_stale_character_speaker_label(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        # task-437: after selecting a character then leaving Characters mode,
+        # the preview must not keep the previous character's speaker label
+        # (else a persona Test Reply would render under the stale name).
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            pane = screen.query_one("#personas-preview-pane", PersonasPreviewPane)
+            assert pane._character_label == "Detective Sam"
+            await screen._apply_mode("personas")
+            await pilot.pause()
+            assert pane._character_label == "character"
+
     async def test_greeting_seeds_after_character_load(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
