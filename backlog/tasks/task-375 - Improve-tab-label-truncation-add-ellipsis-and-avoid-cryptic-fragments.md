@@ -1,8 +1,9 @@
 ---
 id: TASK-375
 title: Improve tab-label truncation - add ellipsis and avoid cryptic fragments
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
 labels: [console, ux]
 dependencies: []
@@ -23,6 +24,21 @@ Resumed conversations open tabs labelled with ~9-14 characters of the title and 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Truncated tab labels always show a visible truncation mark ('…') so a fragment is never mistaken for the full title
-- [ ] #2 Labels are wide enough (or middle-truncated) to preserve distinguishing words between similarly-named conversations
+- [x] #1 Truncated tab labels always show a visible truncation mark ('…') so a fragment is never mistaken for the full title
+- [x] #2 Labels are wide enough (or middle-truncated) to preserve distinguishing words between similarly-named conversations
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+The end-truncation ('...') was defeated by the tab Button's word-wrap (height-1
+showed only the first word, never the mark). Fix: `_display_title` now
+MIDDLE-truncates with a single-cell ellipsis ('Long conv…local RAG'), so the mark
+sits early in the label (well inside the 21-cell button) and the distinguishing
+words at BOTH ends survive — two titles sharing a first word are no longer the
+same fragment. `ConsoleSessionTabButton` gains `text-wrap: nowrap` so the label
+renders on one line instead of wrapping the ellipsis off-screen. Verified via a
+themed SVG screenshot (all tabs render one line with a visible …). RED->GREEN
+pure test + updated the mounted label-region test; the full title stays in the
+tab tooltip. 2 tests green.
+<!-- SECTION:NOTES:END -->
