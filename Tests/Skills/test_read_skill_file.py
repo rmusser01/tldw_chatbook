@@ -98,3 +98,22 @@ def test_policy_action_id_registered():
     from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
 
     assert "skills.read_file.launch.local" in CAPABILITY_REGISTRY
+
+
+@pytest.mark.asyncio
+async def test_execute_skill_carries_reference_files(tmp_path):
+    svc = _svc(tmp_path)
+    await _make_skill(svc)
+    result = await svc.execute_skill("demo")
+    refs = {r["path"]: r for r in (result.get("reference_files") or [])}
+    assert refs["references/api.md"]["is_text"] is True
+    assert refs["assets/logo.png"]["is_text"] is False
+    assert "executable" not in refs["references/api.md"]
+
+
+@pytest.mark.asyncio
+async def test_execute_skill_reference_files_none_when_no_bundle(tmp_path):
+    svc = _svc(tmp_path)
+    await svc.create_skill(name="bare", content="---\nname: bare\n---\nbody\n")
+    result = await svc.execute_skill("bare")
+    assert result.get("reference_files") is None

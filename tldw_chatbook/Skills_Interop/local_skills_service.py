@@ -1208,7 +1208,16 @@ class LocalSkillsService:
         self._verify_exact_skill_content(skill)
         _, body = self._parse_front_matter(skill["content"])
         rendered_prompt = body.strip().replace("{{args}}", request.args or "")
-        return self._dump(
+        manifest = self._read_bundle_manifest(self._skill_dir(skill["name"]))
+        reference_files = (
+            [
+                {"path": entry["path"], "size": entry["size"], "is_text": entry["is_text"]}
+                for entry in manifest
+            ]
+            if manifest is not None
+            else None
+        )
+        payload = self._dump(
             SkillExecutionResult(
                 skill_name=skill["name"],
                 rendered_prompt=rendered_prompt,
@@ -1216,8 +1225,14 @@ class LocalSkillsService:
                 model_override=skill.get("model"),
                 execution_mode=skill.get("context") or "inline",
                 fork_output=None,
+                reference_files=reference_files,
             )
         )
+        if reference_files is None:
+            # Omit (rather than null) when there's no bundle — preserves the
+            # exact-dict-equality contract existing execute_skill callers rely on.
+            payload.pop("reference_files", None)
+        return payload
 
     async def read_skill_file(
         self, skill_name: str, relative_path: str
