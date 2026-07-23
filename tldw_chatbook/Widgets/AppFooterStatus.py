@@ -85,6 +85,12 @@ class AppFooterStatus(Widget):
             "Tokens: -- | ", id="footer-token-count"
         )
         self._db_status_display: Static = Static("", id="internal-db-size-indicator")
+        # The stats read as cryptic single letters (P: / C/N: / M:); a hover
+        # legend spells them out so a first-run user can decode them.
+        self._db_status_display.tooltip = (
+            "Local database file sizes\n"
+            "P: Prompts   C/N: Conversations & Notes   M: Media"
+        )
 
     def compose(self) -> ComposeResult:
         yield self._shortcut_display
