@@ -170,6 +170,14 @@ def test_first_run_import_runs_before_shared_service_lock_is_held(
     # Avoid a real (possibly slow/dependency-gated) RAGService build -- this
     # test is only exercising the lock-acquisition ordering, not construction.
     monkeypatch.setattr(simplified_pkg, "create_rag_service", lambda **kwargs: object())
+    # resolve_active_rag_config() is evaluated eagerly (as a call argument)
+    # inside the lock block, BEFORE the faked create_rag_service runs, so it
+    # must be faked too -- otherwise it hits the real _manager() ->
+    # ConfigProfileManager(), whose __init__ does a real, silent
+    # (exist_ok=True) mkdir() of ~/.local/share/tldw_cli/.../rag_profiles on
+    # whatever machine runs this test. This test only cares about lock
+    # ordering, not config resolution, so a trivial stand-in is fine.
+    monkeypatch.setattr(ac, "resolve_active_rag_config", lambda **kwargs: object())
 
     ii.get_shared_rag_service()  # no service pre-injected: exercises the real fast-path+lock flow up to construction
 
