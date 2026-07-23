@@ -95,7 +95,8 @@ def resolve_active_rag_config(override_embedding_model: Optional[str] = None,
                               override_persist_dir: Optional[Union[str, Path]] = None) -> RAGConfig:
     """The active profile's rag_config (deep copy) + env overlay — the single source."""
     active = _active_profile_id()
-    profile = _manager().get_profile(active) or _manager().get_profile(DEFAULT_PROFILE)
+    mgr = _manager()
+    profile = mgr.get_profile(active) or mgr.get_profile(DEFAULT_PROFILE)
     base = copy.deepcopy(profile.rag_config) if profile else RAGConfig()
     return _apply_env_overrides(base, override_embedding_model, override_persist_dir)
 
@@ -148,7 +149,8 @@ def ensure_imported_profile() -> Optional[str]:
         # Snapshot the resolved config (active pointer may name a builtin default today).
         snapshot = resolve_active_rag_config()
         profile = ProfileConfig(id=_IMPORTED_ID, name="Imported settings",
-                                description="Captured from your existing RAG configuration on first run.",
+                                description="Snapshot of your active RAG profile (plus any RAG_* env "
+                                            "overrides) captured on first run; edit freely.",
                                 profile_type="custom", rag_config=snapshot)
         mgr.save_profile(profile)
         set_active_profile(_IMPORTED_ID)
