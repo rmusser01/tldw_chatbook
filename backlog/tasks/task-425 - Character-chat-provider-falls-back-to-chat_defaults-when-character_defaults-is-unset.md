@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-21 09:38'
-updated_date: '2026-07-23 05:20'
+updated_date: '2026-07-23 05:49'
 labels:
   - roleplay
   - ux
@@ -33,6 +33,7 @@ Filed from the RP/character-card UX review (Docs/superpowers/qa/rp-ux-review-202
 - [x] #5 Resolution failures retain safe structured provider/model/selection context, and changed test helpers satisfy the repository class-naming rule.
 - [x] #6 The default CI test environment installs the existing Markdown dependency required to collect subscription prompt tests on every matrix job.
 - [x] #7 The rebased integration suite validates retrieval-admin access using the RAG service's fingerprinted backing collection name.
+- [x] #8 RAG service cleanup releases the underlying Chroma client so temporary persistent stores can be deleted on Windows.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -46,10 +47,11 @@ Filed from the RP/character-card UX review (Docs/superpowers/qa/rp-ux-review-202
 6. Run focused tests, the full affected Roleplay test pair, static checks, and git diff hygiene; update implementation notes and acceptance criteria.
 7. Reproduce the rebased dev matrix collection failure, align requirements-test.txt with the already-declared Markdown dependency imported by subscription prompt tests, and rerun the full GitHub matrix.
 8. Reproduce the remaining RAG admin integration failure, update its stale literal collection-name expectation to the service's fingerprinted backing collection, and rerun the affected test and matrix.
+9. Add cleanup regressions for the RAG service and Chroma vector store, close persistent test services explicitly, and rerun the focused tests plus the full matrix.
 
 ADR required: no
-ADR path: backlog/decisions/006-provider-aware-generation-settings.md (existing for the Roleplay settings change); N/A for the test-manifest correction
-Reason: The Roleplay fix applies an existing provider-settings boundary. The CI correction adds no dependency or runtime choice; it exposes the already-declared subscriptions Markdown dependency to the test environment that imports it.
+ADR path: backlog/decisions/006-provider-aware-generation-settings.md (existing for the Roleplay settings change); N/A for the CI corrections
+Reason: The Roleplay fix applies an existing provider-settings boundary. The CI corrections align tests with existing dependencies and resource-lifecycle contracts; they introduce no new storage, provider, security, or runtime decision.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -70,4 +72,6 @@ Files: tldw_chatbook/UI/Persona_Modules/personas_preview_controller.py, Tests/UI
 Rebase CI follow-up: the refreshed matrix reproduced the current dev baseline failure on every job during collection: Tests/Internal_Prompts/test_subscriptions_migration.py imports Subscriptions.briefing_generator, whose existing top-level markdown import was not installed by requirements-test.txt. Recent dev run 29952753854 failed for the same reason across unit/integration platforms, and no overlapping PR existed. Added markdown to requirements-test.txt, matching the already-declared subscriptions extra without changing runtime ownership. The focused subscription prompt suite passes 14/14 locally; the next pushed SHA reruns the full matrix. Local pip check still reports pre-existing textual-web/textual and uvloop version conflicts in the shared developer venv; those packages and constraints are unrelated to this PR and are not changed.
 
 The first fully collected matrix exposed a second rebased-dev baseline issue in the RAG admin integration test: the service correctly created a fingerprinted collection (for example, default__1da81a3efa62), while the test still queried the configured base name default. The integration proof now follows the RAG service's effective backing collection name for admin list/detail/export assertions, matching the existing fingerprint-isolation contract without changing production behavior. The exact failing test passed after the correction, the complete local RAG admin test module passes 11/11, Ruff passes the changed test, and git diff --check remains clean.
+
+The next matrix completed everywhere except both Windows unit jobs, where two persistent-RAG tests passed but their temporary-directory fixtures failed to delete open chroma.sqlite3 files. RAGService.close now closes its vector store, ChromaVectorStore.close invokes the underlying client's supported close method before dropping references, and the two persistent-service tests use the service context manager. TDD regressions failed because neither close method reached the next layer, then passed 2/2 after the fix. The three affected RAG modules pass 51 tests with 2 expected skips locally; Ruff and git diff --check pass. Whole-file mypy still reports the pre-existing baseline errors in rag_service.py and vector_store.py, none on the changed cleanup statements.
 <!-- SECTION:NOTES:END -->

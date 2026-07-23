@@ -39,8 +39,8 @@ class TestBackwardCompatibility:
         config.vector_store.persist_directory = temp_dir
 
         # Should work without specifying profile
-        service = create_rag_service_from_config(config)
-        assert isinstance(service, EnhancedRAGServiceV2)
+        with create_rag_service_from_config(config) as service:
+            assert isinstance(service, EnhancedRAGServiceV2)
 
     def test_default_behavior_unchanged(self, memory_rag_config):
         """Test that default behavior is unchanged."""

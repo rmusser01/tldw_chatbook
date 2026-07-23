@@ -1468,6 +1468,9 @@ class RAGService:
             # Close embeddings service
             self.embeddings.close()
 
+            # Release vector-store clients, including persistent SQLite handles.
+            self.vector_store.close()
+
             # Close all database connection pools
             from .db_connection_pool import close_all_pools
 
