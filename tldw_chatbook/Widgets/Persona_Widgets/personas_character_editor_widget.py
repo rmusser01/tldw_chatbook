@@ -583,6 +583,8 @@ class PersonasCharacterEditorWidget(Container):
         """
         enabled = self.expression_character_id() is not None
         hint_text = "" if enabled else "Save the character to add expressions."
+        self.query_one("#personas-char-editor-expr-import", Button).disabled = not enabled
+        self.query_one("#personas-char-editor-expr-export", Button).disabled = not enabled
         for state in EXPRESSION_IMAGE_STATES:
             self.query_one(
                 f"#personas-char-editor-expr-{state}-upload", Button

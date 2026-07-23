@@ -12,13 +12,20 @@ open-editor boilerplate per test.
 """
 
 from io import BytesIO
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
 from PIL import Image
+from textual.app import App, ComposeResult
+from textual.widgets import Button
 
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Utils.paths import get_user_data_dir
+from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget import (
+    PersonasCharacterEditorWidget,
+)
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
     EditCharacterRequested,
 )
@@ -173,3 +180,76 @@ async def test_import_export_buttons_present_for_saved_character(
     app, screen, db, char_id = personas_editor_with_saved_character
     assert screen.query_one("#personas-char-editor-expr-import") is not None
     assert screen.query_one("#personas-char-editor-expr-export") is not None
+
+
+# ===== Review fix 1: _export_expression_set cleans up its temp file on
+# failure (mirrors _dictionary_export_worker's try/except OSError +
+# temp.unlink(missing_ok=True) idiom, which the initial implementation
+# omitted). =====
+
+
+@pytest.mark.asyncio
+async def test_export_expression_set_cleans_up_temp_on_replace_failure(
+    personas_editor_with_saved_character, monkeypatch
+):
+    app, screen, db, char_id = personas_editor_with_saved_character
+
+    def _png():
+        buf = BytesIO()
+        Image.new("RGB", (8, 8)).save(buf, format="PNG")
+        return buf.getvalue()
+
+    db.set_character_expression_image(char_id, "speaking", _png())
+
+    def _boom(self, target):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "replace", _boom)
+
+    # Diff before/after rather than asserting the dir is empty: it's the
+    # shared test-home exports dir, which other test runs may have already
+    # left debris in.
+    exports_dir = get_user_data_dir() / "exports"
+    exports_dir.mkdir(parents=True, exist_ok=True)
+    before = set(exports_dir.glob("*.tmp"))
+
+    with pytest.raises(OSError):
+        await screen._export_expression_set(char_id, "Ada")
+
+    after = set(exports_dir.glob("*.tmp"))
+    assert after - before == set()
+
+
+# ===== Review fix 2: the Import set…/Export set… buttons must be disabled
+# for an unsaved character, same as the per-slot Upload/Clear buttons
+# (_sync_expression_slots_enabled). =====
+
+
+class _UnsavedEditorHost(App):
+    def compose(self) -> ComposeResult:
+        yield PersonasCharacterEditorWidget()
+
+
+@pytest.mark.asyncio
+async def test_import_export_buttons_disabled_for_unsaved_character():
+    app = _UnsavedEditorHost()
+    async with app.run_test() as pilot:
+        ed = app.query_one(PersonasCharacterEditorWidget)
+        ed.load_character({"name": "A"})  # no "id" key -> unsaved
+        await pilot.pause()
+        assert ed.expression_character_id() is None
+        assert ed.query_one("#personas-char-editor-expr-import", Button).disabled is True
+        assert ed.query_one("#personas-char-editor-expr-export", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_import_export_buttons_enabled_for_saved_character(
+    personas_editor_with_saved_character,
+):
+    app, screen, db, char_id = personas_editor_with_saved_character
+    assert (
+        screen.query_one("#personas-char-editor-expr-import", Button).disabled is False
+    )
+    assert (
+        screen.query_one("#personas-char-editor-expr-export", Button).disabled is False
+    )

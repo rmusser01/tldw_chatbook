@@ -4749,8 +4749,12 @@ class PersonasScreen(BaseAppScreen):
         exports_dir.mkdir(parents=True, exist_ok=True)
         target = exports_dir / f"{slug}-expressions-{stamp}.zip"
         temp = exports_dir / f".{slug}-expressions-{stamp}.zip.tmp"
-        temp.write_bytes(blob)
-        temp.replace(target)
+        try:
+            temp.write_bytes(blob)
+            temp.replace(target)
+        except OSError:
+            temp.unlink(missing_ok=True)
+            raise
         return str(target)
 
     # ===== Import / export =====
