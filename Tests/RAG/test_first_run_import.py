@@ -91,3 +91,86 @@ def test_ensure_imported_profile_swallows_save_failure(monkeypatch, tmp_path):
     assert result is None
     assert mgr.get_profile(ac._IMPORTED_ID) is None
     assert ptr["v"] is None  # never activated a profile that failed to save
+
+
+# --- Task 6: wiring into get_shared_rag_service --------------------------
+
+
+@pytest.fixture
+def _reset_first_run_wiring():
+    """Isolate the module-level once-flag + shared-service singleton around
+    each wiring test so they can't leak into each other or into unrelated
+    RAG tests that call get_shared_rag_service()."""
+    import tldw_chatbook.RAG_Search.ingestion_indexing as ii
+    ii._first_run_import_attempted = False
+    ii.reset_shared_rag_service()
+    yield ii
+    ii._first_run_import_attempted = False
+    ii.reset_shared_rag_service()
+
+
+def test_get_shared_rag_service_calls_first_run_import_at_most_once(
+    monkeypatch, _reset_first_run_wiring
+):
+    """Task-6 wiring: get_shared_rag_service must attempt the first-run
+    "Imported settings" capture exactly once per process, no matter how many
+    times it (or callers of it) run.
+
+    The real service is pre-injected via set_shared_rag_service so this
+    exercises get_shared_rag_service's fast path (no real RAGService build),
+    isolating the assertion to the wiring/once-guard behavior itself.
+    """
+    ii = _reset_first_run_wiring
+    import tldw_chatbook.RAG_Search.simplified.active_config as ac
+
+    calls = []
+    monkeypatch.setattr(ac, "ensure_imported_profile", lambda: calls.append(1) or None)
+    # Bypass the test-mode safety skip so the wiring path under test actually runs.
+    monkeypatch.setattr(ii, "_running_under_pytest", lambda: False)
+
+    fake_service = object()
+    ii.set_shared_rag_service(fake_service)
+
+    assert ii.get_shared_rag_service() is fake_service
+    assert ii.get_shared_rag_service() is fake_service
+    assert ii.get_shared_rag_service() is fake_service
+
+    assert len(calls) == 1
+
+
+def test_first_run_import_runs_before_shared_service_lock_is_held(
+    monkeypatch, _reset_first_run_wiring
+):
+    """Deadlock regression guard (task-6 hazard #1): ensure_imported_profile
+    can call set_active_profile -> reset_shared_rag_service, which
+    re-acquires the module-level, non-reentrant _shared_service_lock. If the
+    wiring call were moved inside `with _shared_service_lock:`, this would
+    self-deadlock in production.
+
+    Proven directly (not just "the test completed"): the fake
+    ensure_imported_profile tries to acquire the SAME lock object with a
+    short timeout. If the wiring call happened while the lock was already
+    held, the acquire would time out and this test would fail fast (2s)
+    instead of hanging the suite.
+    """
+    ii = _reset_first_run_wiring
+    import tldw_chatbook.RAG_Search.simplified.active_config as ac
+    import tldw_chatbook.RAG_Search.simplified as simplified_pkg
+
+    acquired = []
+
+    def _fake_ensure_imported_profile():
+        got = ii._shared_service_lock.acquire(timeout=2)
+        if got:
+            ii._shared_service_lock.release()
+        acquired.append(got)
+
+    monkeypatch.setattr(ac, "ensure_imported_profile", _fake_ensure_imported_profile)
+    monkeypatch.setattr(ii, "_running_under_pytest", lambda: False)
+    # Avoid a real (possibly slow/dependency-gated) RAGService build -- this
+    # test is only exercising the lock-acquisition ordering, not construction.
+    monkeypatch.setattr(simplified_pkg, "create_rag_service", lambda **kwargs: object())
+
+    ii.get_shared_rag_service()  # no service pre-injected: exercises the real fast-path+lock flow up to construction
+
+    assert acquired == [True]  # lock was free (not self-deadlocked) when the wiring call ran
