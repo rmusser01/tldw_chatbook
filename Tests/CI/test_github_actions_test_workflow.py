@@ -35,3 +35,13 @@ def test_full_suite_job_is_bounded_and_manual_only() -> None:
     assert "pull_request" not in all_tests_job
     assert "name: Full Test Suite (Manual)" in all_tests_job
     assert "pytest ./Tests/" in all_tests_job
+
+
+def test_ci_exercises_mcp_against_minimum_textual() -> None:
+    workflow = _workflow_text()
+
+    assert "  textual-minimum:" in workflow
+    assert 'pip install "textual==8.0.0"' in workflow
+    assert "Tests/CI/test_textual_runtime_contract.py" in workflow
+    assert "Tests/UI/test_mcp_workbench.py" in workflow
+    assert "Tests/UI/test_mcp_tools_mode.py" in workflow
