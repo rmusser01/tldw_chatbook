@@ -124,6 +124,12 @@ class ConflictError(CharactersRAGDBError):
         return f"{base} ({', '.join(details)})" if details else base
 
 
+# --- Reaction-avatar expression states (P3d) ---
+# ``idle`` is intentionally excluded: it reuses character_cards.image and is
+# never stored in character_expression_images.
+_EXPRESSION_IMAGE_STATE_IDS = frozenset({"thinking", "speaking", "error"})
+
+
 # --- Database Class ---
 class CharactersRAGDB:
     """
@@ -151,7 +157,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 22  # Adds world_book_entries.regex (P2d-regex).
+    _CURRENT_SCHEMA_VERSION = 23  # Adds character_expression_images (P3d reaction avatars).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -2455,6 +2461,27 @@ UPDATE db_schema_version
 """
 
     # Keep this runner SQL aligned with
+    # tldw_chatbook/DB/migrations/chachanotes_v22_to_v23_character_expression_images.sql.
+    _MIGRATE_V22_TO_V23_SQL = """
+CREATE TABLE IF NOT EXISTS character_expression_images(
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  character_id  INTEGER NOT NULL REFERENCES character_cards(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  state_id      TEXT    NOT NULL,
+  image         BLOB    NOT NULL,
+  mime          TEXT,
+  created_at    TEXT    NOT NULL DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ','NOW')),
+  updated_at    TEXT    NOT NULL DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ','NOW')),
+  deleted       INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(character_id, state_id)
+);
+CREATE INDEX IF NOT EXISTS idx_char_expr_images_char ON character_expression_images(character_id);
+UPDATE db_schema_version
+   SET version = 23
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 22;
+"""
+
+    # Keep this runner SQL aligned with
     # tldw_chatbook/DB/migrations/chachanotes_v18_to_v19_message_attachments.sql.
     _MIGRATE_V18_TO_V19_SQL = """
 CREATE TABLE IF NOT EXISTS message_attachments(
@@ -3799,6 +3826,26 @@ UPDATE db_schema_version
             logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V21→V22] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V21 to V22 for '{self._SCHEMA_NAME}': {e}") from e
 
+    def _migrate_from_v22_to_v23(self, conn: sqlite3.Connection):
+        """Migrate schema V22→V23: add the local ``character_expression_images``
+        BLOB table (per-state reaction avatars; idle reuses character_cards.image)."""
+        logger.info(f"Migrating schema from V22 to V23 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            conn.executescript(self._MIGRATE_V22_TO_V23_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V22→V23] Migration script executed.")
+            final_version = self._get_db_version(conn)
+            if final_version != 23:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V22→V23] Migration version check failed. Expected 23, got: {final_version}"
+                )
+            logger.info(f"[{self._SCHEMA_NAME} V22→V23] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V22→V23] Migration failed: {e}")
+            raise SchemaError(f"Migration from V22 to V23 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V22→V23] Unexpected error during migration: {e}")
+            raise SchemaError(f"Unexpected error migrating from V22 to V23 for '{self._SCHEMA_NAME}': {e}") from e
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -3951,6 +3998,7 @@ UPDATE db_schema_version
                     19: self._migrate_from_v19_to_v20,
                     20: self._migrate_from_v20_to_v21,
                     21: self._migrate_from_v21_to_v22,
+                    22: self._migrate_from_v22_to_v23,
                 }
 
                 if current_db_version == 0:
@@ -4399,6 +4447,58 @@ UPDATE db_schema_version
                 f"Database error fetching character card ID {character_id}: {e}"
             )
             raise
+
+    # --- Reaction-avatar expression images (P3d) ---
+
+    def set_character_expression_image(
+        self, character_id: int, state_id: str, image: bytes, mime: str | None = None
+    ) -> None:
+        """Upsert a per-state expression image for a character (state-agnostic
+        store; ``idle`` is never stored here -- it reuses character_cards.image)."""
+        if state_id not in _EXPRESSION_IMAGE_STATE_IDS:
+            raise ValueError(f"Unknown expression state_id: {state_id!r}")
+        if not isinstance(image, (bytes, bytearray)) or not image:
+            raise ValueError("Expression image must be non-empty bytes.")
+        query = """
+            INSERT INTO character_expression_images(character_id, state_id, image, mime, deleted, updated_at)
+            VALUES (?, ?, ?, ?, 0, STRFTIME('%Y-%m-%dT%H:%M:%fZ','NOW'))
+            ON CONFLICT(character_id, state_id) DO UPDATE SET
+                image = excluded.image,
+                mime = excluded.mime,
+                deleted = 0,
+                updated_at = STRFTIME('%Y-%m-%dT%H:%M:%fZ','NOW')
+        """
+        with self.transaction() as conn:
+            conn.execute(query, (character_id, state_id, bytes(image), mime))
+
+    def get_character_expression_image(self, character_id: int, state_id: str) -> bytes | None:
+        """Return the active image bytes for (character, state), or None."""
+        cur = self.get_connection().execute(
+            "SELECT image FROM character_expression_images "
+            "WHERE character_id = ? AND state_id = ? AND deleted = 0",
+            (character_id, state_id),
+        )
+        row = cur.fetchone()
+        return bytes(row[0]) if row is not None and row[0] is not None else None
+
+    def list_character_expression_states(self, character_id: int) -> list[str]:
+        """Return the state_ids with an active image for a character."""
+        cur = self.get_connection().execute(
+            "SELECT state_id FROM character_expression_images "
+            "WHERE character_id = ? AND deleted = 0 ORDER BY state_id",
+            (character_id,),
+        )
+        return [row[0] for row in cur.fetchall()]
+
+    def delete_character_expression_image(self, character_id: int, state_id: str) -> None:
+        """Soft-delete the (character, state) expression image."""
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE character_expression_images SET deleted = 1, "
+                "updated_at = STRFTIME('%Y-%m-%dT%H:%M:%fZ','NOW') "
+                "WHERE character_id = ? AND state_id = ?",
+                (character_id, state_id),
+            )
 
     def get_character_card_by_name(self, name: str) -> Optional[Dict[str, Any]]:
         """
