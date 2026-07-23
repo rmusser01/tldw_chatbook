@@ -122,6 +122,46 @@ def test_unverified_platform_does_not_claim_private(tmp_path, monkeypatch):
     assert result.verified_private is False
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX mutation contract")
+def test_posix_encoding_failure_has_no_filesystem_residue(tmp_path):
+    owned_directory = tmp_path / "application-config"
+    target = owned_directory / "config.toml"
+
+    with pytest.raises(UnicodeEncodeError):
+        create_private_text(
+            target,
+            "\ud800",
+            application_owned_directory=owned_directory,
+        )
+
+    assert not owned_directory.exists()
+    assert not target.exists()
+
+
+def test_windows_encoding_failure_has_no_filesystem_residue(
+    tmp_path,
+    monkeypatch,
+):
+    owned_directory = tmp_path / "application-config"
+    target = owned_directory / "config.toml"
+    monkeypatch.setattr(
+        private_paths,
+        "_posix_guards_available",
+        lambda: False,
+    )
+    monkeypatch.setattr(private_paths, "_WINDOWS_PLATFORM", True)
+
+    with pytest.raises(UnicodeEncodeError):
+        create_private_text(
+            target,
+            "\ud800",
+            application_owned_directory=owned_directory,
+        )
+
+    assert not owned_directory.exists()
+    assert not target.exists()
+
+
 def test_unsupported_posix_guards_fail_closed_without_creating(
     tmp_path,
     monkeypatch,
@@ -143,7 +183,7 @@ def test_unsupported_posix_guards_fail_closed_without_creating(
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX capability contract")
-def test_missing_unlink_dir_fd_capability_fails_before_creation(
+def test_missing_unlink_dir_fd_capability_does_not_block_creation(
     tmp_path,
     monkeypatch,
 ):
@@ -156,16 +196,15 @@ def test_missing_unlink_dir_fd_capability_fails_before_creation(
     monkeypatch.setattr(private_paths.os, "supports_dir_fd", restricted)
     monkeypatch.setattr(private_paths, "_WINDOWS_PLATFORM", False)
 
-    assert private_paths._posix_guards_available() is False
-    with pytest.raises(PrivatePathError) as caught:
-        create_private_text(target, "[chat]\n")
+    assert private_paths._posix_guards_available() is True
+    result = create_private_text(target, "[chat]\n")
 
-    assert caught.value.result.status is PrivatePathStatus.OPERATION_FAILED
-    assert not target.exists()
+    assert result.status is PrivatePathStatus.CREATED_PRIVATE
+    assert target.read_text(encoding="utf-8") == "[chat]\n"
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX postcondition contract")
-def test_create_private_text_removes_failed_postcondition_entry(
+def test_create_private_text_retains_private_entry_on_failed_postcondition(
     tmp_path,
     monkeypatch,
 ):
@@ -181,7 +220,57 @@ def test_create_private_text_removes_failed_postcondition_entry(
 
     assert caught.value.result.status is PrivatePathStatus.OPERATION_FAILED
     assert caught.value.result.reason == "private_file_postcondition_failed"
-    assert not target.exists()
+    assert target.read_text(encoding="utf-8") == "[chat]\n"
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX rollback race contract")
+def test_create_private_text_retains_postcondition_race_replacement(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "config.toml"
+    replacement = tmp_path / "replacement.toml"
+    created_residue = tmp_path / "created-residue.toml"
+    replacement.write_text("replacement", encoding="utf-8")
+
+    def replace_during_postcondition(*args, **kwargs):
+        target.replace(created_residue)
+        replacement.replace(target)
+        return False
+
+    monkeypatch.setattr(
+        private_paths,
+        "_private_file_postcondition_holds",
+        replace_during_postcondition,
+    )
+
+    with pytest.raises(PrivatePathError) as caught:
+        create_private_text(target, "[chat]\n")
+
+    assert caught.value.result.status is PrivatePathStatus.OPERATION_FAILED
+    assert caught.value.result.reason == "private_file_postcondition_failed"
+    assert target.read_text(encoding="utf-8") == "replacement"
+    assert created_residue.read_text(encoding="utf-8") == "[chat]\n"
+    assert stat.S_IMODE(created_residue.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX write contract")
+@pytest.mark.timeout(2, method="signal")
+def test_create_private_text_zero_byte_write_fails_without_spinning(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "config.toml"
+    monkeypatch.setattr(private_paths.os, "write", lambda *args, **kwargs: 0)
+
+    with pytest.raises(PrivatePathError) as caught:
+        create_private_text(target, "[chat]\n")
+
+    assert caught.value.result.status is PrivatePathStatus.OPERATION_FAILED
+    assert caught.value.result.reason == "zero_byte_write"
+    assert target.exists()
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX race contract")

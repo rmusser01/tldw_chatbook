@@ -83,7 +83,7 @@ def lexical_path(path: PathInput) -> Path:
 
 
 def _posix_guards_available() -> bool:
-    required_dir_fd = {os.open, os.stat, os.mkdir, os.unlink}
+    required_dir_fd = {os.open, os.stat, os.mkdir}
     return (
         os.name == "posix"
         and _NOFOLLOW != 0
@@ -324,6 +324,7 @@ def create_private_text(
     """Create a new private text file without replacing an existing entry."""
 
     selected = lexical_path(path)
+    payload = text.encode(encoding)
     if application_owned_directory is not None:
         owned_dir = lexical_path(application_owned_directory)
         if selected.parent != owned_dir:
@@ -336,8 +337,8 @@ def create_private_text(
 
     if not _posix_guards_available():
         if _WINDOWS_PLATFORM:
-            with selected.open("x", encoding=encoding) as handle:
-                handle.write(text)
+            with selected.open("xb") as handle:
+                handle.write(payload)
                 handle.flush()
             return PrivatePathResult(
                 selected,
@@ -357,18 +358,23 @@ def create_private_text(
         missing_leaf_allowed=True,
     )
     file_fd = -1
-    created_stat: os.stat_result | None = None
     try:
         file_fd = _open_leaf_for_create(parent_fd, leaf)
         created_stat = os.fstat(file_fd)
         os.fchmod(file_fd, _PRIVATE_FILE_MODE)
-        payload = text.encode(encoding)
         view = memoryview(payload)
         while view:
             written = os.write(file_fd, view)
+            if written == 0:
+                raise PrivatePathError(
+                    PrivatePathResult(
+                        selected,
+                        PrivatePathStatus.OPERATION_FAILED,
+                        reason="zero_byte_write",
+                    )
+                )
             view = view[written:]
         os.fsync(file_fd)
-        assert created_stat is not None
         if not _private_file_postcondition_holds(
             file_fd,
             parent_fd,
@@ -386,39 +392,8 @@ def create_private_text(
     except FileExistsError:
         raise
     except PrivatePathError:
-        if created_stat is not None:
-            try:
-                current = os.stat(
-                    leaf,
-                    dir_fd=parent_fd,
-                    follow_symlinks=False,
-                )
-                if (current.st_dev, current.st_ino) == (
-                    created_stat.st_dev,
-                    created_stat.st_ino,
-                ):
-                    os.unlink(leaf, dir_fd=parent_fd)
-            except OSError:
-                pass
         raise
     except OSError as exc:
-        # If writing the created inode failed, unlink only when the current
-        # directory entry still identifies created_stat. Never delete a
-        # replacement installed after failure.
-        if created_stat is not None:
-            try:
-                current = os.stat(
-                    leaf,
-                    dir_fd=parent_fd,
-                    follow_symlinks=False,
-                )
-                if (current.st_dev, current.st_ino) == (
-                    created_stat.st_dev,
-                    created_stat.st_ino,
-                ):
-                    os.unlink(leaf, dir_fd=parent_fd)
-            except OSError:
-                pass
         raise PrivatePathError(
             PrivatePathResult(
                 selected,
