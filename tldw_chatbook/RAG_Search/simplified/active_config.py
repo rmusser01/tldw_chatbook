@@ -128,20 +128,28 @@ def ensure_imported_profile() -> Optional[str]:
     already exists). The captured config's SP1 fingerprint matches what SP1 adopts
     the legacy collection under, so the user keeps their index on upgrade.
 
+    Self-healing: existence of the profile is not enough to consider first-run
+    import "done" -- if a previous run persisted the profile but failed before
+    (or otherwise never got to) activating it, that leaves it created-but-never-
+    active forever with no retry. So every call also checks the active pointer
+    and (re)activates the imported profile if it isn't already active.
+
     Exception-safe: any failure here must never block RAG service creation, so
     every error is caught and logged, returning None (as if already imported /
     nothing to do) rather than propagating.
     """
     try:
         mgr = _manager()
-        if mgr.get_profile(_IMPORTED_ID) is not None:
+        existing = mgr.get_profile(_IMPORTED_ID)
+        if existing is not None:
+            if _active_profile_id() != _IMPORTED_ID:
+                set_active_profile(_IMPORTED_ID)  # heal a half-done first run
             return None
         # Snapshot the resolved config (active pointer may name a builtin default today).
         snapshot = resolve_active_rag_config()
-        profile = ProfileConfig(name="Imported settings",
+        profile = ProfileConfig(id=_IMPORTED_ID, name="Imported settings",
                                 description="Captured from your existing RAG configuration on first run.",
                                 profile_type="custom", rag_config=snapshot)
-        profile.id = _IMPORTED_ID
         mgr.save_profile(profile)
         set_active_profile(_IMPORTED_ID)
         return _IMPORTED_ID
