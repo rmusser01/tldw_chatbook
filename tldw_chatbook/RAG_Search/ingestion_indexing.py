@@ -38,6 +38,7 @@ Design notes:
 from __future__ import annotations
 
 import asyncio
+import os
 import queue
 import threading
 import time
@@ -121,6 +122,49 @@ def semantic_indexing_available() -> bool:
 _shared_service: Optional[Any] = None
 _shared_service_lock = threading.Lock()
 
+_first_run_import_attempted = False
+
+
+def _running_under_pytest() -> bool:
+    """True when executing inside a pytest run (monkeypatchable test seam)."""
+    return "PYTEST_CURRENT_TEST" in os.environ
+
+
+def _maybe_run_first_run_import() -> None:
+    """Best-effort first-run "Imported settings" capture.
+
+    Attempted at most once per process, and always BEFORE
+    ``_shared_service_lock`` is acquired: ``ensure_imported_profile`` can call
+    ``set_active_profile``, whose pointer write triggers
+    ``reset_shared_rag_service`` — which re-acquires this same non-reentrant
+    lock. Calling this helper from inside the lock would self-deadlock.
+
+    Skipped under pytest (``PYTEST_CURRENT_TEST``, the codebase-standard test
+    marker also used by ``Metrics/metrics_logger.py`` and
+    ``Utils/optional_deps.py``): ``ConfigProfileManager``'s default
+    ``profiles_dir`` comes from ``get_user_data_dir()``, whose
+    ``BASE_DATA_DIR_CLI`` fallback is a module-level ``Path.home()`` constant
+    baked in at import time — it predates, and is therefore NOT covered by,
+    the per-test ``HOME``/``XDG_*`` monkeypatches in ``Tests/conftest.py``.
+    Without this guard, the first unmocked ``get_shared_rag_service()`` call
+    anywhere in a pytest session would create a real
+    ``imported_settings`` profile under the developer's actual
+    ``~/.local/share/tldw_cli/.../rag_profiles/``. Tests that want to exercise
+    the real function call it directly (see ``Tests/RAG/test_first_run_import.py``).
+    """
+    global _first_run_import_attempted
+    if _first_run_import_attempted:
+        return
+    _first_run_import_attempted = True
+    if _running_under_pytest():
+        return
+    try:
+        from .simplified.active_config import ensure_imported_profile
+
+        ensure_imported_profile()
+    except Exception as e:
+        logger.debug(f"First-run import skipped: {e}")
+
 
 def _configured_profile() -> str:
     """Resolve the RAG service profile from config ([rag.service].profile)."""
@@ -151,6 +195,7 @@ def get_shared_rag_service(profile_name: Optional[str] = None) -> Optional[Any]:
         The shared RAG service, or None when it cannot be created (e.g.
         embeddings dependencies missing).
     """
+    _maybe_run_first_run_import()
     global _shared_service
     if _shared_service is not None:
         return _shared_service
