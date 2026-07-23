@@ -19,6 +19,8 @@ from textual.events import DescendantFocus, Key
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.strip import Strip
+from textual.suggester import SuggestFromList
+from textual.validation import ValidationResult, Validator
 from textual.widgets import (
     Button,
     Checkbox,
@@ -788,6 +790,34 @@ def _textual_web_safe_url_display_index(value: str, index: int) -> int:
     return display_index
 
 
+class ProviderEndpointURLValidator(Validator):
+    """TASK-367: inline endpoint URL validation, run on blur/submit.
+
+    An empty endpoint is allowed (not every provider needs one); a non-empty
+    value must be a well-formed http/https URL. Surfacing this on blur flags a
+    malformed URL (e.g. a dropped scheme character) at the field itself instead
+    of only when the user later saves or runs Discover.
+    """
+
+    def validate(self, value: str) -> ValidationResult:
+        """Validate a provider endpoint URL for the field's blur check.
+
+        Args:
+            value: The endpoint text currently in the field.
+
+        Returns:
+            ``success()`` for an empty value (endpoint optional) or a
+            well-formed http/https URL; otherwise ``failure()`` with a
+            corrective message.
+        """
+        text = str(value or "").strip()
+        if not text or validate_url(text):
+            return self.success()
+        return self.failure(
+            "Enter a full http:// or https:// URL, e.g. http://127.0.0.1:9099/v1."
+        )
+
+
 class SettingsURLInput(Input):
     """Render endpoint URLs without browser autolinking.
 
@@ -993,10 +1023,16 @@ class SettingsScreen(BaseAppScreen):
     manual_sync_rows = reactive((), recompose=True)
     theme_editor_modified = reactive(False, recompose=True)
 
+    #: TASK-366: sentinel copies for the provider Test result row.
+    _PROVIDER_TEST_NOT_RUN_COPY = "Provider test has not run."
+    _PROVIDER_TEST_STALE_COPY = (
+        "Provider settings changed since the last test — re-run Test Provider."
+    )
+
     def __init__(self, app_instance, **kwargs):
         super().__init__(app_instance, "settings", **kwargs)
         self._settings_drafts: dict[SettingsCategoryId, SettingsDraft] = {}
-        self._provider_test_result = "Provider test has not run."
+        self._provider_test_result = self._PROVIDER_TEST_NOT_RUN_COPY
         self._provider_save_result = (
             "Provider settings have not been saved this session."
         )
@@ -4647,6 +4683,8 @@ class SettingsScreen(BaseAppScreen):
         draft.set_value(key, original, value)
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
+        # TASK-366: any edit to a provider field outdates the last Test result.
+        self._mark_provider_test_result_stale()
 
     def _provider_config_entry(
         self, provider: str
@@ -5311,10 +5349,15 @@ class SettingsScreen(BaseAppScreen):
         kind = str(getattr(error, "kind", "") or "")
         if kind == "ambiguous_provider_key":
             return MODEL_DISCOVERY_AMBIGUOUS_PROVIDER_COPY
-        if kind == "unsupported_endpoint":
-            return MODEL_DISCOVERY_UNSUPPORTED_ENDPOINT_COPY
         message = str(getattr(error, "message", "") or "").strip()
         recovery = str(getattr(error, "recovery_hint", "") or "").strip()
+        # TASK-367: surface the discovery client's DISTINCT message for endpoint
+        # problems — a malformed URL and a valid-but-unsupported path now read
+        # differently instead of collapsing into the single generic /v1 copy.
+        if kind in {"unsupported_endpoint", "malformed_endpoint"}:
+            if message or recovery:
+                return redact_secret_text(f"{message} {recovery}".strip())
+            return MODEL_DISCOVERY_UNSUPPORTED_ENDPOINT_COPY
         if recovery:
             return redact_secret_text(f"{message} {recovery}".strip())
         if message:
@@ -5438,6 +5481,7 @@ class SettingsScreen(BaseAppScreen):
                 f"Discovered {len(models)} model(s) from {provider_list_key}."
             )
             self._refresh_model_discovery_widgets()
+            self._refresh_model_field_suggester()  # TASK-369: enable typeahead
             self.app.notify(
                 "Provider model discovery finished.", severity="information"
             )
@@ -5452,6 +5496,66 @@ class SettingsScreen(BaseAppScreen):
     @work(exclusive=True, group="settings-model-discovery")
     async def _save_selected_discovered_provider_models_worker(self) -> None:
         await self._save_selected_discovered_provider_models()
+
+    def _model_field_suggester(self) -> SuggestFromList | None:
+        """TASK-369: typeahead of discovered model ids for the Model field.
+
+        Recognition over recall — while a discovery result is on screen, typing a
+        prefix (e.g. ``gemma``) completes to the full gguf id instead of forcing
+        the user to recall a 56-character filename. Returns ``None`` when there
+        is nothing to suggest.
+        """
+        ids = sorted(
+            {
+                str(getattr(model, "model_id", "") or "").strip()
+                for model in self._model_discovery_models
+                if str(getattr(model, "model_id", "") or "").strip()
+            }
+        )
+        return SuggestFromList(ids, case_sensitive=False) if ids else None
+
+    def _refresh_model_field_suggester(self) -> None:
+        """Point the Model field's suggester at the current discovered models."""
+        try:
+            self.query_one("#settings-model-value", Input).suggester = (
+                self._model_field_suggester()
+            )
+        except (QueryError, AttributeError):
+            pass
+
+    @staticmethod
+    def _model_to_activate_after_save(
+        current_model: object, saved_model_ids: tuple[str, ...]
+    ) -> str:
+        """TASK-369: the Model value to set after saving discovered models.
+
+        An empty field is filled with the first saved model (so readiness can
+        pass without retyping a long gguf name); a field the user already set is
+        left untouched.
+        """
+        current = str(current_model or "").strip()
+        if current:
+            return current
+        for model_id in saved_model_ids:
+            candidate = str(model_id or "").strip()
+            if candidate:
+                return candidate
+        return ""
+
+    def _activate_saved_model_if_field_empty(
+        self, saved_model_ids: tuple[str, ...]
+    ) -> None:
+        """Populate the empty Model field with a just-saved model (TASK-369)."""
+        try:
+            model_input = self.query_one("#settings-model-value", Input)
+        except QueryError:
+            return
+        next_value = self._model_to_activate_after_save(
+            model_input.value, saved_model_ids
+        )
+        if next_value and next_value != model_input.value:
+            # Setting .value fires Input.Changed, which stages the model draft.
+            model_input.value = next_value
 
     async def _save_selected_discovered_provider_models(self) -> None:
         provider = self._provider_widget_value()
@@ -5509,10 +5613,16 @@ class SettingsScreen(BaseAppScreen):
         if status == "saved":
             provider_list_key = getattr(result, "provider_list_key", None)
             self._append_saved_discovered_models(provider_list_key, saved_model_ids)
+            # TASK-369: recognition over recall — offer the saved model for
+            # activation instead of leaving an empty Model field the user must
+            # retype from memory of a name the cleared discovery list no longer
+            # shows.
+            self._activate_saved_model_if_field_empty(saved_model_ids)
             self._model_discovery_status = (
                 message or f"Saved {len(saved_model_ids)} discovered model(s)."
             )
             self._refresh_model_discovery_widgets()
+            self._refresh_model_field_suggester()
             self.app.notify("Discovered models saved.", severity="information")
             return
 
@@ -5661,7 +5771,16 @@ class SettingsScreen(BaseAppScreen):
             Tuple of (redacted detail line, redacted toast summary, passed).
         """
         provider_key = provider_config_key(provider)
-        findings: list[str] = ["Provider test", readiness.user_message]
+        passed = bool(readiness.ready and model)
+        display_name = self._provider_display_name(provider) if provider else "Provider"
+        # TASK-366: lead with ONE verdict consistent with the status line below.
+        # A config-ready provider with no default model is still blocked, so it
+        # must not read "<provider> is ready" next to "status=blocked".
+        if readiness.ready and not model:
+            verdict_message = f"{display_name} is configured, but no default model is set."
+        else:
+            verdict_message = readiness.user_message
+        findings: list[str] = ["Provider test", verdict_message]
 
         if not model:
             findings.append("model=missing")
@@ -5710,11 +5829,9 @@ class SettingsScreen(BaseAppScreen):
             endpoint_summary = f"{endpoint_summary} (draft)"
         findings.append(endpoint_summary)
 
-        passed = bool(readiness.ready and model)
         findings.append(f"status={'ready' if passed else 'blocked'}")
 
         # task-185: the toast must state the outcome, not just "finished".
-        display_name = self._provider_display_name(provider) if provider else "Provider"
         if passed:
             summary = f"Provider test passed: {display_name} is ready; model {model}."
         elif not readiness.ready:
@@ -5801,8 +5918,29 @@ class SettingsScreen(BaseAppScreen):
             self.query_one("#settings-provider-test-result", Static).update(
                 self._provider_test_result
             )
-        except QueryError:
+        except (QueryError, AttributeError):
+            # QueryError: widget not mounted yet. AttributeError: called on an
+            # unmounted screen (no DOM) — the state is still updated for the next
+            # render either way.
             pass
+
+    def _mark_provider_test_result_stale(self) -> None:
+        """Invalidate a prior Test Provider result when provider inputs change.
+
+        TASK-366: a stale ``ready``/``blocked`` verdict that no longer reflects
+        the draft in the form is misleading (the review saw a ``blocked`` line
+        persist after a successful save until Test was re-run). Once any provider
+        field is edited or saved, the last result is replaced with a re-run
+        prompt. A no-op when nothing has run yet or it is already marked stale, so
+        it never clobbers the not-run sentinel or thrashes on every keystroke.
+        """
+        if self._provider_test_result in (
+            self._PROVIDER_TEST_NOT_RUN_COPY,
+            self._PROVIDER_TEST_STALE_COPY,
+        ):
+            return
+        self._provider_test_result = self._PROVIDER_TEST_STALE_COPY
+        self._update_provider_test_result()
 
     def _update_provider_dynamic_widgets(self) -> None:
         try:
@@ -6449,6 +6587,7 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-model-value",
                     classes="settings-compact-input",
                     placeholder="Model name",
+                    suggester=self._model_field_suggester(),
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Endpoint", classes="settings-input-label")
@@ -6457,6 +6596,8 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-provider-endpoint-value",
                     classes="settings-compact-input",
                     placeholder=self._provider_endpoint_placeholder(provider),
+                    validators=[ProviderEndpointURLValidator()],
+                    validate_on={"blur", "submitted"},
                 )
             yield Static("Credentials", classes="destination-section")
             yield Static(
@@ -9738,6 +9879,9 @@ class SettingsScreen(BaseAppScreen):
                 self._set_static_text(
                     "#settings-provider-save-result", self._provider_save_result
                 )
+                # TASK-366: the last Test verdict described the pre-save draft;
+                # don't let a stale ready/blocked line persist after saving.
+                self._mark_provider_test_result_stale()
                 self._sync_provider_credential_widget(provider)
                 self._update_provider_dynamic_widgets()
                 self._update_draft_status_widgets(category)

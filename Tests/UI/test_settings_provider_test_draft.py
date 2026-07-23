@@ -193,6 +193,142 @@ def test_findings_no_draft_has_no_tags():
     assert "http://localhost:8080" in detail
 
 
+def test_findings_avoid_ready_claim_when_blocked_on_missing_model():
+    """TASK-366: a config-ready provider with no default model must not read
+    'is ready' next to 'status=blocked' — the detail leads with one verdict
+    consistent with the final status line, and still explains the block."""
+    app_config = {"api_settings": {"openai": {"api_key": "placeholder-not-a-real-key"}}}
+    screen = _bare_settings_screen(app_config)
+    readiness = get_provider_readiness("OpenAI", app_config, environ={})
+    assert readiness.ready is True  # config-level readiness is fine...
+
+    detail, summary, passed = screen._build_provider_readiness_findings(
+        "OpenAI", "", readiness,
+        draft_endpoint="", dirty=set(),
+    )
+
+    assert passed is False
+    assert "status=blocked" in detail
+    assert "is ready" not in detail  # no contradictory ready claim
+    assert "model" in detail.lower()  # verdict still explains the block
+
+
+def test_findings_keep_ready_verdict_when_passing():
+    """TASK-366 guard: a genuine pass must still read 'ready' / status=ready."""
+    app_config = {"api_settings": {"openai": {"api_key": "placeholder-not-a-real-key"}}}
+    screen = _bare_settings_screen(app_config)
+    readiness = get_provider_readiness("OpenAI", app_config, environ={})
+
+    detail, summary, passed = screen._build_provider_readiness_findings(
+        "OpenAI", "gpt-4o", readiness,
+        draft_endpoint="", dirty=set(),
+    )
+
+    assert passed is True
+    assert "status=ready" in detail
+    assert "ready" in summary.lower()
+
+
+def test_mark_provider_test_result_stale_invalidates_prior_verdict():
+    """TASK-366: editing a provider input must invalidate a prior Test result so
+    a stale 'ready'/'blocked' verdict cannot linger while the form has changed.
+    No-op when nothing has run or it is already stale."""
+    screen = _bare_settings_screen({})
+    screen._provider_test_result = (
+        "Provider test | llama.cpp is ready | model=llama-3 | status=ready"
+    )
+
+    screen._mark_provider_test_result_stale()
+    assert "re-run" in screen._provider_test_result.lower()
+
+    # Idempotent: a second edit does not re-flag or accumulate.
+    stale = screen._provider_test_result
+    screen._mark_provider_test_result_stale()
+    assert screen._provider_test_result == stale
+
+    # No-op on the never-run sentinel.
+    screen._provider_test_result = SettingsScreen._PROVIDER_TEST_NOT_RUN_COPY
+    screen._mark_provider_test_result_stale()
+    assert screen._provider_test_result == SettingsScreen._PROVIDER_TEST_NOT_RUN_COPY
+
+
+def test_discovery_status_distinguishes_malformed_from_unsupported():
+    """TASK-367: the model-discovery status surfaces DISTINCT copy for a
+    malformed URL vs a valid-but-unsupported path, instead of collapsing both
+    into the same generic /v1 message."""
+    from types import SimpleNamespace
+
+    screen = _bare_settings_screen({})
+    malformed = SimpleNamespace(
+        error=SimpleNamespace(
+            kind="malformed_endpoint",
+            message="This endpoint is not a valid URL.",
+            recovery_hint="Enter a full http:// or https:// address.",
+        )
+    )
+    unsupported = SimpleNamespace(
+        error=SimpleNamespace(
+            kind="unsupported_endpoint",
+            message="This endpoint is not an OpenAI-compatible models endpoint.",
+            recovery_hint="Configure an explicit /v1 or /v1/models endpoint.",
+        )
+    )
+
+    malformed_status = screen._discovery_status_from_error(malformed)
+    unsupported_status = screen._discovery_status_from_error(unsupported)
+
+    assert "not a valid URL" in malformed_status
+    assert "not an OpenAI-compatible" in unsupported_status
+    assert malformed_status != unsupported_status
+
+
+def test_provider_endpoint_url_validator_flags_malformed_only():
+    """TASK-367: inline (blur) validation passes an empty or well-formed URL and
+    fails a malformed one, e.g. a dropped scheme character."""
+    from tldw_chatbook.UI.Screens.settings_screen import ProviderEndpointURLValidator
+
+    validator = ProviderEndpointURLValidator()
+    assert validator.validate("").is_valid
+    assert validator.validate("http://127.0.0.1:9099/v1").is_valid
+    assert not validator.validate("ttp://127.0.0.1:9099/v1").is_valid
+
+
+def test_model_to_activate_after_save_prefers_first_saved_when_field_empty():
+    """TASK-369: after saving discovered models, an empty Model field is filled
+    with the first saved model (recognition over recall); a field the user
+    already set is left untouched."""
+    activate = SettingsScreen._model_to_activate_after_save
+    assert activate("", ("gemma-4.gguf", "mistral-7b.gguf")) == "gemma-4.gguf"
+    assert activate("   ", ("gemma-4.gguf",)) == "gemma-4.gguf"
+    assert activate("already-chosen", ("gemma-4.gguf",)) == "already-chosen"
+    assert activate("", ()) == ""
+    assert activate("", ("", "  ", "real.gguf")) == "real.gguf"
+
+
+@pytest.mark.asyncio
+async def test_model_field_suggester_completes_discovered_ids():
+    """TASK-369: the Model field offers discovered model ids for typeahead, so a
+    prefix completes to the full gguf name."""
+    from types import SimpleNamespace
+
+    screen = _bare_settings_screen({})
+    screen._model_discovery_models = (
+        SimpleNamespace(model_id="gemma-4-26B-A4B-it-ultra.Q4_K_M.gguf"),
+        SimpleNamespace(model_id="mistral-7b-instruct.Q5_K_M.gguf"),
+    )
+
+    suggester = screen._model_field_suggester()
+    assert suggester is not None
+    assert (
+        await suggester.get_suggestion("gemma")
+        == "gemma-4-26B-A4B-it-ultra.Q4_K_M.gguf"
+    )
+
+    # No discovered models -> nothing to suggest.
+    screen._model_discovery_models = ()
+    assert screen._model_field_suggester() is None
+
+
 # --- Pilot tests: the clickable Test button path (AC#2/AC#3) + widget wiring ---
 #
 # These drive the real SettingsScreen through the harness
