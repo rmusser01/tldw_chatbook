@@ -1,9 +1,10 @@
 ---
 id: TASK-399.1
 title: A0 Isolate file-note projection storage
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-23 14:22'
+updated_date: '2026-07-23 16:08'
 labels:
   - notes
   - library
@@ -35,3 +36,20 @@ Establish deterministic, owner-protected File Notes storage and bootstrap bounda
 - [ ] #8 Existing corrupt, incompatible, partial, or orphan-indicating databases, sidecars, markers, root/binding rows, and recovery evidence are preserved for diagnosis; no integrity error or apparent unpaired state may trigger a silent rename, replacement, or clean rebuild.
 - [ ] #9 Routine File Notes diagnostics contain neither absolute root paths nor note bodies.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes
+ADR path: backlog/decisions/021-file-backed-notes-disk-authority-and-recovery.md
+Reason: A0 implements the accepted independent storage, schema, runtime-namespace, and startup-failure boundary.
+
+Detailed plan: Docs/superpowers/plans/2026-07-23-file-notes-a0-storage-isolation.md
+
+1. Define pure profile-derived storage/runtime layouts and exact evidence inspection.
+2. Add the version-1 triggerless projection schema and explicit-only owner-protected bootstrap.
+3. Add an app-lifetime, zero-wait, deadline-bounded read-only startup probe.
+4. Wire the one-shot probe only after the existing Database Notes canvas paints.
+5. Prove ChaChaNotes isolation, evidence preservation, and diagnostic privacy.
+6. Run focused and full verification before completing the task.
+<!-- SECTION:PLAN:END -->

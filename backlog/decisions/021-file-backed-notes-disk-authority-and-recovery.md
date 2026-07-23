@@ -1,6 +1,6 @@
 # ADR-021: File-Backed Notes Disk Authority and Recovery Replica
 
-Status: Proposed
+Status: Accepted
 Date: 2026-07-22
 Related Task: [TASK-399](../tasks/task-399%20-%20File-backed-Notes-disk-authoritative-Library-management-and-local-recovery-replica.md)
 Supersedes: N/A

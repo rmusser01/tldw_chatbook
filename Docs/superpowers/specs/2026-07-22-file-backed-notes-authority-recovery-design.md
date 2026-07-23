@@ -1,7 +1,7 @@
 # File-Backed Notes Authority and Recovery Design
 
 Date: 2026-07-22
-Status: Amended after second-pass review; pending final user review before implementation planning
+Status: Approved 2026-07-23; A0 implementation planning complete
 Backlog: [TASK-399](../../../backlog/tasks/task-399%20-%20File-backed-Notes-disk-authoritative-Library-management-and-local-recovery-replica.md)
 ADR: [ADR-021](../../../backlog/decisions/021-file-backed-notes-disk-authority-and-recovery.md)
 
