@@ -126,8 +126,9 @@ without changing it, so no new ADR is needed.
 - Modify `tldw_chatbook/Evals/eval_orchestrator.py`,
   `tldw_chatbook/Event_Handlers/eval_events.py`, `tldw_chatbook/app.py`,
   `tldw_chatbook/Notes/Notes_Library.py`, and the executable example in
-  `tldw_chatbook/DB/Sync_Client.py`: remove or secure DB-parent creation that
-  occurs outside the direct connection owners.
+  `tldw_chatbook/DB/Sync_Client.py`, plus
+  `tldw_chatbook/runtime_policy/server_parity_state.py`: remove or secure
+  DB-parent creation that occurs outside the direct connection owners.
 - Modify all 18 currently direct connection-owner modules:
   `DB/base_db.py`, `DB/ChaChaNotes_DB.py`, `DB/Client_Media_DB_v2.py`,
   `DB/Evals_DB.py`, `DB/Library_Ingest_Jobs_DB.py`, `DB/Prompts_DB.py`,
@@ -351,6 +352,7 @@ without changing it, so no new ADR is needed.
 - Modify: `tldw_chatbook/app.py`
 - Modify: `tldw_chatbook/Notes/Notes_Library.py`
 - Modify: `tldw_chatbook/DB/Sync_Client.py`
+- Modify: `tldw_chatbook/runtime_policy/server_parity_state.py`
 - Create: `Tests/test_database_path_privacy.py`
 - Modify: adjacent config path tests where their old canonical-path assertion
   conflicts with ADR-022.
@@ -387,10 +389,15 @@ without changing it, so no new ADR is needed.
 - [ ] **Step 4: Add red non-owner DB-parent tests**
 
   Cover the evaluation orchestrator and eval event singleton, Prompts app
-  startup, NotesInteropService, and the Sync Client executable example/source
-  contract. Defaults must use an explicitly secured application directory.
-  Custom parents must already exist and remain mode-unchanged. No caller may
-  recursively create an arbitrary selected DB parent with the process umask.
+  startup, NotesInteropService, the Sync Client executable example/source
+  contract, and the server-parity event/sync repository builder. Defaults must
+  use an explicitly secured application directory. Custom parents must already
+  exist and remain mode-unchanged. No caller may recursively create an
+  arbitrary selected DB parent with the process umask. Also pin removal of
+  config-load directory side effects for the unconsumed `DATABASE_URL` and
+  unreachable `USER_DB_BASE_DIR` compatibility branches; environment-selected
+  server paths must not create directories merely because Chatbook loaded
+  settings.
 
 - [ ] **Step 5: Run and confirm failures**
 
@@ -401,7 +408,8 @@ without changing it, so no new ADR is needed.
     Tests/Scheduling/test_scheduled_tasks_db.py \
     Tests/Evals/test_eval_orchestrator.py \
     Tests/Notes/test_notes_library_unit.py \
-    Tests/Media_DB/test_sync_client.py
+    Tests/Media_DB/test_sync_client.py \
+    Tests/RuntimePolicy/test_server_parity_state.py
   ```
 
 - [ ] **Step 6: Implement directory and lexical path policy**
@@ -412,7 +420,11 @@ without changing it, so no new ADR is needed.
   default eval path through the secured user-data helper, make the event
   singleton delegate path selection to the orchestrator, remove the redundant
   Prompts and unused Notes parent creation, and explicitly secure or fail
-  closed in the Sync Client example.
+  closed in the Sync Client example. Preserve the server-parity builder's
+  lexical `data_dir` and require its selected parent to use the same default or
+  custom namespace policy. Remove the stale config-load
+  `DATABASE_URL`/`USER_DB_BASE_DIR` directory-creation branches, while leaving
+  any compatibility values themselves unchanged.
 
 - [ ] **Step 7: Re-run focused config/startup tests**
 
@@ -427,12 +439,14 @@ without changing it, so no new ADR is needed.
     tldw_chatbook/app.py \
     tldw_chatbook/Notes/Notes_Library.py \
     tldw_chatbook/DB/Sync_Client.py \
+    tldw_chatbook/runtime_policy/server_parity_state.py \
     Tests/test_database_path_privacy.py \
     Tests/Library/test_library_collections_config.py \
     Tests/Scheduling/test_scheduled_tasks_db.py \
     Tests/Evals/test_eval_orchestrator.py \
     Tests/Notes/test_notes_library_unit.py \
-    Tests/Media_DB/test_sync_client.py
+    Tests/Media_DB/test_sync_client.py \
+    Tests/RuntimePolicy/test_server_parity_state.py
   git commit -m "fix(security): secure database path selection"
   ```
 
