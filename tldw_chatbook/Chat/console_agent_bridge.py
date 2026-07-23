@@ -863,6 +863,8 @@ class ConsoleAgentBridge:
         supersede_previous: bool = False,
         mcp_provider: Any | None = None,
         review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None,
+        turn_skill_bindings: tuple[str, ...] = (),
+        turn_bundle_block: str = "",
     ) -> RunOutcome:
         # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
         # MCP): rebuilt FRESH for this run whenever there is a skills
@@ -918,6 +920,18 @@ class ConsoleAgentBridge:
                     builtin_names=builtin_names,
                     skill_file_bindings=skill_file_bindings,
                 )
+        # task-5 (skills-fork-reachability): seed this run's own bindings
+        # with the names the CONTROLLER already resolved/spliced for the
+        # triggering turn (a leading `$skill` mention, or embedded mentions
+        # that actually spliced) -- so the primary agent's very first turn
+        # can already read that skill's bundle via skill_file, matching
+        # what a spawned skill child gets for its OWN bundle (Task 4).
+        # `skill_file_bindings` is None whenever there is no skills service
+        # for this run, in which case a non-empty `turn_skill_bindings`
+        # (which can only happen when the controller's own skills-service-
+        # gated substitution ran) has nothing to seed.
+        if skill_file_bindings is not None:
+            skill_file_bindings.authorized.update(turn_skill_bindings)
         # [console] native_tool_calls kill-switch (Task 5): a caller-supplied
         # predicate (chat_screen.py's _console_native_tool_calls_enabled)
         # gates whether this run may use native provider tool-calls at all;
@@ -1045,10 +1059,36 @@ class ConsoleAgentBridge:
             if supersede_previous
             else None
         )
+        # task-5 (skills-fork-reachability): append the turn's pre-rendered
+        # "Bundled files" block (built controller-side as pure string work
+        # over `execute_skill` results already in hand -- Task 4's
+        # byte-identical row format) to the LAST role=="user" entry of THIS
+        # run's OWN copy of `agent_messages` -- the caller's list and
+        # message dict are never mutated. This is the only place the block
+        # is ever inserted into a payload: substitution built it but never
+        # wrote it into messages, and plain (non-agent) sends never call
+        # run_reply at all, so they drop it unused. No-op (the original
+        # `agent_messages` list is used unchanged) when there is no block
+        # to append or no user message to append it to.
+        run_messages = agent_messages
+        if turn_bundle_block:
+            for index in range(len(agent_messages) - 1, -1, -1):
+                message = agent_messages[index]
+                content = message.get("content")
+                if (
+                    message.get("role") == ConsoleMessageRole.USER.value
+                    and isinstance(content, str)
+                ):
+                    run_messages = list(agent_messages)
+                    run_messages[index] = {
+                        **message,
+                        "content": f"{content}\n\n{turn_bundle_block}",
+                    }
+                    break
         try:
             _run_id, outcome = service.run_turn(
                 conversation_id=conversation_id,
-                messages=agent_messages,
+                messages=run_messages,
                 config=config,
                 # execution_key-first (Task 5): the service's capability
                 # check keys off api_endpoint, and execution_key is by
