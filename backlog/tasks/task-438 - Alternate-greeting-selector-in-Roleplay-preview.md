@@ -1,9 +1,10 @@
 ---
 id: TASK-438
 title: Alternate greeting selector in Roleplay preview
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-21 09:38'
+updated_date: '2026-07-23 22:15'
 labels:
   - roleplay
   - ux
