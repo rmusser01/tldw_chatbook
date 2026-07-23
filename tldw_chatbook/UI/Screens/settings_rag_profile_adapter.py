@@ -139,6 +139,11 @@ def clone_profile_as(source_id: str, new_name: str) -> tuple[bool, str]:
         return True, clone.id
     except ValueError as e:
         return False, str(e)
+    except Exception as e:  # manager does raw file I/O (OSError/PermissionError
+        # possible); this runs inside a thread @work with exit_on_error=True,
+        # so an uncaught exception here crashes the whole app -- must never raise.
+        logger.error(f"clone_profile_as({source_id!r}, {new_name!r}) failed: {e}")
+        return False, str(e)
 
 
 def rename_user_profile(profile_id: str, new_name: str) -> tuple[bool, str]:
@@ -148,6 +153,9 @@ def rename_user_profile(profile_id: str, new_name: str) -> tuple[bool, str]:
         return True, ""
     except ValueError as e:
         return False, str(e)
+    except Exception as e:  # see clone_profile_as: raw file I/O, thread @work
+        logger.error(f"rename_user_profile({profile_id!r}, {new_name!r}) failed: {e}")
+        return False, str(e)
 
 
 def delete_user_profile(profile_id: str) -> tuple[bool, str]:
@@ -156,4 +164,7 @@ def delete_user_profile(profile_id: str) -> tuple[bool, str]:
         deleted = _manager().delete_profile(profile_id)
         return (True, "") if deleted else (False, "not-found")
     except ValueError as e:
+        return False, str(e)
+    except Exception as e:  # see clone_profile_as: raw file I/O, thread @work
+        logger.error(f"delete_user_profile({profile_id!r}) failed: {e}")
         return False, str(e)
