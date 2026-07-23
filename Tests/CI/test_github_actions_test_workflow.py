@@ -15,6 +15,19 @@ def _all_tests_job_block() -> str:
     return workflow[start:end]
 
 
+def _textual_minimum_job_block() -> str:
+    workflow = _workflow_text()
+    start = workflow.index("  textual-minimum:")
+    end = workflow.index("  all-tests:", start)
+    return workflow[start:end]
+
+
+def _test_summary_job_block() -> str:
+    workflow = _workflow_text()
+    start = workflow.index("  test-summary:")
+    return workflow[start:]
+
+
 def test_ci_installs_pytest_timeout_for_configured_test_timeouts() -> None:
     requirements = (PROJECT_ROOT / "requirements-test.txt").read_text()
 
@@ -38,10 +51,14 @@ def test_full_suite_job_is_bounded_and_manual_only() -> None:
 
 
 def test_ci_exercises_mcp_against_minimum_textual() -> None:
-    workflow = _workflow_text()
+    textual_minimum = _textual_minimum_job_block()
+    test_summary = _test_summary_job_block()
 
-    assert "  textual-minimum:" in workflow
-    assert 'pip install "textual==8.0.0"' in workflow
-    assert "Tests/CI/test_textual_runtime_contract.py" in workflow
-    assert "Tests/UI/test_mcp_workbench.py" in workflow
-    assert "Tests/UI/test_mcp_tools_mode.py" in workflow
+    assert 'pip install "textual==8.0.0"' in textual_minimum
+    assert "Tests/CI/test_textual_runtime_contract.py" in textual_minimum
+    assert "Tests/UI/test_mcp_workbench.py" in textual_minimum
+    assert "Tests/UI/test_mcp_tools_mode.py" in textual_minimum
+    assert (
+        "needs: [unit-tests, integration-tests, ui-tests, textual-minimum]"
+        in test_summary
+    )

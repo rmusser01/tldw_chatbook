@@ -6,7 +6,7 @@ This file provides comprehensive guidance to Codex (Codex.ai/code) when working 
 
 **tldw_chatbook** - TUI application built with Textual for LLM interactions. Features: conversation management, character chat, notes with file sync, media ingestion, RAG capabilities.
 
-**Tech Stack**: Python ≥3.11, Textual ≥3.3.0, SQLite with FTS5, AGPLv3+  
+**Tech Stack**: Python ≥3.11, Textual 8.x (≥8.0.0,<9), SQLite with FTS5, AGPLv3+
 **Key Dependencies**: httpx, loguru, rich, pydantic, toml, keyring, aiofiles, jinja2
 
 ## Quick Commands

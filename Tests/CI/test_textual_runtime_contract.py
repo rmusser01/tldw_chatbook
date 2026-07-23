@@ -3,10 +3,12 @@ from pathlib import Path
 import tomllib
 
 from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+TEXTUAL_8_X = SpecifierSet(">=8.0.0,<9")
 
 
 def _textual_requirement(entries: Iterable[str]) -> Requirement:
@@ -21,6 +23,7 @@ def _textual_requirement(entries: Iterable[str]) -> Requirement:
 
 
 def _assert_textual_8_only(requirement: Requirement) -> None:
+    assert requirement.specifier == TEXTUAL_8_X
     assert Version("7.999.999") not in requirement.specifier
     assert Version("8.0.0") in requirement.specifier
     assert Version("8.999.999") in requirement.specifier
