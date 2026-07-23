@@ -466,6 +466,34 @@ def clear_encryption_password():
     logger.info("Encryption password cleared from memory")
 
 
+class _ConfigDecryptionResult(NamedTuple):
+    config: Dict[str, Any]
+    succeeded: bool
+
+
+def _decrypt_config_section_with_status(
+    config_data: Dict[str, Any],
+) -> _ConfigDecryptionResult:
+    encryption_config = config_data.get("encryption", {})
+    if not encryption_config.get("enabled", False):
+        return _ConfigDecryptionResult(config_data, True)
+
+    password = get_encryption_password()
+    if not password:
+        logger.warning(
+            "Encryption is enabled but no password is set. Cannot decrypt config."
+        )
+        return _ConfigDecryptionResult(config_data, True)
+
+    try:
+        enc_module = get_encryption_module()
+        decrypted_config = enc_module.decrypt_config(config_data, password)
+        return _ConfigDecryptionResult(decrypted_config, True)
+    except Exception as e:
+        logger.error(f"Failed to decrypt config: {e}")
+        return _ConfigDecryptionResult(config_data, False)
+
+
 def decrypt_config_section(config_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Decrypt encrypted values in the config if encryption is enabled.
@@ -476,28 +504,7 @@ def decrypt_config_section(config_data: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Config dictionary with decrypted values
     """
-    # Check if encryption is enabled
-    encryption_config = config_data.get("encryption", {})
-    if not encryption_config.get("enabled", False):
-        return config_data
-
-    password = get_encryption_password()
-    if not password:
-        logger.warning(
-            "Encryption is enabled but no password is set. Cannot decrypt config."
-        )
-        return config_data
-
-    try:
-        enc_module = get_encryption_module()
-
-        # Decrypt all sections recursively
-        decrypted_config = enc_module.decrypt_config(config_data, password)
-
-        return decrypted_config
-    except Exception as e:
-        logger.error(f"Failed to decrypt config: {e}")
-        return config_data
+    return _decrypt_config_section_with_status(config_data).config
 
 
 def encrypt_api_keys_in_config(
@@ -3530,8 +3537,12 @@ def _load_cli_config_bootstrap(
             user_config_from_file = tomllib.load(opened.stream)
         loaded_config = deep_merge_dicts(loaded_config, user_config_from_file)
         logger.info(f"Successfully loaded and merged CLI config from {config_path}")
-        loaded_config = decrypt_config_section(loaded_config)
-        bootstrap_succeeded = True
+        decryption = _decrypt_config_section_with_status(loaded_config)
+        if decryption.succeeded:
+            loaded_config = decryption.config
+            bootstrap_succeeded = True
+        else:
+            loaded_config = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
     except FileNotFoundError:
         logger.info(
             f"CLI Config file not found at {config_path}. Creating with default values from CONFIG_TOML_CONTENT."

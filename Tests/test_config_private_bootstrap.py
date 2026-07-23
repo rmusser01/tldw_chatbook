@@ -229,6 +229,60 @@ def test_malformed_config_defaults_are_not_cached_by_load_settings(
     assert repaired["chat_defaults"]["temperature"] == 0.17
 
 
+def test_decryptor_failure_returns_uncached_defaults_and_retries(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "config.toml"
+    target.write_text(
+        "[encryption]\nenabled = true\n[chat_defaults]\ntemperature = 0.17\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    monkeypatch.setattr(config_module, "_ENCRYPTION_PASSWORD", "test-password")
+
+    class EncryptionModule:
+        failing = True
+
+        def decrypt_config(self, config_data, password):
+            assert password == "test-password"
+            if self.failing:
+                raise RuntimeError("decrypt failed")
+            return config_data
+
+    encryption_module = EncryptionModule()
+    monkeypatch.setattr(config_module, "_ENCRYPTION_MODULE", encryption_module)
+    _clear_config_cache()
+
+    ciphertext = {
+        "encryption": {"enabled": True},
+        "chat_defaults": {"temperature": 0.17},
+    }
+    assert config_module.decrypt_config_section(ciphertext) is ciphertext
+
+    raw = config_module.load_cli_config_and_ensure_existence(force_reload=True)
+
+    assert raw["chat_defaults"]["temperature"] == 0.6
+    assert config_module._CONFIG_CACHE is None
+    assert config_module._CONFIG_CACHE_SOURCE is None
+
+    normalized = config_module.load_settings(force_reload=True)
+
+    assert normalized["chat_defaults"]["temperature"] == 0.6
+    assert config_module._CONFIG_CACHE is None
+    assert config_module._CONFIG_CACHE_SOURCE is None
+    assert config_module._SETTINGS_CACHE is None
+    assert config_module._SETTINGS_CACHE_SOURCE is None
+
+    encryption_module.failing = False
+
+    repaired = config_module.load_settings()
+
+    assert repaired["chat_defaults"]["temperature"] == 0.17
+    assert config_module._CONFIG_CACHE_SOURCE == target.absolute()
+    assert config_module._SETTINGS_CACHE_SOURCE == target.absolute()
+
+
 def test_effective_path_preserves_symlink_spelling(tmp_path, monkeypatch):
     real = tmp_path / "real"
     real.mkdir()
