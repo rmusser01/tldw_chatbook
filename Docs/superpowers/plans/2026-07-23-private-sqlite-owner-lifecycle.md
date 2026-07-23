@@ -353,6 +353,8 @@ without changing it, so no new ADR is needed.
 - Modify: `tldw_chatbook/Notes/Notes_Library.py`
 - Modify: `tldw_chatbook/DB/Sync_Client.py`
 - Modify: `tldw_chatbook/runtime_policy/server_parity_state.py`
+- Modify: `backlog/docs/sqlite-private-owner-inventory.md`
+- Modify: `Tests/DB/test_private_sqlite_inventory.py`
 - Create: `Tests/test_database_path_privacy.py`
 - Modify: adjacent config path tests where their old canonical-path assertion
   conflicts with ADR-022.
@@ -403,6 +405,7 @@ without changing it, so no new ADR is needed.
 
   ```bash
   python3 -m pytest -q \
+    Tests/DB/test_private_sqlite_inventory.py \
     Tests/test_database_path_privacy.py \
     Tests/Library/test_library_collections_config.py \
     Tests/Scheduling/test_scheduled_tasks_db.py \
@@ -426,6 +429,10 @@ without changing it, so no new ADR is needed.
   `DATABASE_URL`/`USER_DB_BASE_DIR` directory-creation branches, while leaving
   any compatibility values themselves unchanged.
 
+  In the checked inventory, change P01-P03 and P23-P28 from `current` to
+  `migrated` in the same commit. The inventory test must then prove every
+  listed legacy creator-call anchor is absent.
+
 - [ ] **Step 7: Re-run focused config/startup tests**
 
   Expected: all selected tests pass and no custom parent mode changes.
@@ -440,6 +447,8 @@ without changing it, so no new ADR is needed.
     tldw_chatbook/Notes/Notes_Library.py \
     tldw_chatbook/DB/Sync_Client.py \
     tldw_chatbook/runtime_policy/server_parity_state.py \
+    backlog/docs/sqlite-private-owner-inventory.md \
+    Tests/DB/test_private_sqlite_inventory.py \
     Tests/test_database_path_privacy.py \
     Tests/Library/test_library_collections_config.py \
     Tests/Scheduling/test_scheduled_tasks_db.py \
@@ -466,6 +475,7 @@ without changing it, so no new ADR is needed.
 - Modify: `tldw_chatbook/DB/search_history_db.py`
 - Modify: focused tests in `Tests/ChaChaNotesDB/`, `Tests/Media_DB/`,
   `Tests/Prompts_DB/`, `Tests/DB/`, and `Tests/Evals/`.
+- Modify: `backlog/docs/sqlite-private-owner-inventory.md`
 
 - [ ] **Step 1: Add red owner-level privacy regressions**
 
@@ -504,6 +514,10 @@ without changing it, so no new ADR is needed.
   direct `.backup()` calls for Task 6. This ordering ensures the Task 5
   raw-connect guard can pass.
 
+  In the checked inventory, change P06-P15 from `current` to `migrated` in the
+  same commit. The inventory test must prove the removed constructor and
+  backup-parent calls remain absent.
+
 - [ ] **Step 5: Re-run the focused core suites**
 
   Expected: all selected tests pass with no direct `sqlite3.connect` remaining
@@ -512,7 +526,8 @@ without changing it, so no new ADR is needed.
 - [ ] **Step 6: Commit core owners**
 
   ```bash
-  git add tldw_chatbook/DB \
+    git add tldw_chatbook/DB \
+    backlog/docs/sqlite-private-owner-inventory.md \
     Tests/DB Tests/Evals Tests/ChaChaNotesDB Tests/Media_DB Tests/Prompts_DB
   git commit -m "fix(security): migrate core sqlite owners"
   ```
@@ -538,6 +553,7 @@ without changing it, so no new ADR is needed.
 - Modify: `tldw_chatbook/Writing_Interop/local_writing_service.py`
 - Modify/Create: focused owner tests in the corresponding `Tests/` directories.
 - Modify: `Tests/DB/test_private_sqlite_inventory.py`
+- Modify: `backlog/docs/sqlite-private-owner-inventory.md`
 
 - [ ] **Step 1: Add red real-owner tests**
 
@@ -566,6 +582,10 @@ without changing it, so no new ADR is needed.
   helper. Remove arbitrary parent creation. Keep persistent `:memory:`
   connection reuse exactly as before. Change cookie copies to internally built
   read-only URI connections.
+
+  In the checked inventory, change P16-P19 from `current` to `migrated` in the
+  same commit. Keep P20-P22 `current` until the backup slice removes those
+  legacy directory creators.
 
 - [ ] **Step 5: Add the raw connection source guard**
 
@@ -609,7 +629,8 @@ without changing it, so no new ADR is needed.
     tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner.py \
     tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py \
     tldw_chatbook/Writing_Interop \
-    Tests/DB/test_private_sqlite_inventory.py
+    Tests/DB/test_private_sqlite_inventory.py \
+    backlog/docs/sqlite-private-owner-inventory.md
   git commit -m "fix(security): migrate remaining sqlite owners"
   ```
 
@@ -629,6 +650,7 @@ without changing it, so no new ADR is needed.
 - Modify: `tldw_chatbook/UI/Tools_Settings_Window.py`
 - Modify: focused ChaChaNotes, Media, Prompts, and Settings tests.
 - Modify: `Tests/DB/test_private_sqlite_inventory.py`
+- Modify: `backlog/docs/sqlite-private-owner-inventory.md`
 
 **Interfaces:**
 
@@ -690,6 +712,10 @@ without changing it, so no new ADR is needed.
   Preserve the existing public boolean/notification behavior and metadata.
   Do not touch the Tamagotchi JSON backup or unrelated user-export copies.
 
+  In the checked inventory, change P20-P22 from `current` to `migrated` in the
+  same commit. P04-P05 remain `current` because their narrowly documented
+  legacy exclusions are intentionally not migrated.
+
 - [ ] **Step 6: Extend source guards**
 
   Assert `.backup()` occurs only in `DB/private_sqlite.py`. Assert the six
@@ -718,7 +744,8 @@ without changing it, so no new ADR is needed.
     tldw_chatbook/DB/Prompts_DB.py \
     tldw_chatbook/UI/Tools_Settings_Window.py \
     Tests/DB/test_private_sqlite.py \
-    Tests/DB/test_private_sqlite_inventory.py
+    Tests/DB/test_private_sqlite_inventory.py \
+    backlog/docs/sqlite-private-owner-inventory.md
   git commit -m "fix(security): centralize private sqlite backups"
   ```
 
