@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-07-23 04:06'
-updated_date: '2026-07-23 05:07'
+updated_date: '2026-07-23 14:24'
 labels:
   - notes
   - library
@@ -24,17 +24,31 @@ priority: high
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Roll-up tracker for phased first-class management of one existing Git-managed Markdown/text root in Library Notes. Disk and filename/path remain authoritative, Git stays external, isolated main-database tables provide the derived file projection/search, and an independent same-device recovery database protects mutations and selected files/folders. This tracker is never implemented as one PR or moved into implementation as a single unit: after the revised design is approved, planning must create atomic child tasks in A, B1, B2, then B3 dependency order. Linux/Windows writes, additional active roots, folder mutation, file templates/keywords/links/MCP/RAG, mixed bulk export, configurable recovery quotas, general purge, recovery-store relocation/clone, database-pair backup/restore, recovery-only in-place restore, and Git controls are separately approved follow-ups.
+Roll-up tracker for phased first-class management of one existing Git-managed Markdown/text root in Library Notes. Disk and filename/path remain authoritative and Git stays external. A dedicated `file_notes.db` provides the derived plaintext projection/search without changing ChaChaNotes; independent same-device `notes_recovery.db` protects mutations and selected files/folders. This epic is delivered only through its A0-A4, B0, B1a-B1b, B2, and B3a-B3b children. Linux/Windows writes, additional active roots, folder mutation, file templates/keywords/links/MCP/RAG, mixed bulk export, configurable recovery quotas, general purge, recovery-store relocation/clone, paired-store backup/restore, recovery-only in-place restore, and Git controls are separately approved follow-ups.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Milestone A lets users preview and link one ordinary local root read-only on packaged macOS, Linux, and Windows builds; browse/search it through isolated file projection/FTS tables; monitor external changes; preview, exact-copy/export, and hand off to Console; and use deep/5,000-sibling fixtures without altering source bytes or requiring notes_recovery.db.
-- [ ] #2 Filename and relative path remain canonical; opaque frontmatter, BOM, uniform LF/CRLF style, and final-newline facts round-trip exactly while the body is edited separately; mixed/lone-CR normalization requires hash-bound acknowledgment and a verified recovery copy; and existing Database-note schema, triggers, CRUD, search, export, keyword/link, RAG, MCP, and Sync behavior remain unchanged. Zero-root UI/runtime differs only by the specified Link/Recovery actions, and active-root Database selections use the existing Database-note implementation.
-- [ ] #3 Milestone B1 enables debounced hash-checked create, body save, rename, and move only in existing directories on a verified local macOS/APFS root; every mutation is journaled, round-trip verifies required safety bytes before disk mutation, preserves an atomically displaced target, reconciles externally changed bytes near real time, and records only successful Chatbook working-tree changes in the in-memory current-session view.
-- [ ] #4 Milestone B2 confirms against the current exact file, records and verifies a self-contained deletion snapshot/revision and tombstone, deletes the actual file through quarantine, retains its exact bytes for at least 30 days, and provides a working minimal restore before Delete is exposed.
-- [ ] #5 Milestone B3 lets users protect selected files or folder prefixes in independent notes_recovery.db current replicas, coalesce editing checkpoints, use minimal per-note history/restore, and enumerate/verify/exact-export retained content without the main database; main/recovery storage-instance IDs and a shared random recovery-instance UUID must match, and fixed capacity/free-space admission fails closed without silently replacing the store or evicting guaranteed/unresolved content.
-- [ ] #6 FileNotesRepository and the combined read seam keep file projections out of Database-note write paths; remote Sync v2, generic Database-note CRUD/export, MCP, RAG, and keyword/relation triggers cannot mutate them or disk, while pre-activation cooperative legacy passes hold a cross-process shared root-mutation lease and activation holds it exclusively after draining them; passive processes then run no legacy filesystem sync, and every legacy engine entry point also uses the in-process canonical-root gate.
-- [ ] #7 A separate FileNotesWorkbench and file-only FileNotesSessionController deliver the approved collapsible tree/search-replacement editor UX, path breadcrumb, two-line prioritized save/capability status, file actions, wide split layout, narrow Navigator/Editor switching without state loss, explicit source labels, unchanged external Git workflow, and delegation of Database-source selections to the existing LibraryNotesCanvas/handlers.
-- [ ] #8 Capability, mandatory pre-constructor online-backup/additive-migration ordering and Database-only previous-schema fallback, recovery pairing/relocation failure, one-root shared/exclusive OS lease, pinned-root/nested-mount containment, APFS durability, recovery corruption/capacity, conflict/crash, watcher-storm/polling, performance, accessibility/focus, active-root Database parity, and zero-configuration non-degradation tests pass; packaged Linux/Windows tests prove writable actions remain explicitly unavailable until native adapters are separately approved.
+- [ ] #1 Milestone A ships through A0-A4: one ordinary local root can be previewed/linked read-only on packaged macOS, Linux, and Windows; dedicated `file_notes.db` provides scalable path/body projection, triggerless retryable FTS, near-real-time reconciliation, selectable body reading, exact copy/export, Console handoff, and explicit plaintext-cache disclosure without changing source bytes or requiring recovery storage.
+- [ ] #2 Filename/path remain canonical; opaque frontmatter, BOM, newline/final-newline state, and supported security facts round-trip exactly once writing ships. Mixed/lone-CR normalization requires hash-bound acknowledgment and verified prior bytes; files with unsupported ACL/xattr/ownership/flag metadata remain read-only rather than losing it.
+- [ ] #3 B0 checks in a packaged-app APFS capability/version matrix with explicit go/no-go evidence for pinned traversal, exchange/no-replace, metadata handling, file/directory durability, full-fsync, and a named power-cut/reboot result on every supported macOS release before B1 begins.
+- [ ] #4 B1a-B1b enable debounced hash-checked create/save/rename/move only in existing directories on a verified local APFS root. Disk/recovery/projection complete before the journal closes; FTS remains non-blocking; conflicts/startup are durable; and recovery-only enumerate/verify/exact-export works without opening ChaChaNotes or `file_notes.db`.
+- [ ] #5 B2 confirms the exact file, verifies a self-contained deletion snapshot/tombstone, deletes through quarantine, retains exact bytes for at least 30 days, and restores only to the absent original path (or exact-exports when occupied/missing-parent) before Delete is exposed.
+- [ ] #6 B3a-B3b protect selected files/folder prefixes with verified current replicas, fixed capacity/free-space admission, coalesced checkpoints, bounded history, and separately confirmed alternate-path/copy/overwrite restore without silently replacing stores or evicting guaranteed/unresolved content.
+- [ ] #7 ChaChaNotes schema/version/constructors and Database-note backup/restore behavior plus CRUD/search/export/relations/RAG/MCP/Sync remain unchanged; backup labels explicitly exclude linked files and both File Notes databases. A uses only coordinator election; B1 mutation upgrade drains shared legacy holders and acquires exclusive ownership. Repository/source errors remain isolated and no File path can mutate through a Database-note service.
+- [ ] #8 The workbench provides exact source authority labels, full-surface delegation to existing `LibraryNotesCanvas`, leave guards and return targets, source-grouped independent paging, unsafe-draft-first status, deterministic focus transitions, wide/narrow state preservation, zero-root parity, and the fixed scale/performance/crash/security test gates.
 <!-- AC:END -->
+
+## Child Tasks
+
+- [TASK-399.1](task-399.1%20-%20A0-Isolate-file-note-projection-storage.md) — A0 storage/isolation
+- [TASK-399.2](task-399.2%20-%20A1-Preview-and-link-one-read-only-notes-root.md) — A1 discovery/preview
+- [TASK-399.3](task-399.3%20-%20A2-Project-search-and-reconcile-file-notes.md) — A2 projection/search/reconciliation
+- [TASK-399.4](task-399.4%20-%20A3-Add-the-File-Notes-Library-workbench.md) — A3 workbench
+- [TASK-399.5](task-399.5%20-%20A4-Complete-read-only-workflows-and-Database-parity.md) — A4 read-only workflows/parity
+- [TASK-399.6](task-399.6%20-%20B0-Prove-the-macOS-APFS-writable-substrate.md) — B0 APFS proof
+- [TASK-399.7](task-399.7%20-%20B1a-Build-journaled-create-save-and-autosave-foundation.md) — B1a gated write foundation
+- [TASK-399.8](task-399.8%20-%20B1b-Add-move-conflict-resolution-and-startup-recovery.md) — B1b writable completion
+- [TASK-399.9](task-399.9%20-%20B2-Delete-files-with-verified-minimal-restore.md) — B2 delete/minimal restore
+- [TASK-399.10](task-399.10%20-%20B3a-Protect-selected-files-and-folders.md) — B3a protection
+- [TASK-399.11](task-399.11%20-%20B3b-Add-coalesced-history-and-safe-restore-choices.md) — B3b history/expanded restore
