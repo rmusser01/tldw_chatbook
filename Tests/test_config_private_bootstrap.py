@@ -6,6 +6,7 @@ import pytest
 
 from tldw_chatbook import config as config_module
 import tldw_chatbook.Utils.private_paths as private_paths
+from tldw_chatbook.Utils.config_encryption import config_encryption
 from tldw_chatbook.Utils.private_paths import PrivatePathError
 
 
@@ -250,6 +251,9 @@ def test_decryptor_failure_returns_uncached_defaults_and_retries(
                 raise RuntimeError("decrypt failed")
             return config_data
 
+        def decrypt_config_strict(self, config_data, password):
+            return self.decrypt_config(config_data, password)
+
     encryption_module = EncryptionModule()
     monkeypatch.setattr(config_module, "_ENCRYPTION_MODULE", encryption_module)
     _clear_config_cache()
@@ -279,6 +283,66 @@ def test_decryptor_failure_returns_uncached_defaults_and_retries(
     repaired = config_module.load_settings()
 
     assert repaired["chat_defaults"]["temperature"] == 0.17
+    assert config_module._CONFIG_CACHE_SOURCE == target.absolute()
+    assert config_module._SETTINGS_CACHE_SOURCE == target.absolute()
+
+
+def test_corrupt_encrypted_value_fails_bootstrap_without_poisoning_caches(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "config.toml"
+    target.write_text(
+        "[encryption]\nenabled = true\n"
+        '[chat_defaults]\nsystem_prompt = "enc:not-valid-ciphertext"\n'
+        "temperature = 0.17\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    monkeypatch.setattr(config_module, "_ENCRYPTION_PASSWORD", "test-password")
+    monkeypatch.setattr(config_module, "_ENCRYPTION_MODULE", config_encryption)
+    _clear_config_cache()
+
+    failed = config_module._load_cli_config_bootstrap(force_reload=True)
+
+    assert failed.succeeded is False
+    assert failed.config["chat_defaults"]["temperature"] == 0.6
+    assert config_module._CONFIG_CACHE is None
+    assert config_module._CONFIG_CACHE_SOURCE is None
+
+    normalized = config_module.load_settings(force_reload=True)
+
+    assert normalized["chat_defaults"]["temperature"] == 0.6
+    assert config_module._CONFIG_CACHE is None
+    assert config_module._CONFIG_CACHE_SOURCE is None
+    assert config_module._SETTINGS_CACHE is None
+    assert config_module._SETTINGS_CACHE_SOURCE is None
+
+    encrypted_prompt = config_encryption.encrypt_value(
+        "decrypted system prompt",
+        "test-password",
+    )
+    target.write_text(
+        "[encryption]\nenabled = true\n"
+        f'[chat_defaults]\nsystem_prompt = "{encrypted_prompt}"\n'
+        "temperature = 0.17\n",
+        encoding="utf-8",
+    )
+
+    repaired = config_module.load_settings()
+
+    assert repaired["chat_defaults"]["system_prompt"] == "decrypted system prompt"
+    assert repaired["chat_defaults"]["temperature"] == 0.17
+    assert config_module._CONFIG_CACHE is not None
+    assert (
+        config_module._CONFIG_CACHE["chat_defaults"]["system_prompt"]
+        == "decrypted system prompt"
+    )
+    assert config_module._SETTINGS_CACHE is not None
+    assert (
+        config_module._SETTINGS_CACHE["chat_defaults"]["system_prompt"]
+        == "decrypted system prompt"
+    )
     assert config_module._CONFIG_CACHE_SOURCE == target.absolute()
     assert config_module._SETTINGS_CACHE_SOURCE == target.absolute()
 

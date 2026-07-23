@@ -473,6 +473,8 @@ class _ConfigDecryptionResult(NamedTuple):
 
 def _decrypt_config_section_with_status(
     config_data: Dict[str, Any],
+    *,
+    strict: bool = False,
 ) -> _ConfigDecryptionResult:
     encryption_config = config_data.get("encryption", {})
     if not encryption_config.get("enabled", False):
@@ -487,7 +489,10 @@ def _decrypt_config_section_with_status(
 
     try:
         enc_module = get_encryption_module()
-        decrypted_config = enc_module.decrypt_config(config_data, password)
+        if strict:
+            decrypted_config = enc_module.decrypt_config_strict(config_data, password)
+        else:
+            decrypted_config = enc_module.decrypt_config(config_data, password)
         return _ConfigDecryptionResult(decrypted_config, True)
     except Exception as e:
         logger.error(f"Failed to decrypt config: {e}")
@@ -3537,7 +3542,7 @@ def _load_cli_config_bootstrap(
             user_config_from_file = tomllib.load(opened.stream)
         loaded_config = deep_merge_dicts(loaded_config, user_config_from_file)
         logger.info(f"Successfully loaded and merged CLI config from {config_path}")
-        decryption = _decrypt_config_section_with_status(loaded_config)
+        decryption = _decrypt_config_section_with_status(loaded_config, strict=True)
         if decryption.succeeded:
             loaded_config = decryption.config
             bootstrap_succeeded = True
