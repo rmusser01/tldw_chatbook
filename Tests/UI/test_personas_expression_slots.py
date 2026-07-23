@@ -129,3 +129,47 @@ async def test_apply_expression_set_stages_idle_and_writes_three(personas_editor
     assert db.get_character_expression_image(char_id, "speaking") is not None
     assert db.get_character_expression_image(char_id, "idle") is None
     assert set(result.applied) >= {"idle", "speaking", "thinking"}
+
+
+# ===== Roleplay P3d-2 Task 4: import/export expression-set buttons + workers =====
+
+
+@pytest.mark.asyncio
+async def test_import_expression_set_from_zip_path(personas_editor_with_saved_character, tmp_path):
+    app, screen, db, char_id = personas_editor_with_saved_character
+    from tldw_chatbook.Character_Chat.expression_set_io import build_expression_set_zip
+    import io as _io
+    from PIL import Image as _Img
+    def _png(): b=_io.BytesIO(); _Img.new("RGB",(8,8)).save(b,format="PNG"); return b.getvalue()
+    z = tmp_path / "set.zip"
+    z.write_bytes(build_expression_set_zip("Ada", {"idle": _png(), "speaking": _png()}))
+
+    await screen._import_expression_set_from_path(char_id, str(z))
+
+    assert db.get_character_expression_image(char_id, "speaking") is not None
+    from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget import PersonasCharacterEditorWidget
+    assert screen.query_one(PersonasCharacterEditorWidget).current_avatar_bytes() is not None  # idle staged
+
+
+@pytest.mark.asyncio
+async def test_export_expression_set_writes_a_zip(personas_editor_with_saved_character):
+    app, screen, db, char_id = personas_editor_with_saved_character
+    import io as _io
+    from PIL import Image as _Img
+    def _png(): b=_io.BytesIO(); _Img.new("RGB",(8,8)).save(b,format="PNG"); return b.getvalue()
+    db.set_character_expression_image(char_id, "speaking", _png())
+    target = await screen._export_expression_set(char_id, "Ada")
+    assert target is not None
+    from pathlib import Path
+    import zipfile
+    assert zipfile.is_zipfile(Path(target))
+    assert "speaking.png" in zipfile.ZipFile(target).namelist()
+
+
+@pytest.mark.asyncio
+async def test_import_export_buttons_present_for_saved_character(
+    personas_editor_with_saved_character,
+):
+    app, screen, db, char_id = personas_editor_with_saved_character
+    assert screen.query_one("#personas-char-editor-expr-import") is not None
+    assert screen.query_one("#personas-char-editor-expr-export") is not None

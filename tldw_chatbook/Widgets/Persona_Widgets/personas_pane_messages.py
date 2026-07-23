@@ -78,6 +78,14 @@ class CharacterExpressionClearRequested(Message):
         super().__init__()
 
 
+class CharacterExpressionSetImportRequested(Message):
+    """Roleplay P3d-2: import a whole expression set from a .zip."""
+
+
+class CharacterExpressionSetExportRequested(Message):
+    """Roleplay P3d-2: export the character's expression set to a .zip."""
+
+
 class EditPersonaRequested(Message):
     """Edit was requested for the displayed persona profile."""
 
