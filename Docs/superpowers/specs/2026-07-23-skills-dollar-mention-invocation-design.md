@@ -125,12 +125,15 @@ along with `/skill-name` (same hard-remove treatment); running a skill is
 `$name`'s job now. The picker's "submit a skill" affordance (chat_screen's
 skill-pick → submit path) composes a `$name` message instead of `/name`.
 
-### 4. Autocomplete / composer surfaces
+### 4. Discovery surfaces
 
-Typing **`$`** in the Console composer surfaces skill-name completion
-(candidates = user-invocable skills), replacing the `/`-triggered skill
-completion. `/`-completion continues to offer registered *commands* (including
-`/skills`) but no longer offers skill names.
+Verified: there is **no interactive skill-name autocomplete today** — the
+composer's only skill-discovery surfaces are the `/skills` bare list and the
+unknown-command hint. This spec therefore changes copy, not completion
+machinery: the `/skills` transcript listing (`format_skills_list`) renders
+**`$name`** rows, and any copy that teaches the `/name` form updates
+likewise. An interactive `$`-triggered autocomplete popup is an explicit
+**out-of-scope follow-up**, not part of this migration.
 
 ### 5. Where it lives (touched surfaces)
 
@@ -206,6 +209,8 @@ side effects") continues to skip it — the embedded scan lives inside
 ## Out of scope (later specs)
 
 - Embedded args (a delimiter syntax such as `$name{args}`).
+- An interactive `$`-triggered skill-name autocomplete popup (none exists for
+  `/` today either; copy-only discovery in this spec).
 - Fork reference-file reachability (the `skill_file` scoped-read layer — next).
 - Implicit model-driven activation changes (exists via the agent bridge).
 - An escape syntax for a literal `$known-skill-name` in prose.
