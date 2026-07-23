@@ -1,9 +1,10 @@
 ---
 id: TASK-437
 title: Preview conversation uses real speaker names and styles RP action text
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-21 09:38'
+updated_date: '2026-07-23 20:36'
 labels:
   - roleplay
   - ux
