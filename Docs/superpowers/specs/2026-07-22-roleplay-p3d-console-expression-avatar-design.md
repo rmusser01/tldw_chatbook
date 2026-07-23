@@ -69,11 +69,13 @@ A pure, **DB-free** function (reads only in-memory store state), safe to call on
 resolve_console_expression_state(store, session) -> "idle" | "thinking" | "speaking" | "error"
 ```
 
-Derived from the active assistant message's status for the session's conversation:
+Reads the active session's **in-memory** messages via `store.messages_for_session(active_session_id)` (the same in-memory access the controller's `_active_streaming_assistant_message_id` uses — no DB), and maps the active assistant message's status:
 - an assistant message with status `"pending"` → **thinking**
 - status `"streaming"` → **speaking**
 - no in-flight message, last assistant `"complete"` or `"stopped"` → **idle**
 - last assistant `"failed"` → **error** (persists until the next send resets to thinking/idle)
+
+When the `react_character_expressions` sub-gate is off, the function returns **`"idle"`** unconditionally (the P3c avatar still renders; distinct from `show_character_avatar` off, which clears the section entirely).
 
 No emotion classification of reply text. Non-streaming replies may show a brief/absent "speaking" phase — acceptable and documented, not engineered around.
 
@@ -105,7 +107,7 @@ In the P3b character editor (`personas_screen.py`), a small **"Expressions"** ar
 1. User sends → controller creates an empty assistant message (`pending`) and starts the 0.2s `_poll_transcript`.
 2. Poll tick → `_sync_native_console_chat_ui` → refresh → state `thinking` (scope changed) → swap to the thinking image (or idle fallback).
 3. First token → `append_stream_chunk` flips status to `streaming` → next poll tick → state `speaking` → swap to the speaking image.
-4. Completion → message `complete`; the terminal poll tick calls sync **before** stopping the timer → state `idle` → swap back to the idle avatar. (Failure → `failed` → `error` image, persisting until the next send.)
+4. Completion → message `complete`; the idle revert is **race-safe** — state derives from the *message* status (not `run_state`), and multiple `_sync_native_console_chat_ui` calls fire after the message goes terminal (the poll's final tick, which calls sync **before** stopping the timer, plus the explicit send/stop-transition syncs `run_worker(..., group="console-sync")`). The avatar reverts to idle on whichever fires first; it cannot get stuck on "speaking." (Failure → `failed` → `error` image, persisting until the next send.)
 
 ## Error handling / fail-soft
 
