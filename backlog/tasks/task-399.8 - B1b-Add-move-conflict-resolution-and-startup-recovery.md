@@ -21,21 +21,21 @@ priority: high
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Complete safe writable editing with identity-preserving relocation, durable conflict resolution, and deterministic recovery from interrupted rename/move operations through the B1a classifier.
+Roll-up tracker for the three PR-sized B1b children that add identity-preserving relocation, bounded three-sided conflict UX, writable lifecycle barriers, and the all-or-nothing B1 release gate. This tracker does not own a separate implementation PR.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Rename and move preserve UUID only after verified no-replace movement within the same writable root and an existing destination directory.
-- [ ] #2 Existing, normalized-colliding, cross-device, unsafe, or unsupported destinations are rejected without changing either path.
-- [ ] #3 Dirty-buffer external edits, moves, deletion, and late publication races durably retain base, draft, and latest disk sides before navigation releases the buffer.
-- [ ] #4 Compare, save-as-new, keep-editing, overwrite, and discard re-hash disk and cannot erase the only copy of any side.
-- [ ] #5 Startup extends the B1a classifier to interrupted rename/move using both paths, hashes, metadata fingerprints, and owned artifacts, and never blindly replays a filesystem mutation.
-- [ ] #6 Shared-classifier regressions prove create/save and rename/move artifacts are removed only after exact ownership plus durable byte/metadata capture.
-- [ ] #7 Root-offline, recovery/projection-unavailable, and mode-transition states remain actionable while Database Notes stays usable.
-- [ ] #8 Crash tests at every journal/publication/projection/completion boundary preserve canonical disk bytes or a verified draft plus unambiguous Attention.
-- [ ] #9 Folder creation, rename, move, and recursive mutation remain unavailable.
-- [ ] #10 Offline/read-only transitions and disk-change conflicts never hide draft durability state or bypass its resolution/navigation guard.
-- [ ] #11 Writable Unlink crosses the operation barrier and releases both leases while retaining drafts/recovery; Forget is blocked by pending/Attention/unresolved drafts and explicitly purges projection/FTS only after safe resolution.
-- [ ] #12 The B1 release gate exposes create/save/autosave/rename/move only after the full conflict actions, shared startup classifier, and writable Unlink/Forget barriers pass together.
+- [ ] #1 TASK-399.8.1, TASK-399.8.2, and TASK-399.8.3 are complete after the three B1a children and their combined release tests pass on the exact packaged B0 writable matrix.
+- [ ] #2 Same-root rename/move preserves identity through no-replace publication and deterministic shared startup classification without guessing across changed, unsafe, colliding, or cross-device paths.
+- [ ] #3 Focused-clean and dirty external changes retain exact Base, Draft, and Disk sides and provide bounded, cancellable comparison plus save-as-new, keep-editing, overwrite, and discard actions that cannot erase the only copy.
+- [ ] #4 Read/write transitions, controlled lifecycle changes, writable Unlink, detached-root management, and Forget cross the complete operation/editor/lease barrier while Database Notes remains usable.
+- [ ] #5 Folder mutation, recursive mutation, delete, and Git staging/commit/push controls remain unavailable.
+- [ ] #6 Create, save, autosave, rename, move, read/write mode, Unlink, and Forget appear only when the all-or-nothing B1 release gate verifies all six B1 children; every other platform or capability result remains read-only.
 <!-- AC:END -->
+
+## Child Tasks
+
+- [TASK-399.8.1](task-399.8.1%20-%20B1b1-Add-identity-preserving-rename-move-and-recovery-classification.md) — rename/move and classifier expansion
+- [TASK-399.8.2](task-399.8.2%20-%20B1b2-Build-bounded-conflict-comparison-and-resolution-UX.md) — bounded three-sided conflict UX
+- [TASK-399.8.3](task-399.8.3%20-%20B1b3-Integrate-writable-lifecycle-and-open-the-B1-release-gate.md) — lifecycle barriers and release gate

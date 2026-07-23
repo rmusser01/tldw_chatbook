@@ -36,4 +36,5 @@ Provide minimal per-note recovery history without turning every autosave into a 
 - [ ] #7 Checkpoint, expiry, reference-safe collection, occupied destination, alternate path, overwrite race, security restoration, and crash tests pass.
 - [ ] #8 Recovery-only in-place mutation, general purge, guarantee waiver, configurable quota, and paired-store backup/restore remain outside this task.
 - [ ] #9 Forget preserves guaranteed deletion payloads through expiry, removes protection pins, makes ordinary current replicas/checkpoints pruning-eligible, and reports retained logical bytes before confirmation.
+- [ ] #10 Clean app shutdown crosses the save/attention barrier and seals at most one distinct checkpoint for each open protected editing session after its current replica is verified; it does not duplicate an already sealed boundary, while crash recovery continues to rely on the exact current replica and operation journal rather than promising a final checkpoint.
 <!-- AC:END -->

@@ -34,4 +34,5 @@ Maintain an independent exact current replica only for selected files and folder
 - [ ] #6 The fixed 1 GiB live-data cap counts compressed content plus encoded manifests and the 256 MiB post-reservation free-space floor fails closed; guaranteed, current, or unresolved content is never silently evicted.
 - [ ] #7 Disabling protection is confirmed and retains latest current bytes under the retention policy rather than promising immediate space recovery.
 - [ ] #8 Selection, inheritance, external lag, corruption, capacity, free-space, and independent verify/export tests pass.
+- [ ] #9 An explicit per-file protection override follows its UUID across a verified Chatbook or paired-watcher rename/move. Folder-prefix protection remains path-based and is reevaluated at the destination; a Chatbook move previews and confirms any coverage/capacity change before mutation, and no moved file is labeled protected/current until its destination bytes independently verify.
 <!-- AC:END -->

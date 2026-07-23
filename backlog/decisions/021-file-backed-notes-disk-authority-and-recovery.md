@@ -37,8 +37,11 @@ Delivery is split into five independently verifiable milestones:
   scalable tree, external-change monitoring, preview/export, and Console
   handoff. Milestone A has no recovery-database prerequisite.
 - **B0:** executable packaged-app proof of the required native APFS primitives
-  on every supported macOS release. B0 exposes no write action and must pass
-  before B1 begins.
+  on an explicitly declared, finite initial writable macOS support set. B0
+  publishes a versioned machine-readable capability manifest bound to the native
+  mutation-adapter ABI/artifact, exposes no write action, and must pass before
+  B1 begins. The final B1 release candidate reruns the same qualification before
+  writable controls can ship.
 - **B1:** journaled create/save/rename/move in existing directories, initially
   writable only on verified local APFS roots on macOS, plus recovery-only
   enumerate/verify/exact-export without opening ChaChaNotes or `file_notes.db`.
@@ -84,6 +87,11 @@ first writable contract is intentionally narrower than the read-only contract.
   semantics; unsupported containment, replacement, permission, or durability
   primitives fail closed. Nested mounts remain read-only and cross-device
   mutation never falls back to copy/delete.
+- Linking rejects any candidate root whose canonical location has an
+  ancestor/descendant overlap with a File Notes database, recovery store,
+  sidecar or marker, fixed runtime namespace, or any configured application
+  data, database, configuration, cache, or log path. This is an activation
+  boundary for read-only and writable roots, not merely a mutation-time check.
 - A file carrying ACLs, extended attributes, Finder/resource metadata, file
   flags, unusual ownership, alternate streams, or other metadata the platform
   adapter cannot detect and round-trip remains read-only. No mutation may
@@ -103,6 +111,12 @@ first writable contract is intentionally narrower than the read-only contract.
   boundary. Projection failure keeps the operation pending and fails writes
   closed; FTS failure leaves indexing pending but cannot keep the operation open
   or block a later write. Stale FTS generations never surface as current.
+  Every projection/body-cache/FTS batch performs free-space admission before
+  writing and preserves the recovery free-space floor. If an inventory batch
+  cannot safely cache bodies or index content, it publishes metadata/path-only
+  rows with a visible degraded-indexing state; writable admission separately
+  budgets its required journal and projection growth and otherwise fails
+  closed.
 - Confirmed Delete is absent until its verified snapshot and minimal Restore
   are both usable. B2 restores only to an absent original path and offers exact
   export if occupied or if the parent is missing; alternate-path and overwrite
@@ -114,17 +128,21 @@ first writable contract is intentionally narrower than the read-only contract.
 - `file_notes.db` caches relative paths, readable editable bodies, and a token
   index as owner-only plaintext for all indexed files. Protection selection
   controls exact-byte recovery guarantees, not whether content is
-  cached/indexed; activation discloses and estimates these separately.
+  normally cached/indexed; activation discloses and estimates these separately.
+  Low-space metadata-only degradation is the explicit exception.
 - At B1 bootstrap, `file_notes.db` and `notes_recovery.db` persist the same
   storage-instance ID, random recovery-instance UUID, and bootstrap generation.
   Creation requires complete absence of conflicting database/sidecar/marker
-  evidence. A directory-flushed `bootstrap_in_progress` marker binds the
-  proposed storage/UUID/generation; recovery identity commits first,
-  projection-side identity commits second, and the marker is removed only after
-  both verify. Startup may resume only that exact intermediate state. Missing,
-  mismatched, lost, corrupt, or nonmatching orphaned state fails closed,
-  preserves evidence, permits recovery-only export when possible, and never
-  silently initializes or adopts a replacement.
+  evidence. A `bootstrap_in_progress` marker binds the proposed
+  storage/UUID/generation in a versioned, checksummed payload. It is created
+  exclusively, written completely, reread and verified, file-flushed with the
+  adapter's required fsync/full-fsync primitive, and followed by a parent
+  directory fsync before either database identity commit. Recovery identity
+  commits first, projection-side identity commits second, and the marker is
+  removed only after both verify. Startup may resume only that exact
+  intermediate state. Missing, mismatched, lost, corrupt, or nonmatching
+  orphaned state fails closed, preserves evidence, permits recovery-only export
+  when possible, and never silently initializes or adopts a replacement.
 - Recovery uses a fixed 1 GiB live-data cap covering compressed content and
   encoded manifests, plus a fixed 256 MiB post-reservation free-space floor in
   the initial release. Guaranteed or unresolved content is never silently
@@ -132,10 +150,16 @@ first writable contract is intentionally narrower than the read-only contract.
 - `watchdog` is a declared core dependency for near-real-time packaged
   monitoring. A visible bounded polling fallback feeds the same hash-based
   reconciliation path; watcher events and mtimes never decide authority.
-- B0 must retain a checked-in packaged-app APFS capability/version matrix with
-  explicit go/no-go evidence, including the named power-cut/reboot method and
-  observed durability result, for every supported macOS release before any B1
-  write control or implementation proceeds.
+- B0 defines a finite writable macOS support set independent of the
+  application's broader macOS support floor. It retains a checked-in
+  packaged-app APFS capability/version matrix with explicit go/no-go evidence,
+  including the named power-cut/reboot method and observed durability result,
+  and emits the same approval as a versioned machine-readable manifest consumed
+  by B1. Runtime admission matches the exact OS/filesystem entry and packaged
+  native mutation-adapter ABI/artifact hash; the tested application commit is
+  retained as audit provenance rather than an equality gate. An absent or
+  mismatched combination fails to read-only, and the final B1 release candidate
+  must requalify its exact packaged adapter before the release gate opens.
 - A coordinator-election lease permits one active root and one
   monitor/reconciler without fencing legacy filesystem sync. A read-only A link
   rejects configured overlap but never acquires the mutation lease or pauses
@@ -143,8 +167,11 @@ first writable contract is intentionally narrower than the read-only contract.
 - Beginning in B1, a `LegacyRootOwnershipGate` fences every legacy mutation
   entry point. Cooperative legacy passes hold a cross-process mutation lease
   shared for their full lifetime; read/write upgrade drains them and holds it
-  exclusively. Passive processes run no legacy filesystem sync only while that
-  exclusive lease is held; the owner may admit only non-overlapping work.
+  exclusively. While File Notes holds that exclusive ownership, every legacy
+  filesystem pass is blocked or deferred, including nominally non-overlapping
+  work. Relaxing this rule requires a later contract backed by hardened,
+  containment-safe legacy traversal; path-prefix separation alone is
+  insufficient.
 - Any startup classification that changes journal, projection, or filesystem
   state requires both coordinator election and exclusive mutation ownership.
   Passive processes may inspect and report incomplete operations but never
@@ -163,16 +190,30 @@ first writable contract is intentionally narrower than the read-only contract.
   Database-source selections switch the whole Notes content surface to the
   existing `LibraryNotesCanvas`; separate host-File and Database-editor Back
   targets preserve the delegated Database list while still restoring the exact
-  File navigator state after both editors' leave guards succeed.
+  File navigator state after both editors' leave guards succeed. A serializable
+  in-process File session snapshot also restores that state after the Library
+  screen is reconstructed or the user leaves and returns to Library.
 - Milestone A uses a selectable read-only body reader with no dirty/autosave
   state. Combined search has independent pageable source groups and
   source-scoped errors. Unsafe draft status outranks root read-only/offline
   status, and focus always moves to a mounted visible target.
+- A measured, versioned interactive body-size ceiling protects the Textual UI
+  responsiveness budget. Files above the ceiling use a bounded read/export-only
+  reader and never mount the full editable text widget or enter autosave until
+  a separately verified large-file editor exists.
+- Controlled shutdown closes File Notes mutation admission and crosses a File
+  operation barrier before generic worker cancellation. Every dirty File draft
+  must either complete a verified save or be durably represented as unresolved
+  recovery/Attention state; shutdown cannot silently discard it.
 - `Changed this session` is process-lifetime memory state. Only pending and
   Attention operations are durable across restart.
-- Unlink retains and discloses plaintext projection/FTS until Forget. Forget
-  explicitly deletes triggerless FTS rows with the projections, but cannot
-  discard pending/Attention state or unexpired guaranteed recovery.
+- Unlink retains and discloses plaintext projection/FTS until Forget. The
+  zero-root File route lists detached roots, retained size, and Relink/Forget
+  actions even when an original folder is unavailable. Forget explicitly
+  deletes triggerless FTS rows with the projections, but cannot discard
+  pending/Attention state or unexpired guaranteed recovery and is disclosed as
+  logical removal, not secure erasure of SQLite pages, filesystem snapshots,
+  or backups.
 - Folder mutation, file templates, file keywords/links, file MCP/RAG, mixed
   bulk export, Git controls, general recovery purge, configurable quotas,
   additional writable platforms, and additional active roots are deferred.
@@ -217,8 +258,11 @@ first writable contract is intentionally narrower than the read-only contract.
 - Opaque frontmatter is preserved but not structurally edited.
 - Both File Notes databases consume local plaintext disk; all readable indexed
   bodies are cached even when exact recovery protection is off. Neither protects
-  against loss of the device.
-- Linux and Windows remain read-only in the first writable delivery.
+  against loss of the device. Under storage pressure, new body-cache/FTS
+  publication degrades to metadata/path-only rows rather than consuming the
+  recovery floor.
+- Linux, Windows, and macOS combinations outside B0's finite writable manifest
+  remain read-only in the first writable delivery.
 - One active root and one cooperative current installation are support limits,
   not claims of multi-profile coordination.
 - Changing the configured main-database path or user-data directory selects a

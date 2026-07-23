@@ -26,7 +26,7 @@ Let users delete an actual file only when Chatbook can guarantee its exact recov
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Delete confirmation binds root, exact path, UUID, and freshly verified raw hash; a stale confirmation changes nothing.
+- [ ] #1 Delete confirmation displays the full selectable, wrapped, untruncated root label and relative path as literal text, states that disk is authoritative and the actual file will be removed, and names the guaranteed recovery expiry; its token binds the canonical root identity, path, UUID, expiry, and freshly verified raw hash, and a stale confirmation changes nothing.
 - [ ] #2 Before mutation, a self-contained deletion revision and tombstone commit, round-trip verify, and retain exact bytes plus the supported metadata manifest for at least 30 days.
 - [ ] #3 Quarantine preserves a late-changing target; only the confirmed exact file is unlinked and Git immediately sees the deletion.
 - [ ] #4 Delete remains unavailable unless recovery health, capacity, supported-metadata round-trip, quarantine, and restore prerequisites pass; unsupported metadata keeps the file read-only.

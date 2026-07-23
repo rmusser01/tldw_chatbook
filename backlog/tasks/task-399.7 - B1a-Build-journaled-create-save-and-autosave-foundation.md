@@ -22,21 +22,21 @@ priority: high
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Build the gated create/save/autosave substrate for verified APFS-backed notes while preserving every version that a future Chatbook write could otherwise displace.
+Roll-up tracker for the three PR-sized B1a children that establish writable ownership and recovery pairing, implement journaled create/save publication, and integrate autosave, startup classification, recovery-only access, and controlled shutdown. This tracker does not own a separate implementation PR.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Read/write upgrade acquires exclusive mutation ownership only after draining cooperative shared legacy passes; passive processes then start neither file mutation/reconciliation nor legacy filesystem sync.
-- [ ] #2 First writable activation pairs owner-protected notes_recovery.db through an exact durable UUID/generation marker, recovery-first identity commit, projection-side commit, verification, and marker removal; only that exact crash state resumes, while orphaned, missing, corrupt, or mismatched evidence fails closed.
-- [ ] #3 Blank create in an existing directory and body save/autosave use fresh hashes, durable intent, verified safety bytes, atomic displaced-target preservation, and complete-last ordering.
-- [ ] #4 Frontmatter, BOM, uniform newline/final-newline state, and versioned supported-security metadata manifests/fingerprints round-trip; every operation persists expected/intended metadata baselines for crash classification, and mixed/lone-CR normalization requires hash-bound acknowledgment plus verified prior bytes.
-- [ ] #5 Projection commit precedes journal completion; later FTS failure leaves indexing pending, permits later writes, and reports search index updating.
-- [ ] #6 A conflict never overwrites observed disk bytes and durably retains the draft and every displaced side.
-- [ ] #7 On startup, only the elected owner holding exclusive mutation ownership classifies interrupted create/save operations and cleans exact-owned artifacts after durable byte/metadata capture; passive processes inspect/report only.
-- [ ] #8 Debounce, 30-second maximum persistence, editor-generation races, no-op saves, exact draft-export fallback, and capacity reservation covering compressed content plus encoded manifests pass fault tests; manifests over 64 KiB remain read-only.
-- [ ] #9 Recovery-only access enumerates, verifies, and exact-exports retained content without opening ChaChaNotes or file_notes.db; Recovery items (N) appears only for genuine retained evidence.
-- [ ] #10 Changed this session records only successful current-process working-tree changes; Delete, rename, and move remain unavailable.
-- [ ] #11 Unsafe or retained drafts and save failures outrank generic root state, name Retry/Export actions, and veto navigation that would discard the only in-memory copy.
-- [ ] #12 The writable mode transition and all create/save/autosave controls remain hidden until the complete B1 release gate supplies conflict resolution, relocation recovery, and Unlink/Forget barriers.
+- [ ] #1 TASK-399.7.1, TASK-399.7.2, and TASK-399.7.3 are complete and their combined release tests pass on the exact packaged B0 writable matrix.
+- [ ] #2 Recovery pairing, installed-manifest admission, owner-only storage, exclusive mutation ownership, complete legacy-pass blocking, and fixed recovery capacity fail closed before any mutation is admitted.
+- [ ] #3 Blank create and body save preserve exact supported file representation and displaced content through fresh hashes, durable intent, verified safety bytes, path-safe native publication, projection completion, and non-blocking retryable FTS.
+- [ ] #4 Autosave, startup classification, recovery-only enumerate/verify/exact-export, coalesced session changes, navigation guards, and the controlled-shutdown barrier retain the only copy of every live draft.
+- [ ] #5 Rename, move, delete, folder mutation, and public writable controls remain unavailable throughout B1a.
+- [ ] #6 The B1 release gate remains default-off until all three B1a and all three B1b children pass together.
 <!-- AC:END -->
+
+## Child Tasks
+
+- [TASK-399.7.1](task-399.7.1%20-%20B1a1-Pair-recovery-storage-and-acquire-writable-ownership.md) — recovery pairing, capability admission, leases, and capacity
+- [TASK-399.7.2](task-399.7.2%20-%20B1a2-Implement-journaled-create-and-save-publication.md) — journaled create/save mutation core
+- [TASK-399.7.3](task-399.7.3%20-%20B1a3-Integrate-autosave-recovery-classification-and-controlled-shutdown.md) — autosave, recovery classification/access, and shutdown
