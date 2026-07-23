@@ -582,7 +582,7 @@ class PersonasScreen(BaseAppScreen):
         with Vertical(id="personas-shell"):
             yield DestinationHeader(
                 WorkbenchHeaderState(
-                    title="Roleplay",
+                    title="Roleplay & Chat Dictionaries",
                     subtitle=self._header_subtitle_text(),
                     status="ready",
                 ),
@@ -1700,7 +1700,7 @@ class PersonasScreen(BaseAppScreen):
             return
         header.sync_state(
             WorkbenchHeaderState(
-                title="Roleplay",
+                title="Roleplay & Chat Dictionaries",
                 subtitle=self._header_subtitle_text(),
                 status="ready",
             )

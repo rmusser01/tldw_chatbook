@@ -159,6 +159,6 @@ async def test_chat_tab_first_run_exposes_readiness_and_context_sources(
         assert "No messages yet. Send a prompt or attach context." in text
         assert "Provider setup required before sending." in text
         assert (
-            "Context lanes: Library, Search/RAG, Artifacts, Personas, Skills." in text
+            "Context lanes: Library, Search/RAG, Artifacts, RP&CD, Skills." in text
         )
         assert "Chat is the" not in text

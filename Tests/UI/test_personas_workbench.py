@@ -4704,7 +4704,7 @@ class TestDirtyTracking:
             # now that the save cleared it).
             assert str(subtitle.renderable) == "Editing Detective Sam"
             title = screen.query_one("#personas-header #workbench-header-title", Static)
-            assert str(title.renderable) == "Roleplay"
+            assert str(title.renderable) == "Roleplay & Chat Dictionaries"
 
     async def test_active_row_gets_unsaved_badge(
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
