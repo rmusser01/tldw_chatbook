@@ -4,6 +4,7 @@ import copy
 from dataclasses import replace
 from datetime import UTC, datetime
 import gc
+import hmac
 import json
 import sqlite3
 import traceback
@@ -1681,7 +1682,7 @@ def test_cache_reuse_adds_an_idempotent_owner_without_cloning_trace(
     ).fetchone()
     owners = connection.execute(
         """
-        SELECT message_id, trace_id, idempotency_key
+        SELECT message_id, trace_id, body_fingerprint, idempotency_key
         FROM rag_message_trace_owners
         ORDER BY message_id
         """
@@ -1692,6 +1693,162 @@ def test_cache_reuse_adds_an_idempotent_owner_without_cloning_trace(
         ("message-1", "trace-1"),
     ]
     assert owners[0]["idempotency_key"] != owners[1]["idempotency_key"]
+    selected_hmac = connection.execute(
+        """
+        SELECT payload.body_integrity_hmac
+        FROM rag_citation_traces AS trace
+        JOIN rag_answer_attempt_payloads AS payload
+          ON payload.profile_id = trace.profile_id
+         AND payload.trace_id = trace.trace_id
+         AND payload.attempt_id = trace.selected_attempt_id
+        WHERE trace.trace_id = 'trace-1'
+        """
+    ).fetchone()[0]
+    assert hmac.compare_digest(owners[0]["body_fingerprint"], selected_hmac)
+
+
+@pytest.mark.parametrize(
+    ("selected_payload_state", "cached_body", "reason"),
+    [
+        ("available", "Different cached answer.", "cache_selected_answer_mismatch"),
+        ("purged", "Answer [S1].", "cache_selected_answer_unavailable"),
+        ("redacted", "Answer [S1].", "cache_selected_answer_unavailable"),
+        ("missing", "Answer [S1].", "cache_selected_answer_unavailable"),
+        ("tampered", "Answer [S1].", "cache_selected_answer_integrity_mismatch"),
+    ],
+)
+def test_cache_reuse_requires_the_exact_available_selected_answer(
+    db: CharactersRAGDB,
+    selected_payload_state: str,
+    cached_body: str,
+    reason: str,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    identity = _identity(db)
+    namespace = local_trace_namespace(identity, trace_id="trace-1")
+    conversation_id = _conversation(db)
+    db.add_message(
+        {
+            "id": "untrusted-cache-message",
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": cached_body,
+            "client_id": db.client_id,
+        }
+    )
+    connection = db.get_connection()
+    if selected_payload_state == "missing":
+        with db.transaction() as cursor:
+            cursor.execute(
+                "DELETE FROM rag_answer_attempt_payloads WHERE trace_id = 'trace-1'"
+            )
+    elif selected_payload_state == "purged":
+        with db.transaction() as cursor:
+            cursor.execute(
+                """
+                UPDATE rag_answer_attempt_payloads
+                SET redaction_state = 'purged', answer_body = NULL,
+                    body_integrity_hmac = NULL, purged_at = ?
+                WHERE trace_id = 'trace-1'
+                """,
+                (NOW.isoformat(),),
+            )
+    elif selected_payload_state == "redacted":
+        connection.execute("PRAGMA ignore_check_constraints = ON")
+        try:
+            with db.transaction() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE rag_answer_attempt_payloads
+                    SET redaction_state = 'redacted', answer_body = NULL,
+                        body_integrity_hmac = NULL
+                    WHERE trace_id = 'trace-1'
+                    """
+                )
+        finally:
+            connection.execute("PRAGMA ignore_check_constraints = OFF")
+    elif selected_payload_state == "tampered":
+        with db.transaction() as cursor:
+            cursor.execute(
+                """
+                UPDATE rag_answer_attempt_payloads
+                SET body_integrity_hmac = 'tampered-cache-answer-hmac'
+                WHERE trace_id = 'trace-1'
+                """
+            )
+
+    with pytest.raises(CitationPersistenceUnavailable, match=reason):
+        with db.transaction() as cursor:
+            repository.link_cache_message_owner(
+                cursor,
+                namespace,
+                message_id="untrusted-cache-message",
+                message_revision=1,
+                message_body=cached_body,
+            )
+
+    assert (
+        connection.execute(
+            """
+            SELECT count(*) FROM rag_message_trace_owners
+            WHERE message_id = 'untrusted-cache-message'
+            """
+        ).fetchone()[0]
+        == 0
+    )
+
+
+@pytest.mark.parametrize(
+    ("message_revision", "message_body"),
+    [
+        (2, "Answer [S1]."),
+        (1, "Different caller body."),
+    ],
+)
+def test_cache_reuse_requires_the_exact_persisted_message_revision_and_body(
+    db: CharactersRAGDB,
+    message_revision: int,
+    message_body: str,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    identity = _identity(db)
+    conversation_id = _conversation(db)
+    db.add_message(
+        {
+            "id": "cache-message-row-mismatch",
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "Answer [S1].",
+            "client_id": db.client_id,
+        }
+    )
+
+    with pytest.raises(
+        CitationPersistenceUnavailable,
+        match="cache_owner_identity_conflict",
+    ):
+        with db.transaction() as cursor:
+            repository.link_cache_message_owner(
+                cursor,
+                local_trace_namespace(identity, trace_id="trace-1"),
+                message_id="cache-message-row-mismatch",
+                message_revision=message_revision,
+                message_body=message_body,
+            )
+
+    assert (
+        db.get_connection()
+        .execute(
+            """
+            SELECT count(*) FROM rag_message_trace_owners
+            WHERE message_id = 'cache-message-row-mismatch'
+            """
+        )
+        .fetchone()[0]
+        == 0
+    )
 
 
 def test_active_lookup_verifies_body_and_preserves_historical_summary_on_mismatch(
@@ -1860,6 +2017,119 @@ def test_active_result_requires_repository_issuance_and_exact_object_verificatio
 
     object.__setattr__(active, "state", ActiveCitationTraceState.UNVERIFIABLE)
     assert repository.verify_active_trace_result(active) is False
+    assert id(active) not in repository._issued_active_results
+
+
+@pytest.mark.parametrize(
+    "state_change",
+    (
+        "message_edit",
+        "message_delete",
+        "owner_body_mismatch",
+        "owner_delete",
+        "trace_visibility",
+    ),
+)
+def test_active_result_replay_fails_after_persisted_state_changes(
+    db: CharactersRAGDB,
+    state_change: str,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    active = repository.get_active_trace_for_message(
+        "message-1",
+        1,
+        "Answer [S1].",
+        TEST_FINGERPRINT_CODEC,
+    )
+    assert repository.verify_active_trace_result(active) is True
+
+    if state_change == "message_edit":
+        message = db.get_message_by_id("message-1")
+        assert message is not None
+        db.update_message(
+            "message-1",
+            {"content": "Edited answer [S1]."},
+            expected_version=message["version"],
+        )
+    elif state_change == "message_delete":
+        db.soft_delete_message("message-1", expected_version=1)
+    elif state_change == "owner_body_mismatch":
+        with db.transaction() as cursor:
+            cursor.execute(
+                """
+                UPDATE rag_message_trace_owners
+                SET state = 'body_mismatch'
+                WHERE message_id = 'message-1'
+                """
+            )
+    elif state_change == "owner_delete":
+        with db.transaction() as cursor:
+            cursor.execute(
+                "DELETE FROM rag_message_trace_owners WHERE message_id = 'message-1'"
+            )
+    else:
+        with db.transaction() as cursor:
+            cursor.execute(
+                """
+                UPDATE rag_citation_traces
+                SET visibility_state = 'migrating'
+                WHERE trace_id = 'trace-1'
+                """
+            )
+
+    assert repository.verify_active_trace_result(active) is False
+    assert id(active) not in repository._issued_active_results
+
+
+def test_active_result_replay_fails_after_identity_drift(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    active = repository.get_active_trace_for_message(
+        "message-1",
+        1,
+        "Answer [S1].",
+        TEST_FINGERPRINT_CODEC,
+    )
+    assert repository.verify_active_trace_result(active) is True
+    with db.transaction() as cursor:
+        cursor.execute(
+            """
+            UPDATE rag_identity_context
+            SET local_authority_id = 'replacement-authority'
+            WHERE context_name = 'default'
+            """
+        )
+
+    assert repository.verify_active_trace_result(active) is False
+    assert id(active) not in repository._issued_active_results
+
+
+def test_active_result_is_not_transferable_and_registration_expires_with_gc(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    other_repository = _repository(db)
+    _persist(db, repository)
+    active = repository.get_active_trace_for_message(
+        "message-1",
+        1,
+        "Answer [S1].",
+        TEST_FINGERPRINT_CODEC,
+    )
+    active_id = id(active)
+    active_ref = weakref.ref(active)
+
+    assert other_repository.verify_active_trace_result(active) is False
+    assert repository.verify_active_trace_result(active) is True
+
+    del active
+    gc.collect()
+
+    assert active_ref() is None
+    assert active_id not in repository._issued_active_results
 
 
 def test_active_lookup_rejects_stale_caller_body_that_is_not_the_message_row(

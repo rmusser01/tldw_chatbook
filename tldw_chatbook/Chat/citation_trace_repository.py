@@ -142,6 +142,17 @@ class ActiveCitationTraceResult:
         raise TypeError("active citation results cannot be copied")
 
 
+@dataclass(frozen=True, slots=True)
+class _ActiveTraceProof:
+    """Safe opaque owner identity retained outside the public capability."""
+
+    identity_context: LocalCitationIdentityContext
+    message_id: str
+    message_revision: int
+    trace_id: str
+    body_fingerprint: str
+
+
 _SqlValue = str | int | None
 _PreparedRow = tuple[_SqlValue, ...]
 
@@ -268,7 +279,11 @@ class CitationTraceRepository:
         ] = {}
         self._issued_active_results: dict[
             int,
-            tuple[weakref.ReferenceType[ActiveCitationTraceResult], bytes],
+            tuple[
+                weakref.ReferenceType[ActiveCitationTraceResult],
+                bytes,
+                _ActiveTraceProof,
+            ],
         ] = {}
 
     @classmethod
@@ -837,7 +852,49 @@ class CitationTraceRepository:
             or message["content"] != message_body
         ):
             raise CitationPersistenceUnavailable("cache_owner_identity_conflict")
+        body_fingerprint = codec.fingerprint(
+            CitationFingerprintDomain.MESSAGE_BODY,
+            message_body,
+        )
         trace = cursor.execute(
+            """
+            SELECT
+                trace.visibility_state,
+                payload.redaction_state,
+                payload.answer_body,
+                payload.body_integrity_hmac,
+                payload.purged_at
+            FROM rag_citation_traces AS trace
+            LEFT JOIN rag_answer_attempt_payloads AS payload
+              ON payload.profile_id = trace.profile_id
+             AND payload.trace_id = trace.trace_id
+             AND payload.attempt_id = trace.selected_attempt_id
+            WHERE trace.profile_id = ? AND trace.trace_id = ?
+              AND trace.origin = 'local' AND trace.origin_scope_id = ?
+            """,
+            (identity.profile_id, namespace.trace_id, identity.profile_id),
+        ).fetchone()
+        if trace is None:
+            raise CitationPersistenceUnavailable("cache_trace_identity_conflict")
+        if trace["visibility_state"] != "active":
+            raise CitationPersistenceUnavailable("cache_trace_identity_conflict")
+        if (
+            trace["redaction_state"] != "available"
+            or trace["answer_body"] is None
+            or trace["body_integrity_hmac"] is None
+            or trace["purged_at"] is not None
+        ):
+            raise CitationPersistenceUnavailable("cache_selected_answer_unavailable")
+        if trace["answer_body"] != message_body:
+            raise CitationPersistenceUnavailable("cache_selected_answer_mismatch")
+        if not hmac.compare_digest(
+            trace["body_integrity_hmac"],
+            body_fingerprint,
+        ):
+            raise CitationPersistenceUnavailable(
+                "cache_selected_answer_integrity_mismatch"
+            )
+        still_active = cursor.execute(
             """
             SELECT 1
             FROM rag_citation_traces
@@ -847,7 +904,7 @@ class CitationTraceRepository:
             """,
             (identity.profile_id, namespace.trace_id, identity.profile_id),
         ).fetchone()
-        if trace is None:
+        if still_active is None:
             raise CitationPersistenceUnavailable("cache_trace_identity_conflict")
         self._insert_owner(
             cursor,
@@ -855,10 +912,7 @@ class CitationTraceRepository:
             message_id=message_id,
             message_revision=message_revision,
             trace_id=namespace.trace_id or "",
-            body_fingerprint=codec.fingerprint(
-                CitationFingerprintDomain.MESSAGE_BODY,
-                message_body,
-            ),
+            body_fingerprint=body_fingerprint,
             idempotency_key=cache_owner_idempotency_key(
                 codec,
                 namespace,
@@ -959,7 +1013,16 @@ class CitationTraceRepository:
         )
         if summary is None or summary.visibility_state != "active":
             return ActiveCitationTraceResult(state=ActiveCitationTraceState.NOT_FOUND)
-        return self._issue_active_trace_result(summary)
+        return self._issue_active_trace_result(
+            summary,
+            proof=_ActiveTraceProof(
+                identity_context=identity,
+                message_id=message_id,
+                message_revision=revision,
+                trace_id=row["trace_id"],
+                body_fingerprint=fingerprint,
+            ),
+        )
 
     def verify_active_trace_result(
         self,
@@ -975,8 +1038,77 @@ class CitationTraceRepository:
         try:
             current_digest = _active_result_digest(result)
         except (AttributeError, TypeError, ValueError):
-            return False
-        return hmac.compare_digest(issued[1], current_digest)
+            return self._invalidate_active_trace_result(result)
+        if not hmac.compare_digest(issued[1], current_digest):
+            return self._invalidate_active_trace_result(result)
+        proof = issued[2]
+        codec = self._fingerprint_codec
+        if codec is None or self.identity_context != proof.identity_context:
+            return self._invalidate_active_trace_result(result)
+        row = (
+            self.db.get_connection()
+            .execute(
+                """
+                SELECT
+                    owner.state,
+                    owner.body_fingerprint,
+                    message.version AS message_revision,
+                    message.content AS message_body,
+                    trace.visibility_state,
+                    trace.origin,
+                    trace.origin_scope_id,
+                    identity.local_authority_id,
+                    identity.fingerprint_key_id
+                FROM rag_message_trace_owners AS owner
+                JOIN messages AS message
+                  ON message.id = owner.message_id AND message.deleted = 0
+                JOIN rag_citation_traces AS trace
+                  ON trace.profile_id = owner.profile_id
+                 AND trace.trace_id = owner.trace_id
+                JOIN rag_identity_context AS identity
+                  ON identity.context_name = 'default'
+                 AND identity.profile_id = owner.profile_id
+                WHERE owner.profile_id = ?
+                  AND owner.message_id = ?
+                  AND owner.message_revision = ?
+                  AND owner.trace_id = ?
+                """,
+                (
+                    proof.identity_context.profile_id,
+                    proof.message_id,
+                    proof.message_revision,
+                    proof.trace_id,
+                ),
+            )
+            .fetchone()
+        )
+        if (
+            row is None
+            or row["state"] != "active"
+            or row["message_revision"] != proof.message_revision
+            or row["visibility_state"] != "active"
+            or row["origin"] != "local"
+            or row["origin_scope_id"] != proof.identity_context.profile_id
+            or row["local_authority_id"] != proof.identity_context.local_authority_id
+            or row["fingerprint_key_id"] != proof.identity_context.fingerprint_key_id
+        ):
+            return self._invalidate_active_trace_result(result)
+        current_fingerprint = codec.fingerprint(
+            CitationFingerprintDomain.MESSAGE_BODY,
+            row["message_body"],
+        )
+        if not (
+            hmac.compare_digest(
+                row["body_fingerprint"],
+                proof.body_fingerprint,
+            )
+            and hmac.compare_digest(
+                current_fingerprint,
+                proof.body_fingerprint,
+            )
+        ):
+            return self._invalidate_active_trace_result(result)
+        return True
 
     def transition_owner_for_message_update(
         self,
@@ -1152,6 +1284,8 @@ class CitationTraceRepository:
     def _issue_active_trace_result(
         self,
         summary: CitationTraceSummary,
+        *,
+        proof: _ActiveTraceProof,
     ) -> ActiveCitationTraceResult:
         """Issue and register one exact active-result capability."""
 
@@ -1175,8 +1309,20 @@ class CitationTraceRepository:
         self._issued_active_results[result_id] = (
             result_ref,
             _active_result_digest(result),
+            proof,
         )
         return result
+
+    def _invalidate_active_trace_result(
+        self,
+        result: ActiveCitationTraceResult,
+    ) -> bool:
+        """Drop registration for an exact failed or stale capability."""
+
+        issued = self._issued_active_results.get(id(result))
+        if issued is not None and issued[0]() is result:
+            self._issued_active_results.pop(id(result), None)
+        return False
 
     def _owns_prepared_write(self, prepared: PreparedCitationWrite) -> bool:
         """Verify repository, exact object identity, and every prepared row."""
