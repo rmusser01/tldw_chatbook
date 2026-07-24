@@ -243,30 +243,12 @@ class CitationSourceObservation(_StrictFrozenModel):
             raise ValueError("observed_at must be timezone-aware")
         if len(set(self.capabilities)) != len(self.capabilities):
             raise ValueError("source observation capabilities must be unique")
-        if (self.availability is CitationSourceAvailability.ERROR) != (
-            self.error_code is not None
-        ):
-            raise ValueError("error availability and error_code must appear together")
 
-        current_actions = {
-            SourceCapability.RESOLVE_CURRENT,
-            SourceCapability.OPEN_NATIVE,
-            SourceCapability.OPEN_EXTERNAL,
-            SourceCapability.COMPARE,
-            SourceCapability.REFRESH_OBSERVATION,
-        }
         definitive_actions = {
             SourceCapability.OPEN_NATIVE,
             SourceCapability.OPEN_EXTERNAL,
             SourceCapability.COMPARE,
         }
-        if self.permission in {
-            CitationSourcePermission.DENIED,
-            CitationSourcePermission.REVOKED,
-        } and current_actions.intersection(self.capabilities):
-            raise ValueError(
-                "denied or revoked observations cannot grant current-source actions"
-            )
         if (
             self.availability is not CitationSourceAvailability.AVAILABLE
             or self.permission is not CitationSourcePermission.ALLOWED
@@ -277,7 +259,6 @@ class CitationSourceObservation(_StrictFrozenModel):
         if self.location_state is CitationLocationState.RELOCATED and (
             self.availability is not CitationSourceAvailability.AVAILABLE
             or self.permission is not CitationSourcePermission.ALLOWED
-            or SourceCapability.RESOLVE_CURRENT not in self.capabilities
         ):
             raise ValueError(
                 "relocated observations require an available authorized resolution"

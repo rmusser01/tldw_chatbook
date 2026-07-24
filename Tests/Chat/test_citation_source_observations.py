@@ -313,10 +313,16 @@ def test_observation_contract_exists_and_is_strict_frozen() -> None:
         ("available", "allowed", "unchanged", "unchanged", None),
         ("available", "allowed", "changed", "relocated", None),
         ("missing", "unknown", "unknown", "missing", None),
-        ("offline", "unknown", "unknown", "unknown", None),
-        ("error", "unknown", "unknown", "unknown", "resolver_failed"),
+        ("offline", "unknown", "unknown", "unknown", "network_timeout"),
+        ("error", "unknown", "unknown", "unknown", None),
         ("unknown", "revoked", "unknown", "unknown", None),
-        ("unknown", "authentication_required", "unknown", "unknown", None),
+        (
+            "unknown",
+            "authentication_required",
+            "unknown",
+            "unknown",
+            "authentication_expired",
+        ),
         ("available", "allowed", "unknown", "ambiguous", None),
         ("unknown", "unknown", "unknown", "unknown", None),
     ],
@@ -354,11 +360,35 @@ def test_independent_observation_states_round_trip(
 
 
 @pytest.mark.parametrize(
+    ("permission", "capabilities", "location_state"),
+    [
+        ("allowed", (), "relocated"),
+        ("denied", (SourceCapability.RESOLVE_CURRENT,), "unknown"),
+        ("revoked", (SourceCapability.REFRESH_OBSERVATION,), "unknown"),
+    ],
+)
+def test_non_definitive_status_capabilities_remain_independent(
+    permission: str,
+    capabilities: tuple[SourceCapability, ...],
+    location_state: str,
+) -> None:
+    observation = _observation(
+        availability="available",
+        permission=permission,
+        content_state="unknown",
+        location_state=location_state,
+        capabilities=capabilities,
+        error_code="safe_status",
+    )
+
+    assert observation.capabilities == capabilities
+    assert observation.error_code == "safe_status"
+
+
+@pytest.mark.parametrize(
     "changes",
     [
         {"observed_at": datetime(2026, 7, 24, 15, 0)},
-        {"availability": "error", "error_code": None},
-        {"availability": "available", "error_code": "stale_error"},
         {
             "permission": "revoked",
             "capabilities": (SourceCapability.OPEN_NATIVE,),
@@ -366,12 +396,6 @@ def test_independent_observation_states_round_trip(
         {
             "permission": "denied",
             "capabilities": (SourceCapability.COMPARE,),
-        },
-        {
-            "availability": "available",
-            "permission": "allowed",
-            "location_state": "relocated",
-            "capabilities": (SourceCapability.REFRESH_OBSERVATION,),
         },
         {
             "availability": "available",
@@ -425,6 +449,8 @@ def test_observation_exact_json_error_and_identifier_bounds() -> None:
             capabilities=(),
             error_code="e" * 257,
         )
+    with pytest.raises(ValidationError):
+        _observation(error_code="unsafe\nstatus")
     with pytest.raises(ValidationError):
         _observation(resolver_version="é" * 129)
     with pytest.raises(ValidationError):
