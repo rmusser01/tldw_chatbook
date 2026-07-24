@@ -1385,6 +1385,25 @@ class ConsoleChatController:
         restoring the anchor's prior reply in place -- this is the intended
         node-model behavior, not a regression: the anchor is a completely
         separate node and was never touched.
+
+        Args:
+            message_id: Native id of the USER message being edited (the
+                anchor whose ancestor chain -- read with
+                ``before_message_id=message_id``, which excludes the anchor
+                and its own subtree -- becomes the base for the new branch).
+            new_content: The edited text to resend as the new sibling USER
+                message.
+
+        Returns:
+            A ``ConsoleSubmitResult``. ``accepted`` is ``True`` once the new
+            USER/ASSISTANT sibling pair has been created and streaming has
+            started (whether the stream itself later completes or fails);
+            ``False`` if any pre-mutation block gate (active run, message
+            role, session ownership, off-active-path anchor, blank content,
+            provider readiness, skill refusal) rejected the resend before
+            either new node was created. ``visible_copy`` carries the
+            block/refusal copy shown to the user when ``accepted`` is
+            ``False`` (and the streamed/failure copy otherwise).
         """
         active_rejection = self._active_run_rejection()
         if active_rejection is not None:
@@ -1402,6 +1421,18 @@ class ConsoleChatController:
             visible_copy = "Open the original session before editing this message."
             self._set_run_state(ConsoleRunState.blocked(visible_copy))
             return ConsoleSubmitResult(False, False, visible_copy)
+        if message_id not in self.store.active_path_message_ids(session_id):
+            # Task 2 review fix (Qodo finding 2): `_provider_messages_for_session`
+            # builds the resend payload by scanning the ACTIVE-PATH transcript
+            # until `message_id` is seen. If the anchor is not on the active
+            # path, that scan never breaks and the payload would be built from
+            # the wrong branch entirely. Edit is only exposed on active-path
+            # rows today, so this is currently unreachable from the UI -- but
+            # guard it here too so the method is safe to call directly.
+            return self._block(
+                session_id,
+                "Switch to that branch before editing and re-sending this message.",
+            )
 
         clean_content, validation_error = self._validated_draft(new_content)
         if validation_error is not None:

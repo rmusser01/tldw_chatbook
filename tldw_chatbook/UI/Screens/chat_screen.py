@@ -12969,7 +12969,14 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         """Open the dedicated transcript edit modal for one Console message."""
         store = self._ensure_console_chat_store()
-        message = store.get_message(message_id)
+        try:
+            message = store.get_message(message_id)
+        except KeyError:
+            self.app_instance.notify(
+                "Console message action target no longer exists.",
+                severity="error",
+            )
+            return
         can_resend = message.role is ConsoleMessageRole.USER
 
         def _apply_edit(result: ConsoleEditResult | None) -> None:

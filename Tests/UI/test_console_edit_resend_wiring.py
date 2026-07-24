@@ -162,6 +162,48 @@ async def test_edit_and_resend_dispatches_controller_edit_and_resend_message():
 
 
 @pytest.mark.asyncio
+async def test_open_edit_modal_notifies_and_returns_on_stale_message_id():
+    """Qodo PR #811 finding 3: ``_open_console_message_edit_modal`` calls
+    ``store.get_message(message_id)`` (added for ``can_resend``) to decide
+    whether to offer resend. A stale/removed id must not raise -- it should
+    notify with the same copy the in-place-save ``KeyError`` path already
+    uses (below, in this same function) and return without pushing a
+    modal."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="original"
+        )
+        stale_id = message.id
+        store.delete_message(stale_id)
+
+        notices: list[tuple[str, str]] = []
+        app.notify = lambda message_text, **kwargs: notices.append(
+            (str(message_text), kwargs.get("severity", ""))
+        )
+
+        screens_before = len(host.screen_stack)
+        # Must not raise despite the id no longer existing in the store.
+        await console._open_console_message_edit_modal(
+            message_id=stale_id, content="original"
+        )
+        await pilot.pause()
+
+        assert len(host.screen_stack) == screens_before
+        assert not host.screen_stack[-1].query("#console-edit-message-modal")
+        assert (
+            "Console message action target no longer exists.",
+            "error",
+        ) in notices
+
+
+@pytest.mark.asyncio
 async def test_edit_and_resend_blocked_while_a_run_is_already_active():
     """Mirrors retry/regenerate/continue's mid-run gate (TASK-232): a
     ``console-run`` worker must never be spawned while one is already

@@ -235,6 +235,47 @@ async def test_edit_and_resend_provider_not_ready_blocks_without_orphan_sibling(
 
 
 @pytest.mark.asyncio
+async def test_edit_and_resend_blocks_off_active_path_anchor():
+    """Qodo PR #811 finding 2: ``_provider_messages_for_session`` scans the
+    ACTIVE-PATH transcript until ``before_message_id`` is seen -- if the
+    anchor is not on the active path, that scan never breaks and the resend
+    payload would be built from the wrong branch. Edit is only exposed on
+    active-path rows today, but the controller must refuse a
+    directly-called off-path anchor rather than silently mis-building the
+    payload."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    u1 = store.append_message(session.id, role=ConsoleMessageRole.USER, content="q1")
+    # Forking a sibling makes IT the new active leaf, leaving u1 off-path.
+    sibling = store.create_sibling(u1.id, role=ConsoleMessageRole.USER, content="q1-b")
+    assert store.active_leaf(session.id) == sibling.id
+    active_path_ids = store.active_path_message_ids(session.id)
+    assert u1.id not in active_path_ids
+    _siblings, _index, count_before = store.siblings_at(u1.id)
+    assert count_before == 2
+
+    result = await controller.edit_and_resend_message(u1.id, "edited")
+
+    assert result.accepted is False
+    assert (
+        "Switch to that branch before editing and re-sending this message."
+        in result.visible_copy
+    )
+    # No third sibling was forked, and no pending assistant node anywhere.
+    _siblings, _index, count_after = store.siblings_at(u1.id)
+    assert count_after == count_before
+    assert all(
+        m.status != "pending" for m in store.messages_for_session(session.id)
+    )
+    # u1 itself is untouched, and neither u1 nor the sibling gained a new
+    # USER/ASSISTANT child -- `_block` only appends a SYSTEM notice under
+    # the (unrelated) active leaf, same as every other block gate.
+    assert store.get_message(u1.id).content == "q1"
+    assert store.get_message(sibling.id).content == "q1-b"
+
+
+@pytest.mark.asyncio
 async def test_edit_and_resend_skill_refusal_leaves_no_pending_node():
     """Critical (Phase B Task 2 review): a skill-substitution refusal
     discovered while resending an edited message must not leave a stray
