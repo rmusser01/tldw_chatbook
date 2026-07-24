@@ -13,6 +13,7 @@ from loguru import logger
 
 from .agent_models import (
     FIND_TOOLS_NAME,
+    INSTALL_SKILL_TOOL_NAME,
     LOAD_TOOLS_NAME,
     LOOP_DETECTION_N,
     RUN_CANCELLED,
@@ -237,6 +238,12 @@ class LoopDeps:
     # all, and a call by that name falls through to the same
     # deps.invoke_tool path any other unrecognized/undisclosed name hits.
     read_skill_file: Callable[[str, str], ToolResult] | None = None
+    # install_skill: the fifth runtime tool (agent-callable skill install).
+    # Wired ONLY for the top-level agent (agent_kind == primary) by the
+    # service; a spawned subagent never receives it. `None` (the default)
+    # means the run is not wired for install_skill and a call by that name
+    # falls through to the generic deps.invoke_tool path.
+    install_skill: Callable[[str], ToolResult] | None = None
 
 
 def _catalog_lines(entries: list) -> str:
@@ -534,6 +541,12 @@ def run_agent_loop(
                         str(call.args.get("skill_name", "")),
                         str(call.args.get("path", "")),
                     )
+                elif (
+                    call.name == INSTALL_SKILL_TOOL_NAME
+                    and deps.install_skill is not None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    result = deps.install_skill(str(call.args.get("url", "")))
                 else:
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     result = deps.invoke_tool(call)
