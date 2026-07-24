@@ -1,0 +1,173 @@
+{
+  "budgets": {
+    "checks": {
+      "database_growth": {
+        "allowed_bytes": 5924454,
+        "pass": true
+      },
+      "finalization": {
+        "pass": true
+      },
+      "first_token": {
+        "pass": true,
+        "regressions": {
+          "in_process_control": {
+            "milliseconds": 0.0,
+            "percent": 0.0
+          }
+        }
+      },
+      "inspector_load": {
+        "pass": true
+      },
+      "migration": {
+        "pass": true
+      },
+      "trace_size": {
+        "pass": true
+      }
+    },
+    "definitions": {
+      "database_growth": {
+        "fixed_allowance_bytes": 262144,
+        "governed_bytes_multiplier": 1.35
+      },
+      "finalization": {
+        "maximum_p95_ms": 250,
+        "maximum_shape": "64 snapshots x 64 KiB",
+        "standard_p95_ms": 75,
+        "standard_shape": "8 snapshots x 4 KiB"
+      },
+      "first_token": {
+        "max_regression_ms": 25,
+        "max_regression_percent": 10,
+        "statistic": "p95"
+      },
+      "inspector_load": {
+        "cold_p95_ms": 100,
+        "warm_p95_ms": 25
+      },
+      "migration": {
+        "maximum_duplicate_proxy_rows_after_restart": 0,
+        "minimum_messages_per_second": 100
+      },
+      "trace_size": {
+        "aggregate_json_bytes": 262144,
+        "governed_trace_bytes": 4194304,
+        "snapshot_utf8_bytes": 65536
+      }
+    },
+    "environment_compatible": true,
+    "environment_incompatibilities": [],
+    "overall_pass": true
+  },
+  "environment": {
+    "cpu": "arm",
+    "machine": "arm64",
+    "network": "disabled",
+    "operating_system": "Darwin",
+    "os_release": "24.6.0",
+    "provider": "mock-local-v1",
+    "python": "3.12.11",
+    "python_implementation": "CPython",
+    "python_major_minor": "3.12",
+    "result_schema_version": 1,
+    "sqlite": "3.49.1",
+    "supported_envelope": {
+      "fixture_version": "rag-citation-provenance-v1",
+      "machine": "arm64",
+      "network": "disabled",
+      "operating_system": "Darwin",
+      "provider": "mock-local-v1",
+      "python_major_minor": "3.12",
+      "result_schema_version": 1
+    }
+  },
+  "external_network": {
+    "included_in_local_pass": false,
+    "latency_ms": null,
+    "measured": false,
+    "note": "External source resolution is a separate opt-in measurement and is never part of local rendering or persistence budgets."
+  },
+  "fixture_version": "rag-citation-provenance-v1",
+  "metrics": {
+    "database_growth": {
+      "bytes": {
+        "median": 4227072.0,
+        "p95": 4231168.0
+      },
+      "governed_bytes_per_answer": 4194304
+    },
+    "finalization": {
+      "maximum_ms": {
+        "median": 2.098667,
+        "p95": 2.284417
+      },
+      "maximum_result": {
+        "aggregate_json_bytes": 6744,
+        "governed_trace_bytes": 4194304,
+        "maximum_snapshot_bytes": 65536
+      },
+      "maximum_shape": {
+        "bytes_per_snapshot": 65536,
+        "snapshots": 64
+      },
+      "standard_ms": {
+        "median": 0.027959,
+        "p95": 0.040458
+      },
+      "standard_shape": {
+        "bytes_per_snapshot": 4096,
+        "snapshots": 8
+      }
+    },
+    "first_token": {
+      "candidate_ms": {
+        "median": 0.588354,
+        "p95": 0.913791
+      },
+      "comparison": "baseline-current-control",
+      "control_ms": {
+        "median": 0.588354,
+        "p95": 0.913791
+      },
+      "path": [
+        "ConsoleChatController.submit_draft",
+        "ConsoleChatController._stream_assistant_response"
+      ],
+      "regression_vs_control": {
+        "milliseconds": 0.0,
+        "percent": 0.0
+      }
+    },
+    "inspector_load": {
+      "cold_ms": {
+        "median": 0.324979,
+        "p95": 0.421083
+      },
+      "warm_ms": {
+        "median": 0.117541,
+        "p95": 0.192583
+      }
+    },
+    "migration": {
+      "batch_messages": 100,
+      "duplicate_proxy_rows_after_restart": {
+        "median": 0.0,
+        "p95": 0.0
+      },
+      "interrupted_after_messages": 50,
+      "messages_per_second": {
+        "median": 91593.178487,
+        "p95": 124178.713037
+      }
+    },
+    "trace_size": {
+      "aggregate_json_bytes": 6744,
+      "governed_trace_bytes": 4194304,
+      "maximum_snapshot_bytes": 65536
+    }
+  },
+  "samples": 30,
+  "warmups": 5
+}

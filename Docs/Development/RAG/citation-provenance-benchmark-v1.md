@@ -1,0 +1,147 @@
+# RAG Citation Provenance Benchmark v1
+
+This benchmark records the pre-feature local performance and storage baseline
+required by ADR-024. It is deterministic, uses synthetic non-sensitive data,
+and makes no network request.
+
+## Commands
+
+Run from the repository root with the project virtual environment active:
+
+```bash
+python Helper_Scripts/Benchmarks/rag_citation_provenance_benchmark.py \
+  --mode baseline \
+  --samples 30 \
+  --warmups 5 \
+  --output Docs/Development/RAG/citation-provenance-baseline-v1.json
+```
+
+Qualification requires the committed v1 result:
+
+```bash
+python Helper_Scripts/Benchmarks/rag_citation_provenance_benchmark.py \
+  --mode qualification \
+  --samples 30 \
+  --warmups 5 \
+  --baseline Docs/Development/RAG/citation-provenance-baseline-v1.json
+```
+
+Baseline and qualification modes accept only the in-process
+`mock-local-v1` provider and no base URL. An absent baseline, or one with an
+incompatible fixture/result schema, is rejected. A structurally valid baseline
+from an environment outside the recorded envelope may still be measured, but
+the result cannot claim a passing qualification.
+
+## Reference environment
+
+The committed result was measured on:
+
+| Component | Value |
+| --- | --- |
+| CPU / architecture | Apple Silicon-compatible ARM64 (`arm`) |
+| Operating system | macOS 15.6 / Darwin 24.6.0 |
+| Python | CPython 3.12.11 |
+| SQLite | 3.49.1 |
+| Provider | deterministic in-process `mock-local-v1` stream |
+| Network | disabled |
+| Fixture | `rag-citation-provenance-v1` |
+| Result schema | 1 |
+
+The supported v1 qualification envelope is the same OS family, ARM64
+architecture, Python 3.12 minor line, fixture/result schema, mock provider, and
+network-disabled mode recorded in the JSON result. Other environments remain
+useful for measurements but are not comparable enough to claim pass.
+
+## Measurement rules
+
+- Five complete warmups are discarded before 30 measured samples.
+- Every duration uses `time.perf_counter_ns`.
+- Results report the median and nearest-rank p95; minimum values are never
+  reported.
+- Each sample group receives a fresh temporary `ChaChaNotes.db` and
+  `chat_rag_context.json`. No user database or sidecar is read or written.
+- SQLite size measurements run `PRAGMA wal_checkpoint(TRUNCATE)` before each
+  file-size observation.
+- The mocked native first-token path runs through
+  `ConsoleChatController.submit_draft` and
+  `ConsoleChatController._stream_assistant_response`, including message
+  persistence and a deterministic two-chunk stream.
+- The pre-feature baseline has one current implementation, so its recorded
+  candidate and unchanged no-provenance control are the same measured series.
+  Pre-feature qualification also reuses that series because no provenance
+  candidate exists yet. Later candidate tasks extend this runner with their
+  in-process candidate while retaining this unchanged control and normalize the
+  historical candidate/control ratio to current control speed.
+- Finalization hashes governed snapshots and serializes bounded immutable
+  metadata. Inspector, database-growth, and migration measurements use local
+  SQLite proxies.
+- External source resolution is not executed and never contributes to local
+  pass/fail.
+
+## Frozen budgets
+
+| Family | Pass/fail budget |
+| --- | --- |
+| First token | Candidate p95 increase is at most 10% **and** 25 ms over the compatible v1/current control |
+| Finalization | 8 × 4 KiB snapshots p95 ≤ 75 ms; exactly 4 MiB across at most 64 snapshots p95 ≤ 250 ms |
+| Inspector load | Cold p95 ≤ 100 ms; warm p95 ≤ 25 ms |
+| Trace size | Immutable aggregate ≤ 256 KiB; snapshot ≤ 64 KiB UTF-8; governed trace payload ≤ 4 MiB |
+| Database growth | Per grounded answer ≤ governed bytes × 1.35 + 256 KiB |
+| Migration | Median ≥ 100 messages/s; restart produces zero duplicate canonical proxy rows |
+
+## Frozen v1 bounds
+
+The corpus contains deterministic exact-limit and one-unit-over descriptors for
+every bound. Tests materialize and measure each descriptor.
+
+| Value | Maximum |
+| --- | ---: |
+| Immutable aggregate JSON | 256 KiB |
+| Governed snapshot text | 64 KiB UTF-8 |
+| Governed trace payload | 4 MiB |
+| Prompt sets | 8 |
+| Evidence entries per prompt | 64 |
+| Answer attempts | 8 |
+| Citation occurrences | 512 |
+| Retrieval candidates per run | 200 |
+| Locator JSON | 16 KiB |
+| Observation JSON | 8 KiB |
+| Error/reason code | 256 characters |
+| External opaque ID | 256 UTF-8 bytes |
+| Answer-attempt body | 1 MiB UTF-8 |
+| Legacy sidecar | 32 MiB |
+| Migration batch | 100 messages |
+
+## Current result
+
+All six families pass on the reference environment.
+
+| Metric | Median | p95 | Budget result |
+| --- | ---: | ---: | --- |
+| Mocked Console first token | 0.588 ms | 0.914 ms | Pass; baseline regression 0% / 0 ms |
+| Standard finalization | 0.028 ms | 0.040 ms | Pass |
+| Maximum finalization | 2.099 ms | 2.284 ms | Pass |
+| Inspector cold load | 0.325 ms | 0.421 ms | Pass |
+| Inspector warm load | 0.118 ms | 0.193 ms | Pass |
+| SQLite growth per 4 MiB governed answer | 4,227,072 bytes | 4,231,168 bytes | Pass; allowance 5,924,454 bytes |
+| Legacy migration | 91,593 messages/s | 124,179 messages/s | Pass; zero duplicate rows |
+
+The maximum trace proxy contains 4,194,304 governed bytes, a 65,536-byte
+largest snapshot, and 6,744 bytes of immutable aggregate JSON.
+
+The full machine-readable measurements, budget definitions, individual checks,
+environment envelope, sample counts, and external-network exclusion are in
+`citation-provenance-baseline-v1.json`.
+
+## Limitations
+
+- This is a pre-feature benchmark. Finalization, inspector reads, storage
+  growth, and legacy migration are bounded proxies for the later canonical
+  repositories, not claims about code that does not exist yet.
+- The inspector proxy distinguishes a new SQLite connection from a reused
+  connection; it does not flush the operating-system disk cache.
+- The deterministic mock isolates Chatbook overhead and is not a model/provider
+  latency benchmark.
+- External refresh latency depends on resolver, authority, cache, and network.
+  It must be measured by an explicit separate workflow and never gates local
+  answer rendering, finalization, persistence, or inspector opening.
