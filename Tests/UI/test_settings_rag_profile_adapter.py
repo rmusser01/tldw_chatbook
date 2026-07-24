@@ -67,7 +67,42 @@ def test_active_profile_info(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import active_profile_info
     mgr, state = wired
     info = active_profile_info()
-    assert info == {"id": "hybrid_basic", "name": "Hybrid Basic", "read_only": True}
+    assert info == {
+        "id": "hybrid_basic",
+        "name": "Hybrid Basic",
+        "read_only": True,
+        # UX review item 6 (provenance): active_profile_info() surfaces the
+        # profile's own description for the Settings caption sub-line.
+        "description": "Combined keyword and semantic search without enhancements",
+    }
+
+
+def test_active_profile_info_includes_a_cloned_profiles_description(wired):
+    """A user clone inherits its source's description verbatim (clone_profile
+    copies the whole dict) -- the sub-line must show it too, not just for
+    builtins."""
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import active_profile_info
+    mgr, state = wired
+    user = _user_profile(mgr, state)
+
+    info = active_profile_info()
+
+    assert info["description"] == "Combined keyword and semantic search without enhancements"
+
+
+def test_active_profile_info_description_empty_string_when_blank(wired):
+    """An explicitly blank description (e.g. a hand-crafted/imported profile
+    with none) must report "" rather than "None" or raise -- the screen uses
+    this to decide whether to render the sub-line at all."""
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import active_profile_info
+    mgr, state = wired
+    user = _user_profile(mgr, state)
+    user.description = ""
+    mgr.save_profile(user)
+
+    info = active_profile_info()
+
+    assert info["description"] == ""
 
 
 def test_list_profiles_grouped_separates_builtin_and_user_name_sorted(wired):
@@ -527,7 +562,10 @@ def test_hard_config_errors_flags_reranker_top_k_below_one_when_enabled(wired):
 
     errors = hard_config_errors(d)
 
-    assert any("top-k" in e.lower() for e in errors)
+    # UX review item 4 (terminology unification): the user-facing label is
+    # "Rerank results" (not "Reranker top-k"); the field key stays
+    # reranker_top_k.
+    assert any("rerank results" in e.lower() and "at least 1" in e.lower() for e in errors)
 
 
 def test_hard_config_errors_ignores_reranker_top_k_when_reranking_disabled(wired):
@@ -561,7 +599,9 @@ def test_soft_config_warnings_flags_reranker_top_k_exceeding_default_top_k(wired
 
     warnings = soft_config_warnings(d)
 
-    assert any("top-k" in w.lower() and "exceed" in w.lower() for w in warnings)
+    # UX review item 4 (terminology unification): "Rerank results", not
+    # "Reranker top-k".
+    assert any("rerank results" in w.lower() and "exceed" in w.lower() for w in warnings)
 
 
 def test_soft_config_warnings_empty_when_reranking_disabled(wired):

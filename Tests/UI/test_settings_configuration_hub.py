@@ -967,6 +967,34 @@ async def test_settings_library_rag_renders_guided_defaults_and_validates(
 
 
 @pytest.mark.asyncio
+async def test_settings_library_rag_inspector_uses_shortened_terse_guidance(
+    monkeypatch, tmp_path
+):
+    """UX review item 9 (Scope Inspector clipping): the guidance rows were
+    shortened so the "Citations" sentence (the row that clipped mid-word at
+    the pane's unscrolled fold, "...source markers when") completes before
+    the fold. Regression-locks the new wording and that the old, longer
+    prose is gone."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Control guide" in text
+        assert "Citations: adds source markers to answers when supported" in text
+        assert (
+            "sets whether future RAG answers include source markers when supported"
+            not in text
+        )
+        assert "Hybrid balance: 0.0=keyword, 1.0=semantic" in text
+        assert "Config keys: 10 editable defaults in the active RAG profile" in text
+
+
+@pytest.mark.asyncio
 async def test_settings_library_rag_reranker_warning_shown_for_a_warning_triggering_draft(
     monkeypatch, tmp_path
 ):
