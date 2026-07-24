@@ -63,3 +63,86 @@ async def test_get_branches_requests_full_page():
     branches = await client.get_branches("o", "r")
     assert branches == ["main"]
     assert captured["params"] == {"per_page": 100}
+
+
+from tldw_chatbook.Skills_Interop.skill_remote_fetch import (
+    DirectZipSource,
+    GitHubZipSource,
+    RemoteSkillError,
+    classify_skill_source_url,
+    resolve_ref_and_subdir,
+)
+
+
+def test_classify_repo_root():
+    src = classify_skill_source_url("https://github.com/obra/superpowers")
+    assert src == GitHubZipSource(
+        owner="obra", repo="superpowers", tree_tail=(), suggested_name="superpowers"
+    )
+
+
+def test_classify_tree_subdir():
+    src = classify_skill_source_url(
+        "https://github.com/obra/superpowers/tree/main/skills/brainstorming"
+    )
+    assert isinstance(src, GitHubZipSource)
+    assert src.tree_tail == ("main", "skills", "brainstorming")
+    assert src.suggested_name == "brainstorming"
+
+
+def test_classify_release_asset_and_direct_zip():
+    rel = classify_skill_source_url(
+        "https://github.com/o/r/releases/download/v1/my-skill.zip"
+    )
+    assert rel == DirectZipSource(
+        url="https://github.com/o/r/releases/download/v1/my-skill.zip",
+        github_auth=True,
+        suggested_name="my-skill",
+    )
+    direct = classify_skill_source_url("https://example.com/pkg/my-skill.zip")
+    assert direct.github_auth is False and direct.suggested_name == "my-skill"
+
+
+@pytest.mark.parametrize("bad", [
+    "http://github.com/o/r",                    # http
+    "https://example.com/not-a-zip",            # non-github non-zip
+    "git@github.com:o/r.git",                   # git protocol
+    "https://github.com/onlyowner",             # no repo
+    "ftp://example.com/x.zip",
+])
+def test_classify_rejects(bad):
+    with pytest.raises(RemoteSkillError):
+        classify_skill_source_url(bad)
+
+
+@pytest.mark.asyncio
+async def test_ref_split_single_segment_is_ref():
+    src = classify_skill_source_url("https://github.com/o/r/tree/v1.2")
+    async def _boom(o, r):  # must NOT be called for single-segment tails
+        raise AssertionError("branch listing not needed")
+    assert await resolve_ref_and_subdir(src, _boom) == ("v1.2", "")
+
+
+@pytest.mark.asyncio
+async def test_ref_split_longest_prefix_branch_wins():
+    src = classify_skill_source_url("https://github.com/o/r/tree/feature/foo/skills/x")
+    async def _branches(o, r):
+        return ["main", "feature/foo", "feature"]
+    ref, subdir = await resolve_ref_and_subdir(src, _branches)
+    assert (ref, subdir) == ("feature/foo", "skills/x")
+
+
+@pytest.mark.asyncio
+async def test_ref_split_no_match_falls_back_to_first_segment():
+    src = classify_skill_source_url("https://github.com/o/r/tree/main/skills/x")
+    async def _branches(o, r):
+        return ["dev"]  # capped/truncated list without the real branch
+    assert await resolve_ref_and_subdir(src, _branches) == ("main", "skills/x")
+
+
+@pytest.mark.asyncio
+async def test_ref_split_api_failure_falls_back():
+    src = classify_skill_source_url("https://github.com/o/r/tree/main/skills/x")
+    async def _branches(o, r):
+        raise RuntimeError("offline")
+    assert await resolve_ref_and_subdir(src, _branches) == ("main", "skills/x")
