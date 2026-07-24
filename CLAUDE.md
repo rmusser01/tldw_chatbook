@@ -37,20 +37,17 @@ pytest --cov=tldw_chatbook  # With coverage
 
 ### UI Layer (`UI/` and `Widgets/`)
 
-**Main Windows** (all extend Screen):
-- `Chat_Window_Enhanced.py` - Streaming chat, images, RAG, tool calling
-- `Conv_Char_Window.py` - Conversation/character CRUD
-- `Notes_Window.py` - Notes with templates and sync
-- `SearchRAGWindow.py` - RAG search interface
-- `Evals_Window_v3.py` - LLM benchmarking
-- `MediaWindow.py` - Media management hub
-- `Coding_Window.py` - Code-focused chat interface
-- `IngestTldwApiWindow.py` - Media ingestion forms
+**Screens** (tab content, registered in `UI/Navigation/screen_registry.py`):
+- `UI/Screens/chat_screen.py` - Chat (embeds `Chat_Window_Enhanced.py`, a Container)
+- `UI/Screens/search_screen.py` - RAG search (embeds `SearchRAGWindow.py`, a Container)
+- `UI/Screens/media_screen.py` / `media_ingest_screen.py` - Media hub + ingestion
+- `UI/Screens/personas_screen.py`, `evals_screen.py`, `library_screen.py`, etc.
+
+Each tab is a `Screen` registered in `UI/Navigation/screen_registry.py`. Note: `Chat_Window_Enhanced.py` and `SearchRAGWindow.py` are embedded `Container` widgets, not Screens. Several legacy standalone screens (Notes, Coding, Skills, Prompts) are retired; their route ids now alias to Library (see `_SCREEN_ALIASES` in `screen_registry.py`).
 
 **Key Widgets**:
 - `chat_message_enhanced.py` - Rich messages with actions
 - `tool_message_widgets.py` - Tool calling UI (ToolCallMessage, ToolResultMessage)
-- `IngestTldwApi*Window.py` - Media-specific ingestion forms
 - `form_components.py` - Standardized form builders
 
 ### Business Logic
@@ -61,15 +58,22 @@ pytest --cov=tldw_chatbook  # With coverage
 - **`RAG_Search/`** - `simplified/` for streamlined implementation, `chunking_service.py`
 - **`Tools/`** - `tool_executor.py`, built-in: DateTimeTool, CalculatorTool
 - **`Evals/`** - `eval_orchestrator.py`, `eval_runner.py`, task-specific runners
-- **`LLM_Calls/`** - Provider integrations, unified `chat_with_provider()` interface
+- **`LLM_Calls/`** - Provider integrations (`chat_with_<provider>()` functions); the unified dispatcher is `chat_api_call()` in `Chat/Chat_Functions.py`
 
 ### Data Layer (`DB/`)
 
-- **`ChaChaNotes_DB.py`** - Main DB (conversations, messages, characters, notes), schema v7
+- **`ChaChaNotes_DB.py`** - Main DB (conversations, messages, characters, notes); current schema version is `_CURRENT_SCHEMA_VERSION` in this file (25 at time of writing) — bump it and add a migration when changing schema
 - **`Client_Media_DB_v2.py`** - Media storage with chunking
 - **`RAG_Indexing_DB.py`** - Vector storage (when enabled)
-- Other DBs: Evals, Prompts, Subscriptions
+- Other DBs: `Evals_DB.py`, `Prompts_DB.py`, `Subscriptions_DB.py`, `AgentRuns_DB.py`, `Workspace_DB.py`, `Library_Collections_DB.py`, `Library_Ingest_Jobs_DB.py`, `Research_DB.py`, `Writing_DB.py`, `Mindmap_DB.py`, `search_history_db.py`, `Sync_Client.py`
 - Patterns: soft deletion, optimistic locking, FTS5 triggers, parameterized queries only
+
+### Agents Runtime (`Agents/`)
+
+A from-scratch agent framework, distinct from the `Tools/tool_executor.py` tool layer:
+- `agent_models.py`, `agent_runtime.py`, `agent_stream.py` - pure logic (control loop, streaming fence-gate, dataclasses; no I/O)
+- `agent_service.py` - the one impure seam: wires the loop to `chat_api_call`, the permission gate, sub-agent spawning, and run persistence (`AgentRuns_DB.py`); runs on a worker thread
+- `tool_catalog.py` (`ToolProvider` interface), `native_tools.py` (provider-native tool-calls), `mcp_tool_provider.py` (MCP bridge)
 
 ### Event System (`Event_Handlers/`)
 
@@ -107,20 +111,20 @@ def _heavy_task(self):
 ### Adding Features
 
 **New LLM Provider**:
-1. Add to `LLM_Calls/` with `chat_with_provider()` method
-2. Register in main caller
-3. Add config section
+1. Add a `chat_with_<provider>()` function in `LLM_Calls/LLM_API_Calls.py`
+2. Register it in `API_CALL_HANDLERS` / `PROVIDER_PARAM_MAP` (dispatched by `chat_api_call()` in `Chat/Chat_Functions.py`)
+3. Add the provider's config section
 
 **New Tab**:
-1. Create Screen in `UI/`
-2. Add TAB_X constant
-3. Register in app.py compose()
+1. Create a `Screen` subclass in `UI/Screens/`
+2. Add a `TAB_X` constant in `Constants.py`
+3. Register a `ScreenRoute` in `UI/Navigation/screen_registry.py` (module path + class name)
 4. Add event handlers
 
 **New Tool**:
-1. Extend Tool class in `Tools/`
-2. Implement: get_name(), get_description(), get_parameters(), execute()
-3. Register in AVAILABLE_TOOLS
+1. Subclass `Tool` (ABC) in `Tools/tool_executor.py`
+2. Implement the `name`, `description`, `parameters` properties and the async `execute(**kwargs)` method
+3. Register the instance via `ToolExecutor.register_tool()` (the singleton executor is obtained through `get_tool_executor()` in `tool_executor.py`); built-in registration is gated by the `[tools]` config section
 
 ### Security Requirements
 
@@ -158,10 +162,10 @@ Key sections:
 ## Special Systems
 
 ### Tool Calling
-- Schema v7 adds tool messages
+- Tool messages are persisted in the ChaChaNotes DB (see `_CURRENT_SCHEMA_VERSION` for the current schema version)
 - `tool_executor.py` handles execution
 - Provider parsing implemented
-- Status: Detection works, execution pending
+- Status: detection AND execution implemented — `ToolExecutor.execute_tool_call()`/`execute_tool_calls()` run tools; wired into `Event_Handlers/worker_events.py` and `Event_Handlers/Chat_Events/chat_streaming_events.py`
 
 ### Config Encryption
 - AES-256 with PBKDF2
@@ -171,7 +175,7 @@ Key sections:
 ### Splash Screen
 - 20+ animations in `splash_animations.py`
 - Config: `[splash_screen]` section
-- Custom cards in `examples/custom_splash_cards/`
+- Custom cards in `Helper_Scripts/Examples/custom_splash_cards/`
 
 ### Notes Sync
 - Bidirectional file ↔ DB
@@ -179,22 +183,20 @@ Key sections:
 - Background monitoring
 
 ### Pre-commit Hook
-- `auto_review.py` for Claude Code integration
+- `Helper_Scripts/fixed_auto_review.py` for Claude Code integration
 - Reviews diffs with LLM
 - Exit 0 = pass, 2 = fail
 
 ## Project-Specific Gotchas
 
-1. **No localStorage** in artifacts - use React state or JS variables
-2. **Tailwind limitations** - Only core utility classes, no compilation
-3. **Schema migrations** - Always increment version, add to migrations/
-4. **Optional deps** - Check with `optional_deps.py` before importing
-5. **Thread safety** - Use transaction() context manager
-6. **Tab constants** - Must match IDs in compose()
-7. **Streaming** - Always offer non-streaming fallback
-8. **FTS5** - Triggers auto-update on text columns
-9. **Workers** - Mark exclusive=True to prevent duplicates
-10. **Reactive** - recompose=True rebuilds, default just refreshes
+1. **Schema migrations** - Always increment version, add to migrations/
+2. **Optional deps** - Check with `optional_deps.py` before importing
+3. **Thread safety** - Use transaction() context manager
+4. **Tab constants** - Must match IDs in compose()
+5. **Streaming** - Always offer non-streaming fallback
+6. **FTS5** - Triggers auto-update on text columns
+7. **Workers** - Mark exclusive=True to prevent duplicates
+8. **Reactive** - recompose=True rebuilds, default just refreshes
 
 ## File Reference
 
@@ -202,7 +204,7 @@ Critical files for common tasks:
 - Entry: `app.py`, `config.py`, `Constants.py`
 - Chat: `Chat_Functions.py`, `chat_message_enhanced.py`
 - DB: `base_db.py`, `ChaChaNotes_DB.py`
-- LLM: `LLM_API_Calls.py`, `model_capabilities.py`
+- LLM: `LLM_Calls/LLM_API_Calls.py`, `model_capabilities.py` (top-level `tldw_chatbook/model_capabilities.py`, not under `LLM_Calls/`)
 - Security: `path_validation.py`, `input_validation.py`
 - UI: `form_components.py`, reactive patterns in any widget
 
