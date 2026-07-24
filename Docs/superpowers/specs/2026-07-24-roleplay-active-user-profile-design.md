@@ -49,7 +49,9 @@ The three call sites that hardcode `"User"` receive the resolved name (fallback 
 
 ### A5. Byte-compat default (AC3)
 
-No active profile ⇒ resolver `None` ⇒ `"User"` fallbacks ⇒ `set_speakers` untouched ⇒ label untouched ⇒ every current output byte-identical. Pinned by tests.
+No active profile ⇒ resolver `None` ⇒ `"User"` fallbacks ⇒ `set_speakers` untouched ⇒ label untouched ⇒ all USER-SIDE output byte-identical. Pinned by tests.
+
+**Scope note (review):** the new `{{character}}`/`{{persona}}` aliases substitute the CHARACTER's name regardless of the active profile — that is a deliberate, user-requested behavior change for texts containing those tokens (previously rendered literally), independent of the pointer. AC3's byte-compat covers the user-side tokens and all token-free text.
 
 ## Part B — the rename ("persona" never means the user)
 
@@ -60,19 +62,23 @@ No active profile ⇒ resolver `None` ⇒ `"User"` fallbacks ⇒ `set_speakers` 
 | Mode id `"personas"` (state.active_mode value + ~40 literals) | `"user_profiles"` |
 | User-facing labels: "Personas" mode chip, `_MODE_DESCRIPTORS` entry, Settings category, inspector "Type:" copy, status/footer lines | **"User Profiles"** (copy style per the P0/444 plain-language patterns) |
 | Selection kind `"persona_profile"` (~20 literals) | `"user_profile"` |
-| DTOs `PersonaProfileCreate` / `PersonaProfileUpdate` / `PersonaProfileResponse` (16 files) | `UserProfileCreate` / `UserProfileUpdate` / `UserProfileResponse` |
+| DTOs `PersonaProfileCreate` / `PersonaProfileUpdate` / `PersonaProfileResponse` (16 files) | App layer uses `UserProfileCreate` / `UserProfileUpdate` / `UserProfileResponse` — **as re-export aliases**: the classes are DEFINED in `tldw_api/character_persona_schemas.py`, the server-API mirror ("API schemas for the shared TLDW client"), and the server's wire contract calls them personas. The mirror module keeps the wire names (the ONE sanctioned internal "persona" remnant for the user concept — flagged for veto); every app-side import switches to the new aliases. |
 | Messages `EditPersonaRequested`, `PersonaProfileSaveRequested`; widget `PersonaProfileEditorWidget` | `EditUserProfileRequested`, `UserProfileSaveRequested`, `UserProfileEditorWidget` |
-| `ConsoleSessionSettings.persona_label` (~23 refs; serialized) | `user_profile_label` (with load-compat, B3) |
+| `ConsoleSessionSettings.persona_label` (~23 refs; default `"General"`) | `user_profile_label` (with load-compat, B3). INCLUDES its display copy: the session chip renders `f"Persona: {persona_label}"` (`console_session_settings.py:~703-707`) and `chat_shell_bar`/`console_display_state` twins — the visible "Persona:" prefix becomes user-profile language (e.g. `"As: {label}"`). The serialization round-trip site (where ConsoleSessionSettings persists/restores) is verified at plan time and gets the accept-old-write-new rule. |
 | Service naming: the persona halves of `local_character_persona_service.py` / `CharacterPersonaScopeService` (method/param/attr names like `persona_store_path`, `list_persona_profiles`, `_persona_profile_view`) | user-profile naming (`user_profile_store_path`, `list_user_profiles`, …); module/class renames included where they name the user-profile concept |
 
 ### B2. Explicit boundary (OUT of scope — the workbench axis)
 
 `PersonasScreen` / `personas_screen.py` / `Persona_Widgets/` / `PersonasPreviewPane` / `personas_pane_messages.py` and the widget family name the **workbench** (user-facing "Roleplay & Chat Dictionaries" since P0), not the user. Renaming that family is the workbench-rename axis (massive import churn, zero user-reference semantics) and stays out unless separately requested. The spec records this boundary deliberately.
 
+Also OUT (verified, review pass):
+- **DOM element ids / CSS selectors `#personas-*`** — literal workbench-namespace ids (verified: nothing derives ids from the mode string); renaming them is churn with zero user-reference semantics.
+- **Saved-state dict keys** `"personas_workbench"` / `"personas_preview"` — workbench-namespace persistence keys; renaming them would break restore compatibility for zero visible value.
+
 ### B3. Persistence compatibility (LOAD-BEARING — accept old, write new)
 
 Three persisted surfaces carry the old names and MUST keep working for existing users:
-1. **Saved screen state:** `active_mode: "personas"` in persisted workbench state, and `persona_label` inside serialized `ConsoleSessionSettings` (screen-state + session persistence). Readers accept BOTH old and new keys/values (old value normalized on load: `"personas"` → `"user_profiles"`, `persona_label` → `user_profile_label`); writers emit only the new. Tests round-trip a pre-rename serialized blob.
+1. **Saved screen state:** verified (review pass) — `save_state` persists `personas_workbench = asdict(self.state)` including `active_mode`, BUT `restore_state` only restores when `active_mode == "characters"` (non-Characters modes are deliberately reset to the fresh default; a documented pre-existing follow-up). So an old blob with `active_mode: "personas"` was ALREADY discarded on restore — the mode-id rename needs **no compat shim by construction**; a pin test documents this. `persona_label` inside serialized `ConsoleSessionSettings` (the #754-era session/screen-state serialization — locate the exact round-trip at plan time) DOES need accept-old-write-new: readers accept both keys, writers emit only `user_profile_label`; a pre-rename blob round-trips in tests.
 2. **On-disk profile JSONs:** the profile files' own schema fields keep loading unchanged (the rename is of Python identifiers/DTO class names, not the JSON field contract — verify at plan time which JSON keys, if any, say "persona" and apply the same accept-old-write-new rule to those). The store DIRECTORY default stays wherever existing users' files are (rename the parameter, not the path), or reads fall back to the old path if the default moves — existing files must load with zero user action.
 3. **Config:** any existing config keys referencing personas keep being read (accept-old); the new `active_user_profile` key is net-new.
 
