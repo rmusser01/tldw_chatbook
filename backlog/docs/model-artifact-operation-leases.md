@@ -64,14 +64,18 @@ The job has native matrix entries for `ubuntu-latest`, `macos-latest`, and
 complete matrix succeeds, and the repository's test-summary job depends on
 that gate.
 
-Together, the unit and spawn-process tests prove:
+The unit and spawn-process suites verify:
 
 1. two spawned processes can hold the same shared lease;
 2. an exclusive lease is blocked by a shared lease;
 3. an idle root-and-VAD lease set blocks deletion of both artifacts;
 4. normal close and forced process termination release the held leases;
-5. lease-set acquisition is ordered and uses one timeout budget; and
+5. lease sets expose sorted, deduplicated identities; and
 6. partial acquisition failure releases every previously acquired lease.
+
+Code inspection additionally confirms that acquisition iterates those
+canonical identities and derives each per-artifact timeout from one monotonic
+set deadline.
 
 ### Current status
 
