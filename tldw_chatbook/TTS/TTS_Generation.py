@@ -51,6 +51,11 @@ def _record_cleanup_failure(
 
 
 async def _join_retained_task(task: asyncio.Task[None]) -> None:
+    """Join a retained cleanup task without abandoning it on cancellation.
+
+    Args:
+        task: Cleanup task owned by the TTS service or registry.
+    """
     await join_retained_task(
         task,
         on_failure_after_cancellation=_record_cleanup_failure,

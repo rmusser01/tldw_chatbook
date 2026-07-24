@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from copy import deepcopy
 from types import SimpleNamespace
@@ -550,3 +551,133 @@ async def test_provider_failure_does_not_skip_later_candidate_or_expose_details(
     assert "Failed to reconfigure TTS providers: openai" in rendered
     assert "rejected credential" not in rendered
     assert secret not in rendered
+
+
+@pytest.mark.asyncio
+async def test_connection_and_local_provider_settings_persist_and_reconfigure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = RecordingApp()
+    handler = STTSEventHandler(app)
+    reconfigure_provider = AsyncMock()
+    handler._stts_service = SimpleNamespace(
+        reconfigure_provider=reconfigure_provider,
+    )
+    saved_batches: list[dict[str, dict[str, object]]] = []
+    snapshot = {
+        "COMPREHENSIVE_CONFIG_RAW": {
+            "app_tts": {
+                "OPENAI_BASE_URL": "http://127.0.0.1:9000/v1/audio/speech",
+                "OPENAI_ORG_ID": "",
+                "CHATTERBOX_DEVICE": "cpu",
+                "ALLTALK_TTS_URL_DEFAULT": "http://127.0.0.1:7851",
+            }
+        }
+    }
+
+    def save_batch(
+        section_values: Mapping[str, Mapping[object, object]],
+    ) -> bool:
+        saved_batches.append(deepcopy(dict(section_values)))
+        return True
+
+    monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config",
+        save_batch,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.config.load_settings",
+        Mock(return_value=snapshot),
+    )
+
+    await handler.handle_settings_save(
+        STTSSettingsSaveEvent(
+            {
+                "OPENAI_BASE_URL": "http://127.0.0.1:9000/v1/audio/speech",
+                "OPENAI_ORG_ID": "",
+                "CHATTERBOX_DEVICE": "cpu",
+                "ALLTALK_TTS_URL_DEFAULT": "http://127.0.0.1:7851",
+            }
+        )
+    )
+
+    assert saved_batches == [
+        {
+            "app_tts": {
+                "OPENAI_BASE_URL": "http://127.0.0.1:9000/v1/audio/speech",
+                "OPENAI_ORG_ID": "",
+                "CHATTERBOX_DEVICE": "cpu",
+                "ALLTALK_TTS_URL_DEFAULT": "http://127.0.0.1:7851",
+            }
+        }
+    ]
+    assert [call_.args[0] for call_ in reconfigure_provider.await_args_list] == [
+        "openai",
+        "chatterbox",
+        "alltalk",
+    ]
+    for provider_id, call_ in zip(
+        ("openai", "chatterbox", "alltalk"),
+        reconfigure_provider.await_args_list,
+    ):
+        assert call_.args[1] == legacy_provider_config(provider_id, snapshot)
+    assert app.notifications == [
+        ("Settings saved successfully!", "information"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_settings_saves_are_serialized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = RecordingApp()
+    handler = STTSEventHandler(app)
+    first_reconfigure_started = asyncio.Event()
+    allow_first_reconfigure = asyncio.Event()
+    reconfigure_calls = 0
+
+    async def reconfigure_provider(_provider_id: str, _config: object) -> None:
+        nonlocal reconfigure_calls
+        reconfigure_calls += 1
+        if reconfigure_calls == 1:
+            first_reconfigure_started.set()
+            await allow_first_reconfigure.wait()
+
+    handler._stts_service = SimpleNamespace(
+        reconfigure_provider=reconfigure_provider,
+    )
+    saved_values: list[str] = []
+
+    def save_batch(
+        section_values: Mapping[str, Mapping[object, object]],
+    ) -> bool:
+        saved_values.append(str(section_values["API"]["openai_api_key"]))
+        return True
+
+    monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config",
+        save_batch,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.config.load_settings",
+        lambda: {"COMPREHENSIVE_CONFIG_RAW": {"API": {}}},
+    )
+
+    first = asyncio.create_task(
+        handler.handle_settings_save(STTSSettingsSaveEvent({"openai_api_key": "first"}))
+    )
+    await first_reconfigure_started.wait()
+    second = asyncio.create_task(
+        handler.handle_settings_save(
+            STTSSettingsSaveEvent({"openai_api_key": "second"})
+        )
+    )
+    await asyncio.sleep(0)
+
+    assert saved_values == ["first"]
+
+    allow_first_reconfigure.set()
+    await asyncio.gather(first, second)
+
+    assert saved_values == ["first", "second"]
+    assert reconfigure_calls == 2

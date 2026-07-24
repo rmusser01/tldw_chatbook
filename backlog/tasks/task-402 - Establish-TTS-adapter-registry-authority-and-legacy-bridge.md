@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-24 00:42'
-updated_date: '2026-07-24 17:45'
+updated_date: '2026-07-24 19:40'
 labels:
   - tts
   - architecture
@@ -36,6 +36,9 @@ Replace direct access to the wildcard TTS backend manager with one application-o
 - [x] #8 New registry and bridge diagnostics log neither configuration values nor synthesis text, and regression coverage removes the existing OpenAI API-key-prefix disclosure.
 - [x] #9 Saving provider-affecting STTS settings reloads the effective configuration and reconfigures only the affected materialized provider adapters without restarting the application.
 - [x] #10 TTSService shutdown wakes and rejects blocked synthesis admissions, closes abandoned service-wrapped responses after the bounded drain, and leaves no synthesis waiter blocked after wait_closed completes.
+- [x] #11 STTS settings emit canonical Textual select values, support explicit OpenAI reset/clear semantics, and defer success or failure notification to the persistence handler.
+- [x] #12 Refreshed legacy adapters consume nested Kokoro and Higgs settings plus validated OpenAI endpoint and organization settings without exposing submitted values.
+- [x] #13 STTS initialization retrieves the application-bound service without constructing or passing compatibility configuration that the accessor intentionally ignores.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -59,7 +62,7 @@ Reason: ADR-023 governs the service lifecycle, provider-scoped reconfiguration, 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented the app-owned sealed TTSAdapterRegistry and TTSService binding with exact canonical provider IDs, cancellation-safe leases, targeted retirement, and a single absolute shutdown deadline. Added six provider-scoped legacy adapters, enumerated compatibility routing, isolated managers, per-backend locking, operation-scoped progress, service-owned response/resource convergence, late-cleanup observation, and caller-cancellation precedence with sanitized diagnostics. STTS settings now persist atomically, use the real producer keys, normalize provider-scoped effective configuration with raw and environment precedence, reconfigure every affected provider without materializing unrelated adapters, and keep failures value-free. Addressed review requests for public docstrings, missing backend symbols, and cleanup-failure evidence; retained async STTS task ownership because it already dispatches generation without a nested worker. Final isolated verification: 283 broad regressions passed with 14 optional skips; a post-format registry run passed 20 tests; compileall, scoped mypy, boundary isolation, ADR/scope audit, git diff hygiene, and Ruff check/format on 21 TTS-scope Python files passed. Independent spec, quality, and final whole-branch reviews found no remaining Critical or Important production issues. ADR-023 remains governing; native audio.cpp transport and supervision remain deferred. GitHub CI was intentionally not inspected or awaited per the user's instruction.
+Implemented the app-owned sealed TTSAdapterRegistry and application-bound TTSService with exact provider IDs, cancellation-safe leases, targeted reconfiguration, and a single shutdown deadline. Preserved all six existing providers behind isolated legacy adapters with enumerated routing, per-backend locking, bounded cleanup, and value-free diagnostics. Reconciled the rebased PR review fixes by restoring canonical Textual Select values, complete settings-key persistence for OpenAI, Chatterbox, Higgs, and AllTalk, explicit OpenAI endpoint reset and organization clearing, validated endpoint/header configuration, serialized concurrent saves, and service retrieval without ignored compatibility configuration. Kept playground generation in its already-retained same-loop event task and documented why a nested worker would break ownership. Fresh post-format verification: 301 passed and 14 optional skips across TTS, STTS UI, audio-service, and media-reading regressions; Ruff check/format, compileall, scoped mypy, boundary isolation, ADR/scope audit, and git diff hygiene passed. ADR-023 remains governing. Native audio.cpp transport and process supervision remain intentionally deferred to later slices.
 <!-- SECTION:NOTES:END -->
 
 ## Definition of Done

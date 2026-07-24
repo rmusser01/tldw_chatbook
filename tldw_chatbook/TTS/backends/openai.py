@@ -6,6 +6,7 @@ from typing import AsyncGenerator, Optional, Dict, Any
 import json
 import httpx
 import os
+from urllib.parse import urlsplit
 from loguru import logger
 
 # Local imports
@@ -18,10 +19,45 @@ from tldw_chatbook.config import get_cli_setting
 # OpenAI TTS Backend Implementation
 
 
+_DEFAULT_OPENAI_TTS_URL = "https://api.openai.com/v1/audio/speech"
+
+
+def _validate_openai_base_url(value: Any) -> str:
+    normalized = str(value or _DEFAULT_OPENAI_TTS_URL).strip()
+    try:
+        parsed = urlsplit(normalized)
+        valid = (
+            parsed.scheme.lower() in {"http", "https"}
+            and bool(parsed.netloc)
+            and bool(parsed.hostname)
+            and parsed.username is None
+            and parsed.password is None
+            and not parsed.fragment
+            and "\r" not in normalized
+            and "\n" not in normalized
+        )
+    except ValueError:
+        valid = False
+    if not valid:
+        raise ValueError(
+            "OpenAI base URL must be an absolute HTTP(S) URL without "
+            "credentials or a fragment"
+        )
+    return normalized
+
+
 class OpenAITTSBackend(APITTSBackend):
     """OpenAI Text-to-Speech API backend"""
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
+        supplied_config = config or {}
+        base_url = _validate_openai_base_url(
+            supplied_config.get("OPENAI_BASE_URL", _DEFAULT_OPENAI_TTS_URL)
+        )
+        organization_id = str(supplied_config.get("OPENAI_ORG_ID") or "").strip()
+        if "\r" in organization_id or "\n" in organization_id:
+            raise ValueError("OpenAI organization ID cannot contain line breaks")
+
         super().__init__(config)
 
         # Try environment variable first
@@ -82,7 +118,8 @@ class OpenAITTSBackend(APITTSBackend):
                 f"OpenAITTSBackend: Checking app_tts/OPENAI_API_KEY_fallback: {'found' if self.api_key else 'not found'}"
             )
 
-        self.base_url = "https://api.openai.com/v1/audio/speech"
+        self.base_url = base_url
+        self.organization_id = organization_id or None
 
         if not self.api_key:
             logger.warning("OpenAITTSBackend: No API key configured")
@@ -122,6 +159,8 @@ class OpenAITTSBackend(APITTSBackend):
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+        if self.organization_id:
+            headers["OpenAI-Organization"] = self.organization_id
 
         # Map internal model names to OpenAI model names if needed
         model = request.model

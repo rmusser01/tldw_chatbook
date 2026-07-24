@@ -34,7 +34,13 @@ async def join_retained_task(
         Callable[[BaseException, BaseException], None] | None
     ) = None,
 ) -> None:
-    """Finish retained cleanup before propagating caller cancellation."""
+    """Finish retained cleanup before propagating caller cancellation.
+
+    Args:
+        task: Retained cleanup future that must reach a terminal state.
+        on_failure_after_cancellation: Optional observer receiving the caller
+            cancellation and the later cleanup failure, in that order.
+    """
     cancellation: asyncio.CancelledError | None = None
     waiter = asyncio.current_task()
     cancellation_requests = waiter.cancelling() if waiter is not None else 0

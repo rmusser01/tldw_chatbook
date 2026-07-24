@@ -155,6 +155,28 @@ async def test_app_binding_and_close_are_explicit_and_idempotent() -> None:
         await get_tts_service()
 
 
+@pytest.mark.asyncio
+async def test_stts_initialization_only_retrieves_the_bound_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = object()
+    get_service = AsyncMock(return_value=service)
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.STTS_Events.stts_events.get_tts_service",
+        get_service,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.config.load_cli_config_and_ensure_existence",
+        lambda: pytest.fail("initialization must not rebuild compatibility config"),
+    )
+    handler = STTSEventHandler(SimpleNamespace())
+
+    await handler.initialize_stts()
+
+    get_service.assert_awaited_once_with()
+    assert handler._stts_service is service
+
+
 def test_existing_mount_binds_before_screen_work() -> None:
     method = _method_node(REPO_ROOT / "tldw_chatbook/app.py", "TldwCli", "on_mount")
     bind_calls = _self_method_calls(method, "_bind_tts_service")

@@ -6,9 +6,11 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from types import ModuleType
 
+import httpx
 import pytest
 
 from tldw_chatbook.TTS import TTS_Backends
+from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.TTS_Backends import BackendRegistry, TTSBackendManager
 from tldw_chatbook.TTS.backends.openai import OpenAITTSBackend
 
@@ -228,3 +230,68 @@ def test_builtin_import_attribute_error_propagates(
 
     with pytest.raises(AttributeError, match="backend import bug"):
         BackendRegistry.ensure_builtins()
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_uses_configured_endpoint_and_organization_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    requests: list[httpx.Request] = []
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, content=b"audio")
+
+    backend = OpenAITTSBackend(
+        {
+            "OPENAI_API_KEY": "test-key",
+            "OPENAI_BASE_URL": "https://tts.example.test/v1/audio/speech",
+            "OPENAI_ORG_ID": "org-test",
+        }
+    )
+    await backend.client.aclose()
+    backend.client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    try:
+        chunks = [
+            chunk
+            async for chunk in backend.generate_speech_stream(
+                OpenAISpeechRequest(
+                    model="tts-1",
+                    input="hello",
+                    voice="alloy",
+                    response_format="wav",
+                )
+            )
+        ]
+    finally:
+        await backend.close()
+
+    assert chunks == [b"audio"]
+    assert str(requests[0].url) == "https://tts.example.test/v1/audio/speech"
+    assert requests[0].headers["OpenAI-Organization"] == "org-test"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "config",
+    (
+        {"OPENAI_BASE_URL": "relative/speech"},
+        {"OPENAI_BASE_URL": "ftp://example.test/speech"},
+        {"OPENAI_BASE_URL": "https://user:secret@example.test/speech"},
+        {"OPENAI_BASE_URL": "https://example.test/speech#fragment"},
+        {"OPENAI_ORG_ID": "org-test\r\nInjected: value"},
+    ),
+)
+async def test_openai_backend_rejects_unsafe_connection_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    config: dict[str, str],
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    backend = None
+    try:
+        with pytest.raises(ValueError, match="OpenAI"):
+            backend = OpenAITTSBackend({"OPENAI_API_KEY": "test-key", **config})
+    finally:
+        if backend is not None:
+            await backend.close()

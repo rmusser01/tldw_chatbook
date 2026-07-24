@@ -5,7 +5,7 @@
 import asyncio
 from collections.abc import Coroutine
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, NamedTuple
 from pathlib import Path
 from loguru import logger
 
@@ -21,64 +21,207 @@ from tldw_chatbook.TTS.adapter_types import TTSProgress
 from tldw_chatbook.TTS.legacy_bridge import legacy_provider_config
 from tldw_chatbook.TTS.TTS_Generation import _join_retained_task
 from tldw_chatbook.Utils.secure_temp_files import secure_delete_file
-from tldw_chatbook.config import get_cli_setting
 #
 #######################################################################################################################
 #
 # Event Messages
 
-_STTS_PROVIDER_SETTING_KEYS = (
-    ("openai", frozenset({"openai_api_key"})),
-    (
+
+class _SettingBinding(NamedTuple):
+    destinations: tuple[tuple[str, str], ...]
+    provider_id: str | None = None
+
+
+def _app_tts_binding(
+    key: str,
+    provider_id: str | None = None,
+) -> _SettingBinding:
+    return _SettingBinding((("app_tts", key),), provider_id)
+
+
+_TTS_SETTING_BINDINGS = {
+    "default_provider": _SettingBinding(
+        (
+            ("app_tts", "default_provider"),
+            ("tts_settings", "default_tts_provider"),
+        )
+    ),
+    "default_voice": _SettingBinding(
+        (
+            ("app_tts", "default_voice"),
+            ("tts_settings", "default_tts_voice"),
+        )
+    ),
+    "default_model": _SettingBinding(
+        (
+            ("app_tts", "default_model"),
+            ("tts_settings", "default_openai_tts_model"),
+        )
+    ),
+    "default_format": _SettingBinding(
+        (
+            ("app_tts", "default_format"),
+            ("tts_settings", "default_openai_tts_output_format"),
+        )
+    ),
+    "default_speed": _SettingBinding(
+        (
+            ("app_tts", "default_speed"),
+            ("tts_settings", "default_openai_tts_speed"),
+        )
+    ),
+    "openai_api_key": _SettingBinding(
+        (("API", "openai_api_key"),),
+        "openai",
+    ),
+    "OPENAI_BASE_URL": _app_tts_binding("OPENAI_BASE_URL", "openai"),
+    "OPENAI_ORG_ID": _app_tts_binding("OPENAI_ORG_ID", "openai"),
+    "elevenlabs_api_key": _SettingBinding(
+        (("API", "elevenlabs_api_key"),),
         "elevenlabs",
-        frozenset(
-            {
-                "elevenlabs_api_key",
-                "ELEVENLABS_DEFAULT_MODEL",
-                "ELEVENLABS_OUTPUT_FORMAT",
-                "ELEVENLABS_VOICE_STABILITY",
-                "ELEVENLABS_SIMILARITY_BOOST",
-                "ELEVENLABS_STYLE",
-                "ELEVENLABS_USE_SPEAKER_BOOST",
-            }
-        ),
     ),
-    (
-        "kokoro",
-        frozenset(
-            {
-                "KOKORO_DEVICE_DEFAULT",
-                "KOKORO_USE_ONNX",
-                "KOKORO_ONNX_MODEL_PATH_DEFAULT",
-                "KOKORO_ONNX_VOICES_JSON_DEFAULT",
-                "KOKORO_MAX_TOKENS",
-                "KOKORO_ENABLE_VOICE_MIXING",
-                "KOKORO_TRACK_PERFORMANCE",
-            }
-        ),
+    "ELEVENLABS_DEFAULT_MODEL": _app_tts_binding(
+        "ELEVENLABS_DEFAULT_MODEL", "elevenlabs"
     ),
-    (
+    "ELEVENLABS_OUTPUT_FORMAT": _app_tts_binding(
+        "ELEVENLABS_OUTPUT_FORMAT", "elevenlabs"
+    ),
+    "ELEVENLABS_VOICE_STABILITY": _app_tts_binding(
+        "ELEVENLABS_VOICE_STABILITY", "elevenlabs"
+    ),
+    "ELEVENLABS_SIMILARITY_BOOST": _app_tts_binding(
+        "ELEVENLABS_SIMILARITY_BOOST", "elevenlabs"
+    ),
+    "ELEVENLABS_STYLE": _app_tts_binding("ELEVENLABS_STYLE", "elevenlabs"),
+    "ELEVENLABS_USE_SPEAKER_BOOST": _app_tts_binding(
+        "ELEVENLABS_USE_SPEAKER_BOOST", "elevenlabs"
+    ),
+    "KOKORO_DEVICE_DEFAULT": _app_tts_binding("KOKORO_DEVICE_DEFAULT", "kokoro"),
+    "KOKORO_USE_ONNX": _app_tts_binding("KOKORO_USE_ONNX"),
+    "KOKORO_ONNX_MODEL_PATH_DEFAULT": _app_tts_binding(
+        "KOKORO_ONNX_MODEL_PATH_DEFAULT", "kokoro"
+    ),
+    "KOKORO_ONNX_VOICES_JSON_DEFAULT": _app_tts_binding(
+        "KOKORO_ONNX_VOICES_JSON_DEFAULT", "kokoro"
+    ),
+    "KOKORO_MAX_TOKENS": _app_tts_binding("KOKORO_MAX_TOKENS", "kokoro"),
+    "KOKORO_ENABLE_VOICE_MIXING": _app_tts_binding(
+        "KOKORO_ENABLE_VOICE_MIXING", "kokoro"
+    ),
+    "KOKORO_TRACK_PERFORMANCE": _app_tts_binding("KOKORO_TRACK_PERFORMANCE", "kokoro"),
+    "CHATTERBOX_DEVICE": _app_tts_binding("CHATTERBOX_DEVICE", "chatterbox"),
+    "CHATTERBOX_VOICE_DIR": _app_tts_binding("CHATTERBOX_VOICE_DIR", "chatterbox"),
+    "CHATTERBOX_EXAGGERATION": _app_tts_binding(
+        "CHATTERBOX_EXAGGERATION", "chatterbox"
+    ),
+    "CHATTERBOX_CFG_WEIGHT": _app_tts_binding("CHATTERBOX_CFG_WEIGHT", "chatterbox"),
+    "CHATTERBOX_TEMPERATURE": _app_tts_binding("CHATTERBOX_TEMPERATURE", "chatterbox"),
+    "CHATTERBOX_CHUNK_SIZE": _app_tts_binding("CHATTERBOX_CHUNK_SIZE", "chatterbox"),
+    "CHATTERBOX_RANDOM_SEED": _app_tts_binding("CHATTERBOX_RANDOM_SEED", "chatterbox"),
+    "CHATTERBOX_NUM_CANDIDATES": _app_tts_binding(
+        "CHATTERBOX_NUM_CANDIDATES", "chatterbox"
+    ),
+    "CHATTERBOX_VALIDATE_WHISPER": _app_tts_binding(
+        "CHATTERBOX_VALIDATE_WHISPER", "chatterbox"
+    ),
+    "CHATTERBOX_PREPROCESS_TEXT": _app_tts_binding(
+        "CHATTERBOX_PREPROCESS_TEXT", "chatterbox"
+    ),
+    "CHATTERBOX_NORMALIZE_AUDIO": _app_tts_binding(
+        "CHATTERBOX_NORMALIZE_AUDIO", "chatterbox"
+    ),
+    "CHATTERBOX_TARGET_DB": _app_tts_binding("CHATTERBOX_TARGET_DB", "chatterbox"),
+    "CHATTERBOX_MAX_CHUNK_SIZE": _app_tts_binding(
+        "CHATTERBOX_MAX_CHUNK_SIZE", "chatterbox"
+    ),
+    "CHATTERBOX_STREAMING": _app_tts_binding("CHATTERBOX_STREAMING", "chatterbox"),
+    "CHATTERBOX_STREAM_CHUNK_SIZE": _app_tts_binding(
+        "CHATTERBOX_STREAM_CHUNK_SIZE", "chatterbox"
+    ),
+    "CHATTERBOX_ENABLE_CROSSFADE": _app_tts_binding(
+        "CHATTERBOX_ENABLE_CROSSFADE", "chatterbox"
+    ),
+    "CHATTERBOX_CROSSFADE_MS": _app_tts_binding(
+        "CHATTERBOX_CROSSFADE_MS", "chatterbox"
+    ),
+    "HIGGS_MODEL_PATH": _SettingBinding(
+        (("HiggsSettings", "model_path"),),
         "higgs",
-        frozenset(
-            {
-                "HIGGS_MODEL_PATH",
-                "HIGGS_VOICE_SAMPLES_DIR",
-                "HIGGS_DEVICE",
-                "HIGGS_ENABLE_FLASH_ATTN",
-                "HIGGS_DTYPE",
-                "HIGGS_MAX_REFERENCE_DURATION",
-                "HIGGS_DEFAULT_LANGUAGE",
-                "HIGGS_ENABLE_VOICE_CLONING",
-                "HIGGS_ENABLE_MULTI_SPEAKER",
-                "HIGGS_SPEAKER_DELIMITER",
-                "HIGGS_TRACK_PERFORMANCE",
-                "HIGGS_MAX_NEW_TOKENS",
-                "HIGGS_TEMPERATURE",
-                "HIGGS_TOP_P",
-                "HIGGS_REPETITION_PENALTY",
-            }
-        ),
     ),
+    "HIGGS_VOICE_SAMPLES_DIR": _SettingBinding(
+        (("HiggsSettings", "voice_samples_dir"),),
+        "higgs",
+    ),
+    "HIGGS_DEVICE": _SettingBinding(
+        (("HiggsSettings", "device"),),
+        "higgs",
+    ),
+    "HIGGS_ENABLE_FLASH_ATTN": _SettingBinding(
+        (("HiggsSettings", "enable_flash_attn"),),
+        "higgs",
+    ),
+    "HIGGS_DTYPE": _SettingBinding(
+        (("HiggsSettings", "dtype"),),
+        "higgs",
+    ),
+    "HIGGS_MAX_REFERENCE_DURATION": _SettingBinding(
+        (("HiggsSettings", "max_reference_duration"),),
+        "higgs",
+    ),
+    "HIGGS_DEFAULT_LANGUAGE": _SettingBinding(
+        (("HiggsSettings", "default_language"),),
+        "higgs",
+    ),
+    "HIGGS_ENABLE_VOICE_CLONING": _SettingBinding(
+        (("HiggsSettings", "enable_voice_cloning"),),
+        "higgs",
+    ),
+    "HIGGS_ENABLE_MULTI_SPEAKER": _SettingBinding(
+        (("HiggsSettings", "enable_multi_speaker"),),
+        "higgs",
+    ),
+    "HIGGS_SPEAKER_DELIMITER": _SettingBinding(
+        (("HiggsSettings", "speaker_delimiter"),),
+        "higgs",
+    ),
+    "HIGGS_TRACK_PERFORMANCE": _SettingBinding(
+        (("HiggsSettings", "track_performance"),),
+        "higgs",
+    ),
+    "HIGGS_MAX_NEW_TOKENS": _SettingBinding(
+        (("HiggsSettings", "max_new_tokens"),),
+        "higgs",
+    ),
+    "HIGGS_TEMPERATURE": _SettingBinding(
+        (("HiggsSettings", "temperature"),),
+        "higgs",
+    ),
+    "HIGGS_TOP_P": _SettingBinding(
+        (("HiggsSettings", "top_p"),),
+        "higgs",
+    ),
+    "HIGGS_REPETITION_PENALTY": _SettingBinding(
+        (("HiggsSettings", "repetition_penalty"),),
+        "higgs",
+    ),
+    "ALLTALK_TTS_URL_DEFAULT": _app_tts_binding("ALLTALK_TTS_URL_DEFAULT", "alltalk"),
+    "ALLTALK_TTS_VOICE_DEFAULT": _app_tts_binding(
+        "ALLTALK_TTS_VOICE_DEFAULT", "alltalk"
+    ),
+    "ALLTALK_TTS_LANGUAGE_DEFAULT": _app_tts_binding(
+        "ALLTALK_TTS_LANGUAGE_DEFAULT", "alltalk"
+    ),
+    "ALLTALK_TTS_OUTPUT_FORMAT_DEFAULT": _app_tts_binding(
+        "ALLTALK_TTS_OUTPUT_FORMAT_DEFAULT", "alltalk"
+    ),
+}
+_TTS_PROVIDER_ORDER = (
+    "openai",
+    "elevenlabs",
+    "kokoro",
+    "chatterbox",
+    "higgs",
+    "alltalk",
 )
 
 
@@ -148,43 +291,12 @@ class STTSEventHandler:
         self._active_tasks: set[asyncio.Task[Any]] = set()
         self._playground_audio_files: set[Path] = set()
         self._cleanup_task: asyncio.Task[None] | None = None
+        self._settings_save_lock = asyncio.Lock()
 
     async def initialize_stts(self) -> None:
         """Initialize S/TT/S service"""
         try:
-            from tldw_chatbook.config import load_cli_config_and_ensure_existence
-
-            # Load the full config to get API keys
-            full_config = load_cli_config_and_ensure_existence()
-
-            # Get TTS service instance
-            app_config = {
-                "app_tts": {
-                    "default_provider": get_cli_setting(
-                        "app_tts", "default_provider", "openai"
-                    ),
-                    "default_voice": get_cli_setting(
-                        "app_tts", "default_voice", "alloy"
-                    ),
-                    "default_model": get_cli_setting(
-                        "app_tts", "default_model", "tts-1"
-                    ),
-                    "default_format": get_cli_setting(
-                        "app_tts", "default_format", "mp3"
-                    ),
-                    "default_speed": get_cli_setting("app_tts", "default_speed", 1.0),
-                }
-            }
-
-            # Add API settings sections if they exist
-            if "api_settings.openai" in full_config:
-                app_config["api_settings.openai"] = full_config["api_settings.openai"]
-            if "openai_api" in full_config:
-                app_config["openai_api"] = full_config["openai_api"]
-            if "API" in full_config:
-                app_config["API"] = full_config["API"]
-
-            self._stts_service = await get_tts_service(app_config)
+            self._stts_service = await get_tts_service()
             logger.info("S/TT/S service initialized successfully")
         except Exception:
             logger.error("Failed to initialize S/TT/S service")
@@ -193,7 +305,7 @@ class STTSEventHandler:
     async def handle_playground_generate(
         self, event: STTSPlaygroundGenerateEvent
     ) -> None:
-        """Handle TTS generation from playground"""
+        """Run playground TTS inside the handler's retained event task."""
         if self._cleanup_task is not None:
             logger.debug("Ignoring TTS generation after STTS cleanup started")
             return
@@ -217,6 +329,8 @@ class STTSEventHandler:
             logger.warning(f"Could not find TTSPlaygroundWidget: {e}")
             playground = None
 
+        # The Textual message hook already dispatches this coroutine through
+        # _start_event_task, so a nested worker would split task ownership.
         await self._generate_tts_worker(event, playground)
 
     async def _generate_tts_worker(
@@ -638,118 +752,32 @@ class STTSEventHandler:
         if self._cleanup_task is not None:
             logger.debug("Ignoring STTS settings after cleanup started")
             return
+        async with self._settings_save_lock:
+            if self._cleanup_task is not None:
+                logger.debug("Ignoring STTS settings after cleanup started")
+                return
+            await self._persist_settings(event)
+
+    async def _persist_settings(self, event: STTSSettingsSaveEvent) -> None:
+        """Persist one settings event and refresh its affected providers."""
         try:
             from tldw_chatbook.config import (
                 load_settings,
                 save_settings_to_cli_config,
             )
 
-            # Save each setting to the appropriate section
-            settings_map: dict[
-                str,
-                tuple[str, str] | list[tuple[str, str]],
-            ] = {
-                # Default settings - save to both sections for compatibility
-                "default_provider": [
-                    ("app_tts", "default_provider"),
-                    ("tts_settings", "default_tts_provider"),
-                ],
-                "default_voice": [
-                    ("app_tts", "default_voice"),
-                    ("tts_settings", "default_tts_voice"),
-                ],
-                "default_model": [
-                    ("app_tts", "default_model"),
-                    ("tts_settings", "default_openai_tts_model"),
-                ],
-                "default_format": [
-                    ("app_tts", "default_format"),
-                    ("tts_settings", "default_openai_tts_output_format"),
-                ],
-                "default_speed": [
-                    ("app_tts", "default_speed"),
-                    ("tts_settings", "default_openai_tts_speed"),
-                ],
-                # OpenAI settings
-                "openai_api_key": ("API", "openai_api_key"),
-                # ElevenLabs settings
-                "elevenlabs_api_key": ("API", "elevenlabs_api_key"),
-                "ELEVENLABS_DEFAULT_MODEL": (
-                    "app_tts",
-                    "ELEVENLABS_DEFAULT_MODEL",
-                ),
-                "ELEVENLABS_OUTPUT_FORMAT": (
-                    "app_tts",
-                    "ELEVENLABS_OUTPUT_FORMAT",
-                ),
-                "ELEVENLABS_VOICE_STABILITY": (
-                    "app_tts",
-                    "ELEVENLABS_VOICE_STABILITY",
-                ),
-                "ELEVENLABS_SIMILARITY_BOOST": (
-                    "app_tts",
-                    "ELEVENLABS_SIMILARITY_BOOST",
-                ),
-                "ELEVENLABS_STYLE": ("app_tts", "ELEVENLABS_STYLE"),
-                "ELEVENLABS_USE_SPEAKER_BOOST": (
-                    "app_tts",
-                    "ELEVENLABS_USE_SPEAKER_BOOST",
-                ),
-                # Kokoro settings
-                "KOKORO_DEVICE_DEFAULT": ("app_tts", "KOKORO_DEVICE_DEFAULT"),
-                "KOKORO_USE_ONNX": ("app_tts", "KOKORO_USE_ONNX"),
-                "KOKORO_ONNX_MODEL_PATH_DEFAULT": (
-                    "app_tts",
-                    "KOKORO_ONNX_MODEL_PATH_DEFAULT",
-                ),
-                "KOKORO_ONNX_VOICES_JSON_DEFAULT": (
-                    "app_tts",
-                    "KOKORO_ONNX_VOICES_JSON_DEFAULT",
-                ),
-                "KOKORO_MAX_TOKENS": ("app_tts", "KOKORO_MAX_TOKENS"),
-                "KOKORO_ENABLE_VOICE_MIXING": (
-                    "app_tts",
-                    "KOKORO_ENABLE_VOICE_MIXING",
-                ),
-                "KOKORO_TRACK_PERFORMANCE": (
-                    "app_tts",
-                    "KOKORO_TRACK_PERFORMANCE",
-                ),
-                # Higgs settings
-                "HIGGS_MODEL_PATH": ("HiggsSettings", "model_path"),
-                "HIGGS_VOICE_SAMPLES_DIR": ("HiggsSettings", "voice_samples_dir"),
-                "HIGGS_DEVICE": ("HiggsSettings", "device"),
-                "HIGGS_ENABLE_FLASH_ATTN": ("HiggsSettings", "enable_flash_attn"),
-                "HIGGS_DTYPE": ("HiggsSettings", "dtype"),
-                "HIGGS_MAX_REFERENCE_DURATION": (
-                    "HiggsSettings",
-                    "max_reference_duration",
-                ),
-                "HIGGS_DEFAULT_LANGUAGE": ("HiggsSettings", "default_language"),
-                "HIGGS_ENABLE_VOICE_CLONING": ("HiggsSettings", "enable_voice_cloning"),
-                "HIGGS_ENABLE_MULTI_SPEAKER": ("HiggsSettings", "enable_multi_speaker"),
-                "HIGGS_SPEAKER_DELIMITER": ("HiggsSettings", "speaker_delimiter"),
-                "HIGGS_TRACK_PERFORMANCE": ("HiggsSettings", "track_performance"),
-                "HIGGS_MAX_NEW_TOKENS": ("HiggsSettings", "max_new_tokens"),
-                "HIGGS_TEMPERATURE": ("HiggsSettings", "temperature"),
-                "HIGGS_TOP_P": ("HiggsSettings", "top_p"),
-                "HIGGS_REPETITION_PENALTY": (
-                    "HiggsSettings",
-                    "repetition_penalty",
-                ),
-            }
-
             section_values: dict[str, dict[str, Any]] = {}
             saved_destinations: list[tuple[str, str, str]] = []
-            persisted_keys: set[str] = set()
+            candidate_provider_ids: set[str] = set()
             for key, value in event.settings.items():
-                if key in settings_map:
-                    mapping = settings_map[key]
-                    destinations = mapping if isinstance(mapping, list) else [mapping]
-                    for section, setting_name in destinations:
-                        section_values.setdefault(section, {})[setting_name] = value
-                        saved_destinations.append((key, section, setting_name))
-                    persisted_keys.add(key)
+                binding = _TTS_SETTING_BINDINGS.get(key)
+                if binding is None:
+                    continue
+                for section, setting_name in binding.destinations:
+                    section_values.setdefault(section, {})[setting_name] = value
+                    saved_destinations.append((key, section, setting_name))
+                if binding.provider_id is not None:
+                    candidate_provider_ids.add(binding.provider_id)
 
             if section_values and save_settings_to_cli_config(section_values) is False:
                 raise RuntimeError("STTS settings batch save failed")
@@ -759,8 +787,8 @@ class STTSEventHandler:
             effective_settings = load_settings()
             candidate_providers = [
                 provider_id
-                for provider_id, setting_keys in _STTS_PROVIDER_SETTING_KEYS
-                if persisted_keys & setting_keys
+                for provider_id in _TTS_PROVIDER_ORDER
+                if provider_id in candidate_provider_ids
             ]
             if candidate_providers:
                 service = self._stts_service
@@ -1166,7 +1194,7 @@ class STTSEventHandler:
     def on_stts_playground_generate_event(
         self, event: STTSPlaygroundGenerateEvent
     ) -> None:
-        """Handle playground generate event"""
+        """Start a retained async task for playground generation."""
         self._start_event_task(self.handle_playground_generate(event))
 
     def on_stts_settings_save_event(self, event: STTSSettingsSaveEvent) -> None:

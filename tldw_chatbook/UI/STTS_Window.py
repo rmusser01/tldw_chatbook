@@ -5,6 +5,7 @@
 import asyncio
 from typing import Optional, Dict, Any, List
 from pathlib import Path
+from urllib.parse import urlsplit
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer, Container
 from textual.widgets import (
@@ -1905,6 +1906,8 @@ class TTSPlaygroundWidget(Widget):
 class TTSSettingsWidget(Widget):
     """TTS Settings for global configuration"""
 
+    OPENAI_TTS_DEFAULT_URL = "https://api.openai.com/v1/audio/speech"
+
     # Store file paths
     kokoro_model_path = reactive("")
     kokoro_voices_path = reactive("")
@@ -1973,12 +1976,12 @@ class TTSSettingsWidget(Widget):
                     yield Label("Default Provider:", classes="form-label")
                     yield Select(
                         options=[
-                            ("openai", "OpenAI"),
-                            ("elevenlabs", "ElevenLabs"),
-                            ("kokoro", "Kokoro (Local)"),
-                            ("chatterbox", "Chatterbox (Local)"),
-                            ("higgs", "Higgs Audio (Local)"),
-                            ("alltalk", "AllTalk (Local Server)"),
+                            ("OpenAI", "openai"),
+                            ("ElevenLabs", "elevenlabs"),
+                            ("Kokoro (Local)", "kokoro"),
+                            ("Chatterbox (Local)", "chatterbox"),
+                            ("Higgs Audio (Local)", "higgs"),
+                            ("AllTalk (Local Server)", "alltalk"),
                         ],
                         id="default-provider-select",
                     )
@@ -1987,7 +1990,7 @@ class TTSSettingsWidget(Widget):
                     yield Label("Default Voice:", classes="form-label")
                     yield Select(
                         options=[
-                            ("alloy", "Alloy")
+                            ("Alloy", "alloy")
                         ],  # Will be updated based on provider
                         id="default-voice-select",
                     )
@@ -1996,7 +1999,7 @@ class TTSSettingsWidget(Widget):
                     yield Label("Default Model:", classes="form-label")
                     yield Select(
                         options=[
-                            ("tts-1", "TTS-1")
+                            ("TTS-1", "tts-1")
                         ],  # Will be updated based on provider
                         id="default-model-select",
                     )
@@ -2005,11 +2008,11 @@ class TTSSettingsWidget(Widget):
                     yield Label("Default Format:", classes="form-label")
                     yield Select(
                         options=[
-                            ("mp3", "MP3"),
-                            ("opus", "Opus"),
-                            ("aac", "AAC"),
-                            ("flac", "FLAC"),
-                            ("wav", "WAV"),
+                            ("MP3", "mp3"),
+                            ("Opus", "opus"),
+                            ("AAC", "aac"),
+                            ("FLAC", "flac"),
+                            ("WAV", "wav"),
                         ],
                         id="default-format-select",
                     )
@@ -2046,7 +2049,9 @@ class TTSSettingsWidget(Widget):
                 with Horizontal(classes="form-row"):
                     yield Label("Organization ID:", classes="form-label")
                     yield Input(
-                        id="openai-org-id-input", placeholder="org-... (optional)"
+                        id="openai-org-id-input",
+                        value=get_cli_setting("app_tts", "OPENAI_ORG_ID", ""),
+                        placeholder="org-... (optional)",
                     )
 
             # ElevenLabs settings
@@ -2063,10 +2068,10 @@ class TTSSettingsWidget(Widget):
                     yield Label("Model:", classes="form-label")
                     yield Select(
                         options=[
-                            ("eleven_multilingual_v2", "Multilingual v2"),
-                            ("eleven_turbo_v2", "Turbo v2"),
-                            ("eleven_multilingual_v1", "Multilingual v1"),
-                            ("eleven_monolingual_v1", "Monolingual v1"),
+                            ("Multilingual v2", "eleven_multilingual_v2"),
+                            ("Turbo v2", "eleven_turbo_v2"),
+                            ("Multilingual v1", "eleven_multilingual_v1"),
+                            ("Monolingual v1", "eleven_monolingual_v1"),
                         ],
                         id="elevenlabs-model-select",
                     )
@@ -2075,15 +2080,15 @@ class TTSSettingsWidget(Widget):
                     yield Label("Output Format:", classes="form-label")
                     yield Select(
                         options=[
-                            ("mp3_44100_192", "MP3 192kbps"),
-                            ("mp3_44100_128", "MP3 128kbps"),
-                            ("mp3_44100_96", "MP3 96kbps"),
-                            ("mp3_44100_64", "MP3 64kbps"),
-                            ("mp3_44100_32", "MP3 32kbps"),
-                            ("pcm_44100", "PCM 44.1kHz"),
-                            ("pcm_24000", "PCM 24kHz"),
-                            ("pcm_16000", "PCM 16kHz"),
-                            ("ulaw_8000", "μ-law 8kHz"),
+                            ("MP3 192kbps", "mp3_44100_192"),
+                            ("MP3 128kbps", "mp3_44100_128"),
+                            ("MP3 96kbps", "mp3_44100_96"),
+                            ("MP3 64kbps", "mp3_44100_64"),
+                            ("MP3 32kbps", "mp3_44100_32"),
+                            ("PCM 44.1kHz", "pcm_44100"),
+                            ("PCM 24kHz", "pcm_24000"),
+                            ("PCM 16kHz", "pcm_16000"),
+                            ("μ-law 8kHz", "ulaw_8000"),
                         ],
                         id="elevenlabs-format-select",
                     )
@@ -2140,8 +2145,8 @@ class TTSSettingsWidget(Widget):
                     yield Label("Device:", classes="form-label")
                     yield Select(
                         options=[
-                            ("cpu", "CPU"),
-                            ("cuda", "CUDA (GPU)"),
+                            ("CPU", "cpu"),
+                            ("CUDA (GPU)", "cuda"),
                         ],
                         id="kokoro-device-select",
                     )
@@ -2217,8 +2222,8 @@ class TTSSettingsWidget(Widget):
                     yield Label("Device:", classes="form-label")
                     yield Select(
                         options=[
-                            ("cpu", "CPU"),
-                            ("cuda", "CUDA (GPU)"),
+                            ("CPU", "cpu"),
+                            ("CUDA (GPU)", "cuda"),
                         ],
                         id="chatterbox-device-select",
                     )
@@ -2423,11 +2428,11 @@ class TTSSettingsWidget(Widget):
                     yield Label("Device:", classes="form-label")
                     yield Select(
                         options=[
-                            ("auto", "Auto-detect"),
-                            ("cpu", "CPU"),
-                            ("cuda", "CUDA (GPU)"),
-                            ("cuda:0", "CUDA Device 0"),
-                            ("cuda:1", "CUDA Device 1"),
+                            ("Auto-detect", "auto"),
+                            ("CPU", "cpu"),
+                            ("CUDA (GPU)", "cuda"),
+                            ("CUDA Device 0", "cuda:0"),
+                            ("CUDA Device 1", "cuda:1"),
                         ],
                         id="higgs-device-select",
                     )
@@ -2445,9 +2450,9 @@ class TTSSettingsWidget(Widget):
                     yield Label("Data Type:", classes="form-label")
                     yield Select(
                         options=[
-                            ("float32", "Float32 (Full precision)"),
-                            ("float16", "Float16 (Half precision)"),
-                            ("bfloat16", "BFloat16 (Better range)"),
+                            ("Float32 (Full precision)", "float32"),
+                            ("Float16 (Half precision)", "float16"),
+                            ("BFloat16 (Better range)", "bfloat16"),
                         ],
                         id="higgs-dtype-select",
                     )
@@ -2469,16 +2474,16 @@ class TTSSettingsWidget(Widget):
                     yield Label("Default Language:", classes="form-label")
                     yield Select(
                         options=[
-                            ("en", "English"),
-                            ("es", "Spanish"),
-                            ("fr", "French"),
-                            ("de", "German"),
-                            ("it", "Italian"),
-                            ("pt", "Portuguese"),
-                            ("ru", "Russian"),
-                            ("zh", "Chinese"),
-                            ("ja", "Japanese"),
-                            ("ko", "Korean"),
+                            ("English", "en"),
+                            ("Spanish", "es"),
+                            ("French", "fr"),
+                            ("German", "de"),
+                            ("Italian", "it"),
+                            ("Portuguese", "pt"),
+                            ("Russian", "ru"),
+                            ("Chinese", "zh"),
+                            ("Japanese", "ja"),
+                            ("Korean", "ko"),
                         ],
                         id="higgs-language-select",
                     )
@@ -2595,16 +2600,16 @@ class TTSSettingsWidget(Widget):
                     yield Label("Language:", classes="form-label")
                     yield Select(
                         options=[
-                            ("en", "English"),
-                            ("es", "Spanish"),
-                            ("fr", "French"),
-                            ("de", "German"),
-                            ("it", "Italian"),
-                            ("pt", "Portuguese"),
-                            ("ru", "Russian"),
-                            ("zh", "Chinese"),
-                            ("ja", "Japanese"),
-                            ("ko", "Korean"),
+                            ("English", "en"),
+                            ("Spanish", "es"),
+                            ("French", "fr"),
+                            ("German", "de"),
+                            ("Italian", "it"),
+                            ("Portuguese", "pt"),
+                            ("Russian", "ru"),
+                            ("Chinese", "zh"),
+                            ("Japanese", "ja"),
+                            ("Korean", "ko"),
                         ],
                         id="alltalk-language-select",
                     )
@@ -2613,10 +2618,10 @@ class TTSSettingsWidget(Widget):
                     yield Label("Output Format:", classes="form-label")
                     yield Select(
                         options=[
-                            ("wav", "WAV"),
-                            ("mp3", "MP3"),
-                            ("opus", "Opus"),
-                            ("flac", "FLAC"),
+                            ("WAV", "wav"),
+                            ("MP3", "mp3"),
+                            ("Opus", "opus"),
+                            ("FLAC", "flac"),
                         ],
                         id="alltalk-format-select",
                     )
@@ -2626,6 +2631,10 @@ class TTSSettingsWidget(Widget):
 
     def on_mount(self) -> None:
         """Set initial values from config after mount"""
+        self.call_after_refresh(self._set_initial_values)
+
+    def _set_initial_values(self) -> None:
+        """Apply config values after all child Select widgets have mounted."""
         try:
             # Set default provider
             provider_select = self.query_one("#default-provider-select", Select)
@@ -2672,13 +2681,13 @@ class TTSSettingsWidget(Widget):
 
             # Try to set the values if they exist in options
             try:
-                if any(opt[0] == default_voice for opt in voice_select._options):
+                if any(opt[1] == default_voice for opt in voice_select._options):
                     voice_select.value = default_voice
             except Exception:
                 pass
 
             try:
-                if any(opt[0] == default_model for opt in model_select._options):
+                if any(opt[1] == default_model for opt in model_select._options):
                     model_select.value = default_model
             except Exception:
                 pass
@@ -2858,7 +2867,7 @@ class TTSSettingsWidget(Widget):
             if not self._is_valid_voice(event.value):
                 # Find and select the first valid voice
                 voice_select = event.select
-                for value, _ in voice_select._options:
+                for _, value in voice_select._options:
                     if self._is_valid_voice(value):
                         voice_select.value = value
                         break
@@ -2870,23 +2879,25 @@ class TTSSettingsWidget(Widget):
         if provider == "openai":
             voice_select.set_options(
                 [
-                    ("alloy", "Alloy"),
-                    ("ash", "Ash"),
-                    ("ballad", "Ballad"),
-                    ("coral", "Coral"),
-                    ("echo", "Echo"),
-                    ("fable", "Fable"),
-                    ("nova", "Nova"),
-                    ("onyx", "Onyx"),
-                    ("sage", "Sage"),
-                    ("shimmer", "Shimmer"),
-                    ("verse", "Verse"),
+                    ("Alloy", "alloy"),
+                    ("Ash", "ash"),
+                    ("Ballad", "ballad"),
+                    ("Coral", "coral"),
+                    ("Echo", "echo"),
+                    ("Fable", "fable"),
+                    ("Nova", "nova"),
+                    ("Onyx", "onyx"),
+                    ("Sage", "sage"),
+                    ("Shimmer", "shimmer"),
+                    ("Verse", "verse"),
                 ]
             )
             # Set the saved default or fallback to alloy
             default_voice = get_cli_setting("app_tts", "default_voice", "alloy")
             if default_voice in [
-                v[0] for v in voice_select._options if v[0] != Select.BLANK
+                option[1]
+                for option in voice_select._options
+                if option[1] != Select.BLANK
             ]:
                 voice_select.value = default_voice
             else:
@@ -2894,15 +2905,15 @@ class TTSSettingsWidget(Widget):
         elif provider == "elevenlabs":
             voice_select.set_options(
                 [
-                    ("21m00Tcm4TlvDq8ikWAM", "Rachel"),
-                    ("AZnzlk1XvdvUeBnXmlld", "Domi"),
-                    ("EXAVITQu4vr4xnSDxMaL", "Bella"),
-                    ("ErXwobaYiN019PkySvjV", "Antoni"),
-                    ("MF3mGyEYCl7XYWbV9V6O", "Elli"),
-                    ("TxGEqnHWrfWFTfGW9XjX", "Josh"),
-                    ("VR6AewLTigWG4xSOukaG", "Arnold"),
-                    ("pNInz6obpgDQGcFmaJgB", "Adam"),
-                    ("yoZ06aMxZJJ28mfd3POQ", "Sam"),
+                    ("Rachel", "21m00Tcm4TlvDq8ikWAM"),
+                    ("Domi", "AZnzlk1XvdvUeBnXmlld"),
+                    ("Bella", "EXAVITQu4vr4xnSDxMaL"),
+                    ("Antoni", "ErXwobaYiN019PkySvjV"),
+                    ("Elli", "MF3mGyEYCl7XYWbV9V6O"),
+                    ("Josh", "TxGEqnHWrfWFTfGW9XjX"),
+                    ("Arnold", "VR6AewLTigWG4xSOukaG"),
+                    ("Adam", "pNInz6obpgDQGcFmaJgB"),
+                    ("Sam", "yoZ06aMxZJJ28mfd3POQ"),
                 ]
             )
             try:
@@ -2913,26 +2924,26 @@ class TTSSettingsWidget(Widget):
             logger.info(f"Setting up Kokoro voices for provider: {provider}")
             voice_options = [
                 # American Female voices
-                ("af_alloy", "Alloy (US Female)"),
-                ("af_aoede", "Aoede (US Female)"),
-                ("af_bella", "Bella (US Female)"),
-                ("af_heart", "Heart (US Female)"),
-                ("af_jessica", "Jessica (US Female)"),
-                ("af_kore", "Kore (US Female)"),
-                ("af_nicole", "Nicole (US Female)"),
-                ("af_nova", "Nova (US Female)"),
-                ("af_river", "River (US Female)"),
-                ("af_sarah", "Sarah (US Female)"),
-                ("af_sky", "Sky (US Female)"),
+                ("Alloy (US Female)", "af_alloy"),
+                ("Aoede (US Female)", "af_aoede"),
+                ("Bella (US Female)", "af_bella"),
+                ("Heart (US Female)", "af_heart"),
+                ("Jessica (US Female)", "af_jessica"),
+                ("Kore (US Female)", "af_kore"),
+                ("Nicole (US Female)", "af_nicole"),
+                ("Nova (US Female)", "af_nova"),
+                ("River (US Female)", "af_river"),
+                ("Sarah (US Female)", "af_sarah"),
+                ("Sky (US Female)", "af_sky"),
                 # American Male voices
-                ("am_adam", "Adam (US Male)"),
-                ("am_michael", "Michael (US Male)"),
+                ("Adam (US Male)", "am_adam"),
+                ("Michael (US Male)", "am_michael"),
                 # British Female voices
-                ("bf_emma", "Emma (UK Female)"),
-                ("bf_isabella", "Isabella (UK Female)"),
+                ("Emma (UK Female)", "bf_emma"),
+                ("Isabella (UK Female)", "bf_isabella"),
                 # British Male voices
-                ("bm_george", "George (UK Male)"),
-                ("bm_lewis", "Lewis (UK Male)"),
+                ("George (UK Male)", "bm_george"),
+                ("Lewis (UK Male)", "bm_lewis"),
             ]
 
             # Add saved voice blends
@@ -2948,7 +2959,7 @@ class TTSSettingsWidget(Widget):
                         if blends:
                             # Add separator
                             voice_options.append(
-                                ("_separator", "──── Voice Blends ────")
+                                ("──── Voice Blends ────", "_separator")
                             )
                             # Add each blend
                             for blend_name, blend_data in blends.items():
@@ -2958,7 +2969,7 @@ class TTSSettingsWidget(Widget):
                                         f" - {blend_data['description'][:30]}"
                                     )
                                 voice_options.append(
-                                    (f"blend:{blend_name}", display_name)
+                                    (display_name, f"blend:{blend_name}")
                                 )
                 except Exception as e:
                     logger.error(f"Failed to load voice blends: {e}")
@@ -2967,7 +2978,7 @@ class TTSSettingsWidget(Widget):
 
             # Find first valid voice option (skip separators)
             valid_voice = None
-            for value, _ in voice_options:
+            for _, value in voice_options:
                 if self._is_valid_voice(value):
                     valid_voice = value
                     break
@@ -2979,34 +2990,34 @@ class TTSSettingsWidget(Widget):
         elif provider == "chatterbox":
             voice_select.set_options(
                 [
-                    ("default", "Default Voice"),
-                    ("custom", "Custom (Upload Reference)"),
+                    ("Default Voice", "default"),
+                    ("Custom (Upload Reference)", "custom"),
                 ]
             )
             voice_select.value = "default"
         elif provider == "higgs":
             voice_select.set_options(
                 [
-                    ("professional_female", "Professional Female"),
-                    ("warm_female", "Warm Female"),
-                    ("storyteller_male", "Storyteller Male"),
-                    ("deep_male", "Deep Male"),
-                    ("energetic_female", "Energetic Female"),
-                    ("soft_female", "Soft Female"),
+                    ("Professional Female", "professional_female"),
+                    ("Warm Female", "warm_female"),
+                    ("Storyteller Male", "storyteller_male"),
+                    ("Deep Male", "deep_male"),
+                    ("Energetic Female", "energetic_female"),
+                    ("Soft Female", "soft_female"),
                 ]
             )
             voice_select.value = "professional_female"
         elif provider == "alltalk":
             voice_select.set_options(
                 [
-                    ("female_01.wav", "Female 01"),
-                    ("female_02.wav", "Female 02"),
-                    ("female_03.wav", "Female 03"),
-                    ("female_04.wav", "Female 04"),
-                    ("male_01.wav", "Male 01"),
-                    ("male_02.wav", "Male 02"),
-                    ("male_03.wav", "Male 03"),
-                    ("male_04.wav", "Male 04"),
+                    ("Female 01", "female_01.wav"),
+                    ("Female 02", "female_02.wav"),
+                    ("Female 03", "female_03.wav"),
+                    ("Female 04", "female_04.wav"),
+                    ("Male 01", "male_01.wav"),
+                    ("Male 02", "male_02.wav"),
+                    ("Male 03", "male_03.wav"),
+                    ("Male 04", "male_04.wav"),
                 ]
             )
             voice_select.value = "female_01.wav"
@@ -3018,8 +3029,8 @@ class TTSSettingsWidget(Widget):
         if provider == "openai":
             model_select.set_options(
                 [
-                    ("tts-1", "TTS-1 (Standard)"),
-                    ("tts-1-hd", "TTS-1-HD (High Quality)"),
+                    ("TTS-1 (Standard)", "tts-1"),
+                    ("TTS-1-HD (High Quality)", "tts-1-hd"),
                 ]
             )
             # Set the saved default or fallback
@@ -3031,13 +3042,13 @@ class TTSSettingsWidget(Widget):
         elif provider == "elevenlabs":
             model_select.set_options(
                 [
-                    ("eleven_monolingual_v1", "Eleven Monolingual v1"),
-                    ("eleven_multilingual_v1", "Eleven Multilingual v1"),
-                    ("eleven_multilingual_v2", "Eleven Multilingual v2 (Default)"),
-                    ("eleven_turbo_v2", "Eleven Turbo v2"),
-                    ("eleven_turbo_v2_5", "Eleven Turbo v2.5"),
-                    ("eleven_flash_v2", "Eleven Flash v2 (Low Latency)"),
-                    ("eleven_flash_v2_5", "Eleven Flash v2.5 (Ultra Low Latency)"),
+                    ("Eleven Monolingual v1", "eleven_monolingual_v1"),
+                    ("Eleven Multilingual v1", "eleven_multilingual_v1"),
+                    ("Eleven Multilingual v2 (Default)", "eleven_multilingual_v2"),
+                    ("Eleven Turbo v2", "eleven_turbo_v2"),
+                    ("Eleven Turbo v2.5", "eleven_turbo_v2_5"),
+                    ("Eleven Flash v2 (Low Latency)", "eleven_flash_v2"),
+                    ("Eleven Flash v2.5 (Ultra Low Latency)", "eleven_flash_v2_5"),
                 ]
             )
             model_select.value = "eleven_multilingual_v2"
@@ -3045,7 +3056,7 @@ class TTSSettingsWidget(Widget):
             logger.info("Setting Kokoro model options")
             model_select.set_options(
                 [
-                    ("kokoro", "Kokoro 82M"),
+                    ("Kokoro 82M", "kokoro"),
                 ]
             )
             model_select.value = "kokoro"
@@ -3053,7 +3064,7 @@ class TTSSettingsWidget(Widget):
         elif provider == "chatterbox":
             model_select.set_options(
                 [
-                    ("chatterbox", "Chatterbox 0.5B"),
+                    ("Chatterbox 0.5B", "chatterbox"),
                 ]
             )
             model_select.value = "chatterbox"
@@ -3061,7 +3072,7 @@ class TTSSettingsWidget(Widget):
             logger.info("Setting Higgs model options")
             model_select.set_options(
                 [
-                    ("higgs-audio-v2", "Higgs Audio V2 3B"),
+                    ("Higgs Audio V2 3B", "higgs-audio-v2"),
                 ]
             )
             model_select.value = "higgs-audio-v2"
@@ -3069,7 +3080,7 @@ class TTSSettingsWidget(Widget):
         elif provider == "alltalk":
             model_select.set_options(
                 [
-                    ("alltalk", "AllTalk TTS"),
+                    ("AllTalk TTS", "alltalk"),
                 ]
             )
             model_select.value = "alltalk"
@@ -3102,13 +3113,13 @@ class TTSSettingsWidget(Widget):
             if openai_key:
                 settings["openai_api_key"] = openai_key
 
-            base_url = self.query_one("#openai-base-url-input", Input).value
-            if base_url and base_url != "https://api.openai.com/v1/audio/speech":
-                settings["OPENAI_BASE_URL"] = base_url
-
-            org_id = self.query_one("#openai-org-id-input", Input).value
-            if org_id:
-                settings["OPENAI_ORG_ID"] = org_id
+            settings["OPENAI_BASE_URL"] = self._normalize_openai_base_url(
+                self.query_one("#openai-base-url-input", Input).value
+            )
+            org_id = self.query_one("#openai-org-id-input", Input).value.strip()
+            if "\r" in org_id or "\n" in org_id:
+                raise ValueError("OpenAI organization ID cannot contain line breaks")
+            settings["OPENAI_ORG_ID"] = org_id
 
             # ElevenLabs settings
             elevenlabs_key = self.query_one("#elevenlabs-api-key-input", Input).value
@@ -3268,20 +3279,17 @@ class TTSSettingsWidget(Widget):
             if higgs_voices_dir:
                 settings["HIGGS_VOICE_SAMPLES_DIR"] = higgs_voices_dir
 
-            # Use _get_select_key to get actual key value from Select widgets
-            higgs_device_select = self.query_one("#higgs-device-select", Select)
-            higgs_device_value = self._get_select_key(higgs_device_select)
-            if higgs_device_value:
-                settings["HIGGS_DEVICE"] = higgs_device_value
+            settings["HIGGS_DEVICE"] = self.query_one(
+                "#higgs-device-select", Select
+            ).value
 
             settings["HIGGS_ENABLE_FLASH_ATTN"] = self.query_one(
                 "#higgs-flash-attn-switch", Switch
             ).value
 
-            higgs_dtype_select = self.query_one("#higgs-dtype-select", Select)
-            higgs_dtype_value = self._get_select_key(higgs_dtype_select)
-            if higgs_dtype_value:
-                settings["HIGGS_DTYPE"] = higgs_dtype_value
+            settings["HIGGS_DTYPE"] = self.query_one(
+                "#higgs-dtype-select", Select
+            ).value
 
             settings["HIGGS_MAX_REFERENCE_DURATION"] = int(
                 self._validate_numeric_input(
@@ -3292,10 +3300,9 @@ class TTSSettingsWidget(Widget):
                 )
             )
 
-            higgs_language_select = self.query_one("#higgs-language-select", Select)
-            higgs_language_value = self._get_select_key(higgs_language_select)
-            if higgs_language_value:
-                settings["HIGGS_DEFAULT_LANGUAGE"] = higgs_language_value
+            settings["HIGGS_DEFAULT_LANGUAGE"] = self.query_one(
+                "#higgs-language-select", Select
+            ).value
             settings["HIGGS_ENABLE_VOICE_CLONING"] = self.query_one(
                 "#higgs-voice-cloning-switch", Switch
             ).value
@@ -3348,11 +3355,10 @@ class TTSSettingsWidget(Widget):
 
             # Post save event
             self.app.post_message(STTSSettingsSaveEvent(settings))
-            self.app.notify("TTS settings saved successfully", severity="information")
 
-        except Exception as e:
-            logger.error(f"Failed to collect settings: {e}")
-            self.app.notify(f"Failed to save settings: {e}", severity="error")
+        except Exception:
+            logger.error("Failed to collect TTS settings")
+            self.app.notify("Failed to save settings", severity="error")
 
     def _validate_numeric_input(
         self, value: str, min_val: float, max_val: float, default: float
@@ -3366,21 +3372,26 @@ class TTSSettingsWidget(Widget):
         except ValueError:
             return default
 
-    def _get_select_key(self, select_widget) -> Optional[str]:
-        """Get the actual key from a Select widget, not the display text"""
-        if not hasattr(select_widget, "_options") or not select_widget._options:
-            return None
-
-        current_value = select_widget.value
-        if current_value == Select.BLANK:
-            return None
-
-        # Find the key that matches the current value
-        for key, label in select_widget._options:
-            if label == current_value or key == current_value:
-                return key
-
-        return None
+    @classmethod
+    def _normalize_openai_base_url(cls, value: str) -> str:
+        """Return a safe absolute OpenAI-compatible speech endpoint."""
+        normalized = value.strip() or cls.OPENAI_TTS_DEFAULT_URL
+        parsed = urlsplit(normalized)
+        if (
+            parsed.scheme.lower() not in {"http", "https"}
+            or not parsed.netloc
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.fragment
+            or "\r" in normalized
+            or "\n" in normalized
+        ):
+            raise ValueError(
+                "OpenAI base URL must be an absolute HTTP(S) URL without "
+                "credentials or a fragment"
+            )
+        return normalized
 
     def _load_kokoro_voice_blends(self) -> None:
         """Load and display Kokoro voice blends"""
@@ -3760,163 +3771,6 @@ class TTSSettingsWidget(Widget):
             voices_input = self.query_one("#higgs-voices-dir-input", Input)
             voices_input.value = str(dir_path)
             logger.info(f"Higgs voices directory selected: {dir_path}")
-
-    @on(Select.Changed)
-    def on_default_provider_select_changed(self, event: Select.Changed) -> None:
-        """Handle select widget changes"""
-        if event.select.id == "default-provider-select":
-            # Update voice and model options when provider changes
-            self._update_default_voice_model_options(event.value)
-
-    def _update_default_voice_model_options(self, provider: str) -> None:
-        """Update default voice and model options based on selected provider"""
-        voice_select = self.query_one("#default-voice-select", Select)
-        model_select = self.query_one("#default-model-select", Select)
-
-        if provider == "openai":
-            voice_select.set_options(
-                [
-                    ("alloy", "Alloy"),
-                    ("ash", "Ash"),
-                    ("ballad", "Ballad"),
-                    ("coral", "Coral"),
-                    ("echo", "Echo"),
-                    ("fable", "Fable"),
-                    ("onyx", "Onyx"),
-                    ("nova", "Nova"),
-                    ("sage", "Sage"),
-                    ("shimmer", "Shimmer"),
-                    ("verse", "Verse"),
-                ]
-            )
-            model_select.set_options(
-                [
-                    ("tts-1", "TTS-1 (Standard)"),
-                    ("tts-1-hd", "TTS-1-HD (High Quality)"),
-                ]
-            )
-        elif provider == "elevenlabs":
-            voice_select.set_options(
-                [
-                    ("21m00Tcm4TlvDq8ikWAM", "Rachel"),
-                    ("AZnzlk1XvdvUeBnXmlld", "Domi"),
-                    ("EXAVITQu4vr4xnSDxMaL", "Bella"),
-                    ("ErXwobaYiN019PkySvjV", "Antoni"),
-                    ("MF3mGyEYCl7XYWbV9V6O", "Elli"),
-                    ("TxGEqnHWrfWFTfGW9XjX", "Josh"),
-                    ("VR6AewLTigWG4xSOukaG", "Arnold"),
-                    ("pNInz6obpgDQGcFmaJgB", "Adam"),
-                    ("yoZ06aMxZJJ28mfd3POQ", "Sam"),
-                ]
-            )
-            model_select.set_options(
-                [
-                    ("eleven_monolingual_v1", "Eleven Monolingual v1"),
-                    ("eleven_multilingual_v1", "Eleven Multilingual v1"),
-                    ("eleven_multilingual_v2", "Eleven Multilingual v2 (Default)"),
-                    ("eleven_turbo_v2", "Eleven Turbo v2"),
-                    ("eleven_turbo_v2_5", "Eleven Turbo v2.5"),
-                    ("eleven_flash_v2", "Eleven Flash v2 (Low Latency)"),
-                    ("eleven_flash_v2_5", "Eleven Flash v2.5 (Ultra Low Latency)"),
-                ]
-            )
-        elif provider == "kokoro":
-            logger.info(f"Setting up Kokoro voices for provider: {provider}")
-            voice_options = [
-                ("af_alloy", "Alloy (US Female)"),
-                ("af_aoede", "Aoede (US Female)"),
-                ("af_bella", "Bella (US Female)"),
-                ("af_heart", "Heart (US Female)"),
-                ("af_jessica", "Jessica (US Female)"),
-                ("af_kore", "Kore (US Female)"),
-                ("af_nicole", "Nicole (US Female)"),
-                ("af_nova", "Nova (US Female)"),
-                ("af_river", "River (US Female)"),
-                ("af_sarah", "Sarah (US Female)"),
-                ("af_sky", "Sky (US Female)"),
-                ("am_adam", "Adam (US Male)"),
-                ("am_michael", "Michael (US Male)"),
-                ("bf_emma", "Emma (UK Female)"),
-                ("bf_isabella", "Isabella (UK Female)"),
-                ("bm_george", "George (UK Male)"),
-                ("bm_lewis", "Lewis (UK Male)"),
-            ]
-
-            # Add saved voice blends
-            blend_file = (
-                Path.home() / ".config" / "tldw_cli" / "kokoro_voice_blends.json"
-            )
-            if blend_file.exists():
-                try:
-                    import json
-
-                    with open(blend_file, "r") as f:
-                        blends = json.load(f)
-                        if blends:
-                            # Add separator
-                            voice_options.append(
-                                ("_separator", "──── Voice Blends ────")
-                            )
-                            # Add each blend
-                            for blend_name, blend_data in blends.items():
-                                display_name = f"🎭 {blend_name}"
-                                if blend_data.get("description"):
-                                    display_name += (
-                                        f" - {blend_data['description'][:30]}"
-                                    )
-                                voice_options.append(
-                                    (f"blend:{blend_name}", display_name)
-                                )
-                except Exception as e:
-                    logger.error(f"Failed to load voice blends: {e}")
-
-            voice_select.set_options(voice_options)
-
-            # Find first valid voice option (skip separators)
-            valid_voice = None
-            for value, _ in voice_options:
-                if self._is_valid_voice(value):
-                    valid_voice = value
-                    break
-
-            if valid_voice:
-                voice_select.value = valid_voice
-
-            model_select.set_options(
-                [
-                    ("kokoro", "Kokoro 82M"),
-                ]
-            )
-        elif provider == "chatterbox":
-            voice_select.set_options(
-                [
-                    ("default", "Default Voice"),
-                    ("custom", "Custom (Upload Reference)"),
-                ]
-            )
-            model_select.set_options(
-                [
-                    ("chatterbox", "Chatterbox 0.5B"),
-                ]
-            )
-        elif provider == "alltalk":
-            voice_select.set_options(
-                [
-                    ("female_01.wav", "Female 01"),
-                    ("female_02.wav", "Female 02"),
-                    ("female_03.wav", "Female 03"),
-                    ("female_04.wav", "Female 04"),
-                    ("male_01.wav", "Male 01"),
-                    ("male_02.wav", "Male 02"),
-                    ("male_03.wav", "Male 03"),
-                    ("male_04.wav", "Male 04"),
-                ]
-            )
-            model_select.set_options(
-                [
-                    ("alltalk", "AllTalk TTS"),
-                ]
-            )
 
 
 class AudioBookGenerationWidget(Widget):
