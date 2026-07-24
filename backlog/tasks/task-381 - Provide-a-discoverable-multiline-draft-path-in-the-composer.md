@@ -1,8 +1,9 @@
 ---
 id: TASK-381
 title: Provide a discoverable multiline-draft path in the composer
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
 labels: [console, ux]
 dependencies: []
@@ -23,6 +24,21 @@ Shift+Enter sent the draft ('line one' became a sent message - expected, since t
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Provide and document a newline chord that survives terminals (e.g. Ctrl+J) and mention paste behavior
-- [ ] #2 Help should cover the composer's real capabilities (attach, paste-path, cap)
+- [x] #1 Provide and document a newline chord that survives terminals (e.g. Ctrl+J) and mention paste behavior
+- [x] #2 Help should cover the composer's real capabilities (attach, paste-path, cap)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+AC#1: Shift+Enter already inserts a newline but terminals deliver it as a plain
+CR (send), so `on_key` now also accepts `ctrl+j` (a control code that survives
+every terminal) as a portable newline chord -- same `composer.insert_text("\n")`
+path. AC#2: the F1 help Composer group (CONSOLE_WORKBENCH_SHORTCUT_GROUPS) now
+documents both newline chords plus the previously-undiscoverable capabilities --
+Alt+V paste-image, Attach (up to 5 per message = the cap), and paste/drop a file
+path to attach it. The compact footer set (flat CONSOLE_WORKBENCH_SHORTCUTS) is
+unchanged. RED->GREEN: on_key ctrl+j newline test + a pure help-group coverage
+test. Baseline: test_console_rag_action_without_service_stages_recoverable_blocker
+is a load-contention flake (passes solo), unrelated to this change.
+<!-- SECTION:NOTES:END -->
