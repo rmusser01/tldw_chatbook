@@ -2646,9 +2646,9 @@ class TestConsoleActions:
         The configured chat_defaults provider (which a fresh Start-Chat
         Console session resolves - the native Console never reads
         character_defaults) has no API key - the handoff send would fail, so
-        neither readiness surface may claim things are ready. Start
-        Chat/Attach stay clickable regardless (task-427: Start Chat still
-        opens a real conversation) - only the copy changes.
+        neither readiness surface may claim things are ready. Per-intent gating
+        (task-523): Start Chat is DISABLED (it needs an immediate reply) while
+        Attach stays enabled (it stages context; the reply is deferred).
         """
         mock_app_instance.app_config = {
             "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
@@ -2662,11 +2662,20 @@ class TestConsoleActions:
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
             assert readiness_text != "Console ready"
-            assert readiness_text.startswith("Console blocked:")
+            assert readiness_text.startswith("Start Chat blocked:")
             assert "anthropic" in readiness_text.lower()
             assert (
                 "api key" in readiness_text.lower()
                 or "api_settings" in readiness_text.lower()
+            )
+            # Per-intent gating (task-523): an unready handoff provider blocks
+            # Start Chat (it needs an immediate reply) but NOT Attach (it only
+            # stages context; the reply is deferred). The user can still stage
+            # the card and fix the provider before sending.
+            assert screen.query_one("#personas-start-chat", Button).disabled is True
+            assert (
+                screen.query_one("#personas-attach-to-console", Button).disabled
+                is False
             )
 
             header_status = str(
@@ -2675,17 +2684,6 @@ class TestConsoleActions:
                 ).renderable
             )
             assert header_status != "Ready"
-
-            # Gating decision (task-425/427): an unready provider blocks the
-            # readiness COPY but not the buttons - Start Chat still opens a
-            # real conversation and the user can fix the provider from there.
-            assert (
-                screen.query_one("#personas-attach-to-console", Button).disabled
-                is False
-            )
-            assert (
-                screen.query_one("#personas-start-chat", Button).disabled is False
-            )
 
     async def test_readiness_surfaces_stay_ready_with_a_configured_provider(
         self, mock_app_instance, stub_characters, stub_conversations
@@ -2747,7 +2745,7 @@ class TestConsoleActions:
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
             assert readiness_text != "Console ready"
-            assert readiness_text.startswith("Console blocked:")
+            assert readiness_text.startswith("Start Chat blocked:")
             assert "openai" in readiness_text.lower()
             assert (
                 str(
@@ -2757,9 +2755,12 @@ class TestConsoleActions:
                 )
                 != "Ready"
             )
-            # Copy-only gating: the buttons stay enabled (task-427).
+            # Per-intent gating (task-523): Start Chat disabled, Attach enabled.
             assert (
-                screen.query_one("#personas-start-chat", Button).disabled is False
+                screen.query_one("#personas-start-chat", Button).disabled is True
+            )
+            assert (
+                screen.query_one("#personas-attach-to-console", Button).disabled is False
             )
 
     async def test_readiness_ready_when_handoff_provider_ready_despite_unready_character_provider(
@@ -2944,6 +2945,13 @@ class TestConsoleActions:
         destination screen is active; the workbench therefore uses the
         app-level ``open_chat_with_handoff`` API with an intent marker.
         """
+        # Start Chat now needs a ready handoff provider (task-523 per-intent);
+        # give a keyless local provider so the button is enabled and the guard
+        # passes.
+        mock_app_instance.app_config = {
+            "chat_defaults": {"provider": "llama_cpp", "model": "local.gguf"},
+            "api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:8181"}},
+        }
         app = PersonasTestApp(mock_app_instance)
         app.open_chat_with_handoff = Mock()
         async with app.run_test(size=(160, 50)) as pilot:
@@ -2956,6 +2964,116 @@ class TestConsoleActions:
         assert payload.metadata["intent"] == "start_chat"
         assert payload.metadata["selected_target_id"] == "local:character:1"
         assert payload.suggested_prompt == "Respond as Detective Sam."
+
+    async def test_start_chat_action_guard_blocks_unready_provider(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Task-523: the Start-Chat action path refuses to stage a handoff
+        while the resolved provider is unready. The visible button is disabled,
+        so this defends against a press racing a config change - invoked via the
+        action path directly since ``.press()`` on a disabled button is a no-op.
+        """
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+        captured: list[tuple[str, str]] = []
+        app.notify = lambda message, severity="information", **kwargs: captured.append(
+            (str(message), severity)
+        )
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            await screen._attach_selection_to_console(intent="start_chat")
+            await pilot.pause()
+        app.open_chat_with_handoff.assert_not_called()
+        assert any(
+            msg.startswith("Start Chat blocked:") and severity == "warning"
+            for msg, severity in captured
+        )
+
+    async def test_attach_action_not_gated_on_provider_readiness(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Task-523: the per-intent guard is Start-Chat-only. Attach still
+        stages the card with an unready provider (its reply is deferred), so
+        no ``intent=start_chat`` marker and a real handoff is created."""
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen.query_one("#personas-attach-to-console", Button).press()
+            await pilot.pause()
+        app.open_chat_with_handoff.assert_called_once()
+        payload = app.open_chat_with_handoff.call_args.args[0]
+        assert payload.metadata.get("intent") != "start_chat"
+
+    async def test_header_carries_blocked_class_when_provider_unready(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Task-523: the header carries the ``status-blocked`` class (the red
+        cue's CSS hook) while the staged handoff provider is unready, and drops
+        it once the provider becomes ready."""
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            header = screen.query_one("#personas-header")
+            assert header.has_class("status-blocked") is True
+
+            mock_app_instance.app_config["api_settings"] = {
+                "anthropic": {"api_key": "unit-test-placeholder-key"}
+            }
+            screen._sync_title_and_console_actions()
+            await pilot.pause()
+            assert header.has_class("status-blocked") is False
+
+    async def test_blocked_header_badge_renders_red_under_real_bundle(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Task-523 regression guard for the red cue's CSS cascade.
+
+        The colour rule MUST live in app-tier CSS: a widget ``DEFAULT_CSS``
+        rule is outranked by the bundle's ``.ds-status-badge`` (color:
+        $ds-text-primary) regardless of selector specificity, so the badge
+        would stay primary and the cue would never render. Uses
+        ``StyledPersonasTestApp`` (loads the real bundle) and asserts the
+        blocked-state badge colour DIFFERS from the ready-state colour - if the
+        rule were outranked, both states would render the identical primary
+        colour and this fails.
+        """
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+        }
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            badge = screen.query_one(
+                "#personas-header #workbench-header-status", Static
+            )
+            assert screen.query_one("#personas-header").has_class("status-blocked")
+            blocked_color = badge.styles.color
+
+            mock_app_instance.app_config["api_settings"] = {
+                "anthropic": {"api_key": "unit-test-placeholder-key"}
+            }
+            screen._sync_title_and_console_actions()
+            await pilot.pause()
+            assert not screen.query_one("#personas-header").has_class(
+                "status-blocked"
+            )
+            ready_color = badge.styles.color
+
+        assert blocked_color != ready_color
 
     async def test_attach_stages_profile_payload(
         self, mock_app_instance, stub_characters, stub_conversations, stub_scope_service

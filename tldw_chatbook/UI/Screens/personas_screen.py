@@ -363,6 +363,12 @@ class PersonasScreen(BaseAppScreen):
         background: $background;
     }
 
+    /* Red cue when the staged Console handoff provider is unready (task-523):
+       the "Blocked" badge word turns $ds-status-blocked. The rule CANNOT live
+       here — app-bundle CSS (`.ds-status-badge { color: $ds-text-primary }`)
+       outranks any widget DEFAULT_CSS regardless of specificity — so it lives
+       in the app-tier source css/components/_workbench.tcss instead. */
+
     #personas-mode-strip {
         height: 1;
         min-height: 1;
@@ -3577,6 +3583,13 @@ class PersonasScreen(BaseAppScreen):
             # this is a defensive re-check (and the ctrl+enter guard).
             self._notify("Select a saved item before using Console actions.", "warning")
             return
+        if intent == "start_chat":
+            # Start Chat needs a ready handoff provider (task-523 per-intent);
+            # defense-in-depth against a press racing a config change.
+            block = self._provider_send_block_reason()
+            if block:
+                self._notify(f"Start Chat blocked: {block}", "warning")
+                return
         kind = str(self.state.selected_entity_kind)
         name = self.state.selected_entity_name or "Unnamed"
         body = await self._selection_handoff_body()
