@@ -1,5 +1,5 @@
 ---
-id: TASK-410
+id: TASK-511
 title: Add descriptor-backed local ONNX bundle import
 status: To Do
 assignee: []
@@ -10,8 +10,8 @@ labels:
   - import
   - onnx
 dependencies:
-  - TASK-406
-  - TASK-408
+  - TASK-507
+  - TASK-509
 references:
   - backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
 documentation:

@@ -1,5 +1,5 @@
 ---
-id: TASK-409
+id: TASK-510
 title: Add bounded local GGUF artifact import
 status: To Do
 assignee: []
@@ -9,8 +9,8 @@ labels:
   - artifacts
   - import
 dependencies:
-  - TASK-406
-  - TASK-408
+  - TASK-507
+  - TASK-509
 references:
   - backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
 documentation:

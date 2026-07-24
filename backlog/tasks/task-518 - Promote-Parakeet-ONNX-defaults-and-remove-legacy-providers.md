@@ -1,5 +1,5 @@
 ---
-id: TASK-417
+id: TASK-518
 title: Promote Parakeet ONNX defaults and remove legacy providers
 status: To Do
 assignee: []
@@ -9,12 +9,12 @@ labels:
   - migration
   - release
 dependencies:
-  - TASK-408
-  - TASK-409
-  - TASK-410
-  - TASK-414
-  - TASK-415
-  - TASK-416
+  - TASK-509
+  - TASK-510
+  - TASK-511
+  - TASK-515
+  - TASK-516
+  - TASK-517
 references:
   - backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
 documentation:

@@ -4,7 +4,7 @@
 
 **Date:** 2026-07-23
 
-**Related tasks:** TASK-404 through TASK-417; see the
+**Related tasks:** TASK-505 through TASK-518; see the
 [delivery map](../plans/2026-07-23-stt-artifact-runtime-delivery-map.md)
 
 **Canonical ADR:** [ADR-025](../../../backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md)

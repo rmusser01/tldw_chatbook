@@ -1,5 +1,5 @@
 ---
-id: TASK-412
+id: TASK-513
 title: Persist STT provenance and retry lineage
 status: To Do
 assignee: []
@@ -9,7 +9,7 @@ labels:
   - database
   - provenance
 dependencies:
-  - TASK-411
+  - TASK-512
 references:
   - backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
 documentation:

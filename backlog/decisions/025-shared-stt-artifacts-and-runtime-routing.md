@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-07-23
-Related Tasks: TASK-404 through TASK-417
+Related Tasks: TASK-505 through TASK-518
 Supersedes: N/A
 
 ## Decision
