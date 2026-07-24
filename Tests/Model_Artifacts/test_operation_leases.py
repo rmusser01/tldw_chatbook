@@ -5,6 +5,7 @@ from pathlib import Path
 import portalocker
 import pytest
 
+import tldw_chatbook.Model_Artifacts.leases as leases_module
 from tldw_chatbook.Model_Artifacts.leases import (
     ArtifactLeaseCancelledError,
     ArtifactLeaseError,
@@ -58,6 +59,98 @@ def test_exclusive_times_out_while_shared_lease_is_open(tmp_path: Path) -> None:
             ).acquire()
 
 
+def test_single_lease_does_not_retry_after_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Clock:
+        def __init__(self) -> None:
+            self._values = iter((0.0, 0.5, 1.01))
+
+        def monotonic(self) -> float:
+            return next(self._values)
+
+        def sleep(self, seconds: float) -> None:
+            pass
+
+    attempts = 0
+
+    def lock_once_contended(handle: object, flags: object) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise portalocker.exceptions.AlreadyLocked("lease is held", fh=handle)
+
+    monkeypatch.setattr(leases_module, "time", Clock())
+    monkeypatch.setattr(portalocker, "lock", lock_once_contended)
+    lease = ArtifactOperationLease(
+        tmp_path,
+        key(),
+        LeaseMode.SHARED,
+        timeout_seconds=1.0,
+        check_interval_seconds=0.5,
+    )
+
+    with pytest.raises(ArtifactLeaseTimeoutError):
+        lease.acquire()
+
+    assert attempts == 1
+    assert lease.acquired is False
+
+
+def test_lease_set_does_not_start_later_key_after_total_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Clock:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def monotonic(self) -> float:
+            self.calls += 1
+            return 0.0 if self.calls == 1 else 1.01
+
+        def sleep(self, seconds: float) -> None:
+            pass
+
+    attempts = 0
+    opened: list[Path] = []
+    keys = [
+        ArtifactLeaseKey("a-root", "rev", "int8"),
+        ArtifactLeaseKey("b-dependency", "rev", "fp32"),
+    ]
+    lease_set = ArtifactOperationLeaseSet(
+        tmp_path,
+        keys,
+        LeaseMode.SHARED,
+        timeout_seconds=1.0,
+    )
+
+    class Handle:
+        def close(self) -> None:
+            pass
+
+    def record_open(path: Path, *args: object, **kwargs: object) -> Handle:
+        opened.append(path)
+        return Handle()
+
+    def record_lock(handle: object, flags: object) -> None:
+        nonlocal attempts
+        attempts += 1
+
+    monkeypatch.setattr(leases_module, "time", Clock())
+    monkeypatch.setattr(Path, "open", record_open)
+    monkeypatch.setattr(portalocker, "lock", record_lock)
+    monkeypatch.setattr(portalocker, "unlock", lambda handle: None)
+
+    with pytest.raises(ArtifactLeaseTimeoutError):
+        lease_set.acquire()
+
+    assert attempts == 1
+    assert len(opened) == 1
+    assert lease_set.acquired is False
+
+
 def test_non_contention_lock_failure_raises_stable_error_immediately(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -87,6 +180,139 @@ def test_non_contention_lock_failure_raises_stable_error_immediately(
     assert type(exc_info.value) is ArtifactLeaseError
     assert exc_info.value.__cause__ is failure
     assert attempts == 1
+    assert lease.acquired is False
+
+
+@pytest.mark.parametrize("phase", ["mkdir", "open"])
+def test_setup_failure_raises_stable_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+) -> None:
+    failure = OSError(f"{phase} failed")
+
+    if phase == "mkdir":
+        monkeypatch.setattr(
+            Path, "mkdir", lambda *args, **kwargs: (_ for _ in ()).throw(failure)
+        )
+    else:
+        monkeypatch.setattr(
+            Path, "open", lambda *args, **kwargs: (_ for _ in ()).throw(failure)
+        )
+
+    lease = ArtifactOperationLease(tmp_path, key(), LeaseMode.SHARED)
+
+    with pytest.raises(
+        ArtifactLeaseError,
+        match="failed preparing shared lease for parakeet-v2",
+    ) as exc_info:
+        lease.acquire()
+
+    assert exc_info.value.__cause__ is failure
+    assert lease.acquired is False
+
+
+def test_unexpected_backend_lock_failure_raises_stable_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    failure = OSError("unexpected backend failure")
+
+    monkeypatch.setattr(
+        portalocker,
+        "lock",
+        lambda handle, flags: (_ for _ in ()).throw(failure),
+    )
+    lease = ArtifactOperationLease(tmp_path, key(), LeaseMode.SHARED)
+
+    with pytest.raises(
+        ArtifactLeaseError,
+        match="failed acquiring shared lease for parakeet-v2",
+    ) as exc_info:
+        lease.acquire()
+
+    assert exc_info.value.__cause__ is failure
+    assert lease.acquired is False
+
+
+def test_acquire_preserves_timeout_when_handle_close_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    close_failure = OSError("close failed")
+
+    class Handle:
+        def close(self) -> None:
+            raise close_failure
+
+    handle = Handle()
+    contention = portalocker.exceptions.AlreadyLocked("lease is held", fh=handle)
+    monkeypatch.setattr(Path, "open", lambda *args, **kwargs: handle)
+    monkeypatch.setattr(
+        portalocker,
+        "lock",
+        lambda current_handle, flags: (_ for _ in ()).throw(contention),
+    )
+    lease = ArtifactOperationLease(
+        tmp_path,
+        key(),
+        LeaseMode.SHARED,
+        timeout_seconds=0,
+    )
+
+    with pytest.raises(ArtifactLeaseTimeoutError) as exc_info:
+        lease.acquire()
+
+    assert exc_info.value.__cause__ is contention
+    assert any(
+        "close failed" in note for note in getattr(exc_info.value, "__notes__", ())
+    )
+    assert lease.acquired is False
+
+
+@pytest.mark.parametrize("unlock_fails", [False, True])
+def test_release_raises_stable_error_without_masking_unlock_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    unlock_fails: bool,
+) -> None:
+    unlock_failure = OSError("unlock failed")
+    close_failure = OSError("close failed")
+
+    class Handle:
+        def close(self) -> None:
+            raise close_failure
+
+    handle = Handle()
+    monkeypatch.setattr(Path, "open", lambda *args, **kwargs: handle)
+    monkeypatch.setattr(portalocker, "lock", lambda current_handle, flags: None)
+    if unlock_fails:
+        monkeypatch.setattr(
+            portalocker,
+            "unlock",
+            lambda current_handle: (_ for _ in ()).throw(unlock_failure),
+        )
+    else:
+        monkeypatch.setattr(portalocker, "unlock", lambda current_handle: None)
+    lease = ArtifactOperationLease(tmp_path, key(), LeaseMode.SHARED).acquire()
+
+    with pytest.raises(
+        ArtifactLeaseError,
+        match=(
+            "failed releasing shared lease"
+            if unlock_fails
+            else "failed closing shared lease"
+        ),
+    ) as exc_info:
+        lease.release()
+
+    assert exc_info.value.__cause__ is (
+        unlock_failure if unlock_fails else close_failure
+    )
+    if unlock_fails:
+        assert any(
+            "close failed" in note for note in getattr(exc_info.value, "__notes__", ())
+        )
     assert lease.acquired is False
 
 

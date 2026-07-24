@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -39,6 +40,20 @@ def _release_for_context(
         body_error.add_note(f"lease context cleanup failed: {cleanup_error!r}")
         for note in getattr(cleanup_error, "__notes__", ()):
             body_error.add_note(note)
+
+
+def _close_handle(
+    handle: BinaryIO,
+    *,
+    primary_error: BaseException | None,
+    failure_message: str,
+) -> None:
+    try:
+        handle.close()
+    except Exception as close_error:
+        if primary_error is None:
+            raise ArtifactLeaseError(failure_message) from close_error
+        primary_error.add_note(f"{failure_message}: {close_error!r}")
 
 
 class ArtifactLeaseError(RuntimeError):
@@ -130,18 +145,35 @@ class ArtifactOperationLease:
     def acquire(self) -> ArtifactOperationLease:
         """Acquire the lease or raise a stable timeout/cancellation error."""
 
+        return self._acquire_until(
+            time.monotonic() + self.timeout_seconds,
+            allow_initial_attempt=True,
+        )
+
+    def _acquire_until(
+        self,
+        deadline: float,
+        *,
+        allow_initial_attempt: bool,
+    ) -> ArtifactOperationLease:
         if self._handle is not None:
             raise ArtifactLeaseError("lease is already acquired")
 
-        self._lock_root.mkdir(parents=True, exist_ok=True)
-        handle = self.lock_path.open("a+b")
+        try:
+            self._lock_root.mkdir(parents=True, exist_ok=True)
+            handle = self.lock_path.open("a+b")
+        except OSError as error:
+            raise ArtifactLeaseError(
+                f"failed preparing {self.mode.value} lease for {self.key.artifact_id}"
+            ) from error
         flags = portalocker.LockFlags.NON_BLOCKING
         flags |= (
             portalocker.LockFlags.SHARED
             if self.mode is LeaseMode.SHARED
             else portalocker.LockFlags.EXCLUSIVE
         )
-        deadline = time.monotonic() + self.timeout_seconds
+        attempted = False
+        last_contention: BaseException | None = None
 
         try:
             while True:
@@ -149,9 +181,21 @@ class ArtifactOperationLease:
                     raise ArtifactLeaseCancelledError(
                         f"lease acquisition cancelled for {self.key.artifact_id}"
                     )
+                if (attempted or not allow_initial_attempt) and (
+                    time.monotonic() >= deadline
+                ):
+                    timeout_error = ArtifactLeaseTimeoutError(
+                        f"timed out acquiring {self.mode.value} lease "
+                        f"for {self.key.artifact_id}"
+                    )
+                    if last_contention is None:
+                        raise timeout_error
+                    raise timeout_error from last_contention
                 try:
                     portalocker.lock(handle, flags)
                 except portalocker.exceptions.AlreadyLocked as exc:
+                    attempted = True
+                    last_contention = exc
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         raise ArtifactLeaseTimeoutError(
@@ -165,10 +209,21 @@ class ArtifactOperationLease:
                         f"failed acquiring {self.mode.value} lease "
                         f"for {self.key.artifact_id}"
                     ) from exc
+                except Exception as exc:
+                    raise ArtifactLeaseError(
+                        f"failed acquiring {self.mode.value} lease "
+                        f"for {self.key.artifact_id}"
+                    ) from exc
                 self._handle = handle
                 return self
-        except BaseException:
-            handle.close()
+        except BaseException as acquisition_error:
+            _close_handle(
+                handle,
+                primary_error=acquisition_error,
+                failure_message=(
+                    f"failed closing {self.mode.value} lease for {self.key.artifact_id}"
+                ),
+            )
             raise
 
     def release(self) -> None:
@@ -179,9 +234,21 @@ class ArtifactOperationLease:
         if handle is None:
             return
         try:
-            portalocker.unlock(handle)
+            try:
+                portalocker.unlock(handle)
+            except Exception as error:
+                raise ArtifactLeaseError(
+                    f"failed releasing {self.mode.value} lease "
+                    f"for {self.key.artifact_id}"
+                ) from error
         finally:
-            handle.close()
+            _close_handle(
+                handle,
+                primary_error=sys.exception(),
+                failure_message=(
+                    f"failed closing {self.mode.value} lease for {self.key.artifact_id}"
+                ),
+            )
 
     def __enter__(self) -> ArtifactOperationLease:
         return self.acquire()
@@ -234,17 +301,24 @@ class ArtifactOperationLeaseSet:
             raise ArtifactLeaseError("lease set is already acquired")
         deadline = time.monotonic() + self.timeout_seconds
         try:
-            for key in self.keys:
-                remaining = max(0.0, deadline - time.monotonic())
+            for index, key in enumerate(self.keys):
+                if index > 0 and time.monotonic() >= deadline:
+                    raise ArtifactLeaseTimeoutError(
+                        f"timed out acquiring {self.mode.value} lease "
+                        f"for {key.artifact_id}"
+                    )
                 lease = ArtifactOperationLease(
                     self._lock_root,
                     key,
                     self.mode,
-                    timeout_seconds=remaining,
+                    timeout_seconds=self.timeout_seconds,
                     check_interval_seconds=self.check_interval_seconds,
                     cancelled=self._cancelled,
                 )
-                lease.acquire()
+                lease._acquire_until(
+                    deadline,
+                    allow_initial_attempt=index == 0,
+                )
                 self._leases.append(lease)
         except BaseException as acquisition_error:
             try:
