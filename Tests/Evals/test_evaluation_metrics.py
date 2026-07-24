@@ -6,7 +6,12 @@ Tests instruction_adherence, format_compliance, coherence_score, and dialogue_qu
 import pytest
 from unittest.mock import Mock
 
-from tldw_chatbook.Evals.eval_runner import BaseEvalRunner, EvalSample, EvalSampleResult
+from tldw_chatbook.Evals.eval_runner import (
+    BaseEvalRunner,
+    EvalSample,
+    EvalSampleResult,
+    MetricsCalculator,
+)
 from tldw_chatbook.Evals.task_loader import TaskConfig
 
 
@@ -54,6 +59,48 @@ class TestEvaluationMetrics:
 
         score = runner._calculate_instruction_adherence("four", "4", sample)
         assert 0 < score < 1  # Semantic similarity
+
+    def test_embedding_semantic_similarity_returns_finite_float(self):
+        class FixedEmbeddingModel:
+            def encode(self, texts):
+                assert texts == ["alpha", "beta"]
+                return [[3.0, 4.0], [4.0, 3.0]]
+
+        score = MetricsCalculator.calculate_semantic_similarity(
+            "alpha", "beta", embedding_model=FixedEmbeddingModel()
+        )
+
+        assert isinstance(score, float)
+        assert score == pytest.approx(0.96)
+
+    def test_embedding_semantic_similarity_uses_lexical_fallback_for_zero_norm(self):
+        class ZeroEmbeddingModel:
+            def encode(self, texts):
+                assert texts == ["alpha", "beta"]
+                return [[0.0, 0.0], [1.0, 0.0]]
+
+        score = MetricsCalculator.calculate_semantic_similarity(
+            "alpha", "beta", embedding_model=ZeroEmbeddingModel()
+        )
+
+        assert score == 0.0
+
+    def test_exact_semantic_similarity_does_not_load_embeddings(self):
+        class UnexpectedEmbeddingModel:
+            called = False
+
+            def encode(self, texts):
+                self.called = True
+                raise AssertionError("exact normalized text must bypass embeddings")
+
+        embedding_model = UnexpectedEmbeddingModel()
+
+        score = MetricsCalculator.calculate_semantic_similarity(
+            " Exact ", "exact", embedding_model=embedding_model
+        )
+
+        assert score == 1.0
+        assert embedding_model.called is False
 
     def test_instruction_adherence_with_format(self, runner):
         """Test instruction adherence with format requirements."""

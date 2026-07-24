@@ -81,8 +81,10 @@ def _finite_number(name: str, value: object, *, positive: bool) -> float:
             numeric_value = float(value)
         except (OverflowError, ValueError):
             pass
-    if numeric_value is None or not math.isfinite(numeric_value) or (
-        numeric_value <= 0 if positive else numeric_value < 0
+    if (
+        numeric_value is None
+        or not math.isfinite(numeric_value)
+        or (numeric_value <= 0 if positive else numeric_value < 0)
     ):
         qualifier = "positive" if positive else "non-negative"
         raise ValueError(f"{name} must be a {qualifier} finite number")
@@ -788,6 +790,9 @@ class MetricsCalculator:
         if not predicted or not expected:
             return 0.0
 
+        if predicted.strip().casefold() == expected.strip().casefold():
+            return 1.0
+
         lexical_fallback = MetricsCalculator._calculate_lexical_semantic_fallback(
             predicted, expected
         )
@@ -812,15 +817,21 @@ class MetricsCalculator:
                 from numpy import dot
                 from numpy.linalg import norm
 
-                dot(pred_embedding, exp_embedding) / (
-                    norm(pred_embedding) * norm(exp_embedding)
-                )
+                denominator = float(norm(pred_embedding) * norm(exp_embedding))
+                if denominator <= 0 or not math.isfinite(denominator):
+                    return lexical_fallback
+                similarity = float(dot(pred_embedding, exp_embedding) / denominator)
             except ImportError:
                 # Fallback to pure Python cosine similarity
                 dot_product = sum(a * b for a, b in zip(pred_embedding, exp_embedding))
                 norm1 = sum(a * a for a in pred_embedding) ** 0.5
                 norm2 = sum(b * b for b in exp_embedding) ** 0.5
-                dot_product / ((norm1 * norm2) if norm1 * norm2 > 0 else 0.0)
+                denominator = norm1 * norm2
+                if denominator <= 0:
+                    return lexical_fallback
+                similarity = float(dot_product / denominator)
+
+            return similarity if math.isfinite(similarity) else lexical_fallback
 
         except ImportError:
             # Fallback to token overlap if embeddings not available
@@ -2501,9 +2512,7 @@ class EvalRunner:
                 except asyncio.CancelledError:
                     raise
                 except Exception as error:
-                    logger.error(
-                        f"Fatal error processing sample {sample.id}: {error}"
-                    )
+                    logger.error(f"Fatal error processing sample {sample.id}: {error}")
                     result = EvalSampleResult(
                         sample_id=sample.id,
                         input_text=sample.input_text,
@@ -2547,9 +2556,7 @@ class EvalRunner:
                 )
 
                 if completed % 10 == 0:
-                    success_rate = (
-                        (completed - error_count) / completed
-                    ) * 100
+                    success_rate = ((completed - error_count) / completed) * 100
                     logger.info(
                         f"Processed {completed}/{len(samples)} samples | "
                         f"Success rate: {success_rate:.1f}% | "
