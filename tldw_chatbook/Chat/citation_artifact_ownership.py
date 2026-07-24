@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from enum import Enum
 import re
 import sqlite3
-from typing import TYPE_CHECKING, Annotated, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Protocol, runtime_checkable
 
 from pydantic import (
     AfterValidator,
@@ -91,6 +91,7 @@ class ArtifactOwnerBinding(_FrozenModel):
     trace_id: BoundedIdentifier
     lease_id: BoundedIdentifier
     binding_id: BoundedIdentifier
+    artifact_body_fingerprint: BoundedIdentifier
 
 
 class ArtifactOwnerOperation(_FrozenModel):
@@ -115,6 +116,17 @@ class ArtifactOwnerOperation(_FrozenModel):
         return self
 
 
+class DeferredArtifactOwnerUnlink(_FrozenModel):
+    """Key-unavailable unlink tombstone retaining one signed binding."""
+
+    schema_version: Annotated[int, Field(strict=True, ge=1, le=1)] = 1
+    entry_kind: Literal["deferred_unlink"] = "deferred_unlink"
+    tombstone_id: BoundedIdentifier
+    binding: ArtifactOwnerBinding
+    created_at: UtcDateTime
+    error_code: ErrorCode | None = None
+
+
 class ArtifactReconciliationResult(_FrozenModel):
     """Bounded summary suitable for startup diagnostics."""
 
@@ -132,9 +144,33 @@ class CrossStoreArtifactOwnershipStore(Protocol):
 
     artifact_backend_mode: ArtifactBackendMode
     artifact_store_id: str
+    artifact_collection_identity: object
 
-    def list_provenance_outbox(self, *, limit: int) -> list[ArtifactOwnerOperation]:
+    def list_provenance_outbox(
+        self,
+        *,
+        limit: int,
+        advance_cursor: bool = False,
+    ) -> list[ArtifactOwnerOperation]:
         """Read a bounded ordered batch."""
+
+    def materialize_deferred_provenance_unlinks(
+        self,
+        coordinator: CitationArtifactOwnershipCoordinator,
+        *,
+        limit: int,
+    ) -> None:
+        """Convert signed deferred bindings to unlink operations after recovery."""
+
+    def list_provenance_barrier_trace_ids(self, *, limit: int) -> tuple[str, ...]:
+        """Read pending operation and deferred-unlink trace barriers."""
+
+    def validate_provenance_operation(
+        self,
+        operation: ArtifactOwnerOperation,
+        coordinator: CitationArtifactOwnershipCoordinator,
+    ) -> None:
+        """Verify the exact registry entry while its mutation lock is held."""
 
     def mark_provenance_operation_acknowledged(self, operation_id: str) -> None:
         """Durably mark the artifact-side mutation acknowledged."""
@@ -185,14 +221,19 @@ class CitationArtifactOwnershipCoordinator:
             _validate_shared_database_contract(artifact_store, trace_repository)
         elif mode is ArtifactBackendMode.CROSS_STORE:
             required = (
+                "artifact_collection_identity",
                 "list_provenance_outbox",
+                "materialize_deferred_provenance_unlinks",
+                "list_provenance_barrier_trace_ids",
+                "validate_provenance_operation",
                 "mark_provenance_operation_acknowledged",
                 "prune_provenance_operation",
                 "record_provenance_operation_failure",
                 "provenance_collection_guard",
             )
-            if any(
-                not callable(getattr(artifact_store, name, None)) for name in required
+            if getattr(artifact_store, required[0], None) is None or any(
+                not callable(getattr(artifact_store, name, None))
+                for name in required[1:]
             ):
                 raise ValueError("cross_store_outbox_contract_required")
         else:
@@ -201,6 +242,7 @@ class CitationArtifactOwnershipCoordinator:
         self.trace_repository = trace_repository
         if mode is ArtifactBackendMode.CROSS_STORE:
             trace_repository.register_artifact_collection_barrier(
+                store_identity=artifact_store.artifact_collection_identity,
                 provider=self.collection_barriers,
                 guard=artifact_store.provenance_collection_guard,
             )
@@ -212,12 +254,19 @@ class CitationArtifactOwnershipCoordinator:
 
         return self.trace_repository.policy.canonical_writes_enabled
 
+    @property
+    def artifact_binding_verification_available(self) -> bool:
+        """Return whether the local secret is available for binding checks."""
+
+        return self.trace_repository.artifact_binding_verification_available
+
     def prepare_link_operation(
         self,
         request: CitationArtifactOwnerRequest,
         *,
         artifact_id: str,
         artifact_revision: int,
+        artifact_body: str,
     ) -> ArtifactOwnerOperation:
         """Derive one stable link only from a repository-issued owner request."""
 
@@ -228,7 +277,21 @@ class CitationArtifactOwnershipCoordinator:
             artifact_store_id=self.artifact_store.artifact_store_id,
             artifact_id=artifact_id,
             artifact_revision=artifact_revision,
+            artifact_body=artifact_body,
             operation_kind=ArtifactOwnerOperationKind.LINK,
+        )
+
+    def verify_artifact_binding(
+        self,
+        binding: ArtifactOwnerBinding,
+        *,
+        artifact_body: str,
+    ) -> None:
+        """Verify signed binding identity and exact persisted artifact body."""
+
+        self.trace_repository.verify_artifact_owner_binding(
+            binding,
+            artifact_body=artifact_body,
         )
 
     def owner_request_for_message(
@@ -299,9 +362,25 @@ class CitationArtifactOwnershipCoordinator:
                 disabled=True,
             )
         try:
-            operations = self.artifact_store.list_provenance_outbox(limit=limit)
-            if not isinstance(operations, list) or len(operations) > limit:
-                raise ValueError("artifact outbox batch contract violated")
+            with self.artifact_store.provenance_collection_guard():
+                self.artifact_store.materialize_deferred_provenance_unlinks(
+                    self,
+                    limit=limit,
+                )
+                operations = self.artifact_store.list_provenance_outbox(
+                    limit=limit,
+                    advance_cursor=True,
+                )
+                if not isinstance(operations, list) or len(operations) > limit:
+                    raise ValueError("artifact outbox batch contract violated")
+                return self._reconcile_operations(operations)
+        except CitationPersistenceUnavailable as exc:
+            return ArtifactReconciliationResult(
+                examined=0,
+                completed=0,
+                failed=1,
+                reason_codes=(_reconciliation_reason(exc),),
+            )
         except Exception:
             return ArtifactReconciliationResult(
                 examined=0,
@@ -309,6 +388,12 @@ class CitationArtifactOwnershipCoordinator:
                 failed=1,
                 reason_codes=("artifact_registry_unavailable",),
             )
+
+    def _reconcile_operations(
+        self,
+        operations: list[ArtifactOwnerOperation],
+    ) -> ArtifactReconciliationResult:
+        """Apply one already registry-locked reconciliation batch."""
 
         completed = 0
         failed = 0
@@ -321,6 +406,7 @@ class CitationArtifactOwnershipCoordinator:
                     operation.model_dump(mode="python"),
                     strict=True,
                 )
+                self.artifact_store.validate_provenance_operation(validated, self)
                 self.trace_repository.apply_artifact_owner_operation(validated)
                 if validated.state is ArtifactOwnerOutboxState.PENDING:
                     self.artifact_store.mark_provenance_operation_acknowledged(
@@ -374,26 +460,19 @@ class CitationArtifactOwnershipCoordinator:
         if not self.writes_enabled:
             return CitationCollectionBarriers()
         try:
-            operations = self.artifact_store.list_provenance_outbox(
+            trace_ids = self.artifact_store.list_provenance_barrier_trace_ids(
                 limit=ARTIFACT_PROVENANCE_OUTBOX_MAX_ENTRIES
             )
             if (
-                not isinstance(operations, list)
-                or len(operations) > ARTIFACT_PROVENANCE_OUTBOX_MAX_ENTRIES
+                not isinstance(trace_ids, tuple)
+                or len(trace_ids) > ARTIFACT_PROVENANCE_OUTBOX_MAX_ENTRIES
             ):
-                raise ValueError("artifact outbox batch contract violated")
-            trace_ids = {
-                ArtifactOwnerOperation.model_validate(
-                    operation.model_dump(mode="python"),
-                    strict=True,
-                ).binding.trace_id
-                for operation in operations
-            }
+                raise ValueError("artifact barrier batch contract violated")
         except Exception:
             raise CitationPersistenceUnavailable(
                 "artifact_registry_unavailable"
             ) from None
-        return CitationCollectionBarriers(trace_ids=tuple(sorted(trace_ids)))
+        return CitationCollectionBarriers(trace_ids=tuple(sorted(set(trace_ids))))
 
 
 def _reconciliation_reason(exc: Exception) -> str:
@@ -427,30 +506,52 @@ def _validate_shared_database_contract(
     connection = trace_repository.db.get_connection()
     if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
         raise ValueError("shared_database_owner_contract_required")
-    if (
-        not connection.execute(f'PRAGMA table_info("{artifact_table}")').fetchall()
-        or not connection.execute(f'PRAGMA table_info("{owner_table}")').fetchall()
-    ):
+    main_tables = {
+        row["name"]
+        for row in connection.execute(
+            """
+            SELECT name
+            FROM main.sqlite_master
+            WHERE type = 'table' AND name IN (?, ?)
+            """,
+            (artifact_table, owner_table),
+        ).fetchall()
+    }
+    shadowed = connection.execute(
+        """
+        SELECT 1
+        FROM pragma_table_list
+        WHERE schema != 'main' AND name IN (?, ?)
+        LIMIT 1
+        """,
+        (artifact_table, owner_table),
+    ).fetchone()
+    if main_tables != {artifact_table, owner_table} or shadowed is not None:
         raise ValueError("shared_database_owner_contract_required")
 
-    groups: dict[tuple[int, str], set[tuple[str, str]]] = {}
+    groups: dict[tuple[int, str, str], set[tuple[str, str]]] = {}
     for row in connection.execute(
-        f'PRAGMA foreign_key_list("{owner_table}")'
+        f'PRAGMA main.foreign_key_list("{owner_table}")'
     ).fetchall():
-        groups.setdefault((row["id"], row["table"]), set()).add(
-            (row["from"], row["to"])
-        )
+        groups.setdefault(
+            (row["id"], row["table"], row["on_delete"].upper()),
+            set(),
+        ).add((row["from"], row["to"]))
     trace_fk = {("profile_id", "profile_id"), ("trace_id", "trace_id")}
     artifact_fk = {
         ("artifact_id", "artifact_id"),
         ("artifact_revision", "artifact_revision"),
     }
     if not any(
-        table == "rag_citation_traces" and trace_fk <= columns
-        for (_identifier, table), columns in groups.items()
+        table == "rag_citation_traces"
+        and on_delete in {"RESTRICT", "NO ACTION"}
+        and trace_fk == columns
+        for (_identifier, table, on_delete), columns in groups.items()
     ) or not any(
-        table == artifact_table and artifact_fk <= columns
-        for (_identifier, table), columns in groups.items()
+        table == artifact_table
+        and on_delete in {"CASCADE", "RESTRICT", "NO ACTION"}
+        and artifact_fk == columns
+        for (_identifier, table, on_delete), columns in groups.items()
     ):
         raise ValueError("shared_database_owner_contract_required")
 
@@ -459,6 +560,7 @@ __all__ = [
     "ARTIFACT_PROVENANCE_OUTBOX_MAX_ENTRIES",
     "ARTIFACT_RECONCILIATION_BATCH_MAX",
     "ArtifactBackendMode",
+    "DeferredArtifactOwnerUnlink",
     "ArtifactOwnerBinding",
     "ArtifactOwnerOperation",
     "ArtifactOwnerOperationKind",

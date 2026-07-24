@@ -30,6 +30,10 @@ from tldw_chatbook.Chat.citation_payload_lifecycle import CitationPayloadLifecyc
 from tldw_chatbook.Chat.citation_provenance_runtime import (
     CitationProvenanceRuntimePolicy,
 )
+from tldw_chatbook.Chat.console_save_targets import (
+    CONSOLE_CHATBOOK_ARTIFACT_CONTENT_MAX_CHARS,
+    console_chatbook_artifact_payload,
+)
 from tldw_chatbook.Chat.citation_trace_repository import (
     CitationPersistenceUnavailable,
     CitationTraceRepository,
@@ -88,7 +92,19 @@ def _outbox(service: LocalChatbookService) -> list[ArtifactOwnerOperation]:
     return service.list_provenance_outbox(limit=ARTIFACT_PROVENANCE_OUTBOX_MAX_ENTRIES)
 
 
-def _create_shared_database_artifact_tables(db: CharactersRAGDB) -> None:
+def _create_shared_database_artifact_tables(
+    db: CharactersRAGDB,
+    *,
+    trace_on_delete: str = "RESTRICT",
+    artifact_on_delete: str = "CASCADE",
+) -> None:
+    assert trace_on_delete in {"RESTRICT", "NO ACTION", "CASCADE"}
+    assert artifact_on_delete in {
+        "RESTRICT",
+        "NO ACTION",
+        "CASCADE",
+        "SET NULL",
+    }
     with db.transaction() as cursor:
         cursor.execute(
             """
@@ -111,14 +127,17 @@ def _create_shared_database_artifact_tables(db: CharactersRAGDB) -> None:
                 ),
                 FOREIGN KEY(profile_id, trace_id)
                     REFERENCES rag_citation_traces(profile_id, trace_id)
-                    ON DELETE RESTRICT,
+                    ON DELETE {trace_on_delete},
                 FOREIGN KEY(artifact_id, artifact_revision)
                     REFERENCES shared_test_artifacts(
                         artifact_id, artifact_revision
                     )
-                    ON DELETE CASCADE
+                    ON DELETE {artifact_on_delete}
             )
-            """
+            """.format(
+                trace_on_delete=trace_on_delete,
+                artifact_on_delete=artifact_on_delete,
+            )
         )
 
 
@@ -234,6 +253,7 @@ def test_shared_database_owner_commit_uses_repository_transaction_and_real_fks(
         _owner_request(repository),
         artifact_id="shared-artifact-1",
         artifact_revision=1,
+        artifact_body='{"artifact":"shared-artifact-1"}',
     )
 
     coordinator.apply_shared_database_owner_operation(operation)
@@ -267,6 +287,7 @@ def test_shared_database_owner_failure_rolls_back_artifact_and_fk_owner(
         _owner_request(repository),
         artifact_id="shared-artifact-1",
         artifact_revision=1,
+        artifact_body='{"artifact":"shared-artifact-1"}',
     )
 
     with pytest.raises(RuntimeError, match="shared mutation interrupted"):
@@ -300,6 +321,7 @@ def test_shared_database_owner_fk_is_enforced_in_the_shared_transaction(
         _owner_request(repository),
         artifact_id="missing-shared-artifact",
         artifact_revision=1,
+        artifact_body='{"artifact":"missing-shared-artifact"}',
     )
 
     with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
@@ -310,6 +332,104 @@ def test_shared_database_owner_fk_is_enforced_in_the_shared_transaction(
         .execute("SELECT count(*) FROM shared_test_artifact_owners")
         .fetchone()[0]
         == 0
+    )
+
+
+@pytest.mark.parametrize(
+    ("trace_on_delete", "artifact_on_delete"),
+    [
+        ("CASCADE", "CASCADE"),
+        ("RESTRICT", "SET NULL"),
+    ],
+)
+def test_shared_database_contract_rejects_destructive_or_ambiguous_fk_actions(
+    db: CharactersRAGDB,
+    trace_on_delete: str,
+    artifact_on_delete: str,
+) -> None:
+    repository = _repository(db)
+    _create_shared_database_artifact_tables(
+        db,
+        trace_on_delete=trace_on_delete,
+        artifact_on_delete=artifact_on_delete,
+    )
+
+    with pytest.raises(ValueError, match="shared_database_owner_contract_required"):
+        CitationArtifactOwnershipCoordinator(
+            artifact_store=_SharedDatabaseArtifactStore(db),
+            trace_repository=repository,
+        )
+
+
+@pytest.mark.parametrize("shadow_schema", ["temp", "attached"])
+def test_shared_database_contract_rejects_non_main_table_shadows(
+    db: CharactersRAGDB,
+    tmp_path,
+    shadow_schema: str,
+) -> None:
+    repository = _repository(db)
+    _create_shared_database_artifact_tables(db)
+    connection = db.get_connection()
+    if shadow_schema == "attached":
+        connection.execute(
+            "ATTACH DATABASE ? AS shadow", (str(tmp_path / "shadow.db"),)
+        )
+        schema = "shadow"
+    else:
+        schema = "temp"
+    connection.execute(
+        f"""
+        CREATE TABLE {schema}.shared_test_artifact_owners(
+            artifact_id TEXT,
+            artifact_revision INTEGER
+        )
+        """
+    )
+
+    with pytest.raises(ValueError, match="shared_database_owner_contract_required"):
+        CitationArtifactOwnershipCoordinator(
+            artifact_store=_SharedDatabaseArtifactStore(db),
+            trace_repository=repository,
+        )
+
+
+def test_shared_database_real_owner_fk_prevents_live_trace_collection(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    _create_shared_database_artifact_tables(db)
+    coordinator = CitationArtifactOwnershipCoordinator(
+        artifact_store=_SharedDatabaseArtifactStore(db),
+        trace_repository=repository,
+    )
+    operation = coordinator.prepare_link_operation(
+        _owner_request(repository),
+        artifact_id="shared-artifact-live",
+        artifact_revision=1,
+        artifact_body='{"artifact":"shared-artifact-live"}',
+    )
+    coordinator.apply_shared_database_owner_operation(operation)
+    _mark_owner_deleted(db)
+
+    with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
+        CitationPayloadLifecycle(repository, retention_policy=_policy()).collect(
+            now=NOW
+        )
+
+    connection = db.get_connection()
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM rag_citation_traces WHERE trace_id = ?",
+            (operation.binding.trace_id,),
+        ).fetchone()[0]
+        == 1
+    )
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM shared_test_artifact_owners"
+        ).fetchone()[0]
+        == 1
     )
 
 
@@ -325,6 +445,7 @@ def test_owner_models_are_strict_frozen_bounded_and_reject_boolean_revisions() -
             trace_id="trace-1",
             lease_id="lease-1",
             binding_id="binding-1",
+            artifact_body_fingerprint="hmac-sha256-v1:body",
         ),
         state=ArtifactOwnerOutboxState.PENDING,
         created_at=NOW,
@@ -340,6 +461,7 @@ def test_owner_models_are_strict_frozen_bounded_and_reject_boolean_revisions() -
             trace_id="trace-1",
             lease_id="lease-1",
             binding_id="binding-1",
+            artifact_body_fingerprint="hmac-sha256-v1:body",
         )
     corrupted = operation.model_copy(update={"operation_id": "x" * 257})
     with pytest.raises(ValidationError):
@@ -399,6 +521,74 @@ async def test_artifact_create_and_link_outbox_are_one_atomic_registry_write(
         "comparison-hmac",
     ):
         assert governed_value not in serialized
+
+
+@pytest.mark.asyncio
+async def test_artifact_binding_macs_canonical_persisted_console_representation(
+    ownership,
+) -> None:
+    repository, service, coordinator = ownership
+    payload = console_chatbook_artifact_payload(
+        title="Unicode \u00e9vidence",
+        message_text=("界" * (CONSOLE_CHATBOOK_ARTIFACT_CONTENT_MAX_CHARS + 7)),
+        message_role="Assistant",
+    )
+    await service.create_chatbook(
+        **payload,
+        provenance_owner_request=_owner_request(repository),
+    )
+    registry = json.loads(service.registry_path.read_text(encoding="utf-8"))
+    binding = ArtifactOwnerBinding.model_validate(
+        registry["records"][0]["provenance_owner"],
+        strict=True,
+    )
+
+    assert binding.artifact_body_fingerprint.startswith("hmac-sha256-v1:")
+    assert "界" not in binding.artifact_body_fingerprint
+    assert (
+        len(registry["records"][0]["metadata"]["content"])
+        == CONSOLE_CHATBOOK_ARTIFACT_CONTENT_MAX_CHARS
+    )
+
+    # Whitespace, key ordering, and escaped-vs-literal Unicode do not alter the
+    # exact JSON value represented by the registry.
+    service.registry_path.write_text(
+        json.dumps(registry, ensure_ascii=True, sort_keys=True, indent=2),
+        encoding="utf-8",
+    )
+    result = coordinator.reconcile_pending(limit=1)
+    assert result.completed == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tampered_field", ["name", "metadata"])
+async def test_same_revision_artifact_body_tamper_cannot_create_a_live_lease(
+    ownership,
+    tampered_field: str,
+) -> None:
+    repository, service, coordinator = ownership
+    await service.create_chatbook(
+        name="Grounded answer",
+        metadata={"content": "Answer [S1].", "nested": {"a": 1, "b": 2}},
+        provenance_owner_request=_owner_request(repository),
+    )
+    registry = json.loads(service.registry_path.read_text(encoding="utf-8"))
+    if tampered_field == "name":
+        registry["records"][0]["name"] = "Changed without a revision"
+    else:
+        registry["records"][0]["metadata"]["nested"]["a"] = 99
+    service.registry_path.write_text(json.dumps(registry), encoding="utf-8")
+
+    result = coordinator.reconcile_pending(limit=1)
+
+    assert result.completed == 0
+    assert result.failed == 1
+    assert (
+        repository.db.get_connection()
+        .execute("SELECT count(*) FROM rag_artifact_owner_leases")
+        .fetchone()[0]
+        == 0
+    )
 
 
 @pytest.mark.asyncio
@@ -524,6 +714,183 @@ async def test_grounded_artifact_update_without_request_unlinks_old_revision(
     ]
     registry = json.loads(service.registry_path.read_text(encoding="utf-8"))
     assert "provenance_owner" not in registry["records"][0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unavailable_mode", ["disabled", "key_unavailable"])
+@pytest.mark.parametrize("mutation", ["update", "delete"])
+async def test_unavailable_owner_writes_defer_unlink_until_recovery(
+    db: CharactersRAGDB,
+    tmp_path,
+    unavailable_mode: str,
+    mutation: str,
+) -> None:
+    enabled_repository = _repository(db)
+    _persist(db, enabled_repository)
+    service = LocalChatbookService(
+        db_paths={},
+        registry_path=tmp_path / "chatbooks.json",
+    )
+    enabled = CitationArtifactOwnershipCoordinator(
+        artifact_store=service,
+        trace_repository=enabled_repository,
+    )
+    service.set_citation_ownership_coordinator(enabled)
+    created = await service.create_chatbook(
+        name="Grounded answer",
+        provenance_owner_request=_owner_request(enabled_repository),
+    )
+    assert enabled.reconcile_pending(limit=1).completed == 1
+
+    unavailable_repository = CitationTraceRepository(
+        db,
+        policy=CitationProvenanceRuntimePolicy(
+            canonical_writes_enabled=unavailable_mode != "disabled"
+        ),
+        identity_context=_identity(db),
+        fingerprint_codec=None,
+    )
+    unavailable = CitationArtifactOwnershipCoordinator(
+        artifact_store=service,
+        trace_repository=unavailable_repository,
+    )
+    service.set_citation_ownership_coordinator(unavailable)
+
+    if mutation == "update":
+        changed = await service.update_chatbook(
+            created["chatbook_id"],
+            name="Ordinary ungrounded edit",
+        )
+        assert changed["artifact_revision"] == 2
+    else:
+        assert await service.delete_chatbook(created["chatbook_id"]) is True
+
+    registry = json.loads(service.registry_path.read_text(encoding="utf-8"))
+    assert len(registry["provenance_outbox"]) == 1
+    assert registry["provenance_outbox"][0]["entry_kind"] == "deferred_unlink"
+    assert (
+        db.get_connection()
+        .execute("SELECT state FROM rag_artifact_owner_leases")
+        .fetchone()[0]
+        == "live"
+    )
+    if unavailable_mode == "disabled":
+        assert unavailable.reconcile_pending(limit=1).disabled is True
+    else:
+        assert unavailable.reconcile_pending(limit=1).completed == 0
+
+    recovered = CitationArtifactOwnershipCoordinator(
+        artifact_store=service,
+        trace_repository=enabled_repository,
+    )
+    service.set_citation_ownership_coordinator(recovered)
+    assert recovered.reconcile_pending(limit=1).completed == 1
+    assert _outbox(service) == []
+    assert (
+        db.get_connection()
+        .execute("SELECT state FROM rag_artifact_owner_leases")
+        .fetchone()[0]
+        == "released"
+    )
+
+
+@pytest.mark.asyncio
+async def test_invalid_deferred_unlink_is_quarantined_without_starving_next(
+    db: CharactersRAGDB,
+    tmp_path,
+) -> None:
+    enabled_repository = _repository(db)
+    _persist(db, enabled_repository)
+    service = LocalChatbookService(
+        db_paths={},
+        registry_path=tmp_path / "chatbooks.json",
+    )
+    enabled = CitationArtifactOwnershipCoordinator(
+        artifact_store=service,
+        trace_repository=enabled_repository,
+    )
+    service.set_citation_ownership_coordinator(enabled)
+    artifacts = []
+    for name in ("first", "second"):
+        artifacts.append(
+            await service.create_chatbook(
+                name=name,
+                provenance_owner_request=_owner_request(enabled_repository),
+            )
+        )
+        assert enabled.reconcile_pending(limit=1).completed == 1
+
+    disabled_repository = CitationTraceRepository(
+        db,
+        policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=False),
+        identity_context=_identity(db),
+        fingerprint_codec=None,
+    )
+    disabled = CitationArtifactOwnershipCoordinator(
+        artifact_store=service,
+        trace_repository=disabled_repository,
+    )
+    service.set_citation_ownership_coordinator(disabled)
+    for artifact in artifacts:
+        await service.delete_chatbook(artifact["chatbook_id"])
+
+    registry = json.loads(service.registry_path.read_text(encoding="utf-8"))
+    binding_id = registry["provenance_outbox"][0]["binding"]["binding_id"]
+    registry["provenance_outbox"][0]["binding"]["binding_id"] = binding_id[:-1] + (
+        "0" if binding_id[-1] != "0" else "1"
+    )
+    service.registry_path.write_text(json.dumps(registry), encoding="utf-8")
+    recovered = CitationArtifactOwnershipCoordinator(
+        artifact_store=service,
+        trace_repository=enabled_repository,
+    )
+    service.set_citation_ownership_coordinator(recovered)
+
+    assert recovered.reconcile_pending(limit=1).completed == 0
+    quarantined = json.loads(service.registry_path.read_text(encoding="utf-8"))
+    assert (
+        quarantined["provenance_outbox"][0]["error_code"]
+        == "artifact_owner_binding_invalid"
+    )
+    assert recovered.reconcile_pending(limit=1).completed == 1
+    lease_states = {
+        row["artifact_id"]: row["state"]
+        for row in db.get_connection()
+        .execute("SELECT artifact_id, state FROM rag_artifact_owner_leases")
+        .fetchall()
+    }
+    assert lease_states == {
+        str(artifacts[0]["chatbook_id"]): "live",
+        str(artifacts[1]["chatbook_id"]): "released",
+    }
+
+
+@pytest.mark.asyncio
+async def test_verified_binding_tamper_fails_closed_without_deleting_artifact(
+    ownership,
+) -> None:
+    repository, service, coordinator = ownership
+    created = await service.create_chatbook(
+        name="Grounded answer",
+        provenance_owner_request=_owner_request(repository),
+    )
+    assert coordinator.reconcile_pending(limit=1).completed == 1
+    registry = json.loads(service.registry_path.read_text(encoding="utf-8"))
+    binding_id = registry["records"][0]["provenance_owner"]["binding_id"]
+    registry["records"][0]["provenance_owner"]["binding_id"] = binding_id[:-1] + (
+        "0" if binding_id[-1] != "0" else "1"
+    )
+    service.registry_path.write_text(json.dumps(registry), encoding="utf-8")
+
+    with pytest.raises(
+        CitationPersistenceUnavailable,
+        match="artifact_owner_binding_invalid",
+    ):
+        await service.delete_chatbook(created["chatbook_id"])
+
+    assert (await service.get_chatbook(created["chatbook_id"]))["name"] == (
+        "Grounded answer"
+    )
 
 
 @pytest.mark.asyncio
@@ -792,6 +1159,73 @@ def test_overlapping_registry_link_creates_do_not_drop_outbox_entries(
     }
 
 
+def test_collection_barrier_registration_is_idempotent_for_same_registry(
+    db: CharactersRAGDB,
+    tmp_path,
+) -> None:
+    repository = _repository(db)
+    first = LocalChatbookService(
+        db_paths={},
+        registry_path=tmp_path / "chatbooks.json",
+    )
+    CitationArtifactOwnershipCoordinator(
+        artifact_store=first,
+        trace_repository=repository,
+    )
+    rewired = LocalChatbookService(
+        db_paths={},
+        registry_path=tmp_path / "./chatbooks.json",
+    )
+
+    CitationArtifactOwnershipCoordinator(
+        artifact_store=rewired,
+        trace_repository=repository,
+    )
+
+
+def test_different_registry_cannot_replace_an_existing_collection_barrier(
+    db: CharactersRAGDB,
+    tmp_path,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    first = LocalChatbookService(
+        db_paths={},
+        registry_path=tmp_path / "first.json",
+    )
+    first_coordinator = CitationArtifactOwnershipCoordinator(
+        artifact_store=first,
+        trace_repository=repository,
+    )
+    first.set_citation_ownership_coordinator(first_coordinator)
+    asyncio.run(
+        first.create_chatbook(
+            name="Pending owner in registry A",
+            provenance_owner_request=_owner_request(repository),
+        )
+    )
+    second = LocalChatbookService(
+        db_paths={},
+        registry_path=tmp_path / "second.json",
+    )
+
+    with pytest.raises(
+        ValueError, match="artifact_collection_barrier_already_registered"
+    ):
+        CitationArtifactOwnershipCoordinator(
+            artifact_store=second,
+            trace_repository=repository,
+        )
+
+    _mark_owner_deleted(db)
+    result = CitationPayloadLifecycle(
+        repository,
+        retention_policy=_policy(),
+    ).collect(now=NOW)
+    assert result.traces_collected == 0
+    assert len(_outbox(first)) == 1
+
+
 @pytest.mark.asyncio
 async def test_pending_outbox_live_lease_and_unresolved_unlink_block_collection(
     ownership,
@@ -866,6 +1300,80 @@ async def test_reconciliation_never_persists_untrusted_exception_text(
 
     assert result.reason_codes == ("artifact_reconciliation_failed",)
     assert _outbox(service)[0].error_code == "artifact_reconciliation_failed"
+
+
+@pytest.mark.asyncio
+async def test_limit_one_reconciliation_cursor_survives_restart_and_skips_failure(
+    ownership,
+) -> None:
+    repository, service, coordinator = ownership
+    await service.create_chatbook(
+        name="Permanently tampered first artifact",
+        provenance_owner_request=_owner_request(repository),
+    )
+    second = await service.create_chatbook(
+        name="Valid second artifact",
+        provenance_owner_request=_owner_request(repository),
+    )
+    registry = json.loads(service.registry_path.read_text(encoding="utf-8"))
+    registry["records"][0]["name"] = "Tampered without revision"
+    service.registry_path.write_text(json.dumps(registry), encoding="utf-8")
+
+    first_result = coordinator.reconcile_pending(limit=1)
+    assert (first_result.completed, first_result.failed, first_result.examined) == (
+        0,
+        1,
+        1,
+    )
+
+    restarted_service = LocalChatbookService(
+        db_paths={},
+        registry_path=service.registry_path,
+    )
+    restarted = CitationArtifactOwnershipCoordinator(
+        artifact_store=restarted_service,
+        trace_repository=repository,
+    )
+    restarted_service.set_citation_ownership_coordinator(restarted)
+    second_result = restarted.reconcile_pending(limit=1)
+
+    assert (second_result.completed, second_result.failed) == (1, 0)
+    live_artifacts = {
+        row["artifact_id"]
+        for row in repository.db.get_connection()
+        .execute(
+            "SELECT artifact_id FROM rag_artifact_owner_leases WHERE state = 'live'"
+        )
+        .fetchall()
+    }
+    assert live_artifacts == {str(second["chatbook_id"])}
+
+
+@pytest.mark.asyncio
+async def test_fair_cursor_never_selects_unlink_before_its_pending_link(
+    ownership,
+) -> None:
+    repository, service, coordinator = ownership
+    created = await service.create_chatbook(
+        name="Deleted before first reconciliation",
+        provenance_owner_request=_owner_request(repository),
+    )
+    await service.delete_chatbook(created["chatbook_id"])
+
+    assert coordinator.reconcile_pending(limit=1).completed == 1
+    assert (
+        repository.db.get_connection()
+        .execute("SELECT state FROM rag_artifact_owner_leases")
+        .fetchone()[0]
+        == "live"
+    )
+    assert coordinator.reconcile_pending(limit=1).completed == 1
+    assert (
+        repository.db.get_connection()
+        .execute("SELECT state FROM rag_artifact_owner_leases")
+        .fetchone()[0]
+        == "released"
+    )
 
 
 def test_artifact_phase_one_precedes_collection_and_holds_pending_barrier(

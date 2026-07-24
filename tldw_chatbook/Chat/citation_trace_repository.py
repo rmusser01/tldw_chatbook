@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import json
 import sqlite3
+import threading
 from typing import TYPE_CHECKING, Any, Callable
 import weakref
 
@@ -443,19 +444,27 @@ class CitationTraceRepository:
         self._artifact_collection_guard_factory: (
             Callable[[], AbstractContextManager[Any]] | None
         ) = None
+        self._artifact_collection_store_identity: object | None = None
+        self._artifact_collection_registration_lock = threading.Lock()
 
     def register_artifact_collection_barrier(
         self,
         *,
+        store_identity: object,
         provider: Callable[[], Any],
         guard: Callable[[], AbstractContextManager[Any]],
     ) -> None:
         """Install the authoritative cross-store barrier and mutation guard."""
 
-        if not callable(provider) or not callable(guard):
+        if store_identity is None or not callable(provider) or not callable(guard):
             raise TypeError("artifact collection barrier contract is invalid")
-        self._artifact_collection_barrier_provider = provider
-        self._artifact_collection_guard_factory = guard
+        with self._artifact_collection_registration_lock:
+            current_identity = self._artifact_collection_store_identity
+            if current_identity is not None and current_identity != store_identity:
+                raise ValueError("artifact_collection_barrier_already_registered")
+            self._artifact_collection_store_identity = store_identity
+            self._artifact_collection_barrier_provider = provider
+            self._artifact_collection_guard_factory = guard
 
     def artifact_collection_guard(self) -> AbstractContextManager[Any]:
         """Return the registered cross-store guard or a no-op context."""
@@ -468,6 +477,12 @@ class CitationTraceRepository:
 
         provider = self._artifact_collection_barrier_provider
         return None if provider is None else provider()
+
+    @property
+    def artifact_binding_verification_available(self) -> bool:
+        """Return whether signed artifact bindings can currently be verified."""
+
+        return self._fingerprint_codec is not None and self.identity_context is not None
 
     @classmethod
     def from_key_provider(
@@ -1396,6 +1411,7 @@ class CitationTraceRepository:
         artifact_store_id: str,
         artifact_id: str,
         artifact_revision: int,
+        artifact_body: str,
         operation_kind: ArtifactOwnerOperationKind,
     ) -> ArtifactOwnerOperation:
         """Derive a stable link operation from an exact issued owner request."""
@@ -1422,6 +1438,11 @@ class CitationTraceRepository:
             artifact_id=artifact_id,
             artifact_revision=artifact_revision,
             trace_id=proof.trace_id,
+            artifact_body_fingerprint=codec.fingerprint(
+                CitationFingerprintDomain.OWNER_OPERATION,
+                "artifact-body",
+                artifact_body,
+            ),
         )
         return ArtifactOwnerOperation(
             operation_id=self._artifact_owner_operation_id(
@@ -1452,11 +1473,12 @@ class CitationTraceRepository:
         )
         codec = self._fingerprint_codec
         identity = self.identity_context
+        if not self.policy.canonical_writes_enabled:
+            raise CitationPersistenceUnavailable("canonical_citation_writes_disabled")
+        if codec is None or identity is None:
+            raise CitationPersistenceUnavailable("fingerprint_key_unavailable")
         if (
-            not self.policy.canonical_writes_enabled
-            or codec is None
-            or identity is None
-            or validated.profile_id != identity.profile_id
+            validated.profile_id != identity.profile_id
             or not self._artifact_binding_matches(codec, validated)
         ):
             raise CitationPersistenceUnavailable("artifact_owner_binding_invalid")
@@ -1470,6 +1492,42 @@ class CitationTraceRepository:
             binding=validated,
             created_at=datetime.now(UTC),
         )
+
+    def verify_artifact_owner_binding(
+        self,
+        binding: ArtifactOwnerBinding,
+        *,
+        artifact_body: str,
+    ) -> None:
+        """Verify binding authenticity and its exact artifact representation."""
+
+        from tldw_chatbook.Chat.citation_artifact_ownership import (
+            ArtifactOwnerBinding,
+        )
+
+        validated = ArtifactOwnerBinding.model_validate(
+            binding.model_dump(mode="python"),
+            strict=True,
+        )
+        codec = self._fingerprint_codec
+        identity = self.identity_context
+        if codec is None or identity is None:
+            raise CitationPersistenceUnavailable("fingerprint_key_unavailable")
+        if (
+            validated.profile_id != identity.profile_id
+            or not self._artifact_binding_matches(codec, validated)
+        ):
+            raise CitationPersistenceUnavailable("artifact_owner_binding_invalid")
+        expected_body = codec.fingerprint(
+            CitationFingerprintDomain.OWNER_OPERATION,
+            "artifact-body",
+            artifact_body,
+        )
+        if not hmac.compare_digest(
+            expected_body,
+            validated.artifact_body_fingerprint,
+        ):
+            raise CitationPersistenceUnavailable("artifact_body_integrity_invalid")
 
     def apply_artifact_owner_operation(
         self,
@@ -1842,6 +1900,7 @@ class CitationTraceRepository:
         artifact_id: str,
         artifact_revision: int,
         trace_id: str,
+        artifact_body_fingerprint: str,
     ) -> ArtifactOwnerBinding:
         parts = (
             profile_id,
@@ -1849,6 +1908,7 @@ class CitationTraceRepository:
             artifact_id,
             str(artifact_revision),
             trace_id,
+            artifact_body_fingerprint,
         )
         return binding_type(
             profile_id=profile_id,
@@ -1866,6 +1926,7 @@ class CitationTraceRepository:
                 "artifact-binding",
                 *parts,
             ),
+            artifact_body_fingerprint=artifact_body_fingerprint,
         )
 
     @staticmethod
@@ -1897,6 +1958,7 @@ class CitationTraceRepository:
                 artifact_id=binding.artifact_id,
                 artifact_revision=binding.artifact_revision,
                 trace_id=binding.trace_id,
+                artifact_body_fingerprint=binding.artifact_body_fingerprint,
             )
         except (TypeError, ValueError):
             return False
