@@ -10,10 +10,11 @@ Backlog:
 ## Summary
 
 Add a deterministic distribution gate that builds both standard Python
-artifacts outside the working tree, validates their owned data and licenses,
-installs the wheel outside the repository, and exercises the installed
-entry-point and resource contracts. Installed package files are immutable;
-only a real source checkout may rebuild the committed CSS bundle.
+artifacts in a fresh tree outside the working tree, validates their owned data,
+metadata, exclusions, and licenses, installs the wheel outside the repository,
+and exercises the installed entry-point and resource contracts. Installed
+package files are immutable; only a source tree identified by the adjacent
+project metadata may rebuild the committed CSS bundle.
 
 This task repairs the packaging defects exposed by that gate. It does not begin
 the larger application-state decomposition.
@@ -59,6 +60,40 @@ wheel.
 development Markdown, SQL source files not read at runtime, and backup files
 have no demonstrated wheel runtime contract and remain excluded.
 
+### Implicit package-data leakage
+
+Setuptools defaults `include-package-data` to true for projects configured
+through `pyproject.toml`. A clean reproduction with a root `MANIFEST.in`
+confirmed that `tldw_chatbook/css/components/stats_screen.css`, intended as an
+sdist build input, then leaked into the wheel despite not appearing in the
+explicit package-data table.
+
+Setting `include-package-data = false` and rebuilding from a fresh tree kept the
+thirteen chunking templates, RAG config, eval config, compiled bundle, and two
+vendored notices while excluding `stats_screen.css` from the wheel. Reusing the
+same setuptools `build/` directory initially produced a false result because a
+stale copied CSS file survived there. The test must therefore own a fresh source
+and build tree rather than cleaning or reusing repository build output.
+
+The reproduced sdist also contained root test modules when their directory was
+spelled or normalized as lowercase `tests/`. The manifest currently excludes
+`Tests/` and `STests/` only. Both spellings must be excluded, and the checker
+must verify forbidden paths rather than checking presence alone.
+
+### Build metadata
+
+The build emits a setuptools deprecation warning for
+`license = {text = "AGPL-3.0-or-later"}`. The warning states that this form
+stops being supported after 2027-02-18. A clean probe with setuptools 81
+confirmed that raising the build-backend floor to 77, using the SPDX string
+form, and declaring `license-files = ["LICENSE"]` removes the warning and
+produces Core Metadata 2.4 with:
+
+```text
+License-Expression: AGPL-3.0-or-later
+License-File: LICENSE
+```
+
 ### Installed execution
 
 Installing the wheel with `pip --target` and running from an unrelated
@@ -82,6 +117,14 @@ Adding that `.css` source to the wheel would hide the immediate failure but
 would preserve the unsafe write into the installed package. The repair must
 stop installed rebuilds.
 
+A source scan found the same package-writing behavior in three application
+startup sites: direct `app.py` execution, `get_app()`, and
+`main_cli_runner()`. Guarding only the console-script path would make the test
+green while leaving the Textual Serve application factory and direct module
+path unsafe. This is not merely a legacy path:
+`Web_Server.serve.run_web_server()` launches `python -m tldw_chatbook.app`.
+All three sites must share the same source-tree predicate.
+
 The probe also confirmed the existing missing `openai_tts_mappings.json`
 fallback remains functional. Its warning is noisy but unrelated to
 distribution integrity and is not part of this task.
@@ -90,9 +133,13 @@ distribution integrity and is not part of this task.
 
 - Build sdist and wheel artifacts in a temporary source copy.
 - Restore a root setuptools manifest and make the release checker truthful.
+- Make wheel package data explicitly opt-in instead of implicitly inheriting
+  every in-package sdist manifest match.
 - Package every verified runtime-owned non-Python file needed by the tested
   installed flows.
 - Package license notices for the vendored code shipped in the wheel.
+- Replace the time-limited legacy license declaration with current SPDX
+  metadata and verify the resulting distribution metadata.
 - Prove the imported package comes from the installed target.
 - Prove the packaged RAG, chunking, eval, CSS, and entry-point contracts work.
 - Keep installed commands from rebuilding or writing generated package assets.
@@ -136,9 +183,42 @@ The sdist must contain:
 - the runtime configuration and template files; and
 - the two vendored license files.
 
+It must not contain `Tests/`, `tests/`, `STests/`, Python bytecode/cache files,
+or OS metadata. Both test-directory spellings are excluded because
+case-normalized source copies and case-sensitive CI filesystems must produce
+the same contract.
+
+### Build and license metadata
+
+The build backend remains setuptools, with its minimum raised to the first
+version that supports the selected PEP 639 metadata:
+
+```toml
+[build-system]
+requires = ["setuptools>=77.0"]
+
+[project]
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+```
+
+The artifact checker parses distribution metadata and requires
+`License-Expression: AGPL-3.0-or-later` plus `License-File: LICENSE`. The wheel
+must contain the project license under its `.dist-info/licenses/` directory in
+addition to the two vendored notices under their package owners.
+
 ### Wheel
 
-Setuptools package-data remains explicit:
+Setuptools package-data is made genuinely explicit:
+
+```toml
+[tool.setuptools]
+include-package-data = false
+```
+
+Without that setting, root-manifest entries inside `tldw_chatbook/` are
+implicitly eligible for the wheel and the package-data table is not an
+allowlist.
 
 | Package owner | Required data |
 | --- | --- |
@@ -150,6 +230,12 @@ Setuptools package-data remains explicit:
 | `tldw_chatbook.Third_Party.textual_fspicker` | `LICENSE` |
 
 The data rules do not use a catch-all recursive glob.
+
+The wheel must not contain `stats_screen.css`, example-only TOML, development
+Markdown outside the deliberately shipped Config Files guides, root test
+trees, Python bytecode/cache files, or OS metadata. The CSS source remains in
+the sdist for manual source builds; installed wheels consume only the committed
+runtime bundle.
 
 The built-in chunking contract is the complete current source set:
 
@@ -176,24 +262,29 @@ hard-coded fallback. The installed RAG configuration must parse and expose the
 
 ## Installed Asset Immutability
 
-`main_cli_runner()` currently performs its CSS freshness scan before parsing
-arguments. Preserve that source behavior but guard the scan and rebuild block
-with one repository check:
+Application startup currently has three CSS bootstrap sites. Add one small
+internal source-tree predicate and require direct `app.py` execution,
+`get_app()`, and `main_cli_runner()` to use it before creating the CSS
+directory, scanning sources, or invoking the builder:
 
 ```python
-package_root = Path(__file__).parent
-source_checkout = (package_root.parent / "pyproject.toml").is_file()
+def _is_source_tree(package_root: Path) -> bool:
+    return (package_root.parent / "pyproject.toml").is_file()
 ```
 
-Only `source_checkout` enters the source-module mtime scan or invokes
-`css/build_css.py`. An ordinary wheel target and packaged application do not
-have an adjacent repository `pyproject.toml`, so they consume the committed
-bundle without attempting self-modification.
+The predicate centralizes environment detection without refactoring
+application state or changing each source path's existing rebuild policy. Only
+a positive result enters a source-module scan, creates the package CSS
+directory, or invokes `css/build_css.py`. An ordinary wheel target and packaged
+application do not have an adjacent repository `pyproject.toml`, so they
+consume the committed bundle without attempting self-modification.
 
-The installed regression records the package file inventory and compiled
-bundle metadata before and after entry-point help execution. It also rejects
-the CSS rebuilding and failure log messages. This makes the boundary
-observable rather than relying only on source inspection.
+The installed regression records a relative-path-to-SHA-256 map for every
+regular file in the complete installation target before and after entry-point
+help execution. It also rejects CSS rebuilding and failure messages in captured
+process output and private-root log files. Content hashing avoids timestamp
+false positives while inventory comparison detects new files. This makes the
+boundary observable rather than relying only on source inspection.
 
 If the committed bundle is absent from a future wheel, artifact verification
 fails. Runtime regeneration is not a fallback for a bad distribution.
@@ -202,11 +293,13 @@ fails. Runtime regeneration is not a fallback for a bad distribution.
 
 ### Temporary source build
 
-A module-scoped integration fixture copies only the inputs required for a
-standard build into `tmp_path_factory` storage:
+A module-scoped integration fixture copies the package, packaging tools,
+release metadata, and root test-tree candidates required to reproduce
+setuptools selection into `tmp_path_factory` storage:
 
 - `tldw_chatbook/`;
 - `Packaging/`;
+- `Tests/`, `tests/`, and `STests/` when present;
 - `pyproject.toml`;
 - root `MANIFEST.in`;
 - `README.md`;
@@ -215,7 +308,9 @@ standard build into `tmp_path_factory` storage:
 - `CHANGELOG.md`; and
 - `requirements.txt`.
 
-Python caches and build artifacts are excluded from the copy.
+Python caches, `.git`, virtual environments, and existing `build/`, `dist/`,
+and egg-info artifacts are excluded from the copy. The destination starts
+empty, so stale setuptools output cannot make an exclusion test pass or fail.
 
 The fixture runs:
 
@@ -223,15 +318,18 @@ The fixture runs:
 python -m build --sdist --wheel --no-isolation
 ```
 
-`build` is added to `requirements-test.txt`; it is already declared by the
-project's `dev` extra. `--no-isolation` prevents the build frontend from
-downloading build requirements during the test.
+`build` and `setuptools>=77` are added to `requirements-test.txt`; `build` is
+already declared by the project's `dev` extra. `--no-isolation` prevents the
+build frontend from downloading build requirements during the test while the
+declared test dependency guarantees the required backend is present.
 
 ### Artifact inspection
 
 The test runs the copied `Packaging/check_manifest.py` against the temporary
-`dist/` directory and requires exit `0`. The checker validates required sdist
-and wheel paths explicitly, including runtime data and vendored notices.
+`dist/` directory and requires exit `0`. The checker requires exactly one new
+sdist and one new wheel, validates required paths explicitly, checks console
+script metadata and license metadata, and rejects forbidden test, cache,
+example, and sdist-only wheel paths.
 
 Archive inspection remains valuable even though the wheel is installed: it
 produces a direct missing-path error before a loader silently selects a
@@ -245,8 +343,9 @@ The fixture installs the wheel with:
 python -m pip install --no-deps --target <temporary-target> <wheel>
 ```
 
-The child process runs from an unrelated temporary directory with the target
-first on `PYTHONPATH`. It prints and verifies
+The child process runs from an unrelated temporary directory with `PYTHONPATH`
+set to the target only, rather than preserving a caller value. It prints and
+verifies
 `Path(tldw_chatbook.__file__).resolve()` under that target. A source checkout
 or another editable worktree therefore cannot make the test pass.
 
@@ -263,8 +362,9 @@ The child environment uses canonical temporary paths for:
 - `XDG_DATA_HOME`;
 - `TLDW_CONFIG_PATH`;
 - `TMPDIR`, `TEMP`, and `TMP`; and
-- `PYTHONDONTWRITEBYTECODE=1`; and
-- the installed target on `PYTHONPATH`.
+- `PYTHONDONTWRITEBYTECODE=1`.
+
+`PYTHONPATH` is set separately to the installed target.
 
 Inherited test-root ownership variables are removed. The canonical spelling is
 required on macOS because `/tmp` is a symlink and the private-path boundary
@@ -272,8 +372,8 @@ rejects symlinked parent traversal.
 
 The test accepts the existing help-command creation of configuration, logs, and
 data only inside this root. Disabling bytecode output ensures ordinary imports
-do not create `__pycache__` under the target. The test verifies that the caller
-home and installed package remain unchanged.
+do not create `__pycache__` under the target. The test verifies that the
+complete install-target inventory and content hashes remain unchanged.
 
 ### Behavioral assertions
 
@@ -286,10 +386,16 @@ The installed subprocess must prove:
    built-in set;
 5. `EvalConfigLoader().get_task_types()` includes `code_execution`;
 6. both vendored license files exist;
-7. `tldw-cli --help` and `tldw-serve --help` resolve their installed entry
-   points and exit successfully;
-8. no CSS rebuild is attempted or fails; and
-9. installed package files are unchanged by help execution.
+7. wheel metadata declares the exact `tldw-cli` and `tldw-serve` console
+   targets;
+8. platform-aware discovery under the target's `bin/` or `Scripts/` directory
+   runs both installed `--help` commands successfully;
+9. project license metadata uses the SPDX expression and names `LICENSE`;
+10. the installed `get_app()` factory can construct the application without a
+    CSS rebuild;
+11. no installed startup path reports a CSS rebuild attempt or failure; and
+12. every file and hash in the installation target is unchanged by installed
+    entry-point and factory execution.
 
 The tests use the `integration` marker so the existing integration and full
 suite workflows pick them up without multiplying the build across the unit
@@ -323,9 +429,11 @@ to one another.
 Completion requires:
 
 - red proof for the current missing resources, broken manifest, installed CSS
-  rebuild, and missing vendored notices;
+  rebuild, implicit wheel-data leakage, sdist test leakage, legacy license
+  metadata, and missing vendored notices;
 - focused installed-distribution integration tests;
-- focused config, chunking, eval, CSS build, and packaging safety regressions;
+- focused config, chunking, eval, every CSS bootstrap site, and packaging
+  safety regressions;
 - the existing eval/tool cross-task gates affected by this branch;
 - Ruff on changed Python;
 - Python compilation of changed Python;
@@ -349,3 +457,20 @@ runtime-data and installed-entry-point review corrected five weaknesses:
 The result still uses setuptools, `build`, pip, pytest, and the standard
 library. It adds no packaging framework, state owner, or application
 decomposition.
+
+A second adversarial review then verified five additional hazards:
+
+- root manifest matches implicitly leaked sdist-only CSS into wheels until
+  `include-package-data` was explicitly disabled;
+- reused setuptools build output preserved stale data, so the gate now requires
+  a fresh source and build tree;
+- case-normalized lowercase `tests/` entered the sdist and now has an explicit
+  negative contract; and
+- the legacy license-table syntax carries a dated 2027 failure boundary, so the
+  same packaging change now emits and checks current SPDX metadata; and
+- CSS bootstrap writes exist in three startup sites, so all three now share the
+  same source-tree predicate instead of guarding only the tested console path.
+
+The source-only CSS freshness behavior remains unchanged because it is an
+already-approved development convenience and the installed-target hash gate
+directly enforces the relevant immutability boundary.
