@@ -548,3 +548,78 @@ async def test_native_message_id_key_stripped_before_provider():
         and "[Summary of earlier conversation]" in row.get("content", "")
         for row in gateway.captured_messages
     )
+
+
+# ---------------------------------------------------------------------------
+# task-548: the inspector next-send preview mirrors boundary compaction
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_snapshot_reflects_boundary_compaction():
+    """With an active summary, build_context_snapshot compacts like a real send."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=SummaryGateway())
+    session = store.ensure_session(title="Chat 1")
+
+    u1 = store.append_message(session.id, role=ConsoleMessageRole.USER, content="old-q")
+    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="old-a")
+    u2 = store.append_message(session.id, role=ConsoleMessageRole.USER, content="new-q")
+    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="new-a")
+    store.set_session_context_summary(session.id, "COMPACT-SUMMARY", u2.id)
+
+    snapshot = await controller.build_context_snapshot(draft="")
+    rows = snapshot.next_send_payload["messages"]
+
+    # Pre-boundary turns replaced; boundary tail intact.
+    contents = [row.get("content") or "" for row in rows]
+    assert not any("old-q" in c or "old-a" in c for c in contents)
+    assert any("new-q" in c for c in contents)
+    assert any("new-a" in c for c in contents)
+    # Summary folded into the leading system row AND the duplicated field.
+    assert rows[0]["role"] == "system"
+    assert "COMPACT-SUMMARY" in rows[0]["content"]
+    assert any(
+        "COMPACT-SUMMARY" in (row.get("content") or "")
+        for row in snapshot.next_send_payload["system"]
+    )
+    # AC #2: the private id-threading key never reaches the preview.
+    assert not any("_native_message_id" in row for row in rows)
+    _ = u1
+
+
+@pytest.mark.asyncio
+async def test_snapshot_without_summary_unchanged_and_key_free():
+    """No stored summary: preview shows full history and no private keys."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=SummaryGateway())
+    session = store.ensure_session(title="Chat 1")
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q1")
+    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="a1")
+
+    snapshot = await controller.build_context_snapshot(draft="next")
+    rows = snapshot.next_send_payload["messages"]
+
+    contents = [row.get("content") or "" for row in rows]
+    assert any("q1" in c for c in contents)
+    assert any("a1" in c for c in contents)
+    assert not any("_native_message_id" in row for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_snapshot_with_dangling_boundary_shows_full_history():
+    """A dangling boundary leaves the preview un-compacted (leak rule parity)."""
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=SummaryGateway())
+    session = store.ensure_session(title="Chat 1")
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="q1")
+    store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="a1")
+    store.set_session_context_summary(session.id, "GHOST-SUMMARY", "ghost-native-id")
+
+    snapshot = await controller.build_context_snapshot(draft="")
+    rows = snapshot.next_send_payload["messages"]
+
+    contents = [row.get("content") or "" for row in rows]
+    assert any("q1" in c for c in contents)
+    assert any("a1" in c for c in contents)
+    assert not any("GHOST-SUMMARY" in c for c in contents)

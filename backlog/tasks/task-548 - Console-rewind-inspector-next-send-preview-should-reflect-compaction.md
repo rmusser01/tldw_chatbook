@@ -3,7 +3,7 @@ id: TASK-548
 title: >-
   Console /rewind: inspector next-send preview should reflect boundary
   compaction
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-24'
 labels:
@@ -21,7 +21,11 @@ With `/rewind`'s "Summarize up to here" (PR #844), the actual send path compacts
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 With an active boundary summary, the inspector's next-send preview matches the actually-dispatched payload shape (summary in system prefix, pre-boundary turns absent) or is explicitly labeled pre-compaction with the compaction effect shown
-- [ ] #2 No `NATIVE_MESSAGE_ID_KEY` (or other private keys) appear in the previewed rows
-- [ ] #3 Preview behavior unchanged when no summary is active
+- [x] #1 With an active boundary summary, the inspector's next-send preview matches the actually-dispatched payload shape (summary in system prefix, pre-boundary turns absent) or is explicitly labeled pre-compaction with the compaction effect shown
+- [x] #2 No `NATIVE_MESSAGE_ID_KEY` (or other private keys) appear in the previewed rows
+- [x] #3 Preview behavior unchanged when no summary is active
 <!-- AC:END -->
+
+## Implementation Notes
+
+`build_context_snapshot` now mirrors the dispatch choke point: the payload is built with `annotate_ids=True`, `_apply_context_summary_compaction` runs after the dictionary transform (exactly like the send path), and the private `NATIVE_MESSAGE_ID_KEY` is stripped immediately after — so with an active boundary summary the preview shows the compacted payload (summary folded into the leading system row) and the duplicated `system` field is now derived from the payload's own leading system row (falling back to the bare session prompt). Tests: compacted preview (pre-boundary rows gone, summary in messages[0] + system field, no private keys), no-summary unchanged, dangling-boundary un-compacted (leak-rule parity).
