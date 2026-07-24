@@ -173,7 +173,7 @@ Key sections:
 - Password dialogs in widgets
 
 ### Splash Screen
-- 20+ animations in `splash_animations.py`
+- Effects live under `Utils/Splash_Screens/` (organized by category: classic/environmental/tech/gaming/psychedelic/custom); `Utils/splash_animations.py` is a compatibility shim
 - Config: `[splash_screen]` section
 - Custom cards in `Helper_Scripts/Examples/custom_splash_cards/`
 

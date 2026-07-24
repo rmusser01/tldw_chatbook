@@ -24,7 +24,7 @@ CLAUDE.md and README contain claims that contradict the code and will actively m
 - [x] #5 Splash count/location corrected (~90 effects under `Utils/Splash_Screens/`; `Utils/splash_animations.py` is a compat shim)
 - [x] #6 Pre-commit hook path corrected to `Helper_Scripts/fixed_auto_review.py` (not deprecated `auto_review.py`)
 - [x] #7 "Main Windows" section corrected: Screen-per-tab pattern via `UI/Screens/*` + `UI/Navigation/screen_registry.py` (Chat_Window_Enhanced and SearchRAGWindow are Containers; all others extend Screen)
-- [x] #8 File paths corrected: `model_capabilities` is top-level `LLM_Calls/model_capabilities.py`; `custom_splash_cards` at `Helper_Scripts/Examples/custom_splash_cards/`
+- [x] #8 File paths corrected: `model_capabilities` is top-level `tldw_chatbook/model_capabilities.py` (NOT under `LLM_Calls/`); `custom_splash_cards` at `Helper_Scripts/Examples/custom_splash_cards/`
 - [x] #9 Data-layer DB list updated to include AgentRuns/Workspace/Library/Research/Writing/Mindmap and all other DB modules
 - [x] #10 The `Agents/` subsection expanded with Architecture details (control loop + `chat_api_call`/tool-provider seam)
 - [x] #11 The React/Tailwind "gotchas" (localStorage, Tailwind) removed as irrelevant doc-rot in a Python TUI
@@ -44,9 +44,9 @@ Comprehensive documentation corrections applied to CLAUDE.md:
 
 **UI Architecture**: "Main Windows" section clarified: all Screens registered via `UI/Navigation/screen_registry.py`; `Chat_Window_Enhanced` and `SearchRAGWindow` are Containers; all others extend Screen directly.
 
-**File Paths**: `model_capabilities` corrected to `LLM_Calls/model_capabilities.py` (top-level, not under DB/); added `Helper_Scripts/fixed_auto_review.py` pre-commit hook example; added `Helper_Scripts/Examples/custom_splash_cards/` custom card reference.
+**File Paths**: `model_capabilities` corrected to top-level `tldw_chatbook/model_capabilities.py` (NOT under `LLM_Calls/`); pre-commit hook corrected to `Helper_Scripts/fixed_auto_review.py`; custom-card reference corrected to `Helper_Scripts/Examples/custom_splash_cards/`; splash effects corrected to `Utils/Splash_Screens/` (`splash_animations.py` is a compat shim).
 
-**Database Modules**: expanded DB list to include AgentRuns_DB, Workspace_DB, Library_DB, Research_DB, Writing_DB, Mindmap_DB, plus all other DB modules.
+**Database Modules**: expanded DB list to include AgentRuns_DB, Workspace_DB, Library_Collections_DB, Library_Ingest_Jobs_DB, Research_DB, Writing_DB, Mindmap_DB, search_history_db, Sync_Client, plus the existing Evals/Prompts/Subscriptions modules.
 
 **Agents Runtime**: added Architecture subsection documenting control loop, `chat_api_call` dispatcher, tool-provider seam, and event-handler integration.
 
