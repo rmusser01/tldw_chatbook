@@ -141,8 +141,6 @@ async def test_application_sink_sentinel_matrix(scenario: str, tmp_path: Path) -
                 status_code=503 if scenario == "http_error" else 200,
             )
     finally:
-        if executor is not None:
-            executor.executor.shutdown(wait=False)
         loguru_logger.remove(sink_id)
         root.removeHandler(handler)
         root.setLevel(old_level)

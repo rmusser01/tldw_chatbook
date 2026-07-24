@@ -102,7 +102,6 @@ def test_real_rotating_sink_rejects_loguru_payload_from_owned_module(
     try:
         executor.register_tool(_SentinelNamedTool())
     finally:
-        executor.executor.shutdown(wait=False)
         loguru_logger.remove(sink_id)
         root.removeHandler(handler)
         root.setLevel(old_level)

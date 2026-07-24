@@ -648,20 +648,27 @@ class MCPToolProvider:
             on any failure. Never raises.
         """
         future: concurrent.futures.Future | None = None
+        execution_coroutine = None
         try:
             timeout = self._service._tool_call_timeout() + _RESULT_WAIT_SLACK_SECONDS
+            execution_coroutine = self._service.execute_hub_tool(
+                tool.server_key,
+                tool.name,
+                args,
+                initiator="agent",
+                decision=decision,
+            )
             future = asyncio.run_coroutine_threadsafe(
-                self._service.execute_hub_tool(
-                    tool.server_key,
-                    tool.name,
-                    args,
-                    initiator="agent",
-                    decision=decision,
-                ),
+                execution_coroutine,
                 self._main_loop,
             )
             raw_result = future.result(timeout=timeout)
         except Exception as exc:  # noqa: BLE001 -- the never-raise/never-hang contract
+            if future is None and execution_coroutine is not None:
+                try:
+                    execution_coroutine.close()
+                except Exception:
+                    pass
             # Finding F3: `future` may still be unbound here if
             # `run_coroutine_threadsafe` itself raised (e.g. a dead/closed
             # loop) -- guard before cancelling rather than assuming the

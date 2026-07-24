@@ -11,7 +11,6 @@ import math
 import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict, deque
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -462,9 +461,31 @@ class ToolExecutor:
             cache_ttl: Default cache time-to-live in seconds
             cache_persist_path: Optional path to persist cache to disk
         """
+        if (
+            isinstance(max_workers, bool)
+            or not isinstance(max_workers, int)
+            or max_workers <= 0
+        ):
+            raise ValueError("max_workers must be a positive integer")
+        normalized_timeout = None
+        if not isinstance(timeout_seconds, bool) and isinstance(
+            timeout_seconds, (int, float)
+        ):
+            try:
+                normalized_timeout = float(timeout_seconds)
+            except (OverflowError, ValueError):
+                pass
+        if (
+            normalized_timeout is None
+            or not math.isfinite(normalized_timeout)
+            or normalized_timeout <= 0
+        ):
+            raise ValueError("timeout_seconds must be a positive finite number")
+
         self.tools: Dict[str, Tool] = {}
-        self.timeout_seconds = timeout_seconds
-        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        self.timeout_seconds = normalized_timeout
+        self.max_workers = max_workers
+        self._execution_semaphore = asyncio.Semaphore(max_workers)
         self._execution_history: deque[Dict[str, Any]] = deque(
             maxlen=_TOOL_HISTORY_LIMIT
         )
@@ -614,7 +635,17 @@ class ToolExecutor:
 
         # Check cache if enabled
         if self.enable_cache and self.cache:
-            cached_result = await self.cache.get(tool_name, args)
+            try:
+                cached_result = await self.cache.get(tool_name, args)
+            except asyncio.CancelledError:
+                record(
+                    "cancelled",
+                    argument_names=argument_names,
+                    unknown_argument_count=unknown_argument_count,
+                    exception_type="CancelledError",
+                    error_category="cancelled",
+                )
+                raise
             if cached_result is not None:
                 record(
                     "cached",
@@ -634,10 +665,10 @@ class ToolExecutor:
         try:
             logger.info("Executing registered tool")
 
-            # Run the async tool in the executor with timeout
-            result = await asyncio.wait_for(
-                tool.execute(**args), timeout=self.timeout_seconds
-            )
+            async with self._execution_semaphore:
+                result = await asyncio.wait_for(
+                    tool.execute(**args), timeout=self.timeout_seconds
+                )
 
             # Cache the result if caching is enabled
             if self.enable_cache and self.cache:
@@ -659,6 +690,16 @@ class ToolExecutor:
             )
             logger.info("Tool completed successfully")
             return {"tool_call_id": tool_call_id, "result": result}
+
+        except asyncio.CancelledError:
+            record(
+                "cancelled",
+                argument_names=argument_names,
+                unknown_argument_count=unknown_argument_count,
+                exception_type="CancelledError",
+                error_category="cancelled",
+            )
+            raise
 
         except asyncio.TimeoutError:
             error_msg = f"Tool execution timed out after {self.timeout_seconds} seconds"
@@ -697,25 +738,20 @@ class ToolExecutor:
         if not tool_calls:
             return []
 
-        # Execute all tools concurrently
-        tasks = [self.execute_tool_call(call) for call in tool_calls]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Handle any exceptions that occurred during gathering
-        processed_results = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                tool_call_id = tool_calls[i].get("id", f"call_{i}")
-                processed_results.append(
-                    {
-                        "tool_call_id": tool_call_id,
-                        "error": f"Execution failed: {str(result)}",
-                    }
-                )
-            else:
-                processed_results.append(result)
-
-        return processed_results
+        tasks = [
+            asyncio.create_task(
+                self.execute_tool_call(call),
+                name=f"tool-call-{call.get('id', index)}",
+            )
+            for index, call in enumerate(tool_calls)
+        ]
+        try:
+            return await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def get_execution_history(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Get recent tool execution history."""
@@ -740,11 +776,6 @@ class ToolExecutor:
             await self.cache.clear_expired()
             return stats
         return None
-
-    def __del__(self):
-        """Cleanup executor on deletion."""
-        self.executor.shutdown(wait=False)
-
 
 # Built-in tools
 
@@ -1070,10 +1101,5 @@ def get_tool_executor() -> ToolExecutor:
 def reload_tool_executor():
     """Reload the tool executor with updated configuration."""
     global _global_executor
-    if _global_executor is not None:
-        # Shutdown the old executor
-        _global_executor.executor.shutdown(wait=False)
-        _global_executor = None
-
-    # This will create a new executor with updated config
+    _global_executor = None
     return get_tool_executor()

@@ -1,11 +1,11 @@
 ---
 id: TASK-497
 title: Enforce ToolExecutor concurrency and cancellation contracts
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-24 13:17'
-updated_date: '2026-07-24 15:45'
+updated_date: '2026-07-24 16:36'
 labels:
   - tools
   - reliability
@@ -27,15 +27,15 @@ Make ToolExecutor's configured worker limit effective, ensure timeout and cancel
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Timed-out tool calls record a terminal timeout result and do not block later calls
-- [ ] #2 Cancelled tool calls record cancelled history and propagate cancellation to the caller
-- [ ] #3 Batch execution preserves request order, isolates ordinary per-tool failures, and cancels and drains every unfinished sibling before propagating cancellation or unexpected child control flow
-- [ ] #4 Global executor reload replaces configuration without referencing retired worker-pool state
-- [ ] #5 Regression tests verify limits, order, timeout, single-call and batch cancellation cleanup, absence of orphan-task warnings, and reload behavior
-- [ ] #6 The unused thread-pool lifecycle is removed without changing supported async tool behavior
-- [ ] #7 Configured max_workers and timeout_seconds are validated as positive bounds before use
-- [ ] #8 Tool history remains bounded and payload-free with exactly one terminal record per started call, including queued and executing cancellation
-- [ ] #9 A rejected cross-thread MCP submission closes the unsubmitted coroutine and the closed-loop regression passes with unawaited-coroutine warnings treated as errors
+- [x] #1 Timed-out tool calls record a terminal timeout result and do not block later calls
+- [x] #2 Cancelled tool calls record cancelled history and propagate cancellation to the caller
+- [x] #3 Batch execution preserves request order, isolates ordinary per-tool failures, and cancels and drains every unfinished sibling before propagating cancellation or unexpected child control flow
+- [x] #4 Global executor reload replaces configuration without referencing retired worker-pool state
+- [x] #5 Regression tests verify limits, order, timeout, single-call and batch cancellation cleanup, absence of orphan-task warnings, and reload behavior
+- [x] #6 The unused thread-pool lifecycle is removed without changing supported async tool behavior
+- [x] #7 Configured max_workers and timeout_seconds are validated as positive bounds before use
+- [x] #8 Tool history remains bounded and payload-free with exactly one terminal record per started call, including queued and executing cancellation
+- [x] #9 A rejected cross-thread MCP submission closes the unsubmitted coroutine and the closed-loop regression passes with unawaited-coroutine warnings treated as errors
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -54,3 +54,27 @@ Reason: TASK-497 implements ADR-024 and preserves completed TASK-492's metadata-
 
 Detailed plan: Docs/superpowers/plans/2026-07-24-tool-worker-contracts.md
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+- Replaced the unused thread pool with one validated async semaphore around
+  uncached `Tool.execute()` work; queue time is outside the per-execution
+  timeout and capacity releases on every terminal path.
+- Added terminal, metadata-only cancellation history across cache lookup,
+  semaphore wait, tool execution, and cache write while preserving propagated
+  `CancelledError`, bounded history, immediate results, and cache behavior.
+- Made batches own explicit ordered child tasks and always cancel and drain
+  unfinished work before propagating parent/child cancellation or unexpected
+  control flow; ordinary tool failures remain ordered result dictionaries.
+- Removed pool shutdown/destructor/reload state and updated the TASK-492
+  privacy/sentinel regressions for the async-only lifecycle.
+- Made MCP bridge coroutine ownership explicit: rejected pre-transfer
+  submissions close the local coroutine once, while submitted coroutines
+  remain owned by the target loop.
+- Reused ADR-024; no new ADR was required.
+- Verification: warning-strict ToolExecutor/MCP gate `76 passed`; full
+  Tool/MCP/Console plus sentinel/privacy integration gate `188 passed`; Ruff,
+  changed-source compileall, and `git diff --check` passed. The integration
+  gate's single warning is the existing requests dependency-version warning.
+<!-- SECTION:NOTES:END -->

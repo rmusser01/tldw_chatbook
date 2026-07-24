@@ -55,13 +55,10 @@ def _call(arguments, call_id: str = "private-call-id") -> dict:
 async def test_history_is_metadata_only_while_immediate_result_is_unchanged() -> None:
     executor = ToolExecutor()
     executor.register_tool(_EchoTool())
-    try:
-        result = await executor.execute_tool_call(
-            _call({"query": PRIVATE_SENTINEL, PRIVATE_SENTINEL: "unknown-value"})
-        )
-        history = executor.get_execution_history()
-    finally:
-        executor.executor.shutdown(wait=False)
+    result = await executor.execute_tool_call(
+        _call({"query": PRIVATE_SENTINEL, PRIVATE_SENTINEL: "unknown-value"})
+    )
+    history = executor.get_execution_history()
 
     assert result["result"] == {"private_result": PRIVATE_SENTINEL}
     assert len(history) == 1
@@ -94,11 +91,8 @@ async def test_failure_history_never_retains_payload_or_exception_text(
 ) -> None:
     executor = ToolExecutor(timeout_seconds=timeout_seconds)
     executor.register_tool(_EchoTool())
-    try:
-        result = await executor.execute_tool_call(_call(arguments))
-        history = executor.get_execution_history()
-    finally:
-        executor.executor.shutdown(wait=False)
+    result = await executor.execute_tool_call(_call(arguments))
+    history = executor.get_execution_history()
 
     assert "error" in result
     if expected_status == "error":
@@ -114,12 +108,9 @@ async def test_failure_history_never_retains_payload_or_exception_text(
 async def test_history_is_hard_bounded_at_100_records() -> None:
     executor = ToolExecutor()
     executor.register_tool(_EchoTool())
-    try:
-        for index in range(105):
-            await executor.execute_tool_call(_call({"query": PRIVATE_SENTINEL}, str(index)))
-        history = executor.get_execution_history(limit=1000)
-    finally:
-        executor.executor.shutdown(wait=False)
+    for index in range(105):
+        await executor.execute_tool_call(_call({"query": PRIVATE_SENTINEL}, str(index)))
+    history = executor.get_execution_history(limit=1000)
 
     assert len(history) == 100
     assert PRIVATE_SENTINEL not in repr(history)
@@ -131,12 +122,9 @@ async def test_cache_hit_keeps_result_contract_and_payload_free_history() -> Non
     executor = ToolExecutor(enable_cache=True)
     executor.register_tool(_EchoTool())
     call = _call({"query": PRIVATE_SENTINEL})
-    try:
-        first = await executor.execute_tool_call(call)
-        second = await executor.execute_tool_call(call)
-        history = executor.get_execution_history()
-    finally:
-        executor.executor.shutdown(wait=False)
+    first = await executor.execute_tool_call(call)
+    second = await executor.execute_tool_call(call)
+    history = executor.get_execution_history()
 
     assert first["result"] == {"private_result": PRIVATE_SENTINEL}
     assert second == {
@@ -154,13 +142,10 @@ async def test_cache_hit_keeps_result_contract_and_payload_free_history() -> Non
 async def test_public_history_snapshot_cannot_mutate_retained_records() -> None:
     executor = ToolExecutor()
     executor.register_tool(_EchoTool())
-    try:
-        await executor.execute_tool_call(_call({"query": PRIVATE_SENTINEL}))
-        snapshot = executor.get_execution_history()
-        snapshot[0]["payload"] = PRIVATE_SENTINEL
-        retained = executor.get_execution_history()
-    finally:
-        executor.executor.shutdown(wait=False)
+    await executor.execute_tool_call(_call({"query": PRIVATE_SENTINEL}))
+    snapshot = executor.get_execution_history()
+    snapshot[0]["payload"] = PRIVATE_SENTINEL
+    retained = executor.get_execution_history()
 
     assert "payload" not in retained[0]
     assert PRIVATE_SENTINEL not in repr(retained)
