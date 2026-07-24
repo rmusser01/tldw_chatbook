@@ -912,7 +912,7 @@ class TestPersonasMode:
 
             empty = screen.query_one("#personas-library-empty", Static)
             assert (
-                str(empty.renderable) == "No persona profiles yet - use New to add one."
+                str(empty.renderable) == "No user profiles yet - use New to add one."
             )
             assert not list(screen.query("#personas-service-error"))
 
