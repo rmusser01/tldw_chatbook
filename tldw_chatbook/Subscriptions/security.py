@@ -9,9 +9,7 @@
 # - Authentication credential encryption
 #
 # Imports
-import ipaddress
 import re
-import socket
 from typing import Optional, List
 from urllib.parse import urlparse, urlunparse
 import hashlib
@@ -77,18 +75,6 @@ class XXEError(SecurityError):
 class SecurityValidator:
     """Comprehensive security validation for subscriptions."""
 
-    # Private IP ranges to block
-    PRIVATE_IP_RANGES = [
-        ipaddress.ip_network("127.0.0.0/8"),  # Loopback
-        ipaddress.ip_network("10.0.0.0/8"),  # Private
-        ipaddress.ip_network("172.16.0.0/12"),  # Private
-        ipaddress.ip_network("192.168.0.0/16"),  # Private
-        ipaddress.ip_network("169.254.0.0/16"),  # Link-local
-        ipaddress.ip_network("::1/128"),  # IPv6 loopback
-        ipaddress.ip_network("fc00::/7"),  # IPv6 private
-        ipaddress.ip_network("fe80::/10"),  # IPv6 link-local
-    ]
-
     # Blocked URL schemes
     BLOCKED_SCHEMES = {"file", "ftp", "gopher", "javascript", "data"}
 
@@ -103,18 +89,25 @@ class SecurityValidator:
     }
 
     @classmethod
-    def validate_feed_url(cls, url: str) -> str:
+    def validate_feed_url(cls, url: str, trusted_origins=frozenset()) -> str:
         """
         Validate and sanitize feed URLs.
 
+        Host/IP policy (private IPs, cloud metadata endpoints, DNS failures) is
+        delegated to the shared egress guard (``tldw_chatbook.Utils.egress``) so
+        subscription URLs are validated with the same fail-closed policy as
+        every other outbound fetch in the app.
+
         Args:
             url: URL to validate
+            trusted_origins: Hosts the caller already trusts (e.g. a feed's own
+                host, so items whose URL matches it aren't blocked as "private").
 
         Returns:
             Sanitized URL
 
         Raises:
-            SSRFError: If URL is potentially malicious
+            SSRFError: If URL is potentially malicious or blocked by policy
             ValueError: If URL is invalid
         """
         if not url:
@@ -137,30 +130,13 @@ class SecurityValidator:
         if not parsed.hostname:
             raise ValueError("URL must include hostname")
 
-        # Check for metadata endpoints
-        if parsed.hostname.lower() in cls.METADATA_ENDPOINTS:
+        from tldw_chatbook.Utils.egress import evaluate_url_policy
+
+        decision = evaluate_url_policy(url, trusted_origins=trusted_origins)
+        if not decision.allowed and decision.reason != "disabled":
             raise SSRFError(
-                f"Access to metadata endpoint '{parsed.hostname}' is blocked"
+                f"URL blocked by egress policy ({decision.reason}): {parsed.hostname}"
             )
-
-        # Resolve hostname and check IP
-        try:
-            # Get IP address
-            ip_str = socket.gethostbyname(parsed.hostname)
-            ip = ipaddress.ip_address(ip_str)
-
-            # Check if IP is private
-            for private_range in cls.PRIVATE_IP_RANGES:
-                if ip in private_range:
-                    raise SSRFError(f"Access to private IP address {ip} is blocked")
-
-        except socket.gaierror:
-            # Could not resolve hostname - let it through for now
-            # The actual HTTP request will fail if invalid
-            logger.warning(f"Could not resolve hostname: {parsed.hostname}")
-        except Exception as e:
-            logger.error(f"Error validating IP for {parsed.hostname}: {e}")
-            raise SSRFError(f"Error validating URL: {e}")
 
         # Normalize URL
         normalized = urlunparse(
@@ -222,12 +198,14 @@ class SecurityValidator:
         return content
 
     @staticmethod
-    def sanitize_item(item: dict) -> dict:
+    def sanitize_item(item: dict, trusted_origins=frozenset()) -> dict:
         """
         Sanitize a feed item for storage.
 
         Args:
             item: Item dictionary to sanitize
+            trusted_origins: Hosts to pass through to URL validation (e.g. the
+                owning feed's host), so same-origin item URLs aren't blocked.
 
         Returns:
             Sanitized item
@@ -256,7 +234,9 @@ class SecurityValidator:
         # Validate URL if present
         if "url" in sanitized and sanitized["url"]:
             try:
-                sanitized["url"] = SecurityValidator.validate_feed_url(sanitized["url"])
+                sanitized["url"] = SecurityValidator.validate_feed_url(
+                    sanitized["url"], trusted_origins=trusted_origins
+                )
             except (SSRFError, ValueError) as e:
                 logger.warning(f"Invalid item URL, removing: {e}")
                 sanitized["url"] = None
@@ -298,19 +278,9 @@ class SSRFProtector:
             True if allowed, False otherwise
         """
         try:
-            ip_obj = ipaddress.ip_address(ip)
+            from tldw_chatbook.Utils.egress import _classify_ip
 
-            # Check against private ranges
-            for private_range in SecurityValidator.PRIVATE_IP_RANGES:
-                if ip_obj in private_range:
-                    return False
-
-            # Check specific blocked IPs
-            if str(ip_obj) in SecurityValidator.METADATA_ENDPOINTS:
-                return False
-
-            return True
-
+            return _classify_ip(ip) == "public"
         except ValueError:
             return False
 

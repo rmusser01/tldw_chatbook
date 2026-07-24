@@ -540,3 +540,19 @@ def validate_navigation_chain(urls, *, trusted_origins=frozenset()) -> None:
 async def validate_navigation_chain_async(urls, *, trusted_origins=frozenset()) -> None:
     for u in urls:
         await check_url_or_raise_async(u, trusted_origins=trusted_origins)
+
+
+_INSECURE_SSL_WARNED: set = set()
+
+
+def warn_insecure_ssl(host: str) -> None:
+    """Record a TLS-verification-disabled fetch (warn once per host)."""
+    log_counter("web_insecure_ssl_fetch")
+    h = (host or "").lower()
+    if h not in _INSECURE_SSL_WARNED:
+        _INSECURE_SSL_WARNED.add(h)
+        logger.warning(
+            f"TLS certificate verification DISABLED for fetches to {h} "
+            "(subscription ssl_verify=0) — traffic to this host can be "
+            "intercepted; only use for trusted self-signed intranet services."
+        )

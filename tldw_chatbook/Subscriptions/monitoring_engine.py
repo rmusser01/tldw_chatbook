@@ -35,8 +35,22 @@ from loguru import logger
 
 #
 # Local Imports
-from ..DB.Subscriptions_DB import SubscriptionsDB, RateLimitError, AuthenticationError
+from ..DB.Subscriptions_DB import (
+    SubscriptionsDB,
+    RateLimitError,
+    AuthenticationError,
+    SubscriptionError,
+)
 from ..Metrics.metrics_logger import log_histogram, log_counter
+from ..Utils.egress import (
+    EgressBlockedError,
+    EgressFetchError,
+    MAX_FETCH_BYTES_PAGE,
+    guarded_fetch_httpx_async,
+    host_of,
+    origin_set,
+    warn_insecure_ssl,
+)
 from .security import SecurityValidator
 #
 ########################################################################################################################
@@ -44,6 +58,17 @@ from .security import SecurityValidator
 # Core Classes
 #
 ########################################################################################################################
+
+
+class FetchBlockedError(SubscriptionError):
+    """A feed/URL fetch was blocked or failed at the egress (SSRF) guard.
+
+    Mirrors ``RateLimitError``/``AuthenticationError`` as the module's existing
+    failure-exception category so callers keep catching one family of
+    ``SubscriptionError`` subclasses instead of a raw egress-layer exception.
+    """
+
+    pass
 
 
 class RateLimiter:
@@ -364,12 +389,27 @@ class FeedMonitor:
                 )
 
         # Fetch feed
+        feed_host = host_of(feed_url)
+        if subscription.get("ssl_verify", True) == 0:
+            warn_insecure_ssl(feed_host)
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(30.0),
-            follow_redirects=True,
             verify=subscription.get("ssl_verify", True) != 0,
         ) as client:
-            response = await client.get(feed_url, headers=headers, auth=auth)
+            try:
+                response = await guarded_fetch_httpx_async(
+                    feed_url,
+                    client=client,
+                    max_bytes=MAX_FETCH_BYTES_PAGE,
+                    trusted_origins=origin_set(feed_url),
+                    headers=headers,
+                    auth=auth,
+                )
+            except (EgressBlockedError, EgressFetchError) as e:
+                logger.warning(f"Feed fetch blocked by egress policy: {e}")
+                raise FetchBlockedError(
+                    f"Feed URL blocked or oversize: {e}"
+                ) from e
 
         # Handle response
         if response.status_code == 304:
@@ -772,12 +812,24 @@ class URLMonitor:
                 pass
 
         # Fetch content
+        url_host = host_of(url)
+        if subscription.get("ssl_verify", True) == 0:
+            warn_insecure_ssl(url_host)
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(30.0),
-            follow_redirects=True,
             verify=subscription.get("ssl_verify", True) != 0,
         ) as client:
-            response = await client.get(url, headers=headers)
+            try:
+                response = await guarded_fetch_httpx_async(
+                    url,
+                    client=client,
+                    max_bytes=MAX_FETCH_BYTES_PAGE,
+                    trusted_origins=origin_set(url),
+                    headers=headers,
+                )
+            except (EgressBlockedError, EgressFetchError) as e:
+                logger.warning(f"URL fetch blocked by egress policy: {e}")
+                raise FetchBlockedError(f"URL blocked or oversize: {e}") from e
             response.raise_for_status()
 
         # Extract content based on extraction method
