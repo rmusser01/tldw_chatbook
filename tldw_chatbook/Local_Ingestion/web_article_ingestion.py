@@ -59,49 +59,62 @@ def extract_article_for_ingest(url: str, options: Dict[str, Any]) -> Dict[str, A
         PermanentIngestError: For a failure that recurs identically on retry --
             an invalid/unsupported-protocol URL, a redirect loop, a DNS
             resolution failure, a non-408/429 4xx status, a non-HTML
-            content-type, an over-size response, empty extraction, or a
-            missing ``trafilatura`` dependency.
+            content-type, an over-size response, empty extraction, a URL
+            blocked by the egress policy (SSRF guard), or a missing
+            ``trafilatura`` dependency.
         httpx.HTTPError: For a retryable transport failure (network error,
             timeout, 5xx, or 408/429) -- propagated unwrapped so the parse
             worker classifies the job as retryable.
     """
     import httpx
 
+    from urllib.parse import urlparse as _urlparse
+
+    from tldw_chatbook.Utils.egress import (  # noqa: E402
+        EgressBlockedError,
+        EgressFetchError,
+        MAX_FETCH_BYTES_PAGE,
+        guarded_fetch_httpx,
+    )
+
+    origins = frozenset({(_urlparse(url).hostname or "").lower()})
     try:
         with httpx.Client(
-            follow_redirects=True,
             timeout=30.0,
             headers={"User-Agent": _UA, "Accept": "text/html,*/*"},
         ) as client:
-            with client.stream("GET", url) as resp:
-                try:
-                    resp.raise_for_status()
-                except httpx.HTTPStatusError as exc:
-                    status = exc.response.status_code
-                    if status in _RETRYABLE_STATUS:
-                        raise  # retryable
-                    raise PermanentIngestError(
-                        f"URL fetch failed ({status}) for {url}"
-                    ) from exc
-                ctype = (
-                    resp.headers.get("content-type", "").split(";")[0].strip().lower()
+            resp = guarded_fetch_httpx(
+                url,
+                client=client,
+                max_bytes=min(_MAX_BYTES, MAX_FETCH_BYTES_PAGE),
+                trusted_origins=origins,
+            )
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                if status in _RETRYABLE_STATUS:
+                    raise  # retryable
+                raise PermanentIngestError(
+                    f"URL fetch failed ({status}) for {url}"
+                ) from exc
+            ctype = (
+                resp.headers.get("content-type", "").split(";")[0].strip().lower()
+            )
+            if ctype and "html" not in ctype and "xml" not in ctype:
+                raise PermanentIngestError(
+                    f"URL is not a web page (content-type {ctype!r}): {url}"
                 )
-                if ctype and "html" not in ctype and "xml" not in ctype:
-                    raise PermanentIngestError(
-                        f"URL is not a web page (content-type {ctype!r}): {url}"
-                    )
-                # Stream the body, aborting the instant the running total
-                # crosses the cap -- never buffer an unbounded/hostile response.
-                collected = bytearray()
-                for chunk in resp.iter_bytes():
-                    collected += chunk
-                    if len(collected) > _MAX_BYTES:
-                        raise PermanentIngestError(
-                            f"URL response too large (>{_MAX_BYTES} bytes): {url}"
-                        )
-                final_url = str(resp.url)
-                encoding = resp.encoding or "utf-8"
-            body = bytes(collected).decode(encoding, errors="replace")
+            final_url = resp.final_url
+            body = resp.text
+    except EgressBlockedError as exc:
+        raise PermanentIngestError(
+            f"URL blocked by egress policy (SSRF guard): {exc}"
+        ) from exc
+    except EgressFetchError as exc:
+        raise PermanentIngestError(
+            f"URL response too large or redirect chain invalid: {exc}"
+        ) from exc
     except httpx.InvalidURL as exc:
         # Not an httpx.HTTPError subclass -- must be caught separately.
         raise PermanentIngestError(f"Invalid URL: {url}") from exc
