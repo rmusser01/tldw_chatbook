@@ -166,7 +166,7 @@ class TldwMCPServer:
     def _register_tools(self):
         """Register MCP tools."""
         from ..config import get_cli_setting
-        from ..LLM_Calls.LLM_API_Calls import chat_with_provider
+        from ..Chat.Chat_Functions import chat_api_call, extract_response_content
 
         # Basic chat tool
         @self.mcp.tool()
@@ -191,15 +191,17 @@ class TldwMCPServer:
                     messages.append({"role": "system", "content": system_prompt})
                 messages.append({"role": "user", "content": message})
 
-                response = await asyncio.to_thread(
-                    chat_with_provider,
+                raw = await asyncio.to_thread(
+                    chat_api_call,
+                    api_endpoint=provider,
+                    messages_payload=messages,
                     api_key=api_key,
-                    provider=provider,
-                    messages=messages,
                     model=model,
-                    temperature=temperature,
+                    temp=temperature,
                     max_tokens=max_tokens,
+                    streaming=False,
                 )
+                response = extract_response_content(raw)
 
                 return {
                     "response": response,
