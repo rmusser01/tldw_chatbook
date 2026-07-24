@@ -4,10 +4,13 @@ import math
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
-from ipaddress import ip_address
+from ipaddress import AddressValueError, IPv4Address, IPv6Address
 from numbers import Real
 from typing import Any, Literal
-from urllib.parse import SplitResult, urlsplit
+from unicodedata import category
+from urllib.parse import urlsplit
+
+import idna
 
 _CONFIG_DIAGNOSTIC = "audio.cpp configuration must be a mapping"
 _MODE_DIAGNOSTIC = "audio.cpp mode must be external"
@@ -31,46 +34,13 @@ _CONFIG_FIELDS = (
     *_LIMIT_FIELDS,
 )
 _MISSING = object()
+_DISALLOWED_HOST_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Cn", "Co"})
 
 AudioCppConfigValue = str | float | int
 
 
 def _invalid_url() -> ValueError:
     return ValueError(_URL_DIAGNOSTIC)
-
-
-def _validate_hostname(hostname: str) -> None:
-    try:
-        ip_address(hostname)
-        return
-    except ValueError:
-        pass
-
-    try:
-        ascii_hostname = hostname.encode("idna").decode("ascii")
-    except UnicodeError:
-        raise _invalid_url() from None
-
-    if ascii_hostname.endswith("."):
-        ascii_hostname = ascii_hostname[:-1]
-    labels = ascii_hostname.split(".")
-    if (
-        not ascii_hostname
-        or len(ascii_hostname) > 253
-        or any(
-            not label
-            or len(label) > 63
-            or label.startswith("-")
-            or label.endswith("-")
-            or any(
-                character
-                not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"
-                for character in label
-            )
-            for label in labels
-        )
-    ):
-        raise _invalid_url()
 
 
 def _validate_raw_port(netloc: str) -> None:
@@ -93,7 +63,39 @@ def _validate_raw_port(netloc: str) -> None:
         raise _invalid_url()
 
 
-def _split_http_origin(value: object) -> SplitResult:
+def _canonicalize_hostname(netloc: str, hostname: str) -> str:
+    if any(
+        category(character) in _DISALLOWED_HOST_CATEGORIES for character in hostname
+    ):
+        raise _invalid_url()
+
+    if netloc.startswith("["):
+        try:
+            address = IPv6Address(hostname)
+        except AddressValueError:
+            raise _invalid_url() from None
+        return f"[{address.compressed}]"
+
+    candidate = hostname[:-1] if hostname.endswith(".") else hostname
+    numeric_labels = candidate.split(".")
+    if len(numeric_labels) == 4 and all(
+        label
+        and label.isascii()
+        and all("0" <= character <= "9" for character in label)
+        for label in numeric_labels
+    ):
+        try:
+            return str(IPv4Address(candidate))
+        except AddressValueError:
+            raise _invalid_url() from None
+
+    try:
+        return idna.encode(candidate.lower()).decode("ascii")
+    except (UnicodeError, idna.IDNAError):
+        raise _invalid_url() from None
+
+
+def _canonicalize_http_origin(value: object) -> str:
     if (
         not isinstance(value, str)
         or not value
@@ -130,8 +132,10 @@ def _split_http_origin(value: object) -> SplitResult:
         raise _invalid_url() from None
     if hostname is None or (port is not None and port < 1):
         raise _invalid_url()
-    _validate_hostname(hostname)
-    return parsed
+    canonical_hostname = _canonicalize_hostname(parsed.netloc, hostname)
+    default_port = 80 if parsed.scheme == "http" else 443
+    port_suffix = "" if port is None or port == default_port else f":{port}"
+    return f"{parsed.scheme}://{canonical_hostname}{port_suffix}"
 
 
 def _validate_timeout(field_name: str, value: object) -> float:
@@ -169,7 +173,11 @@ class AudioCppConfig:
     def __post_init__(self) -> None:
         if self.mode != "external":
             raise ValueError(_MODE_DIAGNOSTIC)
-        _split_http_origin(self.base_url)
+        object.__setattr__(
+            self,
+            "base_url",
+            _canonicalize_http_origin(self.base_url),
+        )
         for field_name in _TIMEOUT_FIELDS:
             object.__setattr__(
                 self,

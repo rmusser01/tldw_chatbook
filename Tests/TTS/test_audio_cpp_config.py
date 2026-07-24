@@ -76,7 +76,7 @@ def test_raw_nested_configuration_has_exact_precedence() -> None:
 
     config = project_audio_cpp_config(source)
 
-    assert config.base_url == "https://raw.example.test:8443/"
+    assert config.base_url == "https://raw.example.test:8443"
     assert config.connect_timeout_seconds == 2.0
     assert config.synthesis_timeout_seconds == 600.0
 
@@ -207,20 +207,75 @@ def test_invalid_url_categories_are_rejected_with_one_safe_diagnostic(
 
 
 @pytest.mark.parametrize(
-    "base_url",
+    ("base_url", "canonical_origin"),
     (
-        "http://localhost",
-        "http://127.0.0.1:8080/",
-        "https://example.test:443",
-        "http://[::1]:8080",
+        ("http://localhost", "http://localhost"),
+        ("http://127.0.0.1:8080/", "http://127.0.0.1:8080"),
+        ("HTTP://EXAMPLE.COM", "http://example.com"),
+        ("http://example.com:80/", "http://example.com"),
+        ("https://EXAMPLE.COM:443/", "https://example.com"),
+        ("https://EXAMPLE.COM:444/", "https://example.com:444"),
+        (
+            "http://bücher.example/",
+            "http://xn--bcher-kva.example",
+        ),
+        (
+            "HTTP://[2001:0DB8:0:0:0:0:0:1]:80/",
+            "http://[2001:db8::1]",
+        ),
+        ("http://[::1]:8080", "http://[::1]:8080"),
     ),
 )
-def test_http_and_https_root_origins_are_accepted(base_url: str) -> None:
+def test_http_and_https_origins_are_stored_canonically(
+    base_url: str,
+    canonical_origin: str,
+) -> None:
     AudioCppConfig, _ = _config_api()
 
     config = AudioCppConfig.from_mapping({"base_url": base_url})
 
-    assert config.base_url == base_url
+    assert config.base_url == canonical_origin
+
+
+def test_semantically_equivalent_origins_produce_equal_configurations() -> None:
+    AudioCppConfig, _ = _config_api()
+    spellings = (
+        "HTTP://EXAMPLE.COM",
+        "http://example.com",
+        "http://example.com:80/",
+    )
+
+    configurations = tuple(
+        AudioCppConfig.from_mapping({"base_url": spelling}) for spelling in spellings
+    )
+
+    assert configurations[1:] == configurations[:-1]
+    assert configurations[0].base_url == "http://example.com"
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    (
+        "http://exa\u200bmple.example",
+        "http://exa\u2066mple.example",
+        "http://exa\ud800mple.example",
+        "http://exa\u0378mple.example",
+        "http://exa\ue000mple.example",
+        "http://0127.0.0.1",
+        "http://999.1.1.1",
+        "http://[v1.fe80]",
+    ),
+)
+def test_client_incompatible_host_forms_are_rejected_safely(
+    base_url: str,
+) -> None:
+    AudioCppConfig, _ = _config_api()
+
+    with pytest.raises(ValueError) as raised:
+        AudioCppConfig.from_mapping({"base_url": base_url})
+
+    assert str(raised.value) == URL_DIAGNOSTIC
+    assert base_url not in str(raised.value)
 
 
 @pytest.mark.parametrize(
