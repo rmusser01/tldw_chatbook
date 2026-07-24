@@ -52,7 +52,7 @@ class OpenAITTSBackend(APITTSBackend):
             )
             if self.api_key:
                 logger.debug(
-                    f"OpenAITTSBackend: API key length: {len(self.api_key)}, starts with: {self.api_key[:10] if len(self.api_key) > 10 else self.api_key}"
+                    "OpenAITTSBackend: api_settings.openai API key is configured"
                 )
 
         if not self.api_key:
