@@ -7,10 +7,12 @@ Supersedes: N/A
 
 ## Decision
 
-Chatbook will replace its class-global, wildcard-style TTS backend registry with
-an app-scoped, sealed adapter registry using exact provider identities,
-provider-neutral request/response/catalog contracts, lazy adapter instances,
-operation leases, targeted configuration invalidation, and bounded shutdown.
+Chatbook will make an app-scoped, sealed adapter registry the authoritative TTS
+service boundary, using exact provider identities, provider-neutral
+request/response/catalog contracts, lazy adapter instances, operation leases,
+targeted configuration invalidation, and bounded shutdown. The existing
+class-global, wildcard-style registry remains temporarily only inside the
+legacy bridge and is removed with that bridge.
 
 audio.cpp will be the first native adapter and will support one active instance
 in either of two modes:
@@ -33,6 +35,12 @@ views over one shared legacy host. The compatibility bridge is temporary and
 may be removed only after every retained provider has a native adapter, every
 caller supplies explicit provider/model IDs, wildcard internal IDs are absent,
 and compatibility tests prove the legacy accessor is unused.
+
+Delivery is split into four ordered, atomic implementation slices: registry
+authority and legacy containment, the external audio.cpp adapter, the managed
+supervisor, and catalog-driven STTS integration. Each slice receives its own
+single-PR Backlog task and plan rather than being combined into an omnibus
+task.
 
 This ADR supersedes the registration direction in the non-canonical historical
 Higgs backend-registration document. That material remains historical context
@@ -79,7 +87,9 @@ policy, and a cross-module interface.
 
 - `TTSService` and `TTSAdapterRegistry` become application-owned lifecycle
   objects.
-- Registration is explicit and sealed; runtime wildcard matching is removed.
+- Registration at the app boundary is explicit and sealed. Legacy wildcard
+  matching is quarantined inside `LegacyBackendHost`, reset deterministically
+  in tests, closed to new providers, and removed with the bridge.
 - Request routing uses canonical provider IDs and opaque model IDs.
 - Response lifetime extends through async byte consumption, allowing registry
   retirement without closing in-flight resources.
@@ -95,6 +105,14 @@ policy, and a cross-module interface.
   started and never silently adopts an existing listener.
 - The first audio.cpp contract supports complete WAV output and default speed
   only. Upstream streaming metadata does not imply client streaming support.
+- Complete-response synthesis uses a connection deadline and an overall
+  synthesis deadline, but no read-inactivity deadline that could abort quiet
+  native inference before the WAV response begins.
+- Default safety bounds are 10,000 input characters and 128 MiB of response
+  data; both remain configurable.
+- When voice discovery returns IDs, the first discovered voice is the initial
+  UI default. Server default remains explicit and is selected automatically
+  only when discovery returns no voices.
 - Readiness probes health and model discovery without generating hidden audio;
   speech-endpoint compatibility is established by the first user-requested
   generation or the opt-in live smoke test.
@@ -106,8 +124,8 @@ policy, and a cross-module interface.
   `d3d748179e5ace353386fbf17bcaedfacf482d75`, reviewed on 2026-07-23.
 - audio.cpp remains user-supplied and is not redistributed. Any future bundling
   requires a separate Apache-2.0 attribution and packaging review.
-- A Backlog task must be created or selected and linked before implementation
-  planning begins.
+- Each ordered implementation slice requires its own atomic Backlog task,
+  linked before that slice's implementation planning begins.
 
 ## Rollback plan
 

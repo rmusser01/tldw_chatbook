@@ -32,8 +32,10 @@ module singleton. This makes runtime configuration replacement unreliable.
 The UI cannot discover provider capabilities through the service and instead
 contains static provider-specific model and voice lists.
 
-The new design replaces these boundaries without rewriting all legacy backend
-implementations in one milestone.
+The new design makes an app-scoped registry authoritative without rewriting all
+legacy backend implementations in one milestone. The existing class-global
+registry remains temporarily, but only as an implementation detail contained
+inside the legacy bridge.
 
 ## Scope
 
@@ -151,6 +153,12 @@ provider-specific `LegacyTTSAdapter` views delegate to that host, retaining the
 canonical provider identities `openai`, `elevenlabs`, `kokoro`, `chatterbox`,
 `higgs`, and `alltalk`.
 
+The app-scoped registry is the only routing authority visible to new service,
+application, and UI code. The existing class-global `BackendRegistry` remains
+reachable only from `LegacyBackendHost`; it is not converted into a second
+public registry. Tests reset its state deterministically, no new provider may
+register with it, and it is deleted with the bridge.
+
 The bridge moves today's static model, voice, format, and control metadata out
 of the Playground and into compatibility catalogs. Those catalogs are marked
 as approximate until their provider receives a native adapter.
@@ -180,12 +188,11 @@ base_url = "http://127.0.0.1:8080"
 binary_path = ""
 server_config_path = ""
 connect_timeout_seconds = 5
-read_inactivity_timeout_seconds = 300
 synthesis_timeout_seconds = 600
 startup_timeout_seconds = 300
 shutdown_timeout_seconds = 10
-max_input_characters = 20000
-max_response_bytes = 268435456
+max_input_characters = 10000
+max_response_bytes = 134217728
 log_ring_lines = 200
 ```
 
@@ -203,7 +210,17 @@ Wildcard and network-facing binds are rejected. Users who intentionally expose
 audio.cpp over a network run it themselves and use external mode.
 
 The numeric defaults are initial safety guards rather than statements about
-upstream model limits. Advanced settings may increase them.
+upstream model limits. The 10,000-character input limit and 128 MiB response
+limit are configurable. Longer content remains outside the first Playground
+milestone and belongs in a chunked audiobook workflow after that flow adopts
+the adapter service.
+
+Because ordinary audio.cpp synthesis returns no response bytes until the WAV is
+complete, the first milestone has no read-inactivity timer. The five-second
+connect deadline covers connection establishment, while the 600-second overall
+synthesis deadline covers the request through complete bounded response
+consumption. An inactivity timer may be added only with true incremental
+streaming.
 
 ## Managed process supervisor
 
@@ -360,9 +377,13 @@ For audio.cpp:
 1. Readiness populates TTS models.
 2. Model selection lazily loads voices.
 3. Voice options include Server default and discovered IDs.
-4. Format is reset to WAV and disabled.
-5. Speed is reset to `1.0` and disabled with an explanation.
-6. Generate is enabled only when readiness, text, and model validation pass.
+4. When voices are discovered, the first discovered ID is selected by default;
+   Server default remains an explicit choice.
+5. When no voices are discovered, Server default is the only option and is
+   selected automatically.
+6. Format is reset to WAV and disabled.
+7. Speed is reset to `1.0` and disabled with an explanation.
+8. Generate is enabled only when readiness, text, and model validation pass.
 
 A single catalog-application function updates all shared controls. Switching to
 a legacy provider restores that provider's speed, format, model, and voice
@@ -473,6 +494,8 @@ Shutdown is idempotent and never waits indefinitely for native inference.
 - Model refresh once before invalid-model failure.
 - Bounded response reading, early `Content-Length` rejection, valid WAV, generic
   MIME acceptance, and malformed audio rejection.
+- Quiet complete-response synthesis may run until the overall deadline without
+  a read-inactivity failure.
 - Busy, invalid request, unavailable, incompatible, generation, timeout, and
   cancellation mapping.
 - Catalog freshness changes only for health-affecting failures.
@@ -505,7 +528,9 @@ and termination behavior without audio models.
 - Selecting audio.cpp and Start & Test trigger lazy readiness.
 - External and managed actions differ.
 - Stale provider, model, voice, and configuration-revision results are ignored.
-- Server-default sentinel becomes `None`.
+- The first discovered voice is the initial default; Server default is selected
+  automatically only when discovery returns no voices.
+- An explicitly selected Server-default sentinel becomes `None`.
 - Format and speed restrictions restore on provider changes.
 - Discovered metadata and logs render safely.
 - Generated result provenance and filename remain accurate after selection
@@ -542,17 +567,32 @@ If audio.cpp is unavailable or disabled by incomplete configuration, users
 continue selecting existing providers. An audio.cpp request never silently
 falls back.
 
-Before implementation planning, the project must create or select an atomic
-Backlog task, move it to In Progress, and link it to this specification and
-ADR-023.
+This feature-level design is delivered as four ordered, single-PR slices rather
+than one omnibus implementation task:
+
+1. Establish registry authority and contain existing providers in the legacy
+   bridge, preserving their current behavior.
+2. Add the external audio.cpp contract and native adapter, proving discovery
+   and complete WAV synthesis through the service boundary.
+3. Add the managed audio.cpp supervisor for lazy launch, monitoring, restart,
+   and owned-child shutdown.
+4. Make the STTS Playground catalog-driven and complete the external and
+   managed end-to-end flows.
+
+Each slice receives its own atomic Backlog task and implementation plan in
+dependency order. Before planning a slice, the project must create or select
+that task, move it to In Progress, and link it to this specification and
+ADR-023. Later slices are not folded into the active task's acceptance
+criteria.
 
 ## Success criteria
 
 - The STTS Playground can configure and use one external audio.cpp server.
 - The Playground can lazily launch, monitor, restart, and stop one managed
   user-provided audio.cpp server.
-- Only TTS models are offered, voices load lazily, and Server default is omitted
-  from the request.
+- Only TTS models are offered, voices load lazily, a discovered voice is the
+  initial default when available, and an explicitly selected Server default is
+  omitted from the request.
 - Successful generation produces a validated WAV that can be played and saved.
 - Existing providers retain their visible Playground behavior through the
   legacy bridge.
