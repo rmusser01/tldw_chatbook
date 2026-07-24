@@ -543,3 +543,138 @@ async def test_install_seam_overwrite_flag_passed_through():
         resolver=_PUB,
     )
     assert scope.import_kwargs["overwrite"] is True
+
+
+# ---------------------------------------------------------------------------
+# Task 6: end-to-end -- REAL LocalSkillsService/SkillsScopeService/
+# SkillTrustService behind the public install seam, mocked transport only.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_e2e_install_skill_from_github_tree_url_real_services(tmp_path, monkeypatch):
+    """Paste a GitHub ``/tree/`` URL -> classify -> real policy gate ->
+    real 302 hop (api.github.com -> codeload.github.com) -> bounded re-root
+    -> the real hardened ``import_skill_file`` seam, against REAL
+    ``LocalSkillsService``/``SkillsScopeService``/``SkillTrustService``
+    instances (no fakes for the service layer). Only the two network-facing
+    seams are mocked: the httpx transport (``fetch_zip_bytes``'s own
+    ``AsyncClient``) and DNS resolution (SSRF host-allow check).
+
+    ``GitHubAPIClient.get_branches`` (used to resolve the ``/tree/`` ref) is
+    deliberately left unmocked -- it owns its own internal ``httpx.AsyncClient``,
+    not the ``transport=`` override passed to ``install_skill_from_url``, and
+    has a bare-except fallback to ``["main", "master"]`` on ANY failure
+    (network unavailable, or -- as forced here via a deliberately-invalid
+    injected token -- a real 401 from the real GitHub API). Both outcomes
+    converge on branches == ["main", "master"], so the ref/subdir split
+    ("main", "skills/demo") is deterministic regardless of the sandbox's
+    network access, and the test never depends on GitHub's actual branch
+    list for obra/superpowers.
+    """
+    from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
+    from tldw_chatbook.Skills_Interop.skill_remote_fetch import install_skill_from_url
+    from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
+    from tldw_chatbook.Skills_Interop.skill_trust_store import (
+        FileSkillTrustGenerationMarkerStore,
+        SkillTrustStore,
+    )
+    from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
+
+    # A real, unlocked trust service, bootstrapped against an EMPTY store --
+    # mirrors Tests/Skills/test_skills_library_flow.py's
+    # ``_real_trust_service`` + the bootstrap-before-any-skill-exists idiom
+    # from ``test_library_shell_create_skill_save_arrives_needs_review_with_panel_primed``,
+    # so the skill installed below is unambiguously "added since the
+    # baseline" (quarantined_added / trust-pending) rather than merely
+    # unreviewed due to a missing trust service.
+    trust_service = SkillTrustService(
+        skills_dir=tmp_path / "skills",
+        trust_store=SkillTrustStore(
+            store_dir=tmp_path / "trust",
+            marker_store=FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json"),
+        ),
+    )
+    trust_service.unlock_with_passphrase("e2e-passphrase", salt=b"7" * 32)
+    trust_service.bootstrap_trust()
+
+    local_service = LocalSkillsService(store_dir=tmp_path, trust_service=trust_service)
+    # No policy_enforcer wired on either service -- _enforce/_enforce_policy
+    # are documented no-ops in that state (see
+    # test_scope_service_public_enforce_passthrough above), so
+    # enforce_install_remote() genuinely PASSES here rather than being
+    # bypassed by a fake.
+    scope_service = SkillsScopeService(local_service=local_service, server_service=None)
+
+    # GitHubAPIClient reads its token from the env var named by
+    # [github].api_token_env_var ("GITHUB_API_TOKEN" by default -- confirmed
+    # against config.py's default template). install_skill_from_url
+    # constructs its own GitHubAPIClient() internally, so the
+    # constructor-injection idiom Tests/Utils/test_github_api_client.py uses
+    # isn't reachable from here; the env var is the clean seam. The value is
+    # deliberately garbage: it still proves auth-header presence on both
+    # GitHub-family hops, and its rejection by the real API is exactly what
+    # keeps the branch-listing hop's outcome deterministic (see docstring).
+    monkeypatch.setenv("GITHUB_API_TOKEN", "e2e-secret-token")
+
+    zip_bytes = _zipball(
+        [
+            ("skills/demo/SKILL.md", "---\nname: demo\n---\nDemo skill body.\n"),
+            ("skills/demo/references/api.md", "# API\n\nReference doc.\n"),
+        ],
+        wrapper="superpowers-abc/",
+    )
+
+    seen_auth: dict[str, str | None] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        seen_auth[host] = request.headers.get("authorization")
+        if host == "api.github.com":
+            assert request.url.path == "/repos/obra/superpowers/zipball/main"
+            return httpx.Response(
+                302,
+                headers={
+                    "location": "https://codeload.github.com/obra/superpowers/legacy.zip/main"
+                },
+            )
+        if host == "codeload.github.com":
+            return httpx.Response(200, content=zip_bytes)
+        raise AssertionError(f"unexpected host hit: {host}")
+
+    fake_public = lambda host: ["93.184.216.34"]
+
+    result = await install_skill_from_url(
+        "https://github.com/obra/superpowers/tree/main/skills/demo",
+        scope_service=scope_service,
+        transport=_transport(handler),
+        resolver=fake_public,
+    )
+
+    # The auth header was present on BOTH github-family hops -- the redirect
+    # origin AND the codeload landing spot -- proving the 302 re-validates
+    # auth-scoping per hop rather than assuming it carries over (the
+    # off-family-strip half of this is already covered by
+    # test_auth_scoped_to_github_family above; this proves the presence half
+    # end to end through the public install seam).
+    assert seen_auth == {
+        "api.github.com": "token e2e-secret-token",
+        "codeload.github.com": "token e2e-secret-token",
+    }
+
+    assert result["name"] == "demo"
+    assert result["backend"] == "local"
+    assert result["trust_status"] == "quarantined_added"
+    assert result["trust_blocked"] is True
+
+    skill_dir = tmp_path / "skills" / "demo"
+    assert (skill_dir / "SKILL.md").is_file()
+    assert (skill_dir / "references" / "api.md").is_file()
+
+    # Re-confirm not-trusted through the service's own trust-status accessor
+    # -- not by re-deriving it from the install() return value -- so this
+    # proves the persisted index + on-disk bundle actually reflect
+    # trust-pending, not just the one response object.
+    fetched = await scope_service.get_skill("demo", mode="local")
+    assert fetched["trust_status"] == "quarantined_added"
+    assert fetched["trust_blocked"] is True
