@@ -901,8 +901,15 @@ async def test_settings_library_rag_renders_guided_defaults_and_validates(
         assert "RAG" in text
         # task-3/SP3: "Search defaults" became the "Search" Collapsible group
         # title (with Embedding/Chunking/Vector store/Reranking groups added
-        # alongside it).
-        assert "Search" in text
+        # alongside it). Structural check on the Collapsible itself (not just
+        # substring-in-rendered-text) so this can't false-pass on the word
+        # "Search" appearing somewhere else in the pane.
+        assert (
+            screen.query_one(
+                "#settings-library-rag-search-group", Collapsible
+            ).title
+            == "Search"
+        )
         assert "Citation and snippets" in text
         assert "Preview defaults" in text
         assert "Semantic search | 10 results | Inline citations" in text
@@ -957,6 +964,58 @@ async def test_settings_library_rag_renders_guided_defaults_and_validates(
     saved_search = mgr2.get_profile(profile.id).rag_config.search
     assert saved_search.default_top_k == 12
     assert saved_search.snippet_max_chars == 360
+
+
+@pytest.mark.asyncio
+async def test_settings_library_rag_reranker_warning_shown_for_a_warning_triggering_draft(
+    monkeypatch, tmp_path
+):
+    """task-3 review Finding 1(c): the reranker top-k vs default-results
+    advisory becomes visible once a draft triggers it and clears once it no
+    longer does -- and never affects the Save gate (advisory only, see
+    _library_rag_soft_warnings)."""
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    default_top_k = profile.rag_config.search.default_top_k
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        warning = screen.query_one("#settings-library-rag-reranker-warning", Static)
+        assert warning.display is False
+        assert "exceeds default results" not in _visible_text(screen)
+
+        enable_button = screen.query_one(
+            "#settings-library-rag-enable-reranking", Button
+        )
+        screen.handle_library_rag_enable_reranking_changed(
+            Button.Pressed(enable_button)
+        )
+
+        top_k_input = screen.query_one("#settings-library-rag-reranker-top-k", Input)
+        over_default = default_top_k + 50
+        top_k_input.value = str(over_default)
+        screen.handle_library_rag_reranker_top_k_changed(
+            Input.Changed(top_k_input, top_k_input.value)
+        )
+
+        assert warning.display is True
+        visible_text = _visible_text(screen)
+        assert str(over_default) in visible_text
+        assert "exceeds default results" in visible_text
+        # Advisory only -- must never affect the Save gate.
+        assert screen.query_one("#settings-save-category", Button).disabled is False
+
+        # Back within range -> the advisory clears.
+        top_k_input.value = str(default_top_k)
+        screen.handle_library_rag_reranker_top_k_changed(
+            Input.Changed(top_k_input, top_k_input.value)
+        )
+        assert warning.display is False
+        assert "exceeds default results" not in _visible_text(screen)
 
 
 @pytest.mark.asyncio
