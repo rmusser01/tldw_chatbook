@@ -506,7 +506,14 @@ def collect_navigation_chain(response) -> list:
     """
     urls = []
     request = getattr(response, "request", None) if response is not None else None
-    while request is not None:
+    # Bounded walk: a real Playwright chain terminates at ``redirected_from is
+    # None``, but cap iterations so a cyclic/pathological ``redirected_from``
+    # graph (or a mock object whose attributes never resolve to None) can never
+    # hang the scraper. A navigation cannot legitimately exceed the browser's
+    # own redirect ceiling; this cap sits comfortably above it.
+    for _ in range(MAX_REDIRECT_HOPS * 3 + 1):
+        if request is None:
+            break
         urls.append(request.url)
         request = getattr(request, "redirected_from", None)
     return list(reversed(urls))
