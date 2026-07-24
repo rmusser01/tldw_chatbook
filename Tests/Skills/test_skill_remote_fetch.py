@@ -6,6 +6,9 @@ public policy-enforcement passthrough on ``SkillsScopeService``, and the
 defaults to 30 results/page -- installers need the full branch list).
 """
 
+import io
+import zipfile
+
 import pytest
 import httpx
 
@@ -75,6 +78,7 @@ from tldw_chatbook.Skills_Interop.skill_remote_fetch import (
     classify_skill_source_url,
     fetch_zip_bytes,
     resolve_ref_and_subdir,
+    re_root_skill_zip,
 )
 
 
@@ -243,3 +247,69 @@ async def test_stream_cap_aborts():
     with pytest.raises(RemoteSkillError, match="too large"):
         await fetch_zip_bytes("https://example.com/x.zip",
                               transport=_transport(handler), resolver=_PUB)
+
+
+def _zipball(entries, wrapper="repo-abc123/"):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for name, data in entries:
+            z.writestr(wrapper + name, data)
+    return buf.getvalue()
+
+
+def test_reroot_subdir_install():
+    data = _zipball([
+        ("skills/brainstorm/SKILL.md", "---\nname: brainstorm\n---\nbody"),
+        ("skills/brainstorm/references/api.md", "# api"),
+        ("skills/other/SKILL.md", "x"),
+        ("README.md", "top"),
+    ])
+    out, name = re_root_skill_zip(data, subdir="skills/brainstorm", suggested_name="brainstorm")
+    with zipfile.ZipFile(io.BytesIO(out)) as z:
+        assert set(z.namelist()) == {"SKILL.md", "references/api.md"}
+    assert name == "brainstorm"
+
+
+def test_reroot_root_is_skill_and_unwrapped_asset():
+    wrapped = _zipball([("SKILL.md", "body"), ("notes.md", "n")])
+    out, _ = re_root_skill_zip(wrapped, subdir="", suggested_name="repo")
+    with zipfile.ZipFile(io.BytesIO(out)) as z:
+        assert "SKILL.md" in z.namelist()
+    unwrapped = _zipball([("SKILL.md", "body")], wrapper="")   # release-asset shape
+    out2, _ = re_root_skill_zip(unwrapped, subdir="", suggested_name="asset")
+    with zipfile.ZipFile(io.BytesIO(out2)) as z:
+        assert "SKILL.md" in z.namelist()
+
+
+def test_reroot_single_candidate_auto_installs():
+    data = _zipball([("skills/only/SKILL.md", "body"), ("README.md", "r")])
+    out, name = re_root_skill_zip(data, subdir="", suggested_name="repo")
+    assert name == "only"
+
+
+def test_reroot_many_candidates_error_lists_paths():
+    entries = [(f"skills/s{i}/SKILL.md", "b") for i in range(25)]
+    data = _zipball(entries)
+    with pytest.raises(RemoteSkillError) as exc:
+        re_root_skill_zip(data, subdir="", suggested_name="repo")
+    msg = str(exc.value)
+    assert "skills/s0" in msg and "subdirectory URL" in msg
+    assert msg.count("skills/s") <= 20
+
+
+def test_reroot_zero_candidates_and_corrupt():
+    with pytest.raises(RemoteSkillError, match="No SKILL.md"):
+        re_root_skill_zip(_zipball([("README.md", "r")]), subdir="", suggested_name="x")
+    with pytest.raises(RemoteSkillError):
+        re_root_skill_zip(b"not a zip", subdir="", suggested_name="x")
+
+
+def test_reroot_lying_header_bomb_aborts_bounded():
+    # Forge a member whose declared size is tiny but whose stream is huge:
+    # simplest honest proxy — a member whose ACTUAL content exceeds the
+    # per-file cap; the bounded reader must abort during synthesis.
+    from tldw_chatbook.tldw_api.skills_schemas import MAX_SUPPORTING_FILE_BYTES
+    big = "x" * (MAX_SUPPORTING_FILE_BYTES + 100)
+    data = _zipball([("SKILL.md", "body"), ("references/huge.md", big)])
+    with pytest.raises(RemoteSkillError, match="too large"):
+        re_root_skill_zip(data, subdir="", suggested_name="repo")

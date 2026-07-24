@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import zipfile as _zipfile
 from dataclasses import dataclass
+from io import BytesIO
 from urllib.parse import urlparse
 
 import httpx
@@ -239,3 +241,118 @@ async def fetch_zip_bytes(
             except httpx.HTTPError as exc:
                 raise RemoteSkillError(f"Download failed: {exc}") from exc
         raise RemoteSkillError("Too many redirects.")
+
+
+_CANDIDATE_SCAN_DEPTH = 3
+_CANDIDATE_LIST_LIMIT = 20
+
+
+def _archive_names(archive: "_zipfile.ZipFile") -> list[str]:
+    return [m.filename for m in archive.infolist() if not m.is_dir()]
+
+
+def _detect_root(names: list[str]) -> str:
+    """Root prefix: '' when SKILL.md sits at top; descend ONE wrapper dir."""
+    if "SKILL.md" in names:
+        return ""
+    tops = {n.split("/", 1)[0] for n in names if "/" in n}
+    loose = [n for n in names if "/" not in n]
+    if len(tops) == 1 and not loose:
+        return next(iter(tops)) + "/"
+    return ""
+
+
+def re_root_skill_zip(
+    zip_bytes: bytes, *, subdir: str, suggested_name: str
+) -> tuple[bytes, str]:
+    """Re-root a fetched archive to a single-skill zip (BOUNDED synthesis).
+
+    Candidate discovery is central-directory-only (no decompression). Member
+    extraction reuses ``LocalSkillsService._read_zip_member_bounded`` and
+    enforces the import caps DURING synthesis, so a lying-header bomb aborts
+    here exactly as it would in the importer.
+
+    Args:
+        zip_bytes: The fetched archive (already download-capped).
+        subdir: POSIX subdir to install from ('' = auto-detect at root).
+        suggested_name: Fallback skill name (subdir basename wins upstream).
+
+    Returns:
+        ``(single_skill_zip_bytes, final_name)``.
+
+    Raises:
+        RemoteSkillError: Corrupt archive, zero/many candidates, cap abort.
+    """
+    from .local_skills_service import LocalSkillsService
+    from ..tldw_api.skills_schemas import (
+        MAX_SUPPORTING_FILE_BYTES,
+        MAX_SUPPORTING_FILES_COUNT,
+        MAX_SUPPORTING_FILES_TOTAL_BYTES,
+    )
+
+    try:
+        archive = _zipfile.ZipFile(BytesIO(zip_bytes))
+    except _zipfile.BadZipFile as exc:
+        raise RemoteSkillError("The download was not a valid zip archive.") from exc
+    with archive:
+        names = _archive_names(archive)
+        root = _detect_root(names)
+        base = root + (subdir.strip("/") + "/" if subdir.strip("/") else "")
+
+        if base and not any(n.startswith(base) for n in names):
+            raise RemoteSkillError(f"No such folder in the archive: {subdir}")
+
+        skill_root = base
+        final_name = suggested_name
+        if (skill_root + "SKILL.md") not in names:
+            # Depth-limited candidate scan under the current base.
+            candidates = sorted(
+                n[len(base):-len("/SKILL.md")]
+                for n in names
+                if n.startswith(base)
+                and n.endswith("/SKILL.md")
+                and n[len(base):].count("/") <= _CANDIDATE_SCAN_DEPTH
+            )
+            if not candidates:
+                raise RemoteSkillError("No SKILL.md found in that archive.")
+            if len(candidates) > 1:
+                shown = ", ".join(candidates[:_CANDIDATE_LIST_LIMIT])
+                more = len(candidates) - min(len(candidates), _CANDIDATE_LIST_LIMIT)
+                suffix = f" (+{more} more)" if more > 0 else ""
+                raise RemoteSkillError(
+                    f"Found {len(candidates)} skills in that repository: "
+                    f"{shown}{suffix}. Paste a subdirectory URL to install one."
+                )
+            skill_root = base + candidates[0] + "/"
+            final_name = candidates[0].rsplit("/", 1)[-1]
+
+        members = [
+            m for m in archive.infolist()
+            if not m.is_dir() and m.filename.startswith(skill_root)
+        ]
+        if len(members) > MAX_SUPPORTING_FILES_COUNT + 1:
+            raise RemoteSkillError("That skill bundle has too many files.")
+        out = BytesIO()
+        total = 0
+        with _zipfile.ZipFile(out, "w", compression=_zipfile.ZIP_DEFLATED) as dest:
+            for member in members:
+                relative = member.filename[len(skill_root):]
+                if not relative:
+                    continue
+                if member.file_size > MAX_SUPPORTING_FILE_BYTES:
+                    raise RemoteSkillError(
+                        f"File too large in bundle: {relative}"
+                    )
+                try:
+                    data = LocalSkillsService._read_zip_member_bounded(
+                        archive, member, relative, MAX_SUPPORTING_FILE_BYTES
+                    )
+                except ValueError as exc:
+                    raise RemoteSkillError(f"File too large in bundle: {relative}") from exc
+                total += len(data)
+                if total > MAX_SUPPORTING_FILES_TOTAL_BYTES:
+                    raise RemoteSkillError("That skill bundle is too large.")
+                info = _zipfile.ZipInfo(relative)
+                info.external_attr = member.external_attr
+                dest.writestr(info, data)
+        return out.getvalue(), final_name
