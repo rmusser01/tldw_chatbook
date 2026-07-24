@@ -9,6 +9,22 @@ def test_world_book_entries_regex_migrate_v21_to_v22(tmp_path):
     conn.execute("DROP TRIGGER IF EXISTS world_book_entries_sync_create")
     conn.execute("DROP TRIGGER IF EXISTS world_book_entries_sync_update")
     conn.execute("ALTER TABLE world_book_entries DROP COLUMN regex")
+    # A v21 fixture must not retain tables introduced by the v24→v25 migration.
+    for table in (
+        "rag_artifact_owner_operations",
+        "rag_artifact_owner_leases",
+        "rag_source_observations",
+        "rag_message_trace_owners",
+        "rag_trace_evidence_refs",
+        "rag_answer_attempt_payloads",
+        "rag_evidence_runs",
+        "rag_citation_traces",
+        "rag_evidence_snapshots",
+        "rag_payload_tombstones",
+        "rag_legacy_migration_journal",
+        "rag_identity_context",
+    ):
+        conn.execute(f"DROP TABLE {table}")
     conn.execute(
         "UPDATE db_schema_version SET version = 21 WHERE schema_name = ?",
         (db._SCHEMA_NAME,),
@@ -25,7 +41,9 @@ def test_world_book_entries_regex_migrate_v21_to_v22(tmp_path):
     # A simulated-V21 DB migrates all the way to the current version (which keeps
     # advancing as later migrations are added), not a hardcoded 22.
     assert version["version"] == migrated._CURRENT_SCHEMA_VERSION
-    cols = {r[1] for r in mconn.execute("PRAGMA table_info(world_book_entries)").fetchall()}
+    cols = {
+        r[1] for r in mconn.execute("PRAGMA table_info(world_book_entries)").fetchall()
+    }
     assert "regex" in cols
     for trig in ("world_book_entries_sync_create", "world_book_entries_sync_update"):
         sql = mconn.execute(
@@ -37,7 +55,9 @@ def test_world_book_entries_regex_migrate_v21_to_v22(tmp_path):
 def test_fresh_db_has_regex_column_and_triggers(tmp_path):
     db = CharactersRAGDB(str(tmp_path / "fresh.sqlite"), client_id="test-client")
     conn = db.get_connection()
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(world_book_entries)").fetchall()}
+    cols = {
+        r[1] for r in conn.execute("PRAGMA table_info(world_book_entries)").fetchall()
+    }
     assert "regex" in cols
     create_sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE name = 'world_book_entries_sync_create'"
