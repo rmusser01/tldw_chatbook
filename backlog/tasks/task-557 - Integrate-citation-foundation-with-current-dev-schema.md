@@ -31,7 +31,7 @@ Reconcile the completed citation provenance foundation with current dev so its d
 - [x] #2 Combined chat persistence and database initialization preserve both current dev behavior and citation atomicity
 - [x] #3 Shared test setup and generated CSS contain both branches' intended behavior with no conflict markers or stale bundle state
 - [x] #4 Citation foundation, migration, database, UI maturity, static, and qualification gates pass on the integrated branch
-- [ ] #5 The branch is pushed and a ready pull request targets dev with accurate verification and limitation notes
+- [x] #5 The branch is pushed and a ready pull request targets dev with accurate verification and limitation notes
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -82,4 +82,12 @@ CSS, and UI gates above are clean.
 
 ADR decision: no new ADR required. Existing ADR-024 defines the citation storage,
 identity, governance, and atomic persistence boundaries used by this integration.
+
+Publication:
+- Pushed `codex/rag-citation-provenance-foundation` to `origin`.
+- Opened ready pull request
+  [#853](https://github.com/rmusser01/tldw_chatbook/pull/853) against `dev`.
+- The task remains In Progress because repository Definition of Done requires an
+  uncontaminated full-suite pass; that gate remains deferred for the concurrent
+  full-suite reason documented above.
 <!-- SECTION:NOTES:END -->
