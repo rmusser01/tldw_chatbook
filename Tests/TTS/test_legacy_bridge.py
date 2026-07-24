@@ -1143,6 +1143,55 @@ async def test_manager_cleanup_can_finish_timed_out_operation_close() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reconfigure_retains_cooperative_legacy_host_cleanup() -> None:
+    close_started = asyncio.Event()
+    close_finished = asyncio.Event()
+
+    class CooperativeCloseManager(FakeLegacyManager):
+        async def close_all_backends(self) -> None:
+            self.close_calls += 1
+            close_started.set()
+            await asyncio.sleep(0.01)
+            close_finished.set()
+
+    manager = CooperativeCloseManager(FakeLegacyBackend())
+    initial_settings = {"APP_TTS_CONFIG": {"KOKORO_DEVICE": "cpu"}}
+    registry = TTSAdapterRegistry(
+        specs=legacy_provider_specs(
+            initial_settings,
+            manager_factory=lambda _provider_id, _config: manager,
+            shutdown_timeout_seconds=0.05,
+        ),
+        aliases={},
+    )
+    lease = await registry.acquire("kokoro")
+    adapter = lease.adapter
+    response = await adapter.synthesize(
+        adapter_request("kokoro", "local_kokoro_default_onnx"),
+        None,
+    )
+    assert await collect(response.byte_stream) == b"audio"
+    await response.aclose()
+    await lease.release()
+    replacement = legacy_provider_config(
+        "kokoro",
+        {"APP_TTS_CONFIG": {"KOKORO_DEVICE": "mps"}},
+    )
+
+    assert (
+        await registry.reconfigure_provider("kokoro", replacement)
+        is ReconfigureResult.CHANGED
+    )
+
+    assert close_started.is_set()
+    assert close_finished.is_set()
+    assert manager.close_calls == 1
+    assert adapter.host._closed is True
+    await registry.close()
+    await registry.wait_closed()
+
+
+@pytest.mark.asyncio
 async def test_manager_unblocked_operation_cleanup_error_is_preserved() -> None:
     allow_cleanup = asyncio.Event()
     cleanup_finished = asyncio.Event()
