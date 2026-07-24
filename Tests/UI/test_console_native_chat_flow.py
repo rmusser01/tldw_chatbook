@@ -1930,7 +1930,9 @@ async def test_console_send_refreshes_workspace_conversation_rail_after_persiste
         assert "hello" in row_text
         assert "Chat 1" not in row_text
         assert "\n" in row_text
-        assert "Chats" in row_text
+        # TASK-374 removes the redundant workspace/group label from grouped
+        # conversation rows while retaining a non-default state differentiator.
+        assert "active session" in row_text
         assert "workspace-thread" not in row_text
         assert not re.search(r"\[[0-9a-f]{8}\]", row_text)
         # The row metadata also carries a relative age label appended after
@@ -3635,6 +3637,11 @@ async def test_console_continue_action_streams_new_message_from_selected_turn():
         _select_llamacpp_console(console)
         store = console._ensure_console_chat_store()
         session = store.ensure_session(title="Chat 1")
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="prompt",
+        )
         source = store.append_message(
             session.id,
             role=ConsoleMessageRole.ASSISTANT,
@@ -3676,6 +3683,11 @@ async def test_console_regenerate_action_streams_selected_variant():
         _select_llamacpp_console(console)
         store = console._ensure_console_chat_store()
         session = store.ensure_session(title="Chat 1")
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="prompt",
+        )
         source = store.append_message(
             session.id,
             role=ConsoleMessageRole.ASSISTANT,
@@ -5214,8 +5226,7 @@ async def test_console_new_chat_tab_appears_in_workspace_conversation_rail():
         assert any("Chat 1" in text for text in row_texts)
         assert any("Chat 2" in text for text in row_texts)
         assert any(
-            "Chat 2" in text
-            for text in _selected_workspace_conversation_texts(console)
+            "Chat 2" in text for text in _selected_workspace_conversation_texts(console)
         )
 
 
@@ -5681,9 +5692,7 @@ async def test_console_workspace_conversation_search_filters_all_workspace_membe
             console, pilot, "Alpha membership", selected=False
         )
         row_texts = _console_workspace_conversation_texts(console)
-        assert any(
-            "Alpha membership" in " ".join(text.split()) for text in row_texts
-        )
+        assert any("Alpha membership" in " ".join(text.split()) for text in row_texts)
         assert any(
             getattr(row, "conversation_id", None) == "member-other-alpha"
             for row in console.query(".console-workspace-conversation-row")
@@ -5855,8 +5864,7 @@ async def test_console_workspace_rail_new_conversation_creates_default_workspace
             selected=True,
         )
         assert any(
-            "Chat 2" in text
-            for text in _selected_workspace_conversation_texts(console)
+            "Chat 2" in text for text in _selected_workspace_conversation_texts(console)
         )
         assert (
             _static_plain_text(
@@ -5970,8 +5978,7 @@ async def test_console_workspace_conversation_row_switches_native_session():
             selected=True,
         )
         assert any(
-            "Chat 1" in text
-            for text in _selected_workspace_conversation_texts(console)
+            "Chat 1" in text for text in _selected_workspace_conversation_texts(console)
         )
 
 
@@ -6063,7 +6070,7 @@ async def test_console_workspace_conversation_row_resumes_persisted_conversation
         assert selected_row is not None
         selected_row_label = str(selected_row.label)
         assert "\n" in selected_row_label
-        assert "Chats" in selected_row_label
+        assert "active session" in selected_row_label
         assert selected_row.has_class("console-workspace-conversation-row-selected")
         console._set_console_rail_preference(right_open=True, notify_on_failure=False)
         await pilot.pause(0.1)
