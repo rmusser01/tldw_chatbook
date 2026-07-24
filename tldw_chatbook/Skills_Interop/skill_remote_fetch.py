@@ -13,6 +13,7 @@ import socket
 import zipfile as _zipfile
 from dataclasses import dataclass
 from io import BytesIO
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
@@ -391,3 +392,77 @@ def re_root_skill_zip(
                 info.external_attr = member.external_attr
                 dest.writestr(info, data)
         return out.getvalue(), final_name
+
+
+async def install_skill_from_url(
+    url: str,
+    *,
+    scope_service: Any,
+    overwrite: bool = False,
+    transport: Any = None,
+    resolver: Any = None,
+) -> dict:
+    """Install a skill pasted as a GitHub/zip URL (the public install seam).
+
+    Composes every piece this module owns -- classification, the
+    ``SkillsScopeService`` policy gate, GitHub token/branch lookups, the
+    SSRF-hardened fetch, and the bounded re-root -- then hands the final
+    single-skill zip to the EXISTING hardened ``import_skill_file`` seam.
+    Network I/O never runs before ``scope_service.enforce_install_remote()``
+    -- classification is pure (URL parsing only) and may run first.
+
+    Args:
+        url: The pasted URL (GitHub repo/tree, GitHub release asset, or
+            any direct https ``.zip`` link).
+        scope_service: A ``SkillsScopeService``-shaped object exposing
+            ``enforce_install_remote()`` and ``import_skill_file(...)``.
+        overwrite: Forwarded to ``import_skill_file`` (re-import over an
+            existing skill of the same name).
+        transport: httpx transport override (tests).
+        resolver: ``(host) -> list[str]`` resolver override (tests).
+
+    Returns:
+        The ``import_skill_file`` result dict, unchanged.
+
+    Raises:
+        RemoteSkillError: Every user-presentable failure (bad URL, SSRF
+            rejection, download failure, corrupt/ambiguous archive).
+        PolicyDeniedError: When the wired policy enforcer denies the
+            install (via ``scope_service.enforce_install_remote()``).
+    """
+    source = classify_skill_source_url(url)
+    scope_service.enforce_install_remote()
+
+    from ..Utils.github_api_client import GitHubAPIClient
+
+    api = GitHubAPIClient()
+    try:
+        if isinstance(source, GitHubZipSource):
+            ref, subdir = await resolve_ref_and_subdir(source, api.get_branches)
+            zip_url = (
+                f"https://api.github.com/repos/{source.owner}/{source.repo}"
+                f"/zipball/{ref}"
+            )
+            zip_bytes = await fetch_zip_bytes(
+                zip_url, token=api.token, transport=transport, resolver=resolver
+            )
+        else:
+            subdir = ""
+            token = api.token if source.github_auth else None
+            zip_bytes = await fetch_zip_bytes(
+                source.url, token=token, transport=transport, resolver=resolver
+            )
+    finally:
+        await api.close()
+
+    final_bytes, final_name = re_root_skill_zip(
+        zip_bytes, subdir=subdir, suggested_name=source.suggested_name
+    )
+    return await scope_service.import_skill_file(
+        final_bytes,
+        mode="local",
+        filename=f"{final_name}.zip",
+        content_type="application/zip",
+        overwrite=overwrite,
+        trust_approved=False,
+    )

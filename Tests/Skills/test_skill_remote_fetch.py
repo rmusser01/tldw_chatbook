@@ -380,3 +380,166 @@ def test_reroot_labels_corrupt_member_not_too_large():
     with pytest.raises(RemoteSkillError, match="Corrupt file in bundle") as exc_info:
         re_root_skill_zip(data, subdir="", suggested_name="x")
     assert "too large" not in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# Task 5: the public install seam (compose classify -> enforce -> fetch ->
+# re-root -> the existing import_skill_file seam).
+# ---------------------------------------------------------------------------
+
+
+class _RecordingScopeService:
+    """Fake ``SkillsScopeService`` recording call order + captured kwargs.
+
+    ``calls`` is shared with the fake transport handler (appended to
+    directly by the test) so a single list proves ordering across BOTH
+    the policy gate and the network hop -- not just the two scope-service
+    methods on their own.
+    """
+
+    def __init__(self, *, enforce_error: Exception | None = None):
+        self.calls: list[str] = []
+        self._enforce_error = enforce_error
+        self.import_content: bytes | None = None
+        self.import_kwargs: dict | None = None
+
+    def enforce_install_remote(self) -> None:
+        self.calls.append("enforce")
+        if self._enforce_error is not None:
+            raise self._enforce_error
+
+    async def import_skill_file(self, content, **kwargs):
+        self.calls.append("import")
+        self.import_content = content
+        self.import_kwargs = kwargs
+        return {"name": kwargs["filename"].removesuffix(".zip"), "backend": "local"}
+
+
+@pytest.mark.asyncio
+async def test_install_seam_classification_precedes_enforce_for_bad_urls():
+    # Classification is pure and may run before enforcement -- an invalid
+    # URL is rejected without ever touching the policy gate.
+    from tldw_chatbook.Skills_Interop.skill_remote_fetch import install_skill_from_url
+
+    scope = _RecordingScopeService()
+    with pytest.raises(RemoteSkillError):
+        await install_skill_from_url("http://github.com/o/r", scope_service=scope)
+    assert scope.calls == []
+
+
+@pytest.mark.asyncio
+async def test_install_seam_enforces_before_any_network():
+    from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+    from tldw_chatbook.Skills_Interop.skill_remote_fetch import install_skill_from_url
+
+    denial = PolicyDeniedError(
+        action_id="skills.install_remote.launch.local",
+        reason_code="policy_denied",
+        user_message="Remote skill installs are disabled.",
+        effective_source="config",
+        authority_owner="local",
+    )
+    scope = _RecordingScopeService(enforce_error=denial)
+    requests_seen: list[httpx.Request] = []
+
+    def handler(request):
+        requests_seen.append(request)
+        return httpx.Response(200, content=b"PK\x03\x04")
+
+    with pytest.raises(PolicyDeniedError):
+        await install_skill_from_url(
+            "https://github.com/o/r/tree/main",
+            scope_service=scope,
+            transport=_transport(handler),
+            resolver=_PUB,
+        )
+    assert scope.calls == ["enforce"]
+    assert requests_seen == []
+
+
+@pytest.mark.asyncio
+async def test_install_seam_github_zip_source_happy_path():
+    from tldw_chatbook.Skills_Interop.skill_remote_fetch import install_skill_from_url
+
+    zip_bytes = _zipball(
+        [("SKILL.md", "---\nname: brainstorm\n---\nbody")],
+        wrapper="o-brainstorm-abc123/",
+    )
+    scope = _RecordingScopeService()
+
+    def handler(request):
+        assert request.url.host == "api.github.com"
+        assert request.url.path == "/repos/o/brainstorm/zipball/main"
+        scope.calls.append("network")
+        return httpx.Response(200, content=zip_bytes)
+
+    result = await install_skill_from_url(
+        "https://github.com/o/brainstorm/tree/main",
+        scope_service=scope,
+        transport=_transport(handler),
+        resolver=_PUB,
+    )
+
+    assert scope.calls == ["enforce", "network", "import"]
+    assert scope.import_kwargs == {
+        "mode": "local",
+        "filename": "brainstorm.zip",
+        "content_type": "application/zip",
+        "overwrite": False,
+        "trust_approved": False,
+    }
+    with zipfile.ZipFile(io.BytesIO(scope.import_content)) as z:
+        assert "SKILL.md" in z.namelist()
+    assert result == {"name": "brainstorm", "backend": "local"}
+
+
+@pytest.mark.asyncio
+async def test_install_seam_direct_zip_source_flow():
+    from tldw_chatbook.Skills_Interop.skill_remote_fetch import install_skill_from_url
+
+    zip_bytes = _zipball(
+        [("SKILL.md", "---\nname: widget\n---\nbody")], wrapper="widget-1.0/"
+    )
+    scope = _RecordingScopeService()
+    seen_auth: list[str | None] = []
+
+    def handler(request):
+        seen_auth.append(request.headers.get("authorization"))
+        scope.calls.append("network")
+        return httpx.Response(200, content=zip_bytes)
+
+    result = await install_skill_from_url(
+        "https://example.com/pkg/widget.zip",
+        scope_service=scope,
+        transport=_transport(handler),
+        resolver=_PUB,
+    )
+
+    assert scope.calls == ["enforce", "network", "import"]
+    assert seen_auth == [None]  # third-party host: never GitHub-token-scoped
+    assert scope.import_kwargs["filename"] == "widget.zip"
+    assert scope.import_kwargs["overwrite"] is False
+    assert scope.import_kwargs["trust_approved"] is False
+    assert result == {"name": "widget", "backend": "local"}
+
+
+@pytest.mark.asyncio
+async def test_install_seam_overwrite_flag_passed_through():
+    from tldw_chatbook.Skills_Interop.skill_remote_fetch import install_skill_from_url
+
+    zip_bytes = _zipball(
+        [("SKILL.md", "---\nname: widget\n---\nbody")], wrapper="widget-1.0/"
+    )
+    scope = _RecordingScopeService()
+
+    def handler(request):
+        return httpx.Response(200, content=zip_bytes)
+
+    await install_skill_from_url(
+        "https://example.com/pkg/widget.zip",
+        scope_service=scope,
+        overwrite=True,
+        transport=_transport(handler),
+        resolver=_PUB,
+    )
+    assert scope.import_kwargs["overwrite"] is True
