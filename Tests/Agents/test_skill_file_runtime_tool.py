@@ -7,6 +7,7 @@ runtime_schemas (never disclosure-gated) and its authorization lives on the
 per-run SkillFileBindings object, never config.allowed_tools.
 """
 
+import asyncio
 import json
 
 from tldw_chatbook.Agents.agent_models import (
@@ -21,6 +22,7 @@ from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
 
 
 def _fence(name, args):
@@ -241,3 +243,66 @@ def test_skill_file_bindings_none_schema_absent_and_falls_through(tmp_path):
     # Falls through to the SAME permission-gate path any other undisclosed/
     # disallowed tool name hits -- not a skill_file-specific refusal.
     assert "Tool not permitted: skill_file" in results[0]["result"]
+
+
+# --- Step 1 e2e: real LocalSkillsService, no fake reader --------------------
+
+
+def test_skill_file_e2e_fork_reads_its_own_reference_file(tmp_path):
+    """End-to-end through the REAL read seam: a real `LocalSkillsService`
+    (file-marker trust arrangement mirrored from Tests/Skills/
+    test_read_skill_file.py's `_svc` -- no keyring, no policy_enforcer, so
+    `_enforce` and `_require_trusted_skill` both no-op) backs a skill whose
+    bundle has `references/api.md`. The bindings reader is the real sync
+    adapter (`asyncio.run` over the async service call), not a fake -- this
+    is the seam the bridge itself uses in production. Drives the same
+    scripted-model harness as the unit tests above: turn 1 calls skill_file,
+    turn 2 finishes."""
+    svc = LocalSkillsService(
+        store_dir=tmp_path / "skills_store",
+        allow_untrusted_without_trust_service=True,
+    )
+    asyncio.run(
+        svc.create_skill(name="demo", content="---\nname: demo\n---\nbody\n")
+    )
+    skill_dir = svc._skill_dir("demo")
+    (skill_dir / "references").mkdir(parents=True, exist_ok=True)
+    (skill_dir / "references" / "api.md").write_text(
+        "# api docs\n", encoding="utf-8"
+    )
+
+    def reader(skill_name, path):
+        return asyncio.run(svc.read_skill_file(skill_name, path))
+
+    bindings = SkillFileBindings(authorized={"demo"}, reader=reader)
+
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    reg = _registry_with_builtins()
+
+    script = [
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": _skill_file_fence("demo", "references/api.md")
+                    }
+                }
+            ]
+        },
+        {"choices": [{"message": {"content": "Done."}}]},
+    ]
+
+    service = AgentService(
+        db, reg, chat_call=lambda **k: script.pop(0), skill_file_bindings=bindings
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c1",
+        messages=[{"role": "user", "content": "go"}],
+        config=_base_config(),
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+
+    run = db.get_run(run_id)
+    results = [s for s in run["steps"] if s["kind"] == "tool_result"]
+    assert any("# api docs" in r["result"] for r in results)
