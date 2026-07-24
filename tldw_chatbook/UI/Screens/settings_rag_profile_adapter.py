@@ -141,21 +141,23 @@ def apply_defaults_to_profile(
 
 # Keyword fragments used to classify a `RAGConfig.validate()` message as
 # concerning a field the Library/RAG Settings category actually exposes for
-# editing. `RAGConfig.validate()` also checks vector_store.type,
-# persist_directory, and embedding.cache_size -- none of which are editable
-# here -- plus default_top_k/score_threshold/hybrid_alpha, which
-# validate_library_rag_defaults already validates with its own (narrower)
-# rules; a violation on any of THOSE must never gate Save through this path.
-# Kept as substrings (not a field-name dict) because RAGConfig.validate()
-# hands back prose, not structured (field, reason) pairs.
+# editing. Covers exactly the four fields `RAGConfig.validate()` can emit a
+# message about that this category also lets the user edit: chunk_size,
+# chunk_overlap, distance_metric, and embedding_batch_size (the "batch_size"
+# substring matches "embedding batch_size must be positive" without matching
+# "embedding cache_size must be positive"). `RAGConfig.validate()` also
+# checks vector_store.type, persist_directory, and embedding.cache_size --
+# none of which are editable here -- plus default_top_k/score_threshold/
+# hybrid_alpha, which validate_library_rag_defaults already validates with
+# its own (narrower) rules; a violation on any of THOSE must never gate Save
+# through this path. Kept as substrings (not a field-name dict) because
+# RAGConfig.validate() hands back prose, not structured (field, reason)
+# pairs.
 _HARD_ERROR_UI_FIELD_KEYWORDS: tuple[str, ...] = (
     "chunk_size",
     "chunk_overlap",
     "distance metric",
     "batch_size",
-    "max_length",
-    "embedding model",
-    "chunking_method",
 )
 
 
@@ -248,10 +250,16 @@ def hard_config_errors(values: SettingsLibraryRagDefaults) -> list[str]:
 
     Returns:
         Human-readable hard-error messages; empty when nothing blocks Save.
-        When no profile is active, returns a single explanatory message
-        rather than raising.
+        When no profile is active, or the active profile cannot be loaded,
+        returns a single explanatory message rather than raising -- this
+        function must fail CLOSED (block Save) rather than let a profile-
+        manager error propagate out of validation.
     """
-    profile = _active_profile()
+    try:
+        profile = _active_profile()
+    except Exception as e:  # profile fetch must never crash Save validation
+        logger.error(f"Could not load the active profile for validation: {e}")
+        return ["Could not load the active profile for validation."]
     if profile is None:
         return ["No active profile is selected."]
 
