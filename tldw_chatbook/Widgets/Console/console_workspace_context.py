@@ -18,6 +18,7 @@ from tldw_chatbook.Chat.console_glyphs import (
 )
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     console_conversation_status_detail,
+    CONSOLE_DEFAULT_CONVERSATION_DETAIL,
     ConsoleConversationBrowserGroup,
     ConsoleConversationBrowserRow,
     ConsoleConversationBrowserSection,
@@ -1129,13 +1130,10 @@ class ConsoleWorkspaceContextTray(Vertical):
             name_lines = wrap_console_conversation_title(row.title, budget)
             status = self._conversation_status(row.status)
             detail = self._conversation_detail_status(row.status)
-            secondary_parts = [
-                part
-                for part in (row.workspace_label, detail, row.updated_label)
-                if str(part or "").strip()
-            ]
             secondary = truncate_console_row_cells(
-                " - ".join(secondary_parts) or "conversation", budget
+                self._conversation_row_secondary(detail, row.updated_label)
+                or "conversation",
+                budget,
             )
             status_suffix = f" [{status}]" if status else ""
             row_button = self._conversation_button(
@@ -1231,3 +1229,31 @@ class ConsoleWorkspaceContextTray(Vertical):
         Ctrl+K switcher never disagree on the same conversation's state.
         """
         return console_conversation_status_detail(status)
+
+    @staticmethod
+    def _conversation_row_secondary(detail: str, updated_label: str) -> str:
+        """Compress the row's second line to just its differentiator.
+
+        TASK-374: the subtitle used to read ``<workspace> - saved chat - <age>``
+        on every row, so only the age differed and half the section's vertical
+        space carried no information. The workspace is already the section
+        header, and ``saved chat`` is the default for nearly every row -- so keep
+        the age always and the state only when it is a non-default differentiator.
+
+        Args:
+            detail: The friendly state label from ``_conversation_detail_status``.
+            updated_label: The compact relative age (e.g. ``2d``).
+
+        Returns:
+            The age alone for a default saved row, ``<state> - <age>`` when the
+            state differentiates, or ``""`` when neither is present.
+        """
+        parts = [
+            part
+            for part in (
+                detail if detail and detail != CONSOLE_DEFAULT_CONVERSATION_DETAIL else "",
+                updated_label,
+            )
+            if str(part or "").strip()
+        ]
+        return " - ".join(parts)

@@ -295,6 +295,28 @@ def test_console_conversation_status_labels_use_saved_chat_vocabulary() -> None:
     assert status("open") == "open"
 
 
+def test_conversation_row_secondary_drops_boilerplate_keeps_differentiator() -> None:
+    """TASK-374 AC#2: the row subtitle compresses to just the differentiator.
+
+    Every row previously repeated ``<workspace> - saved chat - <age>``, so only
+    the age digits differed and half the section's vertical space carried no
+    information. The subtitle now keeps the age always and the state ONLY when it
+    is not the default ``saved chat``; the section-level workspace label is dropped.
+    """
+    secondary = ConsoleWorkspaceContextTray._conversation_row_secondary
+
+    # Default saved state -> only the differentiating age remains.
+    assert secondary("saved chat", "2d") == "2d"
+    # A non-default state IS the differentiator and is kept alongside the age.
+    assert secondary("active session", "5m") == "active session - 5m"
+    assert secondary("open session", "1h") == "open session - 1h"
+    # Degenerate inputs stay sane.
+    assert secondary("active session", "") == "active session"
+    assert secondary("saved chat", "") == ""
+    # The repeated workspace label is never part of the compressed subtitle.
+    assert "Workspace" not in secondary("saved chat", "3d")
+
+
 def test_console_workspace_conversation_section_state_defaults() -> None:
     section = ConsoleWorkspaceConversationSectionState(
         workspace_id="ws-a",
@@ -359,6 +381,44 @@ async def test_console_workspace_context_renders_grouped_conversation_browser() 
         assert star_button.row_key == "conv-starred"
         assert star_button.conversation_id == "conv-starred"
         assert star_button.starred is True
+
+
+@pytest.mark.asyncio
+async def test_rail_title_budget_scales_with_terminal_width() -> None:
+    """TASK-374 AC#1: titles get the available width instead of a fixed cap.
+
+    The review saw 17-char titles on a wide terminal (pre-width-aware code). The
+    grouped-browser title budget is now measured from the real rail width, so it
+    grows as the terminal widens -- a wide terminal yields 25+ char titles. This
+    locks that responsiveness so it cannot regress to a fixed cap.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+        narrow_budget = tray._browser_title_budget()
+
+        await pilot.resize_terminal(260, 60)
+        await pilot.pause()
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+        wide_budget = tray._browser_title_budget()
+
+    assert wide_budget > narrow_budget, (
+        f"title budget must grow with rail width, not stay fixed "
+        f"(narrow={narrow_budget}, wide={wide_budget})"
+    )
+    assert wide_budget >= 25, (
+        f"a wide terminal must give titles the available width (25+ cells), "
+        f"got {wide_budget}"
+    )
 
 
 @pytest.mark.asyncio
