@@ -107,40 +107,43 @@ dataclasses/enums/hashlib/multiprocessing/pathlib/time, pytest, GitHub Actions.
 # Tests/Model_Artifacts/test_operation_leases.py
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
-from tldw_chatbook.Model_Artifacts.leases import (
-    ArtifactLeaseCancelledError,
-    ArtifactLeaseKey,
-    ArtifactLeaseTimeoutError,
-    ArtifactOperationLease,
-    LeaseMode,
-)
+
+def lease_api() -> ModuleType:
+    """Import the wished-for API inside the test so RED is a test failure."""
+
+    return importlib.import_module("tldw_chatbook.Model_Artifacts.leases")
 
 
 def key(
+    api: ModuleType,
     artifact_id: str = "parakeet-v2",
     revision: str = "rev-a",
     variant: str = "int8",
-) -> ArtifactLeaseKey:
-    return ArtifactLeaseKey(artifact_id, revision, variant)
+):
+    return api.ArtifactLeaseKey(artifact_id, revision, variant)
 
 
 def test_lease_key_rejects_empty_and_reserved_separator() -> None:
+    api = lease_api()
     with pytest.raises(ValueError, match="artifact_id"):
-        ArtifactLeaseKey("", "rev-a", "int8")
+        api.ArtifactLeaseKey("", "rev-a", "int8")
     with pytest.raises(ValueError, match="revision"):
-        ArtifactLeaseKey("model", " ", "int8")
+        api.ArtifactLeaseKey("model", " ", "int8")
     with pytest.raises(ValueError, match="reserved separator"):
-        ArtifactLeaseKey("model", "rev-a", "int8\u001funsafe")
+        api.ArtifactLeaseKey("model", "rev-a", "int8\u001funsafe")
 
 
 def test_lock_filename_is_deterministic_and_opaque(tmp_path: Path) -> None:
-    unsafe = ArtifactLeaseKey("../../model", "refs/rev", "int8/windows")
-    first = ArtifactOperationLease(tmp_path, unsafe, LeaseMode.SHARED)
-    second = ArtifactOperationLease(tmp_path, unsafe, LeaseMode.SHARED)
+    api = lease_api()
+    unsafe = api.ArtifactLeaseKey("../../model", "refs/rev", "int8/windows")
+    first = api.ArtifactOperationLease(tmp_path, unsafe, api.LeaseMode.SHARED)
+    second = api.ArtifactOperationLease(tmp_path, unsafe, api.LeaseMode.SHARED)
 
     assert first.lock_path == second.lock_path
     assert first.lock_path.parent == tmp_path
@@ -151,50 +154,54 @@ def test_lock_filename_is_deterministic_and_opaque(tmp_path: Path) -> None:
 
 
 def test_exclusive_times_out_while_shared_lease_is_open(tmp_path: Path) -> None:
-    with ArtifactOperationLease(tmp_path, key(), LeaseMode.SHARED):
-        with pytest.raises(ArtifactLeaseTimeoutError):
-            ArtifactOperationLease(
+    api = lease_api()
+    with api.ArtifactOperationLease(tmp_path, key(api), api.LeaseMode.SHARED):
+        with pytest.raises(api.ArtifactLeaseTimeoutError):
+            api.ArtifactOperationLease(
                 tmp_path,
-                key(),
-                LeaseMode.EXCLUSIVE,
+                key(api),
+                api.LeaseMode.EXCLUSIVE,
                 timeout_seconds=0.05,
                 check_interval_seconds=0.005,
             ).acquire()
 
 
 def test_context_close_releases_lock(tmp_path: Path) -> None:
-    shared = ArtifactOperationLease(tmp_path, key(), LeaseMode.SHARED)
+    api = lease_api()
+    shared = api.ArtifactOperationLease(tmp_path, key(api), api.LeaseMode.SHARED)
     with shared:
         assert shared.acquired is True
 
     assert shared.acquired is False
-    with ArtifactOperationLease(
+    with api.ArtifactOperationLease(
         tmp_path,
-        key(),
-        LeaseMode.EXCLUSIVE,
+        key(api),
+        api.LeaseMode.EXCLUSIVE,
         timeout_seconds=0.2,
     ) as exclusive:
         assert exclusive.acquired is True
 
 
 def test_cancelled_acquire_closes_unowned_handle(tmp_path: Path) -> None:
-    lease = ArtifactOperationLease(
+    api = lease_api()
+    lease = api.ArtifactOperationLease(
         tmp_path,
-        key(),
-        LeaseMode.SHARED,
+        key(api),
+        api.LeaseMode.SHARED,
         cancelled=lambda: True,
     )
 
-    with pytest.raises(ArtifactLeaseCancelledError):
+    with pytest.raises(api.ArtifactLeaseCancelledError):
         lease.acquire()
 
     assert lease.acquired is False
 
 
 def test_double_acquire_is_rejected(tmp_path: Path) -> None:
-    lease = ArtifactOperationLease(tmp_path, key(), LeaseMode.SHARED)
+    api = lease_api()
+    lease = api.ArtifactOperationLease(tmp_path, key(api), api.LeaseMode.SHARED)
     with lease:
-        with pytest.raises(ArtifactLeaseError, match="already acquired"):
+        with pytest.raises(api.ArtifactLeaseError, match="already acquired"):
             lease.acquire()
 ```
 
@@ -211,7 +218,7 @@ Run:
 pytest Tests/Model_Artifacts/test_operation_leases.py -v
 ```
 
-Expected: collection fails with
+Expected: all six tests collect and fail from `lease_api()` with
 `ModuleNotFoundError: No module named 'tldw_chatbook.Model_Artifacts'`.
 
 - [ ] **Step 3: Pin and install the selected dependency**
@@ -425,6 +432,10 @@ __all__ = [
 ```
 
 - [ ] **Step 5: Run the focused tests**
+
+After GREEN, refactor the test module to the direct production imports shown by
+the public interface list above, remove `lease_api()`, and change `key(api, ...)`
+back to `key(...)`. This is test-only cleanup; do not change behavior.
 
 Run:
 
