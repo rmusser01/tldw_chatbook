@@ -45,6 +45,8 @@ if TYPE_CHECKING:
 
 logger = logger.bind(module="SchedulesWorkbench")
 
+SCHEDULES_COMPACT_WORKBENCH_MAX_WIDTH = 120
+
 
 class SchedulesWorkbench(BaseAppScreen):
     """Main workbench for managing scheduled runs, reminders, and jobs."""
@@ -108,7 +110,11 @@ class SchedulesWorkbench(BaseAppScreen):
             with TabPane("Queue", id="scheduling-queue-tab"):
                 with Horizontal(id="scheduling-workbench"):
                     with Vertical(id="scheduling-list-pane"):
-                        yield Static("Schedule Queue", id="scheduling-list-title")
+                        yield Static(
+                            "Schedule Queue",
+                            id="scheduling-list-title",
+                            classes="scheduling-column-title",
+                        )
                         yield DataTable(id="scheduling-task-table")
                     with Vertical(id="scheduling-detail-pane"):
                         yield TaskDetail(id="scheduling-task-detail")
@@ -132,11 +138,23 @@ class SchedulesWorkbench(BaseAppScreen):
 
     def on_mount(self) -> None:
         super().on_mount()
+        self._sync_responsive_workbench()
         self._register_footer_shortcuts()
         self._refresh_owner_select()
         table = self.query_one("#scheduling-task-table", DataTable)
         table.add_columns("Title", "Type", "Status", "Next Run")
         self.run_worker(self.load_tasks, exclusive=True)  # type: ignore[arg-type]
+
+    def on_resize(self, event: Any) -> None:
+        """Compact the three-pane layout when its normal minima cannot fit."""
+        self._sync_responsive_workbench()
+
+    def _sync_responsive_workbench(self) -> None:
+        """Keep the primary queue and detail action visible at narrow widths."""
+        self.set_class(
+            self.size.width <= SCHEDULES_COMPACT_WORKBENCH_MAX_WIDTH,
+            "schedules-workbench-compact",
+        )
 
     async def load_tasks(self) -> None:
         """Fetch reminders from the scheduling service and populate the table."""

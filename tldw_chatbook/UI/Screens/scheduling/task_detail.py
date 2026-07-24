@@ -263,7 +263,11 @@ class TaskDetail(Vertical):
         self._current_task: ReminderTask | ScheduledTask | None = None
 
     def compose(self) -> ComposeResult:
-        yield Static("Task Detail", id="scheduling-task-detail-header")
+        yield Static(
+            "Task Detail",
+            id="scheduling-task-detail-header",
+            classes="scheduling-column-title",
+        )
         yield Static(
             "Select a scheduled task from the queue, or press Ctrl+C to create one.",
             id="scheduling-task-detail-empty-state",
@@ -335,6 +339,7 @@ class TaskDetail(Vertical):
         yield Button(
             "Follow in Console",
             id="schedules-follow-in-console",
+            disabled=True,
             tooltip=SCHEDULES_EMPTY_CONSOLE_RECOVERY.disabled_tooltip,
         )
 
@@ -449,7 +454,11 @@ class TaskInspector(Vertical):
     """Render sync, conflict, and last-run metadata for a task."""
 
     def compose(self) -> ComposeResult:
-        yield Static("Inspector", id="scheduling-task-inspector-header")
+        yield Static(
+            "Inspector",
+            id="scheduling-task-inspector-header",
+            classes="scheduling-column-title",
+        )
         with Vertical(id="scheduling-inspector-metadata"):
             yield Horizontal(
                 Static("Sync:", classes="scheduling-inspector-label"),
