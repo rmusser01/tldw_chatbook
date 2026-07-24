@@ -167,37 +167,11 @@ class InventoryAuthorityField(str, Enum):
     GOVERNANCE_SCOPE_ID = "governance_scope_id"
 
 
-_LOCATION_HINTS_BY_SOURCE_KIND = MappingProxyType(
+_SHARED_SOURCE_KINDS = frozenset(
     {
-        CanonicalSourceKind.MEDIA_DB: frozenset(
-            {
-                "chunk_id",
-                "page_number",
-                "section_ordinal",
-                "start_seconds",
-                "end_seconds",
-            }
-        ),
-        CanonicalSourceKind.NOTES: frozenset(
-            {"source_root_id", "relative_path", "chunk_id", "section_ordinal"}
-        ),
-        CanonicalSourceKind.CHAT_HISTORY: frozenset({"chunk_id", "message_id"}),
-        CanonicalSourceKind.CHARACTER_CARDS: frozenset(),
-        CanonicalSourceKind.WEB_CONTENT: frozenset(
-            {"chunk_id", "page_number", "section_ordinal"}
-        ),
-        CanonicalSourceKind.PROMPTS: frozenset(),
-        CanonicalSourceKind.WORLD_BOOKS: frozenset(
-            {"chunk_id", "entry_id", "section_ordinal"}
-        ),
-        CanonicalSourceKind.DICTIONARIES: frozenset(
-            {"chunk_id", "entry_id", "section_ordinal"}
-        ),
-        CanonicalSourceKind.KANBAN: frozenset(),
-        CanonicalSourceKind.SQL: frozenset(),
-        CanonicalSourceKind.CLAIMS: frozenset(
-            {"chunk_id", "parent_source_kind", "parent_item_id"}
-        ),
+        CanonicalSourceKind.MEDIA_DB,
+        CanonicalSourceKind.NOTES,
+        CanonicalSourceKind.CHAT_HISTORY,
     }
 )
 
@@ -222,31 +196,26 @@ class SourceCapabilityPolicy(_StrictFrozenModel):
         return bool(getattr(self, capability.value))
 
 
-class SourceLocatorPayloadV1(_StrictFrozenModel):
-    """Typed resolver-owned identity and location hints; never executable data."""
+class _LocatorPayloadV1(_StrictFrozenModel):
+    """Common bounded identity shared by the static payload union."""
 
     schema_version: Literal[1] = 1
+    source_kind: CanonicalSourceKind
     item_id: BoundedIdentifier
-    source_root_id: SourceRootIdentifier | None = None
-    relative_path: SafeRelativePath | None = None
+
+
+class MediaLocatorPayloadV1(_LocatorPayloadV1):
+    """Media item with optional chunk, page, section, or time lineage."""
+
+    source_kind: Literal[CanonicalSourceKind.MEDIA_DB] = CanonicalSourceKind.MEDIA_DB
     chunk_id: BoundedIdentifier | None = None
-    message_id: BoundedIdentifier | None = None
-    entry_id: BoundedIdentifier | None = None
-    parent_source_kind: CanonicalSourceKind | None = None
-    parent_item_id: BoundedIdentifier | None = None
     page_number: int | None = Field(default=None, ge=1)
     section_ordinal: int | None = Field(default=None, ge=0)
     start_seconds: float | None = Field(default=None, ge=0)
     end_seconds: float | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
-    def _validate_location_shape(self) -> "SourceLocatorPayloadV1":
-        if (self.source_root_id is None) != (self.relative_path is None):
-            raise ValueError("source_root_id and relative_path must appear together")
-        if (self.parent_source_kind is None) != (self.parent_item_id is None):
-            raise ValueError(
-                "parent_source_kind and parent_item_id must appear together"
-            )
+    def _validate_time_range(self) -> "MediaLocatorPayloadV1":
         if (
             self.start_seconds is not None
             and self.end_seconds is not None
@@ -254,6 +223,121 @@ class SourceLocatorPayloadV1(_StrictFrozenModel):
         ):
             raise ValueError("end_seconds must not precede start_seconds")
         return self
+
+
+class NoteLocatorPayloadV1(_LocatorPayloadV1):
+    """Note item with optional local file and indexed-chunk lineage."""
+
+    source_kind: Literal[CanonicalSourceKind.NOTES] = CanonicalSourceKind.NOTES
+    source_root_id: SourceRootIdentifier | None = None
+    relative_path: SafeRelativePath | None = None
+    chunk_id: BoundedIdentifier | None = None
+    section_ordinal: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _validate_file_binding(self) -> "NoteLocatorPayloadV1":
+        if (self.source_root_id is None) != (self.relative_path is None):
+            raise ValueError("source_root_id and relative_path must appear together")
+        return self
+
+
+class ChatHistoryLocatorPayloadV1(_LocatorPayloadV1):
+    """Conversation item with optional message and indexed-chunk lineage."""
+
+    source_kind: Literal[CanonicalSourceKind.CHAT_HISTORY] = (
+        CanonicalSourceKind.CHAT_HISTORY
+    )
+    chunk_id: BoundedIdentifier | None = None
+    message_id: BoundedIdentifier | None = None
+
+
+class CharacterCardLocatorPayloadV1(_LocatorPayloadV1):
+    """Character-card item identity."""
+
+    source_kind: Literal[CanonicalSourceKind.CHARACTER_CARDS] = (
+        CanonicalSourceKind.CHARACTER_CARDS
+    )
+
+
+class WebContentLocatorPayloadV1(_LocatorPayloadV1):
+    """Indexed web item identity without an executable URL."""
+
+    source_kind: Literal[CanonicalSourceKind.WEB_CONTENT] = (
+        CanonicalSourceKind.WEB_CONTENT
+    )
+    chunk_id: BoundedIdentifier | None = None
+    page_number: int | None = Field(default=None, ge=1)
+    section_ordinal: int | None = Field(default=None, ge=0)
+
+
+class PromptLocatorPayloadV1(_LocatorPayloadV1):
+    """Prompt item identity."""
+
+    source_kind: Literal[CanonicalSourceKind.PROMPTS] = CanonicalSourceKind.PROMPTS
+
+
+class WorldBookLocatorPayloadV1(_LocatorPayloadV1):
+    """World-book item with optional entry and chunk lineage."""
+
+    source_kind: Literal[CanonicalSourceKind.WORLD_BOOKS] = (
+        CanonicalSourceKind.WORLD_BOOKS
+    )
+    chunk_id: BoundedIdentifier | None = None
+    entry_id: BoundedIdentifier | None = None
+    section_ordinal: int | None = Field(default=None, ge=0)
+
+
+class DictionaryLocatorPayloadV1(_LocatorPayloadV1):
+    """Dictionary item with optional entry and chunk lineage."""
+
+    source_kind: Literal[CanonicalSourceKind.DICTIONARIES] = (
+        CanonicalSourceKind.DICTIONARIES
+    )
+    chunk_id: BoundedIdentifier | None = None
+    entry_id: BoundedIdentifier | None = None
+    section_ordinal: int | None = Field(default=None, ge=0)
+
+
+class KanbanLocatorPayloadV1(_LocatorPayloadV1):
+    """Kanban item identity."""
+
+    source_kind: Literal[CanonicalSourceKind.KANBAN] = CanonicalSourceKind.KANBAN
+
+
+class SQLLocatorPayloadV1(_LocatorPayloadV1):
+    """Structured SQL result identity with no replay or path fields."""
+
+    source_kind: Literal[CanonicalSourceKind.SQL] = CanonicalSourceKind.SQL
+
+
+class ClaimLocatorPayloadV1(_LocatorPayloadV1):
+    """Claim identity with inert parent media/chunk lineage."""
+
+    source_kind: Literal[CanonicalSourceKind.CLAIMS] = CanonicalSourceKind.CLAIMS
+    parent_media_id: BoundedIdentifier | None = None
+    parent_chunk_id: BoundedIdentifier | None = None
+
+    @model_validator(mode="after")
+    def _validate_parent_lineage(self) -> "ClaimLocatorPayloadV1":
+        if (self.parent_media_id is None) != (self.parent_chunk_id is None):
+            raise ValueError("parent_media_id and parent_chunk_id must appear together")
+        return self
+
+
+SourceLocatorPayloadV1 = Annotated[
+    MediaLocatorPayloadV1
+    | NoteLocatorPayloadV1
+    | ChatHistoryLocatorPayloadV1
+    | CharacterCardLocatorPayloadV1
+    | WebContentLocatorPayloadV1
+    | PromptLocatorPayloadV1
+    | WorldBookLocatorPayloadV1
+    | DictionaryLocatorPayloadV1
+    | KanbanLocatorPayloadV1
+    | SQLLocatorPayloadV1
+    | ClaimLocatorPayloadV1,
+    Field(discriminator="source_kind"),
+]
 
 
 class SourceLocatorEnvelope(_StrictFrozenModel):
@@ -290,37 +374,19 @@ class SourceLocatorEnvelope(_StrictFrozenModel):
                 "server locator governance_scope_id must match authenticated_tenant_id"
             )
 
-        local_kinds = {
-            CanonicalSourceKind.MEDIA_DB,
-            CanonicalSourceKind.NOTES,
-            CanonicalSourceKind.CHAT_HISTORY,
-        }
-        if (self.source_kind in local_kinds) != (
+        if (
             self.authority_scope is AuthorityScope.LOCAL_PROFILE
+            and self.source_kind not in _SHARED_SOURCE_KINDS
         ):
             raise ValueError("source kind does not match locator authority scope")
         if (
-            self.resolver_payload.source_root_id is not None
-            and self.source_kind is not CanonicalSourceKind.NOTES
+            self.authority_scope is AuthorityScope.AUTHENTICATED_TENANT
+            and isinstance(self.resolver_payload, NoteLocatorPayloadV1)
+            and self.resolver_payload.source_root_id is not None
         ):
-            raise ValueError("file-backed location hints are valid only for notes")
-        if (
-            self.resolver_payload.parent_source_kind is not None
-            and self.source_kind is not CanonicalSourceKind.CLAIMS
-        ):
-            raise ValueError("parent lineage is valid only for claims")
-        populated_hints = set(self.resolver_payload.model_dump(exclude_none=True)) - {
-            "schema_version",
-            "item_id",
-        }
-        unsupported_hints = (
-            populated_hints - _LOCATION_HINTS_BY_SOURCE_KIND[self.source_kind]
-        )
-        if unsupported_hints:
-            raise ValueError(
-                f"unsupported location hint for {self.source_kind.value}: "
-                f"{sorted(unsupported_hints)}"
-            )
+            raise ValueError("server note locators cannot carry local file paths")
+        if self.resolver_payload.source_kind is not self.source_kind:
+            raise ValueError("payload source kind must match locator source kind")
 
         byte_count = len(_canonical_json(self.model_dump(mode="json")).encode("utf-8"))
         if byte_count > LOCATOR_ENVELOPE_JSON_BYTES_MAX:
@@ -560,10 +626,14 @@ def _revalidate_model(model_type: type[_ModelT], value: Any) -> _ModelT:
     return model_type.model_validate(dict(value.__dict__))
 
 
-def _inventory_entry(source_kind: CanonicalSourceKind) -> SourceInventoryEntry:
-    return next(
-        entry for entry in SOURCE_INVENTORY_V1 if entry.source_kind is source_kind
-    )
+def _inventory_entry(
+    source_kind: CanonicalSourceKind,
+    authority_scope: AuthorityScope,
+) -> SourceInventoryEntry:
+    try:
+        return SOURCE_INVENTORY_BY_SCOPE_V1[(source_kind, authority_scope)]
+    except KeyError as exc:
+        raise ValueError("source kind and authority scope are not registered") from exc
 
 
 def validate_native_locator(
@@ -572,13 +642,15 @@ def validate_native_locator(
     policy: SourceCapabilityPolicy,
     *,
     required_capability: SourceCapability = SourceCapability.VIEW_SNAPSHOT,
+    parent_locator: SourceLocatorEnvelope | None = None,
+    parent_policy: SourceCapabilityPolicy | None = None,
 ) -> SourceLocatorEnvelope:
     """Fail closed unless scope, policy, inventory, and request capability agree."""
 
     native = _revalidate_model(SourceLocatorEnvelope, locator)
     read_auth = _revalidate_model(CitationReadAuthorization, authorization)
     current_policy = _revalidate_model(SourceCapabilityPolicy, policy)
-    entry = _inventory_entry(native.source_kind)
+    entry = _inventory_entry(native.source_kind, native.authority_scope)
 
     if native.authority_id not in read_auth.allowlisted_authority_ids:
         raise ValueError("locator authority is not allowlisted")
@@ -605,7 +677,7 @@ def validate_native_locator(
         raise ValueError(f"authorization denies {required_capability.value}")
 
     if (
-        native.source_kind is CanonicalSourceKind.CLAIMS
+        isinstance(native.resolver_payload, ClaimLocatorPayloadV1)
         and required_capability
         in {
             SourceCapability.RESOLVE_CURRENT,
@@ -614,11 +686,41 @@ def validate_native_locator(
             SourceCapability.REFRESH_OBSERVATION,
         }
         and (
-            native.resolver_payload.parent_source_kind not in entry.allowed_parent_kinds
-            or native.resolver_payload.parent_item_id is None
+            CanonicalSourceKind.MEDIA_DB not in entry.allowed_parent_kinds
+            or native.resolver_payload.parent_media_id is None
+            or native.resolver_payload.parent_chunk_id is None
         )
     ):
         raise ValueError("claims capability requires authorized parent lineage")
+    if isinstance(
+        native.resolver_payload, ClaimLocatorPayloadV1
+    ) and required_capability in {
+        SourceCapability.RESOLVE_CURRENT,
+        SourceCapability.OPEN_NATIVE,
+        SourceCapability.COMPARE,
+        SourceCapability.REFRESH_OBSERVATION,
+    }:
+        if parent_locator is None or parent_policy is None:
+            raise ValueError("claims capability requires separately validated parent")
+        parent = validate_native_locator(
+            parent_locator,
+            read_auth,
+            parent_policy,
+            required_capability=required_capability,
+        )
+        if (
+            not isinstance(parent.resolver_payload, MediaLocatorPayloadV1)
+            or parent.authority_scope is not native.authority_scope
+            or parent.authority_id != native.authority_id
+            or parent.governance_scope_id != native.governance_scope_id
+            or parent.profile_id != native.profile_id
+            or parent.authenticated_tenant_id != native.authenticated_tenant_id
+            or parent.resolver_payload.item_id
+            != native.resolver_payload.parent_media_id
+            or parent.resolver_payload.chunk_id
+            != native.resolver_payload.parent_chunk_id
+        ):
+            raise ValueError("claims parent lineage does not match validated parent")
     return native
 
 
@@ -651,7 +753,11 @@ def rebind_inert_locator(
     native = validate_native_locator(
         current.native_locator,
         authorization,
-        _inventory_entry(current.native_locator.source_kind).default_policy,
+        _inventory_entry(
+            current.native_locator.source_kind,
+            current.native_locator.authority_scope,
+        ).default_policy,
+        required_capability=SourceCapability.RESOLVE_CURRENT,
     )
     return SourceLocatorEnvelope.model_validate(native.model_dump())
 
@@ -749,6 +855,27 @@ SOURCE_INVENTORY_V1: tuple[SourceInventoryEntry, ...] = (
         SnapshotOnlyCondition.MISSING_DURABLE_IDENTITY,
     ),
     _inventory(
+        CanonicalSourceKind.MEDIA_DB,
+        SourceProducer.PINNED_SERVER,
+        AuthorityScope.AUTHENTICATED_TENANT,
+        _SERVER_POLICY,
+        SnapshotOnlyCondition.MISSING_DURABLE_IDENTITY,
+    ),
+    _inventory(
+        CanonicalSourceKind.NOTES,
+        SourceProducer.PINNED_SERVER,
+        AuthorityScope.AUTHENTICATED_TENANT,
+        _SERVER_POLICY,
+        SnapshotOnlyCondition.MISSING_DURABLE_IDENTITY,
+    ),
+    _inventory(
+        CanonicalSourceKind.CHAT_HISTORY,
+        SourceProducer.PINNED_SERVER,
+        AuthorityScope.AUTHENTICATED_TENANT,
+        _SERVER_POLICY,
+        SnapshotOnlyCondition.MISSING_DURABLE_IDENTITY,
+    ),
+    _inventory(
         CanonicalSourceKind.CHARACTER_CARDS,
         SourceProducer.PINNED_SERVER,
         AuthorityScope.AUTHENTICATED_TENANT,
@@ -806,3 +933,12 @@ SOURCE_INVENTORY_V1: tuple[SourceInventoryEntry, ...] = (
         parent_kinds=(CanonicalSourceKind.MEDIA_DB,),
     ),
 )
+
+SOURCE_INVENTORY_BY_SCOPE_V1: Mapping[
+    tuple[CanonicalSourceKind, AuthorityScope],
+    SourceInventoryEntry,
+] = MappingProxyType(
+    {(entry.source_kind, entry.authority_scope): entry for entry in SOURCE_INVENTORY_V1}
+)
+if len(SOURCE_INVENTORY_BY_SCOPE_V1) != len(SOURCE_INVENTORY_V1):
+    raise RuntimeError("duplicate citation source inventory scope")

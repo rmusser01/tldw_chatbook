@@ -12,20 +12,32 @@ from tldw_chatbook.Chat.citation_source_locators import (
     EXTERNAL_OPAQUE_ID_UTF8_BYTES_MAX,
     LOCATOR_ENVELOPE_JSON_BYTES_MAX,
     RUNTIME_SOURCE_KIND_TO_CANONICAL_V1,
+    SOURCE_INVENTORY_BY_SCOPE_V1,
     SOURCE_INVENTORY_V1,
     AuthorityScope,
     CanonicalSourceKind,
+    CharacterCardLocatorPayloadV1,
+    ChatHistoryLocatorPayloadV1,
     CitationReadAuthorization,
+    ClaimLocatorPayloadV1,
     CurrentAuthorityLocatorLookup,
+    DictionaryLocatorPayloadV1,
     InertLocatorCandidate,
+    KanbanLocatorPayloadV1,
     LocatorBindingState,
+    MediaLocatorPayloadV1,
+    NoteLocatorPayloadV1,
+    PromptLocatorPayloadV1,
     RebindAction,
     RebindDecision,
+    SQLLocatorPayloadV1,
     SourceCapability,
     SourceCapabilityPolicy,
     SourceInventoryEntry,
     SourceLocatorEnvelope,
     SourceLocatorPayloadV1,
+    WebContentLocatorPayloadV1,
+    WorldBookLocatorPayloadV1,
     canonical_locator_json,
     parse_inert_locator_candidate,
     rebind_inert_locator,
@@ -42,6 +54,27 @@ FIXTURE_PATH = (
     / "source_inventory_v1.json"
 )
 
+PAYLOAD_MODEL_BY_KIND = {
+    CanonicalSourceKind.MEDIA_DB: MediaLocatorPayloadV1,
+    CanonicalSourceKind.NOTES: NoteLocatorPayloadV1,
+    CanonicalSourceKind.CHAT_HISTORY: ChatHistoryLocatorPayloadV1,
+    CanonicalSourceKind.CHARACTER_CARDS: CharacterCardLocatorPayloadV1,
+    CanonicalSourceKind.WEB_CONTENT: WebContentLocatorPayloadV1,
+    CanonicalSourceKind.PROMPTS: PromptLocatorPayloadV1,
+    CanonicalSourceKind.WORLD_BOOKS: WorldBookLocatorPayloadV1,
+    CanonicalSourceKind.DICTIONARIES: DictionaryLocatorPayloadV1,
+    CanonicalSourceKind.KANBAN: KanbanLocatorPayloadV1,
+    CanonicalSourceKind.SQL: SQLLocatorPayloadV1,
+    CanonicalSourceKind.CLAIMS: ClaimLocatorPayloadV1,
+}
+
+
+def _payload(
+    source_kind: CanonicalSourceKind,
+    **values: object,
+) -> SourceLocatorPayloadV1:
+    return PAYLOAD_MODEL_BY_KIND[source_kind](**values)
+
 
 def _local_locator(
     *,
@@ -55,7 +88,7 @@ def _local_locator(
         authority_id="local-authority",
         governance_scope_id="profile-a",
         profile_id="profile-a",
-        resolver_payload=payload or SourceLocatorPayloadV1(item_id="item-1"),
+        resolver_payload=payload or _payload(source_kind, item_id="item-1"),
     )
 
 
@@ -71,7 +104,7 @@ def _server_locator(
         authority_id="server-authority",
         governance_scope_id="tenant-a",
         authenticated_tenant_id="tenant-a",
-        resolver_payload=payload or SourceLocatorPayloadV1(item_id="item-1"),
+        resolver_payload=payload or _payload(source_kind, item_id="item-1"),
     )
 
 
@@ -140,7 +173,7 @@ def test_locator_contracts_are_strict_frozen_versioned_and_deterministic() -> No
     with pytest.raises(ValidationError, match="Input should be 1"):
         SourceLocatorEnvelope(**{**locator.model_dump(), "resolver_payload_version": 2})
     with pytest.raises(ValidationError, match="Input should be 1"):
-        SourceLocatorPayloadV1(item_id="item", schema_version=2)
+        MediaLocatorPayloadV1(item_id="item", schema_version=2)
     with pytest.raises(ValidationError):
         SourceLocatorEnvelope(
             **{
@@ -187,7 +220,7 @@ def test_locator_payload_rejects_data_selected_code_paths_and_urls(
     field: str, value: str
 ) -> None:
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
-        SourceLocatorPayloadV1(item_id="item", **{field: value})
+        MediaLocatorPayloadV1(item_id="item", **{field: value})
 
 
 def test_unknown_source_kind_and_hostile_constructed_instance_fail_closed() -> None:
@@ -204,6 +237,35 @@ def test_unknown_source_kind_and_hostile_constructed_instance_fail_closed() -> N
             _authorization(),
             _policy(open_external=False),
         )
+    with pytest.raises(ValidationError, match="payload source kind"):
+        SourceLocatorEnvelope(
+            **{
+                **locator.model_dump(),
+                "resolver_payload": SQLLocatorPayloadV1(item_id="result-1"),
+            }
+        )
+    hostile_wrong_payload = SourceLocatorEnvelope.model_construct(
+        **{
+            **locator.model_dump(),
+            "resolver_payload": SQLLocatorPayloadV1(item_id="result-1"),
+        }
+    )
+    with pytest.raises(ValidationError):
+        validate_native_locator(
+            hostile_wrong_payload,
+            _authorization(),
+            _policy(open_external=False),
+        )
+    hostile_payload = {
+        **locator.model_dump(mode="json"),
+        "resolver_payload": {
+            "schema_version": 1,
+            "source_kind": "plugin",
+            "item_id": "item-1",
+        },
+    }
+    with pytest.raises(ValidationError):
+        SourceLocatorEnvelope.model_validate_json(json.dumps(hostile_payload))
 
 
 @pytest.mark.parametrize(
@@ -221,19 +283,8 @@ def test_source_kinds_reject_unrelated_typed_location_hints(
     field: str,
     value: str | int | float,
 ) -> None:
-    payload = SourceLocatorPayloadV1(item_id="item", **{field: value})
-    locator_factory = (
-        _local_locator
-        if source_kind
-        in {
-            CanonicalSourceKind.MEDIA_DB,
-            CanonicalSourceKind.NOTES,
-            CanonicalSourceKind.CHAT_HISTORY,
-        }
-        else _server_locator
-    )
-    with pytest.raises(ValidationError, match="location hint"):
-        locator_factory(source_kind=source_kind, payload=payload)
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        _payload(source_kind, item_id="item", **{field: value})
 
 
 @pytest.mark.parametrize(
@@ -257,7 +308,7 @@ def test_file_backed_notes_reject_unsafe_relative_path_semantics(
     relative_path: str,
 ) -> None:
     with pytest.raises(ValidationError):
-        SourceLocatorPayloadV1(
+        NoteLocatorPayloadV1(
             item_id="note-1",
             source_root_id="notes-root",
             relative_path=relative_path,
@@ -272,7 +323,7 @@ def test_note_source_root_is_a_bounded_opaque_id_not_a_path(
     source_root_id: str,
 ) -> None:
     with pytest.raises(ValidationError):
-        SourceLocatorPayloadV1(
+        NoteLocatorPayloadV1(
             item_id="note-1",
             source_root_id=source_root_id,
             relative_path="folder/note.md",
@@ -285,34 +336,37 @@ def test_file_backed_note_requires_root_and_path_as_a_pair() -> None:
         {"relative_path": "folder/note.md"},
     ):
         with pytest.raises(ValidationError, match="together"):
-            SourceLocatorPayloadV1(item_id="note-1", **update)
+            NoteLocatorPayloadV1(item_id="note-1", **update)
 
     locator = _local_locator(
         source_kind=CanonicalSourceKind.NOTES,
-        payload=SourceLocatorPayloadV1(
+        payload=NoteLocatorPayloadV1(
             item_id="note-1",
             source_root_id="notes-root",
             relative_path="folder/note.md",
         ),
     )
     assert locator.resolver_payload.relative_path == "folder/note.md"
+    with pytest.raises(ValidationError, match="server note"):
+        _server_locator(
+            CanonicalSourceKind.NOTES,
+            payload=NoteLocatorPayloadV1(
+                item_id="note-1",
+                source_root_id="notes-root",
+                relative_path="folder/note.md",
+            ),
+        )
 
 
 def test_locator_envelope_accepts_exact_16_kib_and_rejects_one_byte_over() -> None:
     base_payload = {
         "schema_version": 1,
+        "source_kind": "notes",
         "item_id": "note-1",
         "source_root_id": "root",
         "relative_path": "",
         "chunk_id": None,
-        "message_id": None,
-        "entry_id": None,
-        "parent_source_kind": None,
-        "parent_item_id": None,
-        "page_number": None,
         "section_ordinal": None,
-        "start_seconds": None,
-        "end_seconds": None,
     }
     base_envelope = {
         "schema_version": 1,
@@ -568,69 +622,172 @@ def test_sql_is_always_snapshot_only_and_cannot_replay_or_open_paths() -> None:
             )
 
     with pytest.raises(ValidationError):
-        SourceLocatorPayloadV1(item_id="sql-1", path="/var/lib/database")
+        SQLLocatorPayloadV1(item_id="sql-1", path="/var/lib/database")
     with pytest.raises(ValidationError):
-        SourceLocatorPayloadV1(item_id="sql-1", command="SELECT * FROM secrets")
+        SQLLocatorPayloadV1(item_id="sql-1", command="SELECT * FROM secrets")
 
 
 def test_claims_open_only_through_authorized_parent_lineage() -> None:
+    claim_policy = SourceCapabilityPolicy(
+        storage_mode=EvidenceStorageMode.SERVER_REFERENCE,
+        view_snapshot=True,
+        view_source_identity=True,
+        resolve_current=True,
+        open_native=True,
+    )
+    parent_policy = _policy(
+        storage_mode=EvidenceStorageMode.SERVER_REFERENCE,
+        open_external=False,
+    )
     snapshot_only = _server_locator(CanonicalSourceKind.CLAIMS)
+    with pytest.raises(ValidationError, match="appear together"):
+        ClaimLocatorPayloadV1(item_id="claim-1", parent_media_id="media-1")
     with pytest.raises(ValueError, match="authorized parent"):
         validate_native_locator(
             snapshot_only,
             _authorization(local=False),
-            SourceCapabilityPolicy(
-                storage_mode=EvidenceStorageMode.SERVER_REFERENCE,
-                view_snapshot=True,
-                view_source_identity=True,
-                resolve_current=True,
-                open_native=True,
-            ),
+            claim_policy,
             required_capability=SourceCapability.OPEN_NATIVE,
         )
 
-    with_parent = _server_locator(
+    claim = _server_locator(
         CanonicalSourceKind.CLAIMS,
-        payload=SourceLocatorPayloadV1(
+        payload=ClaimLocatorPayloadV1(
             item_id="claim-1",
-            parent_source_kind=CanonicalSourceKind.MEDIA_DB,
-            parent_item_id="media-1",
+            parent_media_id="media-1",
+            parent_chunk_id="chunk-1",
         ),
     )
+    parent = _server_locator(
+        CanonicalSourceKind.MEDIA_DB,
+        payload=MediaLocatorPayloadV1(
+            item_id="media-1",
+            chunk_id="chunk-1",
+        ),
+    )
+    with pytest.raises(ValueError, match="separately validated parent"):
+        validate_native_locator(
+            claim,
+            _authorization(local=False),
+            claim_policy,
+            required_capability=SourceCapability.OPEN_NATIVE,
+        )
+
     assert (
         validate_native_locator(
-            with_parent,
+            claim,
             _authorization(local=False),
+            claim_policy,
+            required_capability=SourceCapability.OPEN_NATIVE,
+            parent_locator=parent,
+            parent_policy=parent_policy,
+        )
+        == claim
+    )
+
+    wrong_identity = _server_locator(
+        CanonicalSourceKind.MEDIA_DB,
+        payload=MediaLocatorPayloadV1(item_id="media-2", chunk_id="chunk-1"),
+    )
+    with pytest.raises(ValueError, match="parent lineage"):
+        validate_native_locator(
+            claim,
+            _authorization(local=False),
+            claim_policy,
+            required_capability=SourceCapability.OPEN_NATIVE,
+            parent_locator=wrong_identity,
+            parent_policy=parent_policy,
+        )
+    assert (
+        validate_native_locator(
+            claim,
+            _authorization(local=False),
+            claim_policy,
+            required_capability=SourceCapability.RESOLVE_CURRENT,
+            parent_locator=parent,
+            parent_policy=parent_policy,
+        )
+        == claim
+    )
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    ("authority", "tenant", "profile", "governance", "media", "chunk"),
+)
+def test_claims_reject_mismatched_parent_authority_scope_and_identity(
+    mismatch: str,
+) -> None:
+    claim = _server_locator(
+        CanonicalSourceKind.CLAIMS,
+        payload=ClaimLocatorPayloadV1(
+            item_id="claim-1",
+            parent_media_id="media-1",
+            parent_chunk_id="chunk-1",
+        ),
+    )
+    parent = _server_locator(
+        CanonicalSourceKind.MEDIA_DB,
+        payload=MediaLocatorPayloadV1(item_id="media-1", chunk_id="chunk-1"),
+    )
+    authorization = _authorization(local=False)
+    if mismatch == "authority":
+        parent = SourceLocatorEnvelope(
+            **{**parent.model_dump(), "authority_id": "other-authority"}
+        )
+        authorization = CitationReadAuthorization(
+            **{
+                **authorization.model_dump(),
+                "allowlisted_authority_ids": (
+                    "server-authority",
+                    "other-authority",
+                ),
+            }
+        )
+    elif mismatch == "tenant":
+        parent = SourceLocatorEnvelope(
+            **{
+                **parent.model_dump(),
+                "authenticated_tenant_id": "tenant-b",
+                "governance_scope_id": "tenant-b",
+            }
+        )
+    elif mismatch == "profile":
+        parent = _local_locator(
+            source_kind=CanonicalSourceKind.MEDIA_DB,
+            payload=MediaLocatorPayloadV1(item_id="media-1", chunk_id="chunk-1"),
+        )
+    elif mismatch == "governance":
+        parent = SourceLocatorEnvelope.model_construct(
+            **{**parent.model_dump(), "governance_scope_id": "tenant-b"}
+        )
+    elif mismatch == "media":
+        parent = _server_locator(
+            CanonicalSourceKind.MEDIA_DB,
+            payload=MediaLocatorPayloadV1(item_id="media-2", chunk_id="chunk-1"),
+        )
+    else:
+        parent = _server_locator(
+            CanonicalSourceKind.MEDIA_DB,
+            payload=MediaLocatorPayloadV1(item_id="media-1", chunk_id="chunk-2"),
+        )
+
+    with pytest.raises((ValidationError, ValueError)):
+        validate_native_locator(
+            claim,
+            authorization,
             SourceCapabilityPolicy(
                 storage_mode=EvidenceStorageMode.SERVER_REFERENCE,
                 view_snapshot=True,
-                view_source_identity=True,
                 resolve_current=True,
                 open_native=True,
             ),
             required_capability=SourceCapability.OPEN_NATIVE,
-        )
-        == with_parent
-    )
-
-    wrong_parent = _server_locator(
-        CanonicalSourceKind.CLAIMS,
-        payload=SourceLocatorPayloadV1(
-            item_id="claim-1",
-            parent_source_kind=CanonicalSourceKind.PROMPTS,
-            parent_item_id="prompt-1",
-        ),
-    )
-    with pytest.raises(ValueError, match="authorized parent"):
-        validate_native_locator(
-            wrong_parent,
-            _authorization(local=False),
-            SourceCapabilityPolicy(
+            parent_locator=parent,
+            parent_policy=_policy(
                 storage_mode=EvidenceStorageMode.SERVER_REFERENCE,
-                view_snapshot=True,
-                open_native=True,
+                open_external=False,
             ),
-            required_capability=SourceCapability.OPEN_NATIVE,
         )
 
 
@@ -653,11 +810,80 @@ def test_runtime_mapping_and_static_inventory_equal_committed_contract_fixture()
     assert {entry.source_kind for entry in SOURCE_INVENTORY_V1} == set(
         CanonicalSourceKind
     )
-    assert len(SOURCE_INVENTORY_V1) == len(CanonicalSourceKind)
+    inventory_keys = {
+        (entry.source_kind, entry.authority_scope) for entry in SOURCE_INVENTORY_V1
+    }
+    assert len(inventory_keys) == len(SOURCE_INVENTORY_V1)
+    assert len(SOURCE_INVENTORY_V1) == len(CanonicalSourceKind) + 3
+    assert set(SOURCE_INVENTORY_BY_SCOPE_V1) == inventory_keys
     with pytest.raises(TypeError):
         RUNTIME_SOURCE_KIND_TO_CANONICAL_V1["plugin"] = "sql"  # type: ignore[index]
     with pytest.raises(ValidationError, match="frozen"):
         SOURCE_INVENTORY_V1[0].locator_version = 2  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        SOURCE_INVENTORY_BY_SCOPE_V1[
+            (CanonicalSourceKind.SQL, AuthorityScope.LOCAL_PROFILE)
+        ] = SOURCE_INVENTORY_V1[0]  # type: ignore[index]
+
+
+@pytest.mark.parametrize(
+    "source_kind",
+    (
+        CanonicalSourceKind.MEDIA_DB,
+        CanonicalSourceKind.NOTES,
+        CanonicalSourceKind.CHAT_HISTORY,
+    ),
+)
+def test_shared_source_kinds_have_local_and_server_authority_variants(
+    source_kind: CanonicalSourceKind,
+) -> None:
+    local = _local_locator(source_kind=source_kind)
+    server = _server_locator(source_kind)
+    entries = [
+        entry for entry in SOURCE_INVENTORY_V1 if entry.source_kind is source_kind
+    ]
+
+    assert {entry.authority_scope for entry in entries} == {
+        AuthorityScope.LOCAL_PROFILE,
+        AuthorityScope.AUTHENTICATED_TENANT,
+    }
+    assert (
+        validate_native_locator(
+            local,
+            _authorization(),
+            _policy(open_external=False),
+        )
+        == local
+    )
+    assert (
+        validate_native_locator(
+            server,
+            _authorization(local=False),
+            _policy(
+                storage_mode=EvidenceStorageMode.SERVER_REFERENCE,
+                open_external=False,
+            ),
+        )
+        == server
+    )
+
+
+def test_every_inventory_variant_has_a_matching_strict_payload_and_scope() -> None:
+    for entry in SOURCE_INVENTORY_V1:
+        local = entry.authority_scope is AuthorityScope.LOCAL_PROFILE
+        locator = (
+            _local_locator(source_kind=entry.source_kind)
+            if local
+            else _server_locator(entry.source_kind)
+        )
+        assert (
+            validate_native_locator(
+                locator,
+                _authorization(local=local),
+                entry.default_policy,
+            )
+            == locator
+        )
 
 
 def test_imported_and_legacy_candidates_stay_inert_after_parsing() -> None:
@@ -733,6 +959,15 @@ def test_rebinding_requires_fresh_lookup_explicit_decision_and_matching_scope() 
         decided_at=NOW,
     )
     before = candidate.model_dump_json()
+    with pytest.raises(ValueError, match="resolve_current"):
+        rebind_inert_locator(
+            candidate,
+            lookup,
+            decision,
+            _authorization(resolve_current=False, view_snapshot=True),
+            now=NOW + timedelta(minutes=1),
+        )
+
     rebound = rebind_inert_locator(
         candidate,
         lookup,
