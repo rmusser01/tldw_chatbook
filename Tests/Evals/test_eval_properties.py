@@ -17,6 +17,7 @@ import pytest
 import string
 import json
 import tempfile
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 try:
@@ -681,7 +682,7 @@ class TestConcurrencyProperties:
 
         # Use a temporary file database for thread safety
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-            temp_path = f.name
+            temp_path = str(Path(f.name).resolve())
 
         try:
             temp_db = EvalsDB(db_path=temp_path, client_id="test_client")

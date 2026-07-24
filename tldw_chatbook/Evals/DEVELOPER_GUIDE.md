@@ -29,8 +29,23 @@ class EvaluationOrchestrator:
 - Error handling coordination
 - Result aggregation
 
-**Critical Bug Fix (v2.0.0):**
-The `_active_tasks` dictionary must be initialized in `__init__` to prevent `AttributeError` when calling `cancel_evaluation()`.
+`_active_tasks` maps each durable run ID to the `asyncio.Task` that owns its
+terminal-state cleanup. Only that owner removes the registration. Public
+cancellation is therefore awaited:
+
+```python
+cancelled = await orchestrator.cancel_evaluation(run_id)
+```
+
+`run_evaluation()` accepts sync or async callbacks with these signatures:
+
+```python
+run_started_callback(run_id)
+progress_callback(completed, total, result)
+```
+
+The start callback runs after the row is `running` and registered, before
+sample work. Progress runs only after that sample result is durably stored.
 
 ### 2. Error Handling System (`eval_errors.py`)
 
@@ -725,14 +740,18 @@ from tldw_chatbook.Evals.eval_runner import EvalRunner
 from tldw_chatbook.Evals.eval_orchestrator import EvaluationOrchestrator
 ```
 
-2. **Fix _active_tasks usage:**
+2. **Await cancellation and asynchronous shutdown:**
 ```python
-# Old (would crash)
+# Old
 orchestrator.cancel_evaluation(run_id)
 
-# New (works)
-orchestrator.cancel_evaluation(run_id)  # _active_tasks initialized
+# New
+await orchestrator.cancel_evaluation(run_id)
+await orchestrator.aclose()
 ```
+
+Synchronous `close()` remains available only when no run is active and raises
+`RuntimeError` rather than abandoning owned work.
 
 3. **Use unified error handling:**
 ```python

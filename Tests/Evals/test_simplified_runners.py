@@ -62,7 +62,12 @@ class TestMultilingualEvaluationRunner:
             metric="exact_match",
         )
 
-        model_config = {"provider": "test", "model_id": "test", "api_key": "test"}
+        model_config = {
+            "provider": "test",
+            "model_id": "test",
+            "api_key": "test",
+            "retry_attempts": 0,
+        }
         runner = MultilingualEvaluationRunner(task_config, model_config)
 
         # Test various languages if the method exists

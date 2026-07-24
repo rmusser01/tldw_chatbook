@@ -525,6 +525,7 @@ async def _execute_evaluation(app: "TldwCli", config: Dict[str, Any]):
         orchestrator = get_orchestrator()
 
         # Update progress tracker if available
+        evals_window = None
         progress_tracker = None
         cost_estimator = None
         try:
@@ -535,97 +536,87 @@ async def _execute_evaluation(app: "TldwCli", config: Dict[str, Any]):
         except Exception:
             pass
 
-        # Use the new EvaluationProgressAdapter for better integration
-        progress_adapter = EvaluationProgressAdapter(
-            app, config.get("run_id", "current")
-        )
+        progress_adapter = None
+
+        def run_started_callback(run_id: str) -> None:
+            """Bind UI state to the durable run before sample work starts."""
+            nonlocal progress_adapter
+            progress_adapter = EvaluationProgressAdapter(app, run_id)
+            if progress_tracker:
+                progress_tracker.start_evaluation(config.get("max_samples", 100))
+            if cost_estimator:
+                cost_estimator.start_tracking(run_id)
 
         async def progress_callback(
-            progress: EvalProgress, sample_result: Optional[EvalSampleResult] = None
+            completed: int,
+            total: int,
+            sample_result: EvalSampleResult,
         ):
             """Enhanced progress callback using the adapter."""
+            progress = EvalProgress(
+                current=completed,
+                total=total,
+                current_task=sample_result.sample_id,
+            )
+            if progress_adapter is None:
+                raise RuntimeError("Evaluation progress arrived before run start")
             await progress_adapter.on_progress(progress, sample_result)
 
             # Also update the UI directly for backward compatibility
             try:
+                result_dict = {
+                    "error_info": sample_result.error_info,
+                    "sample_id": sample_result.sample_id,
+                    "metrics": sample_result.metrics,
+                }
 
-                def update_ui():
-                    # Convert result to dict format if needed
-                    result_dict = None
-                    if sample_result and hasattr(sample_result, "__dict__"):
-                        result_dict = {
-                            "error_info": getattr(sample_result, "error_info", None),
-                            "sample_id": getattr(sample_result, "sample_id", None),
-                            "metrics": getattr(sample_result, "metrics", {}),
-                        }
-
-                    # Use EvalsWindow's update method if available
-                    if hasattr(evals_window, "update_evaluation_progress"):
-                        evals_window.update_evaluation_progress(
-                            run_id=config.get("run_id", "current"),
-                            completed=progress.current,
-                            total=progress.total,
-                            current_result=result_dict,
+                if evals_window and hasattr(
+                    evals_window, "update_evaluation_progress"
+                ):
+                    evals_window.update_evaluation_progress(
+                        run_id=progress_adapter.eval_id,
+                        completed=progress.current,
+                        total=progress.total,
+                        current_result=result_dict,
+                    )
+                elif progress_tracker:
+                    progress_tracker.current_progress = progress.current
+                    progress_tracker.total_samples = progress.total
+                    if progress.current == progress.total:
+                        progress_tracker.complete_evaluation()
+                    else:
+                        progress_tracker.status_message = (
+                            f"Processing sample {progress.current}/{progress.total}"
                         )
-                    elif progress_tracker:
-                        # Fallback to direct progress tracker update
-                        progress_tracker.current_progress = progress.current
-                        progress_tracker.total_samples = progress.total
-
-                        # Update status message
-                        if progress.current == progress.total:
-                            progress_tracker.complete_evaluation()
-                        else:
-                            progress_tracker.status_message = (
-                                f"Processing sample {progress.current}/{progress.total}"
-                            )
-
-                app.call_from_thread(update_ui)
             except Exception as e:
                 logger.error(f"Error updating progress: {e}")
 
         # Get model details for cost estimation
         model_info = orchestrator.db.get_model(config["model_id"])
         if cost_estimator and model_info:
-            # Show cost estimation
-            app.call_from_thread(
-                cost_estimator.estimate_cost,
+            cost_estimator.estimate_cost(
                 model_info["provider"],
                 model_info["model_id"],
                 config.get("max_samples", 100),
             )
 
-        # Start evaluation
-        if progress_tracker:
-            app.call_from_thread(
-                progress_tracker.start_evaluation, config.get("max_samples", 100)
-            )
-
-        # Generate run ID for tracking
-        from uuid import uuid4
-
-        run_id = str(uuid4())
-
-        # Start cost tracking
-        if cost_estimator:
-            app.call_from_thread(cost_estimator.start_tracking, run_id)
-
         # Modified progress callback to include cost tracking
         async def enhanced_progress_callback(
-            progress: EvalProgress, sample_result: Optional[EvalSampleResult] = None
+            completed: int,
+            total: int,
+            sample_result: EvalSampleResult,
         ):
             # Call original progress callback
-            await progress_callback(progress, sample_result)
+            await progress_callback(completed, total, sample_result)
 
             # Update cost if we have token counts
-            if cost_estimator and sample_result and hasattr(sample_result, "metadata"):
+            if cost_estimator and sample_result.metadata:
                 metadata = sample_result.metadata or {}
                 if "input_tokens" in metadata or "output_tokens" in metadata:
-                    app.call_from_thread(
-                        cost_estimator.update_sample_cost,
+                    cost_estimator.update_sample_cost(
                         metadata.get("input_tokens", 0),
                         metadata.get("output_tokens", 0),
-                        progress.current - 1,  # 0-based index
+                        completed - 1,
                     )
 
         actual_run_id = await orchestrator.run_evaluation(
@@ -636,6 +627,7 @@ async def _execute_evaluation(app: "TldwCli", config: Dict[str, Any]):
             progress_callback=enhanced_progress_callback
             if cost_estimator
             else progress_callback,
+            run_started_callback=run_started_callback,
         )
 
         # Log successful evaluation
@@ -661,7 +653,7 @@ async def _execute_evaluation(app: "TldwCli", config: Dict[str, Any]):
 
         # Finalize cost tracking
         if cost_estimator:
-            cost_result = app.call_from_thread(cost_estimator.finalize_tracking)
+            cost_result = cost_estimator.finalize_tracking()
             if cost_result:
                 app.notify(
                     f"Total cost: {cost_estimator.cost_estimator.format_cost_display(cost_result['total_cost'])}",
@@ -705,7 +697,7 @@ async def _execute_evaluation(app: "TldwCli", config: Dict[str, Any]):
 
         # Update progress tracker with error
         if progress_tracker:
-            app.call_from_thread(progress_tracker.error_evaluation, str(e))
+            progress_tracker.error_evaluation(str(e))
 
 
 # === RESULTS MANAGEMENT EVENTS ===
@@ -1647,7 +1639,7 @@ async def handle_cancel_evaluation(app: "TldwCli", run_id: Optional[str]) -> Non
 
     try:
         orchestrator = get_orchestrator()
-        success = orchestrator.cancel_evaluation(run_id)
+        success = await orchestrator.cancel_evaluation(run_id)
 
         if success:
             log_counter("eval_ui_evaluation_cancelled", labels={"run_id": run_id})

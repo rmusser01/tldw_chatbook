@@ -14,6 +14,7 @@ Coordinates the complete evaluation pipeline:
 This is the main entry point for running evaluations.
 """
 
+import asyncio
 import time
 import sqlite3
 from datetime import datetime, timezone
@@ -24,7 +25,7 @@ from contextlib import contextmanager
 from loguru import logger
 
 from .task_loader import TaskLoader, TaskConfig
-from .eval_runner import EvalRunner, EvalSampleResult
+from .eval_runner import EvalRunner, EvalSampleResult, _invoke_callback
 
 # Use existing infrastructure
 from tldw_chatbook.DB.Evals_DB import EvalsDB
@@ -285,6 +286,7 @@ class EvaluationOrchestrator:
         max_samples: int = None,
         config_overrides: Dict[str, Any] = None,
         progress_callback: Callable = None,
+        run_started_callback: Callable = None,
     ) -> str:
         """
         Run a complete evaluation.
@@ -296,6 +298,7 @@ class EvaluationOrchestrator:
             max_samples: Maximum number of samples to evaluate (None for all)
             config_overrides: Override task configuration parameters
             progress_callback: Function to call with progress updates
+            run_started_callback: Sync or async callback receiving the durable run ID
 
         Returns:
             Evaluation run ID
@@ -399,6 +402,12 @@ class EvaluationOrchestrator:
             # Update run status to running
             self.db.update_run_status(run_id, "running")
 
+            owner_task = asyncio.current_task()
+            if owner_task is None:
+                raise RuntimeError("Evaluation must run inside an asyncio task")
+            self._active_tasks[run_id] = owner_task
+            await _invoke_callback(run_started_callback, run_id)
+
             # Create evaluation runner with model config
             model_config = {
                 "provider": model_data["provider"],
@@ -409,7 +418,9 @@ class EvaluationOrchestrator:
             eval_runner = EvalRunner(task_config, model_config)
 
             # Create progress callback wrapper
-            def progress_wrapper(completed: int, total: int, result: EvalSampleResult):
+            async def progress_wrapper(
+                completed: int, total: int, result: EvalSampleResult
+            ):
                 # Store individual result
                 self.db.store_result(
                     run_id=run_id,
@@ -450,8 +461,9 @@ class EvaluationOrchestrator:
                             )
 
                 # Call user progress callback if provided
-                if progress_callback:
-                    progress_callback(completed, total, result)
+                await _invoke_callback(
+                    progress_callback, completed, total, result
+                )
 
                 # Log progress
                 if completed % 10 == 0 or completed == total:
@@ -504,14 +516,24 @@ class EvaluationOrchestrator:
 
             stored_result_count = len(self.db.get_results_for_run(run_id))
             expected_result_count = len(results)
-            result_storage_failed = stored_result_count < expected_result_count
-            final_status = "failed" if result_storage_failed else "completed"
-            final_error = None
-            if result_storage_failed:
-                final_error = (
+            sample_error_count = sum(
+                1
+                for result in results
+                if result.error_info or "error" in result.metrics
+            )
+            terminal_issues = []
+            if sample_error_count:
+                terminal_issues.append(
+                    f"{sample_error_count} of {expected_result_count} "
+                    "evaluation samples failed"
+                )
+            if stored_result_count != expected_result_count:
+                terminal_issues.append(
                     f"Only stored {stored_result_count} of "
                     f"{expected_result_count} evaluation results"
                 )
+            final_status = "failed" if terminal_issues else "completed"
+            final_error = "; ".join(terminal_issues) or None
 
             self.db.update_run_status(run_id, final_status, final_error)
 
@@ -551,6 +573,17 @@ class EvaluationOrchestrator:
             logger.info(f"Results summary: {aggregate_metrics}")
 
             return run_id
+
+        except asyncio.CancelledError:
+            if run_id:
+                try:
+                    self.db.update_run_status(run_id, "cancelled")
+                except Exception as status_error:
+                    logger.error(
+                        f"Could not persist cancellation for {run_id}: "
+                        f"{status_error}"
+                    )
+            raise
 
         except Exception as e:
             logger.error(f"Evaluation failed: {e}")
@@ -611,6 +644,8 @@ class EvaluationOrchestrator:
         finally:
             # Always unregister the run from concurrent manager
             if run_id:
+                if self._active_tasks.get(run_id) is asyncio.current_task():
+                    self._active_tasks.pop(run_id, None)
                 await self.concurrent_manager.unregister_run(run_id)
 
     def get_run_summary(self, run_id: str) -> Dict[str, Any]:
@@ -833,7 +868,7 @@ class EvaluationOrchestrator:
 
         return categories
 
-    def cancel_evaluation(self, run_id: str) -> bool:
+    async def cancel_evaluation(self, run_id: str) -> bool:
         """
         Cancel an active evaluation run.
 
@@ -843,29 +878,19 @@ class EvaluationOrchestrator:
         Returns:
             True if successfully cancelled, False otherwise
         """
-        try:
-            # Check if this run is active
-            if run_id in self._active_tasks:
-                # Cancel the task
-                task = self._active_tasks[run_id]
-                if task and not task.done():
-                    task.cancel()
-                    logger.info(f"Cancelled evaluation run: {run_id}")
-
-                # Remove from active tasks
-                del self._active_tasks[run_id]
-
-                # Update run status in database
-                self.db.update_run(run_id, {"status": "cancelled"})
-
-                return True
-            else:
-                logger.warning(f"Evaluation run not found or not active: {run_id}")
-                return False
-
-        except Exception as e:
-            logger.error(f"Error cancelling evaluation {run_id}: {e}")
+        task = self._active_tasks.get(run_id)
+        if task is None or task.done():
+            logger.warning(f"Evaluation run not found or not active: {run_id}")
             return False
+
+        task.cancel()
+        logger.info(f"Cancellation requested for evaluation run: {run_id}")
+        if task is not asyncio.current_task():
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        return True
 
     def get_run_status(self, run_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -941,12 +966,23 @@ class EvaluationOrchestrator:
             # Return empty list but don't crash
             return []
 
-    def close(self):
-        """Close database connections and cancel active runs."""
-        # Cancel all active runs
-        for run_id in list(self._active_tasks.keys()):
-            self.cancel_evaluation(run_id)
+    async def aclose(self) -> None:
+        """Cancel and drain active evaluations before closing the database."""
+        tasks = list(self._active_tasks.values())
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self.db.close()
 
+    def close(self) -> None:
+        """Close the database when no evaluation owns active work."""
+        if self._active_tasks:
+            raise RuntimeError(
+                "Cannot close orchestrator while an active evaluation is running; "
+                "await aclose() instead"
+            )
         self.db.close()
 
 
