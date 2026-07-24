@@ -19,6 +19,7 @@ from tldw_chatbook.TTS.adapter_registry import (
 from tldw_chatbook.TTS.adapter_types import (
     ProgressSink,
     TTSAudioResponse,
+    TTSOperationError,
     TTSProgress,
     TTSProviderDescriptor,
     TTSProviderSpec,
@@ -526,6 +527,61 @@ async def test_stream_failure_preserves_primary_when_response_cleanup_fails() ->
 
 
 @pytest.mark.asyncio
+async def test_safe_operation_error_survives_response_cleanup_failure() -> None:
+    primary_error = TTSOperationError(
+        code="generation_failed",
+        message="Audio generation failed",
+        retryable=False,
+        operation_id="op-test",
+    )
+
+    class SafeStreamFailureAdapter(FakeAdapter):
+        async def synthesize(
+            self,
+            request: TTSRequest,
+            progress_sink: ProgressSink | None = None,
+        ) -> TTSAudioResponse:
+            del progress_sink
+
+            async def stream():
+                raise primary_error
+                yield b"unreachable"
+
+            async def cleanup() -> None:
+                self.response_close_calls += 1
+                raise RuntimeError("response cleanup failed")
+
+            return TTSAudioResponse(
+                provider_id=self.provider_id,
+                model_id=request.model_id,
+                audio_format=request.response_format,
+                content_type="audio/mpeg",
+                byte_stream=stream(),
+                cleanup=cleanup,
+            )
+
+    adapter = SafeStreamFailureAdapter("openai")
+    service = service_for_adapter(adapter)
+    stream = service.generate_audio_stream(
+        speech_request(),
+        "openai_official_tts-1",
+    )
+
+    with pytest.raises(TTSOperationError) as error:
+        await anext(stream)
+
+    assert error.value is primary_error
+    assert error.value.code == "generation_failed"
+    assert str(error.value) == "Audio generation failed"
+    assert error.value.__notes__ == [
+        "TTS cleanup also failed while preserving the original error"
+    ]
+    assert adapter.response_close_calls == 1
+    await service.registry.reconfigure_provider("openai", {"revision": 2})
+    assert adapter.close_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_compatibility_generator_releases_response_on_cancellation() -> None:
     started = asyncio.Event()
     cancelled = asyncio.Event()
@@ -750,6 +806,39 @@ async def test_managed_response_preserves_immutable_metadata_and_lease() -> None
     await response.aclose()
     assert adapter.response_close_calls == 1
     assert adapter.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_managed_response_rejects_nested_metadata_and_releases_resources() -> (
+    None
+):
+    class NestedMetadataAdapter(FakeAdapter):
+        async def synthesize(
+            self,
+            request: TTSRequest,
+            progress_sink: ProgressSink | None = None,
+        ) -> TTSAudioResponse:
+            response = await super().synthesize(request, progress_sink)
+            response.metadata = {"unsafe": []}  # type: ignore[assignment]
+            return response
+
+    adapter = NestedMetadataAdapter("openai")
+    registry = registry_for_adapter(adapter)
+    service = TTSService(registry)
+    managed_response: TTSAudioResponse | None = None
+
+    try:
+        with pytest.raises(
+            TypeError,
+            match="TTS audio response metadata values must be immutable scalars",
+        ):
+            managed_response = await service.synthesize(tts_request())
+    finally:
+        if managed_response is not None:
+            await managed_response.aclose()
+
+    assert adapter.response_close_calls == 1
+    assert registry._total_leases() == 0
 
 
 @pytest.mark.asyncio

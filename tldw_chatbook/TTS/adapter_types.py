@@ -38,18 +38,99 @@ class TTSProviderReconfiguringError(RuntimeError):
     """Raised when an exclusive provider handoff blocks new operations."""
 
 
-@dataclass(frozen=True, slots=True)
 class TTSOperationError(RuntimeError):
     """A provider-neutral operation failure with safe, stable details."""
 
-    code: TTSOperationCode
-    message: str
-    retryable: bool
-    operation_id: str
-    recovery_action: str | None = None
+    __slots__ = ("_code", "_retryable", "_operation_id", "_recovery_action")
 
-    def __post_init__(self) -> None:
-        RuntimeError.__init__(self, self.message)
+    _code: TTSOperationCode
+    _retryable: bool
+    _operation_id: str
+    _recovery_action: str | None
+    _standard_exception_attributes = frozenset(
+        {
+            "__cause__",
+            "__context__",
+            "__notes__",
+            "__suppress_context__",
+            "__traceback__",
+        }
+    )
+
+    def __init__(
+        self,
+        *,
+        code: TTSOperationCode,
+        message: str,
+        retryable: bool,
+        operation_id: str,
+        recovery_action: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        object.__setattr__(self, "_code", code)
+        object.__setattr__(self, "_retryable", retryable)
+        object.__setattr__(self, "_operation_id", operation_id)
+        object.__setattr__(self, "_recovery_action", recovery_action)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if name in self._standard_exception_attributes:
+            BaseException.__setattr__(self, name, value)
+            return
+        raise AttributeError("TTS operation error attributes are read-only")
+
+    def __reduce__(
+        self,
+    ) -> tuple[Callable[..., TTSOperationError], tuple[Any, ...]]:
+        notes = tuple(
+            note for note in getattr(self, "__notes__", ()) if isinstance(note, str)
+        )
+        return (
+            _restore_tts_operation_error,
+            (
+                self.code,
+                str(self),
+                self.retryable,
+                self.operation_id,
+                self.recovery_action,
+                notes,
+            ),
+        )
+
+    @property
+    def code(self) -> TTSOperationCode:
+        return self._code
+
+    @property
+    def retryable(self) -> bool:
+        return self._retryable
+
+    @property
+    def operation_id(self) -> str:
+        return self._operation_id
+
+    @property
+    def recovery_action(self) -> str | None:
+        return self._recovery_action
+
+
+def _restore_tts_operation_error(
+    code: TTSOperationCode,
+    message: str,
+    retryable: bool,
+    operation_id: str,
+    recovery_action: str | None,
+    notes: tuple[str, ...],
+) -> TTSOperationError:
+    error = TTSOperationError(
+        code=code,
+        message=message,
+        retryable=retryable,
+        operation_id=operation_id,
+        recovery_action=recovery_action,
+    )
+    for note in notes:
+        error.add_note(note)
+    return error
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,7 +205,7 @@ class TTSAudioResponse:
         byte_stream: AsyncIterator[bytes],
         sample_rate: int | None = None,
         cleanup: CleanupCallback | None = None,
-        metadata: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, str | int | float | bool | None] | None = None,
     ) -> None:
         self.provider_id = provider_id
         self.model_id = model_id
@@ -132,7 +213,15 @@ class TTSAudioResponse:
         self.content_type = content_type
         self.byte_stream = byte_stream
         self.sample_rate = sample_rate
-        self.metadata = MappingProxyType({} if metadata is None else dict(metadata))
+        metadata_copy = {} if metadata is None else dict(metadata)
+        if any(
+            type(value) not in (str, int, float, bool, type(None))
+            for value in metadata_copy.values()
+        ):
+            raise TypeError(
+                "TTS audio response metadata values must be immutable scalars"
+            )
+        self.metadata = MappingProxyType(metadata_copy)
         self._cleanup_callbacks = [cleanup] if cleanup is not None else []
         self._close_lock = asyncio.Lock()
         self._closed = False

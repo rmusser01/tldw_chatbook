@@ -22,7 +22,11 @@ class FakeAdapter:
         *,
         chunks: tuple[bytes, ...] = (b"audio",),
         close_order: list[str] | None = None,
-        response_metadata: Mapping[str, Any] | None = None,
+        response_metadata: Mapping[
+            str,
+            str | int | float | bool | None,
+        ]
+        | None = None,
     ) -> None:
         self.provider_id = provider_id
         self.chunks = chunks

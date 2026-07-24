@@ -204,11 +204,22 @@ class TTSService:
             await _cleanup_preserving_primary(resources.close, error)
             raise
 
-        managed_response = _ManagedAudioResponse(
-            response,
-            resources,
-            self._responses.discard,
-        )
+        try:
+            managed_response = _ManagedAudioResponse(
+                response,
+                resources,
+                self._responses.discard,
+            )
+        except BaseException as error:
+
+            async def close_unmanaged_response() -> None:
+                try:
+                    await response.aclose()
+                finally:
+                    await resources.close()
+
+            await _cleanup_preserving_primary(close_unmanaged_response, error)
+            raise
         self._responses.add(managed_response)
         if self._close_signal.is_set():
             closed_error = TTSRegistryClosedError("The TTS service is closed")
