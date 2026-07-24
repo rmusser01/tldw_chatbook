@@ -1,11 +1,11 @@
 ---
 id: TASK-401.3
 title: Define governed citation source locator contracts
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-24 00:43'
-updated_date: '2026-07-24 06:05'
+updated_date: '2026-07-24 07:00'
 labels:
   - rag
   - citations
@@ -29,11 +29,11 @@ Define typed inert source locators, capability policy, and a versioned source in
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 SourceLocatorEnvelope and static resolver registration reject arbitrary classes, commands, paths, URL handlers, and unknown payload versions.
-- [ ] #2 Storage mode and view, resolve, native-open, external-open, compare, refresh, and export capabilities are independently policy-derived.
-- [ ] #3 The versioned inventory classifies every enabled local and pinned server source kind including claims and snapshot-only SQL evidence.
-- [ ] #4 Imported and legacy free-form locators remain inert until a current authority lookup and explicit rebinding succeed.
-- [ ] #5 A bounded read-authorization contract binds profile or tenant scope, authority, and independent capabilities before governed payload hydration.
+- [x] #1 SourceLocatorEnvelope and static resolver registration reject arbitrary classes, commands, paths, URL handlers, and unknown payload versions.
+- [x] #2 Storage mode and view, resolve, native-open, external-open, compare, refresh, and export capabilities are independently policy-derived.
+- [x] #3 The versioned inventory classifies every enabled local and pinned server source kind including claims and snapshot-only SQL evidence.
+- [x] #4 Imported and legacy free-form locators remain inert until a current authority lookup and explicit rebinding succeed.
+- [x] #5 A bounded read-authorization contract binds profile or tenant scope, authority, and independent capabilities before governed payload hydration.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,3 +50,15 @@ ADR required: yes
 ADR path: backlog/decisions/024-rag-citation-provenance-and-source-resolution.md
 Reason: This task directly implements ADR-024’s typed locator, capability, authority, and inert rebinding boundary; no new architectural decision is introduced.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented strict frozen citation source locator, capability-policy, inventory, authorization, inert parsing, and explicit rebinding contracts. Source payloads are selected through a static data-only per-kind union; runtime producer mapping and the 14-entry local/server/derived inventory are pinned by a committed fixture. Local and server authority shapes are distinct, SQL remains snapshot-only, and claims current/open operations require an independently validated matching server-media parent lineage.
+
+Hardened the hostile boundary with safe relative-path validation, independent capability checks, five-minute current-authority lookup freshness, model-copy revalidation, and bounded preflight of inert JSON before canonical serialization. The preflight rejects oversized/deep/count/cyclic/non-JSON/non-finite/subclass and hostile bigint inputs without attacker-sized intermediate allocation. No resolver, opener, navigation, URL fetch, persistence, or UI behavior was added.
+
+Verification: 150 focused locator/trace compatibility tests passed; Ruff check/format and git diff checks passed. Independent specification and quality/security reviews approved the final implementation with no remaining Critical or Important findings.
+
+ADR required: yes. Applied existing backlog/decisions/024-rag-citation-provenance-and-source-resolution.md; no new ADR was needed. Documentation remains the approved design, ADR, plan, and committed inventory fixture.
+<!-- SECTION:NOTES:END -->
