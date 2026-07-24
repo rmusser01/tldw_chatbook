@@ -264,6 +264,7 @@ from ...UI.Workbench import (
 from ...UI.Workbench.focus import WorkbenchFocusRegistry
 from ...state.ui_state import UIState
 from ...Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+from ...Widgets.Chat_Widgets.skill_install_confirm_card import SkillInstallConfirmCard
 from ...Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from ...Widgets.Console import (
@@ -3321,6 +3322,9 @@ class ChatScreen(BaseAppScreen):
         self._console_chat_controller.app = self.app_instance
         self._console_chat_controller.set_pending_approval = (
             self._set_console_pending_approval
+        )
+        self._console_chat_controller.set_pending_skill_install = (
+            self._set_console_pending_skill_install
         )
         self._sync_console_chat_core_state()
         return self._console_chat_controller
@@ -15418,6 +15422,19 @@ class ChatScreen(BaseAppScreen):
         current = self.chat_state.task_resume_state
         self.set_task_resume_state(replace(current, pending_approval=approval))
 
+    def _set_console_pending_skill_install(
+        self, payload: Dict[str, Any] | None
+    ) -> None:
+        """Set/clear the pending skill-install confirm, then sync the task cards.
+
+        UI-thread bridge target for ConsoleChatController.
+        request_skill_install_confirm, invoked via call_from_thread. Mutates
+        only pending_skill_install so an in-flight approval/resume state is
+        never clobbered.
+        """
+        current = self.chat_state.task_resume_state
+        self.set_task_resume_state(replace(current, pending_skill_install=payload))
+
     @on(ChatApprovalCard.ApprovalDecided)
     def handle_console_approval_decided(
         self, event: ChatApprovalCard.ApprovalDecided
@@ -15427,6 +15444,16 @@ class ChatScreen(BaseAppScreen):
         controller = self._console_chat_controller
         if controller is not None:
             controller.resolve_pending_approval(event.decisions)
+
+    @on(SkillInstallConfirmCard.InstallDecided)
+    def handle_console_skill_install_decided(
+        self, event: SkillInstallConfirmCard.InstallDecided
+    ) -> None:
+        """Forward the user's install decision to the controller's worker thread."""
+        event.stop()
+        controller = self._console_chat_controller
+        if controller is not None:
+            controller.resolve_pending_skill_install(event.allow)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """
