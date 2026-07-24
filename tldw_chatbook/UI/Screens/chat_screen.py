@@ -498,7 +498,14 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
         "Composer",
         (
             ("Enter", "send"),
-            ("Shift+Enter", "insert a newline"),
+            ("Ctrl+J", "insert a newline (works in any terminal)"),
+            ("Shift+Enter", "insert a newline (where the terminal delivers it)"),
+            ("Alt+V", "paste an image from the clipboard"),
+            (
+                "Attach",
+                f"attach files — up to {MAX_PENDING_ATTACHMENTS} per message",
+            ),
+            ("Paste / drop path", "paste or drop a file path to attach it"),
             ("Ctrl+K", "switch session"),
             ("Ctrl+T", "new tab"),
         ),
@@ -13597,7 +13604,10 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             event.prevent_default()
             return
-        if event.key == "shift+enter":
+        # TASK-381: Shift+Enter is the natural newline chord, but terminals
+        # deliver it as a plain CR (which sends), so also accept Ctrl+J -- a
+        # control code that survives every terminal -- as a portable newline.
+        if event.key in ("shift+enter", "ctrl+j"):
             composer.insert_text("\n")
             self._sync_console_workbench_actions_from_draft()
             self._dismiss_console_guidance()
