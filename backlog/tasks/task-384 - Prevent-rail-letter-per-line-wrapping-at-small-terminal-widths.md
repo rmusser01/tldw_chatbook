@@ -1,8 +1,9 @@
 ---
 id: TASK-384
 title: Prevent rail letter-per-line wrapping at small terminal widths
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
 labels: [console, ux, keyboard]
 dependencies: []
@@ -23,6 +24,21 @@ At 125x38 and 97x30, the rail renders 'Workspace Default' as 'Def / aul / t' sta
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Below a min width the rail collapses to its handle (it already has a '◂' collapse affordance) or truncates whole tokens with ellipsis
-- [ ] #2 The transcript/composer get width priority
+- [x] #1 Below a min width the rail collapses to its handle (it already has a '◂' collapse affordance) or truncates whole tokens with ellipsis
+- [x] #2 The transcript/composer get width priority
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Served-app-reproduced at 700x480 (97x30 cells): the rail "Workspace: Default"
+status-pair VALUE column shrinks to ~3 cells and word-wrapped "Default" into a
+"Def / aul / t" letter stack. AC#1 (truncate whole tokens with ellipsis): the
+`ConsoleWorkspaceStatusPair` value Static now sets `text-wrap: nowrap` +
+`text-overflow: ellipsis` inline (applies in both the served app and pytest
+pilots, unlike bundle CSS) so "Default" reads "De…" on one line, with the full
+value on hover. AC#2 (transcript width priority): confirmed in the same capture
+the transcript keeps ~52 cols at 700x480 while the rail sits at its min width.
+Vertical space is also reclaimed (1 line vs 3). Served-app-VERIFIED (row 10:
+"Workspace   De…") + a style-contract regression test.
+<!-- SECTION:NOTES:END -->
