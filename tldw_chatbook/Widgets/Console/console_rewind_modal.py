@@ -70,8 +70,10 @@ class ConsoleRewindChoice:
     Args:
         kind: ``"restore"`` or ``"summarize-up-to"``.
         message_id: Native id of the selected prompt row.
-        prompt_text: The selected row's preview text (restore inserts this
-            back into the composer).
+        prompt_text: The selected row's DISPLAY-ONLY preview text (may be
+            truncated). Restore deliberately re-fetches the FULL original
+            text via ``store.get_message(message_id).content`` rather than
+            using this field — never treat it as the message content.
     """
 
     kind: str
