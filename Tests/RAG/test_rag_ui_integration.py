@@ -54,12 +54,16 @@ class MockApp:
         from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
         from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
+        # This mock bypasses application startup, so it must establish the
+        # trusted application-owned namespace that startup normally secures.
+        data_dir = Path.home() / ".local/share/tldw_cli"
+        data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.media_db = MediaDatabase(
-            str(Path.home() / ".local/share/tldw_cli/tldw_cli_media_v2.db"),
+            str(data_dir / "tldw_cli_media_v2.db"),
             client_id="test_client",
         )
         self.rag_db = CharactersRAGDB(
-            str(Path.home() / ".local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db"),
+            str(data_dir / "tldw_chatbook_ChaChaNotes.db"),
             client_id="test_client",
         )
         self.chachanotes_db = self.rag_db

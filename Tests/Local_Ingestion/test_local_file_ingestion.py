@@ -10,7 +10,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict
 
-from tldw_chatbook.Local_Ingestion.local_file_ingestion import parse_local_file_for_ingest
+from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
+    parse_local_file_for_ingest,
+)
 
 
 def _make_pdf_result(**kwargs) -> Dict[str, Any]:
@@ -40,6 +42,50 @@ def _make_ebook_result(**kwargs) -> Dict[str, Any]:
         "metadata": {},
         "error": None,
         "warnings": kwargs.get("warnings", []),
+    }
+
+
+def test_quick_ingest_uses_canonical_media_database_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.Local_Ingestion import local_file_ingestion
+    from tldw_chatbook import config
+
+    expected_path = tmp_path / "runtime" / "media.db"
+    captured: dict[str, object] = {}
+
+    class FakeMediaDatabase:
+        def __init__(self, db_path, client_id):
+            captured["db_path"] = db_path
+            captured["client_id"] = client_id
+
+        def close_connection(self):
+            captured["closed"] = True
+
+    monkeypatch.setattr(
+        config,
+        "get_media_db_path",
+        lambda: expected_path,
+    )
+    monkeypatch.setattr(
+        local_file_ingestion,
+        "MediaDatabase",
+        FakeMediaDatabase,
+    )
+    monkeypatch.setattr(
+        local_file_ingestion,
+        "ingest_local_file",
+        lambda file_path, media_db: {"status": "ok"},
+    )
+
+    result = local_file_ingestion.quick_ingest(tmp_path / "document.txt")
+
+    assert result == {"status": "ok"}
+    assert captured == {
+        "db_path": str(expected_path),
+        "client_id": "quick_ingest",
+        "closed": True,
     }
 
 
@@ -80,7 +126,9 @@ def test_pdf_unimplemented_options_record_warnings(tmp_path: Path, monkeypatch) 
     source = tmp_path / "doc.pdf"
     source.write_bytes(b"%PDF-1.4 stub")
 
-    def fake_process_pdf(engine=None, page_range=None, ocr=None, extract_images=False, **kwargs):
+    def fake_process_pdf(
+        engine=None, page_range=None, ocr=None, extract_images=False, **kwargs
+    ):
         warnings = []
         if page_range is not None:
             warnings.append(f"page_range={page_range}")
@@ -235,11 +283,15 @@ def test_ebook_options_are_routed_to_process_ebook(tmp_path: Path, monkeypatch) 
     assert call["split_chapters"] is True
 
 
-def test_ebook_split_chapters_false_records_warning(tmp_path: Path, monkeypatch) -> None:
+def test_ebook_split_chapters_false_records_warning(
+    tmp_path: Path, monkeypatch
+) -> None:
     source = tmp_path / "book.epub"
     source.write_bytes(b"PK\x03\x04" + b"\x00" * 64)
 
-    def fake_process_ebook(method=None, split_chapters=True, include_toc=True, **kwargs):
+    def fake_process_ebook(
+        method=None, split_chapters=True, include_toc=True, **kwargs
+    ):
         warnings = []
         if not split_chapters:
             warnings.append("split_chapters=False")

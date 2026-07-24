@@ -36,8 +36,9 @@ from textual import on
 # Local Imports
 from tldw_chatbook.config import (
     load_cli_config_and_ensure_existence,
-    DEFAULT_CONFIG_PATH,
     save_setting_to_cli_config,
+    replace_cli_config,
+    export_cli_config_snapshot,
     API_MODELS_BY_PROVIDER,
     check_encryption_needed,
     get_detected_api_providers,
@@ -46,12 +47,14 @@ from tldw_chatbook.config import (
     change_encryption_password,
     get_encryption_password,
     get_cli_setting,
+    get_chachanotes_db_path,
     get_prompts_db_path,
+    get_media_db_path,
+    get_subscriptions_db_path,
+    get_user_data_dir,
 )
 from loguru import logger
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
-from ..DB.Client_Media_DB_v2 import MediaDatabase
-from ..DB.Prompts_DB import PromptsDatabase
 from ..DB.private_sqlite import (
     SQLiteRestoreIndeterminateError,
     connect_private_sqlite,
@@ -69,6 +72,10 @@ from ..Chat.provider_readiness import (
     chat_api_key_field_state,
     chat_api_key_value_to_persist,
 )
+from ..Chatbooks.database_paths import (
+    get_chatbook_database_paths,
+    get_private_chatbooks_dir,
+)
 
 #
 # Local Imports
@@ -79,6 +86,15 @@ if TYPE_CHECKING:
 #######################################################################################################################
 #
 # Functions:
+
+SETTINGS_DATABASES = (
+    ("chachanotes", "ChaChaNotes", "tldw_chatbook_ChaChaNotes"),
+    ("prompts", "Prompts", "tldw_cli_prompts"),
+    ("media", "Media", "tldw_cli_media_v2"),
+    ("evals", "Evals", "tldw_cli_evals"),
+    ("rag", "RAG", "tldw_cli_rag_indexing"),
+    ("subscriptions", "Subscriptions", "tldw_cli_subscriptions"),
+)
 
 
 class ToolsSettingsWindow(Container):
@@ -4493,19 +4509,7 @@ Thank you for using tldw-chatbook! 🎉
             # Parse the TOML to validate it
             config_data = toml.loads(config_text_area.text)
 
-            # Ensure the config directory exists
-            DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-            # Write the configuration to file
-            with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
-                toml.dump(config_data, f)
-
-            # Force reload the configuration to update all caches
-            from tldw_chatbook.config import load_settings
-
-            self.config_data = load_cli_config_and_ensure_existence(force_reload=True)
-            # Also reload the main settings cache
-            load_settings(force_reload=True)
+            self.config_data = replace_cli_config(config_data)
 
             self.app_instance.notify(
                 "Configuration saved successfully!", severity="successful"
@@ -5431,14 +5435,7 @@ Thank you for using tldw-chatbook! 🎉
     async def _export_configuration(self) -> None:
         """Export configuration to a backup file."""
         try:
-            import datetime
-
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_path = DEFAULT_CONFIG_PATH.parent / f"config_backup_{timestamp}.toml"
-
-            with open(backup_path, "w") as f:
-                toml.dump(self.config_data, f)
-
+            backup_path = export_cli_config_snapshot(self.config_data)
             self.app_instance.notify(f"Configuration exported to {backup_path}")
         except Exception as e:
             self.app_instance.notify(
@@ -5976,38 +5973,17 @@ Thank you for using tldw-chatbook! 🎉
             db_config = self.config_data.get("database", {})
             vacuumed = []
 
-            # Vacuum ChaChaNotes database
-            chachanotes_path = Path(
-                db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                )
-            ).expanduser()
-            if chachanotes_path.exists():
-                db = CharactersRAGDB(str(chachanotes_path), "vacuum_operation")
-                db.vacuum()
-                db.close_connection()
-                vacuumed.append("ChaChaNotes")
-
-            # Vacuum Prompts database
-            prompts_path = get_prompts_db_path()
-            if prompts_path.exists():
-                db = PromptsDatabase(str(prompts_path), "vacuum_operation")
-                db.vacuum()
-                db.close_connection()
-                vacuumed.append("Prompts")
-
-            # Vacuum Media database
-            media_path = Path(
-                db_config.get(
-                    "media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
-                )
-            ).expanduser()
-            if media_path.exists():
-                db = MediaDatabase(str(media_path), "vacuum_operation")
-                db.vacuum()
-                db.close_connection()
-                vacuumed.append("Media")
+            for db_name, display_name, _backup_stem in SETTINGS_DATABASES:
+                db_path = self._get_database_path(db_name, db_config)
+                if not db_path or not db_path.exists():
+                    continue
+                conn = connect_private_sqlite("settings.vacuum", db_path)
+                try:
+                    conn.execute("VACUUM")
+                    conn.commit()
+                finally:
+                    conn.close()
+                vacuumed.append(display_name)
 
             # Update UI from worker thread
             self.app.call_from_thread(
@@ -6057,47 +6033,17 @@ Thank you for using tldw-chatbook! 🎉
 
             backed_up = []
 
-            # Backup ChaChaNotes database
-            chachanotes_path = Path(
-                db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                )
-            ).expanduser()
-            if chachanotes_path.exists():
-                backup_path = backup_dir / f"tldw_chatbook_ChaChaNotes_{timestamp}.db"
+            for db_name, display_name, backup_stem in SETTINGS_DATABASES:
+                db_path = self._get_database_path(db_name, db_config)
+                if not db_path or not db_path.exists():
+                    continue
+                backup_path = backup_dir / f"{backup_stem}_{timestamp}.db"
                 copy_private_sqlite(
                     "settings.bulk_backup",
-                    chachanotes_path,
+                    db_path,
                     backup_path,
                 )
-                backed_up.append(("ChaChaNotes", backup_path))
-
-            # Backup Prompts database
-            prompts_path = get_prompts_db_path()
-            if prompts_path.exists():
-                backup_path = backup_dir / f"tldw_cli_prompts_{timestamp}.db"
-                copy_private_sqlite(
-                    "settings.bulk_backup",
-                    prompts_path,
-                    backup_path,
-                )
-                backed_up.append(("Prompts", backup_path))
-
-            # Backup Media database
-            media_path = Path(
-                db_config.get(
-                    "media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
-                )
-            ).expanduser()
-            if media_path.exists():
-                backup_path = backup_dir / f"tldw_cli_media_v2_{timestamp}.db"
-                copy_private_sqlite(
-                    "settings.bulk_backup",
-                    media_path,
-                    backup_path,
-                )
-                backed_up.append(("Media", backup_path))
+                backed_up.append((display_name, backup_path))
 
             # Create backup info file
             info_path = backup_dir / "backup_info.json"
@@ -6146,38 +6092,21 @@ Thank you for using tldw-chatbook! 🎉
             db_config = self.config_data.get("database", {})
             results = []
 
-            # Check ChaChaNotes database
-            chachanotes_path = Path(
-                db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
+            for db_name, display_name, _backup_stem in SETTINGS_DATABASES:
+                db_path = self._get_database_path(db_name, db_config)
+                if not db_path or not db_path.exists():
+                    continue
+                conn = connect_private_sqlite(
+                    "settings.integrity",
+                    db_path,
+                    read_only=True,
                 )
-            ).expanduser()
-            if chachanotes_path.exists():
-                db = CharactersRAGDB(str(chachanotes_path), "integrity_check")
-                result = db.check_integrity()
-                db.close_connection()
-                results.append(f"ChaChaNotes: {'OK' if result else 'FAILED'}")
-
-            # Check Prompts database
-            prompts_path = get_prompts_db_path()
-            if prompts_path.exists():
-                db = PromptsDatabase(str(prompts_path), "integrity_check")
-                result = db.check_integrity()
-                db.close_connection()
-                results.append(f"Prompts: {'OK' if result else 'FAILED'}")
-
-            # Check Media database
-            media_path = Path(
-                db_config.get(
-                    "media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
-                )
-            ).expanduser()
-            if media_path.exists():
-                db = MediaDatabase(str(media_path), "integrity_check")
-                result = db.check_integrity()
-                db.close_connection()
-                results.append(f"Media: {'OK' if result else 'FAILED'}")
+                try:
+                    row = conn.execute("PRAGMA integrity_check").fetchone()
+                finally:
+                    conn.close()
+                result = bool(row and row[0] == "ok")
+                results.append(f"{display_name}: {'OK' if result else 'FAILED'}")
 
             # Report results
             all_ok = all("OK" in r for r in results)
@@ -6222,22 +6151,24 @@ Thank you for using tldw-chatbook! 🎉
 
             # Create export directory
             export_dir = Path.home() / ".local" / "share" / "tldw_cli" / "exports"
-            export_dir.mkdir(parents=True, exist_ok=True)
+            secure_private_directory(
+                export_dir,
+                create=True,
+                application_owned=True,
+            )
 
             # Export from ChaChaNotes database
-            chachanotes_path = Path(
-                db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                )
-            ).expanduser()
+            chachanotes_path = self._get_database_path("chachanotes", db_config)
             if chachanotes_path.exists():
                 db = CharactersRAGDB(str(chachanotes_path), "export_operation")
                 conversations = db.list_all_active_conversations(limit=10000)
 
                 export_path = export_dir / f"conversations_{timestamp}.json"
-                with open(export_path, "w", encoding="utf-8") as f:
-                    json.dump(conversations, f, indent=2, ensure_ascii=False)
+                create_private_text(
+                    export_path,
+                    json.dumps(conversations, indent=2, ensure_ascii=False),
+                    application_owned_directory=export_dir,
+                )
 
                 db.close_connection()
 
@@ -6280,23 +6211,21 @@ Thank you for using tldw-chatbook! 🎉
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
             # Create export directory
-            export_dir = (
-                Path.home()
-                / ".local"
-                / "share"
-                / "tldw_cli"
-                / "exports"
-                / f"notes_{timestamp}"
+            export_root = Path.home() / ".local" / "share" / "tldw_cli" / "exports"
+            secure_private_directory(
+                export_root,
+                create=True,
+                application_owned=True,
             )
-            export_dir.mkdir(parents=True, exist_ok=True)
+            export_dir = export_root / f"notes_{timestamp}"
+            secure_private_directory(
+                export_dir,
+                create=True,
+                application_owned=True,
+            )
 
             # Export from ChaChaNotes database
-            chachanotes_path = Path(
-                db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                )
-            ).expanduser()
+            chachanotes_path = self._get_database_path("chachanotes", db_config)
             if chachanotes_path.exists():
                 db = CharactersRAGDB(str(chachanotes_path), "export_operation")
                 notes = db.list_notes(limit=10000)
@@ -6309,11 +6238,17 @@ Thank you for using tldw-chatbook! 🎉
                     filename = f"{safe_title}_{note['id']}.md"
 
                     note_path = export_dir / filename
-                    with open(note_path, "w", encoding="utf-8") as f:
-                        f.write(f"# {note['title']}\n\n")
-                        f.write(f"Created: {note['created_at']}\n")
-                        f.write(f"Modified: {note['updated_at']}\n\n")
-                        f.write(note["content"])
+                    note_text = (
+                        f"# {note['title']}\n\n"
+                        f"Created: {note['created_at']}\n"
+                        f"Modified: {note['updated_at']}\n\n"
+                        f"{note['content']}"
+                    )
+                    create_private_text(
+                        note_path,
+                        note_text,
+                        application_owned_directory=export_dir,
+                    )
 
                 db.close_connection()
 
@@ -6359,22 +6294,24 @@ Thank you for using tldw-chatbook! 🎉
 
             # Create export directory
             export_dir = Path.home() / ".local" / "share" / "tldw_cli" / "exports"
-            export_dir.mkdir(parents=True, exist_ok=True)
+            secure_private_directory(
+                export_dir,
+                create=True,
+                application_owned=True,
+            )
 
             # Export from ChaChaNotes database
-            chachanotes_path = Path(
-                db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                )
-            ).expanduser()
+            chachanotes_path = self._get_database_path("chachanotes", db_config)
             if chachanotes_path.exists():
                 db = CharactersRAGDB(str(chachanotes_path), "export_operation")
                 characters = db.list_character_cards(limit=10000)
 
                 export_path = export_dir / f"characters_{timestamp}.json"
-                with open(export_path, "w", encoding="utf-8") as f:
-                    json.dump(characters, f, indent=2, ensure_ascii=False)
+                create_private_text(
+                    export_path,
+                    json.dumps(characters, indent=2, ensure_ascii=False),
+                    application_owned_directory=export_dir,
+                )
 
                 db.close_connection()
 
@@ -6432,41 +6369,13 @@ Thank you for using tldw-chatbook! 🎉
         try:
             db_config = self.config_data.get("database", {})
 
-            # Update ChaChaNotes size
-            chachanotes_path = Path(
-                db_config.get(
-                    "chachanotes_db_path",
-                    "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                )
-            ).expanduser()
-            if chachanotes_path.exists():
-                size = self._format_file_size(chachanotes_path.stat().st_size)
+            for db_name, _display_name, _backup_stem in SETTINGS_DATABASES:
+                db_path = self._get_database_path(db_name, db_config)
+                if not db_path or not db_path.exists():
+                    continue
+                size = self._format_file_size(db_path.stat().st_size)
                 try:
-                    size_widget = self.query_one("#db-size-chachanotes")
-                    size_widget.update(f"Size: {size}")
-                except Exception:
-                    pass
-
-            # Update Prompts size
-            prompts_path = get_prompts_db_path()
-            if prompts_path.exists():
-                size = self._format_file_size(prompts_path.stat().st_size)
-                try:
-                    size_widget = self.query_one("#db-size-prompts")
-                    size_widget.update(f"Size: {size}")
-                except Exception:
-                    pass
-
-            # Update Media size
-            media_path = Path(
-                db_config.get(
-                    "media_db_path", "~/.local/share/tldw_cli/tldw_cli_media_v2.db"
-                )
-            ).expanduser()
-            if media_path.exists():
-                size = self._format_file_size(media_path.stat().st_size)
-                try:
-                    size_widget = self.query_one("#db-size-media")
+                    size_widget = self.query_one(f"#db-size-{db_name}")
                     size_widget.update(f"Size: {size}")
                 except Exception:
                     pass
@@ -6768,33 +6677,23 @@ Thank you for using tldw-chatbook! 🎉
             )
 
     def _get_database_path(self, db_name: str, db_config: dict) -> Optional[Path]:
-        """Get the path for a specific database."""
-        path_map = {
-            "chachanotes": db_config.get(
-                "chachanotes_db_path",
-                "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-            ),
-            "media": db_config.get(
-                "media_db_path", "~/.local/share/tldw_cli/tldw_media_db.db"
-            ),
-            "prompts": db_config.get(
-                "prompts_db_path", "~/.local/share/tldw_cli/tldw_prompts_db.db"
-            ),
-            "evals": db_config.get(
-                "evals_db_path", "~/.local/share/tldw_cli/tldw_evals_db.db"
-            ),
-            "rag": db_config.get(
-                "rag_db_path", "~/.local/share/tldw_cli/tldw_rag_db.db"
-            ),
-            "subscriptions": db_config.get(
-                "subscriptions_db_path",
-                "~/.local/share/tldw_cli/tldw_subscriptions_db.db",
-            ),
-        }
+        """Return the same canonical path used by each runtime database owner."""
 
-        if db_name in path_map:
-            return Path(path_map[db_name]).expanduser()
-        return None
+        path_getters = {
+            "chachanotes": get_chachanotes_db_path,
+            "media": get_media_db_path,
+            "prompts": get_prompts_db_path,
+            "evals": lambda: get_user_data_dir() / "evals.db",
+            "rag": lambda: get_user_data_dir() / "rag_indexing.db",
+            "subscriptions": get_subscriptions_db_path,
+        }
+        getter = path_getters.get(db_name)
+        return getter() if getter is not None else None
+
+    def _get_chatbook_import_database_paths(self, db_config: dict) -> dict[str, str]:
+        """Return canonical paths using the Chatbook importer's key contract."""
+
+        return get_chatbook_database_paths()
 
     def _get_schema_version(self, db_path: Path) -> Optional[int]:
         """Get the schema version from a database."""
@@ -6906,8 +6805,7 @@ Thank you for using tldw-chatbook! 🎉
 
         try:
             # Show file picker to select chatbook
-            chatbooks_dir = Path.home() / ".local" / "share" / "tldw_cli" / "chatbooks"
-            chatbooks_dir.mkdir(parents=True, exist_ok=True)
+            chatbooks_dir = get_private_chatbooks_dir()
 
             file_path = await self.app_instance.push_screen(
                 FilePickerDialog(
@@ -6922,28 +6820,7 @@ Thank you for using tldw-chatbook! 🎉
             if file_path:
                 # Get database paths from config
                 db_config = self.config_data.get("database", {})
-                db_paths = {
-                    "chachanotes": db_config.get(
-                        "chachanotes_db_path",
-                        "~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db",
-                    ),
-                    "prompts": db_config.get(
-                        "prompts_db_path", "~/.local/share/tldw_cli/tldw_prompts_db.db"
-                    ),
-                    "media": db_config.get(
-                        "media_db_path", "~/.local/share/tldw_cli/tldw_media_db.db"
-                    ),
-                    "evals": db_config.get(
-                        "evals_db_path", "~/.local/share/tldw_cli/tldw_evals_db.db"
-                    ),
-                    "rag": db_config.get(
-                        "rag_db_path", "~/.local/share/tldw_cli/tldw_rag_db.db"
-                    ),
-                    "subscriptions": db_config.get(
-                        "subscriptions_db_path",
-                        "~/.local/share/tldw_cli/tldw_subscriptions_db.db",
-                    ),
-                }
+                db_paths = self._get_chatbook_import_database_paths(db_config)
 
                 # Initialize importer
                 importer = ChatbookImporter(db_paths)
@@ -6984,18 +6861,20 @@ Thank you for using tldw-chatbook! 🎉
     def _import_chatbook_worker(self, file_path: str, db_paths: dict) -> None:
         """Worker to import chatbook in background."""
         try:
-            from ..Chatbooks.chatbook_importer import ChatbookImporter
+            from ..Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
             from ..Chatbooks.conflict_resolver import ConflictResolution
 
             importer = ChatbookImporter(db_paths)
+            status = ImportStatus()
 
             # Import with default settings
-            success, status = importer.import_chatbook(
+            success, message = importer.import_chatbook(
                 chatbook_path=Path(file_path),
                 conflict_resolution=ConflictResolution.RENAME,
                 prefix_imported=True,
                 import_media=True,
                 import_embeddings=False,
+                import_status=status,
             )
 
             if success:
@@ -7007,8 +6886,9 @@ Thank you for using tldw-chatbook! 🎉
                 )
             else:
                 error_msg = "Import failed"
-                if status.errors:
-                    error_msg += f": {status.errors[0]}"
+                detail = status.errors[0] if status.errors else message
+                if detail:
+                    error_msg += f": {detail}"
                 self.call_from_thread(
                     self.app_instance.notify, error_msg, severity="error"
                 )

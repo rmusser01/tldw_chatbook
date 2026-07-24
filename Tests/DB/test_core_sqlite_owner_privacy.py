@@ -553,7 +553,7 @@ BACKUP_CASES = (
 @pytest.mark.skipif(os.name != "posix", reason="POSIX backup target contract")
 @pytest.mark.parametrize("existing", [False, True], ids=["first-create", "harden"])
 @pytest.mark.parametrize("backup_case", BACKUP_CASES, ids=lambda case: case.name)
-def test_backup_target_uses_private_owner_and_direct_backup(
+def test_backup_target_uses_centralized_private_backup_helper(
     backup_case: BackupCase,
     existing: bool,
     tmp_path: Path,
@@ -572,18 +572,35 @@ def test_backup_target_uses_private_owner_and_direct_backup(
         target.write_bytes(b"")
         target.chmod(0o644)
 
-    seen: list[tuple[str, str | os.PathLike[str], dict[str, Any]]] = []
-    real_connect = private_sqlite.connect_private_sqlite
+    seen: list[tuple[str, sqlite3.Connection, Path, Path]] = []
+    real_backup = private_sqlite.backup_connection_to_private
 
-    def recording_connect(
+    def recording_backup(
         owner_id: str,
-        path: str | os.PathLike[str],
-        **kwargs: Any,
-    ) -> sqlite3.Connection:
-        seen.append((owner_id, path, kwargs.copy()))
-        return real_connect(owner_id, path, **kwargs)
+        connection: sqlite3.Connection,
+        source_database: str | os.PathLike[str],
+        target_database: str | os.PathLike[str],
+    ) -> None:
+        seen.append(
+            (
+                owner_id,
+                connection,
+                Path(source_database),
+                Path(target_database),
+            )
+        )
+        real_backup(
+            owner_id,
+            connection,
+            source_database,
+            target_database,
+        )
 
-    monkeypatch.setattr(backup_case.module, "connect_private_sqlite", recording_connect)
+    monkeypatch.setattr(
+        backup_case.module,
+        "backup_connection_to_private",
+        recording_backup,
+    )
     monkeypatch.setattr(
         Path,
         "resolve",
@@ -596,7 +613,14 @@ def test_backup_target_uses_private_owner_and_direct_backup(
         os.umask(previous_umask)
         _close_database(backup_case.owner, database)
 
-    assert seen == [(backup_case.backup_owner_id, target, {})]
+    assert seen == [
+        (
+            backup_case.backup_owner_id,
+            source_connection,
+            source,
+            target,
+        )
+    ]
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
     assert stat.S_IMODE(target_parent.stat().st_mode) == parent_mode
     with sqlite3.connect(target) as copied:

@@ -3,6 +3,7 @@
 
 import pytest
 import json
+import os
 import zipfile
 from pathlib import Path
 from datetime import datetime
@@ -14,6 +15,7 @@ import sys
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
+import tldw_chatbook.Chatbooks.chatbook_importer as importer_module
 from tldw_chatbook.Chatbooks.conflict_resolver import ConflictResolution
 
 
@@ -97,6 +99,68 @@ class TestChatbookImporter:
     def chatbook_importer(self, temp_db_paths):
         """Create a ChatbookImporter instance with test database paths."""
         return ChatbookImporter(db_paths=temp_db_paths)
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX temp privacy contract")
+    def test_importer_uses_secured_canonical_temp_root(
+        self,
+        temp_db_paths,
+        tmp_path,
+        monkeypatch,
+    ):
+        user_data_dir = tmp_path / "runtime-data"
+        user_data_dir.mkdir(mode=0o700)
+        imports_dir = user_data_dir / "temp" / "imports"
+        imports_dir.mkdir(parents=True, mode=0o755)
+        monkeypatch.setattr(
+            importer_module,
+            "get_user_data_dir",
+            lambda: user_data_dir,
+            raising=False,
+        )
+
+        importer = ChatbookImporter(db_paths=temp_db_paths)
+
+        assert importer.temp_dir == imports_dir
+        assert importer.temp_dir.stat().st_mode & 0o777 == 0o700
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX extraction contract")
+    def test_preview_extracts_privately_and_always_cleans_up(
+        self,
+        chatbook_importer,
+        tmp_path,
+        monkeypatch,
+    ):
+        chatbook_path = tmp_path / "private.zip"
+        with zipfile.ZipFile(chatbook_path, "w") as archive:
+            archive.writestr("manifest.json", "{}")
+            archive.writestr("content/private-note.md", "secret")
+        observed: dict[str, int] = {}
+
+        def inspect_then_fail(handle):
+            extract_dir = Path(handle.name).parent
+            note_path = extract_dir / "content" / "private-note.md"
+            observed["extract_dir"] = extract_dir.stat().st_mode & 0o777
+            observed["content_dir"] = note_path.parent.stat().st_mode & 0o777
+            observed["manifest"] = Path(handle.name).stat().st_mode & 0o777
+            observed["note"] = note_path.stat().st_mode & 0o777
+            raise RuntimeError("stop after privacy inspection")
+
+        monkeypatch.setattr(importer_module.json, "load", inspect_then_fail)
+        previous = os.umask(0)
+        try:
+            manifest, error = chatbook_importer.preview_chatbook(chatbook_path)
+        finally:
+            os.umask(previous)
+
+        assert manifest is None
+        assert "stop after privacy inspection" in error
+        assert observed == {
+            "extract_dir": 0o700,
+            "content_dir": 0o700,
+            "manifest": 0o600,
+            "note": 0o600,
+        }
+        assert list(chatbook_importer.temp_dir.iterdir()) == []
 
     @pytest.fixture
     def sample_chatbook_path(self, tmp_path):
@@ -251,6 +315,33 @@ Keywords: test, sample"""
         assert manifest is None
         assert error is not None
         assert "manifest.json" in error
+
+    @pytest.mark.parametrize("missing_manifest", [False, True])
+    def test_import_chatbook_early_failure_returns_message_string(
+        self,
+        chatbook_importer,
+        tmp_path,
+        missing_manifest,
+    ):
+        """Keep the documented result contract on validation failures."""
+        invalid_path = tmp_path / (
+            "no_manifest.zip" if missing_manifest else "unsupported.chatbook"
+        )
+        if missing_manifest:
+            with zipfile.ZipFile(invalid_path, "w") as zf:
+                zf.writestr("content/test.txt", "test")
+        else:
+            invalid_path.write_text("not a zip archive")
+        status = ImportStatus()
+
+        success, message = chatbook_importer.import_chatbook(
+            chatbook_path=invalid_path,
+            import_status=status,
+        )
+
+        assert success is False
+        assert isinstance(message, str)
+        assert status.errors == [message]
 
     @patch("tldw_chatbook.Chatbooks.chatbook_importer.CharactersRAGDB")
     def test_import_chatbook_no_conflicts(

@@ -14,9 +14,11 @@ import pytest
 
 import tldw_chatbook.DB.private_sqlite as private_sqlite
 from tldw_chatbook.DB.private_sqlite import (
+    SQLITE_OWNER_REGISTRY,
     SQLiteRestoreIndeterminateError,
     SQLiteRestoreBusyError,
     SQLitePrivacyUnverifiedWarning,
+    SQLiteTargetKind,
     _build_read_only_uri,
     backup_connection_to_private,
     connect_private_sqlite,
@@ -32,6 +34,195 @@ class StringPath:
 
     def __fspath__(self) -> str:
         return self.value
+
+
+OWNER_KIND_CASES = tuple(
+    (owner_id, target_kind)
+    for owner_id, policy in SQLITE_OWNER_REGISTRY.items()
+    for target_kind in sorted(policy.allowed_target_kinds, key=lambda kind: kind.value)
+)
+CONNECTION_BACKUP_OWNER_IDS = (
+    "db.chachanotes.backup",
+    "db.media.backup",
+    "db.prompts.backup",
+)
+COPY_BACKUP_OWNER_IDS = (
+    "settings.bulk_backup",
+    "settings.single_backup",
+)
+RESTORE_BACKUP_OWNER_IDS = (
+    "settings.pre_restore_backup",
+    "settings.restore",
+)
+
+
+@pytest.mark.parametrize(
+    ("owner_id", "target_kind"),
+    OWNER_KIND_CASES,
+    ids=[
+        f"{owner_id}-{target_kind.value}" for owner_id, target_kind in OWNER_KIND_CASES
+    ],
+)
+def test_every_registered_owner_executes_each_declared_target_kind(
+    owner_id,
+    target_kind,
+    tmp_path,
+):
+    target = tmp_path / f"{owner_id.replace('.', '-')}.sqlite"
+    if target_kind is SQLiteTargetKind.MEMORY:
+        database = ":memory:"
+        read_only = False
+    elif target_kind is SQLiteTargetKind.PRIVATE_FILE:
+        database = target
+        read_only = False
+    else:
+        setup = connect_private_sqlite("db.base", target)
+        try:
+            setup.execute("CREATE TABLE owner_matrix (value INTEGER)")
+            setup.execute("INSERT INTO owner_matrix VALUES (42)")
+            setup.commit()
+        finally:
+            setup.close()
+        database = target
+        read_only = True
+
+    connection = connect_private_sqlite(
+        owner_id,
+        database,
+        read_only=read_only,
+    )
+    try:
+        assert connection.execute("SELECT 6 * 7").fetchone() == (42,)
+        if target_kind is SQLiteTargetKind.READ_ONLY_URI:
+            assert connection.execute("SELECT value FROM owner_matrix").fetchone() == (
+                42,
+            )
+            with pytest.raises(sqlite3.OperationalError):
+                connection.execute("INSERT INTO owner_matrix VALUES (43)")
+        else:
+            connection.execute("CREATE TABLE owner_matrix (value INTEGER)")
+            connection.execute("INSERT INTO owner_matrix VALUES (42)")
+            assert connection.execute("SELECT value FROM owner_matrix").fetchone() == (
+                42,
+            )
+    finally:
+        connection.close()
+
+    if target_kind is not SQLiteTargetKind.MEMORY:
+        assert target.is_file()
+        if os.name == "posix":
+            assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+def test_every_backup_enabled_owner_has_a_behavioral_operation() -> None:
+    exercised_owner_ids = {
+        *CONNECTION_BACKUP_OWNER_IDS,
+        *COPY_BACKUP_OWNER_IDS,
+        *RESTORE_BACKUP_OWNER_IDS,
+    }
+
+    assert exercised_owner_ids == {
+        owner_id
+        for owner_id, policy in SQLITE_OWNER_REGISTRY.items()
+        if policy.centralized_backup_allowed
+    }
+
+
+@pytest.mark.parametrize("owner_id", CONNECTION_BACKUP_OWNER_IDS)
+def test_connection_backup_owners_execute_real_transactional_backup(
+    owner_id,
+    tmp_path,
+):
+    source_path = tmp_path / f"{owner_id.replace('.', '-')}-source.sqlite"
+    target = tmp_path / f"{owner_id.replace('.', '-')}.sqlite"
+    source = connect_private_sqlite(owner_id, source_path)
+    try:
+        source.execute("CREATE TABLE owner_matrix_backup (value INTEGER)")
+        source.execute("INSERT INTO owner_matrix_backup VALUES (42)")
+        source.commit()
+
+        backup_connection_to_private(owner_id, source, source_path, target)
+        assert source.execute("SELECT value FROM owner_matrix_backup").fetchone() == (
+            42,
+        )
+    finally:
+        source.close()
+
+    backup = connect_private_sqlite(owner_id, target)
+    try:
+        assert backup.execute("SELECT value FROM owner_matrix_backup").fetchone() == (
+            42,
+        )
+    finally:
+        backup.close()
+
+
+@pytest.mark.parametrize("owner_id", COPY_BACKUP_OWNER_IDS)
+def test_copy_backup_owners_execute_real_transactional_copy(owner_id, tmp_path):
+    source_path = tmp_path / "source.sqlite"
+    target_path = tmp_path / f"{owner_id.replace('.', '-')}.sqlite"
+    source = connect_private_sqlite("db.base", source_path)
+    try:
+        source.execute("CREATE TABLE owner_matrix_copy (value INTEGER)")
+        source.execute("INSERT INTO owner_matrix_copy VALUES (42)")
+        source.commit()
+    finally:
+        source.close()
+
+    copy_private_sqlite(owner_id, source_path, target_path)
+
+    copied = connect_private_sqlite(owner_id, target_path, read_only=True)
+    try:
+        assert copied.execute("SELECT value FROM owner_matrix_copy").fetchone() == (42,)
+    finally:
+        copied.close()
+
+
+def test_restore_backup_owners_execute_real_restore_and_safety_snapshot(tmp_path):
+    source_path = tmp_path / "restore-source.sqlite"
+    destination_path = tmp_path / "restore-live.sqlite"
+    pre_restore_path = tmp_path / "restore-safety.sqlite"
+
+    for path, value in ((source_path, 42), (destination_path, 7)):
+        connection = connect_private_sqlite("settings.restore", path)
+        try:
+            connection.execute("CREATE TABLE owner_matrix_restore (value INTEGER)")
+            connection.execute(
+                "INSERT INTO owner_matrix_restore VALUES (?)",
+                (value,),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+    restore_private_sqlite(
+        "settings.restore",
+        "settings.pre_restore_backup",
+        source_path,
+        destination_path,
+        pre_restore_path,
+    )
+
+    restored = connect_private_sqlite(
+        "settings.restore",
+        destination_path,
+        read_only=True,
+    )
+    safety_snapshot = connect_private_sqlite(
+        "settings.pre_restore_backup",
+        pre_restore_path,
+        read_only=True,
+    )
+    try:
+        assert restored.execute(
+            "SELECT value FROM owner_matrix_restore"
+        ).fetchone() == (42,)
+        assert safety_snapshot.execute(
+            "SELECT value FROM owner_matrix_restore"
+        ).fetchone() == (7,)
+    finally:
+        restored.close()
+        safety_snapshot.close()
 
 
 @pytest.mark.parametrize(

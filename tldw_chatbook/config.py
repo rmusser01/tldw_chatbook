@@ -5,6 +5,7 @@
 import copy
 import json
 import sys
+from datetime import datetime
 
 if sys.version_info < (3, 11):
     import tomli as tomllib
@@ -60,6 +61,12 @@ def _get_effective_config_path() -> Path:
     override = os.environ.get("TLDW_CONFIG_PATH")
     candidate = Path(override).expanduser() if override else DEFAULT_CONFIG_PATH
     return lexical_path(candidate)
+
+
+def get_cli_config_path() -> Path:
+    """Return the effective config path, including any environment override."""
+
+    return _get_effective_config_path()
 
 
 def _application_owned_config_directory(config_path: Path) -> Path | None:
@@ -3484,7 +3491,7 @@ class _ConfigBootstrapResult(NamedTuple):
     succeeded: bool
 
 
-def _load_cli_config_bootstrap(
+def _load_cli_config_bootstrap_unlocked(
     force_reload: bool = False,
 ) -> _ConfigBootstrapResult:
     global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE
@@ -3674,7 +3681,7 @@ def _target_config_section(config_data: Dict[str, Any], section: str) -> Dict[st
 # separate lock and defeat serialization on the first write.
 import threading as _threading  # noqa: E402
 
-_CONFIG_FILE_LOCK = _threading.Lock()
+_CONFIG_FILE_LOCK = _threading.RLock()
 
 # Fallback permissions for a config file that does not exist yet. config.toml
 # may hold plaintext secrets (when encryption is disabled), so it is created
@@ -3692,23 +3699,158 @@ def _config_file_lock():
     return _CONFIG_FILE_LOCK
 
 
-def _config_write_mode(config_path: Path) -> int:
-    """Choose the file mode to write a config file with.
+def _load_cli_config_bootstrap(
+    force_reload: bool = False,
+) -> _ConfigBootstrapResult:
+    """Load or create the config while serializing the file/cache lifecycle."""
 
-    Args:
-        config_path: Target config file path.
+    with _config_file_lock():
+        return _load_cli_config_bootstrap_unlocked(force_reload=force_reload)
 
-    Returns:
-        The existing file's permission bits when it already exists (so a
-        hardened ``0600`` config is never silently widened), otherwise the
-        owner-only default.
-    """
+
+def _prepare_config_parent(config_path: Path) -> Path | None:
+    """Secure the default config directory or verify a custom parent."""
+
+    application_directory = _application_owned_config_directory(config_path)
+    if application_directory is not None:
+        result = secure_private_directory(
+            application_directory,
+            create=True,
+            application_owned=True,
+        )
+        _report_config_path_posture(result, target_kind="directory")
+    else:
+        verify_trusted_directory(
+            config_path.parent,
+            allow_shared_sticky=False,
+        )
+    return application_directory
+
+
+def _read_raw_cli_config_unlocked(config_path: Path) -> Dict[str, Any]:
+    """Read the on-disk config mapping while the config lock is held."""
+
     try:
-        if config_path.exists():
-            return config_path.stat().st_mode & 0o777
-    except OSError:
-        pass
-    return _CONFIG_FILE_DEFAULT_MODE
+        with open_private_binary(config_path) as opened:
+            _report_config_path_posture(opened.result)
+            loaded = tomllib.load(opened.stream)
+    except FileNotFoundError:
+        return {}
+    if not isinstance(loaded, dict):
+        raise TypeError("The CLI config must contain a top-level table")
+    return loaded
+
+
+def _invalidate_config_caches() -> None:
+    """Drop config/settings caches after a successful whole-file write."""
+
+    global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE
+    global _SETTINGS_CACHE, _SETTINGS_CACHE_SOURCE
+
+    _CONFIG_CACHE = None
+    _CONFIG_CACHE_SOURCE = None
+    _SETTINGS_CACHE = None
+    _SETTINGS_CACHE_SOURCE = None
+
+
+def _write_raw_cli_config_unlocked(
+    config_path: Path,
+    config_data: Mapping[str, Any],
+) -> None:
+    """Atomically write a private on-disk config while the lock is held."""
+
+    _prepare_config_parent(config_path)
+    atomic_write_text(
+        config_path,
+        toml.dumps(dict(config_data)),
+        mode=_CONFIG_FILE_DEFAULT_MODE,
+    )
+    _invalidate_config_caches()
+
+
+def _contains_unencrypted_sensitive_value(config_data: Mapping[str, Any]) -> bool:
+    """Return whether an encrypted config mapping contains plaintext secrets."""
+
+    enc_module = get_encryption_module()
+    for key, value in config_data.items():
+        if key == "encryption":
+            continue
+        if isinstance(value, Mapping):
+            if _contains_unencrypted_sensitive_value(value):
+                return True
+            continue
+        if not (
+            _is_sensitive_setting_key(key)
+            and isinstance(value, str)
+            and value.strip()
+        ):
+            continue
+        if value.startswith("<") and value.endswith(">"):
+            continue
+        if not enc_module.is_encrypted(value):
+            return True
+    return False
+
+
+def _config_data_for_persistence(
+    config_data: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Preserve encryption-at-rest when persisting a decrypted config view."""
+
+    selected = copy.deepcopy(dict(config_data))
+    encryption = selected.get("encryption", {})
+    if not (
+        isinstance(encryption, Mapping)
+        and encryption.get("enabled", False)
+    ):
+        return selected
+
+    password = get_encryption_password()
+    if password:
+        return encrypt_api_keys_in_config(selected, password)
+    if _contains_unencrypted_sensitive_value(selected):
+        raise ValueError(
+            "Cannot persist plaintext secrets while config encryption is locked"
+        )
+    return selected
+
+
+def replace_cli_config(config_data: Mapping[str, Any]) -> Dict[str, Any]:
+    """Atomically replace the effective config and refresh all config caches."""
+
+    global settings
+
+    config_path = get_cli_config_path()
+    with _config_file_lock():
+        persisted = _config_data_for_persistence(config_data)
+        _write_raw_cli_config_unlocked(config_path, persisted)
+        loaded = _load_cli_config_bootstrap_unlocked(force_reload=True).config
+        settings = load_settings(force_reload=True)
+        return loaded
+
+
+def export_cli_config_snapshot(
+    config_data: Mapping[str, Any],
+    *,
+    timestamp: str | None = None,
+) -> Path:
+    """Create an owner-only snapshot beside the effective config file."""
+
+    config_path = get_cli_config_path()
+    snapshot_timestamp = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
+    snapshot_path = (
+        config_path.parent / f"config_backup_{snapshot_timestamp}.toml"
+    )
+    with _config_file_lock():
+        application_directory = _prepare_config_parent(config_path)
+        persisted = _config_data_for_persistence(config_data)
+        result = create_private_text(
+            snapshot_path,
+            toml.dumps(persisted),
+            application_owned_directory=application_directory,
+        )
+        _report_config_path_posture(result, target_kind="snapshot")
+    return result.lexical_path
 
 
 def save_settings_to_cli_config(
@@ -3722,29 +3864,19 @@ def save_settings_to_cli_config(
     logger.info(f"Attempting to save settings batch: {logged_keys!r}")
     config_path = _get_effective_config_path()
 
-    try:
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        logger.error(f"Could not create config directory {config_path.parent}: {e}")
-        return False
-
     with _config_file_lock():
-        config_data: Dict[str, Any] = {}
-        if config_path.exists():
-            try:
-                with open(config_path, "rb") as f:
-                    config_data = tomllib.load(f)
-            except tomllib.TOMLDecodeError as e:
-                logger.error(
-                    f"Corrupted config file at {config_path}. Cannot save. Please fix or delete it. Error: {e}"
-                )
-                # Consider creating a backup of the corrupt file for the user.
-                return False
-            except Exception as e:
-                logger.opt(exception=True).error(
-                    f"Unexpected error reading {config_path}: {e}"
-                )
-                return False
+        try:
+            config_data = _read_raw_cli_config_unlocked(config_path)
+        except tomllib.TOMLDecodeError as e:
+            logger.error(
+                f"Corrupted config file at {config_path}. Cannot save. Please fix or delete it. Error: {e}"
+            )
+            return False
+        except Exception as e:
+            logger.opt(exception=True).error(
+                f"Unexpected error reading {config_path}: {e}"
+            )
+            return False
 
         try:
             for section, values in section_values.items():
@@ -3763,21 +3895,19 @@ def save_settings_to_cli_config(
             return False
 
         try:
-            atomic_write_text(
+            persisted = _config_data_for_persistence(config_data)
+            _write_raw_cli_config_unlocked(
                 config_path,
-                toml.dumps(config_data),
-                mode=_config_write_mode(config_path),
+                persisted,
             )
             logger.success(f"Successfully saved settings batch to {config_path}")
 
-            _CONFIG_CACHE = None
-            _SETTINGS_CACHE = None
             load_cli_config_and_ensure_existence(force_reload=True)
             settings = load_settings(force_reload=True)
             logger.info("Global configuration caches invalidated and reloaded.")
 
             return True
-        except (IOError, OSError, toml.TomlDecodeError) as e:
+        except (IOError, OSError, ValueError, toml.TomlDecodeError) as e:
             logger.opt(exception=True).error(
                 f"Failed to write updated config to {config_path}: {e}"
             )
@@ -3803,8 +3933,7 @@ def delete_settings_from_cli_config(section: str, keys: List[str]) -> bool:
 
     with _config_file_lock():
         try:
-            with open(config_path, "rb") as f:
-                config_data: Dict[str, Any] = tomllib.load(f)
+            config_data = _read_raw_cli_config_unlocked(config_path)
         except tomllib.TOMLDecodeError as e:
             logger.error(
                 f"Corrupted config file at {config_path}. Cannot delete from it. Error: {e}"
@@ -3837,17 +3966,14 @@ def delete_settings_from_cli_config(section: str, keys: List[str]) -> bool:
             return True
 
         try:
-            atomic_write_text(
+            _write_raw_cli_config_unlocked(
                 config_path,
-                toml.dumps(config_data),
-                mode=_config_write_mode(config_path),
+                config_data,
             )
             logger.info(
                 f"Removed {len(removed)} key(s) from [{section}] in {config_path}"
             )
 
-            _CONFIG_CACHE = None
-            _SETTINGS_CACHE = None
             load_cli_config_and_ensure_existence(force_reload=True)
             settings = load_settings(force_reload=True)
 
@@ -4158,26 +4284,12 @@ def enable_config_encryption(password: str) -> bool:
         True if encryption was enabled successfully
     """
     try:
-        # Load current config
-        config_data = {}
-        if DEFAULT_CONFIG_PATH.exists():
-            with open(DEFAULT_CONFIG_PATH, "rb") as f:
-                config_data = tomllib.load(f)
-
-        # Encrypt the config
-        encrypted_config = encrypt_api_keys_in_config(config_data, password)
-
-        # Save the encrypted config
-        with open(DEFAULT_CONFIG_PATH, "w", encoding="utf-8") as f:
-            toml.dump(encrypted_config, f)
-
-        # Set the password for the current session
-        set_encryption_password(password)
-
-        # Clear and reload caches
-        global _CONFIG_CACHE, _SETTINGS_CACHE
-        _CONFIG_CACHE = None
-        _SETTINGS_CACHE = None
+        config_path = get_cli_config_path()
+        with _config_file_lock():
+            config_data = _read_raw_cli_config_unlocked(config_path)
+            encrypted_config = encrypt_api_keys_in_config(config_data, password)
+            _write_raw_cli_config_unlocked(config_path, encrypted_config)
+            set_encryption_password(password)
 
         logger.success("Config encryption enabled successfully")
         return True
@@ -4198,48 +4310,25 @@ def disable_config_encryption(password: str) -> bool:
         True if encryption was disabled successfully
     """
     try:
-        # Load current config
-        config_data = {}
-        if DEFAULT_CONFIG_PATH.exists():
-            with open(DEFAULT_CONFIG_PATH, "rb") as f:
-                config_data = tomllib.load(f)
+        config_path = get_cli_config_path()
+        with _config_file_lock():
+            config_data = _read_raw_cli_config_unlocked(config_path)
+            encryption_config = config_data.get("encryption", {})
+            if encryption_config.get("enabled", False):
+                enc_module = get_encryption_module()
+                password_verifier = encryption_config.get("password_verifier", "")
+                if not password_verifier:
+                    logger.error("No password verifier found in encryption config")
+                    return False
+                if not enc_module.verify_password(password, password_verifier):
+                    logger.error("Invalid password provided")
+                    return False
 
-        # Verify password
-        encryption_config = config_data.get("encryption", {})
-        if encryption_config.get("enabled", False):
-            enc_module = get_encryption_module()
-
-            # Verify using password verifier
-            password_verifier = encryption_config.get("password_verifier", "")
-            if not password_verifier:
-                logger.error("No password verifier found in encryption config")
-                return False
-
-            if not enc_module.verify_password(password, password_verifier):
-                logger.error("Invalid password provided")
-                return False
-
-        # Set password temporarily for decryption
-        set_encryption_password(password)
-
-        # Decrypt the config
-        decrypted_config = decrypt_config_section(config_data)
-
-        # Remove encryption metadata
-        if "encryption" in decrypted_config:
-            del decrypted_config["encryption"]
-
-        # Save the decrypted config
-        config_str = toml.dumps(decrypted_config)
-        atomic_write_text(DEFAULT_CONFIG_PATH, config_str, encoding="utf-8")
-
-        # Clear password
-        clear_encryption_password()
-
-        # Clear and reload caches
-        global _CONFIG_CACHE, _SETTINGS_CACHE
-        _CONFIG_CACHE = None
-        _SETTINGS_CACHE = None
+            set_encryption_password(password)
+            decrypted_config = decrypt_config_section(config_data)
+            decrypted_config.pop("encryption", None)
+            _write_raw_cli_config_unlocked(config_path, decrypted_config)
+            clear_encryption_password()
 
         logger.success("Config encryption disabled successfully")
         return True
@@ -4261,50 +4350,31 @@ def change_encryption_password(old_password: str, new_password: str) -> bool:
         True if password was changed successfully
     """
     try:
-        # Load current config
-        config_data = {}
-        if DEFAULT_CONFIG_PATH.exists():
-            with open(DEFAULT_CONFIG_PATH, "rb") as f:
-                config_data = tomllib.load(f)
+        config_path = get_cli_config_path()
+        with _config_file_lock():
+            config_data = _read_raw_cli_config_unlocked(config_path)
+            encryption_config = config_data.get("encryption", {})
+            if not encryption_config.get("enabled", False):
+                logger.error("Encryption is not enabled")
+                return False
 
-        # Verify old password
-        encryption_config = config_data.get("encryption", {})
-        if encryption_config.get("enabled", False):
             enc_module = get_encryption_module()
-
-            # Verify using password verifier
             password_verifier = encryption_config.get("password_verifier", "")
             if not password_verifier:
                 logger.error("No password verifier found in encryption config")
                 return False
-
             if not enc_module.verify_password(old_password, password_verifier):
                 logger.error("Invalid current password provided")
                 return False
-        else:
-            logger.error("Encryption is not enabled")
-            return False
 
-        # Set old password temporarily for decryption
-        set_encryption_password(old_password)
-
-        # Decrypt the config
-        decrypted_config = decrypt_config_section(config_data)
-
-        # Re-encrypt with new password
-        encrypted_config = encrypt_api_keys_in_config(decrypted_config, new_password)
-
-        # Save the re-encrypted config
-        config_str = toml.dumps(encrypted_config)
-        atomic_write_text(DEFAULT_CONFIG_PATH, config_str, encoding="utf-8")
-
-        # Set the new password for the current session
-        set_encryption_password(new_password)
-
-        # Clear and reload caches
-        global _CONFIG_CACHE, _SETTINGS_CACHE
-        _CONFIG_CACHE = None
-        _SETTINGS_CACHE = None
+            set_encryption_password(old_password)
+            decrypted_config = decrypt_config_section(config_data)
+            encrypted_config = encrypt_api_keys_in_config(
+                decrypted_config,
+                new_password,
+            )
+            _write_raw_cli_config_unlocked(config_path, encrypted_config)
+            set_encryption_password(new_password)
 
         logger.success("Encryption password changed successfully")
         return True

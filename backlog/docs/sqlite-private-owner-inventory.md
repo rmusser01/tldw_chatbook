@@ -1,6 +1,6 @@
 # SQLite Private Owner Inventory
 
-Status: checked baseline for TASK-489
+Status: migrated and behaviorally verified for TASK-489
 
 This inventory is the migration ledger for the SQLite private-storage
 boundary established by ADR-022. Module paths are relative to the repository
@@ -19,51 +19,54 @@ Classifications have these meanings:
 
 | ID | Module | Symbol | Owner ID | Classification | Intent | Migration disposition |
 | --- | --- | --- | --- | --- | --- | --- |
-| C01 | tldw_chatbook/Writing_Interop/local_writing_service | LocalWritingService._connect | writing.local | private_file, memory | read/write | Preserve the accepted `Path(":memory:")` form and route files through the checked seam. |
-| C02 | tldw_chatbook/Research_Interop/local_research_service | LocalResearchService._connect | research.local | private_file, memory | read/write | Preserve the accepted `Path(":memory:")` form and route files through the checked seam. |
-| C03 | tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner | get_chrome_cookies | cookies.chrome | read_only_uri | read-only clone | Open the owner-only temporary clone with a validated read-only URI. |
-| C04 | tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner | get_firefox_cookies | cookies.firefox | read_only_uri | read-only clone | Open the owner-only temporary clone with a validated read-only URI. |
-| C05 | tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner | get_edge_cookies | cookies.edge | read_only_uri | read-only clone | Open the owner-only temporary clone with a validated read-only URI. |
-| C06 | tldw_chatbook/Sync_Interop/notes_mirror | NotesMirror.__init__ | sync.notes_mirror | private_file, memory | read/write | Preserve `:memory:` and route an optional file target through the private seam. |
-| C07 | tldw_chatbook/Sync_Interop/sync_state_repository | SyncStateRepository._get_connection | sync.state | memory | read/write | Preserve the exact in-memory contract through the checked seam. |
-| C08 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._vacuum_single_worker | settings.vacuum | private_file | maintenance write | Route VACUUM through the checked writable private-file seam. |
-| C09 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._check_single_worker | settings.integrity | read_only_uri | integrity read | Route the integrity check through a validated read-only URI. |
-| C10 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._get_schema_version | settings.schema | read_only_uri | schema read | Route the schema lookup through a validated read-only URI. |
-| C11 | tldw_chatbook/DB/RAG_Indexing_DB | RAGIndexingDB._get_connection | db.rag_indexing | private_file, memory | read/write | Preserve memory support and route files through the checked seam. |
-| C12 | tldw_chatbook/DB/ChaChaNotes_DB | CharactersRAGDB._get_thread_connection | db.chachanotes.primary | private_file, memory | read/write | Preserve connection options while routing the target through the checked seam. |
-| C13 | tldw_chatbook/DB/ChaChaNotes_DB | CharactersRAGDB.backup_database | db.chachanotes.backup | private_file | backup target | Uses the centralized caller-connection backup operation. |
-| C14 | tldw_chatbook/DB/base_db | BaseDB._get_connection | db.base | private_file, memory | read/write | Make the shared base connection the checked seam for its subclasses. |
-| C15 | tldw_chatbook/DB/Evals_DB | EvalsDB._get_connection | db.evals | private_file, memory | read/write | Preserve memory and thread options while routing files through the checked seam. |
-| C16 | tldw_chatbook/DB/search_history_db | SearchHistoryDB._get_connection | db.search_history | private_file, memory | read/write | Preserve memory support and route files through the checked seam. |
-| C17 | tldw_chatbook/DB/Client_Media_DB_v2 | MediaDatabase._get_thread_connection | db.media.primary | private_file, memory | read/write | Preserve connection options while routing the target through the checked seam. |
-| C18 | tldw_chatbook/DB/Client_Media_DB_v2 | MediaDatabase.backup_database | db.media.backup | private_file | backup target | Uses the centralized caller-connection backup operation. |
-| C19 | tldw_chatbook/DB/Client_Media_DB_v2 | check_database_integrity | db.media.integrity | read_only_uri | integrity read | Replace the interpolated URI with the validated URI builder. |
-| C20 | tldw_chatbook/DB/Prompts_DB | PromptsDatabase._get_thread_connection | db.prompts.primary | private_file, memory | read/write | Preserve connection options while routing the target through the checked seam. |
-| C21 | tldw_chatbook/DB/Prompts_DB | PromptsDatabase.backup_database | db.prompts.backup | private_file | backup target | Uses the centralized caller-connection backup operation. |
-| C22 | tldw_chatbook/DB/Library_Ingest_Jobs_DB | LibraryIngestJobsDB._get_connection | db.library_ingest_jobs | private_file, memory | read/write | Route the override through the checked seam without changing its WAL contract. |
-| C23 | tldw_chatbook/Kanban_Interop/local_kanban_db | open_connection | kanban.local | private_file, memory | read/write | Preserve `:memory:` and route files through the checked seam. |
-| C24 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage | SQLiteStorage._init_db | tamagotchi.sqlite | private_file, memory | read/write | Preserve the accepted `Path(":memory:")` form and use the common checked owner. |
-| C25 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage | SQLiteStorage.load | tamagotchi.sqlite | private_file, memory | read | Preserve the accepted `Path(":memory:")` form and use the common checked owner. |
-| C26 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage | SQLiteStorage.save | tamagotchi.sqlite | private_file, memory | write | Preserve the accepted `Path(":memory:")` form and use the common checked owner. |
-| C27 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage | SQLiteStorage.delete | tamagotchi.sqlite | private_file, memory | write | Preserve the accepted `Path(":memory:")` form and use the common checked owner. |
-| C28 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage | SQLiteStorage.list_pets | tamagotchi.sqlite | private_file, memory | read | Preserve the accepted `Path(":memory:")` form and use the common checked owner. |
-| C29 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage | SQLiteStorage.get_statistics | tamagotchi.sqlite | private_file, memory | read | Preserve the accepted `Path(":memory:")` form and use the common checked owner. |
-| C30 | tldw_chatbook/Notifications/client_notifications_db | ClientNotificationsDB._get_connection | notifications.client | memory | read/write | Preserve the exact in-memory contract through the checked seam. |
-| C31 | tldw_chatbook/Notifications/event_state_repository | EventStateRepository._get_connection | notifications.event_state | memory | read/write | Preserve the exact in-memory contract through the checked seam. |
+| C01 | tldw_chatbook/Writing_Interop/local_writing_service | LocalWritingService._connect | writing.local | private_file, memory | read/write | Migrated via `connect_private_sqlite`. Preserve the accepted `Path(":memory:")` form and route files through the checked seam. |
+| C02 | tldw_chatbook/Research_Interop/local_research_service | LocalResearchService._connect | research.local | private_file, memory | read/write | Migrated via `connect_private_sqlite`. Preserve the accepted `Path(":memory:")` form and route files through the checked seam. |
+| C03 | tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner | get_chrome_cookies | cookies.chrome | read_only_uri | read-only clone | Migrated via `connect_private_sqlite`. Open the owner-only temporary clone with a validated read-only URI. |
+| C04 | tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner | get_firefox_cookies | cookies.firefox | read_only_uri | read-only clone | Migrated via `connect_private_sqlite`. Open the owner-only temporary clone with a validated read-only URI. |
+| C05 | tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner | get_edge_cookies | cookies.edge | read_only_uri | read-only clone | Migrated via `connect_private_sqlite`. Open the owner-only temporary clone with a validated read-only URI. |
+| C06 | tldw_chatbook/Sync_Interop/notes_mirror | NotesMirror.__init__ | sync.notes_mirror | private_file, memory | read/write | Migrated via `connect_private_sqlite`. Preserve `:memory:` and route an optional file target through the private seam. |
+| C07 | tldw_chatbook/Sync_Interop/sync_state_repository | SyncStateRepository._get_connection | sync.state | memory | read/write | Migrated via `connect_private_sqlite`. Preserve the exact in-memory contract through the checked seam. |
+| C08 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._vacuum_single_worker | settings.vacuum | private_file | maintenance write | Migrated via `connect_private_sqlite`. Route VACUUM through the checked writable private-file seam. |
+| C09 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._check_single_worker | settings.integrity | read_only_uri | integrity read | Migrated via `connect_private_sqlite`. Route the integrity check through a validated read-only URI. |
+| C10 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._get_schema_version | settings.schema | read_only_uri | schema read | Migrated via `connect_private_sqlite`. Route the schema lookup through a validated read-only URI. |
+| C11 | tldw_chatbook/DB/RAG_Indexing_DB | RAGIndexingDB._get_connection | db.rag_indexing | private_file, memory | read/write | Migrated via `connect_private_sqlite`. Preserve memory support and route files through the checked seam. |
+| C12 | tldw_chatbook/DB/ChaChaNotes_DB | CharactersRAGDB._get_thread_connection | db.chachanotes.primary | private_file, memory | read/write | Migrated via `connect_private_sqlite`. Preserve connection options while routing the target through the checked seam. |
+| C13 | tldw_chatbook/DB/ChaChaNotes_DB | CharactersRAGDB.backup_database | db.chachanotes.backup | private_file | backup target | Migrated via `backup_connection_to_private`. Uses the centralized caller-connection backup operation. |
+| C14 | tldw_chatbook/DB/base_db | BaseDB._get_connection | db.base | private_file, memory | read/write | Migrated via `connect_private_sqlite`. Make the shared base connection the checked seam for its subclasses. |
+| C15 | tldw_chatbook/DB/Evals_DB | EvalsDB._get_connection | db.evals | private_file, memory | read/write | Migrated via `connect_private_sqlite`. Preserve memory and thread options while routing files through the checked seam. |
+| C16 | tldw_chatbook/DB/search_history_db | SearchHistoryDB._get_connection | db.search_history | private_file, memory | read/write | Migrated via `connect_private_sqlite`. Preserve memory support and route files through the checked seam. |
+| C17 | tldw_chatbook/DB/Client_Media_DB_v2 | MediaDatabase._get_thread_connection | db.media.primary | private_file, memory | read/write | Migrated via `connect_private_sqlite`. Preserve connection options while routing the target through the checked seam. |
+| C18 | tldw_chatbook/DB/Client_Media_DB_v2 | MediaDatabase.backup_database | db.media.backup | private_file | backup target | Migrated via `backup_connection_to_private`. Uses the centralized caller-connection backup operation. |
+| C19 | tldw_chatbook/DB/Client_Media_DB_v2 | check_database_integrity | db.media.integrity | read_only_uri | integrity read | Migrated via `connect_private_sqlite`. Replace the interpolated URI with the validated URI builder. |
+| C20 | tldw_chatbook/DB/Prompts_DB | PromptsDatabase._get_thread_connection | db.prompts.primary | private_file, memory | read/write | Migrated via `connect_private_sqlite`. Preserve connection options while routing the target through the checked seam. |
+| C21 | tldw_chatbook/DB/Prompts_DB | PromptsDatabase.backup_database | db.prompts.backup | private_file | backup target | Migrated via `backup_connection_to_private`. Uses the centralized caller-connection backup operation. |
+| C22 | tldw_chatbook/DB/Library_Ingest_Jobs_DB | LibraryIngestJobsDB._get_connection | db.library_ingest_jobs | private_file, memory | read/write | Migrated via `connect_private_sqlite`. Route the override through the checked seam without changing its WAL contract. |
+| C23 | tldw_chatbook/Kanban_Interop/local_kanban_db | open_connection | kanban.local | private_file, memory | read/write | Migrated via `connect_private_sqlite`. Preserve `:memory:` and route files through the checked seam. |
+| C24 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage | SQLiteStorage._init_db | tamagotchi.sqlite | private_file, memory | read/write | Migrated via `connect_private_sqlite`. Preserve the accepted `Path(":memory:")` form and use the common checked owner. |
+| C25 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage | SQLiteStorage.load | tamagotchi.sqlite | private_file, memory | read | Migrated via `connect_private_sqlite`. Preserve the accepted `Path(":memory:")` form and use the common checked owner. |
+| C26 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage | SQLiteStorage.save | tamagotchi.sqlite | private_file, memory | write | Migrated via `connect_private_sqlite`. Preserve the accepted `Path(":memory:")` form and use the common checked owner. |
+| C27 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage | SQLiteStorage.delete | tamagotchi.sqlite | private_file, memory | write | Migrated via `connect_private_sqlite`. Preserve the accepted `Path(":memory:")` form and use the common checked owner. |
+| C28 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage | SQLiteStorage.list_pets | tamagotchi.sqlite | private_file, memory | read | Migrated via `connect_private_sqlite`. Preserve the accepted `Path(":memory:")` form and use the common checked owner. |
+| C29 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage | SQLiteStorage.get_statistics | tamagotchi.sqlite | private_file, memory | read | Migrated via `connect_private_sqlite`. Preserve the accepted `Path(":memory:")` form and use the common checked owner. |
+| C30 | tldw_chatbook/Notifications/client_notifications_db | ClientNotificationsDB._get_connection | notifications.client | memory | read/write | Migrated via `connect_private_sqlite`. Preserve the exact in-memory contract through the checked seam. |
+| C31 | tldw_chatbook/Notifications/event_state_repository | EventStateRepository._get_connection | notifications.event_state | memory | read/write | Migrated via `connect_private_sqlite`. Preserve the exact in-memory contract through the checked seam. |
 
 ## SQLite backup and restore inventory
 
 | ID | Module | Symbol | Owner ID | Classification | Operation | Migration disposition |
 | --- | --- | --- | --- | --- | --- | --- |
-| B01 | tldw_chatbook/DB/ChaChaNotes_DB | CharactersRAGDB.backup_database | db.chachanotes.backup | private_file | backup_connection_to_private | Verifies the explicit caller-owned source and creates the private target centrally. |
-| B02 | tldw_chatbook/DB/Client_Media_DB_v2 | MediaDatabase.backup_database | db.media.backup | private_file | backup_connection_to_private | Verifies the explicit caller-owned source and creates the private target centrally. |
-| B03 | tldw_chatbook/DB/Prompts_DB | PromptsDatabase.backup_database | db.prompts.backup | private_file | backup_connection_to_private | Verifies the explicit caller-owned source and creates the private target centrally. |
-| B04 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_worker ChaChaNotes branch | settings.bulk_backup | private_file, read_only_uri | copy_private_sqlite | Opens the verified source read-only and transactionally backs it up to a private target. |
-| B05 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_worker Prompts branch | settings.bulk_backup | private_file, read_only_uri | copy_private_sqlite | Opens the verified source read-only and transactionally backs it up to a private target. |
-| B06 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_worker Media branch | settings.bulk_backup | private_file, read_only_uri | copy_private_sqlite | Opens the verified source read-only and transactionally backs it up to a private target. |
-| B07 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_single_worker | settings.single_backup | private_file, read_only_uri | copy_private_sqlite | Opens the verified source read-only and transactionally backs it up to a private target. |
-| B08 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._restore_single_worker pre-restore branch | settings.pre_restore_backup | private_file, read_only_uri | restore_private_sqlite | Creates the private safety snapshot inside the guarded destination lifecycle. |
-| B09 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._restore_single_worker restore branch | settings.restore | private_file, read_only_uri | restore_private_sqlite | Restores through verified source identity and prompt-fail destination quiescence. |
+| B01 | tldw_chatbook/DB/ChaChaNotes_DB | CharactersRAGDB.backup_database | db.chachanotes.backup | private_file | backup_connection_to_private | Migrated via `backup_connection_to_private`. Verifies the explicit caller-owned source and creates the private target centrally. |
+| B02 | tldw_chatbook/DB/Client_Media_DB_v2 | MediaDatabase.backup_database | db.media.backup | private_file | backup_connection_to_private | Migrated via `backup_connection_to_private`. Verifies the explicit caller-owned source and creates the private target centrally. |
+| B03 | tldw_chatbook/DB/Prompts_DB | PromptsDatabase.backup_database | db.prompts.backup | private_file | backup_connection_to_private | Migrated via `backup_connection_to_private`. Verifies the explicit caller-owned source and creates the private target centrally. |
+| B04 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_worker ChaChaNotes target | settings.bulk_backup | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. The shared six-owner loop opens the verified source read-only and transactionally backs it up to a private target. |
+| B05 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_worker Prompts target | settings.bulk_backup | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. The shared six-owner loop opens the verified source read-only and transactionally backs it up to a private target. |
+| B06 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_worker Media target | settings.bulk_backup | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. The shared six-owner loop opens the verified source read-only and transactionally backs it up to a private target. |
+| B07 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_worker Evals target | settings.bulk_backup | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. The shared six-owner loop opens the verified source read-only and transactionally backs it up to a private target. |
+| B08 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_worker RAG target | settings.bulk_backup | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. The shared six-owner loop opens the verified source read-only and transactionally backs it up to a private target. |
+| B09 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_worker Subscriptions target | settings.bulk_backup | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. The shared six-owner loop opens the verified source read-only and transactionally backs it up to a private target. |
+| B10 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._backup_single_worker | settings.single_backup | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Opens the verified source read-only and transactionally backs it up to a private target. |
+| B11 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._restore_single_worker pre-restore branch | settings.pre_restore_backup | private_file, read_only_uri | restore_private_sqlite | Migrated via `restore_private_sqlite`. Creates the private safety snapshot inside the guarded destination lifecycle. |
+| B12 | tldw_chatbook/UI/Tools_Settings_Window | ToolsSettingsWindow._restore_single_worker restore branch | settings.restore | private_file, read_only_uri | restore_private_sqlite | Migrated via `restore_private_sqlite`. Restores through verified source identity and prompt-fail destination quiescence. |
 
 Restore retains one exclusive destination connection across the quiescence
 probe, private safety snapshot, final transactional page backup, and
@@ -132,7 +135,7 @@ a checked `P` row when it is introduced.
 | X03 | tldw_chatbook/DB/Client_Media_DB_v2 | create_automated_backup | No-op placeholder; it creates no backup artifact. |
 | X04 | production tree | aiosqlite.connect | No production `aiosqlite.connect` owner exists. |
 
-The migrated boundary retains the 31 classified connection owners and nine
+The migrated boundary retains the 31 classified connection owners and twelve
 classified backup/restore operations. Production has one raw
 `sqlite3.connect` site and one direct `Connection.backup()` site, both inside
 `DB/private_sqlite.py`; Settings has no SQLite database `shutil.copy2()` site.

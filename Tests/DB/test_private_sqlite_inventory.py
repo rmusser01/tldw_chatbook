@@ -209,6 +209,13 @@ def _inventory_rows(prefix: str) -> list[dict[str, str]]:
                 "disposition",
                 "rationale",
             )
+        elif prefix == "X":
+            columns = (
+                "id",
+                "module",
+                "symbol",
+                "exclusion",
+            )
         else:
             raise AssertionError(f"Unsupported inventory prefix: {prefix}")
         assert len(cells) == len(columns), line
@@ -570,7 +577,7 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         f"C{number:02d}" for number in range(1, 32)
     ]
     assert [row["id"] for row in backup_rows] == [
-        f"B{number:02d}" for number in range(1, 10)
+        f"B{number:02d}" for number in range(1, 13)
     ]
 
 
@@ -896,6 +903,47 @@ def test_every_connection_and_backup_row_links_to_a_matching_policy() -> None:
         assert row["disposition"].strip()
 
 
+def test_connection_and_backup_rows_record_completed_helper_migrations() -> None:
+    connection_rows = _inventory_rows("C")
+    backup_rows = _inventory_rows("B")
+
+    assert (
+        "Status: migrated and behaviorally verified for TASK-489"
+        in INVENTORY_PATH.read_text(encoding="utf-8")
+    )
+    for row in connection_rows:
+        helper = (
+            "backup_connection_to_private"
+            if row["id"] in {"C13", "C18", "C21"}
+            else "connect_private_sqlite"
+        )
+        assert row["disposition"].startswith(f"Migrated via `{helper}`.")
+    for row in backup_rows:
+        assert row["disposition"].startswith(f"Migrated via `{row['operation']}`.")
+
+
+def test_parent_rows_and_explicit_exclusions_are_fully_reconciled() -> None:
+    parent_rows = _inventory_rows("P")
+    exclusion_rows = _inventory_rows("X")
+
+    assert {row["id"] for row in parent_rows if row["state"] == "current"} == {
+        "P04",
+        "P05",
+    }
+    assert all(
+        row["disposition"] == "justified_exclusion"
+        for row in parent_rows
+        if row["state"] == "current"
+    )
+    assert [row["id"] for row in exclusion_rows] == [
+        "X01",
+        "X02",
+        "X03",
+        "X04",
+    ]
+    assert all(row["exclusion"].strip() for row in exclusion_rows)
+
+
 def test_registry_is_immutable_complete_and_points_to_production_modules() -> None:
     rows = [
         *_inventory_rows("C"),
@@ -923,7 +971,7 @@ def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> Non
     assert Counter(row["operation"] for row in backup_rows) == Counter(
         {
             "backup_connection_to_private": 3,
-            "copy_private_sqlite": 4,
+            "copy_private_sqlite": 7,
             "restore_private_sqlite": 2,
         }
     )
@@ -976,7 +1024,7 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
                 "tldw_chatbook/UI/Tools_Settings_Window",
                 "ToolsSettingsWindow._backup_worker",
                 "copy_private_sqlite",
-            ): 3,
+            ): 1,
             (
                 "tldw_chatbook/UI/Tools_Settings_Window",
                 "ToolsSettingsWindow._backup_single_worker",

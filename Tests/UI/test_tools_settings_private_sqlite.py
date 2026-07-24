@@ -48,6 +48,47 @@ def _worker_target(database: Path) -> SimpleNamespace:
     )
 
 
+@pytest.mark.asyncio
+async def test_settings_raw_toml_save_delegates_to_locked_config_replacement(
+    monkeypatch,
+) -> None:
+    parsed = {"general": {"users_name": "private-user"}}
+    loaded = {"general": {"users_name": "private-user"}, "defaults": {}}
+    replace = MagicMock(return_value=loaded)
+    monkeypatch.setattr(settings_module, "replace_cli_config", replace)
+    target = SimpleNamespace(
+        query_one=lambda *_args: SimpleNamespace(
+            text='[general]\nusers_name = "private-user"\n'
+        ),
+        app_instance=SimpleNamespace(notify=MagicMock()),
+        config_data={},
+    )
+
+    await settings_module.ToolsSettingsWindow._save_raw_toml_config(target)
+
+    replace.assert_called_once_with(parsed)
+    assert target.config_data == loaded
+
+
+@pytest.mark.asyncio
+async def test_settings_config_export_delegates_to_private_snapshot(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    snapshot = tmp_path / "config_backup.toml"
+    export = MagicMock(return_value=snapshot)
+    monkeypatch.setattr(settings_module, "export_cli_config_snapshot", export)
+    target = SimpleNamespace(
+        app_instance=SimpleNamespace(notify=MagicMock()),
+        config_data={"API": {"openai_api_key": "secret"}},
+    )
+
+    await settings_module.ToolsSettingsWindow._export_configuration(target)
+
+    export.assert_called_once_with(target.config_data)
+    assert str(snapshot) in str(target.app_instance.notify.call_args)
+
+
 def test_settings_vacuum_uses_registered_writable_owner(
     tmp_path: Path,
     monkeypatch,
@@ -218,21 +259,15 @@ def test_settings_bulk_backup_uses_checked_copies_and_private_info(
         "chachanotes": tmp_path / "chachanotes.db",
         "prompts": tmp_path / "prompts.db",
         "media": tmp_path / "media.db",
+        "evals": tmp_path / "evals.db",
+        "rag": tmp_path / "rag.db",
+        "subscriptions": tmp_path / "subscriptions.db",
     }
     for source in sources.values():
         _create_private_database(source)
     target = _worker_target(sources["media"])
-    target.config_data = {
-        "database": {
-            "chachanotes_db_path": str(sources["chachanotes"]),
-            "media_db_path": str(sources["media"]),
-        }
-    }
-    monkeypatch.setattr(
-        settings_module,
-        "get_prompts_db_path",
-        lambda: sources["prompts"],
-    )
+    target.config_data = {"database": {}}
+    target._get_database_path = lambda name, _config: sources[name]
     calls: list[tuple[str, Path, Path]] = []
 
     def tracking_copy(owner_id, source, destination):
@@ -255,11 +290,266 @@ def test_settings_bulk_backup_uses_checked_copies_and_private_info(
     backup_dirs = list(backup_root.iterdir())
     assert len(backup_dirs) == 1
     backup_dir = backup_dirs[0]
-    assert len(calls) == 3
+    assert len(calls) == 6
     assert {call[0] for call in calls} == {"settings.bulk_backup"}
     assert {call[1] for call in calls} == set(sources.values())
     assert (backup_dir.stat().st_mode & 0o777) == 0o700
     assert all((path.stat().st_mode & 0o777) == 0o600 for path in backup_dir.iterdir())
+
+
+def test_settings_bulk_maintenance_covers_every_database_owner(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    sources = {
+        name: tmp_path / f"{name}.db"
+        for name in (
+            "chachanotes",
+            "prompts",
+            "media",
+            "evals",
+            "rag",
+            "subscriptions",
+        )
+    }
+    for source in sources.values():
+        _create_private_database(source)
+    target = _worker_target(sources["media"])
+    target._get_database_path = lambda name, _config: sources[name]
+    calls: list[tuple[str, Path, bool]] = []
+
+    def tracking_connect(owner_id, selected, *, read_only=False, **kwargs):
+        calls.append((owner_id, Path(selected), read_only))
+        return connect_private_sqlite(
+            owner_id,
+            selected,
+            read_only=read_only,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(settings_module, "connect_private_sqlite", tracking_connect)
+
+    settings_module.ToolsSettingsWindow._vacuum_worker.__wrapped__(target)
+    settings_module.ToolsSettingsWindow._integrity_worker.__wrapped__(target)
+
+    assert calls == [
+        *[("settings.vacuum", source, False) for source in sources.values()],
+        *[("settings.integrity", source, True) for source in sources.values()],
+    ]
+
+
+def test_settings_size_refresh_covers_every_database_owner(tmp_path: Path) -> None:
+    sources = {
+        name: tmp_path / f"{name}.db"
+        for name in (
+            "chachanotes",
+            "prompts",
+            "media",
+            "evals",
+            "rag",
+            "subscriptions",
+        )
+    }
+    for source in sources.values():
+        source.write_bytes(b"x")
+    widgets = {f"#db-size-{name}": MagicMock() for name in sources}
+    target = SimpleNamespace(
+        config_data={"database": {}},
+        _get_database_path=lambda name, _config: sources[name],
+        _format_file_size=lambda size: f"{size} B",
+        query_one=lambda selector: widgets[selector],
+    )
+
+    settings_module.ToolsSettingsWindow._update_database_sizes(target)
+
+    for widget in widgets.values():
+        widget.update.assert_called_once_with("Size: 1 B")
+
+
+def test_settings_database_path_router_uses_canonical_runtime_paths(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    user_data_dir = tmp_path / "runtime-data"
+    expected = {
+        "chachanotes": tmp_path / "chachanotes.db",
+        "prompts": tmp_path / "prompts.db",
+        "media": tmp_path / "media.db",
+        "evals": user_data_dir / "evals.db",
+        "rag": user_data_dir / "rag_indexing.db",
+        "subscriptions": tmp_path / "subscriptions.db",
+    }
+    for name in ("chachanotes", "prompts", "media", "subscriptions"):
+        monkeypatch.setattr(
+            settings_module,
+            f"get_{name}_db_path",
+            lambda name=name: expected[name],
+            raising=False,
+        )
+    monkeypatch.setattr(
+        settings_module,
+        "get_user_data_dir",
+        lambda: user_data_dir,
+        raising=False,
+    )
+
+    target = SimpleNamespace()
+    selected = {
+        name: settings_module.ToolsSettingsWindow._get_database_path(target, name, {})
+        for name in expected
+    }
+
+    assert selected == expected
+    assert (
+        settings_module.ToolsSettingsWindow._get_database_path(target, "unknown", {})
+        is None
+    )
+
+
+def test_settings_chatbook_import_paths_match_importer_contract(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    expected = {
+        "ChaChaNotes": str(tmp_path / "chachanotes.db"),
+        "Prompts": str(tmp_path / "prompts.db"),
+        "Media": str(tmp_path / "media.db"),
+    }
+    monkeypatch.setattr(
+        settings_module,
+        "get_chatbook_database_paths",
+        lambda: expected,
+    )
+    target = SimpleNamespace()
+
+    selected = settings_module.ToolsSettingsWindow._get_chatbook_import_database_paths(
+        target,
+        {},
+    )
+
+    assert selected == expected
+
+
+def test_settings_chatbook_worker_uses_explicit_import_status(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.Chatbooks.chatbook_importer import ImportStatus
+
+    database = tmp_path / "settings.db"
+    target = _worker_target(database)
+    db_paths = {
+        "ChaChaNotes": str(tmp_path / "chachanotes.db"),
+        "Prompts": str(tmp_path / "prompts.db"),
+        "Media": str(tmp_path / "media.db"),
+    }
+    captured: dict[str, object] = {}
+
+    class FakeImporter:
+        def __init__(self, selected_paths):
+            captured["db_paths"] = selected_paths
+
+        def import_chatbook(self, **kwargs):
+            status = kwargs["import_status"]
+            status.successful_items = 3
+            status.skipped_items = 1
+            status.failed_items = 0
+            status.add_warning("test warning")
+            captured["status"] = status
+            return True, "Successfully imported 3 items"
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Chatbooks.chatbook_importer.ChatbookImporter",
+        FakeImporter,
+    )
+
+    settings_module.ToolsSettingsWindow._import_chatbook_worker.__wrapped__(
+        target,
+        str(tmp_path / "bundle.zip"),
+        db_paths,
+    )
+
+    assert captured["db_paths"] == db_paths
+    assert isinstance(captured["status"], ImportStatus)
+    assert any(
+        "Successfully imported 3 items (1 skipped, 0 failed)" in str(call)
+        for call in target.app_instance.notify.call_args_list
+    )
+    assert not any(
+        "Error during import" in str(call)
+        for call in target.app_instance.notify.call_args_list
+    )
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX export privacy contract")
+@pytest.mark.parametrize(
+    ("worker_name", "result_method", "records", "file_pattern"),
+    [
+        (
+            "_export_conversations_worker",
+            "list_all_active_conversations",
+            [{"id": 1, "title": "Private conversation"}],
+            "conversations_*.json",
+        ),
+        (
+            "_export_notes_worker",
+            "list_notes",
+            [
+                {
+                    "id": 1,
+                    "title": "Private note",
+                    "created_at": "2026-07-23",
+                    "updated_at": "2026-07-23",
+                    "content": "private body",
+                }
+            ],
+            "notes_*/*.md",
+        ),
+        (
+            "_export_characters_worker",
+            "list_character_cards",
+            [{"id": 1, "name": "Private character"}],
+            "characters_*.json",
+        ),
+    ],
+)
+def test_settings_sensitive_exports_are_private_under_umask_zero(
+    tmp_path: Path,
+    monkeypatch,
+    worker_name: str,
+    result_method: str,
+    records: list[dict],
+    file_pattern: str,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir(mode=0o700)
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+    export_root = home / ".local" / "share" / "tldw_cli" / "exports"
+    export_root.mkdir(parents=True, mode=0o755)
+    database = tmp_path / "chachanotes.db"
+    _create_private_database(database)
+    target = _worker_target(database)
+    mock_database = MagicMock()
+    getattr(mock_database, result_method).return_value = records
+    monkeypatch.setattr(
+        settings_module,
+        "CharactersRAGDB",
+        MagicMock(return_value=mock_database),
+    )
+
+    previous = os.umask(0)
+    try:
+        worker = getattr(settings_module.ToolsSettingsWindow, worker_name)
+        worker(target)
+    finally:
+        os.umask(previous)
+
+    exported = list(export_root.glob(file_pattern))
+    assert len(exported) == 1
+    assert export_root.stat().st_mode & 0o777 == 0o700
+    assert exported[0].parent.stat().st_mode & 0o777 == 0o700
+    assert exported[0].stat().st_mode & 0o777 == 0o600
+    mock_database.close_connection.assert_called_once_with()
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX restore privacy contract")

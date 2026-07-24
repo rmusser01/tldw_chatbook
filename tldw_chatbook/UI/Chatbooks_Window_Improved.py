@@ -20,6 +20,8 @@ from textual.widgets import Static, Button, Input, ListView, ListItem
 from textual.reactive import reactive
 from loguru import logger
 
+from ..Utils.private_paths import secure_private_directory
+
 if TYPE_CHECKING:
     from ..app import TldwCli
 
@@ -357,7 +359,11 @@ class ChatbooksWindowImproved(Screen):
     def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
-        self._export_path = Path.home() / "Documents" / "Chatbooks"
+        self._export_path = secure_private_directory(
+            Path.home() / "Documents" / "Chatbooks",
+            create=True,
+            application_owned=True,
+        ).lexical_path
 
     def compose(self) -> ComposeResult:
         # Header
@@ -531,8 +537,11 @@ class ChatbooksWindowImproved(Screen):
     async def _refresh_chatbooks(self) -> None:
         """Load chatbooks from export directory."""
         try:
-            if not self._export_path.exists():
-                self._export_path.mkdir(parents=True, exist_ok=True)
+            self._export_path = secure_private_directory(
+                self._export_path,
+                create=True,
+                application_owned=True,
+            ).lexical_path
 
             chatbooks = []
 

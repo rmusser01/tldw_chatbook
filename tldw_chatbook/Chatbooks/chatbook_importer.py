@@ -9,10 +9,13 @@ Handles the import and validation of chatbooks into the application.
 """
 
 import json
+import os
 import shutil
+import stat
+import tempfile
 import zipfile
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import List, Dict, Any, Optional, Tuple, Mapping
 from loguru import logger
 
@@ -25,6 +28,7 @@ from ..DB.Prompts_DB import PromptsDatabase
 from ..Character_Chat.character_card_formats import detect_and_parse_character_card
 from ..Utils.path_validation import validate_filename
 from ..Utils.paths import get_user_data_dir
+from ..Utils.private_paths import secure_private_directory
 
 
 class ImportStatus:
@@ -71,11 +75,80 @@ class ChatbookImporter:
             db_paths: Dictionary mapping database names to their paths
         """
         self.db_paths = db_paths
-        self.temp_dir = (
-            Path.home() / ".local" / "share" / "tldw_cli" / "temp" / "imports"
-        )
-        self.temp_dir.mkdir(parents=True, exist_ok=True)
+        self.temp_dir = secure_private_directory(
+            get_user_data_dir() / "temp" / "imports",
+            create=True,
+            application_owned=True,
+        ).lexical_path
         self.conflict_resolver = ConflictResolver()
+
+    def _create_extract_dir(self, prefix: str) -> Path:
+        """Create one collision-resistant owner-only extraction directory."""
+
+        return Path(tempfile.mkdtemp(prefix=prefix, dir=self.temp_dir))
+
+    @staticmethod
+    def _validated_archive_parts(member: zipfile.ZipInfo) -> tuple[str, ...]:
+        """Return safe relative path components for one archive member."""
+
+        filename = member.filename
+        if not filename or "\x00" in filename or "\\" in filename:
+            raise ValueError(f"Unsafe archive member path: {filename!r}")
+        relative = PurePosixPath(filename)
+        parts = relative.parts
+        if (
+            relative.is_absolute()
+            or not parts
+            or any(part in {"", ".", ".."} for part in parts)
+            or parts[0].endswith(":")
+        ):
+            raise ValueError(f"Unsafe archive member path: {filename!r}")
+
+        archived_mode = member.external_attr >> 16
+        archived_type = stat.S_IFMT(archived_mode)
+        if archived_type not in {0, stat.S_IFREG, stat.S_IFDIR}:
+            raise ValueError(f"Unsupported archive member type: {filename!r}")
+        return parts
+
+    def _extract_private_archive(
+        self,
+        chatbook_path: Path,
+        extract_dir: Path,
+    ) -> None:
+        """Extract regular ZIP members with owner-only permissions."""
+
+        with zipfile.ZipFile(chatbook_path, "r") as archive:
+            for member in archive.infolist():
+                parts = self._validated_archive_parts(member)
+                target = extract_dir.joinpath(*parts)
+                if member.is_dir():
+                    secure_private_directory(
+                        target,
+                        create=True,
+                        application_owned=True,
+                    )
+                    continue
+
+                secure_private_directory(
+                    target.parent,
+                    create=True,
+                    application_owned=True,
+                )
+                flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                flags |= getattr(os, "O_NOFOLLOW", 0)
+                file_fd = os.open(target, flags, 0o600)
+                try:
+                    if hasattr(os, "fchmod"):
+                        os.fchmod(file_fd, 0o600)
+                    with os.fdopen(file_fd, "wb") as destination:
+                        file_fd = -1
+                        with archive.open(member, "r") as source:
+                            shutil.copyfileobj(source, destination)
+                        destination.flush()
+                        os.fsync(destination.fileno())
+                finally:
+                    if file_fd >= 0:
+                        os.close(file_fd)
 
     def preview_chatbook(
         self, chatbook_path: Path
@@ -89,25 +162,19 @@ class ChatbookImporter:
         Returns:
             Tuple of (manifest, error_message)
         """
+        extract_dir: Optional[Path] = None
         try:
-            # Extract to temporary directory
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            extract_dir = self.temp_dir / f"preview_{timestamp}"
-
-            # Extract archive
-            if chatbook_path.suffix == ".zip":
-                with zipfile.ZipFile(chatbook_path, "r") as zf:
-                    zf.extractall(extract_dir)
-            else:
+            if chatbook_path.suffix != ".zip":
                 return (
                     None,
                     "Unsupported chatbook format. Only ZIP files are supported.",
                 )
+            extract_dir = self._create_extract_dir("preview_")
+            self._extract_private_archive(chatbook_path, extract_dir)
 
             # Load manifest
             manifest_path = extract_dir / "manifest.json"
             if not manifest_path.exists():
-                shutil.rmtree(extract_dir)
                 return None, "Invalid chatbook: manifest.json not found"
 
             with open(manifest_path, "r", encoding="utf-8") as f:
@@ -115,14 +182,14 @@ class ChatbookImporter:
 
             manifest = ChatbookManifest.from_dict(manifest_data)
 
-            # Cleanup
-            shutil.rmtree(extract_dir)
-
             return manifest, None
 
         except Exception as e:
             logger.error(f"Error previewing chatbook: {e}")
             return None, f"Error previewing chatbook: {str(e)}"
+        finally:
+            if extract_dir is not None:
+                shutil.rmtree(extract_dir, ignore_errors=True)
 
     def import_chatbook(
         self,
@@ -144,6 +211,7 @@ class ChatbookImporter:
             prefix_imported: Whether to prefix imported content titles
             import_media: Whether to import media files
             import_embeddings: Whether to import embeddings
+            import_status: Optional status object populated with item-level results
 
         Returns:
             Tuple of (success, message)
@@ -155,23 +223,17 @@ class ChatbookImporter:
             f"ChatbookImporter.import_chatbook: Options - conflict_resolution={conflict_resolution}, prefix_imported={prefix_imported}, import_media={import_media}, import_embeddings={import_embeddings}"
         )
         status = import_status if import_status else ImportStatus()
+        extract_dir: Optional[Path] = None
 
         try:
-            # Extract chatbook
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            extract_dir = self.temp_dir / f"import_{timestamp}"
-
             logger.info(f"Importing chatbook from {chatbook_path}")
 
-            # Extract archive
-            if chatbook_path.suffix == ".zip":
-                with zipfile.ZipFile(chatbook_path, "r") as zf:
-                    zf.extractall(extract_dir)
-            else:
-                status.add_error(
-                    "Unsupported chatbook format. Only ZIP files are supported."
-                )
-                return False, status
+            if chatbook_path.suffix != ".zip":
+                error_msg = "Unsupported chatbook format. Only ZIP files are supported."
+                status.add_error(error_msg)
+                return False, error_msg
+            extract_dir = self._create_extract_dir("import_")
+            self._extract_private_archive(chatbook_path, extract_dir)
 
             # Load manifest
             manifest_path = extract_dir / "manifest.json"
@@ -182,9 +244,9 @@ class ChatbookImporter:
                 logger.error(
                     "ChatbookImporter.import_chatbook: manifest.json not found"
                 )
-                status.add_error("Invalid chatbook: manifest.json not found")
-                shutil.rmtree(extract_dir)
-                return False, status
+                error_msg = "Invalid chatbook: manifest.json not found"
+                status.add_error(error_msg)
+                return False, error_msg
 
             with open(manifest_path, "r", encoding="utf-8") as f:
                 manifest_data = json.load(f)
@@ -266,9 +328,6 @@ class ChatbookImporter:
                     status,
                 )
 
-            # Cleanup
-            shutil.rmtree(extract_dir)
-
             # Success if we processed items without fatal errors
             # This includes both imported and skipped items
             success = (
@@ -304,6 +363,9 @@ class ChatbookImporter:
             logger.error(f"Error importing chatbook: {e}")
             status.add_error(error_msg)
             return False, error_msg
+        finally:
+            if extract_dir is not None:
+                shutil.rmtree(extract_dir, ignore_errors=True)
 
     def _import_conversations(
         self,
