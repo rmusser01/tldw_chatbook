@@ -346,9 +346,9 @@ def test_cli_never_reads_or_writes_host_config_data_or_secrets(tmp_path: Path) -
             "--warmups",
             "0",
             "--output",
-            str(output),
+            output.name,
         ],
-        cwd=REPO_ROOT,
+        cwd=process_temp,
         env=environment,
         text=True,
         capture_output=True,
@@ -360,6 +360,11 @@ def test_cli_never_reads_or_writes_host_config_data_or_secrets(tmp_path: Path) -
     emitted = completed.stdout + completed.stderr
     assert secret not in emitted
     assert str(host_home) not in emitted
+    assert str(REPO_ROOT) not in emitted
+    assert str(process_temp) not in emitted
+    assert "host-state" not in emitted
+    assert completed.stdout == f"Wrote {output.name}\n"
+    assert completed.stderr == ""
     assert host_snapshot() == before
     assert output.is_relative_to(process_temp)
     assert _load_json(output)["budgets"]["overall_pass"] is True
@@ -571,6 +576,69 @@ def test_corrupt_baseline_is_rejected_before_benchmark_with_sanitized_error(
     assert captured.err.startswith("benchmark error: invalid qualification baseline")
     assert "Traceback" not in captured.err
     assert str(corrupt_path) not in captured.err
+
+
+@pytest.mark.parametrize(
+    ("samples", "warmups", "valid"),
+    [
+        (MISSING, 5, False),
+        (True, 5, False),
+        ("30", 5, False),
+        (29, 5, False),
+        (30, MISSING, False),
+        (30, False, False),
+        (30, "5", False),
+        (30, 4, False),
+        (30, 5, True),
+    ],
+)
+def test_qualification_rejects_inadequately_sampled_historical_baseline(
+    samples: object,
+    warmups: object,
+    valid: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    benchmark = _load_benchmark()
+    baseline = _load_json(BASELINE_PATH)
+    _replace_nested(baseline, ("samples",), samples)
+    _replace_nested(baseline, ("warmups",), warmups)
+    baseline_path = tmp_path / "baseline.json"
+    baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
+    benchmark_called = False
+
+    async def record_benchmark(**_kwargs):
+        nonlocal benchmark_called
+        benchmark_called = True
+        return {"budgets": {"overall_pass": True}}
+
+    monkeypatch.setattr(benchmark, "run_benchmark", record_benchmark)
+    exit_code = benchmark.main(
+        [
+            "--mode",
+            "qualification",
+            "--samples",
+            "30",
+            "--warmups",
+            "5",
+            "--baseline",
+            str(baseline_path),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert benchmark_called is valid
+    assert exit_code == (0 if valid else 2)
+    if valid:
+        assert captured.err == ""
+    else:
+        assert captured.out == ""
+        assert captured.err.startswith(
+            "benchmark error: invalid qualification baseline"
+        )
+        assert "Traceback" not in captured.err
+        assert str(baseline_path) not in captured.err
 
 
 @pytest.mark.asyncio

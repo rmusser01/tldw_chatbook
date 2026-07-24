@@ -42,9 +42,11 @@ python Helper_Scripts/Benchmarks/rag_citation_provenance_benchmark.py \
 Baseline and qualification modes accept only the in-process
 `mock-local-v1` provider and no base URL. An absent baseline, or one with an
 incompatible fixture/result schema or incomplete/non-finite required metric,
-is rejected before measurement with a sanitized error. A structurally valid
-baseline from an environment outside the recorded envelope may still be
-measured, but the result cannot claim a passing qualification.
+or one recorded with fewer than 30 samples and five warmups is rejected before
+measurement with a sanitized error. The stored sample counts must be
+non-Boolean integers. A structurally valid baseline from an environment
+outside the recorded envelope may still be measured, but the result cannot
+claim a passing qualification.
 
 Qualification runs with fewer than 30 measured samples or five warmups are
 permitted as quick diagnostics. They report fixed ineligibility reason codes
@@ -87,8 +89,10 @@ useful for measurements but are not comparable enough to claim pass.
 - Before the first Chatbook import, the runner redirects HOME, XDG config/data,
   and `TLDW_CONFIG_PATH` to its temporary workspace, enables test mode, and
   hides inherited secret-bearing environment variables. It restores the
-  original environment after the Console measurement; host configuration,
-  credentials, and user data are never loaded or modified.
+  original environment after the Console measurement. Import-time production
+  diagnostics are scoped away with the same context so repository, temporary
+  config, credential, and user-data paths are not emitted; runner results and
+  sanitized benchmark errors remain visible.
 - SQLite size measurements run `PRAGMA wal_checkpoint(TRUNCATE)` before each
   file-size observation.
 - The mocked native first-token path runs through
@@ -159,13 +163,13 @@ All six families pass on the reference environment.
 
 | Metric | Median | p95 | Budget result |
 | --- | ---: | ---: | --- |
-| Mocked Console first token | 22.787 ms | 24.730 ms | Pass; baseline regression 0% / 0 ms |
-| Standard finalization | 0.042 ms | 0.118 ms | Pass |
-| Maximum finalization | 2.884 ms | 3.765 ms | Pass |
-| Inspector cold load | 0.288 ms | 2.522 ms | Pass |
-| Inspector warm load | 0.079 ms | 0.246 ms | Pass |
+| Mocked Console first token | 22.932 ms | 23.292 ms | Pass; baseline regression 0% / 0 ms |
+| Standard finalization | 0.031 ms | 0.038 ms | Pass |
+| Maximum finalization | 2.121 ms | 2.264 ms | Pass |
+| Inspector cold load | 0.215 ms | 0.267 ms | Pass |
+| Inspector warm load | 0.066 ms | 0.067 ms | Pass |
 | SQLite growth per 4 MiB governed answer | 4,227,072 bytes | 4,235,264 bytes | Pass; allowance 5,924,454 bytes |
-| Legacy migration | 74,954 messages/s | 100,768 messages/s | Pass; zero duplicate rows |
+| Legacy migration | 105,503 messages/s | 119,278 messages/s | Pass; zero duplicate rows |
 
 The maximum trace proxy contains 4,194,304 governed bytes, a 65,536-byte
 largest snapshot, and 6,744 bytes of immutable aggregate JSON.

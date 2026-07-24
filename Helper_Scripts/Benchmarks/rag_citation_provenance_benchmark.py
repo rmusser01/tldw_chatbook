@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import io
 import json
 import math
 import os
@@ -15,7 +16,7 @@ import statistics
 import sys
 import tempfile
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Iterator, NamedTuple, Sequence
@@ -326,7 +327,8 @@ def isolated_benchmark_host_state(root: Path) -> Iterator[None]:
         for key in hidden:
             os.environ.pop(key, None)
         os.environ.update(overrides)
-        yield
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            yield
     finally:
         for key, value in previous.items():
             if value is None:
@@ -740,6 +742,19 @@ def _validate_baseline_document(baseline: dict[str, Any]) -> None:
 
     if not isinstance(baseline, dict):
         raise ValueError("invalid qualification baseline: document must be an object")
+    for field, minimum in (
+        ("samples", DEFAULT_SAMPLES),
+        ("warmups", DEFAULT_WARMUPS),
+    ):
+        value = baseline.get(field)
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(
+                f"invalid qualification baseline: {field} must be an integer"
+            )
+        if value < minimum:
+            raise ValueError(
+                f"invalid qualification baseline: {field} must be at least {minimum}"
+            )
     if baseline.get("fixture_version") != FIXTURE_VERSION:
         raise ValueError(
             "invalid qualification baseline: fixture version is incompatible"

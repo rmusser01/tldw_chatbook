@@ -141,8 +141,8 @@
     "finalization": {
       "corpus_input_sha256": "75e9875b8128677026c22c4c20dddfe158a4603595a95db5ee767ffbe4d71ce2",
       "maximum_ms": {
-        "median": 2.883979,
-        "p95": 3.765375
+        "median": 2.120896,
+        "p95": 2.264292
       },
       "maximum_result": {
         "aggregate_json_bytes": 6744,
@@ -154,8 +154,8 @@
         "snapshots": 64
       },
       "standard_ms": {
-        "median": 0.04225,
-        "p95": 0.11825
+        "median": 0.030917,
+        "p95": 0.037584
       },
       "standard_shape": {
         "bytes_per_snapshot": 4096,
@@ -164,13 +164,13 @@
     },
     "first_token": {
       "candidate_ms": {
-        "median": 22.786625,
-        "p95": 24.7295
+        "median": 22.932083,
+        "p95": 23.29175
       },
       "comparison": "baseline-current-control",
       "control_ms": {
-        "median": 22.786625,
-        "p95": 24.7295
+        "median": 22.932083,
+        "p95": 23.29175
       },
       "corpus_input_sha256": "3dbea4e8d42b65f25278d38880d70c019fd631169bc25cda8e81e4ba705ad0f2",
       "path": [
@@ -184,12 +184,12 @@
     },
     "inspector_load": {
       "cold_ms": {
-        "median": 0.287896,
-        "p95": 2.522042
+        "median": 0.214605,
+        "p95": 0.26725
       },
       "warm_ms": {
-        "median": 0.078792,
-        "p95": 0.246292
+        "median": 0.066208,
+        "p95": 0.067459
       }
     },
     "migration": {
@@ -201,8 +201,8 @@
       },
       "interrupted_after_messages": 50,
       "messages_per_second": {
-        "median": 74953.530193,
-        "p95": 100768.358735
+        "median": 105502.821747,
+        "p95": 119278.365886
       }
     },
     "trace_size": {

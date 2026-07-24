@@ -57,18 +57,22 @@ The local runner now establishes isolated temporary config/data/home roots and
 hides inherited secrets before its first Chatbook import, then restores the
 environment. Qualification validates every evaluator-required baseline number
 before measurement and rejects missing, non-real, non-finite, zero-reference,
-or negative values with sanitized errors. Runs below 30 samples or five
-warmups remain available as quick diagnostics but are explicitly ineligible
-for a passing qualification.
+or negative values with sanitized errors. Historical baselines must also
+record non-Boolean integer counts of at least 30 samples and five warmups.
+Runs below those counts remain available as quick diagnostics but are
+explicitly ineligible for a passing qualification. Production import
+diagnostics are suppressed only inside the isolated Console measurement so
+host, worktree, and generated config paths cannot leak while runner results
+and bounded errors remain visible.
 
 The updated 30-sample/5-warmup ARM64 reference run passed all six local budget
-families: first-token p95 24.730 ms, standard/maximum finalization p95
-0.118/3.765 ms, inspector cold/warm p95 2.522/0.246 ms, SQLite growth p95
-4,235,264 bytes for 4 MiB governed data, and migration median 74,954
+families: first-token p95 23.292 ms, standard/maximum finalization p95
+0.038/2.264 ms, inspector cold/warm p95 0.267/0.067 ms, SQLite growth p95
+4,235,264 bytes for 4 MiB governed data, and migration median 105,503
 messages/second with zero duplicate restart rows. Qualification runs passed
 against the regenerated baseline: the final candidate first-token p95 was
-22.251 ms, and the baseline SHA-256 remained
-`0928c7037ba941bb5e624586c4def05075f2c7528f6d91a6ea9150194255c71f`.
+23.016 ms, and the baseline SHA-256 remained
+`51529a379dd1ca206f8d2011f2c819ea7802582d2a3761cac602dbdc1bf00b6b`.
 
 ADR required: yes
 
