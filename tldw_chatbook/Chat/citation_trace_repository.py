@@ -67,6 +67,7 @@ class CitationHydrationState(str, Enum):
     GOVERNANCE_SCOPE_DENIED = "governance_scope_denied"
     AUTHORITY_DENIED = "authority_denied"
     SNAPSHOT_CAPABILITY_DENIED = "snapshot_capability_denied"
+    SOURCE_IDENTITY_CAPABILITY_DENIED = "source_identity_capability_denied"
     PAYLOAD_UNAVAILABLE = "payload_unavailable"
     REDACTED = "redacted"
     REVOKED = "revoked"
@@ -633,6 +634,15 @@ class CitationTraceRepository:
                 state=CitationHydrationState.SNAPSHOT_CAPABILITY_DENIED,
                 summary=summary,
             )
+        if (
+            PolicyCapability.VIEW_SOURCE_IDENTITY
+            not in summary.trace.policy_capabilities
+            or not authorization.view_source_identity
+        ):
+            return CitationHydrationResult(
+                state=CitationHydrationState.SOURCE_IDENTITY_CAPABILITY_DENIED,
+                summary=summary,
+            )
 
         profile_id = namespace.profile_id
         trace_id = summary.trace.trace_id
@@ -802,83 +812,401 @@ class CitationTraceRepository:
                 summary=summary,
             )
 
-        run_rows = connection.execute(
+        expected_runs = tuple(
+            {
+                "run_id": run.run_id,
+                "run_ordinal": run.run_ordinal,
+                "payload_id": run.payload_ref,
+            }
+            for run in summary.trace.evidence_runs
+        )
+        expected_snapshots = tuple(
+            {
+                "payload_id": entry.snapshot_payload_ref,
+                "storage_mode": entry.storage_mode.value,
+            }
+            for prompt_set in summary.trace.prompt_evidence_sets
+            for entry in prompt_set.entries
+        )
+        expected_answers = tuple(
+            {
+                "payload_id": attempt.answer_payload_ref,
+                "attempt_id": attempt.attempt_id,
+                "attempt_ordinal": attempt.attempt_ordinal,
+            }
+            for attempt in summary.trace.answer_attempts
+            if attempt.answer_payload_ref is not None
+        )
+        expected_references = tuple(
+            {
+                "prompt_set_id": prompt_set.prompt_set_id,
+                "evidence_ordinal": entry.evidence_ordinal,
+                "run_id": entry.run_id,
+                "snapshot_payload_id": entry.snapshot_payload_ref,
+                "marker_ordinal": entry.marker_ordinal,
+                "storage_mode": entry.storage_mode.value,
+            }
+            for prompt_set in summary.trace.prompt_evidence_sets
+            for entry in prompt_set.entries
+        )
+        self._before_governed_select()
+        governed_rows = connection.execute(
             """
-            SELECT run_payload_json
-            FROM rag_evidence_runs
-            WHERE profile_id = ? AND trace_id = ?
-            ORDER BY run_ordinal
-            """,
-            (profile_id, trace_id),
-        ).fetchall()
-        snapshot_rows = connection.execute(
-            """
-            SELECT DISTINCT
-                s.payload_id, s.storage_mode, s.snapshot_text, s.title,
+            WITH
+            expected_runs AS (
+                SELECT
+                    json_extract(value, '$.run_id') AS run_id,
+                    json_extract(value, '$.run_ordinal') AS run_ordinal,
+                    json_extract(value, '$.payload_id') AS payload_id
+                FROM json_each(?)
+            ),
+            expected_snapshots AS (
+                SELECT DISTINCT
+                    json_extract(value, '$.payload_id') AS payload_id,
+                    json_extract(value, '$.storage_mode') AS storage_mode
+                FROM json_each(?)
+            ),
+            expected_answers AS (
+                SELECT
+                    json_extract(value, '$.payload_id') AS payload_id,
+                    json_extract(value, '$.attempt_id') AS attempt_id,
+                    json_extract(value, '$.attempt_ordinal') AS attempt_ordinal
+                FROM json_each(?)
+            ),
+            expected_references AS (
+                SELECT
+                    json_extract(value, '$.prompt_set_id') AS prompt_set_id,
+                    json_extract(value, '$.evidence_ordinal') AS evidence_ordinal,
+                    json_extract(value, '$.run_id') AS run_id,
+                    json_extract(value, '$.snapshot_payload_id')
+                        AS snapshot_payload_id,
+                    json_extract(value, '$.marker_ordinal') AS marker_ordinal,
+                    json_extract(value, '$.storage_mode') AS storage_mode
+                FROM json_each(?)
+            ),
+            allowed_authorities AS (
+                SELECT value AS authority_id
+                FROM json_each(?)
+            ),
+            invalid(reason) AS (
+                SELECT 'trace'
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM rag_citation_traces t
+                    WHERE t.profile_id = ?
+                      AND t.trace_id = ?
+                      AND t.origin = ?
+                      AND t.origin_scope_id = ?
+                      AND t.aggregate_json = ?
+                      AND t.visibility_state = ?
+                )
+                UNION ALL
+                SELECT 'run_count'
+                WHERE (
+                    SELECT count(*)
+                    FROM rag_evidence_runs r
+                    WHERE r.profile_id = ? AND r.trace_id = ?
+                ) != (SELECT count(*) FROM expected_runs)
+                UNION ALL
+                SELECT 'run'
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM expected_runs e
+                    LEFT JOIN rag_evidence_runs r
+                      ON r.profile_id = ?
+                     AND r.trace_id = ?
+                     AND r.run_id = e.run_id
+                    WHERE r.run_id IS NULL
+                       OR r.run_ordinal != e.run_ordinal
+                       OR r.redaction_state != 'available'
+                       OR r.purged_at IS NOT NULL
+                       OR NOT json_valid(r.run_payload_json)
+                       OR json_type(r.run_payload_json) != 'object'
+                       OR json_extract(r.run_payload_json, '$.payload_id')
+                            IS NOT e.payload_id
+                       OR json_extract(r.run_payload_json, '$.run_id')
+                            IS NOT e.run_id
+                       OR json_type(r.run_payload_json, '$.authority_id')
+                            NOT IN ('null', 'text')
+                       OR COALESCE(
+                            json_extract(r.run_payload_json, '$.authority_id'),
+                            ?
+                       ) NOT IN (
+                            SELECT authority_id FROM allowed_authorities
+                       )
+                       OR (
+                            ? IS NOT NULL
+                            AND COALESCE(
+                                json_extract(
+                                    r.run_payload_json,
+                                    '$.authority_id'
+                                ),
+                                ?
+                            ) != ?
+                       )
+                )
+                UNION ALL
+                SELECT 'reference_count'
+                WHERE (
+                    SELECT count(*)
+                    FROM rag_trace_evidence_refs r
+                    WHERE r.profile_id = ? AND r.trace_id = ?
+                ) != (SELECT count(*) FROM expected_references)
+                UNION ALL
+                SELECT 'reference'
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM expected_references e
+                    LEFT JOIN rag_trace_evidence_refs r
+                      ON r.profile_id = ?
+                     AND r.trace_id = ?
+                     AND r.prompt_set_id = e.prompt_set_id
+                     AND r.evidence_ordinal = e.evidence_ordinal
+                     AND r.run_id = e.run_id
+                     AND r.snapshot_payload_id = e.snapshot_payload_id
+                     AND r.marker_ordinal = e.marker_ordinal
+                     AND r.storage_mode = e.storage_mode
+                    WHERE r.prompt_set_id IS NULL
+                )
+                UNION ALL
+                SELECT 'snapshot'
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM expected_snapshots e
+                    LEFT JOIN rag_evidence_snapshots s
+                      ON s.profile_id = ?
+                     AND s.payload_id = e.payload_id
+                    WHERE s.payload_id IS NULL
+                       OR s.storage_mode != e.storage_mode
+                       OR s.governance_scope_id != ?
+                       OR s.authority_id NOT IN (
+                            SELECT authority_id FROM allowed_authorities
+                       )
+                       OR s.redaction_state != 'available'
+                       OR s.purged_at IS NOT NULL
+                       OR (
+                            s.source_identity_json IS NOT NULL
+                            AND (
+                                NOT json_valid(s.source_identity_json)
+                                OR json_type(s.source_identity_json) != 'object'
+                            )
+                       )
+                       OR (
+                            s.locator_json IS NOT NULL
+                            AND (
+                                NOT json_valid(s.locator_json)
+                                OR json_type(s.locator_json) != 'object'
+                            )
+                       )
+                       OR (
+                            s.lineage_json IS NOT NULL
+                            AND (
+                                NOT json_valid(s.lineage_json)
+                                OR json_type(s.lineage_json) != 'object'
+                            )
+                       )
+                       OR (
+                            s.transformations_json IS NOT NULL
+                            AND (
+                                NOT json_valid(s.transformations_json)
+                                OR json_type(s.transformations_json) != 'array'
+                            )
+                       )
+                       OR EXISTS (
+                            SELECT 1
+                            FROM rag_payload_tombstones tombstone
+                            WHERE tombstone.profile_id = s.profile_id
+                              AND tombstone.origin_namespace =
+                                    s.origin_namespace
+                              AND tombstone.origin_payload_id =
+                                    s.origin_payload_id
+                       )
+                )
+                UNION ALL
+                SELECT 'answer_count'
+                WHERE (
+                    SELECT count(*)
+                    FROM rag_answer_attempt_payloads a
+                    WHERE a.profile_id = ? AND a.trace_id = ?
+                ) != (SELECT count(*) FROM expected_answers)
+                UNION ALL
+                SELECT 'answer'
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM expected_answers e
+                    LEFT JOIN rag_answer_attempt_payloads a
+                      ON a.profile_id = ?
+                     AND a.trace_id = ?
+                     AND a.payload_id = e.payload_id
+                     AND a.attempt_id = e.attempt_id
+                    WHERE a.payload_id IS NULL
+                       OR a.redaction_state != 'available'
+                       OR a.answer_body IS NULL
+                       OR a.body_integrity_hmac IS NULL
+                       OR a.purged_at IS NOT NULL
+                )
+            ),
+            guarded AS (
+                SELECT 1 AS permitted
+                WHERE NOT EXISTS (SELECT 1 FROM invalid)
+            )
+            SELECT
+                0 AS family_order,
+                'run' AS family,
+                e.run_ordinal AS sort_ordinal,
+                e.run_id AS sort_key,
+                r.run_payload_json,
+                NULL AS payload_id,
+                NULL AS attempt_id,
+                NULL AS storage_mode,
+                NULL AS snapshot_text,
+                NULL AS title,
+                NULL AS source_identity_json,
+                NULL AS locator_json,
+                NULL AS lineage_json,
+                NULL AS transformations_json,
+                NULL AS content_hash,
+                NULL AS comparison_fingerprint,
+                NULL AS origin_payload_id,
+                NULL AS answer_body,
+                NULL AS body_integrity_hmac
+            FROM guarded
+            JOIN expected_runs e
+            JOIN rag_evidence_runs r
+              ON r.profile_id = ?
+             AND r.trace_id = ?
+             AND r.run_id = e.run_id
+            UNION ALL
+            SELECT
+                1, 'snapshot', 0, e.payload_id, NULL,
+                s.payload_id, NULL, s.storage_mode, s.snapshot_text, s.title,
                 s.source_identity_json, s.locator_json, s.lineage_json,
                 s.transformations_json, s.content_hash,
-                s.comparison_fingerprint, s.origin_payload_id
-            FROM rag_trace_evidence_refs r
+                s.comparison_fingerprint, s.origin_payload_id, NULL, NULL
+            FROM guarded
+            JOIN expected_snapshots e
             JOIN rag_evidence_snapshots s
-              ON s.profile_id = r.profile_id
-             AND s.payload_id = r.snapshot_payload_id
-            WHERE r.profile_id = ? AND r.trace_id = ?
-            ORDER BY s.payload_id
+              ON s.profile_id = ?
+             AND s.payload_id = e.payload_id
+            UNION ALL
+            SELECT
+                2, 'answer', e.attempt_ordinal, e.attempt_id, NULL,
+                a.payload_id, a.attempt_id, NULL, NULL, NULL, NULL, NULL,
+                NULL, NULL, NULL, NULL, NULL, a.answer_body,
+                a.body_integrity_hmac
+            FROM guarded
+            JOIN expected_answers e
+            JOIN rag_answer_attempt_payloads a
+              ON a.profile_id = ?
+             AND a.trace_id = ?
+             AND a.payload_id = e.payload_id
+             AND a.attempt_id = e.attempt_id
+            ORDER BY family_order, sort_ordinal, sort_key
             """,
-            (profile_id, trace_id),
+            (
+                _canonical_json(expected_runs),
+                _canonical_json(expected_snapshots),
+                _canonical_json(expected_answers),
+                _canonical_json(expected_references),
+                _canonical_json(authorization.allowlisted_authority_ids),
+                profile_id,
+                trace_id,
+                summary.trace.origin.value,
+                namespace.origin_scope_id,
+                _canonical_json(summary.trace.model_dump(mode="json")),
+                summary.visibility_state,
+                profile_id,
+                trace_id,
+                profile_id,
+                trace_id,
+                default_run_authority_id,
+                required_run_authority_id,
+                default_run_authority_id,
+                required_run_authority_id,
+                profile_id,
+                trace_id,
+                profile_id,
+                trace_id,
+                profile_id,
+                authorization.governance_scope_id,
+                profile_id,
+                trace_id,
+                profile_id,
+                trace_id,
+                profile_id,
+                trace_id,
+                profile_id,
+                profile_id,
+                trace_id,
+            ),
         ).fetchall()
-        answer_rows = connection.execute(
-            """
-            SELECT payload_id, attempt_id, answer_body, body_integrity_hmac
-            FROM rag_answer_attempt_payloads
-            WHERE profile_id = ? AND trace_id = ?
-            ORDER BY attempt_id
-            """,
-            (profile_id, trace_id),
-        ).fetchall()
-        governed = GovernedCitationPayloads(
-            evidence_run_payloads=tuple(
-                EvidenceRunPayload.model_validate_json(row["run_payload_json"])
-                for row in run_rows
-            ),
-            evidence_snapshot_payloads=tuple(
-                EvidenceSnapshotPayload(
-                    payload_id=row["payload_id"],
-                    storage_mode=EvidenceStorageMode(row["storage_mode"]),
-                    snapshot_text=row["snapshot_text"],
-                    server_reference=(
-                        row["origin_payload_id"]
-                        if row["storage_mode"]
-                        == EvidenceStorageMode.SERVER_REFERENCE.value
-                        else None
-                    ),
-                    title=row["title"],
-                    source_identity=json.loads(row["source_identity_json"] or "{}"),
-                    locator=json.loads(row["locator_json"] or "{}"),
-                    lineage=json.loads(row["lineage_json"] or "{}"),
-                    transformations=tuple(
-                        json.loads(row["transformations_json"] or "[]")
-                    ),
-                    content_hash=row["content_hash"],
-                    comparison_hash=row["comparison_fingerprint"],
-                )
-                for row in snapshot_rows
-            ),
-            answer_attempt_payloads=tuple(
-                AnswerAttemptPayload(
-                    payload_id=row["payload_id"],
-                    attempt_id=row["attempt_id"],
-                    answer_body=row["answer_body"],
-                    body_integrity_hmac=row["body_integrity_hmac"],
-                )
-                for row in answer_rows
-            ),
+        run_rows = tuple(row for row in governed_rows if row["family"] == "run")
+        snapshot_rows = tuple(
+            row for row in governed_rows if row["family"] == "snapshot"
         )
+        answer_rows = tuple(row for row in governed_rows if row["family"] == "answer")
+        if (
+            len(run_rows) != len(expected_runs)
+            or len(snapshot_rows)
+            != len({item["payload_id"] for item in expected_snapshots})
+            or len(answer_rows) != len(expected_answers)
+        ):
+            return CitationHydrationResult(
+                state=CitationHydrationState.PAYLOAD_UNAVAILABLE,
+                summary=summary,
+            )
+        try:
+            governed = GovernedCitationPayloads(
+                evidence_run_payloads=tuple(
+                    EvidenceRunPayload.model_validate_json(row["run_payload_json"])
+                    for row in run_rows
+                ),
+                evidence_snapshot_payloads=tuple(
+                    EvidenceSnapshotPayload(
+                        payload_id=row["payload_id"],
+                        storage_mode=EvidenceStorageMode(row["storage_mode"]),
+                        snapshot_text=row["snapshot_text"],
+                        server_reference=(
+                            row["origin_payload_id"]
+                            if row["storage_mode"]
+                            == EvidenceStorageMode.SERVER_REFERENCE.value
+                            else None
+                        ),
+                        title=row["title"],
+                        source_identity=json.loads(row["source_identity_json"] or "{}"),
+                        locator=json.loads(row["locator_json"] or "{}"),
+                        lineage=json.loads(row["lineage_json"] or "{}"),
+                        transformations=tuple(
+                            json.loads(row["transformations_json"] or "[]")
+                        ),
+                        content_hash=row["content_hash"],
+                        comparison_hash=row["comparison_fingerprint"],
+                    )
+                    for row in snapshot_rows
+                ),
+                answer_attempt_payloads=tuple(
+                    AnswerAttemptPayload(
+                        payload_id=row["payload_id"],
+                        attempt_id=row["attempt_id"],
+                        answer_body=row["answer_body"],
+                        body_integrity_hmac=row["body_integrity_hmac"],
+                    )
+                    for row in answer_rows
+                ),
+            )
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return CitationHydrationResult(
+                state=CitationHydrationState.PAYLOAD_UNAVAILABLE,
+                summary=summary,
+            )
         return CitationHydrationResult(
             state=CitationHydrationState.AUTHORIZED,
             summary=summary,
             governed_payloads=governed,
         )
+
+    def _before_governed_select(self) -> None:
+        """Test seam immediately before the guarded governed read."""
 
     def _fail_after(self, row_family: str) -> None:
         if self._failure_after_row_family == row_family:

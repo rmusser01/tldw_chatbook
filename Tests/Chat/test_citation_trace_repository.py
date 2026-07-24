@@ -132,7 +132,10 @@ def _sealed_write(*, authority_id: str | None = None) -> SealedCitationWrite:
         prompt_evidence_sets=(prompt,),
         answer_attempts=(attempt,),
         selected_attempt_id=attempt.attempt_id,
-        policy_capabilities=(PolicyCapability.VIEW_SNAPSHOT,),
+        policy_capabilities=(
+            PolicyCapability.VIEW_SNAPSHOT,
+            PolicyCapability.VIEW_SOURCE_IDENTITY,
+        ),
         policy_version="policy-1",
         created_at=NOW,
         sealed_at=NOW,
@@ -248,6 +251,7 @@ def _authorization(
     profile_id: str | None = None,
     authority_id: str | None = None,
     view_snapshot: bool = True,
+    view_source_identity: bool = True,
 ) -> CitationReadAuthorization:
     profile = profile_id or identity.profile_id
     return CitationReadAuthorization(
@@ -256,6 +260,7 @@ def _authorization(
         governance_scope_id=profile,
         allowlisted_authority_ids=(authority_id or identity.local_authority_id,),
         view_snapshot=view_snapshot,
+        view_source_identity=view_source_identity,
     )
 
 
@@ -851,19 +856,72 @@ def test_hydration_denials_return_only_safe_summary(
     assert "private" not in repr(result)
 
 
-def test_hydration_requires_the_sealed_snapshot_capability(
+@pytest.mark.parametrize(
+    (
+        "sealed_capabilities",
+        "request_snapshot",
+        "request_identity",
+        "expected_state",
+    ),
+    [
+        (
+            (PolicyCapability.VIEW_SOURCE_IDENTITY,),
+            True,
+            True,
+            CitationHydrationState.SNAPSHOT_CAPABILITY_DENIED,
+        ),
+        (
+            (
+                PolicyCapability.VIEW_SNAPSHOT,
+                PolicyCapability.VIEW_SOURCE_IDENTITY,
+            ),
+            False,
+            True,
+            CitationHydrationState.SNAPSHOT_CAPABILITY_DENIED,
+        ),
+        (
+            (PolicyCapability.VIEW_SNAPSHOT,),
+            True,
+            True,
+            CitationHydrationState.SOURCE_IDENTITY_CAPABILITY_DENIED,
+        ),
+        (
+            (
+                PolicyCapability.VIEW_SNAPSHOT,
+                PolicyCapability.VIEW_SOURCE_IDENTITY,
+            ),
+            True,
+            False,
+            CitationHydrationState.SOURCE_IDENTITY_CAPABILITY_DENIED,
+        ),
+        (
+            (
+                PolicyCapability.VIEW_SNAPSHOT,
+                PolicyCapability.VIEW_SOURCE_IDENTITY,
+            ),
+            True,
+            True,
+            CitationHydrationState.AUTHORIZED,
+        ),
+    ],
+)
+def test_hydration_requires_independent_snapshot_and_identity_capabilities(
     db: CharactersRAGDB,
+    sealed_capabilities: tuple[PolicyCapability, ...],
+    request_snapshot: bool,
+    request_identity: bool,
+    expected_state: CitationHydrationState,
 ) -> None:
     repository = _repository(db)
     write = _sealed_write()
-    trace_without_capability = write.trace.model_copy(
-        update={"policy_capabilities": ()}
+    trace_with_capabilities = write.trace.model_copy(
+        update={"policy_capabilities": sealed_capabilities}
     )
     _persist(
         db,
         repository,
         sealed_write=SealedCitationWrite(
-            trace=trace_without_capability,
+            trace=trace_with_capabilities,
             evidence_run_payloads=write.evidence_run_payloads,
             evidence_snapshot_payloads=write.evidence_snapshot_payloads,
             answer_attempt_payloads=write.answer_attempt_payloads,
@@ -873,13 +931,20 @@ def test_hydration_requires_the_sealed_snapshot_capability(
 
     result = repository.hydrate_trace(
         local_trace_namespace(identity, trace_id="trace-1"),
-        authorization=_authorization(identity, view_snapshot=True),
+        authorization=_authorization(
+            identity,
+            view_snapshot=request_snapshot,
+            view_source_identity=request_identity,
+        ),
     )
 
-    assert result.state is CitationHydrationState.SNAPSHOT_CAPABILITY_DENIED
+    assert result.state is expected_state
     assert result.summary is not None
-    assert result.governed_payloads is None
-    assert "private" not in repr(result)
+    if expected_state is CitationHydrationState.AUTHORIZED:
+        assert result.governed_payloads is not None
+    else:
+        assert result.governed_payloads is None
+        assert "private" not in repr(result)
 
 
 @pytest.mark.parametrize(
@@ -944,6 +1009,88 @@ def test_hydration_checks_redaction_and_tombstone_before_governed_select(
     assert result.governed_payloads is None
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "snapshot_redacted",
+        "snapshot_authority_changed",
+        "snapshot_tombstoned",
+        "run_payload_malformed",
+    ],
+)
+def test_hydration_final_statement_rechecks_governance_after_safe_preflight(
+    db: CharactersRAGDB,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    identity = _identity(db)
+    hook_called = False
+
+    with sqlite3.connect(db.db_path_str) as competing_connection:
+        competing_connection.execute("PRAGMA foreign_keys = ON")
+
+        def mutate_after_preflight() -> None:
+            nonlocal hook_called
+            hook_called = True
+            if mutation == "snapshot_redacted":
+                competing_connection.execute(
+                    """
+                    UPDATE rag_evidence_snapshots
+                    SET redaction_state = 'redacted'
+                    WHERE profile_id = ? AND payload_id = 'snapshot-1'
+                    """,
+                    (identity.profile_id,),
+                )
+            elif mutation == "snapshot_authority_changed":
+                competing_connection.execute(
+                    """
+                    UPDATE rag_evidence_snapshots
+                    SET authority_id = 'hostile-authority'
+                    WHERE profile_id = ? AND payload_id = 'snapshot-1'
+                    """,
+                    (identity.profile_id,),
+                )
+            elif mutation == "snapshot_tombstoned":
+                competing_connection.execute(
+                    """
+                    INSERT INTO rag_payload_tombstones VALUES (
+                        ?, 'local_payload_v1', 'snapshot-1', 'snapshot-1',
+                        'revoked', 'policy-1',
+                        '2026-07-24T00:00:00Z', '2027-07-24T00:00:00Z'
+                    )
+                    """,
+                    (identity.profile_id,),
+                )
+            else:
+                competing_connection.execute(
+                    """
+                    UPDATE rag_evidence_runs
+                    SET run_payload_json = '{'
+                    WHERE profile_id = ? AND run_id = 'run-1'
+                    """,
+                    (identity.profile_id,),
+                )
+            competing_connection.commit()
+
+        monkeypatch.setattr(
+            repository,
+            "_before_governed_select",
+            mutate_after_preflight,
+            raising=False,
+        )
+        result = repository.hydrate_trace(
+            local_trace_namespace(identity, trace_id="trace-1"),
+            authorization=_authorization(identity),
+        )
+
+    assert hook_called
+    assert result.state is CitationHydrationState.PAYLOAD_UNAVAILABLE
+    assert result.governed_payloads is None
+    assert "private" not in repr(result)
+
+
 def test_authorized_hydration_returns_revalidated_governed_payloads(
     db: CharactersRAGDB,
 ) -> None:
@@ -990,6 +1137,51 @@ def test_hydration_returns_bounded_unavailable_state_for_incomplete_rows(
     assert result.state is CitationHydrationState.PAYLOAD_UNAVAILABLE
     assert result.summary is not None
     assert result.governed_payloads is None
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    ["run_payload_ref", "answer_payload_ref", "evidence_reference"],
+)
+def test_hydration_final_statement_rechecks_exact_aggregate_references(
+    db: CharactersRAGDB,
+    mismatch: str,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    identity = _identity(db)
+    connection = db.get_connection()
+    if mismatch == "run_payload_ref":
+        payload = json.loads(
+            connection.execute(
+                "SELECT run_payload_json FROM rag_evidence_runs"
+            ).fetchone()[0]
+        )
+        payload["payload_id"] = "substituted-run-payload"
+        connection.execute(
+            "UPDATE rag_evidence_runs SET run_payload_json = ?",
+            (json.dumps(payload),),
+        )
+    elif mismatch == "answer_payload_ref":
+        connection.execute(
+            """
+            UPDATE rag_answer_attempt_payloads
+            SET payload_id = 'substituted-answer-payload'
+            """
+        )
+    else:
+        connection.execute("UPDATE rag_trace_evidence_refs SET marker_ordinal = 2")
+    connection.commit()
+
+    result = repository.hydrate_trace(
+        local_trace_namespace(identity, trace_id="trace-1"),
+        authorization=_authorization(identity),
+    )
+
+    assert result.state is CitationHydrationState.PAYLOAD_UNAVAILABLE
+    assert result.summary is not None
+    assert result.governed_payloads is None
+    assert "private" not in repr(result)
 
 
 @pytest.mark.parametrize(
