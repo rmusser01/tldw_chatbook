@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import json
 import sqlite3
 import threading
@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from Tests.Chat.test_citation_payload_lifecycle import _mark_owner_deleted, _policy
 from Tests.Chat.test_citation_trace_repository import (
     _identity,
-    _persist,
+    _persist as _repository_persist,
     _repository,
 )
 from tldw_chatbook.Chat.citation_artifact_ownership import (
@@ -43,6 +43,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
 NOW = datetime(2026, 7, 24, 18, 0, tzinfo=UTC)
+FIXTURE_CREATED_AT = NOW - timedelta(days=1)
 
 
 @pytest.fixture
@@ -53,6 +54,47 @@ def db(tmp_path) -> CharactersRAGDB:
     )
     yield database
     database.close_connection()
+
+
+def _persist(
+    db: CharactersRAGDB,
+    repository: CitationTraceRepository,
+    *,
+    message_id: str = "message-1",
+) -> None:
+    """Persist an artifact-owner fixture entirely before the fixed test clock."""
+
+    _repository_persist(db, repository, message_id=message_id)
+    fixture_timestamp = FIXTURE_CREATED_AT.isoformat()
+    with db.transaction() as cursor:
+        cursor.execute(
+            """
+            UPDATE conversations
+            SET created_at = ?, last_modified = ?
+            WHERE id = (
+                SELECT conversation_id
+                FROM messages
+                WHERE id = ?
+            )
+            """,
+            (fixture_timestamp, fixture_timestamp, message_id),
+        )
+        cursor.execute(
+            """
+            UPDATE messages
+            SET timestamp = ?, last_modified = ?
+            WHERE id = ?
+            """,
+            (fixture_timestamp, fixture_timestamp, message_id),
+        )
+        cursor.execute(
+            """
+            UPDATE rag_message_trace_owners
+            SET created_at = ?, updated_at = ?
+            WHERE message_id = ?
+            """,
+            (fixture_timestamp, fixture_timestamp, message_id),
+        )
 
 
 @pytest.fixture
