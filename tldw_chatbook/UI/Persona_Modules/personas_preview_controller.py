@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Mapping
 from loguru import logger
 from textual.css.query import QueryError
 
+from ...Character_Chat.active_user_profile import resolve_active_user_profile_name
 from ...Character_Chat.Character_Chat_Lib import replace_placeholders
 from ...Chat.console_chat_models import ConsoleProviderSelection
 from ...Chat.console_provider_gateway import ConsoleProviderGateway
@@ -65,6 +66,23 @@ class PersonasPreviewController:
         self.screen.workers.cancel_group(self.screen, "personas-preview")
         self.history.clear()
 
+    def _active_user_name(self) -> str | None:
+        """The active user profile's name for ``{{user}}``/labels, or ``None``.
+
+        Resolved through the app's LOCAL persona service - the synchronous
+        ``list_user_profiles`` surface the task-442 resolver expects (the
+        scope service's method is async and cannot be consumed by the sync
+        resolver). Any failure reads as no-active, so callers fall back to
+        the historical "User" literal byte-for-byte.
+
+        Returns:
+            The active profile's name, or ``None`` when no profile is active.
+        """
+        service = getattr(
+            self.screen.app_instance, "local_character_persona_service", None
+        )
+        return resolve_active_user_profile_name(service)
+
     async def reset(self, greeting: str, *, seeded_for: str | None = None) -> None:
         """Clear preview state and reseed the preview transcript.
 
@@ -110,7 +128,20 @@ class PersonasPreviewController:
             for g in (record.get("alternate_greetings") or [])
             if isinstance(g, str)
         ]
-        self._greetings = [replace_placeholders(g, name, "User") for g in raw]
+        # task-442: {{user}} renders the active user profile's name. With no
+        # active profile the historical "User" literal is preserved byte-exact
+        # and the pane's user speaker label stays untouched.
+        user_name = self._active_user_name()
+        self._greetings = [
+            replace_placeholders(g, name, user_name or "User") for g in raw
+        ]
+        if user_name:
+            try:
+                self.screen.query_one(PersonasPreviewPane).set_speakers(
+                    user=user_name
+                )
+            except QueryError:
+                pass
         if keep_index and self._greetings:
             self._current_greeting_index = min(
                 self._current_greeting_index, len(self._greetings) - 1

@@ -1,5 +1,7 @@
 """Mounted tests for the Personas preview-conversation pane."""
 
+from types import SimpleNamespace
+
 import pytest
 from textual.app import App
 from textual.widgets import Button, Input, Select, Static
@@ -560,3 +562,127 @@ async def test_choosing_greeting_posts_message():
         # only PreviewGreetingSelected is this genuine user pick (index 1) - no
         # spurious programmatic index-0 post (task-438 review).
         assert posted == [1]
+
+
+# ===== task-442 T4: {{user}} renders the active user profile's name =====
+
+
+@pytest.fixture
+def _isolated_active_profile_config(monkeypatch):
+    """Route the active-profile pointer at an in-memory store (never real config)."""
+    store: dict = {}
+    import tldw_chatbook.Character_Chat.active_user_profile as active_profile_module
+
+    monkeypatch.setattr(
+        active_profile_module,
+        "get_cli_setting",
+        lambda section, key, default=None: store.get((section, key), default),
+    )
+
+    def _save(section, key, value):
+        store[(section, key)] = value
+        return True
+
+    monkeypatch.setattr(active_profile_module, "save_setting_to_cli_config", _save)
+    return store
+
+
+class _ProfileService:
+    """Sync ``list_user_profiles`` double matching the T1 resolver contract."""
+
+    def __init__(self, names):
+        self._names = list(names)
+
+    def list_user_profiles(self, **kwargs):
+        return [{"name": name} for name in self._names]
+
+
+class _ControllerScreen:
+    """Minimal screen double driving the controller against the mounted pane."""
+
+    def __init__(self, app, profile_service=None):
+        self._app = app
+        self.app_instance = SimpleNamespace(
+            local_character_persona_service=profile_service
+        )
+
+    def query_one(self, selector, *args):
+        return self._app.query_one(PersonasPreviewPane)
+
+
+async def test_greeting_renders_active_profile_name_and_labels_user_lines(
+    _isolated_active_profile_config,
+):
+    """Active profile "Sam": {{user}} renders "Sam" and user lines are labeled."""
+    from tldw_chatbook.Character_Chat.active_user_profile import (
+        set_active_user_profile,
+    )
+    from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
+        PersonasPreviewController,
+    )
+
+    set_active_user_profile("Sam")
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        controller = PersonasPreviewController(
+            _ControllerScreen(app, _ProfileService(["Sam"]))
+        )
+        seed = controller._load_greetings(
+            {"first_message": "Hello {{user}}, I am {{char}}."}, "Elara"
+        )
+        assert seed == "Hello Sam, I am Elara."
+        assert pane._user_label == "Sam"  # set_speakers(user="Sam") was called
+        await pane.seed_greeting(seed)
+        pane.append_user("hi")
+        await pilot.pause()
+        assert "Sam: hi" in pane.transcript_text()
+
+
+async def test_greeting_falls_back_to_user_without_active_profile(
+    _isolated_active_profile_config,
+):
+    """No active profile: output stays byte-identical to the "User" literal and
+    the user speaker label is untouched (AC3 twin)."""
+    from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
+        PersonasPreviewController,
+    )
+
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        controller = PersonasPreviewController(
+            _ControllerScreen(app, _ProfileService(["Sam"]))
+        )
+        seed = controller._load_greetings(
+            {"first_message": "Hello {{user}}, I am {{char}}."}, "Elara"
+        )
+        assert seed == "Hello User, I am Elara."
+        assert pane._user_label == "you"  # default label: no user override
+        await pane.seed_greeting(seed)
+        pane.append_user("hi")
+        await pilot.pause()
+        assert "you: hi" in pane.transcript_text()
+
+
+async def test_dangling_active_profile_pointer_falls_back_to_user(
+    _isolated_active_profile_config,
+):
+    """A pointer at a deleted/renamed profile reads as no-active (byte-compat)."""
+    from tldw_chatbook.Character_Chat.active_user_profile import (
+        set_active_user_profile,
+    )
+    from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
+        PersonasPreviewController,
+    )
+
+    set_active_user_profile("Ghost")
+    app = PreviewApp()
+    async with app.run_test():
+        pane = app.query_one(PersonasPreviewPane)
+        controller = PersonasPreviewController(
+            _ControllerScreen(app, _ProfileService(["Sam"]))
+        )
+        seed = controller._load_greetings({"first_message": "Hello {{user}}."}, "Elara")
+        assert seed == "Hello User."
+        assert pane._user_label == "you"
