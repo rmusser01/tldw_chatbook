@@ -73,6 +73,7 @@ class PersonasInspectorPane(Vertical):
         self._selected_kind: str | None = None
         self._console_actions_enabled = False
         self._console_action_block_reason = "select an item"
+        self._provider_block_reason: str | None = None
         self._conversation_lookup: dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
@@ -169,6 +170,7 @@ class PersonasInspectorPane(Vertical):
         enabled: bool,
         *,
         reason: str | None = None,
+        provider_block_reason: str | None = None,
     ) -> None:
         """Set Attach/Start availability from the screen-owned Console gate.
 
@@ -179,9 +181,21 @@ class PersonasInspectorPane(Vertical):
         Args:
             enabled: Whether Console actions are currently available.
             reason: Optional user-facing reason shown when actions are blocked.
+            provider_block_reason: Optional readiness-only blocker naming why
+                the provider a Start Chat/Attach Console handoff session
+                would resolve is not ready (task-440). When set (and ``enabled`` is
+                True) it overrides the "Console ready" readiness copy with
+                the same "Console blocked: ..." pattern WITHOUT disabling the
+                buttons: Start Chat still opens a real conversation
+                (task-427) and Attach still stages the card even when the
+                staged send itself would currently fail, so button
+                availability stays driven solely by ``enabled``. Ignored when
+                ``enabled`` is False - the selection/unsaved reason already
+                owns the copy.
         """
         self._console_actions_enabled = bool(enabled)
         self._console_action_block_reason = "" if enabled else (reason or "unavailable")
+        self._provider_block_reason = provider_block_reason if enabled else None
         self._apply_action_state()
 
     def show_validation(self, errors: tuple[str, ...]) -> None:
@@ -262,7 +276,9 @@ class PersonasInspectorPane(Vertical):
         selected = self._has_selection
         unsaved = self._is_unsaved
         readiness = self.query_one("#personas-readiness-console", Static)
-        if self._console_actions_enabled:
+        if self._console_actions_enabled and self._provider_block_reason:
+            readiness.update(f"Console blocked: {self._provider_block_reason}")
+        elif self._console_actions_enabled:
             readiness.update("Console ready")
         else:
             reason = self._console_action_block_reason or "unavailable"
@@ -276,6 +292,8 @@ class PersonasInspectorPane(Vertical):
                 if selected and unsaved
                 else f"Console action blocked: {self._console_action_block_reason}"
             )
+        elif self._provider_block_reason:
+            console_tooltip = f"Reply may fail: {self._provider_block_reason}"
         for button_id in ("#personas-attach-to-console", "#personas-start-chat"):
             button = self.query_one(button_id, Button)
             button.disabled = not self._console_actions_enabled

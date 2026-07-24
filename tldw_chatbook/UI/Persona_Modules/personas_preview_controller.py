@@ -18,6 +18,7 @@ from ...Chat.console_chat_models import ConsoleProviderSelection
 from ...Chat.console_provider_gateway import ConsoleProviderGateway
 from ...Chat.console_session_settings import build_default_console_session_settings
 from ...Chat.provider_catalog import PROVIDER_DISPLAY_NAMES
+from ...Chat.provider_readiness import get_provider_readiness
 from ...Widgets.Persona_Widgets.personas_character_editor_widget import (
     PersonasCharacterEditorWidget,
 )
@@ -268,6 +269,46 @@ class PersonasPreviewController:
             self.screen.query_one(PersonasPreviewPane).set_provider_readout(text)
         except QueryError:
             pass
+
+    def console_handoff_readiness(self) -> tuple[bool, str | None]:
+        """Cheap, config/env-only readiness for a Console handoff send.
+
+        The Roleplay inspector/header readiness surfaces (task-440) gate
+        Attach/Start Chat, which create a FRESH native-Console session
+        (``chat_screen._start_character_console_session`` ->
+        ``_default_console_session_settings`` ->
+        ``_effective_console_provider_model``) - a path resolved from
+        ``chat_defaults``; the native Console never reads
+        ``character_defaults``. So this checks ONLY the chat_defaults
+        selection: it is the config-side approximation of
+        ``_effective_console_provider_model`` (this screen cannot see the
+        Console screen's live provider reactives, and a fresh handoff
+        session is built from these config defaults, so config-side is the
+        honest cheap answer). The preview pane's own provider readout keeps
+        its separate character_defaults -> chat_defaults fallback behavior
+        (``provider_readout`` / ``_resolve_selection_with_fallback``,
+        task-425) - that one IS the preview send path.
+
+        Readiness goes through ``get_provider_readiness`` - the same
+        side-effect-free seam Chat and Settings badges already use - not the
+        async ``ConsoleProviderGateway.resolve_for_send`` probe: this runs
+        on every selection sync and must stay cheap. Unlike the real send
+        path it performs no llama.cpp network reachability check, so a
+        configured-but-unreachable llama.cpp endpoint reads as ready here -
+        the real send still surfaces that failure when it happens.
+
+        Returns:
+            ``(ready, reason)``. When not ready, ``reason`` is the
+            ``ProviderReadiness.user_message`` for the provider the handoff
+            session would resolve. ``None`` when ready.
+        """
+        raw_config = getattr(self.screen.app_instance, "app_config", {}) or {}
+        config = raw_config if isinstance(raw_config, Mapping) else {}
+        selection = self._selection_from_defaults(config, "chat_defaults")
+        readiness = get_provider_readiness(selection.provider, config)
+        if readiness.ready:
+            return True, None
+        return False, readiness.user_message
 
     def open_provider_settings(self) -> None:
         """Deep-link to Settings > Providers & Models for the readout provider."""

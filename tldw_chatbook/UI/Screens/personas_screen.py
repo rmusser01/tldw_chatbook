@@ -1732,11 +1732,18 @@ class PersonasScreen(BaseAppScreen):
         except Exception:
             logger.opt(exception=True).debug("Could not update the personas header.")
             return
+        # Same input as the inspector's readiness line (task-440): a staged
+        # character/persona whose resolved provider would not answer must
+        # not claim "Ready" - the existing degraded-state badge ("Blocked")
+        # is the header's own established pattern (see stats_screen.py) for
+        # this, so no new header UI is introduced. The fuller "what to do"
+        # remedy text stays in the inspector's readiness line below it.
+        status = "blocked" if self._provider_send_block_reason() else "ready"
         header.sync_state(
             WorkbenchHeaderState(
                 title="Roleplay & Chat Dictionaries",
                 subtitle=self._header_subtitle_text(),
-                status="ready",
+                status=status,
             )
         )
 
@@ -3487,6 +3494,37 @@ class PersonasScreen(BaseAppScreen):
             return "select a character or persona"
         return "unavailable"
 
+    def _provider_send_block_reason(self) -> str | None:
+        """Actionable reason the staged Console handoff send would fail, if any.
+
+        Reuses ``PersonasPreviewController.console_handoff_readiness`` - a
+        config/env-only mirror of the provider a fresh Start-Chat/Attach
+        Console session actually resolves (chat_defaults; the native Console
+        never reads character_defaults) - so this never duplicates
+        provider-resolution logic and stays cheap enough to run on every
+        selection sync (task-440).
+
+        Returns:
+            ``None`` when the handoff provider would answer (or no
+            character/persona is staged, so the question does not apply),
+            else a short actionable reason suitable for the inspector/header
+            readiness copy.
+        """
+        # Precedence (Qodo #824-2): the provider question is only OPERATIVE
+        # when the Console action gate itself passes — otherwise the header
+        # would claim provider-"Blocked" while the inspector says
+        # "Console blocked: unsaved edits/select an item" (two conflicting
+        # readiness stories for one staged intent). With the gate closed the
+        # inspector carries the action reason and the header keeps its
+        # pre-task-440 semantics; provider readiness surfaces the moment the
+        # action gate opens.
+        if not self._console_action_allowed():
+            return None
+        if self.state.selected_entity_kind not in ("character", "persona_profile"):
+            return None
+        ready, reason = self.preview.console_handoff_readiness()
+        return None if ready else reason
+
     def _sync_inspector_console_actions(self) -> None:
         """Push the single screen-owned Console gate into the inspector pane."""
         try:
@@ -3497,6 +3535,7 @@ class PersonasScreen(BaseAppScreen):
         inspector.set_console_actions_enabled(
             allowed,
             reason=None if allowed else self._console_action_block_reason(),
+            provider_block_reason=self._provider_send_block_reason(),
         )
 
     async def _selection_handoff_body(self) -> str | None:
