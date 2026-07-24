@@ -327,7 +327,7 @@ Run:
   --tb=short
 ```
 
-Expected: all selected tests PASS. The two existing
+Expected: all selected tests PASS. On the rebased `dev` suite, nine existing
 `MCPWorkbench._clear_tool_view` unawaited-coroutine warnings may remain.
 
 - [x] **Step 2: Replay the MCP suites against exactly Textual 8.0.0**
@@ -344,8 +344,8 @@ PYTHONPATH="$minimum_textual_dir" .venv/bin/python -m pytest -q \
   --tb=short
 ```
 
-Expected: all 184 tests PASS; the two pre-existing coroutine warnings may
-remain.
+Expected after the `dev` rebase: all 209 tests PASS; the same nine pre-existing
+coroutine warnings may remain.
 
 - [x] **Step 3: Run static hygiene**
 
