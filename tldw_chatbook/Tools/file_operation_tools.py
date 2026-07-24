@@ -12,6 +12,26 @@ from . import Tool
 from ..Utils.path_validation import validate_path
 
 
+def _resolve_sandbox_config() -> str:
+    """Return the configured sandbox root string (indirection for tests)."""
+    from ..config import get_cli_setting, get_user_data_dir
+
+    default_root = str(get_user_data_dir() / "tool_sandbox")
+    return get_cli_setting("tools", "file_sandbox_root", default_root) or default_root
+
+
+def _tool_sandbox_root() -> Path:
+    """Resolve + create the file-tool sandbox root.
+
+    The file tools confine all reads/writes/listings under this directory.
+    Defaults to ``<user data dir>/tool_sandbox``; override with
+    ``[tools] file_sandbox_root`` in config.toml.
+    """
+    root = Path(_resolve_sandbox_config()).expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
 class ReadFileTool(Tool):
     """Tool for reading file contents."""
 
@@ -60,7 +80,7 @@ class ReadFileTool(Tool):
 
         try:
             # Validate the path
-            validated_path = validate_path(file_path, "file")
+            validated_path = validate_path(file_path, _tool_sandbox_root())
             path = Path(validated_path)
 
             # Check if file exists
@@ -165,7 +185,7 @@ class ListDirectoryTool(Tool):
 
         try:
             # Validate the path
-            validated_path = validate_path(directory_path, "directory")
+            validated_path = validate_path(directory_path, _tool_sandbox_root())
             path = Path(validated_path)
 
             # Check if directory exists
@@ -331,7 +351,7 @@ class WriteFileTool(Tool):
 
         try:
             # Validate the path
-            validated_path = validate_path(file_path, "file")
+            validated_path = validate_path(file_path, _tool_sandbox_root())
             path = Path(validated_path)
 
             # Check if we're overwriting an existing file
