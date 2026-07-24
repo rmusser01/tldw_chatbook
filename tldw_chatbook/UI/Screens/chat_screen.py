@@ -13580,6 +13580,18 @@ class ChatScreen(BaseAppScreen):
         ``message`` isn't a generation message. Defensive: ``available_actions()``
         only ever offers "keep" when ``generation_browsed_index != 0`` (which
         implies a generation message), but this guards direct callers too.
+
+        ``store.keep_generation_variant`` swaps attachment bytes between
+        position 0 and the browsed position, but the render cache
+        (``_build_generation_card_specs``) still holds the OLD decoded
+        images under the composite keys ``f"{message_id}:{i}"`` -- and the
+        prep path skips re-decoding whatever is already cached. Left alone,
+        the card would keep showing the pre-keep canonical image (paired
+        with the now-correct details block) until the next full reload or
+        an unrelated LRU eviction. Evict every variant key for this message
+        so the next spec build re-decodes from the now-correct in-memory
+        bytes; ``generation_card_signature``'s ``decoded`` bit then drives
+        the row rebuild once prep catches up.
         """
         if not message.generation_metadata:
             return
@@ -13589,10 +13601,25 @@ class ChatScreen(BaseAppScreen):
             return
         store = self._ensure_console_chat_store()
         session_id = store.session_id_for_message(message.id)
+        variant_count = len(message.generation_metadata)
         store.keep_generation_variant(
             session_id, message.id, position=browsed_index, persist=True
         )
         browse[message.id] = 0
+        # `evict_session` is key-agnostic despite its session-closing name
+        # and docstring -- it just pops whatever string keys it's handed
+        # from the image/pixels dicts and clears their failure marks, which
+        # is exactly what a composite `f"{message_id}:{i}"` key needs too.
+        _state, cache = self._ensure_console_image_view()
+        stale_keys = [f"{message.id}:{i}" for i in range(variant_count)]
+        cache.evict_session(stale_keys)
+        # `getattr(..., None)`, not `self._console_image_preparing`: bare
+        # test screens built via `ChatScreen.__new__` (bypassing `__init__`,
+        # which normally seeds this set) never touch the in-flight prep
+        # guard, so it may not exist yet.
+        preparing = getattr(self, "_console_image_preparing", None)
+        if preparing is not None:
+            preparing.difference_update(stale_keys)
 
     def _get_shell_bar(self):
         """Get the mounted combined chat shell bar."""

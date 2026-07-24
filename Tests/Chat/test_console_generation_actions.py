@@ -17,10 +17,12 @@ chat_ui`/`app_instance.notify` are stubbed, matching the brief's "mock store
 
 from __future__ import annotations
 
+from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from PIL import Image as PILImage
 from textual.widgets import Button
 
 from tldw_chatbook.Chat.console_chat_models import GenerationVariantMeta
@@ -41,6 +43,13 @@ def _meta(*, prompt: str = "a red dragon", backend: str = "swarmui", seed=42):
         style=None,
         params={},
     )
+
+
+def _png_bytes(color: tuple[int, int, int]) -> bytes:
+    """Real (decodable) PNG bytes, distinct by solid color per variant."""
+    buffer = BytesIO()
+    PILImage.new("RGB", (16, 16), color).save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def _seed_generation_message(store: ConsoleChatStore, *, variant_count: int = 1):
@@ -187,6 +196,73 @@ def test_keep_noop_when_browsed_index_is_zero():
 
     untouched = store.get_message(message.id)
     assert untouched.attachments[0].data == b"img0"
+
+
+def test_keep_evicts_stale_render_cache_entries_so_rebuild_shows_kept_variant():
+    """Regression: keep swaps store bytes (position 0 <-> browsed position)
+    but the render cache is keyed by composite ``f"{message_id}:{i}"`` and
+    is never invalidated on its own -- and the prep path skips re-decoding
+    whatever key is already cached. Repro this fixes: generate -> regenerate
+    -> browse to variant 1 -> Keep -> the card kept showing the OLD
+    canonical image (paired with the new details), self-healing only on
+    reload or an unrelated LRU eviction.
+    """
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+    red = _png_bytes((200, 0, 0))
+    green = _png_bytes((0, 200, 0))
+    message = store.append_generation_message(
+        session.id,
+        content="[image] a red dragon",
+        variants=[
+            (red, "image/png", _meta(seed=42)),
+            (green, "image/png", _meta(seed=-1)),
+        ],
+        persist=False,
+    )
+    screen = _bare_generation_screen(store)
+    _state, cache = screen._ensure_console_image_view()
+    # Simulate a reader who already browsed to variant 1 (and back), so BOTH
+    # composite keys are decoded and cached before the keep happens.
+    cache.prepare(f"{message.id}:0", red)
+    cache.prepare(f"{message.id}:1", green)
+    screen._console_generation_browse()[message.id] = 1
+
+    screen._keep_console_generation_variant(message)
+
+    # Store-level swap: position 0 is now the (formerly variant-1) green bytes.
+    kept = store.get_message(message.id)
+    assert kept.attachments[0].data == green
+    assert screen._generation_browse[message.id] == 0
+
+    # Render cache: neither composite key may still hand back a decoded
+    # image -- the old cached PIL/pixels under BOTH keys must be gone,
+    # otherwise the next spec build would resolve `f"{message.id}:0"` to the
+    # stale (pre-keep) red canonical instead of re-decoding the swapped bytes.
+    assert cache.get_pil(f"{message.id}:0") is None
+    assert cache.get_pil(f"{message.id}:1") is None
+
+    # The rebuilt card spec must not carry the stale pre-keep image: either
+    # it's undecoded pending re-prep, or (once re-prepped below) it shows
+    # the KEPT variant -- never the old red canonical.
+    card_specs = screen._build_generation_card_specs([kept])
+    spec = card_specs[message.id]
+    assert spec.browsed_index == 0
+    assert spec.pixels is None and spec.pil is None  # decoded=False, re-prep queued
+
+    pending = screen._pending_console_generation_card_images([kept], card_specs)
+    assert pending == [(f"{message.id}:0", green)]
+    for cache_key, data in pending:
+        cache.prepare(cache_key, data)
+
+    rebuilt_specs = screen._build_generation_card_specs([kept])
+    rebuilt = rebuilt_specs[message.id]
+    assert rebuilt.pixels is not None or rebuilt.pil is not None  # decoded=True now
+    # Pull the actual decoded PIL back out of the cache to inspect its color
+    # (mode-agnostic -- works whether the session default is pixels/graphics).
+    redecoded = cache.get_pil(f"{message.id}:0")
+    assert redecoded is not None
+    assert redecoded.getpixel((0, 0)) == (0, 200, 0)  # the KEPT (green) variant
 
 
 # --- Regenerate: cap + in-flight refusal, failure/success paths ---------------
