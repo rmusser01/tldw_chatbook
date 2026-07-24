@@ -27,6 +27,48 @@ CREATE TABLE sync_log(
 );
 """
 
+_PRE_V21_WORLD_BOOK_TABLES_SQL = """
+CREATE TABLE world_books(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT UNIQUE NOT NULL,
+  description TEXT,
+  scan_depth INTEGER DEFAULT 3,
+  token_budget INTEGER DEFAULT 500,
+  recursive_scanning BOOLEAN DEFAULT 0,
+  enabled BOOLEAN NOT NULL DEFAULT 1,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  deleted BOOLEAN NOT NULL DEFAULT 0,
+  client_id TEXT NOT NULL DEFAULT 'unknown',
+  version INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE world_book_entries(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  world_book_id INTEGER NOT NULL REFERENCES world_books(id) ON DELETE CASCADE,
+  keys TEXT NOT NULL,
+  content TEXT NOT NULL,
+  enabled BOOLEAN DEFAULT 1,
+  position TEXT DEFAULT 'before_char',
+  insertion_order INTEGER DEFAULT 0,
+  selective BOOLEAN DEFAULT 0,
+  secondary_keys TEXT,
+  case_sensitive BOOLEAN DEFAULT 0,
+  extensions TEXT,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE conversation_world_books(
+  conversation_id TEXT NOT NULL
+    REFERENCES conversations(id) ON DELETE CASCADE,
+  world_book_id INTEGER NOT NULL
+    REFERENCES world_books(id) ON DELETE CASCADE,
+  priority INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (conversation_id, world_book_id)
+);
+"""
+
 _LEGACY_V12_CONVERSATION_COLUMNS_SQL = """
   id TEXT PRIMARY KEY,
   root_id TEXT NOT NULL,
@@ -138,6 +180,7 @@ def _create_legacy_conversations_db(
             );
 
             {_SYNC_LOG_TABLE_SQL}
+            {_PRE_V21_WORLD_BOOK_TABLES_SQL}
             """
         )
         connection.executemany(
