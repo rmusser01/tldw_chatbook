@@ -325,6 +325,56 @@ async def test_cancelled_shutdown_does_not_report_cleanup_complete() -> None:
     assert adapter.close_calls == 1
 
 
+@pytest.mark.asyncio
+async def test_shutdown_reports_known_failure_while_other_cleanup_is_pending() -> None:
+    close_started = asyncio.Event()
+    allow_close = asyncio.Event()
+    failing_factory = _FailingCloseFactory("failing")
+    blocking_factory = _BlockingCloseFactory(
+        "blocking",
+        close_started=close_started,
+        allow_close=allow_close,
+    )
+    failing_spec = TTSProviderSpec(
+        descriptor=provider_spec("failing", FakeAdapterFactory("unused")).descriptor,
+        factory=failing_factory,
+        initial_config={},
+    )
+    blocking_spec = TTSProviderSpec(
+        descriptor=provider_spec("blocking", FakeAdapterFactory("unused")).descriptor,
+        factory=blocking_factory,
+        initial_config={},
+    )
+    registry = TTSAdapterRegistry(
+        specs=(failing_spec, blocking_spec),
+        aliases={},
+        shutdown_timeout_seconds=0.01,
+    )
+    failing = await registry.acquire("failing")
+    blocking = await registry.acquire("blocking")
+    await failing.release()
+    await blocking.release()
+
+    first_error: RuntimeError | None = None
+    try:
+        await registry.close()
+    except RuntimeError as error:
+        first_error = error
+    await close_started.wait()
+    allow_close.set()
+    second_error: RuntimeError | None = None
+    try:
+        await registry.close()
+    except RuntimeError as error:
+        second_error = error
+    await registry.close()
+
+    assert str(first_error) == "adapter close failed"
+    assert str(second_error) == "adapter close failed"
+    assert failing.adapter.close_calls == 1
+    assert blocking.adapter.close_calls == 1
+
+
 class _FailingCloseAdapter(FakeAdapter):
     async def close(self) -> None:
         self.close_calls += 1
@@ -411,10 +461,30 @@ async def test_cancelled_exclusive_cleanup_keeps_admission_sealed() -> None:
     with pytest.raises(asyncio.CancelledError):
         await reconfigure
 
-    with pytest.raises(TTSProviderReconfiguringError):
-        await registry.acquire("exclusive")
+    retry = asyncio.create_task(
+        registry.reconfigure_provider("exclusive", {"revision": 2})
+    )
+    await asyncio.sleep(0)
+    retry_completed_before_cleanup = retry.done()
+    replacement_created_before_cleanup = factory.calls > 1
+    unexpected_lease = None
+    try:
+        unexpected_lease = await registry.acquire("exclusive")
+        admission_blocked = False
+    except TTSProviderReconfiguringError:
+        admission_blocked = True
+
     allow_close.set()
+    assert await retry is ReconfigureResult.CHANGED
+    replacement = unexpected_lease or await registry.acquire("exclusive")
+    await replacement.release()
     await registry.close()
+
+    assert retry_completed_before_cleanup is False
+    assert replacement_created_before_cleanup is False
+    assert admission_blocked is True
+    assert factory.calls == 2
+    assert factory.instances[0].close_calls == 1
 
 
 @pytest.mark.asyncio
@@ -433,11 +503,26 @@ async def test_failed_exclusive_cleanup_keeps_admission_sealed() -> None:
     with pytest.raises(RuntimeError, match="adapter close failed"):
         await registry.reconfigure_provider("exclusive", {"revision": 2})
 
-    with pytest.raises(TTSProviderReconfiguringError):
-        await registry.acquire("exclusive")
+    retry_error: RuntimeError | None = None
+    try:
+        await registry.reconfigure_provider("exclusive", {"revision": 2})
+    except RuntimeError as error:
+        retry_error = error
+    unexpected_lease = None
+    try:
+        unexpected_lease = await registry.acquire("exclusive")
+        admission_blocked = False
+    except TTSProviderReconfiguringError:
+        admission_blocked = True
+    if unexpected_lease is not None:
+        await unexpected_lease.release()
     with pytest.raises(RuntimeError, match="adapter close failed"):
         await registry.close()
     await registry.close()
+
+    assert str(retry_error) == "adapter close failed"
+    assert admission_blocked is True
+    assert factory.calls == 1
 
 
 @pytest.mark.asyncio

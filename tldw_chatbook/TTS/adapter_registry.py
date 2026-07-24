@@ -40,6 +40,7 @@ class _ProviderSlot:
     active: _AdapterRecord | None = None
     retired: list[_AdapterRecord] = field(default_factory=list)
     reconfiguring: bool = False
+    exclusive_record: _AdapterRecord | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     transition_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     lease_changed: asyncio.Event = field(default_factory=asyncio.Event)
@@ -207,21 +208,25 @@ class TTSAdapterRegistry:
                 await self._start_close_record(record)
                 for record in self._closing_records
             ]
+            pending: set[asyncio.Task[None]] = set()
             if close_tasks:
                 remaining = max(0.0, deadline - loop.time())
                 _, pending = await asyncio.wait(close_tasks, timeout=remaining)
-                if pending:
-                    return
 
             first_error: BaseException | None = None
             for close_task in close_tasks:
+                if not close_task.done():
+                    continue
                 try:
                     close_task.result()
                 except BaseException as error:
                     first_error = first_error or error
-            self._close_complete = True
+            if not pending:
+                self._close_complete = True
             if first_error is not None:
                 raise first_error
+            if pending:
+                return
 
     def _resolve_id(self, provider_id: str) -> str:
         canonical_id = self._aliases.get(provider_id, provider_id)
@@ -281,18 +286,24 @@ class TTSAdapterRegistry:
             if self._closed:
                 raise TTSRegistryClosedError("The TTS registry is closed")
             async with slot.lock:
-                if slot.config == new_config:
-                    return ReconfigureResult.UNCHANGED
-                slot.reconfiguring = True
-                old_record = slot.active
+                if slot.reconfiguring:
+                    old_record = slot.exclusive_record
+                else:
+                    if slot.config == new_config:
+                        return ReconfigureResult.UNCHANGED
+                    slot.reconfiguring = True
+                    old_record = slot.active
+                    slot.exclusive_record = old_record
 
             if old_record is not None:
                 while True:
                     async with slot.lock:
                         if old_record.leases == 0:
-                            slot.active = None
+                            if slot.active is old_record:
+                                slot.active = None
                             old_record.retired = True
-                            slot.retired.append(old_record)
+                            if old_record not in slot.retired:
+                                slot.retired.append(old_record)
                             break
                         slot.lease_changed.clear()
                     await slot.lease_changed.wait()
@@ -304,6 +315,7 @@ class TTSAdapterRegistry:
                 slot.config = new_config
                 slot.revision += 1
                 slot.reconfiguring = False
+                slot.exclusive_record = None
 
         return ReconfigureResult.CHANGED
 
