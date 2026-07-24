@@ -104,8 +104,7 @@ async def test_footer_db_size_stats_expose_decode_legend_tooltip():
 
 @pytest.mark.asyncio
 async def test_footer_memory_stats_yield_to_key_hints_when_narrow():
-    """TASK-451: on a narrow footer the debug memory stats hide so the key hints
-    (navigation) are preserved, rather than the reverse."""
+    """A narrow footer hides the debug memory stats to preserve the key hints."""
 
     class TestApp(App):
         def compose(self):
@@ -137,5 +136,32 @@ async def test_footer_memory_stats_yield_to_key_hints_when_narrow():
 
         # Widen again -> memory stats return.
         await pilot.resize_terminal(200, 12)
+        await pilot.pause()
+        assert db.display is True
+
+
+@pytest.mark.asyncio
+async def test_footer_reflows_when_counts_change_without_a_resize():
+    """A word/token count change re-runs the priority reflow (Qodo #834)."""
+
+    class TestApp(App):
+        def compose(self):
+            yield AppFooterStatus(id="footer")
+
+    app = TestApp()
+    async with app.run_test(size=(100, 12)) as pilot:
+        footer = app.query_one("#footer", AppFooterStatus)
+        footer.update_db_sizes_display("P: 144.0 KB | C/N: 904.0 KB | M: 376.0 KB")
+        await pilot.pause()
+        db = app.query_one("#internal-db-size-indicator", Static)
+        assert db.display is True
+
+        # Growing the word count (no resize) can push past the width -> stats yield.
+        footer.update_word_count(999_999_999)
+        await pilot.pause()
+        assert db.display is False
+
+        # Clearing it brings them back.
+        footer.update_word_count(0)
         await pilot.pause()
         assert db.display is True

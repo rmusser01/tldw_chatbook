@@ -110,7 +110,12 @@ class AppFooterStatus(Widget):
         yield self._db_status_display  # This is the existing DB size display
 
     def on_resize(self, event: Resize) -> None:
-        """TASK-451: reprioritise the footer when its width changes."""
+        """Reprioritise the footer when its width changes (TASK-451).
+
+        Args:
+            event: The resize event; its ``size.width`` becomes the width the
+                priority reflow measures against.
+        """
         self._last_footer_width = event.size.width
         self._reflow_footer_priority()
 
@@ -195,6 +200,9 @@ class AppFooterStatus(Widget):
                 self._word_count_display.update(f"Words: {word_count} | ")
             else:
                 self._word_count_display.update("")
+            # The count's width feeds the priority threshold, so re-run the
+            # reflow when it changes without a resize (Qodo #834).
+            self._reflow_footer_priority()
         except Exception as e:
             print(f"Error updating word count display: {e}")
 
@@ -205,6 +213,7 @@ class AppFooterStatus(Widget):
                 self._token_count_display.update(f"{display_text} | ")
             else:
                 self._token_count_display.update("")
+            self._reflow_footer_priority()
         except Exception as e:
             print(f"Error updating token count display: {e}")
 
