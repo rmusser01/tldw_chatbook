@@ -450,13 +450,16 @@ class ConsoleTranscriptEmptyPanel(Vertical):
 
 #: TASK-371: the "jump to latest" pill copy per run status. Absent statuses
 #: (idle, blocked) show no pill -- there is no streaming context to jump to.
+_JUMP_PILL_STREAMING = "▼ streaming below — jump to latest"
+_JUMP_PILL_STOPPED = "▼ stopped — jump to latest"
+_JUMP_PILL_READY = "▼ reply ready — jump to latest"
 _JUMP_PILL_TEXT: Mapping[str, str] = {
-    "validating": "▼ streaming below — jump to latest",
-    "retrying": "▼ streaming below — jump to latest",
-    "streaming": "▼ streaming below — jump to latest",
-    "stopped": "▼ stopped — jump to latest",
-    "failed": "▼ stopped — jump to latest",
-    "completed": "▼ reply ready — jump to latest",
+    "validating": _JUMP_PILL_STREAMING,
+    "retrying": _JUMP_PILL_STREAMING,
+    "streaming": _JUMP_PILL_STREAMING,
+    "stopped": _JUMP_PILL_STOPPED,
+    "failed": _JUMP_PILL_STOPPED,
+    "completed": _JUMP_PILL_READY,
 }
 
 
@@ -470,7 +473,12 @@ class ConsoleTranscriptJumpPill(Static):
     """
 
     def on_click(self, event: Click) -> None:
-        """Jump the parent transcript to its newest content."""
+        """Jump the parent transcript to its newest content.
+
+        Args:
+            event: The click event; stopped so it doesn't bubble to the
+                transcript's message-selection handler.
+        """
         event.stop()
         transcript = self.parent
         if isinstance(transcript, ConsoleTranscript):
@@ -539,6 +547,9 @@ class ConsoleTranscript(VerticalScroll):
         #: TASK-371: last run status seen by `sync_jump_indicator`, so a scroll
         #: that detaches the reader can refresh the pill without a status source.
         self._last_run_status = "idle"
+        #: Last-applied (visible, text) pill state; lets the 0.2s streaming sync
+        #: tick skip the query_one + update when nothing changed (Qodo #826).
+        self._jump_pill_state: tuple[bool, str] | None = None
 
     def on_mount(self) -> None:
         """Engage tail-follow: stay scrolled to the newest content.
@@ -567,6 +578,9 @@ class ConsoleTranscript(VerticalScroll):
             classes="console-transcript-jump-pill",
         )
         pill.display = False
+        # The fresh pill starts hidden; drop the applied-state cache so the next
+        # sync re-applies to this new widget (recompose creates a new pill).
+        self._jump_pill_state = None
         yield pill
 
     @property
@@ -605,18 +619,23 @@ class ConsoleTranscript(VerticalScroll):
             run_status: The current Console run status value (e.g. ``streaming``).
         """
         self._last_run_status = run_status
+        text = _JUMP_PILL_TEXT.get(run_status, "")
+        visible = bool(text and self._messages and not self._is_following_tail())
+        target = (visible, text if visible else "")
+        # Called on every 0.2s streaming sync tick -- skip the query_one + update
+        # when the effective state is unchanged (the common steady-stream case).
+        if target == self._jump_pill_state:
+            return
         try:
             pill = self.query_one(
                 "#console-transcript-jump-pill", ConsoleTranscriptJumpPill
             )
         except NoMatches:
             return
-        text = _JUMP_PILL_TEXT.get(run_status, "")
-        if text and self._messages and not self._is_following_tail():
+        if visible:
             pill.update(text)
-            pill.display = True
-        else:
-            pill.display = False
+        pill.display = visible
+        self._jump_pill_state = target
 
     def jump_to_latest(self) -> None:
         """Re-engage tail-follow, scroll to the newest content, and hide the pill."""
@@ -628,6 +647,7 @@ class ConsoleTranscript(VerticalScroll):
             ).display = False
         except NoMatches:
             pass
+        self._jump_pill_state = (False, "")
 
     def note_follow_intent(self) -> None:
         """Record a programmatic jump-to-tail intent (send/resume/switch).
