@@ -11946,8 +11946,8 @@ class ChatScreen(BaseAppScreen):
         regenerate (``♻``) action (Task 8): unlike text regeneration it
         never creates an LLM sibling turn -- it rebuilds a request from the
         message's position-0 (canonical) ``GenerationVariantMeta`` -- same
-        backend/prompt/negative -- with ``seed`` forced to ``-1`` so the new
-        variant is never a duplicate of the kept image, generates ONE
+        backend/prompt/negative/style -- with ``seed`` forced to ``-1`` so
+        the new variant is never a duplicate of the kept image, generates ONE
         variant off the UI loop (mirroring ``_console_command_generate_image``'s
         ``asyncio.to_thread(run_generation_batch, ...)`` offload), appends it
         via ``ConsoleChatStore.append_generation_variant``, and browses to
@@ -11998,6 +11998,7 @@ class ChatScreen(BaseAppScreen):
                 negative_prompt=base_meta.negative_prompt or None,
                 seed=-1,
                 count=1,
+                style_name=base_meta.style,
             )
             if not batch.successes:
                 detail = "; ".join(batch.errors) or "unknown error"
