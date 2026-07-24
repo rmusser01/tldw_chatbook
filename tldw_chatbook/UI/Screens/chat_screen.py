@@ -4459,9 +4459,22 @@ class ChatScreen(BaseAppScreen):
         persisted ChaChaNotes rows, where markers never land
         (``ConsoleAgentBridge._append_marker`` uses ``persist=False`` so
         agent activity survives a restart without being written into the
-        conversation itself). See ``inject_resume_agent_markers`` for the
-        placement/idempotency contract, and ``resume_marker_messages`` for
-        how each run's marker block is derived.
+        conversation itself).
+
+        Task 3: ``resume_marker_messages`` now pairs each run's block with
+        the ``assistant_message_id`` of the reply it produced, and
+        ``inject_resume_agent_markers`` anchors placement to that id
+        against ``messages``'s own ``persisted_message_id``s -- a run
+        whose reply isn't on the active path (edited/regenerated onto
+        another branch) has its block hidden rather than misattributed to
+        a different reply; a legacy/null-id run keeps the prior ordinal
+        placement. ``messages`` is the caller's already-active-path
+        transcript (``_console_messages_from_conversation_tree`` walks the
+        active thread only), so this composes correctly with branching
+        without any extra filtering here. See ``inject_resume_agent_
+        markers`` for the full placement/idempotency contract, and
+        ``resume_marker_messages`` for how each run's marker block and
+        anchor id are derived.
 
         Returns ``messages`` unchanged when there is no durable agent
         bridge available (e.g. an in-memory test harness, matching
@@ -4472,6 +4485,9 @@ class ChatScreen(BaseAppScreen):
             return messages
         from tldw_chatbook.Chat.console_agent_bridge import inject_resume_agent_markers
 
+        # bridge.resume_marker_messages returns the (anchor_id, block) pairs
+        # inject_resume_agent_markers now expects directly -- no reshaping
+        # needed here, just passed straight through.
         return inject_resume_agent_markers(
             messages, bridge.resume_marker_messages(conversation_id)
         )

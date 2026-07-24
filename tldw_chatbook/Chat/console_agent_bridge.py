@@ -196,22 +196,34 @@ def format_agent_step_marker(
 
 def inject_resume_agent_markers(
     messages: list[ConsoleChatMessage],
-    marker_blocks: list[list[ConsoleChatMessage]],
+    anchored_blocks: list[tuple[str | None, list[ConsoleChatMessage]]],
 ) -> list[ConsoleChatMessage]:
     """Interleave AgentRunsDB-derived TOOL marker blocks into a resumed transcript.
 
-    Placement (Plan-B final-review Medium-1): each run's marker block is
-    matched ordinally to the Nth ASSISTANT message in ``messages`` --
-    oldest run <-> oldest assistant reply -- so in the common case (every
-    assistant reply in the conversation came from the agent path) each
-    run's markers land directly after the answer they belong to, exactly
-    mirroring where they rendered live. This is the "simplest correct"
-    placement given persisted messages carry no per-step timestamp to
-    interleave by more precisely. A run left over with no corresponding
-    assistant message -- only possible when ``agent_runtime`` was toggled
-    off mid-conversation after some replies already used the agent path --
-    has its block appended at the end of the transcript instead of being
-    silently dropped.
+    Task 3 placement, anchored by the run's ``assistant_message_id`` (the
+    persisted id of the reply it produced -- see
+    ``ConsoleAgentBridge.record_run_assistant_message``, written on every
+    terminal path since Task 2):
+
+    - **Anchor id set and it matches** a message's ``persisted_message_id``
+      in ``messages`` -- the block is inserted immediately after that
+      message, wherever it sits (this is exact, not ordinal: a resumed
+      transcript may have been edited/branched since the run happened, so
+      the Nth run no longer need be the Nth reply).
+    - **Anchor id set but it matches no message in ``messages``** -- the
+      reply that run produced lives on a different branch than the one
+      currently active (an edit/regenerate moved the active path off of
+      it). The block is **dropped**: showing that run's tool trace next to
+      a DIFFERENT reply would misattribute it, so hiding it is correct.
+    - **Anchor id is ``None``** -- a legacy (pre-Phase-C) run, a sub-agent
+      run, or one whose terminal path never got to record the id (crash /
+      never-persisted reply). Falls back to the prior ordinal placement:
+      the Nth null-anchored block is matched to the Nth ASSISTANT message
+      in ``messages`` that isn't already claimed by an id-anchored block,
+      oldest first. A null block left over with no unclaimed assistant
+      message to pair with is appended at the end of the transcript
+      instead of being silently dropped, preserving the pre-Task-3
+      leftover behavior for this fallback path.
 
     Idempotent: a block whose marker texts are already present as TOOL
     messages anywhere in ``messages`` is skipped, so calling this twice (or
@@ -222,15 +234,16 @@ def inject_resume_agent_markers(
         messages: The rebuilt transcript (ChaChaNotes-derived; never
             contains TOOL rows on its own, since markers are appended
             live with ``persist=False``).
-        marker_blocks: Per-run marker-message blocks, oldest run first
-            (see ``ConsoleAgentBridge.resume_marker_messages``).
+        anchored_blocks: Per-run ``(assistant_message_id, marker_block)``
+            pairs, oldest run first (see
+            ``ConsoleAgentBridge.resume_marker_messages``).
 
     Returns:
         A new list with marker blocks interleaved; ``messages`` itself is
         not mutated.
     """
-    non_empty_blocks = [block for block in marker_blocks if block]
-    if not non_empty_blocks:
+    non_empty = [(anchor, block) for anchor, block in anchored_blocks if block]
+    if not non_empty:
         return list(messages)
 
     existing_tool_contents = {
@@ -238,23 +251,44 @@ def inject_resume_agent_markers(
         for message in messages
         if message.role is ConsoleMessageRole.TOOL
     }
-    assistant_indexes = [
-        index
-        for index, message in enumerate(messages)
-        if message.role is ConsoleMessageRole.ASSISTANT
-    ]
-    matched = dict(zip(assistant_indexes, non_empty_blocks))
-    leftover_blocks = non_empty_blocks[len(assistant_indexes) :]
 
     def _already_present(block: list[ConsoleChatMessage]) -> bool:
         return all(marker.content in existing_tool_contents for marker in block)
 
+    by_persisted = {
+        message.persisted_message_id: index
+        for index, message in enumerate(messages)
+        if message.persisted_message_id
+    }
+
+    matched: dict[int, list[list[ConsoleChatMessage]]] = {}
+    null_blocks: list[list[ConsoleChatMessage]] = []
+    used_indexes: set[int] = set()
+    for anchor_id, block in non_empty:
+        if anchor_id is None:
+            null_blocks.append(block)
+            continue
+        index = by_persisted.get(anchor_id)
+        if index is None:
+            continue  # off-path: this run's reply lives on another branch
+        matched.setdefault(index, []).append(block)
+        used_indexes.add(index)
+
+    unclaimed_assistant_indexes = [
+        index
+        for index, message in enumerate(messages)
+        if message.role is ConsoleMessageRole.ASSISTANT and index not in used_indexes
+    ]
+    for index, block in zip(unclaimed_assistant_indexes, null_blocks):
+        matched.setdefault(index, []).append(block)
+    leftover_blocks = null_blocks[len(unclaimed_assistant_indexes) :]
+
     result: list[ConsoleChatMessage] = []
     for index, message in enumerate(messages):
         result.append(message)
-        block = matched.get(index)
-        if block is not None and not _already_present(block):
-            result.extend(block)
+        for block in matched.get(index, ()):
+            if not _already_present(block):
+                result.extend(block)
     for block in leftover_blocks:
         if not _already_present(block):
             result.extend(block)
@@ -1238,7 +1272,7 @@ class ConsoleAgentBridge:
 
     def resume_marker_messages(
         self, conversation_id: str
-    ) -> list[list[ConsoleChatMessage]]:
+    ) -> list[tuple[str | None, list[ConsoleChatMessage]]]:
         """Re-derive transcript TOOL marker messages from ``AgentRunsDB`` for resume.
 
         Plan-B final-review Medium-1: the rail (``historical_snapshot``) and
@@ -1248,16 +1282,24 @@ class ConsoleAgentBridge:
         ``persist=False``, so a session rebuilt fresh from ChaChaNotes never
         sees them.
 
-        Returns one marker-message block per non-superseded PRIMARY run for
-        the conversation, oldest run first (``list_runs`` itself returns
-        newest-first, so the order is reversed here). Each block holds that
-        run's own TOOL marker messages, in the run's recorded step order,
-        built with ``format_agent_step_marker`` -- the same formatter the
-        live bridge uses -- so a resumed transcript's markers are
-        byte-identical to what the live run produced. A run with no
-        marker-worthy steps (e.g. a plain answer, no tool/spawn/error step)
-        yields an empty block; callers should skip those rather than inject
-        nothing.
+        Returns one ``(assistant_message_id, marker_block)`` pair per
+        non-superseded PRIMARY run for the conversation, oldest run first
+        (``list_runs`` itself returns newest-first, so the order is
+        reversed here). ``assistant_message_id`` is the run's own
+        ``record["assistant_message_id"]`` -- the persisted id of the
+        reply it produced (set on every terminal path since Task 2), or
+        ``None`` for a legacy/pre-Phase-C run, a sub-agent run, or one
+        whose reply was never persisted -- Task 3's
+        ``inject_resume_agent_markers`` is what turns this id into an
+        anchored (or ordinal-fallback, or dropped) placement.
+
+        Each block holds that run's own TOOL marker messages, in the run's
+        recorded step order, built with ``format_agent_step_marker`` -- the
+        same formatter the live bridge uses -- so a resumed transcript's
+        markers are byte-identical to what the live run produced. A run
+        with no marker-worthy steps (e.g. a plain answer, no
+        tool/spawn/error step) yields an empty block; callers should skip
+        those rather than inject nothing.
 
         Placement of the returned blocks into a transcript is the caller's
         job -- see ``inject_resume_agent_markers``.
@@ -1268,7 +1310,7 @@ class ConsoleAgentBridge:
             if record["agent_kind"] == AGENT_KIND_PRIMARY
         ]
         records.reverse()  # list_runs is newest-first; markers must read chronologically
-        blocks: list[list[ConsoleChatMessage]] = []
+        blocks: list[tuple[str | None, list[ConsoleChatMessage]]] = []
         for record in records:
             block: list[ConsoleChatMessage] = []
             for step in record.get("steps") or []:
@@ -1286,7 +1328,7 @@ class ConsoleAgentBridge:
                             status="complete",
                         )
                     )
-            blocks.append(block)
+            blocks.append((record.get("assistant_message_id"), block))
         return blocks
 
     # -- internals ------------------------------------------------------

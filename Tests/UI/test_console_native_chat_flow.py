@@ -7363,7 +7363,13 @@ def test_resume_wiring_injects_agent_markers_from_agent_runs_db(tmp_path):
     (`_inject_resume_agent_markers`) must re-derive TOOL markers from the
     real sibling `AgentRunsDB` the same way `_ensure_console_agent_bridge`
     locates it (keyed off `chachanotes_db.db_path`), not just the pure
-    helper functions in isolation."""
+    helper functions in isolation.
+
+    Task 3: the run carries an `assistant_message_id` matching the
+    assistant message's `persisted_message_id`, so this exercises the real
+    id-anchored placement path -- not the ordinal fallback that would
+    coincidentally land the block in the same place for a single-run,
+    single-reply conversation."""
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     screen = ChatScreen(_build_test_app())
@@ -7371,7 +7377,11 @@ def test_resume_wiring_injects_agent_markers_from_agent_runs_db(tmp_path):
         db_path=str(tmp_path / "chacha.db")
     )
     runs_db = AgentRunsDB(tmp_path / "agent_runs.db", client_id="t")
-    primary_id = runs_db.create_run(conversation_id="conv-x", agent_kind="primary")
+    primary_id = runs_db.create_run(
+        conversation_id="conv-x",
+        agent_kind="primary",
+        assistant_message_id="asst-42",
+    )
     runs_db.append_steps(
         primary_id,
         [
@@ -7391,7 +7401,10 @@ def test_resume_wiring_injects_agent_markers_from_agent_runs_db(tmp_path):
     messages = [
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="what is 6*7"),
         ConsoleChatMessage(
-            role=ConsoleMessageRole.ASSISTANT, content="It is 42.", status="complete"
+            role=ConsoleMessageRole.ASSISTANT,
+            content="It is 42.",
+            status="complete",
+            persisted_message_id="asst-42",
         ),
     ]
 

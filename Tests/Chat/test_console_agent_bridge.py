@@ -630,8 +630,60 @@ def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(
         agent_runs_db=db, store=None, provider_gateway=None
     )
     blocks = fresh_bridge.resume_marker_messages("conv-1")
-    resumed_tool_contents = [m.content for block in blocks for m in block]
+    resumed_tool_contents = [m.content for _anchor, block in blocks for m in block]
     assert resumed_tool_contents == live_tool_contents
+
+
+def test_resume_marker_messages_surfaces_assistant_message_id_anchor(tmp_path):
+    """Task 3: each block is paired with the run's ``assistant_message_id``
+    (``None`` for a legacy/pre-Phase-C run that never recorded one) so the
+    placement layer can anchor by id instead of guessing ordinally."""
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    anchored = db.create_run(
+        conversation_id="conv-1",
+        agent_kind="primary",
+        assistant_message_id="asst-anchor",
+    )
+    db.append_steps(
+        anchored,
+        [
+            {
+                "index": 0,
+                "kind": STEP_ERROR,
+                "summary": "boom",
+                "tool_name": "",
+                "result": "",
+                "args": None,
+                "created_at": "",
+            },
+        ],
+    )
+    db.set_status(anchored, "done", result="ok")
+    legacy = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.append_steps(
+        legacy,
+        [
+            {
+                "index": 0,
+                "kind": STEP_ERROR,
+                "summary": "legacy",
+                "tool_name": "",
+                "result": "",
+                "args": None,
+                "created_at": "",
+            },
+        ],
+    )
+    db.set_status(legacy, "done", result="ok")
+
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    blocks = bridge.resume_marker_messages("conv-1")
+
+    assert len(blocks) == 2
+    assert blocks[0][0] == "asst-anchor"
+    assert "boom" in blocks[0][1][0].content
+    assert blocks[1][0] is None
+    assert "legacy" in blocks[1][1][0].content
 
 
 def test_resume_marker_messages_orders_blocks_chronologically_oldest_first(tmp_path):
@@ -672,8 +724,8 @@ def test_resume_marker_messages_orders_blocks_chronologically_oldest_first(tmp_p
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     blocks = bridge.resume_marker_messages("conv-1")
     assert len(blocks) == 2
-    assert "calculator" in blocks[0][0].content
-    assert "timed out" in blocks[1][0].content
+    assert "calculator" in blocks[0][1][0].content
+    assert "timed out" in blocks[1][1][0].content
 
 
 def test_resume_marker_messages_skips_superseded_runs(tmp_path):
@@ -714,7 +766,7 @@ def test_resume_marker_messages_skips_superseded_runs(tmp_path):
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     blocks = bridge.resume_marker_messages("conv-1")
     assert len(blocks) == 1
-    assert "final attempt" in blocks[0][0].content
+    assert "final attempt" in blocks[0][1][0].content
 
 
 def _tool_marker(text: str) -> ConsoleChatMessage:
@@ -724,17 +776,32 @@ def _tool_marker(text: str) -> ConsoleChatMessage:
 
 
 def test_inject_resume_agent_markers_places_block_after_matching_assistant_message():
+    """Task 3: placement follows the block's anchor id (matched against
+    each message's ``persisted_message_id``), not block order/ordinal
+    position. The blocks below are listed in the OPPOSITE order of their
+    anchors -- the block for the SECOND assistant reply ("asst-2") comes
+    first in the list -- so an ordinal placement would put it after "42."
+    (wrong); id-anchoring must still put it after "ok." (right)."""
     messages = [
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
         ConsoleChatMessage(
-            role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"
+            role=ConsoleMessageRole.ASSISTANT,
+            content="42.",
+            status="complete",
+            persisted_message_id="asst-1",
         ),
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="again"),
         ConsoleChatMessage(
-            role=ConsoleMessageRole.ASSISTANT, content="ok.", status="complete"
+            role=ConsoleMessageRole.ASSISTANT,
+            content="ok.",
+            status="complete",
+            persisted_message_id="asst-2",
         ),
     ]
-    blocks = [[_tool_marker("⚙ calculator → 42")], [_tool_marker("⚠ retry")]]
+    blocks = [
+        ("asst-2", [_tool_marker("⚠ retry")]),
+        ("asst-1", [_tool_marker("⚙ calculator → 42")]),
+    ]
 
     result = inject_resume_agent_markers(messages, blocks)
 
@@ -749,14 +816,110 @@ def test_inject_resume_agent_markers_places_block_after_matching_assistant_messa
     ]
 
 
+def test_inject_resume_agent_markers_drops_block_whose_anchor_matches_no_active_path_message():
+    """A block anchored to an assistant_message_id that isn't in the
+    active-path ``messages`` (the run's reply lives on another branch) must
+    be hidden entirely -- never appended anywhere -- rather than leak an
+    off-branch tool trace onto the visible transcript."""
+    messages = [
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT,
+            content="42.",
+            status="complete",
+            persisted_message_id="asst-1",
+        ),
+    ]
+    blocks = [("asst-OFF-PATH", [_tool_marker("⚙ calculator → 999")])]
+
+    result = inject_resume_agent_markers(messages, blocks)
+
+    assert [m.content for m in result] == ["hi", "42."]
+    assert not any(m.role is ConsoleMessageRole.TOOL for m in result)
+
+
+def test_inject_resume_agent_markers_null_anchor_blocks_place_ordinally_when_no_id_claims():
+    """Legacy (pre-Phase-C) runs never recorded an assistant_message_id --
+    their blocks carry a ``None`` anchor and keep the old ordinal
+    placement: Nth null block <-> Nth assistant reply."""
+    messages = [
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"
+        ),
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="again"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT, content="ok.", status="complete"
+        ),
+    ]
+    blocks = [
+        (None, [_tool_marker("⚙ calculator → 42")]),
+        (None, [_tool_marker("⚠ retry")]),
+    ]
+
+    result = inject_resume_agent_markers(messages, blocks)
+
+    roles = [(m.role, m.content) for m in result]
+    assert roles == [
+        (ConsoleMessageRole.USER, "hi"),
+        (ConsoleMessageRole.ASSISTANT, "42."),
+        (ConsoleMessageRole.TOOL, "⚙ calculator → 42"),
+        (ConsoleMessageRole.USER, "again"),
+        (ConsoleMessageRole.ASSISTANT, "ok."),
+        (ConsoleMessageRole.TOOL, "⚠ retry"),
+    ]
+
+
+def test_inject_resume_agent_markers_mixed_id_and_null_anchors_null_skips_claimed_assistant():
+    """Mixed case: one block is id-anchored to the FIRST assistant reply: the
+    remaining null (legacy) block's ordinal fallback must skip that already
+    id-claimed reply and land on the next unclaimed one, not double up on
+    "42."."""
+    messages = [
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT,
+            content="42.",
+            status="complete",
+            persisted_message_id="asst-1",
+        ),
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="again"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT, content="ok.", status="complete"
+        ),
+    ]
+    blocks = [
+        ("asst-1", [_tool_marker("⚙ calculator → 42")]),
+        (None, [_tool_marker("⚠ legacy retry")]),
+    ]
+
+    result = inject_resume_agent_markers(messages, blocks)
+
+    roles = [(m.role, m.content) for m in result]
+    assert roles == [
+        (ConsoleMessageRole.USER, "hi"),
+        (ConsoleMessageRole.ASSISTANT, "42."),
+        (ConsoleMessageRole.TOOL, "⚙ calculator → 42"),
+        (ConsoleMessageRole.USER, "again"),
+        (ConsoleMessageRole.ASSISTANT, "ok."),
+        (ConsoleMessageRole.TOOL, "⚠ legacy retry"),
+    ]
+
+
 def test_inject_resume_agent_markers_appends_leftover_block_when_more_runs_than_replies():
+    """Preserves the old leftover-append behavior, now for NULL-anchored
+    blocks: a legacy run with no corresponding assistant reply left in the
+    active path is appended at the end rather than dropped."""
     messages = [
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
         ConsoleChatMessage(
             role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"
         ),
     ]
-    blocks = [[_tool_marker("⚙ calculator → 42")], [_tool_marker("⚠ orphan run")]]
+    blocks = [
+        (None, [_tool_marker("⚙ calculator → 42")]),
+        (None, [_tool_marker("⚠ orphan run")]),
+    ]
 
     result = inject_resume_agent_markers(messages, blocks)
 
@@ -774,7 +937,7 @@ def test_inject_resume_agent_markers_skips_empty_blocks():
             role=ConsoleMessageRole.ASSISTANT, content="ok.", status="complete"
         ),
     ]
-    result = inject_resume_agent_markers(messages, [[], []])
+    result = inject_resume_agent_markers(messages, [(None, []), ("some-id", [])])
     assert [m.content for m in result] == ["ok."]
 
 
@@ -782,10 +945,13 @@ def test_inject_resume_agent_markers_is_idempotent_no_duplicates_on_second_call(
     messages = [
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
         ConsoleChatMessage(
-            role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"
+            role=ConsoleMessageRole.ASSISTANT,
+            content="42.",
+            status="complete",
+            persisted_message_id="asst-1",
         ),
     ]
-    blocks = [[_tool_marker("⚙ calculator → 42")]]
+    blocks = [("asst-1", [_tool_marker("⚙ calculator → 42")])]
 
     once = inject_resume_agent_markers(messages, blocks)
     twice = inject_resume_agent_markers(once, blocks)
@@ -802,11 +968,14 @@ def test_inject_resume_agent_markers_leaves_live_session_with_markers_untouched(
     messages = [
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
         ConsoleChatMessage(
-            role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"
+            role=ConsoleMessageRole.ASSISTANT,
+            content="42.",
+            status="complete",
+            persisted_message_id="asst-1",
         ),
         _tool_marker("⚙ calculator → 42"),
     ]
-    blocks = [[_tool_marker("⚙ calculator → 42")]]
+    blocks = [("asst-1", [_tool_marker("⚙ calculator → 42")])]
 
     result = inject_resume_agent_markers(messages, blocks)
 
