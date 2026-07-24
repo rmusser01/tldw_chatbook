@@ -340,24 +340,45 @@ class DirectoryNavigation(OptionList):
             # applied when `_repopulate_display` runs on completion.
             self.location = parent
 
-    def _apply_pending_highlight(self) -> bool:
+    def _apply_pending_highlight(self, *, final: bool = False) -> bool:
         """Highlight the pending target if it is present in the current listing.
+
+        The pending request is cleared only once it is resolved -- either the
+        entry was found and highlighted, the load has finished with the entry
+        absent (``final``), or the user navigated to a different directory. A
+        not-yet-found target during an in-flight load is KEPT so the post-load
+        ``_repopulate_display`` can still apply it (the immediate same-directory
+        call may run before the options are populated).
+
+        Args:
+            final: ``True`` when called after a completed directory load, so a
+                target still absent is genuinely gone and the request is dropped;
+                ``False`` for the speculative same-directory fast path, which
+                leaves an unmatched target pending for the post-load pass.
 
         Returns:
             ``True`` when a matching entry was found and highlighted.
         """
         target = self._pending_highlight
-        if target is None or target.parent != self._location:
+        if target is None:
             return False
-        self._pending_highlight = None
+        if target.parent != self._location:
+            # Navigated elsewhere before the target loaded; abandon it.
+            self._pending_highlight = None
+            return False
         for index in range(self.option_count):
             option = self.get_option_at_index(index)
             if (
                 isinstance(option, DirectoryEntry)
                 and option.location.name == target.name
             ):
+                self._pending_highlight = None
                 self.highlighted = index
                 return True
+        if final:
+            # The directory has finished loading and the target is not present;
+            # stop retrying so a stale request cannot linger.
+            self._pending_highlight = None
         return False
 
     @property
@@ -435,8 +456,9 @@ class DirectoryNavigation(OptionList):
                 )
             )
         # Honor a pending "reveal this file" request from the path bar before
-        # falling back to the default top-of-list highlight (TASK-378).
-        if not self._apply_pending_highlight():
+        # falling back to the default top-of-list highlight (TASK-378). This runs
+        # after a completed load, so an absent target is resolved (final=True).
+        if not self._apply_pending_highlight(final=True):
             self._settle_highlight()
 
     @work(exclusive=True, thread=True)
