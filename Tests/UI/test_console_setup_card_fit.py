@@ -94,7 +94,7 @@ def test_setup_step_wraps_instead_of_ellipsizing_on_overflow():
     assert "height: auto" in step
 
 
-class _SetupModalGeometryApp(App[None]):
+class SetupModalGeometryApp(App[None]):
     """Mount the setup modal with the production stylesheet for geometry checks."""
 
     CSS_PATH = str(_BUNDLED_STYLESHEET)
@@ -115,7 +115,7 @@ class _SetupModalGeometryApp(App[None]):
 async def test_step_three_is_one_complete_line_at_default_terminal_size():
     """AC#1, rendered: an 80-column default terminal shows the full sentence
     on a single row -- not clipped, and not wrapped (the card is wide enough)."""
-    app = _SetupModalGeometryApp()
+    app = SetupModalGeometryApp()
     async with app.run_test(size=(80, 24)):
         step3 = app.query_one("#console-setup-step-3", Static)
         assert step3.size.height == 1
@@ -131,7 +131,7 @@ async def test_step_three_wraps_onto_a_second_row_on_a_narrow_terminal():
     sentence's width, the widget grows to a second row and every word --
     including the "setup" that TASK-389's evidence showed getting dropped --
     is still painted onscreen instead of being cut."""
-    app = _SetupModalGeometryApp()
+    app = SetupModalGeometryApp()
     async with app.run_test(size=(50, 30)):
         step3 = app.query_one("#console-setup-step-3", Static)
         # A fixed height: 1 (the pre-fix rule) would clamp this at 1 no matter

@@ -206,7 +206,15 @@ class PersonasLibraryPane(Vertical):
         yield Static("", id="personas-library-count", classes="destination-purpose")
 
     def set_mode(self, mode: str) -> None:
-        """Gate the toolbar per mode: Import for characters+dictionaries+lore, Duplicate for characters+dictionaries+lore (task-443)."""
+        """Gate the library toolbar's buttons for the active workbench mode.
+
+        Import and Duplicate render for characters/dictionaries/lore (with a
+        mode-appropriate Import tooltip); personas mode hides both (task-443).
+
+        Args:
+            mode: The active workbench mode id (``characters``/``personas``/
+                ``dictionaries``/``lore``).
+        """
         self._import_visible = mode in ("characters", "dictionaries", "lore")
         import_button = self.query_one("#personas-library-import", Button)
         import_button.display = self._import_visible

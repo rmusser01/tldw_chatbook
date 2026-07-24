@@ -150,6 +150,14 @@ class PersonasInspectorPane(Vertical):
             )
 
     def show_selection(self, *, name: str, kind: str) -> None:
+        """Reflect the selected library item in the inspector summary.
+
+        Args:
+            name: The selected item's display name.
+            kind: The selection kind (``character``/``persona_profile``/
+                ``dictionary``/``lore``) -- drives which actions render
+                (task-443 kind-aware visibility).
+        """
         self._has_selection = True
         self._selected_kind = kind
         self.query_one("#personas-selected-name", Static).update(f"Selected: {name}")

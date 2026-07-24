@@ -14,6 +14,11 @@ class ShortcutAction:
     available: bool = True
 
     def render(self) -> str:
+        """Render this hint as the footer's ``key label`` fragment.
+
+        Returns:
+            The single-hint text, e.g. ``"ctrl+n new"``.
+        """
         return f"{self.key} {self.label}"
 
 
@@ -25,6 +30,13 @@ class ShortcutContext:
     actions: tuple[ShortcutAction, ...]
 
     def render(self) -> str:
+        """Render the visible footer hint line for this context.
+
+        Returns:
+            The `` | ``-joined hints for the AVAILABLE actions only (may be
+            an empty string when nothing is available -- the footer widget
+            falls back to its default text in that case).
+        """
         # task-445: the footer is a single plain-text Static -- it has no way
         # to dim a hint, so the two AC-permitted options collapse to one:
         # only currently-available actions are shown at all. Previously every
