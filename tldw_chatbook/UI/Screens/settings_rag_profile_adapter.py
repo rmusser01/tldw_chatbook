@@ -7,6 +7,7 @@ All functions here are headless (no Textual imports) and testable.
 from __future__ import annotations
 
 import copy
+import dataclasses
 from typing import Optional
 
 from loguru import logger
@@ -19,7 +20,11 @@ from tldw_chatbook.RAG_Search.simplified.active_config import (
     _active_profile_id,
     set_active_profile,
 )
-from .settings_library_rag_defaults import SettingsLibraryRagDefaults
+from .settings_library_rag_defaults import (
+    SettingsLibraryRagDefaults,
+    _strict_float,
+    _strict_int,
+)
 
 
 def _manager():
@@ -66,7 +71,16 @@ def load_rag_defaults_from_active_profile() -> SettingsLibraryRagDefaults:
         # only mirrors for display/consistency.
         enable_reranking=rr is not None,
         reranker_model=str(rr.model_name) if rr is not None else "",
-        reranker_top_k=int(rr.top_k_to_rerank) if rr is not None else int(s.reranker_top_k),
+        # When the profile has no reranking_config yet, fall back to the
+        # SAME default SettingsLibraryRagDefaults itself uses (sourced from
+        # RerankingConfig().top_k_to_rerank == 20) -- NOT
+        # `s.reranker_top_k` (SearchConfig's functionally-dead field,
+        # default 5; see rerank presence-semantics note above).
+        reranker_top_k=(
+            int(rr.top_k_to_rerank)
+            if rr is not None
+            else SettingsLibraryRagDefaults().reranker_top_k
+        ),
     )
 
 
@@ -95,7 +109,10 @@ def apply_defaults_to_profile(
 
     e = profile.rag_config.embedding
     e.model = values.embedding_model
-    e.device = values.embedding_device
+    # A blank device (like a blank reranker_model below) means "leave the
+    # profile's existing device alone" -- never stomp it with an empty string.
+    if values.embedding_device:
+        e.device = values.embedding_device
     e.batch_size = int(values.embedding_batch_size)
     e.max_length = int(values.embedding_max_length)
 
@@ -122,45 +139,168 @@ def apply_defaults_to_profile(
     return profile
 
 
-def validate_full_config(values: SettingsLibraryRagDefaults) -> list[str]:
-    """Validate the full RAGConfig that saving ``values`` would produce.
+# Keyword fragments used to classify a `RAGConfig.validate()` message as
+# concerning a field the Library/RAG Settings category actually exposes for
+# editing. `RAGConfig.validate()` also checks vector_store.type,
+# persist_directory, and embedding.cache_size -- none of which are editable
+# here -- plus default_top_k/score_threshold/hybrid_alpha, which
+# validate_library_rag_defaults already validates with its own (narrower)
+# rules; a violation on any of THOSE must never gate Save through this path.
+# Kept as substrings (not a field-name dict) because RAGConfig.validate()
+# hands back prose, not structured (field, reason) pairs.
+_HARD_ERROR_UI_FIELD_KEYWORDS: tuple[str, ...] = (
+    "chunk_size",
+    "chunk_overlap",
+    "distance metric",
+    "batch_size",
+    "max_length",
+    "embedding model",
+    "chunking_method",
+)
+
+
+def _is_ui_exposed_ragconfig_error(message: str) -> bool:
+    """Whether a ``RAGConfig.validate()`` message concerns a field the
+    Library/RAG Settings category actually exposes for editing.
+
+    Args:
+        message: One message from ``RAGConfig.validate()``.
+
+    Returns:
+        True when the message concerns a UI-exposed field.
+    """
+    lowered = message.lower()
+    return any(keyword in lowered for keyword in _HARD_ERROR_UI_FIELD_KEYWORDS)
+
+
+# Every numeric field `apply_defaults_to_profile` casts with a plain
+# `int()`/`float()` call -- both reject float-like strings ("12.0") that
+# validate_library_rag_defaults's own _strict_int/_strict_float helpers (and
+# load_library_rag_defaults's callers) treat as valid input. See
+# _tolerant_numeric_values below.
+_HARD_ERROR_INT_FIELDS: tuple[str, ...] = (
+    "default_top_k",
+    "fts_top_k",
+    "vector_top_k",
+    "snippet_max_chars",
+    "max_context_size",
+    "embedding_batch_size",
+    "embedding_max_length",
+    "chunk_size",
+    "chunk_overlap",
+    "reranker_top_k",
+)
+_HARD_ERROR_FLOAT_FIELDS: tuple[str, ...] = ("hybrid_alpha", "score_threshold")
+
+
+def _tolerant_numeric_values(
+    values: SettingsLibraryRagDefaults,
+) -> SettingsLibraryRagDefaults:
+    """Pre-coerce ``apply_defaults_to_profile``'s numeric fields tolerantly.
+
+    ``apply_defaults_to_profile`` casts these with plain ``int()``/``float()``
+    for the SAVE path, where the UI already stages real numeric types. But a
+    validator may legitimately be handed a still-stringly-typed, float-like
+    value (e.g. ``"12.0"``) that plain ``int()`` raises on even though it is
+    perfectly well-formed. Swap in the strictly-coerced value wherever it
+    parses; a field that ISN'T even loosely parseable is left untouched, so
+    ``apply_defaults_to_profile``'s own cast still raises on genuine garbage
+    -- ``hard_config_errors`` converts that into a hard error instead of
+    letting it crash the caller.
+
+    Args:
+        values: Candidate Library/RAG defaults to normalise.
+
+    Returns:
+        A copy of ``values`` with every loosely-numeric field coerced to a
+        real ``int``/``float``.
+    """
+    updates: dict[str, object] = {}
+    for field_name in _HARD_ERROR_INT_FIELDS:
+        coerced = _strict_int(getattr(values, field_name))
+        if coerced is not None:
+            updates[field_name] = coerced
+    for field_name in _HARD_ERROR_FLOAT_FIELDS:
+        coerced = _strict_float(getattr(values, field_name))
+        if coerced is not None:
+            updates[field_name] = coerced
+    return dataclasses.replace(values, **updates) if updates else values
+
+
+def hard_config_errors(values: SettingsLibraryRagDefaults) -> list[str]:
+    """Hard validation errors that must block Save.
 
     Applies ``values`` onto a scratch (deep-copied) clone of the active
     profile -- never the cached object other callers share -- and runs
     ``RAGConfig.validate()`` (the first caller of that method anywhere in the
-    codebase), plus rerank-specific checks that ``RAGConfig.validate()``
+    codebase), keeping only the messages that concern a field this category
+    actually exposes for editing (see ``_HARD_ERROR_UI_FIELD_KEYWORDS``).
+    Also flags ``reranker_top_k < 1`` when reranking is enabled --
+    ``RAGConfig.validate()`` has no concept of reranking at all.
+
+    ``validate_library_rag_defaults`` (settings_library_rag_defaults.py)
+    calls this for the rules it would otherwise have to duplicate (and drift
+    from); it keeps its own narrower rules for fields ``RAGConfig.validate()``
     doesn't cover.
 
     Args:
         values: Candidate Library/RAG defaults to validate.
 
     Returns:
-        A list of human-readable validation messages; empty when the
-        resulting config is valid. When no profile is active, returns a
-        single explanatory message rather than raising.
+        Human-readable hard-error messages; empty when nothing blocks Save.
+        When no profile is active, returns a single explanatory message
+        rather than raising.
     """
     profile = _active_profile()
     if profile is None:
         return ["No active profile is selected."]
 
     scratch = copy.deepcopy(profile)
-    apply_defaults_to_profile(scratch, values)
-
-    errors = list(scratch.rag_config.validate())
-
     try:
-        reranker_top_k = int(values.reranker_top_k)
-    except (TypeError, ValueError):
-        reranker_top_k = None
-    if reranker_top_k is None or reranker_top_k < 1:
-        errors.append("Reranker top-k must be at least 1.")
-    elif values.enable_reranking and reranker_top_k > int(values.default_top_k):
-        errors.append(
-            f"Reranker top-k ({reranker_top_k}) exceeds default results "
-            f"({values.default_top_k}); reranking will not see all requested results."
-        )
+        apply_defaults_to_profile(scratch, _tolerant_numeric_values(values))
+    except (TypeError, ValueError) as e:
+        return [f"Library/RAG defaults contain an invalid value: {e}"]
+
+    errors = [
+        message
+        for message in scratch.rag_config.validate()
+        if _is_ui_exposed_ragconfig_error(message)
+    ]
+
+    if values.enable_reranking:
+        reranker_top_k = _strict_int(values.reranker_top_k)
+        if reranker_top_k is None or reranker_top_k < 1:
+            errors.append("Reranker top-k must be at least 1.")
 
     return errors
+
+
+def soft_config_warnings(values: SettingsLibraryRagDefaults) -> list[str]:
+    """Advisory warnings that inform but never gate Save.
+
+    Currently just one check: when reranking is enabled and
+    ``reranker_top_k`` exceeds ``default_top_k``, reranking will never see
+    all the requested results. Pure (no active-profile dependency) --
+    everything it needs is already on ``values``.
+
+    Args:
+        values: Candidate Library/RAG defaults to check.
+
+    Returns:
+        Human-readable advisory messages; empty when nothing to report.
+    """
+    if not values.enable_reranking:
+        return []
+    reranker_top_k = _strict_int(values.reranker_top_k)
+    default_top_k = _strict_int(values.default_top_k)
+    if reranker_top_k is None or default_top_k is None:
+        return []
+    if reranker_top_k > default_top_k:
+        return [
+            f"Reranker top-k ({reranker_top_k}) exceeds default results "
+            f"({default_top_k}); reranking will not see all requested results."
+        ]
+    return []
 
 
 def save_rag_defaults_to_active_profile(
