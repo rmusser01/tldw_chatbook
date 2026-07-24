@@ -4957,6 +4957,40 @@ class TestSetAsMyName:
                 == "Set as my name"
             )
 
+    async def test_renaming_active_profile_keeps_indicators_in_sync(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        """Whole-branch review: the rename-follows-pointer config write must
+        also refresh the inspector's "Chatting as" summary and the Set/Clear
+        button label -- the pane caches ``_active_profile_name`` (no reactive
+        plumbing), and a stale "Set as my name" label would INVERT the
+        button's action (clearing the pointer) on the next click."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await self._select_profile(pilot)
+            screen.query_one("#personas-set-my-name", Button).press()
+            await pilot.pause()
+            assert get_active_user_profile_pointer() == "Archivist"
+
+            # Simulate a save-in-place rename Archivist -> Chronicler: the
+            # refreshed list now carries the new name, then the save
+            # completion path runs.
+            renamed = dict(PROFILE)
+            renamed["name"] = "Chronicler"
+            stub_scope_service.list_user_profiles = AsyncMock(
+                return_value={"items": [renamed], "total": 1}
+            )
+            await screen._after_profile_save({"id": "p-1", "name": "Chronicler"})
+            await pilot.pause()
+
+            assert get_active_user_profile_pointer() == "Chronicler"
+            summary = screen.query_one("#personas-active-profile-summary", Static)
+            assert str(summary.renderable) == "Chatting as: Chronicler"
+            assert (
+                str(screen.query_one("#personas-set-my-name", Button).label)
+                == "Clear my name"
+            )
+
     async def test_delete_active_profile_clears_pointer(
         self, mock_app_instance, stub_characters, stub_scope_service
     ):

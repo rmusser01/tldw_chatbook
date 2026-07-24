@@ -194,3 +194,21 @@ Characters and user-profile content.
   `PersonaMessage`) were left untouched — out of the T2 rename map's named
   surface, a much larger separate refactor.
 <!-- SECTION:NOTES:END -->
+
+### Grep-gate survivor enumeration (whole-branch review, Finding 2)
+
+Remaining "persona" tokens in `tldw_chatbook/`, each justified:
+- The `persona_label` → `user_profile_label` compat shim itself (accept-old-write-new; by design).
+- `server_character_persona_service.py` / `tldw_api/client.py` wire methods + the
+  `tldw_api/character_persona_schemas.py` class names — the sanctioned server-API
+  wire-mirror boundary (app layer uses the `UserProfile*` aliases).
+- The pre-existing `assistant_kind`/`persona_memory_mode`/`ccp_persona`
+  conversation-ownership subsystem (Chat_Functions, ChaChaNotes_DB,
+  chat_conversation/persistence services, chat models/tabs) — a DIFFERENT,
+  older "persona" concept classifying conversation assistants; zero hunks in
+  this branch; never in the rename map.
+- Kept-by-design internal ids: `#console-persona-chip`,
+  `console-settings-persona-readonly`, `WorkbenchMode(id="persona", ...)`,
+  DOM ids `#personas-*`, state-dict keys `personas_workbench`/`personas_preview`.
+- `ccp_persona_handler.py` internal identifiers (user-facing strings de-personaed;
+  internals are the documented residual).

@@ -6181,6 +6181,11 @@ class PersonasScreen(BaseAppScreen):
         inspector.set_unsaved(False)
         inspector.show_validation(())
         self._sync_inspector_console_actions()
+        # Whole-branch review: the pointer write above must also refresh the
+        # inspector's "Chatting as" summary + Set/Clear button label — the
+        # pane caches _active_profile_name (no reactive plumbing), and a
+        # stale label could INVERT the button's action on the next click.
+        await self._sync_active_profile_indicators()
         await self._render_profile_rows()
         # Save-in-place: the returned ``saved`` dict already carries the
         # incremented optimistic-lock version, so the editor (which stays
