@@ -116,7 +116,7 @@ async def test_stts_settings_save_logs_names_and_destinations_not_secrets(
         "openai_api_key": "sk-OpenAI-UniquePrefix-PrivateSuffix",
         "elevenlabs_api_key": "xi-ElevenLabs-UniquePrefix-PrivateSuffix",
     }
-    saved: list[tuple[str, str, str]] = []
+    saved_batches: list[dict[str, dict[str, str]]] = []
     messages: list[str] = []
 
     class App:
@@ -129,11 +129,15 @@ async def test_stts_settings_save_logs_names_and_destinations_not_secrets(
         async def reconfigure_provider(self, provider_id: str, config: object) -> None:
             del provider_id, config
 
-    def save_setting(section: str, setting_name: str, value: str) -> None:
-        saved.append((section, setting_name, value))
+    def save_settings(section_values: dict[str, dict[str, str]]) -> bool:
+        saved_batches.append(section_values)
+        return True
 
     handler._stts_service = Service()
-    monkeypatch.setattr("tldw_chatbook.config.save_setting_to_cli_config", save_setting)
+    monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config",
+        save_settings,
+    )
     monkeypatch.setattr(
         "tldw_chatbook.config.load_settings",
         lambda *, force_reload=False: {
@@ -147,9 +151,13 @@ async def test_stts_settings_save_logs_names_and_destinations_not_secrets(
     finally:
         logger.remove(sink_id)
 
-    assert saved == [
-        ("API", "openai_api_key", secrets["openai_api_key"]),
-        ("API", "elevenlabs_api_key", secrets["elevenlabs_api_key"]),
+    assert saved_batches == [
+        {
+            "API": {
+                "openai_api_key": secrets["openai_api_key"],
+                "elevenlabs_api_key": secrets["elevenlabs_api_key"],
+            }
+        }
     ]
     rendered = "\n".join(messages)
     assert "Saved openai_api_key to [API].openai_api_key" in rendered
@@ -176,10 +184,13 @@ async def test_stts_settings_save_does_not_echo_secret_from_writer_error(
 
     handler = STTSEventHandler(App())
 
-    def fail_to_save(section: str, setting_name: str, value: str) -> None:
-        raise RuntimeError(f"could not save {value}")
+    def fail_to_save(section_values: dict[str, dict[str, str]]) -> None:
+        raise RuntimeError(f"could not save {section_values['API']['openai_api_key']}")
 
-    monkeypatch.setattr("tldw_chatbook.config.save_setting_to_cli_config", fail_to_save)
+    monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config",
+        fail_to_save,
+    )
 
     sink_id = logger.add(messages.append, level="DEBUG", format="{message}")
     try:
@@ -190,7 +201,7 @@ async def test_stts_settings_save_does_not_echo_secret_from_writer_error(
         logger.remove(sink_id)
 
     rendered = "\n".join(messages)
-    assert "Failed to save openai_api_key to [API].openai_api_key" in rendered
+    assert "Failed to save settings" in rendered
     assert secret not in rendered
     assert secret[:12] not in rendered
     assert secret[-12:] not in rendered
@@ -205,7 +216,7 @@ async def test_stts_settings_save_does_not_echo_reconfiguration_error_secret(
 ) -> None:
     secret = "sk-Reconfigure-UniquePrefix-PrivateSuffix"
     messages: list[str] = []
-    saved: list[tuple[str, str, str]] = []
+    saved_batches: list[dict[str, dict[str, str]]] = []
     get_service_calls = 0
 
     class App:
@@ -223,15 +234,19 @@ async def test_stts_settings_save_does_not_echo_reconfiguration_error_secret(
             del provider_id, config
             raise RuntimeError(f"rejected credential {secret}")
 
-    def save_setting(section: str, setting_name: str, value: str) -> None:
-        saved.append((section, setting_name, value))
+    def save_settings(section_values: dict[str, dict[str, str]]) -> bool:
+        saved_batches.append(section_values)
+        return True
 
     async def get_bound_service() -> Service:
         nonlocal get_service_calls
         get_service_calls += 1
         return Service()
 
-    monkeypatch.setattr("tldw_chatbook.config.save_setting_to_cli_config", save_setting)
+    monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config",
+        save_settings,
+    )
     monkeypatch.setattr(
         "tldw_chatbook.config.load_settings",
         lambda *, force_reload=False: {
@@ -254,10 +269,11 @@ async def test_stts_settings_save_does_not_echo_reconfiguration_error_secret(
     finally:
         logger.remove(sink_id)
 
-    assert saved == [("API", "openai_api_key", secret)]
+    assert saved_batches == [{"API": {"openai_api_key": secret}}]
     assert get_service_calls == 1
     rendered = "\n".join(messages)
-    assert "Failed to save settings" in rendered
+    assert "Failed to reconfigure TTS providers: openai" in rendered
+    assert "Settings saved, but some TTS providers could not be updated" in rendered
     assert "rejected credential" not in rendered
     assert secret not in rendered
     assert secret[:12] not in rendered

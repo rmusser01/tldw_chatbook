@@ -34,10 +34,12 @@ _STTS_PROVIDER_SETTING_KEYS = (
         frozenset(
             {
                 "elevenlabs_api_key",
-                "elevenlabs_voice_stability",
-                "elevenlabs_similarity_boost",
-                "elevenlabs_style",
-                "elevenlabs_use_speaker_boost",
+                "ELEVENLABS_DEFAULT_MODEL",
+                "ELEVENLABS_OUTPUT_FORMAT",
+                "ELEVENLABS_VOICE_STABILITY",
+                "ELEVENLABS_SIMILARITY_BOOST",
+                "ELEVENLABS_STYLE",
+                "ELEVENLABS_USE_SPEAKER_BOOST",
             }
         ),
     ),
@@ -45,9 +47,13 @@ _STTS_PROVIDER_SETTING_KEYS = (
         "kokoro",
         frozenset(
             {
-                "kokoro_device",
-                "kokoro_use_onnx",
-                "kokoro_model_path",
+                "KOKORO_DEVICE_DEFAULT",
+                "KOKORO_USE_ONNX",
+                "KOKORO_ONNX_MODEL_PATH_DEFAULT",
+                "KOKORO_ONNX_VOICES_JSON_DEFAULT",
+                "KOKORO_MAX_TOKENS",
+                "KOKORO_ENABLE_VOICE_MIXING",
+                "KOKORO_TRACK_PERFORMANCE",
             }
         ),
     ),
@@ -69,7 +75,7 @@ _STTS_PROVIDER_SETTING_KEYS = (
                 "HIGGS_MAX_NEW_TOKENS",
                 "HIGGS_TEMPERATURE",
                 "HIGGS_TOP_P",
-                "HIGGS_TOP_K",
+                "HIGGS_REPETITION_PENALTY",
             }
         ),
     ),
@@ -632,9 +638,11 @@ class STTSEventHandler:
         if self._cleanup_task is not None:
             logger.debug("Ignoring STTS settings after cleanup started")
             return
-        active_destination: tuple[str, str, str] | None = None
         try:
-            from tldw_chatbook.config import load_settings, save_setting_to_cli_config
+            from tldw_chatbook.config import (
+                load_settings,
+                save_settings_to_cli_config,
+            )
 
             # Save each setting to the appropriate section
             settings_map = {
@@ -663,20 +671,47 @@ class STTSEventHandler:
                 "openai_api_key": ("API", "openai_api_key"),
                 # ElevenLabs settings
                 "elevenlabs_api_key": ("API", "elevenlabs_api_key"),
-                "elevenlabs_voice_stability": ("app_tts", "ELEVENLABS_VOICE_STABILITY"),
-                "elevenlabs_similarity_boost": (
+                "ELEVENLABS_DEFAULT_MODEL": (
+                    "app_tts",
+                    "ELEVENLABS_DEFAULT_MODEL",
+                ),
+                "ELEVENLABS_OUTPUT_FORMAT": (
+                    "app_tts",
+                    "ELEVENLABS_OUTPUT_FORMAT",
+                ),
+                "ELEVENLABS_VOICE_STABILITY": (
+                    "app_tts",
+                    "ELEVENLABS_VOICE_STABILITY",
+                ),
+                "ELEVENLABS_SIMILARITY_BOOST": (
                     "app_tts",
                     "ELEVENLABS_SIMILARITY_BOOST",
                 ),
-                "elevenlabs_style": ("app_tts", "ELEVENLABS_STYLE"),
-                "elevenlabs_use_speaker_boost": (
+                "ELEVENLABS_STYLE": ("app_tts", "ELEVENLABS_STYLE"),
+                "ELEVENLABS_USE_SPEAKER_BOOST": (
                     "app_tts",
                     "ELEVENLABS_USE_SPEAKER_BOOST",
                 ),
                 # Kokoro settings
-                "kokoro_device": ("app_tts", "KOKORO_DEVICE"),
-                "kokoro_use_onnx": ("app_tts", "KOKORO_USE_ONNX"),
-                "kokoro_model_path": ("app_tts", "KOKORO_MODEL_PATH"),
+                "KOKORO_DEVICE_DEFAULT": ("app_tts", "KOKORO_DEVICE_DEFAULT"),
+                "KOKORO_USE_ONNX": ("app_tts", "KOKORO_USE_ONNX"),
+                "KOKORO_ONNX_MODEL_PATH_DEFAULT": (
+                    "app_tts",
+                    "KOKORO_ONNX_MODEL_PATH_DEFAULT",
+                ),
+                "KOKORO_ONNX_VOICES_JSON_DEFAULT": (
+                    "app_tts",
+                    "KOKORO_ONNX_VOICES_JSON_DEFAULT",
+                ),
+                "KOKORO_MAX_TOKENS": ("app_tts", "KOKORO_MAX_TOKENS"),
+                "KOKORO_ENABLE_VOICE_MIXING": (
+                    "app_tts",
+                    "KOKORO_ENABLE_VOICE_MIXING",
+                ),
+                "KOKORO_TRACK_PERFORMANCE": (
+                    "app_tts",
+                    "KOKORO_TRACK_PERFORMANCE",
+                ),
                 # Higgs settings
                 "HIGGS_MODEL_PATH": ("HiggsSettings", "model_path"),
                 "HIGGS_VOICE_SAMPLES_DIR": ("HiggsSettings", "voice_samples_dir"),
@@ -695,36 +730,30 @@ class STTSEventHandler:
                 "HIGGS_MAX_NEW_TOKENS": ("HiggsSettings", "max_new_tokens"),
                 "HIGGS_TEMPERATURE": ("HiggsSettings", "temperature"),
                 "HIGGS_TOP_P": ("HiggsSettings", "top_p"),
-                "HIGGS_TOP_K": ("HiggsSettings", "top_k"),
+                "HIGGS_REPETITION_PENALTY": (
+                    "HiggsSettings",
+                    "repetition_penalty",
+                ),
             }
 
-            # Save each setting
+            section_values: dict[str, dict[str, Any]] = {}
+            saved_destinations: list[tuple[str, str, str]] = []
             persisted_keys: set[str] = set()
             for key, value in event.settings.items():
                 if key in settings_map:
                     mapping = settings_map[key]
-                    # Handle both single tuple and list of tuples
-                    if isinstance(mapping, list):
-                        for section, setting_name in mapping:
-                            active_destination = (key, section, setting_name)
-                            saved = save_setting_to_cli_config(
-                                section, setting_name, value
-                            )
-                            if saved is False:
-                                raise RuntimeError("STTS setting save failed")
-                            logger.info(f"Saved {key} to [{section}].{setting_name}")
-                            active_destination = None
-                    else:
-                        section, setting_name = mapping
-                        active_destination = (key, section, setting_name)
-                        saved = save_setting_to_cli_config(section, setting_name, value)
-                        if saved is False:
-                            raise RuntimeError("STTS setting save failed")
-                        logger.info(f"Saved {key} to [{section}].{setting_name}")
-                        active_destination = None
+                    destinations = mapping if isinstance(mapping, list) else [mapping]
+                    for section, setting_name in destinations:
+                        section_values.setdefault(section, {})[setting_name] = value
+                        saved_destinations.append((key, section, setting_name))
                     persisted_keys.add(key)
 
-            effective_settings = load_settings(force_reload=True)
+            if section_values and save_settings_to_cli_config(section_values) is False:
+                raise RuntimeError("STTS settings batch save failed")
+            for key, section, setting_name in saved_destinations:
+                logger.info(f"Saved {key} to [{section}].{setting_name}")
+
+            effective_settings = load_settings()
             snapshot = _legacy_config_snapshot(effective_settings)
             candidate_providers = [
                 provider_id
@@ -736,18 +765,35 @@ class STTSEventHandler:
                 if service is None:
                     service = await get_tts_service()
                     self._stts_service = service
-                for provider_id in candidate_providers:
-                    await service.reconfigure_provider(
-                        provider_id,
-                        {"app_config": snapshot},
+                results = await asyncio.gather(
+                    *(
+                        service.reconfigure_provider(
+                            provider_id,
+                            {"app_config": snapshot},
+                        )
+                        for provider_id in candidate_providers
+                    ),
+                    return_exceptions=True,
+                )
+                failed_providers = [
+                    provider_id
+                    for provider_id, result in zip(candidate_providers, results)
+                    if isinstance(result, BaseException)
+                ]
+                if failed_providers:
+                    logger.error(
+                        "Failed to reconfigure TTS providers: {}",
+                        ", ".join(failed_providers),
                     )
+                    self.app.notify(
+                        "Settings saved, but some TTS providers could not be updated",
+                        severity="error",
+                    )
+                    return
 
             self.app.notify("Settings saved successfully!", severity="information")
         except Exception:
             message = "Failed to save settings"
-            if active_destination is not None:
-                key, section, setting_name = active_destination
-                message = f"Failed to save {key} to [{section}].{setting_name}"
             logger.error(message)
             self.app.notify(message, severity="error")
 

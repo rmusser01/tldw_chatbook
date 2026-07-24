@@ -84,25 +84,31 @@ first configuration it receives. Tests and standalone utilities instantiate
 `TTSService` directly. Shutdown and test teardown explicitly clear the
 compatibility binding.
 
-After all requested STTS setting writes succeed, the handler derives candidate
-providers only from recognized adapter-affecting event keys, reloads the
-effective configuration once, and calls `reconfigure_provider()` once for each
-candidate provider:
+The handler submits all recognized STTS destinations, including compatibility
+pairs, to one atomic `save_settings_to_cli_config()` call. That writer
+invalidates and force-reloads the effective-settings cache once. After it
+succeeds, the handler derives candidate providers only from recognized
+adapter-affecting event keys, reads the resulting effective configuration once
+through cached `load_settings()`, and calls `reconfigure_provider()` once for
+each candidate provider:
 
 | Provider | Exact STTS event keys |
 |---|---|
 | `openai` | `openai_api_key` |
-| `elevenlabs` | `elevenlabs_api_key`, `elevenlabs_voice_stability`, `elevenlabs_similarity_boost`, `elevenlabs_style`, `elevenlabs_use_speaker_boost` |
-| `kokoro` | `kokoro_device`, `kokoro_use_onnx`, `kokoro_model_path` |
-| `higgs` | `HIGGS_MODEL_PATH`, `HIGGS_VOICE_SAMPLES_DIR`, `HIGGS_DEVICE`, `HIGGS_ENABLE_FLASH_ATTN`, `HIGGS_DTYPE`, `HIGGS_MAX_REFERENCE_DURATION`, `HIGGS_DEFAULT_LANGUAGE`, `HIGGS_ENABLE_VOICE_CLONING`, `HIGGS_ENABLE_MULTI_SPEAKER`, `HIGGS_SPEAKER_DELIMITER`, `HIGGS_TRACK_PERFORMANCE`, `HIGGS_MAX_NEW_TOKENS`, `HIGGS_TEMPERATURE`, `HIGGS_TOP_P`, `HIGGS_TOP_K` |
+| `elevenlabs` | `elevenlabs_api_key`, `ELEVENLABS_DEFAULT_MODEL`, `ELEVENLABS_OUTPUT_FORMAT`, `ELEVENLABS_VOICE_STABILITY`, `ELEVENLABS_SIMILARITY_BOOST`, `ELEVENLABS_STYLE`, `ELEVENLABS_USE_SPEAKER_BOOST` |
+| `kokoro` | `KOKORO_DEVICE_DEFAULT`, `KOKORO_USE_ONNX`, `KOKORO_ONNX_MODEL_PATH_DEFAULT`, `KOKORO_ONNX_VOICES_JSON_DEFAULT`, `KOKORO_MAX_TOKENS`, `KOKORO_ENABLE_VOICE_MIXING`, `KOKORO_TRACK_PERFORMANCE` |
+| `higgs` | `HIGGS_MODEL_PATH`, `HIGGS_VOICE_SAMPLES_DIR`, `HIGGS_DEVICE`, `HIGGS_ENABLE_FLASH_ATTN`, `HIGGS_DTYPE`, `HIGGS_MAX_REFERENCE_DURATION`, `HIGGS_DEFAULT_LANGUAGE`, `HIGGS_ENABLE_VOICE_CLONING`, `HIGGS_ENABLE_MULTI_SPEAKER`, `HIGGS_SPEAKER_DELIMITER`, `HIGGS_TRACK_PERFORMANCE`, `HIGGS_MAX_NEW_TOKENS`, `HIGGS_TEMPERATURE`, `HIGGS_TOP_P`, `HIGGS_REPETITION_PENALTY` |
 
-The candidate set is based on successfully persisted recognized keys, not on a
-comparison of submitted UI values. The registry compares the normalized
-effective provider configuration with its stored configuration: equality is an
-`UNCHANGED` no-op; inequality updates the slot configuration. For an
-unmaterialized provider this updates its future lazy factory input without
-creating or retiring an adapter. For a materialized provider it retires only
-that provider's adapter.
+The candidate set is based on recognized keys in the successfully persisted
+atomic batch, not on a comparison of submitted UI values. A failed batch
+performs no effective-config read or provider reconfiguration. The registry
+compares the normalized effective provider configuration with its stored
+configuration: equality is an `UNCHANGED` no-op; inequality updates the slot
+configuration. For an unmaterialized provider this updates its future lazy
+factory input without creating or retiring an adapter. For a materialized
+provider it retires only that provider's adapter. Every candidate is attempted
+even if another reconfiguration fails; diagnostics identify failed provider
+IDs without including configuration values or raw exception text.
 
 `default_provider`, `default_voice`, `default_model`, `default_format`, and
 `default_speed` are selection defaults and never add a provider to the

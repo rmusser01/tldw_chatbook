@@ -215,6 +215,21 @@ class TTSBackendManager:
             if openai_key:
                 config["OPENAI_API_KEY"] = openai_key
 
+        elif backend_id.startswith("elevenlabs"):
+            import os
+
+            elevenlabs_key = os.getenv("ELEVENLABS_API_KEY")
+            if not elevenlabs_key:
+                api_settings = self.app_config.get("API", {})
+                if isinstance(api_settings, dict):
+                    elevenlabs_key = api_settings.get("elevenlabs_api_key")
+            if not elevenlabs_key:
+                normalized_settings = self.app_config.get("elevenlabs_api", {})
+                if isinstance(normalized_settings, dict):
+                    elevenlabs_key = normalized_settings.get("api_key")
+            if elevenlabs_key:
+                config["ELEVENLABS_API_KEY"] = elevenlabs_key
+
         elif backend_id.startswith("local_kokoro"):
             # Get Kokoro-specific paths from environment or config
             import os
@@ -226,24 +241,25 @@ class TTSBackendManager:
                 "KOKORO_USE_ONNX": use_onnx,
                 "KOKORO_MODEL_PATH": os.getenv(
                     "KOKORO_MODEL_PATH",
-                    self.app_config.get(
+                    config.get(
                         "KOKORO_ONNX_MODEL_PATH_DEFAULT", "models/kokoro-v0_19.onnx"
                     )
                     if use_onnx
-                    else self.app_config.get(
+                    else config.get(
                         "KOKORO_PT_MODEL_PATH_DEFAULT", "models/kokoro-v0_19.pth"
                     ),
                 ),
                 "KOKORO_VOICES_JSON_PATH": os.getenv(
                     "KOKORO_VOICES_PATH",
-                    self.app_config.get(
-                        "KOKORO_ONNX_VOICES_JSON_DEFAULT", "models/voices.json"
-                    ),
+                    config.get("KOKORO_ONNX_VOICES_JSON_DEFAULT", "models/voices.json"),
                 ),
-                "KOKORO_DEVICE": self.app_config.get("KOKORO_DEVICE_DEFAULT", "cpu"),
-                "KOKORO_MAX_TOKENS": self.app_config.get("KOKORO_MAX_TOKENS", 500),
-                "KOKORO_ENABLE_VOICE_MIXING": self.app_config.get(
+                "KOKORO_DEVICE": config.get("KOKORO_DEVICE_DEFAULT", "cpu"),
+                "KOKORO_MAX_TOKENS": config.get("KOKORO_MAX_TOKENS", 500),
+                "KOKORO_ENABLE_VOICE_MIXING": config.get(
                     "KOKORO_ENABLE_VOICE_MIXING", False
+                ),
+                "KOKORO_TRACK_PERFORMANCE": config.get(
+                    "KOKORO_TRACK_PERFORMANCE", True
                 ),
             }
             config.update(kokoro_defaults)
@@ -252,53 +268,61 @@ class TTSBackendManager:
             # Get Higgs-specific configuration
             import os
 
+            higgs_settings = self.app_config.get("HiggsSettings", {})
+            if not isinstance(higgs_settings, dict):
+                higgs_settings = {}
+
+            def higgs_setting(key: str, default: Any) -> Any:
+                section_key = key.removeprefix("HIGGS_").lower()
+                return self.app_config.get(
+                    key,
+                    higgs_settings.get(section_key, default),
+                )
+
             higgs_defaults = {
                 "HIGGS_MODEL_PATH": os.getenv(
                     "HIGGS_MODEL_PATH",
-                    self.app_config.get(
-                        "HIGGS_MODEL_PATH", "bosonai/higgs-audio-v2-generation-3B-base"
+                    higgs_setting(
+                        "HIGGS_MODEL_PATH",
+                        "bosonai/higgs-audio-v2-generation-3B-base",
                     ),
                 ),
-                "HIGGS_DEVICE": self.app_config.get(
+                "HIGGS_DEVICE": higgs_setting(
                     "HIGGS_DEVICE", "cuda" if self._check_cuda_available() else "cpu"
                 ),
-                "HIGGS_ENABLE_FLASH_ATTN": self.app_config.get(
+                "HIGGS_ENABLE_FLASH_ATTN": higgs_setting(
                     "HIGGS_ENABLE_FLASH_ATTN", True
                 ),
-                "HIGGS_DTYPE": self.app_config.get("HIGGS_DTYPE", "bfloat16"),
+                "HIGGS_DTYPE": higgs_setting("HIGGS_DTYPE", "bfloat16"),
                 "HIGGS_VOICE_SAMPLES_DIR": os.path.expanduser(
-                    self.app_config.get(
+                    higgs_setting(
                         "HIGGS_VOICE_SAMPLES_DIR", "~/.config/tldw_cli/higgs_voices"
                     )
                 ),
-                "HIGGS_ENABLE_VOICE_CLONING": self.app_config.get(
+                "HIGGS_ENABLE_VOICE_CLONING": higgs_setting(
                     "HIGGS_ENABLE_VOICE_CLONING", True
                 ),
-                "HIGGS_MAX_REFERENCE_DURATION": self.app_config.get(
+                "HIGGS_MAX_REFERENCE_DURATION": higgs_setting(
                     "HIGGS_MAX_REFERENCE_DURATION", 30
                 ),
-                "HIGGS_DEFAULT_LANGUAGE": self.app_config.get(
-                    "HIGGS_DEFAULT_LANGUAGE", "en"
-                ),
-                "HIGGS_ENABLE_BACKGROUND_MUSIC": self.app_config.get(
+                "HIGGS_DEFAULT_LANGUAGE": higgs_setting("HIGGS_DEFAULT_LANGUAGE", "en"),
+                "HIGGS_ENABLE_BACKGROUND_MUSIC": higgs_setting(
                     "HIGGS_ENABLE_BACKGROUND_MUSIC", False
                 ),
-                "HIGGS_ENABLE_MULTI_SPEAKER": self.app_config.get(
+                "HIGGS_ENABLE_MULTI_SPEAKER": higgs_setting(
                     "HIGGS_ENABLE_MULTI_SPEAKER", True
                 ),
-                "HIGGS_SPEAKER_DELIMITER": self.app_config.get(
+                "HIGGS_SPEAKER_DELIMITER": higgs_setting(
                     "HIGGS_SPEAKER_DELIMITER", "|||"
                 ),
-                "HIGGS_MAX_TOKENS": self.app_config.get("HIGGS_MAX_TOKENS", 500),
-                "HIGGS_TRACK_PERFORMANCE": self.app_config.get(
+                "HIGGS_MAX_TOKENS": higgs_setting("HIGGS_MAX_TOKENS", 500),
+                "HIGGS_TRACK_PERFORMANCE": higgs_setting(
                     "HIGGS_TRACK_PERFORMANCE", True
                 ),
-                "HIGGS_MAX_NEW_TOKENS": self.app_config.get(
-                    "HIGGS_MAX_NEW_TOKENS", 4096
-                ),
-                "HIGGS_TEMPERATURE": self.app_config.get("HIGGS_TEMPERATURE", 0.7),
-                "HIGGS_TOP_P": self.app_config.get("HIGGS_TOP_P", 0.9),
-                "HIGGS_REPETITION_PENALTY": self.app_config.get(
+                "HIGGS_MAX_NEW_TOKENS": higgs_setting("HIGGS_MAX_NEW_TOKENS", 4096),
+                "HIGGS_TEMPERATURE": higgs_setting("HIGGS_TEMPERATURE", 0.7),
+                "HIGGS_TOP_P": higgs_setting("HIGGS_TOP_P", 0.9),
+                "HIGGS_REPETITION_PENALTY": higgs_setting(
                     "HIGGS_REPETITION_PENALTY", 1.1
                 ),
             }

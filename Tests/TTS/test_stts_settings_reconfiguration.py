@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock, call
 
 import pytest
+from loguru import logger
 
 from Tests.TTS.adapter_fakes import FakeAdapter, FakeAdapterFactory, provider_spec
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
@@ -39,15 +40,21 @@ PROVIDER_SETTING_KEYS = {
     "openai": ("openai_api_key",),
     "elevenlabs": (
         "elevenlabs_api_key",
-        "elevenlabs_voice_stability",
-        "elevenlabs_similarity_boost",
-        "elevenlabs_style",
-        "elevenlabs_use_speaker_boost",
+        "ELEVENLABS_DEFAULT_MODEL",
+        "ELEVENLABS_OUTPUT_FORMAT",
+        "ELEVENLABS_VOICE_STABILITY",
+        "ELEVENLABS_SIMILARITY_BOOST",
+        "ELEVENLABS_STYLE",
+        "ELEVENLABS_USE_SPEAKER_BOOST",
     ),
     "kokoro": (
-        "kokoro_device",
-        "kokoro_use_onnx",
-        "kokoro_model_path",
+        "KOKORO_DEVICE_DEFAULT",
+        "KOKORO_USE_ONNX",
+        "KOKORO_ONNX_MODEL_PATH_DEFAULT",
+        "KOKORO_ONNX_VOICES_JSON_DEFAULT",
+        "KOKORO_MAX_TOKENS",
+        "KOKORO_ENABLE_VOICE_MIXING",
+        "KOKORO_TRACK_PERFORMANCE",
     ),
     "higgs": (
         "HIGGS_MODEL_PATH",
@@ -64,7 +71,7 @@ PROVIDER_SETTING_KEYS = {
         "HIGGS_MAX_NEW_TOKENS",
         "HIGGS_TEMPERATURE",
         "HIGGS_TOP_P",
-        "HIGGS_TOP_K",
+        "HIGGS_REPETITION_PENALTY",
     ),
 }
 
@@ -108,11 +115,14 @@ async def test_provider_setting_reconfigures_only_current_materialized_adapter(
 
     handler = STTSEventHandler(RecordingApp())
     handler._stts_service = service
-    saved: list[tuple[str, str, str]] = []
+    saved_batches: list[dict[str, dict[str, object]]] = []
     reloads: list[bool] = []
 
-    def save_setting(section: str, setting_name: str, value: str) -> None:
-        saved.append((section, setting_name, value))
+    def save_batch(
+        section_values: Mapping[str, Mapping[object, object]],
+    ) -> bool:
+        saved_batches.append(deepcopy(dict(section_values)))
+        return True
 
     def load_effective_settings(*, force_reload: bool = False) -> dict[str, Any]:
         reloads.append(force_reload)
@@ -122,8 +132,12 @@ async def test_provider_setting_reconfigures_only_current_materialized_adapter(
     get_bound_service = AsyncMock(side_effect=AssertionError("accessor used"))
     monkeypatch.setattr(handler, "initialize_stts", initialize_stts)
     monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config",
+        save_batch,
+    )
+    monkeypatch.setattr(
         "tldw_chatbook.config.save_setting_to_cli_config",
-        save_setting,
+        Mock(side_effect=AssertionError("per-setting writer used")),
     )
     monkeypatch.setattr("tldw_chatbook.config.load_settings", load_effective_settings)
     monkeypatch.setattr(
@@ -133,8 +147,8 @@ async def test_provider_setting_reconfigures_only_current_materialized_adapter(
 
     await handler.handle_settings_save(STTSSettingsSaveEvent({"openai_api_key": "new"}))
 
-    assert saved == [("API", "openai_api_key", "new")]
-    assert reloads == [True]
+    assert saved_batches == [{"API": {"openai_api_key": "new"}}]
+    assert reloads == [False]
     assert openai_factory.instances[0].close_calls == 1
     assert kokoro_factory.instances[0].close_calls == 0
     assert registry.configuration_revision("openai") == 2
@@ -166,20 +180,77 @@ async def test_recognized_keys_reconfigure_each_candidate_once_in_provider_order
         for key in PROVIDER_SETTING_KEYS[provider_id]
     }
     event_settings["default_provider"] = "openai"
+    saved_batches: list[dict[str, dict[str, object]]] = []
+    load_calls: list[bool] = []
+
+    def save_batch(
+        section_values: Mapping[str, Mapping[object, object]],
+    ) -> bool:
+        saved_batches.append(deepcopy(dict(section_values)))
+        return True
+
+    def load_effective_settings(*, force_reload: bool = False) -> dict[str, Any]:
+        load_calls.append(force_reload)
+        return {"COMPREHENSIVE_CONFIG_RAW": snapshot}
 
     monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config",
+        save_batch,
+    )
+    monkeypatch.setattr(
         "tldw_chatbook.config.save_setting_to_cli_config",
-        lambda _section, _setting_name, _value: None,
+        Mock(side_effect=AssertionError("per-setting writer used")),
     )
     monkeypatch.setattr(
         "tldw_chatbook.config.load_settings",
-        lambda *, force_reload=False: {
-            "COMPREHENSIVE_CONFIG_RAW": snapshot,
-        },
+        load_effective_settings,
     )
 
     await handler.handle_settings_save(STTSSettingsSaveEvent(event_settings))
 
+    assert saved_batches == [
+        {
+            "HiggsSettings": {
+                "model_path": "value",
+                "voice_samples_dir": "value",
+                "device": "value",
+                "enable_flash_attn": "value",
+                "dtype": "value",
+                "max_reference_duration": "value",
+                "default_language": "value",
+                "enable_voice_cloning": "value",
+                "enable_multi_speaker": "value",
+                "speaker_delimiter": "value",
+                "track_performance": "value",
+                "max_new_tokens": "value",
+                "temperature": "value",
+                "top_p": "value",
+                "repetition_penalty": "value",
+            },
+            "app_tts": {
+                "KOKORO_DEVICE_DEFAULT": "value",
+                "KOKORO_USE_ONNX": "value",
+                "KOKORO_ONNX_MODEL_PATH_DEFAULT": "value",
+                "KOKORO_ONNX_VOICES_JSON_DEFAULT": "value",
+                "KOKORO_MAX_TOKENS": "value",
+                "KOKORO_ENABLE_VOICE_MIXING": "value",
+                "KOKORO_TRACK_PERFORMANCE": "value",
+                "ELEVENLABS_DEFAULT_MODEL": "value",
+                "ELEVENLABS_OUTPUT_FORMAT": "value",
+                "ELEVENLABS_VOICE_STABILITY": "value",
+                "ELEVENLABS_SIMILARITY_BOOST": "value",
+                "ELEVENLABS_STYLE": "value",
+                "ELEVENLABS_USE_SPEAKER_BOOST": "value",
+                "default_provider": "openai",
+            },
+            "API": {
+                "elevenlabs_api_key": "value",
+                "openai_api_key": "value",
+            },
+            "tts_settings": {"default_tts_provider": "openai"},
+        }
+    ]
+    assert load_calls == [False]
     normalized_snapshot = {**snapshot, "app_tts": {}}
     assert reconfigure_provider.await_args_list == [
         call(provider_id, {"app_config": normalized_snapshot})
@@ -197,11 +268,14 @@ async def test_defaults_only_save_reloads_once_without_reconfiguring_provider(
     handler._stts_service = SimpleNamespace(
         reconfigure_provider=reconfigure_provider,
     )
-    saved: list[tuple[str, str, object]] = []
+    saved_batches: list[dict[str, dict[str, object]]] = []
     reloads: list[bool] = []
 
-    def save_setting(section: str, setting_name: str, value: object) -> None:
-        saved.append((section, setting_name, value))
+    def save_batch(
+        section_values: Mapping[str, Mapping[object, object]],
+    ) -> bool:
+        saved_batches.append(deepcopy(dict(section_values)))
+        return True
 
     def load_effective_settings(*, force_reload: bool = False) -> dict[str, Any]:
         reloads.append(force_reload)
@@ -210,8 +284,12 @@ async def test_defaults_only_save_reloads_once_without_reconfiguring_provider(
     initialize_stts = AsyncMock(side_effect=AssertionError("service rebuilt"))
     monkeypatch.setattr(handler, "initialize_stts", initialize_stts)
     monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config",
+        save_batch,
+    )
+    monkeypatch.setattr(
         "tldw_chatbook.config.save_setting_to_cli_config",
-        save_setting,
+        Mock(side_effect=AssertionError("per-setting writer used")),
     )
     monkeypatch.setattr("tldw_chatbook.config.load_settings", load_effective_settings)
 
@@ -228,19 +306,25 @@ async def test_defaults_only_save_reloads_once_without_reconfiguring_provider(
         )
     )
 
-    assert saved == [
-        ("app_tts", "default_provider", "kokoro"),
-        ("tts_settings", "default_tts_provider", "kokoro"),
-        ("app_tts", "default_voice", "af_heart"),
-        ("tts_settings", "default_tts_voice", "af_heart"),
-        ("app_tts", "default_model", "model"),
-        ("tts_settings", "default_openai_tts_model", "model"),
-        ("app_tts", "default_format", "wav"),
-        ("tts_settings", "default_openai_tts_output_format", "wav"),
-        ("app_tts", "default_speed", 1.25),
-        ("tts_settings", "default_openai_tts_speed", 1.25),
+    assert saved_batches == [
+        {
+            "app_tts": {
+                "default_provider": "kokoro",
+                "default_voice": "af_heart",
+                "default_model": "model",
+                "default_format": "wav",
+                "default_speed": 1.25,
+            },
+            "tts_settings": {
+                "default_tts_provider": "kokoro",
+                "default_tts_voice": "af_heart",
+                "default_openai_tts_model": "model",
+                "default_openai_tts_output_format": "wav",
+                "default_openai_tts_speed": 1.25,
+            },
+        }
     ]
-    assert reloads == [True]
+    assert reloads == [False]
     reconfigure_provider.assert_not_awaited()
     initialize_stts.assert_not_awaited()
     assert app.notifications == [
@@ -249,7 +333,7 @@ async def test_defaults_only_save_reloads_once_without_reconfiguring_provider(
 
 
 @pytest.mark.asyncio
-async def test_explicit_false_save_stops_before_reload_and_reconfiguration(
+async def test_failed_atomic_batch_stops_before_reload_and_reconfiguration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app = RecordingApp()
@@ -259,15 +343,21 @@ async def test_explicit_false_save_stops_before_reload_and_reconfiguration(
         reconfigure_provider=reconfigure_provider,
     )
     load_effective_settings = Mock()
-    saved: list[tuple[str, str, str]] = []
+    saved_batches: list[dict[str, dict[str, object]]] = []
 
-    def save_setting(section: str, setting_name: str, value: str) -> bool | None:
-        saved.append((section, setting_name, value))
-        return False if setting_name == "KOKORO_DEVICE" else None
+    def fail_batch(
+        section_values: Mapping[str, Mapping[object, object]],
+    ) -> bool:
+        saved_batches.append(deepcopy(dict(section_values)))
+        return False
 
     monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config",
+        fail_batch,
+    )
+    monkeypatch.setattr(
         "tldw_chatbook.config.save_setting_to_cli_config",
-        save_setting,
+        Mock(side_effect=AssertionError("per-setting writer used")),
     )
     monkeypatch.setattr(
         "tldw_chatbook.config.load_settings",
@@ -277,21 +367,89 @@ async def test_explicit_false_save_stops_before_reload_and_reconfiguration(
     await handler.handle_settings_save(
         STTSSettingsSaveEvent(
             {
+                "default_provider": "kokoro",
                 "openai_api_key": "secret",
-                "kokoro_device": "cpu",
+                "KOKORO_DEVICE_DEFAULT": "cpu",
             }
         )
     )
 
-    assert saved == [
-        ("API", "openai_api_key", "secret"),
-        ("app_tts", "KOKORO_DEVICE", "cpu"),
+    assert saved_batches == [
+        {
+            "app_tts": {
+                "default_provider": "kokoro",
+                "KOKORO_DEVICE_DEFAULT": "cpu",
+            },
+            "tts_settings": {"default_tts_provider": "kokoro"},
+            "API": {"openai_api_key": "secret"},
+        }
     ]
     load_effective_settings.assert_not_called()
     reconfigure_provider.assert_not_awaited()
+    assert app.notifications == [("Failed to save settings", "error")]
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_does_not_skip_later_candidate_or_expose_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "sk-Reconfigure-Private-Value"
+    app = RecordingApp()
+    attempts: list[str] = []
+
+    class Service:
+        async def reconfigure_provider(
+            self,
+            provider_id: str,
+            config: object,
+        ) -> None:
+            del config
+            attempts.append(provider_id)
+            if provider_id == "openai":
+                raise RuntimeError(f"rejected credential {secret}")
+
+    handler = STTSEventHandler(app)
+    handler._stts_service = Service()
+    monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config",
+        lambda _section_values: True,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.config.save_setting_to_cli_config",
+        Mock(side_effect=AssertionError("per-setting writer used")),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.config.load_settings",
+        lambda: {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "API": {"openai_api_key": secret},
+                "app_tts": {"KOKORO_DEVICE_DEFAULT": "cpu"},
+            }
+        },
+    )
+    messages: list[str] = []
+
+    sink_id = logger.add(messages.append, level="DEBUG", format="{message}")
+    try:
+        await handler.handle_settings_save(
+            STTSSettingsSaveEvent(
+                {
+                    "openai_api_key": secret,
+                    "KOKORO_DEVICE_DEFAULT": "cpu",
+                }
+            )
+        )
+    finally:
+        logger.remove(sink_id)
+
+    assert attempts == ["openai", "kokoro"]
     assert app.notifications == [
         (
-            "Failed to save kokoro_device to [app_tts].KOKORO_DEVICE",
+            "Settings saved, but some TTS providers could not be updated",
             "error",
         )
     ]
+    rendered = "\n".join(messages + [message for message, _ in app.notifications])
+    assert "Failed to reconfigure TTS providers: openai" in rendered
+    assert "rejected credential" not in rendered
+    assert secret not in rendered
