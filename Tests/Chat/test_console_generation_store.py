@@ -12,8 +12,14 @@ from dataclasses import replace
 
 import pytest
 
+from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import GenerationVariantMeta
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+from Tests.UI.test_screen_navigation import _build_test_app
 
 
 def _meta(seed):
@@ -298,3 +304,101 @@ def test_persist_generation_message_rejects_null_bytes(store_with_session):
     # Now try to persist it; should fail with ValueError
     with pytest.raises(ValueError, match="has no bytes"):
         store._persist_new_message(session_id=sid, message=msg)
+
+
+@pytest.mark.integration
+def test_generation_message_reload_round_trip_keeps_variant_and_hydrates_metadata(
+    tmp_path,
+):
+    """Reload round-trip against REAL persistence (Task 9).
+
+    Persists a 2-variant generation message, keeps position 1 (promoting
+    variant B to canonical), then simulates a genuine reload -- persist ->
+    DROP the store -> a fresh ``ConsoleChatStore`` fed through the real
+    ``ChatScreen._console_messages_from_conversation_tree`` flatten +
+    ``restore_persisted_session`` load/ingest path (mirrors
+    ``Tests/integration/test_console_branching_e2e.py``'s
+    ``_resume_into_fresh_store``) -- and completes the round trip with the
+    store's own hydration seam: a batch ``get_generation_metadata_for_messages``
+    fetch feeding ``hydrate_generation_metadata`` (per both methods'
+    docstrings and the design spec's Task 9 Step 1).
+
+    Asserts the reloaded message's position-0/canonical bytes are the KEPT
+    variant's, ``generation_metadata`` order matches the DB (kept first),
+    and the message stays card-eligible (non-empty ``generation_metadata``).
+    """
+    db = CharactersRAGDB(tmp_path / "reload_round_trip.sqlite", "test_client")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.create_session(title="Generation reload")
+        store.active_session_id = session.id
+
+        msg = store.append_generation_message(
+            session.id,
+            content="[image] a red dragon",
+            variants=[
+                (b"variant-a-bytes", "image/png", _meta(1)),
+                (b"variant-b-bytes", "image/png", _meta(2)),
+            ],
+            persist=True,
+        )
+        store.keep_generation_variant(session.id, msg.id, position=1)
+        # Sanity: the live in-memory node already reflects the keep.
+        assert msg.image_data == b"variant-b-bytes"
+        assert [m.seed for m in msg.generation_metadata] == [2, 1]
+
+        conversation_id = session.persisted_conversation_id
+        assert conversation_id is not None  # real persistence engaged
+
+        # ---- Simulate reload: persist -> DROP the store -> fresh store ----
+        conversation_service = ChatConversationService(db)
+        tree = conversation_service.get_conversation_tree(
+            conversation_id, depth_cap=10_000, root_limit=10_000
+        )
+        screen = ChatScreen(_build_test_app())
+        screen.app_instance.chachanotes_db = db
+        all_nodes = screen._console_messages_from_conversation_tree(tree)
+        active_leaf_id = db.get_conversation_active_leaf(conversation_id)
+
+        fresh_persistence = ChatPersistenceService(db)
+        fresh_store = ConsoleChatStore(persistence=fresh_persistence)
+        fresh_session = fresh_store.restore_persisted_session(
+            title="Generation reload",
+            workspace_id=None,
+            persisted_conversation_id=conversation_id,
+            all_nodes=all_nodes,
+            active_leaf_persisted_id=active_leaf_id,
+        )
+
+        # The load/ingest path (``restore_persisted_session`` fed by the real
+        # tree flatten) restores the tree, ids, and position-0 bytes, but --
+        # like the real ``ChatScreen`` resume flow -- does not itself fetch
+        # the generation-metadata sidecar; the store exposes the seam that
+        # completes it (``get_generation_metadata_for_messages`` batch fetch
+        # + ``hydrate_generation_metadata``), which the caller (here, this
+        # test, standing in for ``ChatScreen``'s own resume path) drives
+        # once, covering every restored message.
+        persisted_ids = [
+            m.persisted_message_id
+            for m in fresh_store.messages_for_session(fresh_session.id)
+            if m.persisted_message_id
+        ]
+        rows_by_message = fresh_persistence.get_generation_metadata_for_messages(
+            persisted_ids
+        )
+        fresh_store.hydrate_generation_metadata(fresh_session.id, rows_by_message)
+
+        reloaded = fresh_store.messages_for_session(fresh_session.id)
+        reloaded_generation_msg = next(m for m in reloaded if m.generation_metadata)
+
+        # Card-eligible: non-empty generation_metadata survived the reload.
+        assert len(reloaded_generation_msg.generation_metadata) == 2
+        # Position-0/canonical bytes are the KEPT variant's (byte B), both on
+        # the scalar mirror and the attachments[0] entry.
+        assert reloaded_generation_msg.image_data == b"variant-b-bytes"
+        assert reloaded_generation_msg.attachments[0].data == b"variant-b-bytes"
+        # generation_metadata order matches the DB (kept variant -- seed 2 --
+        # first, original position-0 variant -- seed 1 -- second).
+        assert [m.seed for m in reloaded_generation_msg.generation_metadata] == [2, 1]
+    finally:
+        db.close_connection()
