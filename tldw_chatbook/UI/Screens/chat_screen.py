@@ -11571,13 +11571,13 @@ class ChatScreen(BaseAppScreen):
         cleared up front (this IS the "successful dispatch" point — not
         "successful generation"): the blocking batch loop
         (`run_generation_batch`) then runs off the UI loop via
-        `asyncio.to_thread`, exactly like `_prep_console_images`. Zero
-        successful variants append no message (only an error status line);
-        one or more successes append a single generation message via
-        `ConsoleChatStore.append_generation_message` with a trailing partial
-        status line when some variants failed. The in-flight guard is
-        always cleared in a `finally`, so a crashed/cancelled batch never
-        wedges the session against further `/generate-image` commands.
+        `asyncio.to_thread`, exactly like `_prep_console_images`. On the
+        zero-success path the original draft is restored so the user can
+        edit and retry. One or more successes append a single generation
+        message via `ConsoleChatStore.append_generation_message` with a
+        trailing partial status line when some variants failed. The in-flight
+        guard is always cleared in a `finally`, so a crashed/cancelled batch
+        never wedges the session against further `/generate-image` commands.
         """
         args = parse_generate_image_args(parse.args)
         store = self._ensure_console_chat_store()
@@ -11616,6 +11616,9 @@ class ChatScreen(BaseAppScreen):
             )
             return
         inflight.add(session.id)
+        # Capture draft before clearing so we can restore it on zero-success.
+        composer = self._console_composer_or_none()
+        saved_draft = composer.draft_text() if composer is not None else ""
         self._clear_console_composer_draft()
         try:
             count = cfg.default_batch
@@ -11628,6 +11631,10 @@ class ChatScreen(BaseAppScreen):
                 count=count,
             )
             if not batch.successes:
+                # Restore the saved draft so the user can edit and retry.
+                if composer is not None and saved_draft:
+                    composer.clear_draft()
+                    composer.insert_text_as_paste(saved_draft)
                 detail = "; ".join(batch.errors) or "unknown error"
                 await self._append_native_console_system_message(
                     f"Image generation failed: {detail}"

@@ -116,3 +116,26 @@ def test_batch_explicit_seed_only_first_variant():
         seed=1234, count=3, generate=gen,
     )
     assert seeds == [1234, -1, -1]  # identical-image guard
+
+
+def test_batch_build_exception_collected():
+    """When build raises on a variant, the error is collected and batch continues."""
+    n = {"i": 0}
+
+    def build_fn(*args, **kwargs):
+        n["i"] += 1
+        if n["i"] == 2:
+            raise RuntimeError("build boom")
+        return {"seed": kwargs.get("seed")}
+
+    def gen(req):
+        return _Res(b"img")
+
+    out = run_generation_batch(
+        backend="swarmui", prompt="p", negative_prompt=None,
+        seed=None, count=3, generate=gen, build=build_fn,
+    )
+    # First and third variants succeed (build calls 1 and 3).
+    # Second fails during build (call 2).
+    assert len(out.successes) == 2 and len(out.errors) == 1
+    assert "build boom" in out.errors[0]

@@ -165,13 +165,13 @@ def run_generation_batch(
     errors: list[str] = []
     for index in range(count):
         variant_seed = seed if (index == 0 or seed is None) else -1
-        request = build(
-            backend=backend,
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            seed=variant_seed,
-        )
         try:
+            request = build(
+                backend=backend,
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                seed=variant_seed,
+            )
             result = generate(request)
         except Exception as exc:  # noqa: BLE001 - collected per-variant, never aborts the batch
             errors.append(str(exc))
