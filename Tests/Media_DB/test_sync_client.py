@@ -17,6 +17,7 @@ import requests
 #
 # Local Imports
 from .test_media_db_v2 import get_entity_version
+from tldw_chatbook.DB import Client_Media_DB_v2 as media_db_module
 from tldw_chatbook.DB.Sync_Client import ClientSyncEngine
 
 # Test marker for unit tests
@@ -57,7 +58,12 @@ def client_db(memory_db_factory):
     import tempfile
 
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-    return MediaDatabase(db_path=tmp.name, client_id="client_test_eng")
+    tmp.close()
+    db_path = Path(tmp.name).resolve()
+    db = MediaDatabase(db_path=db_path, client_id="client_test_eng")
+    yield db
+    db.close_connection()
+    db_path.unlink(missing_ok=True)
 
 
 @pytest.fixture
@@ -426,6 +432,158 @@ class TestClientSyncEnginePullApply:
         else:
             assert row["last_modified"] == "2023-10-28T12:00:00Z"
         assert sync_engine.last_server_log_id_processed == 103
+
+    def test_remote_media_delete_removes_fts_projection(
+        self, sync_engine, client_db
+    ):
+        search_term = "remotedeleteprojection"
+        media_id, media_uuid, _ = client_db.add_media_with_keywords(
+            title=f"Remote delete {search_term}",
+            content="Content removed from the local full-text projection.",
+            keywords=[],
+            media_type="article",
+        )
+        assert client_db.execute_query(
+            "SELECT rowid FROM media_fts WHERE media_fts MATCH ?",
+            (search_term,),
+        ).fetchone()["rowid"] == media_id
+        server_change = create_mock_log_entry(
+            change_id=104,
+            entity="Media",
+            uuid=media_uuid,
+            op="delete",
+            client="other_client",
+            version=2,
+            payload_dict={
+                "uuid": media_uuid,
+                "version": 2,
+                "client_id": "other_client",
+                "deleted": 1,
+            },
+            ts="2023-10-28T13:00:00Z",
+        )
+
+        assert sync_engine._apply_remote_changes_batch([server_change]) is True
+
+        row = client_db.execute_query(
+            "SELECT deleted, version FROM Media WHERE id = ?", (media_id,)
+        ).fetchone()
+        assert dict(row) == {"deleted": 1, "version": 2}
+        assert (
+            client_db.execute_query(
+                "SELECT rowid FROM media_fts WHERE media_fts MATCH ?",
+                (search_term,),
+            ).fetchone()
+            is None
+        )
+
+    def test_remote_media_undelete_restores_fts_projection(
+        self, sync_engine, client_db
+    ):
+        search_term = "remoteundeleteprojection"
+        title = f"Remote undelete {search_term}"
+        content = "Content restored to the local full-text projection."
+        media_id, media_uuid, _ = client_db.add_media_with_keywords(
+            title=title,
+            content=content,
+            keywords=[],
+            media_type="article",
+        )
+        assert client_db.soft_delete_media(media_id, cascade=False) is True
+        assert (
+            client_db.execute_query(
+                "SELECT rowid FROM media_fts WHERE media_fts MATCH ?",
+                (search_term,),
+            ).fetchone()
+            is None
+        )
+        server_change = create_mock_log_entry(
+            change_id=105,
+            entity="Media",
+            uuid=media_uuid,
+            op="update",
+            client="other_client",
+            version=3,
+            payload_dict={
+                "uuid": media_uuid,
+                "title": title,
+                "content": content,
+                "version": 3,
+                "client_id": "other_client",
+                "deleted": 0,
+            },
+            ts="2023-10-28T14:00:00Z",
+        )
+
+        assert sync_engine._apply_remote_changes_batch([server_change]) is True
+
+        row = client_db.execute_query(
+            "SELECT deleted, version FROM Media WHERE id = ?", (media_id,)
+        ).fetchone()
+        assert dict(row) == {"deleted": 0, "version": 3}
+        assert client_db.execute_query(
+            "SELECT rowid FROM media_fts WHERE media_fts MATCH ?",
+            (search_term,),
+        ).fetchone()["rowid"] == media_id
+
+    def test_remote_media_lifecycle_hooks_observe_committed_resulting_state(
+        self, sync_engine, client_db
+    ):
+        media_id, media_uuid, _ = client_db.add_media_with_keywords(
+            title="Remote lifecycle callbacks",
+            content="Sync callbacks must observe committed media state.",
+            keywords=[],
+            media_type="article",
+        )
+        seen = []
+
+        def on_delete(db, changed_id, changed_uuid):
+            row = db.get_media_by_id(changed_id, include_deleted=True)
+            seen.append(("delete", changed_uuid, row["deleted"]))
+
+        def on_restore(db, changed_id, changed_uuid):
+            row = db.get_media_by_id(changed_id, include_deleted=True)
+            seen.append(("restore", changed_uuid, row["deleted"]))
+
+        media_db_module.register_media_post_delete_callback(on_delete)
+        media_db_module.register_media_post_ingest_callback(on_restore)
+        try:
+            delete_change = create_mock_log_entry(
+                change_id=106,
+                entity="Media",
+                uuid=media_uuid,
+                op="delete",
+                client="other_client",
+                version=2,
+                payload_dict={"uuid": media_uuid, "deleted": 1},
+                ts="2023-10-28T15:00:00Z",
+            )
+            assert sync_engine._apply_remote_changes_batch([delete_change]) is True
+
+            restore_change = create_mock_log_entry(
+                change_id=107,
+                entity="Media",
+                uuid=media_uuid,
+                op="update",
+                client="other_client",
+                version=3,
+                payload_dict={
+                    "uuid": media_uuid,
+                    "title": "Remote lifecycle callbacks",
+                    "content": "Sync callbacks must observe committed media state.",
+                    "deleted": 0,
+                },
+                ts="2023-10-28T16:00:00Z",
+            )
+            assert sync_engine._apply_remote_changes_batch([restore_change]) is True
+        finally:
+            media_db_module.unregister_media_post_delete_callback(on_delete)
+            media_db_module.unregister_media_post_ingest_callback(on_restore)
+
+        assert seen == [
+            ("delete", media_uuid, 1),
+            ("restore", media_uuid, 0),
+        ]
 
     @patch("tldw_chatbook.DB.Sync_Client.requests.get")
     def test_apply_idempotency(self, mock_get, sync_engine, client_db):
