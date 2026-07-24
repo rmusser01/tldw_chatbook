@@ -14,6 +14,7 @@ from Tests.UI.test_console_native_chat_flow import (
     ConsoleHarness,
     _configure_native_ready_console,
 )
+from tldw_chatbook.Chat.console_chat_store import MAX_PENDING_ATTACHMENTS
 from tldw_chatbook.UI.Screens.chat_screen import CONSOLE_WORKBENCH_SHORTCUT_GROUPS
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
@@ -31,7 +32,7 @@ def test_composer_help_documents_newline_attach_and_cap():
     # AC#2: attach, paste-path, and the per-message cap are covered.
     assert "attach" in flat
     assert "paste" in flat
-    assert "5" in flat
+    assert str(MAX_PENDING_ATTACHMENTS) in flat
 
 
 @pytest.mark.asyncio

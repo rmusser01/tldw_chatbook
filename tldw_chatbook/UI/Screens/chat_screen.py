@@ -501,7 +501,10 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
             ("Ctrl+J", "insert a newline (works in any terminal)"),
             ("Shift+Enter", "insert a newline (where the terminal delivers it)"),
             ("Alt+V", "paste an image from the clipboard"),
-            ("Attach", "attach files — up to 5 per message"),
+            (
+                "Attach",
+                f"attach files — up to {MAX_PENDING_ATTACHMENTS} per message",
+            ),
             ("Paste / drop path", "paste or drop a file path to attach it"),
             ("Ctrl+K", "switch session"),
             ("Ctrl+T", "new tab"),
