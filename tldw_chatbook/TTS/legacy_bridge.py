@@ -123,11 +123,10 @@ def _legacy_config_snapshot(
 
 
 def _first_mapping_value(
-    configurations: tuple[Mapping[str, Any], ...],
-    section: str,
-    key: str,
+    configuration: Mapping[str, Any],
+    locations: tuple[tuple[str, str], ...],
 ) -> Any:
-    for configuration in configurations:
+    for section, key in locations:
         values = configuration.get(section)
         if isinstance(values, Mapping):
             value = values.get(key)
@@ -180,35 +179,34 @@ def legacy_provider_config(
         }
     )
 
-    configurations = (app_config, raw)
     if provider_id == "openai":
+        openai_key_locations = (
+            ("api_settings.openai", "api_key"),
+            ("openai_api", "api_key"),
+            ("API", "openai_api_key"),
+        )
         api_key = os.getenv("OPENAI_API_KEY") or _first_mapping_value(
-            configurations,
-            "api_settings.openai",
-            "api_key",
+            raw,
+            openai_key_locations,
         )
         api_key = api_key or _first_mapping_value(
-            configurations,
-            "openai_api",
-            "api_key",
-        )
-        api_key = api_key or _first_mapping_value(
-            configurations,
-            "API",
-            "openai_api_key",
+            app_config,
+            openai_key_locations,
         )
         if api_key:
             projected["openai_api"] = {"api_key": api_key}
     elif provider_id == "elevenlabs":
+        elevenlabs_key_locations = (
+            ("API", "elevenlabs_api_key"),
+            ("elevenlabs_api", "api_key"),
+        )
         api_key = os.getenv("ELEVENLABS_API_KEY") or _first_mapping_value(
-            configurations,
-            "API",
-            "elevenlabs_api_key",
+            raw,
+            elevenlabs_key_locations,
         )
         api_key = api_key or _first_mapping_value(
-            configurations,
-            "elevenlabs_api",
-            "api_key",
+            app_config,
+            elevenlabs_key_locations,
         )
         if api_key:
             projected["elevenlabs_api"] = {"api_key": api_key}

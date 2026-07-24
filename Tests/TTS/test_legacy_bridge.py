@@ -631,6 +631,129 @@ async def test_environment_path_override_shadows_stored_reconfiguration(
 
 
 @pytest.mark.asyncio
+async def test_openai_projection_ignores_shadowed_raw_api_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.TTS.TTS_Backends import TTSBackendManager
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    def settings(lower_priority_key: str) -> dict[str, Any]:
+        return {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "openai_api": {"api_key": "raw-legacy-key"},
+                "API": {"openai_api_key": lower_priority_key},
+            },
+            "APP_TTS_CONFIG": {},
+            "openai_api": {"api_key": lower_priority_key},
+        }
+
+    registry = TTSAdapterRegistry(
+        specs=legacy_provider_specs(settings("lower-key-before")),
+        aliases={},
+    )
+    lease = await registry.acquire("openai")
+    adapter = lease.adapter
+    await lease.release()
+    replacement = legacy_provider_config(
+        "openai",
+        settings("lower-key-after"),
+    )
+
+    assert (
+        await registry.reconfigure_provider("openai", replacement)
+        is ReconfigureResult.UNCHANGED
+    )
+    assert registry.configuration_revision("openai") == 1
+    assert adapter.host._closed is False
+    assert replacement["app_config"]["openai_api"]["api_key"] == "raw-legacy-key"
+    manager = TTSBackendManager(replacement["app_config"])
+    assert (
+        manager._prepare_backend_config("openai_official_tts-1")["OPENAI_API_KEY"]
+        == "raw-legacy-key"
+    )
+
+    await registry.close()
+    await registry.wait_closed()
+
+
+@pytest.mark.parametrize(
+    ("raw_config", "expected_key"),
+    (
+        ({"API": {"openai_api_key": "raw-api-key"}}, "raw-api-key"),
+        ({}, "normalized-only-key"),
+    ),
+)
+def test_openai_projection_uses_raw_api_then_normalized_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    raw_config: dict[str, Any],
+    expected_key: str,
+) -> None:
+    from tldw_chatbook.TTS.TTS_Backends import TTSBackendManager
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    projected = legacy_provider_config(
+        "openai",
+        {
+            "COMPREHENSIVE_CONFIG_RAW": raw_config,
+            "APP_TTS_CONFIG": {},
+            "openai_api": {"api_key": "normalized-only-key"},
+        },
+    )
+
+    assert projected["app_config"]["openai_api"]["api_key"] == expected_key
+    manager = TTSBackendManager(projected["app_config"])
+    assert (
+        manager._prepare_backend_config("openai_official_tts-1")["OPENAI_API_KEY"]
+        == expected_key
+    )
+
+
+@pytest.mark.parametrize(
+    ("raw_config", "expected_key"),
+    (
+        (
+            {
+                "API": {"elevenlabs_api_key": "raw-api-key"},
+                "elevenlabs_api": {"api_key": "raw-legacy-key"},
+            },
+            "raw-api-key",
+        ),
+        (
+            {"elevenlabs_api": {"api_key": "raw-legacy-key"}},
+            "raw-legacy-key",
+        ),
+        ({}, "normalized-only-key"),
+    ),
+)
+def test_elevenlabs_projection_uses_raw_sources_then_normalized_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    raw_config: dict[str, Any],
+    expected_key: str,
+) -> None:
+    from tldw_chatbook.TTS.TTS_Backends import TTSBackendManager
+
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    projected = legacy_provider_config(
+        "elevenlabs",
+        {
+            "COMPREHENSIVE_CONFIG_RAW": raw_config,
+            "APP_TTS_CONFIG": {},
+            "elevenlabs_api": {"api_key": "normalized-only-key"},
+        },
+    )
+
+    assert projected["app_config"]["elevenlabs_api"]["api_key"] == expected_key
+    manager = TTSBackendManager(projected["app_config"])
+    assert (
+        manager._prepare_backend_config("elevenlabs_eleven_multilingual_v2")[
+            "ELEVENLABS_API_KEY"
+        ]
+        == expected_key
+    )
+
+
+@pytest.mark.asyncio
 async def test_manager_and_backend_construction_are_lazy() -> None:
     managers: dict[str, FakeLegacyManager] = {}
 
