@@ -26,7 +26,14 @@ Keep the character-expression migration smoke test aligned with the database's d
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Record the stale hardcoded-version failure on branch and merge base. 2. Rename the test to describe the current-schema contract and assert the class-declared version. 3. Run the focused file, lint, and diff checks. 4. Record no-ADR rationale and complete the task only after verification.
+1. Record the stale hardcoded-version failure on branch and merge base.
+2. Rename the test to describe the current-schema contract and assert the class-declared version.
+3. Run the focused file, lint, and diff checks.
+4. Record the no-ADR rationale and complete the task only after verification.
+
+ADR required: no
+ADR path: N/A
+Reason: This is test-only expectation hardening against an existing schema-version declaration, with no schema, migration, storage, or runtime decision.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

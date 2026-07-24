@@ -111,15 +111,19 @@ def test_caching_model_native_tools_are_copied_and_get_cache_control(mock_post):
 def test_anthropic_converter_drops_invalid_shapes_with_bounded_diagnostics():
     from loguru import logger as loguru_logger
 
+    class RaisingRepr:
+        def __repr__(self):
+            raise AssertionError("diagnostics must not render caller-controlled values")
+
     messages = []
     sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
     try:
         converted = _anthropic_tools_payload(
             [
-                "not-a-dict",
+                RaisingRepr(),
                 {"name": "", "input_schema": {}},
                 {"name": "bad-schema", "input_schema": "not-a-dict"},
-                {"unrelated": "x" * 500},
+                {"api_key": "sk-review-secret", "unrelated": "x" * 500},
             ]
         )
     finally:
@@ -127,8 +131,19 @@ def test_anthropic_converter_drops_invalid_shapes_with_bounded_diagnostics():
 
     assert converted == []
     assert len(messages) == 4
-    assert all(message.startswith("Anthropic:") for message in messages)
-    assert all("Cohere" not in message for message in messages)
+    assert messages[0] == (
+        "Anthropic: dropping invalid tools entry (expected a mapping).\n"
+    )
+    assert (
+        messages[1:]
+        == [
+            "Anthropic: dropping invalid tools entry "
+            "(expected an OpenAI function tool or Anthropic native tool).\n"
+        ]
+        * 3
+    )
+    assert all("sk-review-secret" not in message for message in messages)
+    assert all("api_key" not in message for message in messages)
     assert max(len(message) for message in messages) <= 240
 
 

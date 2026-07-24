@@ -905,7 +905,7 @@ def _anthropic_tools_payload(tools: list) -> list:
     for entry in tools or []:
         if not isinstance(entry, dict):
             logger.warning(
-                "Anthropic: dropping invalid tools entry: {}", repr(entry)[:120]
+                "Anthropic: dropping invalid tools entry (expected a mapping)."
             )
             continue
         function = entry.get("function")
@@ -934,7 +934,8 @@ def _anthropic_tools_payload(tools: list) -> list:
             converted.append(dict(entry))
         else:
             logger.warning(
-                "Anthropic: dropping invalid tools entry: {}", repr(entry)[:120]
+                "Anthropic: dropping invalid tools entry "
+                "(expected an OpenAI function tool or Anthropic native tool)."
             )
     return converted
 
