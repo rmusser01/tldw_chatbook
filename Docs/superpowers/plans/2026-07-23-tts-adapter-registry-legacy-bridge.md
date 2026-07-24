@@ -2409,6 +2409,11 @@ async for chunk in self._stts_service.generate_audio_stream(
     total_size = len(audio_data)
 ```
 
+Update the callback boundary to accept `TTSProgress` rather than the legacy
+progress dictionary. Translate its `status`, `fraction`, `processed`, `total`,
+and `metrics` fields into the existing widget updates without assuming that
+processed units are always chunks.
+
 Keep the existing UI scheduling inside `progress_callback`; do not move Textual
 widget references into the service or bridge.
 
