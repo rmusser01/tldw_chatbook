@@ -4,6 +4,7 @@ import base64
 import hashlib
 import logging
 import re
+import traceback
 
 import pytest
 from pydantic import ValidationError
@@ -280,3 +281,32 @@ def test_keyring_missing_invalid_or_unavailable_fails_closed(
         match="fingerprint_key_unavailable",
     ):
         provider.load_key("key-1")
+
+
+def test_keyring_failure_traceback_never_includes_backend_message() -> None:
+    sentinel = "backend-secret-sentinel"
+    provider = KeyringCitationFingerprintKeyProvider(
+        keyring_backend=SecureFakeKeyring(error=RuntimeError(sentinel))
+    )
+
+    with pytest.raises(CitationFingerprintKeyUnavailable) as captured:
+        provider.load_key("key-1")
+
+    assert str(captured.value) == CitationFingerprintKeyUnavailable.reason_code
+    assert sentinel not in "".join(traceback.format_exception(captured.value))
+
+
+def test_fingerprint_provider_failure_traceback_never_includes_provider_message() -> (
+    None
+):
+    sentinel = "provider-secret-sentinel"
+
+    class LeakyProvider:
+        def load_key(self, fingerprint_key_id: str) -> bytes:
+            raise RuntimeError(f"{sentinel}:{fingerprint_key_id}")
+
+    with pytest.raises(CitationFingerprintKeyUnavailable) as captured:
+        load_fingerprint_codec(LeakyProvider(), "key-1")
+
+    assert str(captured.value) == CitationFingerprintKeyUnavailable.reason_code
+    assert sentinel not in "".join(traceback.format_exception(captured.value))

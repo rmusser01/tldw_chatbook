@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from bisect import bisect_right
+from collections.abc import Iterator
 from dataclasses import dataclass
 import json
 import math
@@ -42,6 +44,7 @@ GOVERNED_DESCRIPTOR_JSON_BYTES_MAX = 16 * 1024
 
 _CHATBOOK_MARKER = re.compile(r"\[S([1-9][0-9]*)\]")
 _LEGACY_NUMERIC_MARKER = re.compile(r"\[([1-9][0-9]*)\]")
+_LEGACY_EVIDENCE_LABEL_MARKER = re.compile(r"\[(S[0-9][A-Za-z0-9_-]*)\]")
 _FENCE_START = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})")
 
 
@@ -197,6 +200,16 @@ class CitationMarkerSpan:
 
     raw_marker: str
     marker_ordinal: int
+    marker_start: int
+    marker_end: int
+
+
+@dataclass(frozen=True)
+class EvidenceLabelMarkerSpan:
+    """One legacy EvidenceBundle label outside Markdown literal regions."""
+
+    raw_marker: str
+    evidence_id: str
     marker_start: int
     marker_end: int
 
@@ -626,19 +639,20 @@ class EvidenceSnapshotPayload(_StrictFrozenModel):
 
     @model_validator(mode="after")
     def _validate_payload(self) -> "EvidenceSnapshotPayload":
-        if (
-            self.storage_mode is EvidenceStorageMode.EMBEDDED
-            and self.snapshot_text is None
-        ):
-            raise ValueError("embedded snapshot requires snapshot_text")
-        if (
-            self.storage_mode is EvidenceStorageMode.SERVER_REFERENCE
-            and self.server_reference is None
-        ):
-            raise ValueError("server_reference storage requires server_reference")
-        if self.storage_mode is EvidenceStorageMode.REDACTED and (
-            self.snapshot_text is not None or self.server_reference is not None
-        ):
+        if self.storage_mode is EvidenceStorageMode.EMBEDDED:
+            if self.snapshot_text is None:
+                raise ValueError("embedded snapshot requires snapshot_text")
+            if self.server_reference is not None:
+                raise ValueError("embedded snapshot cannot retain server_reference")
+        elif self.storage_mode is EvidenceStorageMode.SERVER_REFERENCE:
+            if self.server_reference is None:
+                raise ValueError("server_reference storage requires server_reference")
+            if self.snapshot_text is not None:
+                raise ValueError("server_reference storage cannot retain snapshot_text")
+        elif self.storage_mode is EvidenceStorageMode.EPHEMERAL:
+            if self.server_reference is not None:
+                raise ValueError("ephemeral snapshot cannot retain server_reference")
+        elif self.snapshot_text is not None or self.server_reference is not None:
             raise ValueError("redacted snapshot cannot retain text or reference")
         _validate_governed_descriptors(
             self.source_identity,
@@ -873,6 +887,8 @@ def reduce_selected_attempt_completeness(
 def eligible_citation_marker_spans(
     answer_text: str,
     marker_namespace: MarkerNamespace,
+    *,
+    max_count: int | None = None,
 ) -> tuple[CitationMarkerSpan, ...]:
     """Return markers outside Markdown code and escaped literal regions."""
 
@@ -881,10 +897,55 @@ def eligible_citation_marker_spans(
         if marker_namespace is MarkerNamespace.CHATBOOK_S_V1
         else _LEGACY_NUMERIC_MARKER
     )
+    return tuple(
+        CitationMarkerSpan(
+            raw_marker=match.group(0),
+            marker_ordinal=int(match.group(1)),
+            marker_start=match.start(),
+            marker_end=match.end(),
+        )
+        for match in _eligible_marker_matches(
+            answer_text,
+            matcher,
+            max_count=max_count,
+        )
+    )
+
+
+def eligible_evidence_label_marker_spans(
+    answer_text: str,
+) -> tuple[EvidenceLabelMarkerSpan, ...]:
+    """Return legacy EvidenceBundle labels outside Markdown literal regions."""
+
+    return tuple(
+        EvidenceLabelMarkerSpan(
+            raw_marker=match.group(0),
+            evidence_id=match.group(1),
+            marker_start=match.start(),
+            marker_end=match.end(),
+        )
+        for match in _eligible_marker_matches(
+            answer_text,
+            _LEGACY_EVIDENCE_LABEL_MARKER,
+        )
+    )
+
+
+def _eligible_marker_matches(
+    answer_text: str,
+    matcher: re.Pattern[str],
+    *,
+    max_count: int | None = None,
+) -> Iterator[re.Match[str]]:
     excluded = _markdown_code_intervals(answer_text)
-    spans: list[CitationMarkerSpan] = []
+    excluded_starts = tuple(start for start, _end in excluded)
+    count = 0
     for match in matcher.finditer(answer_text):
-        if _point_in_intervals(match.start(), excluded):
+        if _point_in_sorted_intervals(
+            match.start(),
+            excluded,
+            excluded_starts,
+        ):
             continue
         preceding_backslashes = 0
         cursor = match.start() - 1
@@ -893,15 +954,10 @@ def eligible_citation_marker_spans(
             cursor -= 1
         if preceding_backslashes % 2:
             continue
-        spans.append(
-            CitationMarkerSpan(
-                raw_marker=match.group(0),
-                marker_ordinal=int(match.group(1)),
-                marker_start=match.start(),
-                marker_end=match.end(),
-            )
-        )
-    return tuple(spans)
+        if max_count is not None and count >= max_count:
+            raise ValueError(f"eligible citation marker count exceeds {max_count}")
+        count += 1
+        yield match
 
 
 def validate_aggregate_json_bytes(payload: bytes | str) -> int:
@@ -941,7 +997,7 @@ def _revalidate_model(model: ModelT) -> ModelT:
 def _markdown_code_intervals(answer_text: str) -> tuple[tuple[int, int], ...]:
     fenced = _fenced_code_intervals(answer_text)
     inline = _inline_code_intervals(answer_text, fenced)
-    return tuple(sorted((*fenced, *inline)))
+    return _merge_intervals((*fenced, *inline))
 
 
 def _fenced_code_intervals(answer_text: str) -> tuple[tuple[int, int], ...]:
@@ -975,10 +1031,12 @@ def _inline_code_intervals(
     fenced: tuple[tuple[int, int], ...],
 ) -> tuple[tuple[int, int], ...]:
     intervals: list[tuple[int, int]] = []
+    fence_starts = tuple(start for start, _end in fenced)
     cursor = 0
     while cursor < len(answer_text):
-        if _point_in_intervals(cursor, fenced):
-            cursor = next(end for start, end in fenced if start <= cursor < end)
+        if _point_in_sorted_intervals(cursor, fenced, fence_starts):
+            fence_index = bisect_right(fence_starts, cursor) - 1
+            cursor = fenced[fence_index][1]
             continue
         if answer_text[cursor] != "`":
             cursor += 1
@@ -989,7 +1047,7 @@ def _inline_code_intervals(
         token = answer_text[cursor:run_end]
         closing = answer_text.find(token, run_end)
         while closing >= 0 and (
-            _point_in_intervals(closing, fenced)
+            _point_in_sorted_intervals(closing, fenced, fence_starts)
             or (closing > 0 and answer_text[closing - 1] == "`")
             or (
                 closing + len(token) < len(answer_text)
@@ -1005,11 +1063,26 @@ def _inline_code_intervals(
     return tuple(intervals)
 
 
-def _point_in_intervals(
+def _merge_intervals(
+    intervals: tuple[tuple[int, int], ...],
+) -> tuple[tuple[int, int], ...]:
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(intervals):
+        if merged and start <= merged[-1][1]:
+            previous_start, previous_end = merged[-1]
+            merged[-1] = (previous_start, max(previous_end, end))
+        else:
+            merged.append((start, end))
+    return tuple(merged)
+
+
+def _point_in_sorted_intervals(
     point: int,
     intervals: tuple[tuple[int, int], ...],
+    starts: tuple[int, ...],
 ) -> bool:
-    return any(start <= point < end for start, end in intervals)
+    index = bisect_right(starts, point) - 1
+    return index >= 0 and point < intervals[index][1]
 
 
 def _validate_governed_descriptors(*values: Mapping[str, JsonValue]) -> None:
@@ -1122,7 +1195,11 @@ def _validate_answer_offsets(
         raise ValueError("answer offsets require a retained answer body")
     if body is None:
         return
-    expected_spans = eligible_citation_marker_spans(body, marker_namespace)
+    expected_spans = eligible_citation_marker_spans(
+        body,
+        marker_namespace,
+        max_count=CITATION_OCCURRENCES_MAX,
+    )
     actual_spans = tuple(
         (
             occurrence.raw_marker,
@@ -1182,6 +1259,7 @@ __all__ = [
     "ClaimSupport",
     "EvidenceRun",
     "EvidenceRunPayload",
+    "EvidenceLabelMarkerSpan",
     "EvidenceSnapshotPayload",
     "EvidenceStorageMode",
     "MarkerNamespace",
@@ -1200,6 +1278,7 @@ __all__ = [
     "TraceLifecycle",
     "TraceOrigin",
     "eligible_citation_marker_spans",
+    "eligible_evidence_label_marker_spans",
     "reduce_selected_attempt_completeness",
     "validate_aggregate_json_bytes",
 ]

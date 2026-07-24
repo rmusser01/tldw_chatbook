@@ -301,16 +301,14 @@ class KeyringCitationFingerprintKeyProvider:
                     "fingerprint_key_unavailable: key is missing"
                 )
             secret = base64.b64decode(encoded, validate=True)
-        except CitationFingerprintKeyUnavailable:
-            raise
-        except Exception as exc:
+        except Exception:
             raise CitationFingerprintKeyUnavailable(
-                "fingerprint_key_unavailable: keyring read failed"
-            ) from exc
+                CitationFingerprintKeyUnavailable.reason_code
+            ) from None
         if len(secret) != MINIMUM_FINGERPRINT_SECRET_BYTES:
             raise CitationFingerprintKeyUnavailable(
-                "fingerprint_key_unavailable: key is invalid"
-            )
+                CitationFingerprintKeyUnavailable.reason_code
+            ) from None
         return secret
 
     def __repr__(self) -> str:
@@ -326,12 +324,10 @@ def load_fingerprint_codec(
     try:
         secret = provider.load_key(_bounded_identifier(fingerprint_key_id))
         return CitationFingerprintCodec(secret)
-    except CitationFingerprintKeyUnavailable as exc:
-        if CitationFingerprintKeyUnavailable.reason_code in str(exc):
-            raise
-        raise CitationFingerprintKeyUnavailable("fingerprint_key_unavailable") from exc
-    except Exception as exc:
-        raise CitationFingerprintKeyUnavailable("fingerprint_key_unavailable") from exc
+    except Exception:
+        raise CitationFingerprintKeyUnavailable(
+            CitationFingerprintKeyUnavailable.reason_code
+        ) from None
 
 
 __all__ = [

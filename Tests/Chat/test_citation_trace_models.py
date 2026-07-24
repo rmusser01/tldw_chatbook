@@ -9,6 +9,7 @@ import pytest
 from hypothesis import given, strategies as st
 from pydantic import ValidationError
 
+from tldw_chatbook.Chat import citation_trace_models as trace_models
 from tldw_chatbook.Chat.citation_trace_models import (
     ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX,
     ANSWER_ATTEMPTS_MAX,
@@ -49,6 +50,7 @@ from tldw_chatbook.Chat.citation_trace_models import (
     TimingSummary,
     TraceLifecycle,
     TraceOrigin,
+    eligible_citation_marker_spans,
     reduce_selected_attempt_completeness,
     validate_aggregate_json_bytes,
 )
@@ -332,19 +334,22 @@ def test_unicode_repeated_grouped_reordered_and_unknown_markers_round_trip() -> 
     assert restored.trace.answer_attempts[0].occurrences[-1].evidence_ordinal is None
 
 
-def test_marker_grammar_and_exact_answer_offsets_are_enforced() -> None:
+@pytest.mark.parametrize("raw_marker", ("[S0]", "[S01]", "[S1_doc]"))
+def test_canonical_marker_grammar_remains_strict(raw_marker: str) -> None:
     with pytest.raises(ValidationError, match="chatbook_s_v1 marker"):
         CitationOccurrence(
             occurrence_id="occurrence",
             occurrence_ordinal=1,
-            raw_marker="[S01]",
+            raw_marker=raw_marker,
             marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
             evidence_ordinal=1,
             marker_start=0,
-            marker_end=5,
+            marker_end=len(raw_marker),
             structural_state=StructuralValidationState.VALID,
         )
 
+
+def test_exact_answer_offsets_are_enforced() -> None:
     occurrence = CitationOccurrence(
         occurrence_id="occurrence",
         occurrence_ordinal=1,
@@ -448,6 +453,115 @@ def test_sealed_write_rejects_ineligible_or_unmapped_marker_spans(
         )
 
 
+def test_eligible_scanner_handles_many_fenced_regions_and_markers() -> None:
+    answer = "".join(
+        f"```\n[S{ordinal}]\n```\nVisible [S{ordinal}].\n"
+        for ordinal in range(1, CITATION_OCCURRENCES_MAX + 1)
+    )
+
+    spans = eligible_citation_marker_spans(
+        answer,
+        MarkerNamespace.CHATBOOK_S_V1,
+    )
+
+    assert tuple(span.marker_ordinal for span in spans) == tuple(
+        range(1, CITATION_OCCURRENCES_MAX + 1)
+    )
+
+
+def test_eligible_scanner_interval_traversal_is_linear(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class CountingIntervals(tuple[tuple[int, int], ...]):
+        visited = 0
+
+        def __iter__(self):  # type: ignore[no-untyped-def]
+            for interval in super().__iter__():
+                self.visited += 1
+                yield interval
+
+    chunks: list[str] = []
+    intervals: list[tuple[int, int]] = []
+    offset = 0
+    for ordinal in range(1, CITATION_OCCURRENCES_MAX + 1):
+        chunks.append("x")
+        intervals.append((offset, offset + 1))
+        offset += 1
+        marker = f"[S{ordinal}]"
+        chunks.append(marker)
+        offset += len(marker)
+    answer = "".join(chunks)
+    excluded = CountingIntervals(intervals)
+    monkeypatch.setattr(
+        trace_models,
+        "_markdown_code_intervals",
+        lambda _answer_text: excluded,
+    )
+
+    spans = eligible_citation_marker_spans(
+        answer,
+        MarkerNamespace.CHATBOOK_S_V1,
+    )
+
+    assert len(spans) == CITATION_OCCURRENCES_MAX
+    assert excluded.visited <= len(excluded) * 2
+
+
+def test_sealed_write_stops_at_the_513th_eligible_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class CountingMatcher:
+        def __init__(self, matcher: object) -> None:
+            self.matcher = matcher
+            self.yields = 0
+
+        def fullmatch(self, text: str):  # type: ignore[no-untyped-def]
+            return self.matcher.fullmatch(text)  # type: ignore[attr-defined]
+
+        def finditer(self, text: str):  # type: ignore[no-untyped-def]
+            for match in self.matcher.finditer(text):  # type: ignore[attr-defined]
+                self.yields += 1
+                yield match
+
+    answer = "[S1]" * CITATION_OCCURRENCES_MAX
+    occurrences = tuple(
+        CitationOccurrence(
+            occurrence_id=f"occurrence-{ordinal}",
+            occurrence_ordinal=ordinal,
+            raw_marker="[S1]",
+            marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+            evidence_ordinal=1,
+            marker_start=(ordinal - 1) * 4,
+            marker_end=ordinal * 4,
+            structural_state=StructuralValidationState.VALID,
+        )
+        for ordinal in range(1, CITATION_OCCURRENCES_MAX + 1)
+    )
+    write = _write_for_modes(
+        (EvidenceStorageMode.EMBEDDED,),
+        answer_body=answer,
+        occurrences=occurrences,
+    )
+    counting_matcher = CountingMatcher(trace_models._CHATBOOK_MARKER)
+    monkeypatch.setattr(trace_models, "_CHATBOOK_MARKER", counting_matcher)
+    forged_answer = write.answer_attempt_payloads[0].model_copy(
+        update={"answer_body": "[S1]" * (CITATION_OCCURRENCES_MAX + 100)}
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match=f"eligible citation marker count exceeds {CITATION_OCCURRENCES_MAX}",
+    ):
+        SealedCitationWrite(
+            trace=write.trace,
+            evidence_run_payloads=write.evidence_run_payloads,
+            evidence_snapshot_payloads=write.evidence_snapshot_payloads,
+            answer_attempt_payloads=(forged_answer,),
+        )
+
+    assert counting_matcher.yields == CITATION_OCCURRENCES_MAX + 1
+
+
 def test_selected_attempt_only_completeness_uses_worst_state_precedence() -> None:
     cases = (
         ((EvidenceStorageMode.EMBEDDED,), CitationCompleteness.COMPLETE),
@@ -466,6 +580,64 @@ def test_selected_attempt_only_completeness_uses_worst_state_precedence() -> Non
             payload.payload_id: payload for payload in write.evidence_snapshot_payloads
         }
         assert reduce_selected_attempt_completeness(write.trace, index) is expected
+
+
+@pytest.mark.parametrize(
+    "payload_kwargs",
+    (
+        {
+            "storage_mode": EvidenceStorageMode.EMBEDDED,
+            "snapshot_text": "submitted text",
+        },
+        {
+            "storage_mode": EvidenceStorageMode.SERVER_REFERENCE,
+            "server_reference": "server-ref",
+        },
+        {
+            "storage_mode": EvidenceStorageMode.EPHEMERAL,
+            "snapshot_text": "live request text",
+        },
+        {"storage_mode": EvidenceStorageMode.EPHEMERAL},
+        {"storage_mode": EvidenceStorageMode.REDACTED},
+    ),
+    ids=(
+        "embedded",
+        "server-reference",
+        "ephemeral-live",
+        "ephemeral-expired",
+        "redacted",
+    ),
+)
+def test_snapshot_storage_modes_accept_only_their_positive_shape(
+    payload_kwargs: dict[str, object],
+) -> None:
+    payload = EvidenceSnapshotPayload(payload_id="snapshot", **payload_kwargs)
+
+    assert payload.storage_mode is payload_kwargs["storage_mode"]
+
+
+@pytest.mark.parametrize(
+    ("storage_mode", "snapshot_text", "server_reference"),
+    (
+        (EvidenceStorageMode.EMBEDDED, "submitted text", "hidden-server-ref"),
+        (EvidenceStorageMode.SERVER_REFERENCE, "hidden text", "server-ref"),
+        (EvidenceStorageMode.EPHEMERAL, "live request text", "hidden-server-ref"),
+        (EvidenceStorageMode.REDACTED, "hidden text", None),
+    ),
+    ids=("embedded", "server-reference", "ephemeral", "redacted"),
+)
+def test_snapshot_storage_modes_reject_cross_mode_retained_data(
+    storage_mode: EvidenceStorageMode,
+    snapshot_text: str | None,
+    server_reference: str | None,
+) -> None:
+    with pytest.raises(ValidationError, match=storage_mode.value):
+        EvidenceSnapshotPayload(
+            payload_id="snapshot",
+            storage_mode=storage_mode,
+            snapshot_text=snapshot_text,
+            server_reference=server_reference,
+        )
 
 
 def test_legacy_origin_and_marker_namespace_can_never_reduce_complete() -> None:
@@ -1267,6 +1439,9 @@ def test_sealed_write_revalidates_forged_nested_model_copies() -> None:
     forged_snapshot = write.evidence_snapshot_payloads[0].model_copy(
         update={"snapshot_text": "x" * (SNAPSHOT_TEXT_UTF8_BYTES_MAX + 1)}
     )
+    forged_storage_shape = write.evidence_snapshot_payloads[0].model_copy(
+        update={"server_reference": "hidden-server-ref"}
+    )
     forged_answer = write.answer_attempt_payloads[0].model_copy(
         update={"answer_body": "x" * (ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX + 1)}
     )
@@ -1279,6 +1454,13 @@ def test_sealed_write_revalidates_forged_nested_model_copies() -> None:
             trace=write.trace,
             evidence_run_payloads=write.evidence_run_payloads,
             evidence_snapshot_payloads=(forged_snapshot,),
+            answer_attempt_payloads=write.answer_attempt_payloads,
+        )
+    with pytest.raises(ValidationError, match="embedded.*server_reference"):
+        SealedCitationWrite(
+            trace=write.trace,
+            evidence_run_payloads=write.evidence_run_payloads,
+            evidence_snapshot_payloads=(forged_storage_shape,),
             answer_attempt_payloads=write.answer_attempt_payloads,
         )
     with pytest.raises(ValidationError, match="answer_body"):

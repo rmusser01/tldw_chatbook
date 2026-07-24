@@ -11,9 +11,8 @@ from tldw_chatbook.Chat.citation_evidence_models import (
     EvidenceReference,
 )
 from tldw_chatbook.Chat.citation_trace_models import (
-    CitationMarkerSpan,
-    MarkerNamespace,
-    eligible_citation_marker_spans,
+    EvidenceLabelMarkerSpan,
+    eligible_evidence_label_marker_spans,
 )
 
 
@@ -219,14 +218,11 @@ def extract_citation_markers(answer_text: Any) -> tuple[str, ...]:
 
 def _first_seen_citation_marker_spans(
     answer_text: str,
-) -> tuple[tuple[str, CitationMarkerSpan], ...]:
+) -> tuple[tuple[str, EvidenceLabelMarkerSpan], ...]:
     seen: set[str] = set()
-    markers: list[tuple[str, CitationMarkerSpan]] = []
-    for span in eligible_citation_marker_spans(
-        answer_text,
-        MarkerNamespace.CHATBOOK_S_V1,
-    ):
-        marker = span.raw_marker[1:-1]
+    markers: list[tuple[str, EvidenceLabelMarkerSpan]] = []
+    for span in eligible_evidence_label_marker_spans(answer_text):
+        marker = span.evidence_id
         if marker not in seen:
             markers.append((marker, span))
             seen.add(marker)
@@ -359,7 +355,7 @@ def _format_reference_for_prompt(reference: EvidenceReference) -> list[str]:
     return lines
 
 
-def _quote_for_marker(answer_text: str, marker_span: CitationMarkerSpan) -> str:
+def _quote_for_marker(answer_text: str, marker_span: EvidenceLabelMarkerSpan) -> str:
     marker = marker_span.raw_marker
     marker_index = marker_span.marker_start
     sentence_start = max(

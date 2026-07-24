@@ -107,6 +107,16 @@ def test_extract_citation_markers_ignores_escaped_inline_and_fenced_code() -> No
     assert markers == ("S5",)
 
 
+def test_extract_citation_markers_preserves_legacy_bundle_label_grammar() -> None:
+    markers = extract_citation_markers(
+        r"Escaped \[S1_doc]. Inline `[S0]`."
+        "\n```\n[S01]\n```\n"
+        "Real [S1_doc], [S0], and [S01]. Duplicate [S1_doc]."
+    )
+
+    assert markers == ("S1_doc", "S0", "S01")
+
+
 def test_answer_citation_validation_marks_valid_unknown_and_uncited_refs() -> None:
     result = build_answer_citation_validation(
         "The credential expired [S1]. A made-up source was also cited [S9].",
