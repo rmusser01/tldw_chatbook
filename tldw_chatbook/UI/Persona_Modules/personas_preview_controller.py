@@ -18,6 +18,7 @@ from ...Chat.console_chat_models import ConsoleProviderSelection
 from ...Chat.console_provider_gateway import ConsoleProviderGateway
 from ...Chat.console_session_settings import build_default_console_session_settings
 from ...Chat.provider_catalog import PROVIDER_DISPLAY_NAMES
+from ...Chat.provider_readiness import get_provider_readiness
 from ...Widgets.Persona_Widgets.personas_character_editor_widget import (
     PersonasCharacterEditorWidget,
 )
@@ -268,6 +269,49 @@ class PersonasPreviewController:
             self.screen.query_one(PersonasPreviewPane).set_provider_readout(text)
         except QueryError:
             pass
+
+    def resolved_send_readiness(self) -> tuple[bool, str | None]:
+        """Cheap, config/env-only readiness for the staged character-chat send.
+
+        Mirrors ``_resolve_selection_with_fallback``'s character_defaults ->
+        chat_defaults fallback intent (task-425) through
+        ``get_provider_readiness`` - the same side-effect-free readiness seam
+        Chat and Settings already use for their own readiness badges -
+        instead of the async ``ConsoleProviderGateway.resolve_for_send``
+        probe. The Roleplay inspector/header readiness surfaces (task-440)
+        call this on every selection sync, which must stay cheap: unlike the
+        real send path this performs no llama.cpp network reachability
+        check, so a configured-but-unreachable llama.cpp endpoint reads as
+        ready here - the real send (and the preview's own status line) still
+        catches that failure when it actually happens.
+
+        Returns:
+            ``(ready, reason)``. When not ready, ``reason`` is the
+            ``ProviderReadiness.user_message`` for whichever provider the
+            send path would actually settle on failing with - the
+            chat_defaults fallback's message when a distinct fallback was
+            attempted (same "more actionable" precedent
+            ``_resolve_selection_with_fallback`` documents), else the
+            character_defaults provider's own message. ``None`` when ready.
+        """
+        raw_config = getattr(self.screen.app_instance, "app_config", {}) or {}
+        config = raw_config if isinstance(raw_config, Mapping) else {}
+        char_selection = self._selection_from_defaults(config, "character_defaults")
+        char_readiness = get_provider_readiness(char_selection.provider, config)
+        if char_readiness.ready:
+            return True, None
+        chat_selection = self._selection_from_defaults(config, "chat_defaults")
+        same_target = (
+            chat_selection.provider.lower() == char_selection.provider.lower()
+            and self._selection_model(chat_selection)
+            == self._selection_model(char_selection)
+        )
+        if chat_selection.provider and not same_target:
+            chat_readiness = get_provider_readiness(chat_selection.provider, config)
+            if chat_readiness.ready:
+                return True, None
+            return False, chat_readiness.user_message
+        return False, char_readiness.user_message
 
     def open_provider_settings(self) -> None:
         """Deep-link to Settings > Providers & Models for the readout provider."""

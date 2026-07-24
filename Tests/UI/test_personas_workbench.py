@@ -2485,6 +2485,87 @@ class TestConsoleActions:
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
 
+    async def test_readiness_surfaces_reflect_unready_character_provider(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Task-440: honest readiness copy when no provider would answer.
+
+        The shipped [character_defaults] (Anthropic) has no API key and the
+        guided setup never wrote a [chat_defaults] provider either (task-425
+        scenario) - a character reply is genuinely impossible, so neither
+        readiness surface may claim things are ready. Start Chat/Attach stay
+        clickable regardless (task-427: Start Chat still opens a real
+        conversation) - only the copy changes.
+        """
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"model": "claude-3-haiku"},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+
+            readiness_text = str(
+                screen.query_one("#personas-readiness-console", Static).renderable
+            )
+            assert readiness_text != "Console ready"
+            assert readiness_text.startswith("Console blocked:")
+            assert "anthropic" in readiness_text.lower()
+            assert (
+                "api key" in readiness_text.lower()
+                or "api_settings" in readiness_text.lower()
+            )
+
+            header_status = str(
+                screen.query_one(
+                    "#personas-header #workbench-header-status", Static
+                ).renderable
+            )
+            assert header_status != "Ready"
+
+            # Gating decision (task-425/427): an unready provider blocks the
+            # readiness COPY but not the buttons - Start Chat still opens a
+            # real conversation and the user can fix the provider from there.
+            assert (
+                screen.query_one("#personas-attach-to-console", Button).disabled
+                is False
+            )
+            assert (
+                screen.query_one("#personas-start-chat", Button).disabled is False
+            )
+
+    async def test_readiness_surfaces_stay_ready_with_a_configured_provider(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Provider ready -> existing "Console ready"/"Ready" copy is unchanged."""
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"model": "claude-3-haiku"},
+            "api_settings": {"anthropic": {"api_key": "sk-configured-test-key"}},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+
+            assert "Console ready" in str(
+                screen.query_one("#personas-readiness-console", Static).renderable
+            )
+            assert (
+                str(
+                    screen.query_one(
+                        "#personas-header #workbench-header-status", Static
+                    ).renderable
+                )
+                == "Ready"
+            )
+            assert (
+                screen.query_one("#personas-attach-to-console", Button).disabled
+                is False
+            )
+            assert (
+                screen.query_one("#personas-start-chat", Button).disabled is False
+            )
+
     async def test_selection_pushes_console_gate_before_async_followup(
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
     ):
