@@ -108,10 +108,17 @@ The registry does not use prefix or wildcard matching. Runtime code cannot add
 or replace provider definitions after construction.
 
 When effective provider configuration changes, the registry increments that
-provider's configuration revision and retires its current adapter. New
-operations use a replacement. The retired adapter closes only after its active
-leases have been released. Saving normalized configuration that is identical
+provider's configuration revision and retires its current adapter. Providers
+normally allow new operations to use a replacement while the retired adapter
+finishes its active leases. Saving normalized configuration that is identical
 to the current value reports no change and leaves a healthy adapter running.
+
+audio.cpp uses an exclusive handoff instead of overlapping retirement. A
+configuration change places the provider in a retryable `reconfiguring` state
+and stops admitting new audio.cpp operations. Existing leases finish without
+being cancelled; the old adapter and any owned child then close before the new
+configuration becomes active. The replacement remains lazy and is created only
+by a later use. An old and new audio.cpp adapter or managed child never coexist.
 
 ### Native contracts
 
@@ -121,6 +128,7 @@ The service boundary uses the following provider-neutral contracts:
 | --- | --- |
 | `TTSRequest` | Canonical provider ID, opaque model ID, text, optional voice, requested format, speed, and adapter-validated options. |
 | `TTSAudioResponse` | Actual format, content type, optional sample rate, asynchronous byte iterator, provenance, and a generic async cleanup callback. |
+| `TTSProgress` | Provider-neutral status, optional normalized completion fraction, and safe optional metrics delivered to an operation-scoped progress sink. |
 | `TTSProviderCatalog` | Provider identity plus its cached model catalog and catalog revision. |
 | `TTSModelInfo` | Opaque model ID, family, upstream mode, formats, voices, control support, and voice-omission policy. |
 | `ProviderHealth` | Availability state, freshness, safe diagnostics, retryability, and UI-neutral recovery action. |
@@ -140,11 +148,13 @@ Native adapters implement four asynchronous operations:
 
 - `ensure_ready()` initializes, connects, or starts lazily.
 - `get_catalog(refresh=False)` returns health and model metadata.
-- `synthesize(request)` returns an adapter audio response.
+- `synthesize(request, progress_sink=None)` returns an adapter audio response.
 - `close()` releases HTTP, runtime, or owned-process resources.
 
 Application and UI code do not retrieve or call concrete adapters. They use
-`TTSService` and registry catalog operations.
+`TTSService` and registry catalog operations. The progress sink is optional and
+operation-scoped; audio.cpp reports indeterminate work until the complete WAV
+arrives rather than inventing percentage progress.
 
 ### Legacy bridge
 
@@ -167,6 +177,21 @@ One centralized legacy resolver replaces repeated internal-model routing. It
 accepts only enumerated legacy forms and maps them to an exact provider and
 internal model ID; it does not reproduce wildcard prefix matching.
 
+During migration, `TTSService` retains the existing
+`generate_audio_stream(request: OpenAISpeechRequest, internal_model_id: str)`
+call shape, with an optional progress sink. It resolves the enumerated legacy ID
+and delegates through the registry, yielding the native response bytes and
+closing the response in `finally`. Existing media reading, audio interop, TTS
+events, STTS, and audiobook callers continue through this compatibility method
+until their own migration tasks. New code uses canonical `TTSRequest` and
+`synthesize()`.
+
+The bridge never exposes `TTSBackendManager` or a concrete backend to UI code.
+When a legacy backend supports progress only through a mutable callback, the
+host serializes callback installation and generation for that backend and
+clears the callback in `finally`, preventing concurrent operations from
+receiving one another's progress.
+
 The host is closed exactly once by the registry. Individual bridge views do not
 own or close it.
 
@@ -175,7 +200,8 @@ The bridge may be removed only when:
 1. Every retained legacy provider has a native adapter.
 2. All callers supply explicit provider and model IDs.
 3. No wildcard-style internal model IDs remain.
-4. Compatibility tests prove the old accessor and resolver are unused.
+4. Compatibility tests prove the old accessor, internal-model resolver, and
+   legacy `generate_audio_stream()` method are unused.
 
 ## audio.cpp configuration
 
@@ -198,6 +224,7 @@ log_ring_lines = 200
 
 External mode requires a syntactically valid HTTP or HTTPS origin. Credentials,
 query strings, and fragments are rejected. TLS verification remains enabled.
+Redirect following is disabled so synthesis text cannot move to another origin.
 No authentication headers are supported in this milestone.
 
 Managed mode requires an existing executable binary and readable JSON
@@ -205,9 +232,13 @@ configuration. Chatbook reads only `host` and `port`; audio.cpp remains the
 authority for every other setting and resolves its own relative model paths.
 Chatbook never edits the file.
 
-Managed configurations must bind to `127.0.0.1`, `::1`, or `localhost`.
-Wildcard and network-facing binds are rejected. Users who intentionally expose
-audio.cpp over a network run it themselves and use external mode.
+For the pinned `audio_cpp_http_v1` contract, a managed configuration may omit
+`host` and `port`, which Chatbook interprets using audio.cpp's defaults of
+`127.0.0.1` and `8080`. An explicit host must be exactly `127.0.0.1`; the
+pinned server accepts only an IPv4 literal and cannot bind `localhost` or
+`::1`. Other IPv4 addresses, wildcard binds, hostnames, and IPv6 are rejected.
+Users who intentionally expose audio.cpp over a network run it themselves and
+use external mode.
 
 The numeric defaults are initial safety guards rather than statements about
 upstream model limits. The 10,000-character input limit and 128 MiB response
@@ -328,12 +359,16 @@ The initial audio.cpp payload contains only:
 - Optional `voice`
 
 Speech POST requests are never automatically retried. Health, model, and voice
-GET requests may receive one bounded transient retry.
+GET requests may receive one bounded transient retry. Redirects are disabled
+for every request.
 
 The HTTP body is read incrementally at the network layer. `Content-Length`, when
 present, is checked before reading; accumulated bytes are capped throughout.
-`audio/wav` and generic binary content types are accepted only when the body has
-a valid RIFF/WAVE signature. The bytes are authoritative.
+`audio/wav` and generic binary content types are accepted only when the bounded
+body parses as uncompressed 16-bit PCM WAV. Validation covers the RIFF/WAVE
+container, `fmt` and `data` chunks, declared sizes, positive channel and sample
+rate values, and complete declared frame data. A signature alone is
+insufficient. The parsed bytes are authoritative.
 
 A successful result is exposed as one asynchronous WAV chunk with actual
 format, content type, provenance, and any safely parsed timing metadata. This
@@ -364,8 +399,10 @@ The audio.cpp settings panel contains:
 
 Save performs local validation and effective-configuration comparison. It does
 not connect or start a process. If configuration changed, the old adapter is
-retired safely. Managed configuration changes stop an owned old process after
-its active operations finish but do not launch a replacement.
+retired safely. An active audio.cpp provider becomes `reconfiguring`; Generate,
+Test, Refresh, Start, and Restart report a retryable state until existing leases
+finish and the old adapter closes. A managed old child stops during that
+handoff. Save never launches the replacement or kills an in-flight operation.
 
 ### Catalog-driven controls
 
@@ -377,10 +414,9 @@ For audio.cpp:
 1. Readiness populates TTS models.
 2. Model selection lazily loads voices.
 3. Voice options include Server default and discovered IDs.
-4. When voices are discovered, the first discovered ID is selected by default;
-   Server default remains an explicit choice.
-5. When no voices are discovered, Server default is the only option and is
-   selected automatically.
+4. Server default is initially selected because audio.cpp's configured default
+   is not identified by the voices endpoint.
+5. When no voices are discovered, Server default is the only option.
 6. Format is reset to WAV and disabled.
 7. Speed is reset to `1.0` and disabled with an explanation.
 8. Generate is enabled only when readiness, text, and model validation pass.
@@ -397,6 +433,10 @@ announces the change.
 Catalog discovery, voice discovery, synthesis, and playback use independent
 worker groups. A refresh cannot cancel generation, and repeated Generate input
 cannot replace an active generation worker.
+
+Progress reaches the Playground only through the service-level progress sink.
+Legacy adapters may provide real progress; audio.cpp remains indeterminate until
+its complete response is validated.
 
 Catalog and voice results carry the selected IDs and configuration revision.
 Stale results are discarded. Generation captures a request snapshot.
@@ -427,14 +467,18 @@ The initial categories are:
 - Server busy.
 - Generation failed.
 - Audio response invalid.
+- Provider reconfiguring.
 - Operation cancelled.
 
 Endpoint interpretation is deliberate:
 
 - Missing voices endpoint means voices are unavailable.
 - Missing speech endpoint means the server is incompatible.
-- Unknown model triggers one discovery refresh, then an invalid-model error.
 - HTTP `503` with `server_busy` is retryable and does not affect health.
+- The pinned server reports most other speech failures as HTTP `500` with
+  `server_error`. The adapter does not classify these by matching error text.
+  It refreshes models once without retrying the POST; if the requested model
+  vanished, the result is invalid-model, otherwise it is generation-failed.
 - Cancellation is a normal terminal state and is not logged as a provider
   failure.
 - Malformed health or models data is an incompatible contract.
@@ -475,11 +519,16 @@ Shutdown is idempotent and never waits indefinitely for native inference.
 - Exact registration, alias collision, and sealing.
 - Per-provider single materialization under concurrent first use.
 - Operation leases, retirement, identical-config no-op, and shutdown.
+- audio.cpp exclusive reconfiguration blocks new operations, preserves active
+  leases, and never overlaps old and new adapters or managed children.
 - Response cleanup after success, partial consumption, cancellation, and
   consumer failure.
 - Shared legacy-host ownership and exactly-once close.
 - Enumerated routing for every legacy internal-model form used by current call
   sites.
+- The retained legacy generation signature resolves through the bridge and
+  always closes native responses.
+- Operation-scoped legacy progress callbacks are serialized and cleared.
 - Application binding, explicit reset, and configuration replacement without
   first-config retention.
 - Instance-scoped concurrency across independent event loops.
@@ -488,12 +537,15 @@ Shutdown is idempotent and never waits indefinitely for native inference.
 
 - Health and model structural validation.
 - TTS-only filtering and zero-TTS-model recovery.
-- Lazy voice discovery, missing voice endpoint, and cache revisions.
+- Lazy voice discovery, Server default as the initial selection, missing voice
+  endpoint, and cache revisions.
 - Correct payload, omitted server-default voice, unsupported speed, and
   unknown-option rejection.
-- Model refresh once before invalid-model failure.
-- Bounded response reading, early `Content-Length` rejection, valid WAV, generic
-  MIME acceptance, and malformed audio rejection.
+- Model refresh before a locally invalid model request and after an upstream
+  `server_error`, without retrying the speech POST.
+- Bounded response reading, early `Content-Length` rejection, redirects
+  disabled, full PCM WAV validation, generic MIME acceptance, and malformed
+  audio rejection.
 - Quiet complete-response synthesis may run until the overall deadline without
   a read-inactivity failure.
 - Busy, invalid request, unavailable, incompatible, generation, timeout, and
@@ -516,7 +568,8 @@ Unit tests use fakes rather than sleeps or real ports and cover:
 - Unexpected exit monitoring.
 - Restart on later use.
 - Refusal to adopt an existing listener.
-- Loopback-only validation.
+- Omitted host and port defaults, exact `127.0.0.1` acceptance, and rejection of
+  `localhost`, `::1`, wildcard, hostname, and other-address binds.
 - Owned-child-only termination.
 
 A separate small subprocess integration test verifies actual launch, readiness,
@@ -528,9 +581,10 @@ and termination behavior without audio models.
 - Selecting audio.cpp and Start & Test trigger lazy readiness.
 - External and managed actions differ.
 - Stale provider, model, voice, and configuration-revision results are ignored.
-- The first discovered voice is the initial default; Server default is selected
-  automatically only when discovery returns no voices.
+- Server default remains the initial selection when discovered voices exist.
 - An explicitly selected Server-default sentinel becomes `None`.
+- Reconfiguring disables audio.cpp actions without interrupting active audio.
+- Progress arrives through the service sink without direct backend access.
 - Format and speed restrictions restore on provider changes.
 - Discovered metadata and logs render safely.
 - Generated result provenance and filename remain accurate after selection
@@ -567,17 +621,19 @@ If audio.cpp is unavailable or disabled by incomplete configuration, users
 continue selecting existing providers. An audio.cpp request never silently
 falls back.
 
-This feature-level design is delivered as four ordered, single-PR slices rather
+This feature-level design is delivered as five ordered, single-PR slices rather
 than one omnibus implementation task:
 
 1. Establish registry authority and contain existing providers in the legacy
-   bridge, preserving their current behavior.
+   bridge, including the compatibility generation and progress paths.
 2. Add the external audio.cpp contract and native adapter, proving discovery
    and complete WAV synthesis through the service boundary.
-3. Add the managed audio.cpp supervisor for lazy launch, monitoring, restart,
+3. Make the STTS Playground catalog-driven and complete the external audio.cpp
+   end-to-end flow.
+4. Add the managed audio.cpp supervisor for lazy launch, monitoring, restart,
    and owned-child shutdown.
-4. Make the STTS Playground catalog-driven and complete the external and
-   managed end-to-end flows.
+5. Add managed audio.cpp settings and actions to the STTS Playground, completing
+   the managed end-to-end flow.
 
 Each slice receives its own atomic Backlog task and implementation plan in
 dependency order. Before planning a slice, the project must create or select
@@ -590,14 +646,13 @@ criteria.
 - The STTS Playground can configure and use one external audio.cpp server.
 - The Playground can lazily launch, monitor, restart, and stop one managed
   user-provided audio.cpp server.
-- Only TTS models are offered, voices load lazily, a discovered voice is the
-  initial default when available, and an explicitly selected Server default is
-  omitted from the request.
+- Only TTS models are offered, voices load lazily, Server default is initially
+  selected, and that sentinel is omitted from the request.
 - Successful generation produces a validated WAV that can be played and saved.
 - Existing providers retain their visible Playground behavior through the
   legacy bridge.
 - Runtime configuration replacement does not require application restart and
-  never closes an in-flight response.
+  never closes an in-flight response or overlaps audio.cpp instances.
 - Failure and recovery states are specific, safe, and ownership-aware.
 - Normal CI requires neither audio.cpp nor model downloads.
 
