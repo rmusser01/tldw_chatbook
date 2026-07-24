@@ -22,8 +22,14 @@ import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-import build_css as _build_css  # noqa: E402  (sibling module, no package import)
+try:
+    # Normal package import (tests, `python -m`) -- no global side effects.
+    from . import build_css as _build_css
+except ImportError:  # pragma: no cover - only when run as a bare script
+    # Direct script execution (`python tldw_chatbook/css/build_css.py`'s dir on
+    # sys.path) has no package context; add the sibling dir just for this path.
+    sys.path.insert(0, str(Path(__file__).parent))
+    import build_css as _build_css  # noqa: E402
 
 _TIMESTAMP_RE = re.compile(r"^ \* Generated:.*$", re.MULTILINE)
 _MODULE_SPLIT_RE = re.compile(r"/\* ===== MODULE: (.+?) ===== \*/")
@@ -65,14 +71,30 @@ def drifted_modules(committed: str, rebuilt: str) -> list[str] | None:
 
 
 def main() -> int:
-    """Rebuild the bundle to a temp file and compare it to the committed one."""
+    """Rebuild the bundle to a temp file and compare it to the committed one.
+
+    Returns:
+        ``0`` when the committed bundle reproduces from its sources; ``1`` when it
+        has drifted or cannot be rebuilt (with ``::error::`` annotations naming
+        the drifted modules or the missing source).
+    """
     css_dir = Path(__file__).parent
     committed = (css_dir / "tldw_cli_modular.tcss").read_text(encoding="utf-8")
     with tempfile.TemporaryDirectory() as tmp:
         rebuilt_path = Path(tmp) / "rebuilt.tcss"
-        # build_css narrates each module; silence it so CI logs stay readable.
-        with contextlib.redirect_stdout(io.StringIO()):
-            _build_css.build_css(css_dir, rebuilt_path)
+        try:
+            # build_css narrates each module; silence it so CI logs stay clean.
+            with contextlib.redirect_stdout(io.StringIO()):
+                _build_css.build_css(css_dir, rebuilt_path)
+        except FileNotFoundError as exc:
+            # A declared module was removed without updating the manifest -- a
+            # desync worth failing on, but reported clearly rather than as a
+            # traceback (Qodo #835).
+            print(
+                f"::error::CSS bundle could not be rebuilt: {exc}. Update the "
+                "CSS_MODULES manifest in build_css.py to match the source tree."
+            )
+            return 1
         rebuilt = rebuilt_path.read_text(encoding="utf-8")
 
     drifted = drifted_modules(committed, rebuilt)
