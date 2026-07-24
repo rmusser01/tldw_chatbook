@@ -157,3 +157,72 @@ class ArtifactOperationLease:
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
         self.release()
+
+
+class ArtifactOperationLeaseSet:
+    """Acquire one mode over a canonical immutable artifact closure."""
+
+    def __init__(
+        self,
+        lock_root: Path,
+        keys: list[ArtifactLeaseKey] | tuple[ArtifactLeaseKey, ...],
+        mode: LeaseMode,
+        *,
+        timeout_seconds: float = 5.0,
+        check_interval_seconds: float = 0.05,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> None:
+        ordered_keys = tuple(sorted(set(keys)))
+        if not ordered_keys:
+            raise ValueError("lease set requires at least one artifact key")
+        if timeout_seconds < 0:
+            raise ValueError("timeout_seconds must be nonnegative")
+        self._lock_root = Path(lock_root)
+        self.keys = ordered_keys
+        self.mode = mode
+        self.timeout_seconds = timeout_seconds
+        self.check_interval_seconds = check_interval_seconds
+        self._cancelled = cancelled
+        self._leases: list[ArtifactOperationLease] = []
+
+    @property
+    def acquired(self) -> bool:
+        """Return whether the complete key set is currently held."""
+
+        return len(self._leases) == len(self.keys)
+
+    def acquire(self) -> ArtifactOperationLeaseSet:
+        """Acquire every key in order under one total timeout budget."""
+
+        if self._leases:
+            raise ArtifactLeaseError("lease set is already acquired")
+        deadline = time.monotonic() + self.timeout_seconds
+        try:
+            for key in self.keys:
+                remaining = max(0.0, deadline - time.monotonic())
+                lease = ArtifactOperationLease(
+                    self._lock_root,
+                    key,
+                    self.mode,
+                    timeout_seconds=remaining,
+                    check_interval_seconds=self.check_interval_seconds,
+                    cancelled=self._cancelled,
+                )
+                lease.acquire()
+                self._leases.append(lease)
+        except BaseException:
+            self.release()
+            raise
+        return self
+
+    def release(self) -> None:
+        """Release all acquired keys in reverse order."""
+
+        while self._leases:
+            self._leases.pop().release()
+
+    def __enter__(self) -> ArtifactOperationLeaseSet:
+        return self.acquire()
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        self.release()

@@ -10,6 +10,7 @@ from tldw_chatbook.Model_Artifacts.leases import (
     ArtifactLeaseKey,
     ArtifactLeaseTimeoutError,
     ArtifactOperationLease,
+    ArtifactOperationLeaseSet,
     LeaseMode,
 )
 
@@ -90,3 +91,49 @@ def test_double_acquire_is_rejected(tmp_path: Path) -> None:
     with lease:
         with pytest.raises(ArtifactLeaseError, match="already acquired"):
             lease.acquire()
+
+
+def test_lease_set_sorts_and_deduplicates_keys(tmp_path: Path) -> None:
+    keys = [
+        ArtifactLeaseKey("vad", "rev-b", "fp32"),
+        ArtifactLeaseKey("parakeet", "rev-a", "int8"),
+        ArtifactLeaseKey("vad", "rev-b", "fp32"),
+    ]
+    lease_set = ArtifactOperationLeaseSet(
+        tmp_path,
+        keys,
+        LeaseMode.SHARED,
+    )
+
+    assert lease_set.keys == (
+        ArtifactLeaseKey("parakeet", "rev-a", "int8"),
+        ArtifactLeaseKey("vad", "rev-b", "fp32"),
+    )
+
+
+def test_partial_set_failure_releases_already_acquired_keys(tmp_path: Path) -> None:
+    first = ArtifactLeaseKey("a-root", "rev", "int8")
+    blocked = ArtifactLeaseKey("z-vad", "rev", "fp32")
+
+    with ArtifactOperationLease(tmp_path, blocked, LeaseMode.EXCLUSIVE):
+        with pytest.raises(ArtifactLeaseTimeoutError):
+            ArtifactOperationLeaseSet(
+                tmp_path,
+                [blocked, first],
+                LeaseMode.SHARED,
+                timeout_seconds=0.05,
+                check_interval_seconds=0.005,
+            ).acquire()
+
+        with ArtifactOperationLease(
+            tmp_path,
+            first,
+            LeaseMode.EXCLUSIVE,
+            timeout_seconds=0.2,
+        ) as recovered:
+            assert recovered.acquired is True
+
+
+def test_empty_lease_set_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="at least one"):
+        ArtifactOperationLeaseSet(tmp_path, [], LeaseMode.SHARED)

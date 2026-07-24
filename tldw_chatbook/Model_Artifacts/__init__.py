@@ -6,6 +6,7 @@ from .leases import (
     ArtifactLeaseKey,
     ArtifactLeaseTimeoutError,
     ArtifactOperationLease,
+    ArtifactOperationLeaseSet,
     LeaseMode,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     "ArtifactLeaseKey",
     "ArtifactLeaseTimeoutError",
     "ArtifactOperationLease",
+    "ArtifactOperationLeaseSet",
     "LeaseMode",
 ]
