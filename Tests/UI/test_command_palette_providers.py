@@ -1002,8 +1002,8 @@ class TestCommandPaletteIntegration:
             )
 
     @pytest.mark.asyncio
-    async def test_all_providers_return_hits_from_discover(self, mock_app):
-        """Test that all providers return Hit objects from discover()."""
+    async def test_provider_discovery_matches_textual_contract(self, mock_app):
+        """Providers either return Hits or inherit optional discovery."""
         mock_screen = MagicMock()
         mock_screen.app = mock_app
 
@@ -1021,6 +1021,10 @@ class TestCommandPaletteIntegration:
             hits = []
             async for hit in provider.discover():
                 hits.append(hit)
+
+            if type(provider).discover is Provider.discover:
+                assert hits == [NotImplemented]
+                continue
 
             assert len(hits) > 0, (
                 f"{provider.__class__.__name__} should return at least one hit"
