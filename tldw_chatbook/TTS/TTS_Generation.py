@@ -18,6 +18,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSProgress,
     TTSProviderCatalog,
     TTSRequest,
+    TTSRegistryClosedError,
 )
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.legacy_bridge import resolve_legacy_route
@@ -90,7 +91,11 @@ class _OperationResources:
 
 
 class _ManagedAudioResponse(TTSAudioResponse):
-    def __init__(self, response: TTSAudioResponse) -> None:
+    def __init__(
+        self,
+        response: TTSAudioResponse,
+        on_closed: Callable[["_ManagedAudioResponse"], None],
+    ) -> None:
         super().__init__(
             provider_id=response.provider_id,
             model_id=response.model_id,
@@ -100,15 +105,25 @@ class _ManagedAudioResponse(TTSAudioResponse):
             sample_rate=response.sample_rate,
         )
         self._response = response
+        self._on_closed = on_closed
         self._response_close_task: asyncio.Task[None] | None = None
 
     def add_cleanup(self, callback: CleanupCallback) -> None:
         self._response.add_cleanup(callback)
 
-    async def aclose(self) -> None:
+    def start_close(self) -> asyncio.Task[None]:
         if self._response_close_task is None:
-            self._response_close_task = asyncio.create_task(self._response.aclose())
-        await _join_retained_task(self._response_close_task)
+            self._response_close_task = asyncio.create_task(self._close())
+        return self._response_close_task
+
+    async def aclose(self) -> None:
+        await _join_retained_task(self.start_close())
+
+    async def _close(self) -> None:
+        try:
+            await self._response.aclose()
+        finally:
+            self._on_closed(self)
 
 
 class TTSService:
@@ -124,6 +139,10 @@ class TTSService:
             raise ValueError("max_concurrent_operations must be positive")
         self.registry = registry
         self._operation_limit = asyncio.Semaphore(max_concurrent_operations)
+        self._close_signal = asyncio.Event()
+        self._registry_close_task: asyncio.Task[None] | None = None
+        self._shutdown_task: asyncio.Task[None] | None = None
+        self._responses: set[_ManagedAudioResponse] = set()
 
     async def synthesize(
         self,
@@ -139,7 +158,7 @@ class TTSService:
         Returns:
             A response that releases its registry lease when closed.
         """
-        await self._operation_limit.acquire()
+        await self._acquire_operation_slot()
         try:
             lease = await self.registry.acquire(request.provider_id)
         except BaseException:
@@ -147,6 +166,11 @@ class TTSService:
             raise
 
         resources = _OperationResources(lease, self._operation_limit)
+        if self._close_signal.is_set():
+            closed_error = TTSRegistryClosedError("The TTS service is closed")
+            await _cleanup_preserving_primary(resources.close, closed_error)
+            raise closed_error
+
         safe_sink = _isolate_progress_sink(progress_sink)
         try:
             await lease.adapter.ensure_ready()
@@ -160,7 +184,14 @@ class TTSService:
         except BaseException as error:
             await _cleanup_preserving_primary(resources.close, error)
             raise
-        return _ManagedAudioResponse(response)
+
+        if self._close_signal.is_set():
+            closed_error = TTSRegistryClosedError("The TTS service is closed")
+            await _cleanup_preserving_primary(response.aclose, closed_error)
+            raise closed_error
+        managed_response = _ManagedAudioResponse(response, self._responses.discard)
+        self._responses.add(managed_response)
+        return managed_response
 
     async def generate_audio_stream(
         self,
@@ -237,12 +268,110 @@ class TTSService:
         return await self.registry.reconfigure_provider(provider_id, config)
 
     async def close(self) -> None:
-        """Begin bounded shutdown of the provider registry."""
-        await self.registry.close()
+        """Seal admission and begin bounded provider shutdown."""
+        registry_close_task, _ = self._start_close()
+        await _join_retained_task(registry_close_task)
 
     async def wait_closed(self) -> None:
-        """Wait for definitive provider shutdown and report cleanup failures."""
-        await self.registry.wait_closed()
+        """Join response and provider cleanup and report sanitized failures."""
+        _, shutdown_task = self._start_close()
+        await _join_retained_task(shutdown_task)
+
+    async def _acquire_operation_slot(self) -> None:
+        if self._close_signal.is_set():
+            raise TTSRegistryClosedError("The TTS service is closed")
+
+        acquire_task = asyncio.create_task(self._operation_limit.acquire())
+        close_task = asyncio.create_task(self._close_signal.wait())
+        try:
+            await asyncio.wait(
+                {acquire_task, close_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if close_task.done() or self._close_signal.is_set():
+                raise TTSRegistryClosedError("The TTS service is closed")
+            close_task.cancel()
+            await asyncio.gather(close_task, return_exceptions=True)
+            if self._close_signal.is_set():
+                raise TTSRegistryClosedError("The TTS service is closed")
+            acquire_task.result()
+        except BaseException:
+            cleanup_task = asyncio.create_task(
+                self._cancel_admission(acquire_task, close_task)
+            )
+            await _join_retained_task(cleanup_task)
+            raise
+
+    async def _cancel_admission(
+        self,
+        acquire_task: asyncio.Task[bool],
+        close_task: asyncio.Task[bool],
+    ) -> None:
+        acquired = self._task_acquired_slot(acquire_task)
+        acquire_task.cancel()
+        close_task.cancel()
+        await asyncio.gather(
+            acquire_task,
+            close_task,
+            return_exceptions=True,
+        )
+        if acquired or self._task_acquired_slot(acquire_task):
+            self._operation_limit.release()
+
+    def _start_close(self) -> tuple[asyncio.Task[None], asyncio.Task[None]]:
+        if self._registry_close_task is None:
+            self._close_signal.set()
+            self._registry_close_task = asyncio.create_task(self.registry.close())
+            self._shutdown_task = asyncio.create_task(
+                self._complete_shutdown(self._registry_close_task)
+            )
+            self._shutdown_task.add_done_callback(self._observe_shutdown_result)
+        assert self._shutdown_task is not None
+        return self._registry_close_task, self._shutdown_task
+
+    async def _complete_shutdown(
+        self,
+        registry_close_task: asyncio.Task[None],
+    ) -> None:
+        failures: list[BaseException] = []
+        try:
+            await asyncio.shield(registry_close_task)
+        except BaseException as error:
+            failures.append(error)
+
+        response_tasks = [response.start_close() for response in tuple(self._responses)]
+        registry_wait_task = asyncio.create_task(self.registry.wait_closed())
+        results = await asyncio.gather(
+            registry_wait_task,
+            *response_tasks,
+            return_exceptions=True,
+        )
+        failures.extend(
+            result for result in results if isinstance(result, BaseException)
+        )
+        if failures:
+            failure_types = ", ".join(
+                sorted({type(failure).__name__ for failure in failures})
+            )
+            raise RuntimeError(
+                f"TTS shutdown cleanup failed ({failure_types})"
+            ) from None
+
+    @staticmethod
+    def _task_acquired_slot(task: asyncio.Task[bool]) -> bool:
+        if not task.done() or task.cancelled():
+            return False
+        try:
+            return task.result()
+        except BaseException:
+            return False
+
+    @staticmethod
+    def _observe_shutdown_result(task: asyncio.Task[None]) -> None:
+        try:
+            task.exception()
+        except BaseException:
+            pass
 
 
 def _isolate_progress_sink(
