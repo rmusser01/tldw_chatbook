@@ -65,7 +65,9 @@ def _default_advanced_open(monkeypatch):
     import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
 
     monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: True)
-    monkeypatch.setattr(mcp_inspector_module, "save_setting_to_cli_config", lambda *a, **k: True)
+    monkeypatch.setattr(
+        mcp_inspector_module, "save_setting_to_cli_config", lambda *a, **k: True
+    )
 
 
 def _region(widget):
@@ -273,10 +275,15 @@ async def test_main_navigation_overflow_hint_does_not_overlap_settings_at_defaul
         home = _active_home_screen(host)
         await _wait_for_selector(home, pilot, "#home-triage-grid")
         nav = home.query_one(MainNavigationBar)
+        strip = nav.query_one("#nav-destination-strip")
         settings = nav.query_one("#nav-settings", Button)
         more = nav.query_one("#nav-overflow-hint")
         _assert_no_horizontal_overlap(
-            settings, more, context="More hint overlaps Settings nav item"
+            strip, more, context="More hint overlaps the destination scroll strip"
+        )
+        visible_settings = settings.region.intersection(strip.content_region)
+        assert visible_settings.x + visible_settings.width <= more.region.x, (
+            "Visible Settings nav content overlaps the More hint"
         )
 
 
