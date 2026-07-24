@@ -355,7 +355,7 @@ def test_console_transcript_selected_message_shows_action_row():
 
     plain = transcript.to_plain_text(width=80)
 
-    assert "Copy Edit Save as... ♻ ---> 👍 👎 🗑" in plain
+    assert "Copy 🔊 Edit Save as... ♻ ---> 👍 👎 🗑" in plain
     assert "|" not in plain
 
 
@@ -412,7 +412,7 @@ def test_console_transcript_action_row_stays_within_terminal_width_budget():
         if line.startswith("Copy")
     )
 
-    assert action_row == "Copy Edit Save as... ♻ ---> 👍 👎 🗑"
+    assert action_row == "Copy 🔊 Edit Save as... ♻ ---> 👍 👎 🗑"
     assert len(action_row) <= 48
 
 
@@ -426,7 +426,7 @@ def test_console_transcript_selected_message_explains_icon_actions():
 
     rendered = transcript.to_plain_text(width=80)
 
-    assert "Copy Edit Save as... ♻ ---> 👍 👎 🗑" in rendered
+    assert "Copy 🔊 Edit Save as... ♻ ---> 👍 👎 🗑" in rendered
     # TASK-362 AC#2: the guide names the single-key shortcuts, not just icons.
     assert "Guide:" in rendered
     assert "c Copy" in rendered and "e Edit" in rendered and "r Regenerate" in rendered
@@ -481,7 +481,7 @@ def test_console_transcript_variant_action_row_stays_within_terminal_width_budge
         if line.startswith("Copy")
     )
 
-    assert action_row == "Copy Edit Save as... < > ♻ ---> 👍 👎 🗑"
+    assert action_row == "Copy 🔊 Edit Save as... < > ♻ ---> 👍 👎 🗑"
     assert len(action_row) <= 52
 
 

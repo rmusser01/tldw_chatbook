@@ -278,6 +278,19 @@ def test_generation_card_details_text_contains_all_fields():
     assert "2/3" in text  # n/N indicator, 1-based
 
 
+def test_generation_card_details_text_uses_named_style_not_custom():
+    """P2b pin: a spec whose meta carries a named style (e.g. a resolved
+    ``@style`` template's display name) renders that name, never the
+    ``meta.style is None`` fallback of "Custom"."""
+    meta = _meta(style="Anime Style")
+    spec = _card_spec("gen-1", meta=meta)
+
+    text = generation_card_details_text(spec)
+
+    assert "Style: Anime Style" in text
+    assert "Style: Custom" not in text
+
+
 def test_generation_card_details_text_style_and_seed_fallbacks():
     meta = _meta(style=None, seed=None)
     spec = _card_spec("gen-1", meta=meta)

@@ -5811,6 +5811,7 @@ class TldwCli(
             # Update widget state to ready with audio file
             if event.audio_file and event.audio_file.exists():
                 try:
+                    widget_found = False
                     if event.message_id:
                         # Find the message widget and update state
                         for message_widget in list(self.query(ChatMessage)) + list(
@@ -5820,6 +5821,7 @@ class TldwCli(
                                 getattr(message_widget, "message_id_internal", None)
                                 == event.message_id
                             ):
+                                widget_found = True
                                 # Update TTS state to ready with audio file
                                 if hasattr(message_widget, "update_tts_state"):
                                     message_widget.update_tts_state(
@@ -5834,10 +5836,25 @@ class TldwCli(
                                 except Exception:
                                     pass
                                 break
-                    # Don't automatically play or delete - let user control playback
-                    self.notify(
-                        "TTS audio ready - click play to listen", severity="information"
-                    )
+                    if widget_found:
+                        # A legacy ChatMessage/ChatMessageEnhanced widget owns
+                        # this message and exposes its own play control - let
+                        # the user trigger playback explicitly rather than
+                        # auto-playing underneath them.
+                        self.notify(
+                            "TTS audio ready - click play to listen",
+                            severity="information",
+                        )
+                    else:
+                        # No legacy widget claims this message (e.g. Console,
+                        # which has no per-message playback control), so
+                        # there is nothing for the user to click - play the
+                        # generated audio immediately instead of going silent.
+                        self.post_message(
+                            TTSPlaybackEvent(
+                                action="play", message_id=event.message_id
+                            )
+                        )
                 except Exception as e:
                     self.loguru_logger.error(f"Error playing audio: {e}")
                     self.notify("Failed to play audio", severity="error")

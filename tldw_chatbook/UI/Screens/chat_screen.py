@@ -97,9 +97,13 @@ from ...Chat.console_prefill import (
     pinned_prefill_from_conversation_metadata,
 )
 from ...Chat.console_generate_image import (
+    GenerationRefusal,
+    PreparedGeneration,
     clamp_initial_batch,
     generation_content_marker,
+    insert_style_token_into_draft,
     parse_generate_image_args,
+    prepare_generation_request,
     run_generation_batch,
 )
 from ...Image_Generation.config import get_image_generation_config
@@ -309,6 +313,7 @@ from ...Widgets.Console.console_prompt_picker_modal import (
     ConsolePromptPickerModal,
 )
 from ...Widgets.Console.console_skill_picker_modal import ConsoleSkillPickerModal
+from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
 from ...Widgets.Console.console_system_prompt_modal import ConsoleSystemPromptModal
 from ...Widgets.Console.console_setup_modal import (
     CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION,
@@ -1460,6 +1465,22 @@ class ChatScreen(BaseAppScreen):
             return
         self.run_worker(
             self._open_console_prompt_picker_for_insert(""),
+            exclusive=False,
+        )
+
+    def action_open_console_style_insert(self) -> None:
+        """Open the image-style picker from the command palette ("Insert image style…").
+
+        Mirrors `action_open_console_prompt_insert`'s guard + launch shape.
+        The picker only inserts an `@<style-id>` token into the composer
+        draft -- `/generate-image @<id> ...` is what later resolves and
+        applies the style at generation time; this action never generates
+        anything itself.
+        """
+        if self._console_setup_modal_blocking():
+            return
+        self.run_worker(
+            self._open_console_style_picker_for_insert(),
             exclusive=False,
         )
 
@@ -11471,6 +11492,57 @@ class ChatScreen(BaseAppScreen):
             callback=_apply_picker_choice,
         )
 
+    async def _open_console_style_picker_for_insert(self) -> None:
+        """Open the image-style picker, inserting whatever style is chosen."""
+
+        def _apply_picker_choice(record: Optional[Mapping[str, Any]]) -> None:
+            self._focus_console_composer_if_needed(force=True)
+            if record is None:
+                return
+            style_id = str(record.get("id") or "").strip()
+            if not style_id:
+                return
+            self._insert_console_style_token_into_composer(style_id)
+
+        self.app.push_screen(ConsoleStylePickerModal(), callback=_apply_picker_choice)
+
+    def _insert_console_style_token_into_composer(self, style_id: str) -> bool:
+        """Compose an ``@<style_id>`` token into a valid `/generate-image` draft.
+
+        Delegates the actual composition to `insert_style_token_into_draft`
+        (the pure grammar-aware helper `/generate-image`'s own parser is
+        built from) rather than blindly prepending the token: a bare
+        prepend would land the token BEFORE the command word on an
+        unedited draft like ``/generate-image a dragon``, producing
+        ``@style_anime /generate-image a dragon`` -- text `parse_generate_
+        image_args` never sees as a command at all (`ConsoleCommandRegistry
+        .parse` only recognizes drafts that START with `/`), so the whole
+        thing would ship to the LLM as plain chat text instead of
+        generating anything.
+
+        The whole draft is replaced wholesale with the composed result --
+        same clear-then-paste idiom `_insert_prompt_text_into_composer`
+        uses for `replace=True` -- since the composed draft may reorder or
+        drop text relative to the original (e.g. replacing an existing
+        leading `@style` token), so a plain in-place insert cannot express
+        it.
+
+        Args:
+            style_id: The resolved style template's `id` (e.g. "style_anime").
+
+        Returns:
+            ``True`` when the composer widget was found and the insert
+            applied, ``False`` when no native composer is mounted.
+        """
+        try:
+            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+        except QueryError:
+            return False
+        new_draft = insert_style_token_into_draft(composer.draft_text(), style_id)
+        composer.clear_draft()
+        composer.insert_text_as_paste(new_draft)
+        return True
+
     def _insert_prompt_text_into_composer(self, text: str, *, replace: bool) -> bool:
         """Insert resolved prompt text into the Console composer via paste semantics.
 
@@ -11729,23 +11801,54 @@ class ChatScreen(BaseAppScreen):
             self._imagegen_inflight_message_ids = message_ids
         return message_ids
 
-    async def _console_command_generate_image(self, parse: CommandParse) -> None:
-        """Resolve and run one `/generate-image` batch (`[:backend] <prompt>`).
+    def _console_generate_image_conversation_pairs(
+        self, store: Any, session_id: str
+    ) -> list[tuple[str, str]]:
+        """Return the session's completed, non-empty messages as ``(role, content)``.
 
-        Refusals (empty prompt, no resolvable/configured backend, or a
-        batch already running for this session) leave the composer draft
-        untouched, mirroring `/system`'s no-system-part behavior, and never
-        touch the store. Once a batch is actually going to run the draft is
-        cleared up front (this IS the "successful dispatch" point — not
-        "successful generation"): the blocking batch loop
-        (`run_generation_batch`) then runs off the UI loop via
-        `asyncio.to_thread`, exactly like `_prep_console_images`. On the
-        zero-success path the original draft is restored so the user can
-        edit and retry. One or more successes append a single generation
-        message via `ConsoleChatStore.append_generation_message` with a
-        trailing partial status line when some variants failed. The in-flight
-        guard is always cleared in a `finally`, so a crashed/cancelled batch
-        never wedges the session against further `/generate-image` commands.
+        Feeds `prepare_generation_request`'s no-prompt "generate from
+        conversation" path. The just-typed ``/generate-image`` invocation
+        itself is never in this list -- command dispatch intercepts before
+        the composer draft is ever appended to the store as a message.
+        """
+        return [
+            (
+                message.role.value
+                if hasattr(message.role, "value")
+                else str(message.role),
+                message.content,
+            )
+            for message in store.messages_for_session(session_id)
+            if message.status == "complete" and message.content and message.content.strip()
+        ]
+
+    async def _console_command_generate_image(self, parse: CommandParse) -> None:
+        """Resolve and run one `/generate-image` batch.
+
+        Grammar: ``[:backend] [@style] <prompt>`` (tokens in any order), or
+        no prompt at all to generate from the session's conversation
+        context. `prepare_generation_request` (`Chat/console_generate_image.py`)
+        owns all of that decision logic -- style-token resolution, prompt
+        composition against a template, and the conversation-context
+        fallback -- so it stays independently unit-testable; this handler
+        just executes its result.
+
+        Refusals (a `GenerationRefusal` from `prepare_generation_request`,
+        no resolvable/configured backend, or a batch already running for
+        this session) leave the composer draft untouched, mirroring
+        `/system`'s no-system-part behavior, and never touch the store.
+        Once a batch is actually going to run the draft is cleared up front
+        (this IS the "successful dispatch" point — not "successful
+        generation"): the blocking batch loop (`run_generation_batch`) then
+        runs off the UI loop via `asyncio.to_thread`, exactly like
+        `_prep_console_images`. On the zero-success path the original draft
+        is restored so the user can edit and retry. One or more successes
+        append a single generation message via
+        `ConsoleChatStore.append_generation_message` with a trailing
+        partial status line when some variants failed. The in-flight guard
+        is always cleared in a `finally`, so a crashed/cancelled batch
+        never wedges the session against further `/generate-image`
+        commands.
         """
         args = parse_generate_image_args(parse.args)
         store = self._ensure_console_chat_store()
@@ -11753,10 +11856,14 @@ class ChatScreen(BaseAppScreen):
             workspace_id=store.workspace_context.active_workspace_id,
             settings=self._default_console_session_settings(),
         )
-        if not args.prompt:
-            await self._append_native_console_system_message(
-                "Usage: /generate-image [:backend] <prompt>"
-            )
+        conversation_pairs = self._console_generate_image_conversation_pairs(
+            store, session.id
+        )
+        prepared: PreparedGeneration | GenerationRefusal = prepare_generation_request(
+            args, conversation_pairs
+        )
+        if isinstance(prepared, GenerationRefusal):
+            await self._append_native_console_system_message(prepared.reason)
             return
         cfg = get_image_generation_config()
         backend = args.backend or cfg.default_backend
@@ -11793,10 +11900,15 @@ class ChatScreen(BaseAppScreen):
             batch = await asyncio.to_thread(
                 run_generation_batch,
                 backend=backend,
-                prompt=args.prompt,
-                negative_prompt=None,
+                prompt=prepared.prompt,
+                negative_prompt=prepared.negative_prompt,
                 seed=None,
                 count=count,
+                style_name=prepared.style_name,
+                width=prepared.width,
+                height=prepared.height,
+                steps=prepared.steps,
+                cfg_scale=prepared.cfg_scale,
             )
             if not batch.successes:
                 # Restore the saved draft so the user can edit and retry.
@@ -11810,7 +11922,7 @@ class ChatScreen(BaseAppScreen):
                 return
             store.append_generation_message(
                 session.id,
-                content=generation_content_marker(args.prompt),
+                content=generation_content_marker(prepared.prompt),
                 variants=batch.successes,
                 persist=True,
             )
@@ -11834,8 +11946,8 @@ class ChatScreen(BaseAppScreen):
         regenerate (``♻``) action (Task 8): unlike text regeneration it
         never creates an LLM sibling turn -- it rebuilds a request from the
         message's position-0 (canonical) ``GenerationVariantMeta`` -- same
-        backend/prompt/negative -- with ``seed`` forced to ``-1`` so the new
-        variant is never a duplicate of the kept image, generates ONE
+        backend/prompt/negative/style -- with ``seed`` forced to ``-1`` so
+        the new variant is never a duplicate of the kept image, generates ONE
         variant off the UI loop (mirroring ``_console_command_generate_image``'s
         ``asyncio.to_thread(run_generation_batch, ...)`` offload), appends it
         via ``ConsoleChatStore.append_generation_variant``, and browses to
@@ -11886,6 +11998,7 @@ class ChatScreen(BaseAppScreen):
                 negative_prompt=base_meta.negative_prompt or None,
                 seed=-1,
                 count=1,
+                style_name=base_meta.style,
             )
             if not batch.successes:
                 detail = "; ".join(batch.errors) or "unknown error"
@@ -12957,6 +13070,17 @@ class ChatScreen(BaseAppScreen):
             copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
             if callable(copy_to_clipboard):
                 copy_to_clipboard(result.clipboard_text)
+        if action_id == "speak" and result.status == "completed":
+            # No new TTS machinery -- hand off to the app's existing
+            # pipeline (validation, synthesis, playback, failure toast) the
+            # same way legacy chat does (spec §1a).
+            from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
+                TTSRequestEvent,
+            )
+
+            self.app_instance.post_message(
+                TTSRequestEvent(text=message.content, message_id=message.id)
+            )
         if action_id == "edit" and result.status == "edit_requested":
             await self._open_console_message_edit_modal(
                 message_id=message_id,
@@ -13615,6 +13739,7 @@ class ChatScreen(BaseAppScreen):
             ("console-message-action-continue-", "continue"),
             ("console-message-action-delete-", "delete"),
             ("console-message-action-retry-", "retry"),
+            ("console-message-action-speak-", "speak"),
             ("console-message-action-copy-", "copy"),
             ("console-message-action-edit-", "edit"),
         )

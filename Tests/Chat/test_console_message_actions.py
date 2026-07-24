@@ -16,6 +16,7 @@ def test_assistant_message_actions_include_required_order():
 
     assert [action.label for action in actions] == [
         "Copy",
+        "🔊",
         "Edit",
         "Save as...",
         "♻",
@@ -58,6 +59,7 @@ def test_streaming_assistant_message_shows_completed_actions_disabled_with_reaso
 
     assert [action.label for action in actions] == [
         "Copy",
+        "🔊",
         "Edit",
         "Save as...",
         "♻",
@@ -150,7 +152,7 @@ def test_action_labels_fit_compact_terminal_width_budget():
 
     labels = service.plain_action_labels(message)
 
-    assert " ".join(labels) == "Copy Edit Save as... ♻ ---> 👍 👎 🗑"
+    assert " ".join(labels) == "Copy 🔊 Edit Save as... ♻ ---> 👍 👎 🗑"
     assert len(" ".join(labels)) <= 48
 
 
@@ -168,6 +170,7 @@ def test_variant_action_labels_use_symbolic_navigation():
 
     assert [action.label for action in actions] == [
         "Copy",
+        "🔊",
         "Edit",
         "Save as...",
         "<",
@@ -238,7 +241,7 @@ def test_variant_action_labels_fit_compact_terminal_width_budget():
 
     labels = service.plain_action_labels(message)
 
-    assert " ".join(labels) == "Copy Edit Save as... < > ♻ ---> 👍 👎 🗑"
+    assert " ".join(labels) == "Copy 🔊 Edit Save as... < > ♻ ---> 👍 👎 🗑"
     assert len(" ".join(labels)) <= 52
 
 
@@ -320,7 +323,9 @@ def test_unimplemented_actions_return_wip_reason():
 def test_regression_no_generation_kwargs_matches_text_sibling_gating():
     """Regression guard: callers that don't pass the new generation kwargs
     (every existing call site as of this task) must see byte-identical
-    behavior to before -- pinned against a real text-sibling case."""
+    behavior to before -- pinned against a real text-sibling case. Also pins
+    the TASK-1 speak action landing in its one new legacy spot (right after
+    Copy) without disturbing anything else in this set."""
     service = ConsoleMessageActionService()
     message = ConsoleChatMessage(
         role=ConsoleMessageRole.ASSISTANT,
@@ -334,6 +339,7 @@ def test_regression_no_generation_kwargs_matches_text_sibling_gating():
 
     assert [action.label for action in actions] == [
         "Copy",
+        "🔊",
         "Edit",
         "Save as...",
         "<",
@@ -502,3 +508,95 @@ def test_continue_action_targets_selected_variant_content():
     assert result.status == "continue_requested"
     assert result.target_message_id == "m1"
     assert result.target_content == "second"
+
+
+# --- TASK-1: speak (TTS) action ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "role", [ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT]
+)
+def test_speak_action_present_for_completed_text_message_any_role(
+    role: ConsoleMessageRole,
+):
+    """Spec §1a: speak is available for any COMPLETED message with
+    non-empty text -- both roles, not just assistant responses."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=role, content="hello there")
+
+    action_ids = [action.action_id for action in service.available_actions(message)]
+
+    assert "speak" in action_ids
+
+
+def test_speak_action_present_for_generation_card_marker_text():
+    """Spec §1a: a generation-card message's ``[image] ...`` marker text is
+    harmless input to TTS -- speak is offered for it like any other text."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="[image] a red dragon"
+    )
+
+    action_ids = [
+        action.action_id
+        for action in service.available_actions(
+            message, generation_variant_count=1, generation_browsed_index=0
+        )
+    ]
+
+    assert "speak" in action_ids
+
+
+def test_speak_action_absent_for_empty_content_message():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="", status="pending"
+    )
+
+    action_ids = [action.action_id for action in service.available_actions(message)]
+
+    assert "speak" not in action_ids
+
+
+def test_speak_action_absent_for_whitespace_only_content_message():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="   ")
+
+    action_ids = [action.action_id for action in service.available_actions(message)]
+
+    assert "speak" not in action_ids
+
+
+def test_speak_action_absent_for_failed_assistant_message():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="partial answer", status="failed"
+    )
+
+    action_ids = [action.action_id for action in service.available_actions(message)]
+
+    assert "speak" not in action_ids
+
+
+def test_speak_action_absent_for_failed_user_message():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER, content="hello", status="failed"
+    )
+
+    action_ids = [action.action_id for action in service.available_actions(message)]
+
+    assert "speak" not in action_ids
+
+
+def test_speak_action_dispatch_returns_completed_result_with_message_content_and_id():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="answer", id="m1"
+    )
+
+    result = service.dispatch("speak", message)
+
+    assert result.status == "completed"
+    assert result.target_message_id == "m1"
+    assert result.target_content == "answer"

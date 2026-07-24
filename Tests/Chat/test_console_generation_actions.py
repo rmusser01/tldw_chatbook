@@ -25,22 +25,32 @@ import pytest
 from PIL import Image as PILImage
 from textual.widgets import Button
 
-from tldw_chatbook.Chat.console_chat_models import GenerationVariantMeta
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleMessageRole,
+    GenerationVariantMeta,
+)
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_generate_image import BatchResult
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
+from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSRequestEvent
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
-def _meta(*, prompt: str = "a red dragon", backend: str = "swarmui", seed=42):
+def _meta(
+    *,
+    prompt: str = "a red dragon",
+    backend: str = "swarmui",
+    seed=42,
+    style: str | None = None,
+):
     return GenerationVariantMeta(
         prompt=prompt,
         negative_prompt="blurry",
         backend=backend,
         model=None,
         seed=seed,
-        style=None,
+        style=style,
         params={},
     )
 
@@ -88,9 +98,14 @@ def _bare_generation_screen(store: ConsoleChatStore) -> ChatScreen:
 
 
 def _fake_batch(*, calls: list, data: bytes = b"newimg") -> callable:
-    """Return a fake ``run_generation_batch`` recording every call's kwargs."""
+    """Return a fake ``run_generation_batch`` recording every call's kwargs.
 
-    def _run(*, backend, prompt, negative_prompt, seed, count, **_ignored):
+    Mirrors the real function's meta construction closely enough for
+    style-threading assertions: whatever ``style_name`` the caller passes
+    in lands on the returned variant's ``GenerationVariantMeta.style``.
+    """
+
+    def _run(*, backend, prompt, negative_prompt, seed, count, style_name=None, **_ignored):
         calls.append(
             {
                 "backend": backend,
@@ -98,6 +113,7 @@ def _fake_batch(*, calls: list, data: bytes = b"newimg") -> callable:
                 "negative_prompt": negative_prompt,
                 "seed": seed,
                 "count": count,
+                "style_name": style_name,
             }
         )
         meta = GenerationVariantMeta(
@@ -106,7 +122,7 @@ def _fake_batch(*, calls: list, data: bytes = b"newimg") -> callable:
             backend=backend,
             model=None,
             seed=seed,
-            style=None,
+            style=style_name,
             params={},
         )
         return BatchResult(successes=[(data, "image/png", meta)], errors=[])
@@ -386,6 +402,49 @@ def test_regenerate_success_appends_variant_and_browses_to_new_index(monkeypatch
     assert calls[0]["count"] == 1
 
 
+def test_regenerate_success_inherits_style_from_position_zero_meta(monkeypatch):
+    """P2b pin: the appended variant carries the canonical (position-0)
+    variant's style, not None.
+
+    Regression coverage for a real bug found while writing this pin:
+    ``_regenerate_console_generation_variant`` rebuilds its request from
+    position-0's backend/prompt/negative but was dropping ``style``,
+    silently downgrading every regenerated card's "Style" field back to
+    "Custom" even when the canonical variant carried a named ``@style``.
+    """
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+    styled_meta = _meta(seed=42, style="Anime Style")
+    message = store.append_generation_message(
+        session.id,
+        content="[image] a red dragon",
+        variants=[(b"img0", "image/png", styled_meta)],
+        persist=False,
+    )
+    screen = _bare_generation_screen(store)
+    monkeypatch.setattr(
+        chat_screen_module,
+        "get_image_generation_config",
+        lambda: SimpleNamespace(max_variants_per_message=8),
+    )
+    calls: list = []
+    monkeypatch.setattr(
+        chat_screen_module,
+        "run_generation_batch",
+        _fake_batch(calls=calls, data=b"appended"),
+    )
+
+    import asyncio
+
+    asyncio.run(screen._regenerate_console_generation_variant(message.id))
+
+    assert len(calls) == 1
+    assert calls[0]["style_name"] == "Anime Style"
+    appended = store.get_message(message.id)
+    assert len(appended.generation_metadata) == 2
+    assert appended.generation_metadata[1].style == "Anime Style"
+
+
 # --- Full dispatch routing through handle_console_message_action --------------
 
 
@@ -442,3 +501,191 @@ async def test_handle_console_message_action_routes_regenerate_for_generation_me
     assert handled is True
     appended = store.get_message(message.id)
     assert len(appended.generation_metadata) == 2
+
+
+# --- TASK-1: speak (TTS) action dispatch --------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_handle_console_message_action_routes_speak_to_tts_request_event():
+    """Speak posts the app's existing ``TTSRequestEvent`` -- no new TTS
+    machinery, no worker (spec §1a). Captured via a monkeypatched
+    ``post_message`` on the bare screen's stub ``app_instance``."""
+    store = ConsoleChatStore()
+    session = store.ensure_session(title="Chat 1")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="The sky is blue today.",
+        persist=False,
+    )
+    screen = _bare_generation_screen(store)
+    posted: list = []
+    screen.app_instance.post_message = posted.append
+    button = Button("speak", id=f"console-message-action-speak-{message.id}")
+
+    handled = await screen.handle_console_message_action(Button.Pressed(button))
+
+    assert handled is True
+    assert len(posted) == 1
+    event = posted[0]
+    assert isinstance(event, TTSRequestEvent)
+    assert event.text == "The sky is blue today."
+    assert event.message_id == message.id
+
+
+@pytest.mark.asyncio
+async def test_handle_console_message_action_routes_speak_for_generation_message():
+    """Spec §1a: speak also works for a generation-card message, reading
+    its ``[image] ...`` marker text."""
+    store = ConsoleChatStore()
+    _session, message = _seed_generation_message(store, variant_count=1)
+    screen = _bare_generation_screen(store)
+    posted: list = []
+    screen.app_instance.post_message = posted.append
+    button = Button("speak", id=f"console-message-action-speak-{message.id}")
+
+    handled = await screen.handle_console_message_action(Button.Pressed(button))
+
+    assert handled is True
+    assert len(posted) == 1
+    assert posted[0].text == "[image] a red dragon"
+    assert posted[0].message_id == message.id
+
+
+# --- Task 3: handler-level wiring test for /generate-image style threading ----
+
+
+@pytest.mark.asyncio
+async def test_generate_image_handler_threads_prepared_fields_into_batch(monkeypatch):
+    """Handler-level test of _console_command_generate_image: verifies that
+    parse -> PreparedGeneration -> run_generation_batch receives the correct
+    kwargs with prompt properly composed from style template, and that the
+    appended message contains the expected content marker.
+
+    Assembles a bare ChatScreen with minimum stubs following the precedent
+    from test_console_generation_actions.py, invokes the handler with a
+    /generate-image @anime "a dragon" parse, monkeypatches run_generation_batch
+    to capture its kwargs, and asserts the captured call plus the store's
+    appended message.
+    """
+    from types import SimpleNamespace
+    from tldw_chatbook.Chat.console_command_grammar import CommandParse
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+    from tldw_chatbook.Media_Creation.generation_templates import get_template
+
+    store = ConsoleChatStore()
+    screen = _bare_generation_screen(store)
+
+    # Stub session creation and settings
+    def _mock_default_settings():
+        return ConsoleSessionSettings(provider="openai")
+
+    screen._default_console_session_settings = _mock_default_settings
+
+    # Stub conversation pairs helper to return a simple test pair
+    def _mock_conversation_pairs(store, session_id):
+        return [("user", "a red dragon by a lake")]
+
+    screen._console_generate_image_conversation_pairs = _mock_conversation_pairs
+
+    # Stub status line and composer helpers
+    def _mock_composer_or_none():
+        return None  # No composer draft to save/restore
+
+    def _mock_clear_draft():
+        pass
+
+    screen._console_composer_or_none = _mock_composer_or_none
+    screen._clear_console_composer_draft = _mock_clear_draft
+
+    # Stub in-flight tracking
+    def _mock_inflight_sessions():
+        return set()
+
+    screen._console_imagegen_inflight_sessions = _mock_inflight_sessions
+
+    # Capture the batch call and store appends
+    captured_kwargs = []
+    appended_messages: list = []
+
+    def _mock_batch(**kwargs):
+        captured_kwargs.append(kwargs)
+        # Return successful batch with one image
+        meta = GenerationVariantMeta(
+            prompt=kwargs["prompt"],
+            negative_prompt=kwargs.get("negative_prompt") or "",
+            backend=kwargs["backend"],
+            model=None,
+            seed=None,
+            style=kwargs.get("style_name"),
+            params={},
+        )
+        return BatchResult(
+            successes=[(b"generated_img", "image/png", meta)], errors=[]
+        )
+
+    original_append = store.append_generation_message
+
+    def _capture_append(session_id, **kwargs):
+        appended_messages.append(kwargs)
+        return original_append(session_id, **kwargs)
+
+    store.append_generation_message = _capture_append
+
+    # Monkeypatch run_generation_batch and config
+    monkeypatch.setattr(
+        chat_screen_module, "run_generation_batch", _mock_batch
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "get_image_generation_config",
+        lambda: SimpleNamespace(
+            default_backend="swarmui",
+            default_batch=1,
+            max_variants_per_message=8,
+        ),
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "list_image_models_for_catalog",
+        lambda: [
+            {"name": "swarmui", "is_configured": True},
+        ],
+    )
+
+    # Build the command parse: /generate-image @anime a dragon
+    parse = CommandParse(kind="command", name="generate-image", args="@anime a dragon")
+
+    # Invoke the handler
+    await screen._console_command_generate_image(parse)
+
+    # Verify run_generation_batch was called once with correct kwargs
+    assert len(captured_kwargs) == 1
+    kwargs = captured_kwargs[0]
+    template = get_template("style_anime")
+
+    # Prompt should be composed from template + user prompt "a dragon"
+    assert "a dragon" in kwargs["prompt"]
+    assert "anime style" in kwargs["prompt"]
+
+    # Style name should be "Anime Style"
+    assert kwargs["style_name"] == "Anime Style"
+
+    # Width/height/steps/cfg_scale should come from template defaults
+    assert kwargs["width"] == template.default_params["width"]  # 768
+    assert kwargs["height"] == template.default_params["height"]  # 1024
+    assert kwargs["steps"] == template.default_params["steps"]  # 25
+    assert kwargs["cfg_scale"] == template.default_params["cfg_scale"]  # 9.0
+
+    # Backend should be the default
+    assert kwargs["backend"] == "swarmui"
+
+    # Count should be clamped
+    assert kwargs["count"] == 1
+
+    # Verify that append_generation_message was called with correct content marker
+    assert len(appended_messages) == 1
+    append_kwargs = appended_messages[0]
+    assert append_kwargs["content"].startswith("[image] ")
+    assert "a dragon" in append_kwargs["content"]
