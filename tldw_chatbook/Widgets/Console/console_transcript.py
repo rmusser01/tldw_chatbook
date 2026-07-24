@@ -257,13 +257,15 @@ def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Cont
         body = f"{body}\n{chip_lines}" if body else chip_lines
     if _is_generating_placeholder_body(message, body):
         body_segments: list = [(body, "dim")]
-    elif message.role is ConsoleMessageRole.USER:
-        # The user's own text is shown verbatim -- don't restyle their input.
-        body_segments = [body]
-    else:
+    elif message.role is ConsoleMessageRole.ASSISTANT:
         # TASK-372: render assistant markdown (headings/**bold**/`code`) with
-        # terminal emphasis instead of literal marker characters.
+        # terminal emphasis instead of literal marker characters. Only ASSISTANT
+        # replies are markdown -- USER input, SYSTEM diagnostics, and TOOL output
+        # stay verbatim, since their #/**/backtick characters may be literal and
+        # meaningful (Qodo #823).
         body_segments = _markdown_body_spans(body)
+    else:
+        body_segments = [body]
     separator = "  " if not selected and "\n" not in body and len(body) <= 120 else "\n"
     return Content.assemble((role_label, "dim"), separator, *body_segments)
 
