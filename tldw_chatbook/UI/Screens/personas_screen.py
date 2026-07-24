@@ -1699,11 +1699,7 @@ class PersonasScreen(BaseAppScreen):
             self._show_center("#personas-mode-placeholder")
 
     def _header_subtitle_text(self) -> str:
-        """Live header subtitle: destination purpose plus the editing state.
-
-        "Local" deliberately stays out of the header - the status row directly
-        below already says "Source: Local" (de-dup, P3-15).
-        """
+        """Live header subtitle: destination purpose plus the editing state."""
         suffix = " - unsaved" if self.state.has_unsaved_changes else ""
         if self._edit_mode == "create":
             noun = "persona" if self.state.active_mode == "personas" else "character"
@@ -1752,10 +1748,10 @@ class PersonasScreen(BaseAppScreen):
         if mode == "characters":
             # ``_characters`` is now one page; the full-library count lives in
             # ``_character_total``.
-            return f"Characters: {self._character_total} | Source: Local | Attachments: Console"
+            return f"Characters: {self._character_total}"
         if mode == "personas":
-            return f"Personas: {len(self._profiles)} | Source: Local | Attachments: Console"
-        return f"Mode: {MODE_LABELS.get(mode, mode)} | Source: Local | Attachments: Console"
+            return f"Personas: {len(self._profiles)}"
+        return f"Mode: {MODE_LABELS.get(mode, mode)}"
 
     def _update_status_row(self) -> None:
         """Refresh the status row text; tolerate refreshes racing teardown."""
@@ -1806,7 +1802,7 @@ class PersonasScreen(BaseAppScreen):
         await self.character_handler.load_character(entity_id)
         self._show_center("#ccp-character-card-view")
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(name=entity_name, kind="character", authority="Local")
+        inspector.show_selection(name=entity_name, kind="character")
         inspector.set_unsaved(False)
         inspector.show_validation(())
         self._sync_inspector_console_actions()
@@ -1856,9 +1852,7 @@ class PersonasScreen(BaseAppScreen):
         self.query_one(PersonaProfileCardWidget).show_persona(record)
         self._show_center("#ccp-persona-card-view")
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(
-            name=entity_name, kind="persona_profile", authority="Local"
-        )
+        inspector.show_selection(name=entity_name, kind="persona_profile")
         inspector.set_unsaved(False)
         inspector.show_validation(())
         self._sync_inspector_console_actions()
@@ -1905,7 +1899,7 @@ class PersonasScreen(BaseAppScreen):
         library = self.query_one(PersonasLibraryPane)
         library.mark_active_row("dictionary", entity_id)
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(name=entity_name, kind="dictionary", authority="Local")
+        inspector.show_selection(name=entity_name, kind="dictionary")
         self.query_one(PersonasDictionaryTryItWidget).set_ready(
             True, "Run the preview to see what this dictionary changes."
         )
@@ -1962,7 +1956,7 @@ class PersonasScreen(BaseAppScreen):
         library = self.query_one(PersonasLibraryPane)
         library.mark_active_row("lore", entity_id)
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(name=entity_name, kind="lore", authority="Local")
+        inspector.show_selection(name=entity_name, kind="lore")
         self.query_one(PersonasLoreTryItWidget).set_ready(
             True, "Run the preview to see what this lore book injects."
         )
@@ -2078,7 +2072,7 @@ class PersonasScreen(BaseAppScreen):
         self.state.has_unsaved_changes = False
         self.state.selected_entity_name = str(record.get("name") or "")
         self.query_one(PersonasInspectorPane).show_selection(
-            name=self.state.selected_entity_name, kind="dictionary", authority="Local"
+            name=self.state.selected_entity_name, kind="dictionary"
         )
         detail.load_dictionary(record)
         await self._refresh_dictionary_statistics(record)
@@ -2797,7 +2791,6 @@ class PersonasScreen(BaseAppScreen):
             self.query_one(PersonasInspectorPane).show_selection(
                 name=self.state.selected_entity_name,
                 kind="dictionary",
-                authority="Local",
             )
             detail.load_dictionary(record)
             await self._refresh_dictionary_statistics(record)
@@ -3127,7 +3120,7 @@ class PersonasScreen(BaseAppScreen):
             self._selected_lore_book = record
             self.state.selected_entity_name = str(record.get("name") or "")
             self.query_one(PersonasInspectorPane).show_selection(
-                name=self.state.selected_entity_name, kind="lore", authority="Local"
+                name=self.state.selected_entity_name, kind="lore"
             )
         detail.set_status("Saved.")
         self._update_title()
@@ -3688,7 +3681,9 @@ class PersonasScreen(BaseAppScreen):
             elif self.state.active_mode == "lore":
                 await self._run_guarded(self._open_lore_import_dialog)
         elif message.action == "duplicate":
-            if self.state.active_mode == "dictionaries":
+            if self.state.active_mode == "characters":
+                await self._run_guarded(self._duplicate_selected_character)
+            elif self.state.active_mode == "dictionaries":
                 await self._run_guarded(self._duplicate_selected_dictionary)
             elif self.state.active_mode == "lore":
                 await self._run_guarded(self._duplicate_selected_lore)
@@ -3782,6 +3777,80 @@ class PersonasScreen(BaseAppScreen):
             self.query_one("#personas-dict-name", Input).focus()
         except QueryError:
             pass
+
+    async def _duplicate_selected_character(self) -> None:
+        """Copy the selected character card under a disambiguated name.
+
+        Task-443 AC2: characters had no Duplicate seam (only dictionaries and
+        lore did). Mirrors ``_duplicate_selected_dictionary``/
+        ``_duplicate_selected_lore``: read the full source record off the UI
+        thread, disambiguate the name against the cached list, and reuse the
+        existing create seam (``ccp_character_handler.create_character`` -
+        the same helper Save-as-new-character already calls) rather than a
+        new duplication engine.
+        """
+        entity_id = self.state.selected_entity_id
+        if self.state.selected_entity_kind != "character" or not entity_id:
+            self._notify("Select a character to duplicate.", "warning")
+            return
+        try:
+            source = await asyncio.to_thread(
+                ccp_character_handler.fetch_character_by_id, entity_id
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Could not load character {entity_id} to duplicate."
+            )
+            self._notify(f"Duplicate failed: {exc}", "error")
+            return
+        if not source:
+            self._notify(
+                f"Could not load character {entity_id} to duplicate.", "error"
+            )
+            return
+        base_name = str(source.get("name") or "Character")
+        base = f"{base_name} (copy)"
+        existing = {
+            str(c.get("name") or "") for c in self.character_handler.character_list
+        }
+        name = base
+        suffix = 2
+        while name in existing:
+            name = f"{base_name} (copy {suffix})"
+            suffix += 1
+        payload = {
+            "name": name,
+            "description": source.get("description"),
+            "personality": source.get("personality"),
+            "scenario": source.get("scenario"),
+            "image": source.get("image"),
+            "post_history_instructions": source.get("post_history_instructions"),
+            "first_message": source.get("first_message"),
+            "message_example": source.get("message_example"),
+            "creator_notes": source.get("creator_notes"),
+            "system_prompt": source.get("system_prompt"),
+            "alternate_greetings": source.get("alternate_greetings"),
+            "tags": source.get("tags"),
+            "creator": source.get("creator"),
+            "character_version": source.get("character_version"),
+            "extensions": source.get("extensions"),
+        }
+        try:
+            new_id = await asyncio.to_thread(
+                ccp_character_handler.create_character, payload
+            )
+        except ConflictError:
+            self._notify("A character with that name already exists.", "error")
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning("Could not duplicate the character.")
+            self._notify(f"Duplicate failed: {exc}", "error")
+            return
+        if not new_id:
+            self._notify("Duplicate failed: character creation returned no id.", "error")
+            return
+        await self.character_handler.refresh_character_list()
+        await self._select_character(str(new_id), name)
 
     async def _duplicate_selected_dictionary(self) -> None:
         service = self._dictionary_scope_service()
@@ -5029,10 +5098,20 @@ class PersonasScreen(BaseAppScreen):
         # The selection changed outside _run_guarded; refresh the footer hints
         # (attach is now available) and the header state.
         self._sync_title_and_console_actions()
+        # task-445: import swaps in the card view and inspector at the same
+        # moment this notification appears, so the default 5s toast reads as
+        # a flash against a screen that just changed everywhere else. Linger
+        # longer, matching the codebase's convention for confirmations that
+        # need a deliberate beat to register (e.g. import-conflict warnings
+        # elsewhere use timeout=6).
         if existed_before:
-            self._notify("Character already existed; selected it.", "information")
+            self._notify(
+                "Character already existed; selected it.",
+                "information",
+                timeout=6.0,
+            )
         else:
-            self._notify("Character imported.", "information")
+            self._notify("Character imported.", "information", timeout=6.0)
 
     async def _open_lore_import_dialog(self) -> None:
         """Continuation for the guarded lore-import action."""
@@ -5850,7 +5929,7 @@ class PersonasScreen(BaseAppScreen):
         self.query_one(PersonasPreviewPane).set_speakers(character=name)
         self.state.has_unsaved_changes = False
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(name=name, kind="character", authority="Local")
+        inspector.show_selection(name=name, kind="character")
         inspector.set_unsaved(False)
         inspector.show_validation(())
         self._sync_inspector_console_actions()
@@ -6006,7 +6085,7 @@ class PersonasScreen(BaseAppScreen):
             entity_kind="persona_profile", entity_id=saved_id, entity_name=name
         )
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(name=name, kind="persona_profile", authority="Local")
+        inspector.show_selection(name=name, kind="persona_profile")
         inspector.set_unsaved(False)
         inspector.show_validation(())
         self._sync_inspector_console_actions()
@@ -6220,10 +6299,28 @@ class PersonasScreen(BaseAppScreen):
             )
             return False
 
-    def _notify(self, message: str, severity: str = "warning") -> None:
+    def _notify(
+        self,
+        message: str,
+        severity: str = "warning",
+        *,
+        timeout: float | None = None,
+    ) -> None:
+        """Post an app notification.
+
+        Args:
+            message: Text to show.
+            severity: Textual severity level.
+            timeout: Seconds to linger before dismissing; ``None`` uses the
+                app's default (Textual's ``NOTIFICATION_TIMEOUT``, 5s). Most
+                callers leave this at the default; a few confirmations that
+                land alongside a big simultaneous UI change (e.g. import
+                swapping in the card view) pass a longer value so they don't
+                read as a flash (task-445).
+        """
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
-            notify(message, severity=severity)
+            notify(message, severity=severity, timeout=timeout)
 
     # ===== Key bindings =====
 

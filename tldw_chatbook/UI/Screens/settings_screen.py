@@ -460,20 +460,20 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
         title="Personas",
         owner_destination="Personas",
         source_of_truth=(
-            "Character/persona scope service",
-            "Personas destination runtime handoff",
+            "Your saved characters and personas",
+            "Whatever's currently open in Roleplay",
         ),
         rows=(
             (
-                "Runtime selection",
-                "Personas owns character/profile selection and Console attach payloads",
+                "What Roleplay controls",
+                "Picking a character or persona, and sending it to Console",
             ),
             (
-                "Settings role",
-                "future defaults may choose discovery/display preferences, not active persona runtime",
+                "What Settings might add later",
+                "Browsing or display preferences - never which persona is active",
             ),
         ),
-        follow_up="Follow-up: add persona display/default controls after Personas exposes a persisted category source.",
+        follow_up="Add persona display/browsing preferences once Roleplay can hand Settings a saved preference to edit.",
     ),
     SettingsDomainCategoryContract(
         category=SettingsCategoryId.SKILLS,
@@ -1287,7 +1287,7 @@ class SettingsScreen(BaseAppScreen):
             SettingsCategorySummary(
                 SettingsCategoryId.PERSONAS,
                 "Personas",
-                "Character/persona discovery and Console attach defaults.",
+                "Character and persona browsing, plus how they attach to Console chats.",
                 "Read-only",
             ),
             SettingsCategorySummary(
@@ -2464,8 +2464,8 @@ class SettingsScreen(BaseAppScreen):
         if category in DOMAIN_SETTINGS_CATEGORY_IDS:
             contract = self._domain_category_contract(category)
             return (
-                "State: Read-only contract | "
-                f"{contract.owner_destination} owns workflow actions and setup."
+                "State: View only | "
+                f"Manage this in {contract.owner_destination}."
             )
         return "State: Active | Review readiness across Settings categories."
 
@@ -6386,15 +6386,15 @@ class SettingsScreen(BaseAppScreen):
             return (
                 (
                     "Affected config",
-                    "none yet - this category is an ownership/status contract",
+                    "none yet - nothing on this page is editable",
                 ),
                 (
                     "Recovery",
-                    f"open {contract.owner_destination} for workflow actions and setup",
+                    f"go to {contract.owner_destination} to make changes",
                 ),
                 (
                     "Boundary",
-                    f"{contract.owner_destination} remains the runtime owner; Settings cannot mutate it yet",
+                    f"{contract.owner_destination} owns this; Settings only shows it",
                 ),
             )
         guidance = _INSPECTOR_GUIDANCE.get(category)
@@ -7504,14 +7504,14 @@ class SettingsScreen(BaseAppScreen):
             id=f"settings-{category.value}-card", classes="settings-focus-card"
         ):
             yield self._render_category_state_banner(category)
-            yield Static("Domain ownership contract", classes="destination-section")
+            yield Static("How this page works", classes="destination-section")
             yield self._detail_row("Owner destination", contract.owner_destination)
             yield self._detail_row(
-                "Settings mode", "read-only defaults/status contract"
+                "Settings mode", "View only - shows current defaults and status"
             )
             yield self._detail_row(
                 "Writes allowed",
-                "No - destination ownership must be implemented before mutation",
+                f"No - change this in {contract.owner_destination} instead",
             )
             yield Static("Source of truth", classes="destination-section")
             for index, source in enumerate(contract.source_of_truth, start=1):

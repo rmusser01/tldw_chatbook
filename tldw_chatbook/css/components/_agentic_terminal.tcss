@@ -3090,14 +3090,15 @@ ConsoleSystemPromptModal {
 }
 
 .console-setup-step {
-    height: 1;
+    height: auto;
+    min-height: 1;
     color: $ds-text-primary;
-    /* TASK-389: the step is height-1, so a line wider than the card silently
-       clipped its last word ("setup") to a hidden second line with no ellipsis.
-       Ellipsize on one line so any unavoidable overflow (e.g. a narrow terminal
-       capping the card at max-width) is marked rather than dropped. */
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
+    /* TASK-389 made a height-1 line ellipsize on unavoidable overflow instead
+       of silently clipping. TASK-441: ellipsizing still drops the tail of the
+       sentence, so wrap onto a second row instead -- height:auto (Static's
+       default text-wrap is already "wrap") lets the widget grow to fit
+       however many rows a narrow terminal's capped card width needs, and
+       .console-setup-modal-card's own height:auto absorbs the extra row. */
 }
 
 .console-setup-step-done {
@@ -4068,6 +4069,18 @@ ListItem.personas-library-row.is-active.-highlight {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold;
+}
+
+/* task-445: the global `*:focus { outline: solid $ds-focus-accent; }`
+   fallback (core/_reset.tcss) draws its outline around the ListView's own
+   box once it takes keyboard focus after a row is selected -- and that box
+   is taller than the 1-2 rows it holds (it fills the rail's remaining
+   height), so the outline rendered as a tall empty bordered rectangle
+   hanging below the selected row (RP UX review). Rows already show
+   selection via .is-active/.-highlight backgrounds above, so the fallback
+   outline is both redundant and visually broken here. */
+#personas-library-rows:focus {
+    outline: none;
 }
 
 .library-source-action {

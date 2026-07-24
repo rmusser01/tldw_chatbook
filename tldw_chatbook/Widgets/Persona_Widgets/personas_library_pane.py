@@ -37,6 +37,16 @@ def _singular_noun(noun: str) -> str:
     return noun
 
 
+def _noun_for_count(count: int, noun: str) -> str:
+    """Return ``noun`` in the grammatical number matching ``count``.
+
+    task-445: the count line used the plural ``noun`` unconditionally, so a
+    total of exactly one item read "1 characters".
+    """
+
+    return _singular_noun(noun) if count == 1 else noun
+
+
 @dataclass(frozen=True)
 class LibraryRow:
     """One selectable row in the workbench library list."""
@@ -113,8 +123,13 @@ class PersonasLibraryPane(Vertical):
         self._import_visible: bool = True
 
     def on_mount(self) -> None:
-        """Initialize control visibility for default characters mode."""
-        self.query_one("#personas-library-duplicate", Button).display = False
+        """Initialize control visibility for default characters mode.
+
+        ``PersonasScreen.on_mount`` calls ``set_mode`` immediately after this
+        pane mounts, so this only sets the very first paint; Duplicate
+        applies to characters (task-443), so it starts visible here too.
+        """
+        self.query_one("#personas-library-duplicate", Button).display = True
         self.query_one("#personas-library-pagebar").display = False
 
     def compose(self) -> ComposeResult:
@@ -191,7 +206,15 @@ class PersonasLibraryPane(Vertical):
         yield Static("", id="personas-library-count", classes="destination-purpose")
 
     def set_mode(self, mode: str) -> None:
-        """Gate the toolbar per mode: Import for characters+dictionaries+lore, Duplicate for dictionaries+lore."""
+        """Gate the library toolbar's buttons for the active workbench mode.
+
+        Import and Duplicate render for characters/dictionaries/lore (with a
+        mode-appropriate Import tooltip); personas mode hides both (task-443).
+
+        Args:
+            mode: The active workbench mode id (``characters``/``personas``/
+                ``dictionaries``/``lore``).
+        """
         self._import_visible = mode in ("characters", "dictionaries", "lore")
         import_button = self.query_one("#personas-library-import", Button)
         import_button.display = self._import_visible
@@ -202,6 +225,7 @@ class PersonasLibraryPane(Vertical):
         else:
             import_button.tooltip = "Import a character card (PNG or JSON)."
         self.query_one("#personas-library-duplicate", Button).display = mode in (
+            "characters",
             "dictionaries",
             "lore",
         )
@@ -337,9 +361,11 @@ class PersonasLibraryPane(Vertical):
                     f"{match_word} from full library"
                 )
             elif filtered:
-                count_static.update(f"{len(rows)} of {total} {noun}")
+                count_static.update(
+                    f"{len(rows)} of {total} {_noun_for_count(total, noun)}"
+                )
             else:
-                count_static.update(f"{total} {noun}")
+                count_static.update(f"{total} {_noun_for_count(total, noun)}")
 
     def mark_active_row(self, kind: str, item_id: str) -> None:
         """Move the list highlight and the .is-active marker to one row."""

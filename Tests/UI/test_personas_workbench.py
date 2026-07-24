@@ -356,8 +356,11 @@ class TestWorkbenchShell:
             rendered = context.render()
             assert "new" in rendered.lower()
             assert "search" in rendered.lower()
-            assert "save" in rendered.lower()
-            assert "attach" in rendered.lower()
+            # task-445: unavailable actions (nothing is being edited/selected
+            # at fresh mount) are dropped from the rendered hint entirely
+            # rather than shown with a literal "unavailable" suffix.
+            assert "save" not in rendered.lower()
+            assert "attach" not in rendered.lower()
             assert context.source == "personas"
             # task-264: the registration lands on the SCREEN's own footer,
             # not the harness's default-screen stand-in.
@@ -406,7 +409,7 @@ class TestWorkbenchShell:
             await pilot.pause()
             status = screen.query_one("#personas-status-row", Static)
             assert "Characters: 2" in str(status.renderable)
-            assert "Source: Local" in str(status.renderable)
+            assert str(status.renderable) == "Characters: 2"
             await pilot.click("#personas-mode-personas")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
@@ -1193,7 +1196,8 @@ class TestSearch:
             count = str(screen.query_one("#personas-library-count", Static).renderable)
             # Task 4: the library pages from the DB seam, so a search reports the
             # match count as the page total (no separate "of <library>" copy).
-            assert "1 characters" in count
+            # task-445: a total of exactly 1 reads singular ("1 character").
+            assert "1 character" in count
 
     async def test_clearing_search_restores_all_rows(
         self, mock_app_instance, stub_characters
@@ -1250,7 +1254,8 @@ class TestSearch:
             assert [_row_text(r) for r in rows] == ["Navigator"]
             count = str(screen.query_one("#personas-library-count", Static).renderable)
             # Task 4: personas paginate in-memory; the count is the match total.
-            assert "1 persona profiles" in count
+            # task-445: a total of exactly 1 reads singular ("1 persona profile").
+            assert "1 persona profile" in count
 
     async def test_mode_switch_clears_search(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -1377,6 +1382,63 @@ class TestImportExport:
             assert screen.query_one("#personas-library-search").value == ""
             rows = screen.query(".personas-library-row")
             assert "Imported Hero" in [_row_text(r) for r in rows]
+
+    async def test_import_success_notification_lingers_past_the_app_default(
+        self, mock_app_instance, stub_characters, monkeypatch, tmp_path
+    ):
+        """task-445: the review saw the import-success toast flash by --
+        it fired at the same instant the card view/inspector swapped in,
+        against the app's plain 5s default. It must now request an explicit
+        timeout longer than that default so it reads at normal pace."""
+        imported_paths: list[str] = []
+
+        def fake_import(file_path):
+            imported_paths.append(file_path)
+            return 3
+
+        monkeypatch.setattr(
+            character_handler_module, "import_character_card", fake_import
+        )
+
+        def fetch_all_with_imported():
+            characters = [dict(c) for c in CHARACTERS]
+            if imported_paths:
+                characters.append({"id": 3, "name": "Imported Hero", "version": 1})
+            return characters
+
+        monkeypatch.setattr(
+            character_handler_module, "fetch_all_characters", fetch_all_with_imported
+        )
+        monkeypatch.setattr(
+            character_handler_module,
+            "fetch_character_by_id",
+            lambda character_id: next(
+                (
+                    dict(c)
+                    for c in fetch_all_with_imported()
+                    if str(c["id"]) == str(character_id)
+                ),
+                None,
+            ),
+        )
+        app = PersonasTestApp(mock_app_instance)
+        calls: list[tuple[str, str, dict]] = []
+        app.notify = lambda message, severity="information", **kwargs: calls.append(
+            (str(message), severity, kwargs)
+        )
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await screen._import_character_from_path(str(tmp_path / "card.json"))
+            await pilot.pause()
+        matches = [c for c in calls if c[0] == "Character imported."]
+        assert matches, f"no 'Character imported.' notify call in {calls}"
+        message, severity, kwargs = matches[-1]
+        assert severity == "information"
+        timeout = kwargs.get("timeout")
+        assert timeout is not None and timeout > 5, (
+            f"import-success notify must linger past the 5s app default, got {timeout!r}"
+        )
 
     async def test_import_markdown_routes_through_character_import_helper(
         self, mock_app_instance, stub_characters, monkeypatch, tmp_path
@@ -1527,6 +1589,97 @@ class TestImportExport:
                 for message, severity in notifications
             )
             assert screen.state.selected_entity_id == "1"
+
+    async def test_duplicate_copies_character_under_disambiguated_name(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        """Task-443 AC2: characters gained a Duplicate seam (the library-rail
+        button now shows in Characters mode too), reusing the same
+        ``create_character`` seam a normal Save-as-new already calls -
+        mirrors ``test_duplicate_copies_entries_and_strategy`` (dictionaries)
+        and the lore equivalent."""
+        created_payloads: list[dict] = []
+        characters = [dict(c) for c in CHARACTERS]
+
+        def fake_create(data):
+            record = dict(data)
+            record["id"] = 99
+            record["version"] = 1
+            characters.append(record)
+            created_payloads.append(data)
+            return 99
+
+        monkeypatch.setattr(character_handler_module, "create_character", fake_create)
+        monkeypatch.setattr(
+            character_handler_module, "fetch_all_characters", lambda: list(characters)
+        )
+        monkeypatch.setattr(
+            character_handler_module,
+            "fetch_character_by_id",
+            lambda character_id: next(
+                (dict(c) for c in characters if str(c["id"]) == str(character_id)),
+                None,
+            ),
+        )
+        app = PersonasTestApp(mock_app_instance)
+        # Button-press tests need a real-terminal-sized layout: at the
+        # default 80x24 the center panels overlap the library toolbar's
+        # coordinates, so a Duplicate click silently lands on the
+        # character-dictionaries panel instead (same reason
+        # TestConsoleActions runs at 160x50).
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            # Duplicate now applies to characters (task-443) - the library
+            # rail button must be visible in the default characters mode.
+            assert screen.query_one("#personas-library-duplicate", Button).display
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            await pilot.click("#personas-library-duplicate")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert len(created_payloads) == 1
+            payload = created_payloads[0]
+            assert payload["name"] == "Detective Sam (copy)"
+            assert payload["description"] == "Noir detective"
+            assert payload["first_message"] == "The name's {{char}}. Who's asking?"
+            assert payload["alternate_greetings"] == [
+                "An alternate opener.",
+                "A third opener.",
+            ]
+            assert screen.state.selected_entity_id == "99"
+            rows = screen.query(".personas-library-row")
+            assert "Detective Sam (copy)" in [_row_text(r) for r in rows]
+
+    async def test_duplicate_name_conflict_notifies_error(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError
+
+        def fake_create(data):
+            raise ConflictError(
+                "already exists", entity="character_cards", entity_id=data["name"]
+            )
+
+        monkeypatch.setattr(character_handler_module, "create_character", fake_create)
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        # 200x60: see test_duplicate_copies_character_under_disambiguated_name.
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            await pilot.click("#personas-library-duplicate")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.state.selected_entity_id == "1"
+            assert any(
+                "already exists" in message and severity == "error"
+                for message, severity in notifications
+            )
 
     async def test_stage_character_avatar_from_path_updates_editor_and_dirty_state(
         self, mock_app_instance, stub_characters, tmp_path
@@ -4944,7 +5097,9 @@ class TestKeyboardInteraction:
             assert confirms == []
             assert screen._edit_mode == "view"
             assert _save_action(screen._shortcut_context()).available is False
-            assert "ctrl+s save unavailable" in footer.shortcut_text
+            # task-445: unavailable hints are dropped entirely rather than
+            # rendered with a literal "unavailable" suffix.
+            assert "ctrl+s save" not in footer.shortcut_text
 
     async def test_mode_keys_switch_modes(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -5224,7 +5379,9 @@ class TestDirtyTracking:
             # task-264: the registration lands on the SCREEN's own footer,
             # not the harness's default-screen stand-in.
             footer = screen.query_one(AppFooterStatus)
-            assert "ctrl+enter attach unavailable" in footer.shortcut_text
+            # task-445: unavailable hints are dropped entirely rather than
+            # rendered with a literal "unavailable" suffix.
+            assert "ctrl+enter attach" not in footer.shortcut_text
             await screen._import_character_from_path("/tmp/card.json")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
