@@ -3,7 +3,9 @@
 # Imports
 #
 # 3rd-party Libraries
+from rich.cells import cell_len
 from textual.app import ComposeResult
+from textual.events import Resize
 from textual.widget import Widget
 from textual.widgets import Static
 
@@ -14,6 +16,11 @@ from ..UI.Navigation.shortcut_context import ShortcutAction, ShortcutContext
 ########################################################################################################################
 #
 # AppFooterStatus
+
+#: TASK-451: cells reserved for the footer's padding/margins plus a gap so the
+#: key hints don't sit flush against the debug memory stats at the boundary.
+#: Below `hints + word + token + stats + this`, the memory stats hide.
+_FOOTER_STATS_HEADROOM = 10
 
 
 class AppFooterStatus(Widget):
@@ -91,6 +98,9 @@ class AppFooterStatus(Widget):
             "Local database file sizes\n"
             "P: Prompts   C/N: Conversations & Notes   M: Media"
         )
+        #: TASK-451: last known footer width, so a content change (new shortcut
+        #: context / DB stats) can re-run the priority reflow without a resize.
+        self._last_footer_width = 0
 
     def compose(self) -> ComposeResult:
         yield self._shortcut_display
@@ -99,6 +109,38 @@ class AppFooterStatus(Widget):
         yield self._token_count_display  # Token count display
         yield self._db_status_display  # This is the existing DB size display
 
+    def on_resize(self, event: Resize) -> None:
+        """Reprioritise the footer when its width changes (TASK-451).
+
+        Args:
+            event: The resize event; its ``size.width`` becomes the width the
+                priority reflow measures against.
+        """
+        self._last_footer_width = event.size.width
+        self._reflow_footer_priority()
+
+    def _reflow_footer_priority(self) -> None:
+        """Preserve the left key hints; the right debug memory stats yield.
+
+        On a narrow footer the right-docked memory stats (``P:/C/N:/M:`` file
+        sizes -- debug telemetry) would otherwise keep full width and squeeze
+        the left-docked key hints (navigation the user needs). When there is not
+        room for the hints AND every right-side item, the memory stats hide
+        (TASK-451). Recomputed from the raw renderables, so the decision is
+        stable regardless of the stats' current visibility (no flicker).
+        """
+        width = self._last_footer_width or self.size.width
+        if width <= 0:
+            return
+        needed = (
+            cell_len(self._shortcut_text)
+            + cell_len(str(self._word_count_display.renderable))
+            + cell_len(str(self._token_count_display.renderable))
+            + cell_len(str(self._db_status_display.renderable))
+            + _FOOTER_STATS_HEADROOM
+        )
+        self._db_status_display.display = width >= needed
+
     @property
     def shortcut_text(self) -> str:
         return self._shortcut_text
@@ -106,6 +148,9 @@ class AppFooterStatus(Widget):
     def _set_shortcut_text(self, text: str) -> None:
         self._shortcut_text = text
         self._shortcut_display.update(text)
+        # A new shortcut context changes how much room the hints need, so the
+        # memory-stats visibility can flip (TASK-451).
+        self._reflow_footer_priority()
 
     def set_shortcut_context(self, context: ShortcutContext) -> None:
         text = context.render() or self.DEFAULT_SHORTCUT_TEXT
@@ -142,6 +187,7 @@ class AppFooterStatus(Widget):
     def update_db_sizes_display(self, status_string: str) -> None:
         try:
             self._db_status_display.update(status_string)
+            self._reflow_footer_priority()
         except Exception as e:
             # If the app is shutting down, the widget might be gone
             # In a real scenario, you'd use self.log from the widget
@@ -154,6 +200,9 @@ class AppFooterStatus(Widget):
                 self._word_count_display.update(f"Words: {word_count} | ")
             else:
                 self._word_count_display.update("")
+            # The count's width feeds the priority threshold, so re-run the
+            # reflow when it changes without a resize (Qodo #834).
+            self._reflow_footer_priority()
         except Exception as e:
             print(f"Error updating word count display: {e}")
 
@@ -164,6 +213,7 @@ class AppFooterStatus(Widget):
                 self._token_count_display.update(f"{display_text} | ")
             else:
                 self._token_count_display.update("")
+            self._reflow_footer_priority()
         except Exception as e:
             print(f"Error updating token count display: {e}")
 
