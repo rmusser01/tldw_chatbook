@@ -381,15 +381,21 @@ def isolate_test_environment(monkeypatch, tmp_path):
     # "imported_settings" RAG profile under the (now-isolated, but still
     # real-filesystem) data dir. Tests that specifically want to exercise
     # `_maybe_run_first_run_import` reset this flag themselves (see
-    # `Tests/RAG/test_first_run_import.py`). Imported lazily/defensively so a
-    # test run that never touches the RAG stack doesn't pay for (or fail on)
-    # this import.
-    try:
-        from tldw_chatbook.RAG_Search import ingestion_indexing
-
-        monkeypatch.setattr(ingestion_indexing, "_first_run_import_attempted", True)
-    except ImportError:
-        pass
+    # `Tests/RAG/test_first_run_import.py`).
+    #
+    # This must NOT `import tldw_chatbook.RAG_Search.ingestion_indexing` itself
+    # (review finding on task-519/PR #845): that would drag the RAG stack into
+    # every single test in the suite, autouse, even ones that never touch RAG.
+    # Instead only arm the flag if the module is ALREADY in sys.modules (i.e.
+    # some earlier-collected test already imported it) -- the first-run wiring
+    # lives INSIDE that module, so if it isn't imported it cannot fire. If a
+    # test imports it later in its own body, task-519's call-time HOME
+    # resolution already isolates any first-run write under the HOME/
+    # XDG_DATA_HOME patched above, so this pre-arm is belt-and-braces for
+    # modules that happen to already be loaded, not a correctness requirement.
+    ii = sys.modules.get("tldw_chatbook.RAG_Search.ingestion_indexing")
+    if ii is not None:
+        monkeypatch.setattr(ii, "_first_run_import_attempted", True, raising=False)
 
     yield test_data_dir
 
