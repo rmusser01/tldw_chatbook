@@ -258,6 +258,32 @@ def test_baseline_rejects_external_url_or_provider(extra: list[str]) -> None:
         benchmark.validate_args(args)
 
 
+@pytest.mark.parametrize("mode", ["baseline", "qualification"])
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--external-target", "https://example.invalid/health"],
+        ["--external-timeout-seconds", "1"],
+        ["--provider", "external-http-v1"],
+        ["--base-url", "https://example.invalid/v1"],
+    ],
+)
+def test_local_modes_reject_external_only_arguments(
+    mode: str,
+    extra: list[str],
+    tmp_path: Path,
+) -> None:
+    benchmark = _load_benchmark()
+    argv = ["--mode", mode, *extra]
+    if mode == "qualification":
+        baseline = tmp_path / "baseline.json"
+        baseline.write_text("{}\n", encoding="utf-8")
+        argv.extend(["--baseline", str(baseline)])
+
+    with pytest.raises(ValueError, match="external|network-free|mock-local"):
+        benchmark.validate_args(benchmark.parse_args(argv))
+
+
 def test_summary_reports_median_and_p95_never_minimum() -> None:
     benchmark = _load_benchmark()
 

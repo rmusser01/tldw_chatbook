@@ -213,7 +213,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--provider", default=MOCK_PROVIDER)
     parser.add_argument("--base-url")
     parser.add_argument("--external-target")
-    parser.add_argument("--external-timeout-seconds", type=float, default=10.0)
+    parser.add_argument("--external-timeout-seconds", type=float)
     return parser.parse_args(argv)
 
 
@@ -229,10 +229,15 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError("external mode requires --external-target")
         if args.provider != EXTERNAL_PROVIDER:
             raise ValueError(f"external mode requires provider {EXTERNAL_PROVIDER!r}")
-        if args.external_timeout_seconds <= 0:
+        if (
+            args.external_timeout_seconds is not None
+            and args.external_timeout_seconds <= 0
+        ):
             raise ValueError("--external-timeout-seconds must be positive")
         _external_target_origin(args.external_target)
         return
+    if args.external_target is not None or args.external_timeout_seconds is not None:
+        raise ValueError("external-only arguments require --mode external")
     if args.provider != MOCK_PROVIDER or args.base_url:
         raise ValueError(
             "local benchmark modes are network-free and require provider "
@@ -1443,7 +1448,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     target=args.external_target,
                     samples=args.samples,
                     warmups=args.warmups,
-                    timeout_seconds=args.external_timeout_seconds,
+                    timeout_seconds=args.external_timeout_seconds or 10.0,
                 )
             )
         else:
