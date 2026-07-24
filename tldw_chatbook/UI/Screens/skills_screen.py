@@ -28,7 +28,9 @@ logger = logger.bind(module="SkillsScreen")
 SKILLS_LOCAL_PAGE_SIZE = 25
 SKILLS_SERVICE_ERROR_COPY = "Skills service unavailable; retry Skills later."
 SKILLS_SERVICE_UNAVAILABLE_COPY = "Skills service is unavailable in this runtime."
-SKILLS_POLICY_DENIED_FALLBACK_COPY = "Local Skills are blocked by the current runtime policy."
+SKILLS_POLICY_DENIED_FALLBACK_COPY = (
+    "Local Skills are blocked by the current runtime policy."
+)
 SKILLS_TRUST_REVIEWABLE_STATUSES = {
     "quarantined_modified",
     "quarantined_added",
@@ -95,20 +97,46 @@ class SkillTrustPassphraseModal(ModalScreen[str | None]):
 
     BINDINGS = [("escape", "dismiss", "Cancel")]
 
-    def __init__(self, *, confirm_bootstrap: bool) -> None:
+    def __init__(
+        self,
+        *,
+        confirm_bootstrap: bool,
+        title: str | None = None,
+        message: str | None = None,
+    ) -> None:
+        """Prompt for the local skill trust passphrase.
+
+        Args:
+            confirm_bootstrap: Whether this prompt confirms a first-run
+                trust bootstrap (drives the default title/message copy).
+            title: Optional title override so a caller can state its actual
+                purpose (task-418: e.g. the Library approve flow) instead of
+                every purpose presenting as "Unlock Local Skill Trust".
+            message: Optional message-body override, paired with ``title``.
+        """
         super().__init__()
         self._confirm_bootstrap = confirm_bootstrap
+        self._title_override = title
+        self._message_override = message
 
     def compose(self) -> ComposeResult:
-        title = "Bootstrap Local Skill Trust" if self._confirm_bootstrap else "Unlock Local Skill Trust"
-        message = (
+        title = self._title_override or (
+            "Bootstrap Local Skill Trust"
+            if self._confirm_bootstrap
+            else "Unlock Local Skill Trust"
+        )
+        message = self._message_override or (
             "Current local skill files will become the trusted baseline. "
             "Enter the local skill trust passphrase to continue."
             if self._confirm_bootstrap
             else "Enter the local skill trust passphrase to unlock trust checks for this session."
         )
         with Vertical(id="skill-trust-passphrase-modal"):
-            yield Static(title, classes="destination-section")
+            yield Static(
+                title,
+                id="skill-trust-passphrase-title",
+                classes="destination-section",
+            )
             yield Static(message, id="skill-trust-passphrase-message")
             yield Input(
                 password=True,
@@ -118,7 +146,9 @@ class SkillTrustPassphraseModal(ModalScreen[str | None]):
             yield Static("", id="skill-trust-passphrase-error", markup=False)
             with Horizontal(id="skill-trust-passphrase-actions"):
                 yield Button("Cancel", id="skill-trust-passphrase-cancel")
-                yield Button("Submit", id="skill-trust-passphrase-submit", variant="primary")
+                yield Button(
+                    "Submit", id="skill-trust-passphrase-submit", variant="primary"
+                )
 
     def on_mount(self) -> None:
         self.query_one("#skill-trust-passphrase-input", Input).focus()
@@ -147,6 +177,130 @@ class SkillTrustPassphraseModal(ModalScreen[str | None]):
             self.query_one("#skill-trust-passphrase-error", Static).update(
                 "Passphrase cannot be blank."
             )
+            return
+        self.dismiss(passphrase)
+
+
+class SkillTrustBootstrapModal(ModalScreen[str | None]):
+    """Prompt for a brand-new local skill trust passphrase, twice, before bootstrap.
+
+    Structural twin of ``SkillTrustPassphraseModal`` above (same CSS id/
+    layout shape, same Cancel/Submit actions and ``escape`` binding) --
+    this is the ONLY trust modal that creates a passphrase rather than
+    unlocking an existing one, so it asks for it twice and refuses to
+    dismiss on a mismatch instead of silently proceeding with a possibly-
+    mistyped passphrase nobody could recover afterward. Used by the Library
+    Skills editor's first-run "Set up skill trust" state (the Phase-1 gate
+    fix: a brand-new install previously had no live-UI path to bootstrap
+    trust at all).
+    """
+
+    DEFAULT_CSS = """
+    SkillTrustBootstrapModal {
+        align: center middle;
+    }
+
+    #skill-trust-bootstrap-modal {
+        width: 64;
+        height: auto;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    #skill-trust-bootstrap-message {
+        margin: 1 0;
+    }
+
+    #skill-trust-bootstrap-input {
+        width: 100%;
+        margin: 0 0 1 0;
+    }
+
+    #skill-trust-bootstrap-confirm-input {
+        width: 100%;
+    }
+
+    #skill-trust-bootstrap-error {
+        height: auto;
+        min-height: 1;
+        color: red;
+    }
+
+    #skill-trust-bootstrap-actions {
+        height: 3;
+        min-height: 3;
+        margin: 1 0 0 0;
+        align-horizontal: right;
+    }
+
+    #skill-trust-bootstrap-cancel,
+    #skill-trust-bootstrap-submit {
+        width: 10;
+        min-width: 10;
+        height: 3;
+        min-height: 3;
+    }
+    """
+
+    BINDINGS = [("escape", "dismiss", "Cancel")]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="skill-trust-bootstrap-modal"):
+            yield Static("Set Up Local Skill Trust", classes="destination-section")
+            yield Static(
+                "Choose a passphrase to protect local skill trust. Current local "
+                "skill files become the trusted baseline. Enter it twice to confirm.",
+                id="skill-trust-bootstrap-message",
+            )
+            yield Input(
+                password=True,
+                id="skill-trust-bootstrap-input",
+                placeholder="New trust passphrase",
+            )
+            yield Input(
+                password=True,
+                id="skill-trust-bootstrap-confirm-input",
+                placeholder="Confirm trust passphrase",
+            )
+            yield Static("", id="skill-trust-bootstrap-error", markup=False)
+            with Horizontal(id="skill-trust-bootstrap-actions"):
+                yield Button("Cancel", id="skill-trust-bootstrap-cancel")
+                yield Button(
+                    "Submit", id="skill-trust-bootstrap-submit", variant="primary"
+                )
+
+    def on_mount(self) -> None:
+        self.query_one("#skill-trust-bootstrap-input", Input).focus()
+
+    def action_dismiss(self) -> None:
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#skill-trust-bootstrap-cancel")
+    def _cancel(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#skill-trust-bootstrap-submit")
+    def _submit_button(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._submit()
+
+    @on(Input.Submitted, "#skill-trust-bootstrap-input")
+    @on(Input.Submitted, "#skill-trust-bootstrap-confirm-input")
+    def _submit_input(self, event: Input.Submitted) -> None:
+        event.stop()
+        self._submit()
+
+    def _submit(self) -> None:
+        passphrase = self.query_one("#skill-trust-bootstrap-input", Input).value
+        confirm = self.query_one("#skill-trust-bootstrap-confirm-input", Input).value
+        error = self.query_one("#skill-trust-bootstrap-error", Static)
+        if not passphrase:
+            error.update("Passphrase cannot be blank.")
+            return
+        if passphrase != confirm:
+            error.update("Passphrases do not match.")
             return
         self.dismiss(passphrase)
 
@@ -189,7 +343,9 @@ class SkillsScreen(BaseAppScreen):
 
     async def _list_local_skills(
         self,
-    ) -> tuple[tuple[Mapping[str, Any], ...], str | None, DestinationRecoveryState | None]:
+    ) -> tuple[
+        tuple[Mapping[str, Any], ...], str | None, DestinationRecoveryState | None
+    ]:
         service = getattr(self.app_instance, "skills_scope_service", None)
         list_skills = getattr(service, "list_skills", None)
         if not callable(list_skills):
@@ -236,11 +392,15 @@ class SkillsScreen(BaseAppScreen):
             return (), SKILLS_SERVICE_ERROR_COPY, None
 
         skills = result.get("skills") if isinstance(result, Mapping) else None
-        records = tuple(record for record in tuple(skills or ()) if isinstance(record, Mapping))
+        records = tuple(
+            record for record in tuple(skills or ()) if isinstance(record, Mapping)
+        )
         return records, None, None
 
     @staticmethod
-    def _safe_skill_text(value: Any, fallback: str = "", *, max_length: int = 1000) -> str:
+    def _safe_skill_text(
+        value: Any, fallback: str = "", *, max_length: int = 1000
+    ) -> str:
         text = sanitize_string(str(value or ""), max_length=max_length).strip()
         if not text:
             return fallback
@@ -249,13 +409,17 @@ class SkillsScreen(BaseAppScreen):
         return fallback
 
     @classmethod
-    def _skill_field(cls, record: Mapping[str, Any], key: str, fallback: str = "") -> str:
+    def _skill_field(
+        cls, record: Mapping[str, Any], key: str, fallback: str = ""
+    ) -> str:
         value = record.get(key)
         max_length = SKILL_TEXT_LIMITS.get(key, 1000)
         return cls._safe_skill_text(value, fallback=fallback, max_length=max_length)
 
     def _skill_name(self, record: Mapping[str, Any]) -> str:
-        return self._skill_field(record, "name") or self._skill_field(record, "skill_name", "Untitled skill")
+        return self._skill_field(record, "name") or self._skill_field(
+            record, "skill_name", "Untitled skill"
+        )
 
     def _skill_record_id(self, record: Mapping[str, Any]) -> str:
         name = self._skill_name(record)
@@ -352,7 +516,10 @@ class SkillsScreen(BaseAppScreen):
                 "Next: remove unsupported paths before staging."
             ),
         }
-        return blocked_copy.get(status, "local skill trust blocks execution. Next: resolve trust state before staging.")
+        return blocked_copy.get(
+            status,
+            "local skill trust blocks execution. Next: resolve trust state before staging.",
+        )
 
     def _can_review_skill_trust(self, record: Mapping[str, Any] | None) -> bool:
         if record is None:
@@ -364,7 +531,10 @@ class SkillsScreen(BaseAppScreen):
         )
 
     def _has_trust_status(self, trust_status: str) -> bool:
-        return any(self._skill_trust_status(record) == trust_status for record in self._local_skill_records)
+        return any(
+            self._skill_trust_status(record) == trust_status
+            for record in self._local_skill_records
+        )
 
     @staticmethod
     def _review_file_label(value: Any) -> str:
@@ -385,11 +555,15 @@ class SkillsScreen(BaseAppScreen):
         changed_files = []
         for file_name in files:
             safe_file_name = self._review_file_label(file_name)
-            if safe_file_name and validate_text_input(safe_file_name, max_length=100, allow_html=False):
+            if safe_file_name and validate_text_input(
+                safe_file_name, max_length=100, allow_html=False
+            ):
                 changed_files.append(safe_file_name)
         return changed_files
 
-    def _active_review_matches_selected(self, metadata: Mapping[str, Any] | None = None) -> bool:
+    def _active_review_matches_selected(
+        self, metadata: Mapping[str, Any] | None = None
+    ) -> bool:
         if self._active_trust_review is None:
             return False
         metadata = metadata or self._selected_skill_metadata()
@@ -398,9 +572,12 @@ class SkillsScreen(BaseAppScreen):
         if not metadata.get("trust_reviewable"):
             return False
         return (
-            self._active_trust_review.get("selected_skill_name") == metadata.get("selected_skill_name")
-            and self._active_trust_review.get("selected_record_id") == metadata.get("selected_record_id")
-            and self._active_trust_review.get("selected_target_id") == metadata.get("selected_target_id")
+            self._active_trust_review.get("selected_skill_name")
+            == metadata.get("selected_skill_name")
+            and self._active_trust_review.get("selected_record_id")
+            == metadata.get("selected_record_id")
+            and self._active_trust_review.get("selected_target_id")
+            == metadata.get("selected_target_id")
         )
 
     def _reconcile_active_trust_review(self) -> None:
@@ -413,13 +590,18 @@ class SkillsScreen(BaseAppScreen):
             self._active_trust_review = None
 
     def _is_skill_valid(self, record: Mapping[str, Any]) -> bool:
-        return self._skill_validation_status(record) == "valid" and not self._skill_trust_blocked(record)
+        return self._skill_validation_status(
+            record
+        ) == "valid" and not self._skill_trust_blocked(record)
 
     def _ensure_selected_skill(self) -> None:
         if not self._local_skill_records or self._skills_lookup_error:
             self._selected_skill_index = None
             return
-        if self._selected_skill_index is not None and 0 <= self._selected_skill_index < len(self._local_skill_records):
+        if (
+            self._selected_skill_index is not None
+            and 0 <= self._selected_skill_index < len(self._local_skill_records)
+        ):
             return
         for index, record in enumerate(self._local_skill_records):
             if self._is_skill_valid(record):
@@ -487,12 +669,11 @@ class SkillsScreen(BaseAppScreen):
             lines.append("")
         return "\n".join(lines).strip()
 
-    def _skill_names(self, records: tuple[Mapping[str, Any], ...] | None = None) -> list[str]:
+    def _skill_names(
+        self, records: tuple[Mapping[str, Any], ...] | None = None
+    ) -> list[str]:
         records = records if records is not None else self._local_skill_records
-        return [
-            self._skill_name(record)
-            for record in records
-        ]
+        return [self._skill_name(record) for record in records]
 
     def _apply_selected_skill_widgets(self) -> None:
         metadata = self._selected_skill_metadata()
@@ -501,16 +682,22 @@ class SkillsScreen(BaseAppScreen):
         selected_name = metadata["selected_skill_name"]
         target_id = metadata["selected_target_id"]
         stageable = bool(metadata["stageable"])
-        reason = "; ".join(metadata["validation_errors"]) or "Selected skill is not valid."
+        reason = (
+            "; ".join(metadata["validation_errors"]) or "Selected skill is not valid."
+        )
         if metadata["validation_status"] == "valid" and metadata["trust_blocked"]:
             reason = self._skill_trust_blocked_copy(self._selected_skill_record() or {})
         updates = {
             "#skills-selected-context": f"Selected: {selected_name}",
             "#skills-selected-runtime-target": f"Runtime target: {target_id}",
             "#skills-execution-readiness": (
-                "Execution: ready to stage in Console" if stageable else "Execution: blocked"
+                "Execution: ready to stage in Console"
+                if stageable
+                else "Execution: blocked"
             ),
-            "#skills-execution-blocked-reason": "" if stageable else f"Reason: {reason}",
+            "#skills-execution-blocked-reason": ""
+            if stageable
+            else f"Reason: {reason}",
             "#skills-selected-trust-reason-code": (
                 f"Reason code: {metadata['trust_reason_code']}"
                 if metadata["trust_blocked"] and metadata["trust_reason_code"]
@@ -548,7 +735,9 @@ class SkillsScreen(BaseAppScreen):
                     else "Capture a trust review before approving this skill version."
                 )
         review_bound = self._active_review_matches_selected(metadata)
-        review_files = ", ".join(self._active_review_changed_files()) or "selected files"
+        review_files = (
+            ", ".join(self._active_review_changed_files()) or "selected files"
+        )
         review_updates = {
             "#skills-trust-review-title": "Trust Review" if review_bound else "",
             "#skills-trust-review-skill": (
@@ -575,7 +764,11 @@ class SkillsScreen(BaseAppScreen):
     def compose_content(self) -> ComposeResult:
         local_skills_service = getattr(self.app_instance, "local_skills_service", None)
         skills_dir = getattr(local_skills_service, "skills_dir", None)
-        skills_dir_label = str(skills_dir) if skills_dir is not None else "Local skills directory unavailable."
+        skills_dir_label = (
+            str(skills_dir)
+            if skills_dir is not None
+            else "Local skills directory unavailable."
+        )
         selected_metadata = self._selected_skill_metadata()
 
         with Vertical(id="skills-shell"):
@@ -584,15 +777,24 @@ class SkillsScreen(BaseAppScreen):
                 id="skills-title",
                 classes="ds-destination-header",
             )
-            with DestinationModeStrip(id="skills-mode-strip", classes="destination-mode-strip"):
+            with DestinationModeStrip(
+                id="skills-mode-strip", classes="destination-mode-strip"
+            ):
                 yield Static(
                     "Mode: Installed / Validate / Attach | Source: local SKILL.md directories",
                     id="skills-mode-label",
                     classes="destination-section",
                 )
-            with Horizontal(id="skills-workbench", classes="ds-panel destination-workbench"):
-                with Vertical(id="skills-list-pane", classes="destination-workbench-pane"):
-                    yield Static("Skill Library", classes="destination-section skills-column-title")
+            with Horizontal(
+                id="skills-workbench", classes="ds-panel destination-workbench"
+            ):
+                with Vertical(
+                    id="skills-list-pane", classes="destination-workbench-pane"
+                ):
+                    yield Static(
+                        "Skill Library",
+                        classes="destination-section skills-column-title",
+                    )
                     yield Static("Installed", classes="destination-section")
                     yield Static("Discover/Import", classes="destination-section")
                     yield Static("Validate", classes="destination-section")
@@ -600,9 +802,14 @@ class SkillsScreen(BaseAppScreen):
                     yield Static("References", classes="destination-section")
                     yield Static("Assets", classes="destination-section")
                     yield Static("Attachments", classes="destination-section")
-                    yield Static(f"Local skills directory: {skills_dir_label}", id="skills-local-directory")
+                    yield Static(
+                        f"Local skills directory: {skills_dir_label}",
+                        id="skills-local-directory",
+                    )
                 yield self._column_divider("skills-list-detail-divider")
-                with Vertical(id="skills-detail-pane", classes="destination-workbench-pane"):
+                with Vertical(
+                    id="skills-detail-pane", classes="destination-workbench-pane"
+                ):
                     yield Static(
                         "Skill Detail",
                         classes="destination-section skills-column-title",
@@ -614,7 +821,9 @@ class SkillsScreen(BaseAppScreen):
                         )
                         attach_label = "Attach local Skills to Console"
                         attach_disabled = True
-                        attach_tooltip = "Stage local skill context after Skills finishes loading."
+                        attach_tooltip = (
+                            "Stage local skill context after Skills finishes loading."
+                        )
                     elif self._skills_lookup_error:
                         recovery_state = self._skills_lookup_recovery_state
                         yield Static(
@@ -647,14 +856,20 @@ class SkillsScreen(BaseAppScreen):
                         )
                         for index, record in enumerate(self._local_skill_records):
                             name = self._skill_name(record)
-                            description = self._skill_field(record, "description", "No description provided.")
-                            metadata_valid = self._skill_validation_status(record) == "valid"
+                            description = self._skill_field(
+                                record, "description", "No description provided."
+                            )
+                            metadata_valid = (
+                                self._skill_validation_status(record) == "valid"
+                            )
                             validation_copy = (
                                 "Ready: valid SKILL.md"
                                 if metadata_valid
                                 else "Blocked: invalid SKILL.md"
                             )
-                            validation_errors = "; ".join(self._skill_validation_errors(record))
+                            validation_errors = "; ".join(
+                                self._skill_validation_errors(record)
+                            )
                             yield Static(
                                 Text.from_markup(
                                     f"{escape_markup(name)} - {escape_markup(description)}"
@@ -680,7 +895,9 @@ class SkillsScreen(BaseAppScreen):
                                     self._plain_text(f"Reason code: {trust_reason}"),
                                     id=f"skills-trust-reason-{index}",
                                 )
-                            changed_files = ", ".join(self._skill_trust_changed_files(record))
+                            changed_files = ", ".join(
+                                self._skill_trust_changed_files(record)
+                            )
                             if changed_files:
                                 yield Static(
                                     self._plain_text(f"Changed files: {changed_files}"),
@@ -702,8 +919,14 @@ class SkillsScreen(BaseAppScreen):
                             else "Resolve SKILL.md validation or local trust blocks before staging this skill in Console."
                         )
                 yield self._column_divider("skills-detail-inspector-divider")
-                with Vertical(id="skills-inspector-pane", classes="destination-workbench-pane ds-inspector"):
-                    yield Static("Skill Inspector", classes="destination-section skills-column-title")
+                with Vertical(
+                    id="skills-inspector-pane",
+                    classes="destination-workbench-pane ds-inspector",
+                ):
+                    yield Static(
+                        "Skill Inspector",
+                        classes="destination-section skills-column-title",
+                    )
                     if selected_metadata:
                         yield Static(
                             "Selected Console target",
@@ -711,11 +934,15 @@ class SkillsScreen(BaseAppScreen):
                             classes="destination-section",
                         )
                         yield Static(
-                            self._plain_text(f"Selected: {selected_metadata['selected_skill_name']}"),
+                            self._plain_text(
+                                f"Selected: {selected_metadata['selected_skill_name']}"
+                            ),
                             id="skills-selected-context",
                         )
                         yield Static(
-                            self._plain_text(f"Runtime target: {selected_metadata['selected_target_id']}"),
+                            self._plain_text(
+                                f"Runtime target: {selected_metadata['selected_target_id']}"
+                            ),
                             id="skills-selected-runtime-target",
                         )
                         is_selected_stageable = bool(selected_metadata["stageable"])
@@ -723,9 +950,12 @@ class SkillsScreen(BaseAppScreen):
                             "; ".join(selected_metadata["validation_errors"])
                             or "Selected skill is not valid."
                         )
-                        if selected_metadata["validation_status"] == "valid" and selected_metadata["trust_blocked"]:
-                            selected_blocked_reason = (
-                                self._skill_trust_blocked_copy(self._selected_skill_record() or {})
+                        if (
+                            selected_metadata["validation_status"] == "valid"
+                            and selected_metadata["trust_blocked"]
+                        ):
+                            selected_blocked_reason = self._skill_trust_blocked_copy(
+                                self._selected_skill_record() or {}
                             )
                         yield Static(
                             "Execution: ready to stage in Console"
@@ -735,20 +965,26 @@ class SkillsScreen(BaseAppScreen):
                         )
                         yield Static(
                             self._plain_text(
-                                "" if is_selected_stageable else f"Reason: {selected_blocked_reason}"
+                                ""
+                                if is_selected_stageable
+                                else f"Reason: {selected_blocked_reason}"
                             ),
                             id="skills-execution-blocked-reason",
                         )
                         yield Static(
                             self._plain_text(
                                 f"Reason code: {selected_metadata['trust_reason_code']}"
-                                if selected_metadata["trust_blocked"] and selected_metadata["trust_reason_code"]
+                                if selected_metadata["trust_blocked"]
+                                and selected_metadata["trust_reason_code"]
                                 else ""
                             ),
                             id="skills-selected-trust-reason-code",
                         )
                         if self._active_review_matches_selected(selected_metadata):
-                            review_files = ", ".join(self._active_review_changed_files()) or "selected files"
+                            review_files = (
+                                ", ".join(self._active_review_changed_files())
+                                or "selected files"
+                            )
                             yield Static(
                                 "Trust Review",
                                 id="skills-trust-review-title",
@@ -797,7 +1033,9 @@ class SkillsScreen(BaseAppScreen):
                             else "Unlock is available when local skill trust is locked."
                         ),
                     )
-                    review_enabled = bool(selected_metadata and selected_metadata.get("trust_reviewable"))
+                    review_enabled = bool(
+                        selected_metadata and selected_metadata.get("trust_reviewable")
+                    )
                     yield Button(
                         "Review Diff",
                         id="skills-review-diff",
@@ -808,7 +1046,9 @@ class SkillsScreen(BaseAppScreen):
                             else "Review is available only for metadata-valid local skills blocked by changed files."
                         ),
                     )
-                    review_active = self._active_review_matches_selected(selected_metadata)
+                    review_active = self._active_review_matches_selected(
+                        selected_metadata
+                    )
                     yield Button(
                         "Trust Reviewed Version",
                         id="skills-trust-reviewed-version",
@@ -853,10 +1093,14 @@ class SkillsScreen(BaseAppScreen):
         records, lookup_error, recovery_state = await self._list_local_skills()
         self._apply_local_skills_context(records, lookup_error, recovery_state)
 
-    async def _request_skill_trust_passphrase(self, confirm_bootstrap: bool) -> str | None:
+    async def _request_skill_trust_passphrase(
+        self, confirm_bootstrap: bool
+    ) -> str | None:
         push_screen_wait = getattr(self.app, "push_screen_wait", None)
         if not callable(push_screen_wait):
-            self._notify_skill_trust_warning("Local skill trust passphrase prompt is unavailable.")
+            self._notify_skill_trust_warning(
+                "Local skill trust passphrase prompt is unavailable."
+            )
             return None
         result = await push_screen_wait(
             SkillTrustPassphraseModal(confirm_bootstrap=confirm_bootstrap)
@@ -873,7 +1117,9 @@ class SkillsScreen(BaseAppScreen):
         trust_service = getattr(self.app_instance, "local_skill_trust_service", None)
         method = getattr(trust_service, method_name, None)
         if not callable(method):
-            self._notify_skill_trust_warning("Local skill trust service is unavailable.")
+            self._notify_skill_trust_warning(
+                "Local skill trust service is unavailable."
+            )
             return None, False
         try:
             if inspect.iscoroutinefunction(method):
@@ -1002,10 +1248,9 @@ class SkillsScreen(BaseAppScreen):
                 )
             return
         if not self._is_skill_valid(selected_record):
-            if (
-                self._skill_validation_status(selected_record) == "valid"
-                and self._skill_trust_blocked(selected_record)
-            ):
+            if self._skill_validation_status(
+                selected_record
+            ) == "valid" and self._skill_trust_blocked(selected_record):
                 warning = "Resolve the local skill trust block before staging this skill in Console."
             else:
                 warning = "Fix SKILL.md validation errors before staging this skill in Console."
@@ -1016,7 +1261,9 @@ class SkillsScreen(BaseAppScreen):
                     severity="warning",
                 )
             return
-        open_chat_with_handoff = getattr(self.app_instance, "open_chat_with_handoff", None)
+        open_chat_with_handoff = getattr(
+            self.app_instance, "open_chat_with_handoff", None
+        )
         if not callable(open_chat_with_handoff):
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):

@@ -13,7 +13,6 @@ from Tests.UI.test_console_internals_decomposition import (
 )
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
-    _visible_text,
 )
 from tldw_chatbook.Chat import console_chat_store as console_chat_store_module
 from tldw_chatbook.Chat.console_chat_models import ConsoleWorkspaceContext
@@ -128,11 +127,15 @@ def _assert_right_handle_lightweight(screen) -> None:
         workspace_grid.region.y + workspace_grid.region.height
     )
     assert button.region.x >= handle.region.x
-    assert button.region.x + button.region.width <= handle.region.x + handle.region.width
+    assert (
+        button.region.x + button.region.width <= handle.region.x + handle.region.width
+    )
     assert button.region.width >= len(button_label)
     assert button.region.width >= len(button_label) + 2
     assert button.region.y >= handle.region.y
-    assert button.region.y + button.region.height <= handle.region.y + handle.region.height
+    assert (
+        button.region.y + button.region.height <= handle.region.y + handle.region.height
+    )
     assert 1 <= button.region.height <= 4
 
 
@@ -146,7 +149,9 @@ async def _wait_for_badge(screen, pilot, selector: str, expected: str) -> str:
                     return text
         await pilot.pause(0.05)
     visible_text = " ".join(
-        _static_text(widget) for widget in screen.query(selector) if _is_displayed(widget)
+        _static_text(widget)
+        for widget in screen.query(selector)
+        if _is_displayed(widget)
     )
     raise AssertionError(
         f"{selector} did not include {expected!r}; visible badge text={visible_text!r}"
@@ -194,7 +199,9 @@ async def _wait_for_native_console_session(screen, pilot):
     for _ in range(20):
         store = getattr(screen, "_console_chat_store", None)
         if store is not None and store.active_session_id is not None:
-            return store.ensure_session(workspace_id=store.workspace_context.active_workspace_id)
+            return store.ensure_session(
+                workspace_id=store.workspace_context.active_workspace_id
+            )
         await pilot.pause(0.05)
     raise AssertionError("native Console store did not expose an active session")
 
@@ -214,23 +221,28 @@ def _rail_prefs(
     left_open: bool,
     right_open: bool,
     session_open: bool = True,
-    context_open: bool = True,
     model_open: bool = True,
     details_open: bool = False,
+    agent_open: bool = False,
+    character_open: bool = True,
 ) -> dict[str, bool]:
-    """Full serialized rail-preference shape (left/right rails + four sections).
+    """Full serialized rail-preference shape (left/right rails + five sections).
 
-    The persisted shape now carries the four collapsible left-rail section
-    states alongside the left/right rail openness. Section states default to
-    the first-run layout (Session/Context/Model open, Details collapsed).
+    The persisted shape carries the five collapsible left-rail section states
+    alongside the left/right rail openness. Section states default to the
+    first-run layout (Session/Model/Character open, Details/Agent collapsed).
+    Task-400 dropped the Context section (staged sources moved to the
+    Inspector), so serialized payloads no longer carry a ``context_open`` key.
+    P3c added the Character section (``character_open``).
     """
     return {
         "left_open": left_open,
         "right_open": right_open,
         "session_open": session_open,
-        "context_open": context_open,
         "model_open": model_open,
         "details_open": details_open,
+        "agent_open": agent_open,
+        "character_open": character_open,
     }
 
 
@@ -259,7 +271,9 @@ def test_generated_console_stylesheet_includes_rail_rules():
         ):
             assert selector in css
         assert "content-align: left middle;" in css
-        composer_focus = _css_block(css, "#console-native-composer.console-composer-focused")
+        composer_focus = _css_block(
+            css, "#console-native-composer.console-composer-focused"
+        )
         assert "border: heavy $ds-action-focus;" not in composer_focus
         assert "border: thick $ds-action-focus;" not in css
         for selector in (
@@ -291,7 +305,12 @@ def test_generated_console_stylesheet_includes_rail_section_rules():
         ".console-rail-section-title",
         ".console-rail-section-toggle",
         ".console-rail-section-body",
-        ".console-model-section-line",
+        ".console-workspace-conversations-header",
+        ".console-model-section-label",
+        ".console-model-section-value",
+        ".console-staged-source-status",
+        ".console-workspace-empty-copy",
+        ".console-workspace-action-row",
     ):
         assert selector in component_css, selector
         assert selector in generated_css, selector
@@ -318,10 +337,12 @@ async def test_console_first_start_renders_left_rail_and_right_handle():
         await _wait_for_selector(console, pilot, "#console-inspector-rail-handle")
 
         assert _is_displayed(console.query_one("#console-left-rail"))
-        assert _is_displayed(console.query_one("#console-staged-context-tray"))
         assert _is_displayed(console.query_one("#console-workspace-context"))
         _assert_selector_hidden_or_absent(console, "#console-context-rail-handle")
         _assert_selector_hidden_or_absent(console, "#console-right-rail")
+        # Task-400: the staged-context tray lives in the Inspector rail, so it
+        # stays hidden behind the collapsed right handle on first start.
+        _assert_selector_hidden_or_absent(console, "#console-staged-context-tray")
         _assert_selector_hidden_or_absent(console, "#console-run-inspector-state")
         _assert_selector_hidden_or_absent(
             console,
@@ -390,7 +411,6 @@ async def test_console_context_rail_collapse_hides_left_rail_and_expands_main_co
         await pilot.click("#console-context-rail-collapse")
 
         await _wait_for_hidden(console, pilot, "#console-left-rail")
-        await _wait_for_hidden(console, pilot, "#console-staged-context-tray")
         await _wait_for_hidden(console, pilot, "#console-workspace-context")
         assert _is_displayed(console.query_one("#console-context-rail-handle"))
         _assert_handle_aligned_with_workbench_frame(
@@ -425,8 +445,11 @@ async def test_console_visible_rail_headers_are_left_aligned_and_collapse_button
         context_title = console.query_one("#console-context-rail-title", Static)
         context_collapse = console.query_one("#console-context-rail-collapse", Button)
         assert context_title.has_class("console-rail-title")
+        # Pane title names the rail itself (task-186); the "Context" (staged
+        # sources) section moved to the Inspector rail in task-400.
+        assert str(context_title.renderable) == "Console context"
         assert str(context_collapse.label) == "◂"
-        assert context_collapse.tooltip == "Collapse Context rail"
+        assert context_collapse.tooltip == "Collapse Console context rail"
         assert context_collapse.region.width >= 3
         assert context_title.region.x < context_collapse.region.x
 
@@ -434,7 +457,9 @@ async def test_console_visible_rail_headers_are_left_aligned_and_collapse_button
         await _wait_for_displayed(console, pilot, "#console-right-rail")
 
         inspector_title = console.query_one("#console-inspector-rail-title", Static)
-        inspector_collapse = console.query_one("#console-inspector-rail-collapse", Button)
+        inspector_collapse = console.query_one(
+            "#console-inspector-rail-collapse", Button
+        )
         assert inspector_title.has_class("console-rail-title")
         assert str(inspector_collapse.label) == "▸"
         assert inspector_collapse.tooltip == "Collapse Inspector rail"
@@ -663,7 +688,9 @@ async def test_console_rail_state_uses_workspace_session_specific_keys(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_console_session_preference_copies_to_durable_conversation_key(monkeypatch):
+async def test_console_session_preference_copies_to_durable_conversation_key(
+    monkeypatch,
+):
     app = _build_test_app()
     app.app_config = {
         "console": {
@@ -717,7 +744,9 @@ async def test_console_session_preference_copies_to_durable_conversation_key(mon
 
 
 @pytest.mark.asyncio
-async def test_console_rail_key_prefers_native_session_over_legacy_conversation(monkeypatch):
+async def test_console_rail_key_prefers_native_session_over_legacy_conversation(
+    monkeypatch,
+):
     app = _build_test_app()
     app.app_config = {"console": {"rail_state": {}}}
 
@@ -755,7 +784,9 @@ async def test_console_rail_key_prefers_native_session_over_legacy_conversation(
         assert rail_state[
             f"console_rail_state:{DEFAULT_WORKSPACE_ID}:session-native"
         ] == _rail_prefs(left_open=False, right_open=False)
-        assert f"console_rail_state:{DEFAULT_WORKSPACE_ID}:legacy-conv" not in rail_state
+        assert (
+            f"console_rail_state:{DEFAULT_WORKSPACE_ID}:legacy-conv" not in rail_state
+        )
 
         session.persisted_conversation_id = "native-conv"
         console._sync_console_rail_visibility(console._current_console_rail_state())
@@ -915,7 +946,7 @@ async def test_console_pending_approval_badge_does_not_auto_open_inspector():
                     "right_open": False,
                 }
             }
-        }
+        },
     }
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "local-model"
@@ -947,7 +978,7 @@ async def test_console_tool_badge_when_no_higher_priority_inspector_badge():
                     "right_open": False,
                 }
             }
-        }
+        },
     }
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "local-model"
@@ -968,16 +999,22 @@ async def test_console_tool_badge_when_no_higher_priority_inspector_badge():
 
 
 @pytest.mark.asyncio
-async def test_console_left_staged_context_badge_does_not_auto_open_context():
+async def test_console_staged_context_badge_lands_on_inspector_handle_not_left():
+    """Task-400: staged context badges the Inspector handle, not the left one.
+
+    Ready provider setup keeps the higher-precedence "setup" badge out of the
+    way so the staged signal is observable. The pending launch auto-opens the
+    Inspector (existing behavior); collapsing it shows the staged badge on the
+    Inspector handle while the left handle stays free of staged copy.
+    """
     app = _build_test_app()
+    _configure_native_ready_console(app)
     app.console_rail_session_id = "badge-session"
-    app.app_config = {
-        "console": {
-            "rail_state": {
-                f"console_rail_state:{DEFAULT_WORKSPACE_ID}:badge-session": {
-                    "left_open": False,
-                    "right_open": False,
-                }
+    app.app_config["console"] = {
+        "rail_state": {
+            f"console_rail_state:{DEFAULT_WORKSPACE_ID}:badge-session": {
+                "left_open": False,
+                "right_open": False,
             }
         }
     }
@@ -993,11 +1030,25 @@ async def test_console_left_staged_context_badge_does_not_auto_open_context():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-context-rail-handle")
 
+        # The staged launch never auto-opens the LEFT rail, and the left
+        # handle badge no longer advertises staged context.
         _assert_selector_hidden_or_absent(console, "#console-left-rail")
+        left_badge_text = " ".join(
+            _static_text(widget)
+            for widget in console.query("#console-context-rail-badge")
+            if _is_displayed(widget)
+        )
+        assert "staged" not in left_badge_text
+
+        # The pending launch auto-opens the Inspector; collapse it to
+        # observe the handle badge carrying the staged signal.
+        await _wait_for_displayed(console, pilot, "#console-right-rail")
+        await pilot.click("#console-inspector-rail-collapse")
+        await _wait_for_hidden(console, pilot, "#console-right-rail")
         badge = await _wait_for_badge(
             console,
             pilot,
-            "#console-context-rail-badge",
+            "#console-inspector-rail-badge",
             "staged",
         )
         assert badge in {"1 staged", "staged"}
@@ -1015,7 +1066,7 @@ async def test_console_badge_state_update_after_mount_does_not_auto_open_inspect
                     "right_open": False,
                 }
             }
-        }
+        },
     }
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "local-model"
@@ -1124,7 +1175,7 @@ async def test_console_desktop_composer_span_ignores_rail_width_changes():
 
 
 @pytest.mark.asyncio
-async def test_console_left_rail_renders_four_sections_with_details_collapsed():
+async def test_console_left_rail_renders_sections_with_details_collapsed():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -1132,21 +1183,34 @@ async def test_console_left_rail_renders_four_sections_with_details_collapsed():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-rail-section-header-details")
 
-        for section_id in ("session", "context", "model", "details"):
+        # Task-400: no Context section in the left rail anymore -- staged
+        # sources render in the Inspector rail instead.
+        for section_id in ("session", "model", "details"):
             assert _is_displayed(
                 console.query_one(f"#console-rail-section-header-{section_id}")
             )
+        _assert_selector_hidden_or_absent(
+            console, "#console-rail-section-header-context"
+        )
+        _assert_selector_hidden_or_absent(
+            console, "#console-rail-section-body-context"
+        )
         assert _is_displayed(console.query_one("#console-rail-section-body-session"))
-        assert _is_displayed(console.query_one("#console-rail-section-body-context"))
         assert _is_displayed(console.query_one("#console-rail-section-body-model"))
-        assert not _is_displayed(console.query_one("#console-rail-section-body-details"))
+        assert not _is_displayed(
+            console.query_one("#console-rail-section-body-details")
+        )
         # Session content: workspace context tray without duplicate heading.
         assert _is_displayed(console.query_one("#console-workspace-context"))
         _assert_selector_hidden_or_absent(console, "#console-workspace-context-title")
         # Details content exists but is hidden.
         assert list(console.query("#console-workspace-details"))
-        # Model section content.
-        assert _is_displayed(console.query_one("#console-model-section-line1"))
+        # Model section content: labeled provider/model/temperature/max-tokens
+        # rows alongside the Configure shortcut.
+        assert _is_displayed(console.query_one("#console-model-section-provider"))
+        assert _is_displayed(console.query_one("#console-model-section-model"))
+        assert _is_displayed(console.query_one("#console-model-section-temperature"))
+        assert _is_displayed(console.query_one("#console-model-section-max-tokens"))
         assert _is_displayed(console.query_one("#console-model-section-configure"))
 
 
@@ -1164,13 +1228,20 @@ async def test_console_details_toggle_expands_and_persists():
     app.chat_api_model_value = "local-model"
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(180, 48)) as pilot:
+    async with host.run_test(size=(180, 70)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-rail-section-header-details")
 
+        rail_body = console.query_one("#console-left-rail-body")
+        details_header = console.query_one("#console-rail-section-header-details")
+        rail_body.scroll_to_widget(details_header, animate=False)
+        await pilot.pause(0.1)
+
         await pilot.click("#console-rail-section-toggle-details")
         try:
-            await _wait_for_displayed(console, pilot, "#console-rail-section-body-details")
+            await _wait_for_displayed(
+                console, pilot, "#console-rail-section-body-details"
+            )
         except AssertionError:
             # A reused test profile can resume a conversation whose stored
             # details_open=True re-applies asynchronously before the click,
@@ -1178,7 +1249,9 @@ async def test_console_details_toggle_expands_and_persists():
             # always lands on the expand path; the persistence assertion
             # below still verifies the real contract.
             await pilot.click("#console-rail-section-toggle-details")
-            await _wait_for_displayed(console, pilot, "#console-rail-section-body-details")
+            await _wait_for_displayed(
+                console, pilot, "#console-rail-section-body-details"
+            )
         assert _is_displayed(console.query_one("#console-workspace-authority-label"))
 
     rail_state_config = app.app_config.get("console", {}).get("rail_state", {})
@@ -1203,7 +1276,9 @@ async def test_console_rail_section_sync_applies_stored_scope_preferences():
     async with host.run_test(size=(180, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-rail-section-header-details")
-        assert not _is_displayed(console.query_one("#console-rail-section-body-details"))
+        assert not _is_displayed(
+            console.query_one("#console-rail-section-body-details")
+        )
         assert _is_displayed(console.query_one("#console-rail-section-body-model"))
 
         workspace_context = console._current_console_workspace_context()
@@ -1342,9 +1417,7 @@ async def test_console_rail_preference_skips_persist_when_unchanged(monkeypatch)
             persisted.append(key)
             return original_persist(key, preferences, **kwargs)
 
-        monkeypatch.setattr(
-            console, "_persist_console_rail_preferences", _spy_persist
-        )
+        monkeypatch.setattr(console, "_persist_console_rail_preferences", _spy_persist)
 
         # Details defaults to collapsed; opening it is a real change → one write.
         console._set_console_rail_preference(section_updates={"details": True})

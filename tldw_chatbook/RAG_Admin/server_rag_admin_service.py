@@ -3,23 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    BatchMediaEmbeddingsRequest,
-    ChunkingTemplateApplyRequest,
-    ChunkingTemplateCreateRequest,
-    ChunkingTemplateLearnRequest,
-    ChunkingTemplateUpdateRequest,
-    EmbeddingCollectionCreateRequest,
-    MediaEmbeddingsBatchRequest,
-    MediaEmbeddingsGenerateRequest,
-    MediaEmbeddingsSearchRequest,
-    ReprocessMediaRequest,
-    TLDWAPIClient,
-)
+
+if TYPE_CHECKING:
+    from ..tldw_api import (
+        MediaEmbeddingsBatchRequest,
+        MediaEmbeddingsGenerateRequest,
+        MediaEmbeddingsSearchRequest,
+        TLDWAPIClient,
+    )
 
 
 class ServerRAGAdminService:
@@ -67,13 +62,17 @@ class ServerRAGAdminService:
             return self.client
         if self.client_provider is not None:
             return self.client_provider.build_client()
-        raise ValueError("TLDW API client is required for server retrieval-admin operations.")
+        raise ValueError(
+            "TLDW API client is required for server retrieval-admin operations."
+        )
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -82,11 +81,14 @@ class ServerRAGAdminService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
                     user_message=getattr(decision, "user_message", None)
                     or "Server retrieval-admin action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @staticmethod
@@ -132,7 +134,9 @@ class ServerRAGAdminService:
 
     async def get_template(self, template_name: str) -> dict[str, Any]:
         self._enforce(self._template_action_id("detail"))
-        return self._dump_model(await self._require_client().get_chunking_template(template_name))
+        return self._dump_model(
+            await self._require_client().get_chunking_template(template_name)
+        )
 
     async def create_template(
         self,
@@ -143,6 +147,9 @@ class ServerRAGAdminService:
         tags: Optional[Sequence[str]] = None,
         user_id: Optional[str] = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChunkingTemplateCreateRequest
+
         self._enforce(self._template_action_id("create"))
         request = ChunkingTemplateCreateRequest(
             name=name,
@@ -151,7 +158,9 @@ class ServerRAGAdminService:
             tags=list(tags or []),
             user_id=user_id,
         )
-        return self._dump_model(await self._require_client().create_chunking_template(request))
+        return self._dump_model(
+            await self._require_client().create_chunking_template(request)
+        )
 
     async def update_template(
         self,
@@ -161,6 +170,9 @@ class ServerRAGAdminService:
         template: Optional[Mapping[str, Any]] = None,
         tags: Optional[Sequence[str]] = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChunkingTemplateUpdateRequest
+
         self._enforce(self._template_action_id("update"))
         request = ChunkingTemplateUpdateRequest(
             description=description,
@@ -168,12 +180,18 @@ class ServerRAGAdminService:
             tags=list(tags) if tags is not None else None,
         )
         return self._dump_model(
-            await self._require_client().update_chunking_template(template_name, request)
+            await self._require_client().update_chunking_template(
+                template_name, request
+            )
         )
 
-    async def delete_template(self, template_name: str, *, hard_delete: bool = False) -> None:
+    async def delete_template(
+        self, template_name: str, *, hard_delete: bool = False
+    ) -> None:
         self._enforce(self._template_action_id("delete"))
-        await self._require_client().delete_chunking_template(template_name, hard_delete=hard_delete)
+        await self._require_client().delete_chunking_template(
+            template_name, hard_delete=hard_delete
+        )
 
     async def apply_template(
         self,
@@ -183,11 +201,16 @@ class ServerRAGAdminService:
         override_options: Optional[Mapping[str, Any]] = None,
         include_metadata: bool = False,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChunkingTemplateApplyRequest
+
         self._enforce(self._admin_action_id("launch"))
         request = ChunkingTemplateApplyRequest(
             template_name=template_name,
             text=text,
-            override_options=dict(override_options) if override_options is not None else None,
+            override_options=dict(override_options)
+            if override_options is not None
+            else None,
         )
         return self._dump_model(
             await self._require_client().apply_chunking_template(
@@ -198,11 +221,17 @@ class ServerRAGAdminService:
 
     async def get_template_diagnostics(self) -> dict[str, Any]:
         self._enforce(self._admin_action_id("observe"))
-        return self._dump_model(await self._require_client().get_chunking_template_diagnostics())
-
-    async def validate_template_config(self, template_config: Mapping[str, Any]) -> dict[str, Any]:
         return self._dump_model(
-            await self._require_client().validate_chunking_template(dict(template_config))
+            await self._require_client().get_chunking_template_diagnostics()
+        )
+
+    async def validate_template_config(
+        self, template_config: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        return self._dump_model(
+            await self._require_client().validate_chunking_template(
+                dict(template_config)
+            )
         )
 
     async def match_templates(
@@ -231,6 +260,9 @@ class ServerRAGAdminService:
         save: bool = False,
         classifier: Optional[Mapping[str, Any]] = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChunkingTemplateLearnRequest
+
         request = ChunkingTemplateLearnRequest(
             name=name,
             example_text=example_text,
@@ -238,11 +270,15 @@ class ServerRAGAdminService:
             save=save,
             classifier=dict(classifier) if classifier is not None else None,
         )
-        return self._dump_model(await self._require_client().learn_chunking_template(request))
+        return self._dump_model(
+            await self._require_client().learn_chunking_template(request)
+        )
 
     async def list_collections(self) -> list[dict[str, Any]]:
         self._enforce(self._admin_action_id("list"))
-        return self._dump_model(await self._require_client().list_embedding_collections())
+        return self._dump_model(
+            await self._require_client().list_embedding_collections()
+        )
 
     async def create_collection(
         self,
@@ -252,6 +288,9 @@ class ServerRAGAdminService:
         embedding_model: str | None = None,
         provider: str | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import EmbeddingCollectionCreateRequest
+
         self._enforce(self._admin_action_id("configure"))
         request = EmbeddingCollectionCreateRequest(
             name=name,
@@ -259,11 +298,15 @@ class ServerRAGAdminService:
             embedding_model=embedding_model,
             provider=provider,
         )
-        return self._dump_model(await self._require_client().create_embedding_collection(request))
+        return self._dump_model(
+            await self._require_client().create_embedding_collection(request)
+        )
 
     async def get_collection_detail(self, collection_name: str) -> dict[str, Any]:
         self._enforce(self._admin_action_id("observe"))
-        return self._dump_model(await self._require_client().get_embedding_collection_stats(collection_name))
+        return self._dump_model(
+            await self._require_client().get_embedding_collection_stats(collection_name)
+        )
 
     async def delete_collection(self, collection_name: str) -> None:
         self._enforce(self._admin_action_id("configure"))
@@ -280,6 +323,9 @@ class ServerRAGAdminService:
         force_regenerate_embeddings: bool = False,
         **options: Any,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ReprocessMediaRequest
+
         self._enforce(self._admin_action_id("launch"))
         request = ReprocessMediaRequest(
             perform_chunking=perform_chunking,
@@ -289,11 +335,15 @@ class ServerRAGAdminService:
             force_regenerate_embeddings=force_regenerate_embeddings,
             **options,
         )
-        return self._dump_model(await self._require_client().reprocess_media(int(media_id), request))
+        return self._dump_model(
+            await self._require_client().reprocess_media(int(media_id), request)
+        )
 
     async def get_media_embeddings_status(self, media_id: Any) -> dict[str, Any]:
         self._enforce(self._media_embeddings_action_id("status"))
-        return self._dump_model(await self._require_client().get_media_embeddings_status(int(media_id)))
+        return self._dump_model(
+            await self._require_client().get_media_embeddings_status(int(media_id))
+        )
 
     async def generate_media_embeddings(
         self,
@@ -307,6 +357,9 @@ class ServerRAGAdminService:
         force_regenerate: bool = False,
         priority: int = 50,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MediaEmbeddingsGenerateRequest
+
         self._enforce(self._media_embeddings_action_id("create"))
         request = request_data or MediaEmbeddingsGenerateRequest(
             embedding_model=embedding_model,
@@ -317,7 +370,9 @@ class ServerRAGAdminService:
             priority=priority,
         )
         return self._dump_model(
-            await self._require_client().generate_media_embeddings(int(media_id), request)
+            await self._require_client().generate_media_embeddings(
+                int(media_id), request
+            )
         )
 
     async def generate_media_embeddings_batch(
@@ -332,6 +387,9 @@ class ServerRAGAdminService:
         force_regenerate: bool = False,
         priority: int = 50,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MediaEmbeddingsBatchRequest
+
         self._enforce(self._media_embeddings_action_id("create"))
         request = request_data or MediaEmbeddingsBatchRequest(
             media_ids=[int(media_id) for media_id in list(media_ids or [])],
@@ -342,7 +400,9 @@ class ServerRAGAdminService:
             force_regenerate=force_regenerate,
             priority=priority,
         )
-        return self._dump_model(await self._require_client().generate_media_embeddings_batch(request))
+        return self._dump_model(
+            await self._require_client().generate_media_embeddings_batch(request)
+        )
 
     async def search_media_embeddings(
         self,
@@ -355,6 +415,9 @@ class ServerRAGAdminService:
         embedding_provider: str | None = None,
         filters: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import MediaEmbeddingsSearchRequest
+
         self._enforce(self._media_embeddings_action_id("search"))
         if request_data is None and not query:
             raise ValueError("query is required when request_data is not provided.")
@@ -366,15 +429,21 @@ class ServerRAGAdminService:
             embedding_provider=embedding_provider,
             filters=dict(filters) if filters is not None else None,
         )
-        return self._dump_model(await self._require_client().search_media_embeddings(request))
+        return self._dump_model(
+            await self._require_client().search_media_embeddings(request)
+        )
 
     async def delete_media_embeddings(self, media_id: Any) -> dict[str, Any]:
         self._enforce(self._media_embeddings_action_id("delete"))
-        return self._dump_model(await self._require_client().delete_media_embeddings(int(media_id)))
+        return self._dump_model(
+            await self._require_client().delete_media_embeddings(int(media_id))
+        )
 
     async def get_media_embedding_job(self, job_id: str) -> dict[str, Any]:
         self._enforce(self._media_embedding_jobs_action_id("detail"))
-        return self._dump_model(await self._require_client().get_media_embedding_job(str(job_id)))
+        return self._dump_model(
+            await self._require_client().get_media_embedding_job(str(job_id))
+        )
 
     async def list_media_embedding_jobs(
         self,

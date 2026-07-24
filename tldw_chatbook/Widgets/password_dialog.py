@@ -18,7 +18,7 @@ from loguru import logger
 
 class PasswordDialog(ModalScreen):
     """Dialog for entering master password for config encryption."""
-    
+
     DEFAULT_CSS = """
     PasswordDialog {
         align: center middle;
@@ -87,7 +87,7 @@ class PasswordDialog(ModalScreen):
         color: $success;
     }
     """
-    
+
     def __init__(
         self,
         mode: Literal["setup", "unlock", "change"] = "unlock",
@@ -99,7 +99,7 @@ class PasswordDialog(ModalScreen):
     ):
         """
         Initialize the password dialog.
-        
+
         Args:
             mode: The dialog mode - "setup" for initial setup, "unlock" for decryption, "change" for changing password
             title: Custom title for the dialog
@@ -114,7 +114,7 @@ class PasswordDialog(ModalScreen):
         self.custom_message = message
         self.on_submit_callback = on_submit
         self.on_cancel_callback = on_cancel
-        
+
         # Set default titles and messages based on mode
         if not self.custom_title:
             if mode == "setup":
@@ -123,75 +123,84 @@ class PasswordDialog(ModalScreen):
                 self.custom_title = "Enter Master Password"
             elif mode == "change":
                 self.custom_title = "Change Master Password"
-        
+
         if not self.custom_message:
             if mode == "setup":
                 self.custom_message = "Create a master password to encrypt your API keys and sensitive configuration data."
             elif mode == "unlock":
-                self.custom_message = "Enter your master password to decrypt the configuration file."
+                self.custom_message = (
+                    "Enter your master password to decrypt the configuration file."
+                )
             elif mode == "change":
                 self.custom_message = "Enter your current master password to change it."
-    
+
     def compose(self) -> ComposeResult:
         """Create the dialog layout."""
         with Container():
             with Vertical():
                 yield Label(self.custom_title, classes="dialog-title")
                 yield Static(self.custom_message, classes="dialog-message")
-                
+
                 # Password input
                 yield Input(
                     placeholder="Enter password",
                     password=True,
                     id="password-input",
                     classes="password-input",
-                    validators=[Length(minimum=8, failure_description="Password must be at least 8 characters")]
+                    validators=[
+                        Length(
+                            minimum=8,
+                            failure_description="Password must be at least 8 characters",
+                        )
+                    ],
                 )
-                
+
                 # Confirm password for setup/change modes
                 if self.mode in ["setup", "change"]:
                     yield Input(
                         placeholder="Confirm password",
                         password=True,
                         id="confirm-input",
-                        classes="password-input"
+                        classes="password-input",
                     )
-                    
+
                     # Password strength indicator
-                    yield Static("", id="strength-indicator", classes="strength-indicator")
-                
+                    yield Static(
+                        "", id="strength-indicator", classes="strength-indicator"
+                    )
+
                 # Error message container
                 yield Static("", id="error-message", classes="error-message")
-                
+
                 # Buttons
                 with Horizontal(classes="button-container"):
                     yield Button("Cancel", variant="default", id="cancel-button")
                     yield Button("Submit", variant="primary", id="submit-button")
-    
+
     def check_password_strength(self, password: str) -> tuple[str, str]:
         """
         Check password strength and return strength level and message.
-        
+
         Returns:
             Tuple of (strength_class, strength_message)
         """
         if len(password) < 8:
             return "strength-weak", "Too short"
-        
+
         has_upper = any(c.isupper() for c in password)
         has_lower = any(c.islower() for c in password)
         has_digit = any(c.isdigit() for c in password)
         has_special = any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password)
-        
+
         strength_score = sum([has_upper, has_lower, has_digit, has_special])
-        
+
         if strength_score <= 1:
             return "strength-weak", "Weak password"
         elif strength_score == 2:
             return "strength-medium", "Medium strength"
         else:
             return "strength-strong", "Strong password"
-    
+
     @on(Input.Changed, "#password-input")
     def on_password_changed(self, event: Input.Changed) -> None:
         """Update password strength indicator when password changes."""
@@ -200,48 +209,50 @@ class PasswordDialog(ModalScreen):
             if event.value:
                 strength_class, strength_msg = self.check_password_strength(event.value)
                 strength_indicator.update(f"Password strength: {strength_msg}")
-                strength_indicator.remove_class("strength-weak", "strength-medium", "strength-strong")
+                strength_indicator.remove_class(
+                    "strength-weak", "strength-medium", "strength-strong"
+                )
                 strength_indicator.add_class(strength_class)
             else:
                 strength_indicator.update("")
-    
+
     def show_error(self, message: str) -> None:
         """Display an error message."""
         error_widget = self.query_one("#error-message", Static)
         error_widget.update(message)
         error_widget.add_class("visible")
-    
+
     def hide_error(self) -> None:
         """Hide the error message."""
         error_widget = self.query_one("#error-message", Static)
         error_widget.remove_class("visible")
-    
+
     @on(Button.Pressed, "#submit-button")
     def on_submit(self) -> None:
         """Handle submit button press."""
         self.hide_error()
-        
+
         password_input = self.query_one("#password-input", Input)
         password = password_input.value
-        
+
         # Validate password
         if not password:
             self.show_error("Password cannot be empty")
             return
-        
+
         if len(password) < 8:
             self.show_error("Password must be at least 8 characters")
             return
-        
+
         # For setup/change modes, check password confirmation
         if self.mode in ["setup", "change"]:
             confirm_input = self.query_one("#confirm-input", Input)
             confirm_password = confirm_input.value
-            
+
             if password != confirm_password:
                 self.show_error("Passwords do not match")
                 return
-        
+
         # Call the callback if provided
         if self.on_submit_callback:
             try:
@@ -252,14 +263,14 @@ class PasswordDialog(ModalScreen):
                 self.show_error(str(e))
         else:
             self.dismiss(password)
-    
+
     @on(Button.Pressed, "#cancel-button")
     def on_cancel(self) -> None:
         """Handle cancel button press."""
         if self.on_cancel_callback:
             self.on_cancel_callback()
         self.dismiss(None)
-    
+
     @on(Input.Submitted)
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle Enter key in input fields."""
@@ -273,7 +284,7 @@ class PasswordDialog(ModalScreen):
 
 class EncryptionSetupDialog(ModalScreen):
     """Dialog for setting up config encryption with API key detection."""
-    
+
     DEFAULT_CSS = """
     EncryptionSetupDialog {
         align: center middle;
@@ -324,7 +335,7 @@ class EncryptionSetupDialog(ModalScreen):
         min-width: 12;
     }
     """
-    
+
     def __init__(
         self,
         detected_providers: list[str],
@@ -334,7 +345,7 @@ class EncryptionSetupDialog(ModalScreen):
     ):
         """
         Initialize the encryption setup dialog.
-        
+
         Args:
             detected_providers: List of providers with detected API keys
             on_proceed: Callback when user proceeds with encryption
@@ -345,41 +356,51 @@ class EncryptionSetupDialog(ModalScreen):
         self.detected_providers = detected_providers
         self.on_proceed_callback = on_proceed
         self.on_cancel_callback = on_cancel
-    
+
     def compose(self) -> ComposeResult:
         """Create the dialog layout."""
         with Container():
             with Vertical():
                 yield Label("Config Encryption Setup", classes="dialog-title")
-                
+
                 # Info section
                 with Vertical(classes="info-section"):
                     yield Static("🔐 API Keys Detected!")
-                    yield Static(f"\nFound API keys for {len(self.detected_providers)} provider(s):")
-                    
+                    yield Static(
+                        f"\nFound API keys for {len(self.detected_providers)} provider(s):"
+                    )
+
                     # List detected providers
-                    api_key_list = "\n".join(f"• {provider}" for provider in self.detected_providers)
+                    api_key_list = "\n".join(
+                        f"• {provider}" for provider in self.detected_providers
+                    )
                     yield Static(api_key_list, classes="api-key-list")
-                
+
                 # Warning section
                 with Vertical(classes="warning-section"):
                     yield Static("⚠️  Important:")
-                    yield Static("• You'll need to enter this password every time you start the app")
-                    yield Static("• If you forget the password, you'll need to re-enter your API keys")
+                    yield Static(
+                        "• You'll need to enter this password every time you start the app"
+                    )
+                    yield Static(
+                        "• If you forget the password, you'll need to re-enter your API keys"
+                    )
                     yield Static("• Make sure to use a strong, memorable password")
-                
+
                 # Buttons
                 with Horizontal(classes="button-container"):
                     yield Button("Not Now", variant="default", id="cancel-button")
-                    yield Button("Setup Encryption", variant="primary", id="proceed-button")
-    
+                    yield Button(
+                        "Setup Encryption", variant="primary", id="proceed-button"
+                    )
+
     @on(Button.Pressed, "#proceed-button")
     def on_proceed(self) -> None:
         """Handle proceed button press."""
         if self.on_proceed_callback:
             self.on_proceed_callback()
         self.dismiss(True)
-    
+
     @on(Button.Pressed, "#cancel-button")
     def on_cancel(self) -> None:
         """Handle cancel button press."""

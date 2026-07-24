@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal, Mapping
 from uuid import uuid4
 
 
@@ -101,7 +102,9 @@ class ConsoleWorkspaceContext:
     def allowed_sources(self) -> list[ConsoleStagedSource]:
         """Return staged sources available to the active workspace."""
         blocked = {source.source_id for source in self.blocked_sources}
-        return [source for source in self.staged_sources if source.source_id not in blocked]
+        return [
+            source for source in self.staged_sources if source.source_id not in blocked
+        ]
 
     @property
     def has_policy_blocks(self) -> bool:
@@ -137,7 +140,13 @@ class ConsoleProviderSelection:
     thinking_effort: str | None = None
     thinking_budget_tokens: int | None = None
     streaming: bool = True
-    workspace_context: ConsoleWorkspaceContext = field(default_factory=ConsoleWorkspaceContext)
+    #: Optional per-session system prompt to prepend to provider messages.
+    #: Not used for readiness resolution; carried through so the controller
+    #: can build provider messages from a single selection snapshot.
+    system_prompt: str | None = None
+    workspace_context: ConsoleWorkspaceContext = field(
+        default_factory=ConsoleWorkspaceContext
+    )
 
 
 @dataclass(frozen=True)
@@ -153,7 +162,9 @@ class ConsoleRunState:
         return cls(ConsoleRunStatus.BLOCKED, visible_copy)
 
     @classmethod
-    def retrying(cls, visible_copy: str = "Retrying failed response") -> "ConsoleRunState":
+    def retrying(
+        cls, visible_copy: str = "Retrying failed response"
+    ) -> "ConsoleRunState":
         """Build a retrying run state."""
         return cls(ConsoleRunStatus.RETRYING, visible_copy)
 
@@ -174,6 +185,93 @@ class ConsoleRunState:
         return self.status is ConsoleRunStatus.STREAMING
 
 
+@dataclass(frozen=True)
+class MessageAttachment:
+    """One attachment carried by a Console message (position 0 = legacy slot)."""
+
+    data: bytes | None
+    mime_type: str
+    display_name: str
+    position: int
+
+
+@dataclass(frozen=True)
+class GenerationVariantMeta:
+    """Per-variant image-generation metadata (mirrors a ``message_generation_metadata`` row).
+
+    Position is deliberately NOT stored on the instance -- callers track it
+    externally via index alignment with the owning message's attachments:
+    index i of ``ConsoleChatMessage.generation_metadata`` always describes
+    ``attachments[i]`` (attachment position i). ``to_row``/``from_row``
+    convert to/from the DB sidecar row shape, which DOES carry an explicit
+    ``position`` column (``ChaChaNotes_DB.set_message_generation_metadata`` /
+    ``get_generation_metadata_for_messages``).
+    """
+
+    prompt: str
+    negative_prompt: str
+    backend: str
+    model: str | None
+    seed: int | None
+    style: str | None
+    params: dict[str, Any]
+
+    def to_row(self, position: int) -> dict[str, Any]:
+        """Convert to a ``message_generation_metadata`` row dict for ``position``.
+
+        Args:
+            position: The attachment position this variant's metadata
+                belongs to (not carried on the instance itself).
+
+        Returns:
+            A dict shaped for
+            ``CharactersRAGDB.set_message_generation_metadata``/
+            ``ChatPersistenceService.create_message(generation_metadata=...)``.
+        """
+        return {
+            "position": position,
+            "prompt": self.prompt,
+            "negative_prompt": self.negative_prompt,
+            "backend": self.backend,
+            "model": self.model,
+            "seed": self.seed,
+            "style": self.style,
+            "params_json": json.dumps(self.params),
+        }
+
+    @classmethod
+    def from_row(cls, row: Mapping[str, Any]) -> "GenerationVariantMeta":
+        """Build from a DB sidecar row dict (``position``/``created_at`` ignored).
+
+        Args:
+            row: A row dict as returned by
+                ``get_generation_metadata_for_messages`` (or an equivalent
+                mapping built by a test fake).
+
+        Returns:
+            The decoded metadata. An unparseable ``params_json`` degrades to
+            an empty ``params`` dict rather than raising.
+        """
+        raw_params = row.get("params_json") or "{}"
+        try:
+            params = (
+                json.loads(raw_params)
+                if isinstance(raw_params, str)
+                else dict(raw_params)
+            )
+        except (TypeError, ValueError):
+            params = {}
+        return cls(
+            prompt=row["prompt"],
+            negative_prompt=row.get("negative_prompt", ""),
+            backend=row["backend"],
+            model=row.get("model"),
+            seed=row.get("seed"),
+            style=row.get("style"),
+            params=params,
+        )
+
+
 @dataclass
 class ConsoleChatMessage:
     """A native Console transcript message."""
@@ -184,8 +282,25 @@ class ConsoleChatMessage:
     turn_id: str | None = None
     status: ConsoleMessageStatus = "complete"
     persisted_message_id: str | None = None
+    #: Persisted id of this node's PARENT in the conversation tree (None for a
+    #: root / not-yet-known parent). Distinct from ``persisted_message_id``
+    #: (this node's own persisted id). Used to reconstruct the active path.
+    parent_message_id: str | None = None
+    #: Transient (non-persisted) sibling-navigation hints the store fills in on
+    #: active-path snapshots so the renderer can show `<`/`>` + an `n/m` counter
+    #: without reaching into store internals. Default 0/1 = "no siblings".
+    sibling_index: int = 0
+    sibling_count: int = 1
     variants: "ConsoleVariantSet | None" = None
     feedback: ConsoleMessageFeedback | None = None
+    image_data: bytes | None = None
+    image_mime_type: str | None = None
+    attachment_label: str | None = None
+    attachments: tuple["MessageAttachment", ...] = ()
+    #: Per-variant image-generation metadata, index-aligned with
+    #: ``attachments`` (index i describes attachment position i). An empty
+    #: tuple (the default) means this is NOT a generation message.
+    generation_metadata: tuple["GenerationVariantMeta", ...] = ()
 
 
 @dataclass(frozen=True)
@@ -237,3 +352,18 @@ class ConsoleVariantSet:
     def can_go_next(self) -> bool:
         """Return whether a next variant exists."""
         return self.selected_index < len(self.variants) - 1
+
+
+@dataclass(frozen=True)
+class ConsoleContextSnapshot:
+    """Independent snapshot of current transcript and next-send provider payload.
+
+    ``frozen=True`` prevents reassigning the snapshot's top-level fields.
+    ``independent`` means the snapshot is safe from store mutation: the
+    ``current_messages`` and ``next_send_payload`` structures are copied at
+    creation time, so mutating them does not change the underlying store.
+    It does *not* promise deep immutability of nested values.
+    """
+
+    current_messages: list[ConsoleChatMessage]
+    next_send_payload: dict[str, Any]

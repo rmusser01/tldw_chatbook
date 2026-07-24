@@ -8,6 +8,8 @@ from loguru import logger
 from textual.app import ComposeResult
 
 from ..Navigation.base_app_screen import BaseAppScreen
+from ..Workbench.workbench_state import WorkbenchHeaderState
+from ..Workbench.workbench_widgets import DestinationHeader
 from ..Writing_Window import WritingWindow
 
 
@@ -23,11 +25,21 @@ class WritingScreen(BaseAppScreen):
         self._pending_restore_state: Dict[str, Any] | None = None
 
     def compose_content(self) -> ComposeResult:
+        yield DestinationHeader(
+            WorkbenchHeaderState(
+                title="Writing",
+                subtitle="Draft and edit books, chapters, and scenes.",
+                status="ready",
+            ),
+            id="writing-destination-header",
+        )
         self.writing_window = WritingWindow(
             self.app_instance,
             id="writing-window",
             classes="window",
         )
+        # Leave room for the destination header above the window.
+        self.writing_window.styles.height = "1fr"
         if self._pending_restore_state is not None:
             self.writing_window.restore_state(self._pending_restore_state)
             self._pending_restore_state = None
@@ -48,7 +60,9 @@ class WritingScreen(BaseAppScreen):
         except Exception:
             window = self.writing_window
         if window is None:
-            logger.debug("Deferring WritingScreen restore_state until window is composed")
+            logger.debug(
+                "Deferring WritingScreen restore_state until window is composed"
+            )
             self._pending_restore_state = dict(state or {})
             return
         window.restore_state(state)

@@ -8,7 +8,9 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.css.query import NoMatches
 from textual.widgets import Button
+from textual.widgets import Collapsible
 from textual.widgets import Static
 
 from Tests.UI.test_destination_shells import (
@@ -26,9 +28,11 @@ from Tests.UI.test_library_shell import (
     _active_library_screen,
     _wait_for_library_shell,
 )
-from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
 from Tests.UI.test_screen_navigation import _build_test_app
-from tldw_chatbook.UI.MCP_Modules import unified_mcp_panel as unified_mcp_panel_module
+from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Screens import (
     artifacts_screen as artifacts_screen_module,
@@ -38,7 +42,30 @@ from tldw_chatbook.UI.Screens import (
     watchlists_collections_screen as wc_screen_module,
     workflows_screen as workflows_screen_module,
 )
-from tldw_chatbook.Widgets.destination_workbench import DestinationWorkbench, WorkbenchPane
+from tldw_chatbook.Widgets.destination_workbench import (
+    DestinationWorkbench,
+    WorkbenchPane,
+)
+
+
+@pytest.fixture(autouse=True)
+def _default_advanced_open(monkeypatch):
+    """Task 5 (MCP Hub Phase 6): same rationale as test_mcp_workbench.py's
+    fixture of the same name -- the MCP destination mounts a nested
+    `MCPInspector`, whose `compose()` reads `mcp.hub_state.advanced_open`
+    AND the new `mcp.hub_state.advanced_visible` opt-in via
+    `mcp_inspector.get_cli_setting` at mount time. Without this, every MCP
+    parity test here would hit the developer's real config
+    (non-deterministic) and -- with `advanced_visible` defaulting False --
+    `_assert_advanced_run_reachable()`'s `#mcp-adv-*` queries would find the
+    opt-in reveal Button instead of the composed Advanced pane. The blanket
+    True answers both keys (visible + expanded), matching the pre-Task-5
+    layout these geometry assertions were written against.
+    """
+    import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
+
+    monkeypatch.setattr(mcp_inspector_module, "get_cli_setting", lambda *a, **k: True)
+    monkeypatch.setattr(mcp_inspector_module, "save_setting_to_cli_config", lambda *a, **k: True)
 
 
 def _region(widget):
@@ -109,16 +136,22 @@ def _assert_any_action_visible(
             return
         except AssertionError:
             continue
-    raise AssertionError(f"{context} has no visible action/recovery path from {selectors!r}")
+    raise AssertionError(
+        f"{context} has no visible action/recovery path from {selectors!r}"
+    )
 
 
-def _assert_marker_inside_container(screen, marker: str, container: str, *, context: str) -> None:
+def _assert_marker_inside_container(
+    screen, marker: str, container: str, *, context: str
+) -> None:
     marker_widget = screen.query_one(marker)
     container_region = screen.query_one(container).region
     assert marker_widget.region.x >= container_region.x, context
     assert marker_widget.region.y >= container_region.y, context
     assert marker_widget.region.x < container_region.x + container_region.width, context
-    assert marker_widget.region.y < container_region.y + container_region.height, context
+    assert marker_widget.region.y < container_region.y + container_region.height, (
+        context
+    )
 
 
 def _assert_any_marker_inside_container(
@@ -151,12 +184,16 @@ def _assert_ascii_workbench_contract(
     if strip is not None:
         _assert_strip_compact(screen, strip, max_height=strip_max_height)
     workbench_widget = screen.query_one(workbench)
-    assert workbench_widget.region.y <= start_by, f"{workbench} starts too low: {workbench_widget.region}"
+    assert workbench_widget.region.y <= start_by, (
+        f"{workbench} starts too low: {workbench_widget.region}"
+    )
     _assert_visible_in_viewport(workbench_widget, height=height, context=workbench)
     _assert_horizontal_panes(screen, panes)
     for selector in panes:
         pane = screen.query_one(selector)
-        assert pane.region.height >= min_pane_rows, f"{selector} is too short: {pane.region}"
+        assert pane.region.height >= min_pane_rows, (
+            f"{selector} is too short: {pane.region}"
+        )
         _assert_visible_in_viewport(pane, height=height, context=selector)
     if actions:
         _assert_any_action_visible(screen, actions, height=height, context=workbench)
@@ -176,7 +213,9 @@ def _visible_workbench_pane_titles(screen, workbench: str) -> list[str]:
     for widget in workbench_widget.query(Static):
         if not widget.display or not hasattr(widget, "renderable"):
             continue
-        if not any(str(class_name).endswith("-column-title") for class_name in widget.classes):
+        if not any(
+            str(class_name).endswith("-column-title") for class_name in widget.classes
+        ):
             continue
         renderable = widget.renderable
         titles.append(getattr(renderable, "plain", str(renderable)))
@@ -203,6 +242,21 @@ def _is_effectively_displayed(widget) -> bool:
     return True
 
 
+async def _click_settings_category(screen, pilot, category_id: str) -> None:
+    """Click a settings sidebar category, scrolling it into view first."""
+    selector = f"#settings-category-{category_id}"
+    await _wait_for_selector(screen, pilot, selector)
+    try:
+        category_list = screen.query_one("#settings-category-list")
+        category_list.scroll_to_widget(
+            screen.query_one(selector), animate=False, immediate=True
+        )
+        await pilot.pause()
+    except Exception:
+        pass
+    await pilot.click(selector)
+
+
 class StaticArtifactsChatbookService:
     def __init__(self, chatbooks):
         self.chatbooks = tuple(chatbooks)
@@ -221,7 +275,9 @@ async def test_main_navigation_overflow_hint_does_not_overlap_settings_at_defaul
         nav = home.query_one(MainNavigationBar)
         settings = nav.query_one("#nav-settings", Button)
         more = nav.query_one("#nav-overflow-hint")
-        _assert_no_horizontal_overlap(settings, more, context="More hint overlaps Settings nav item")
+        _assert_no_horizontal_overlap(
+            settings, more, context="More hint overlaps Settings nav item"
+        )
 
 
 @pytest.mark.asyncio
@@ -277,7 +333,9 @@ async def test_home_dashboard_regions_fit_default_viewport():
             "#home-canvas",
             "#home-details-body",
         ):
-            _assert_visible_in_viewport(home.query_one(selector), height=42, context=selector)
+            _assert_visible_in_viewport(
+                home.query_one(selector), height=42, context=selector
+            )
         _assert_any_action_visible(
             home,
             (
@@ -309,7 +367,9 @@ async def test_console_first_start_shows_left_rail_main_and_right_handle():
         transcript = console.query_one("#console-session-surface")
         composer = console.query_one("#console-native-composer")
 
-        assert workbench.region.y <= 12, f"Console workbench starts too low: {workbench.region}"
+        assert workbench.region.y <= 12, (
+            f"Console workbench starts too low: {workbench.region}"
+        )
         _assert_visible_in_viewport(workbench, height=42, context="Console workbench")
         assert _is_effectively_displayed(left_rail)
         assert _is_effectively_displayed(main_column)
@@ -320,8 +380,12 @@ async def test_console_first_start_shows_left_rail_main_and_right_handle():
         assert main_column.region.height >= 20
         assert right_handle.region.height >= 20
         _assert_visible_in_viewport(left_rail, height=42, context="Console left rail")
-        _assert_visible_in_viewport(main_column, height=42, context="Console main column")
-        _assert_visible_in_viewport(right_handle, height=42, context="Console right handle")
+        _assert_visible_in_viewport(
+            main_column, height=42, context="Console main column"
+        )
+        _assert_visible_in_viewport(
+            right_handle, height=42, context="Console right handle"
+        )
         assert console.query_one("#console-staged-context-tray")
         assert console.query_one("#console-workspace-context")
         _assert_visible_in_viewport(transcript, height=42, context="Console transcript")
@@ -345,8 +409,12 @@ async def test_library_shell_grid_is_visible_in_viewport():
         shell_grid = library.query_one("#library-shell-grid")
         rail = library.query_one("#library-rail")
         canvas = library.query_one("#library-canvas")
-        assert shell_grid.region.y <= 12, f"#library-shell-grid starts too low: {shell_grid.region}"
-        _assert_visible_in_viewport(shell_grid, height=42, context="#library-shell-grid")
+        assert shell_grid.region.y <= 12, (
+            f"#library-shell-grid starts too low: {shell_grid.region}"
+        )
+        _assert_visible_in_viewport(
+            shell_grid, height=42, context="#library-shell-grid"
+        )
         _assert_visible_in_viewport(rail, height=42, context="#library-rail")
         _assert_visible_in_viewport(canvas, height=42, context="#library-canvas")
         assert rail.region.x < canvas.region.x
@@ -514,22 +582,41 @@ async def test_library_source_snapshot_times_out_to_stable_error(monkeypatch):
     )
 
     start = time.perf_counter()
-    records, counts, total_known, error, recovery_state, study_counts = (
-        await screen._list_local_source_snapshot()
-    )
+    (
+        records,
+        counts,
+        total_known,
+        error,
+        recovery_state,
+        study_counts,
+    ) = await screen._list_local_source_snapshot()
     elapsed = time.perf_counter() - start
 
-    assert records == {"notes": (), "media": (), "conversations": ()}
+    assert records == {
+        "notes": (),
+        "media": (),
+        "conversations": (),
+        # The prompts and skills seams carry (count, payload) placeholders,
+        # not bare records tuples (see LibraryScreen.__init__).
+        "prompts": (None, ()),
+        "skills": (None, {"available_skills": [], "blocked_skills": []}),
+    }
     assert counts == {"notes": 0, "media": 0, "conversations": 0}
     assert total_known == {"notes": True, "media": True, "conversations": True}
     assert error == library_screen_module.LIBRARY_SERVICE_ERROR_COPY
     assert recovery_state is None
-    assert study_counts == {"study_decks": None, "flashcards_due": None, "quizzes": None}
+    assert study_counts == {
+        "study_decks": None,
+        "flashcards_due": None,
+        "quizzes": None,
+    }
     assert elapsed < 0.05
 
 
 @pytest.mark.asyncio
-async def test_library_source_snapshot_timeout_handles_blocking_async_services(monkeypatch):
+async def test_library_source_snapshot_timeout_handles_blocking_async_services(
+    monkeypatch,
+):
     class BlockingAsyncNotesService:
         async def list_notes(self, **_kwargs):
             time.sleep(0.2)
@@ -560,22 +647,41 @@ async def test_library_source_snapshot_timeout_handles_blocking_async_services(m
     )
 
     start = time.perf_counter()
-    records, counts, total_known, error, recovery_state, study_counts = (
-        await screen._list_local_source_snapshot()
-    )
+    (
+        records,
+        counts,
+        total_known,
+        error,
+        recovery_state,
+        study_counts,
+    ) = await screen._list_local_source_snapshot()
     elapsed = time.perf_counter() - start
 
-    assert records == {"notes": (), "media": (), "conversations": ()}
+    assert records == {
+        "notes": (),
+        "media": (),
+        "conversations": (),
+        # The prompts and skills seams carry (count, payload) placeholders,
+        # not bare records tuples (see LibraryScreen.__init__).
+        "prompts": (None, ()),
+        "skills": (None, {"available_skills": [], "blocked_skills": []}),
+    }
     assert counts == {"notes": 0, "media": 0, "conversations": 0}
     assert total_known == {"notes": True, "media": True, "conversations": True}
     assert error == library_screen_module.LIBRARY_SERVICE_ERROR_COPY
     assert recovery_state is None
-    assert study_counts == {"study_decks": None, "flashcards_due": None, "quizzes": None}
+    assert study_counts == {
+        "study_decks": None,
+        "flashcards_due": None,
+        "quizzes": None,
+    }
     assert elapsed < 0.05
 
 
 @pytest.mark.asyncio
-async def test_library_service_call_awaits_coroutine_functions_without_worker(monkeypatch):
+async def test_library_service_call_awaits_coroutine_functions_without_worker(
+    monkeypatch,
+):
     async def async_service_call():
         return "direct-result"
 
@@ -601,7 +707,11 @@ async def test_library_service_call_awaits_coroutine_functions_without_worker(mo
             # The run inspector is a section inside the right rail; the rail
             # itself is the third workbench pane.
             ("#console-left-rail", "#console-main-column", "#console-right-rail"),
-            ("#console-send-message", "#console-attach-context", "#console-save-chatbook"),
+            (
+                "#console-send-message",
+                "#console-attach-context",
+                "#console-save-chatbook",
+            ),
             ("#console-run-inspector-state",),
             "#console-run-inspector",
         ),
@@ -659,7 +769,11 @@ SOURCE_PREP_WORKBENCHES = {
     "artifacts": {
         "workbench": "#artifacts-workbench",
         "strip": "#artifacts-mode-strip",
-        "panes": ("#artifacts-list-pane", "#artifacts-detail-pane", "#artifacts-inspector-pane"),
+        "panes": (
+            "#artifacts-list-pane",
+            "#artifacts-detail-pane",
+            "#artifacts-inspector-pane",
+        ),
         "actions": (
             "#artifacts-open-chatbooks",
             "#artifacts-open-console",
@@ -677,7 +791,11 @@ SOURCE_PREP_WORKBENCHES = {
     "personas": {
         "workbench": "#personas-workbench",
         "strip": "#personas-mode-strip",
-        "panes": ("#personas-library-pane", "#personas-work-area", "#personas-inspector-pane"),
+        "panes": (
+            "#personas-library-pane",
+            "#personas-work-area",
+            "#personas-inspector-pane",
+        ),
         "actions": ("#personas-library-new", "#personas-attach-to-console"),
         "markers": ("#personas-library-empty", "#personas-library-count"),
         "marker_container": "#personas-library-pane",
@@ -685,8 +803,16 @@ SOURCE_PREP_WORKBENCHES = {
     "watchlists_collections": {
         "workbench": "#watchlists-workbench",
         "strip": "#watchlists-filter-strip",
-        "panes": ("#watchlists-list-pane", "#watchlists-detail-pane", "#watchlists-inspector-pane"),
-        "actions": ("#wc-open-watchlists", "#wc-attach-to-console", "#watchlists-follow-in-console"),
+        "panes": (
+            "#watchlists-list-pane",
+            "#watchlists-detail-pane",
+            "#watchlists-inspector-pane",
+        ),
+        "actions": (
+            "#wc-open-watchlists",
+            "#wc-attach-to-console",
+            "#watchlists-follow-in-console",
+        ),
         "markers": ("#wc-empty-state", "#wc-service-error", "#wc-loading-state"),
         "marker_container": "#watchlists-detail-pane",
     },
@@ -695,7 +821,11 @@ SOURCE_PREP_WORKBENCHES = {
         "strip": "#skills-mode-strip",
         "panes": ("#skills-list-pane", "#skills-detail-pane", "#skills-inspector-pane"),
         "actions": ("#skills-import-skill", "#skills-attach-to-console"),
-        "markers": ("#skills-empty-state", "#skills-service-error", "#skills-loading-state"),
+        "markers": (
+            "#skills-empty-state",
+            "#skills-service-error",
+            "#skills-loading-state",
+        ),
         "marker_container": "#skills-detail-pane",
     },
 }
@@ -703,7 +833,9 @@ SOURCE_PREP_WORKBENCHES = {
 
 @pytest.mark.parametrize("route,contract", SOURCE_PREP_WORKBENCHES.items())
 @pytest.mark.asyncio
-async def test_source_prep_destinations_use_list_detail_inspector_workbench(route, contract):
+async def test_source_prep_destinations_use_list_detail_inspector_workbench(
+    route, contract
+):
     app = _build_test_app()
     host = DestinationHarness(app, route)
     async with host.run_test(size=(140, 42)) as pilot:
@@ -727,7 +859,9 @@ async def test_source_prep_destinations_use_list_detail_inspector_workbench(rout
 
 @pytest.mark.parametrize("route,contract", SOURCE_PREP_WORKBENCHES.items())
 @pytest.mark.asyncio
-async def test_source_prep_default_empty_or_unavailable_states_preserve_workbench_geometry(route, contract):
+async def test_source_prep_default_empty_or_unavailable_states_preserve_workbench_geometry(
+    route, contract
+):
     app = _build_test_app()
     host = DestinationHarness(app, route)
     async with host.run_test(size=(140, 42)) as pilot:
@@ -780,26 +914,52 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
 @pytest.mark.parametrize(
     ("route", "workbench", "expected_titles"),
     (
-        ("artifacts", "#artifacts-workbench", ("Artifact List", "Artifact Preview", "Provenance")),
+        (
+            "artifacts",
+            "#artifacts-workbench",
+            ("Artifact List", "Artifact Preview", "Provenance"),
+        ),
         # The personas work area renders mode-driven section headers
         # (Character / Character Editor / Persona Profile) instead of a fixed
         # column title, so only the library and inspector panes carry
         # *-column-title statics.
         ("personas", "#personas-workbench", ("Library", "Inspector")),
-        ("schedules", "#schedules-workbench", ("Schedule Queue", "Run Detail", "Status Inspector")),
-        ("workflows", "#workflows-workbench", ("Procedure Library", "Run Detail", "Run Inspector")),
+        (
+            "schedules",
+            "#schedules-workbench",
+            ("Schedule Queue", "Run Detail", "Status Inspector"),
+        ),
+        (
+            "workflows",
+            "#workflows-workbench",
+            ("Procedure Library", "Run Detail", "Run Inspector"),
+        ),
         # With no runtime configured (the harness default), ACP's middle pane
         # is the Runtime Setup column rather than Session Detail.
-        ("acp", "#acp-workbench", ("Agents / Sessions", "Runtime Setup", "Compatibility / Actions")),
-        ("skills", "#skills-workbench", ("Skill Library", "Skill Detail", "Skill Inspector")),
+        (
+            "acp",
+            "#acp-workbench",
+            ("Agents / Sessions", "Runtime Setup", "Compatibility / Actions"),
+        ),
+        (
+            "skills",
+            "#skills-workbench",
+            ("Skill Library", "Skill Detail", "Skill Inspector"),
+        ),
         # Settings' Overview card title carries the column-title class.
-        ("settings", "#settings-workbench", ("Settings Sections", "Preference Detail", "Overview", "Scope Inspector")),
+        (
+            "settings",
+            "#settings-workbench",
+            ("Settings Sections", "Preference Detail", "Overview", "Scope Inspector"),
+        ),
         # The legacy ccp route/screen was retired; its workbench is the Personas
         # destination, covered by Tests/UI/test_personas_workbench.py.
     ),
 )
 @pytest.mark.asyncio
-async def test_destination_pane_titles_are_user_facing_not_ordinal(route, workbench, expected_titles):
+async def test_destination_pane_titles_are_user_facing_not_ordinal(
+    route, workbench, expected_titles
+):
     app = _build_test_app()
     host = DestinationHarness(app, route)
 
@@ -808,7 +968,9 @@ async def test_destination_pane_titles_are_user_facing_not_ordinal(route, workbe
         await _wait_for_selector(screen, pilot, workbench)
         visible_text = _visible_static_text(screen)
 
-        assert _visible_workbench_pane_titles(screen, workbench) == list(expected_titles)
+        assert _visible_workbench_pane_titles(screen, workbench) == list(
+            expected_titles
+        )
         assert "Column 1:" not in visible_text
         assert "Column 2:" not in visible_text
         assert "Column 3:" not in visible_text
@@ -925,7 +1087,11 @@ async def test_personas_workbench_exposes_approved_three_column_ia():
 
         _assert_horizontal_panes(
             screen,
-            ("#personas-library-pane", "#personas-work-area", "#personas-inspector-pane"),
+            (
+                "#personas-library-pane",
+                "#personas-work-area",
+                "#personas-inspector-pane",
+            ),
         )
         assert _visible_workbench_pane_titles(screen, "#personas-workbench") == [
             "Library",
@@ -955,10 +1121,7 @@ async def test_personas_workbench_separates_columns_without_legacy_dividers():
 
         for pane in (library_pane, work_area, inspector_pane):
             assert "destination-workbench-pane" in pane.classes
-        assert (
-            library_pane.region.x + library_pane.region.width
-            <= work_area.region.x
-        )
+        assert library_pane.region.x + library_pane.region.width <= work_area.region.x
         assert work_area.region.x + work_area.region.width <= inspector_pane.region.x
         workbench = screen.query_one("#personas-workbench")
         assert not list(workbench.query(".destination-pane-divider"))
@@ -1100,14 +1263,22 @@ async def test_source_prep_loading_states_preserve_workbench_geometry(
             "schedules",
             "#schedules-filter-strip",
             "#schedules-workbench",
-            ("#schedules-list-pane", "#schedules-detail-pane", "#schedules-inspector-pane"),
+            (
+                "#schedules-list-pane",
+                "#schedules-detail-pane",
+                "#schedules-inspector-pane",
+            ),
             ("#schedules-follow-in-console",),
         ),
         (
             "workflows",
             "#workflows-mode-strip",
             "#workflows-workbench",
-            ("#workflows-list-pane", "#workflows-detail-pane", "#workflows-inspector-pane"),
+            (
+                "#workflows-list-pane",
+                "#workflows-detail-pane",
+                "#workflows-inspector-pane",
+            ),
             ("#workflows-launch-in-console",),
         ),
     ],
@@ -1138,7 +1309,11 @@ async def test_operational_destinations_use_timing_or_procedure_workbench(
             "schedules",
             "#schedules-filter-strip",
             "#schedules-workbench",
-            ("#schedules-list-pane", "#schedules-detail-pane", "#schedules-inspector-pane"),
+            (
+                "#schedules-list-pane",
+                "#schedules-detail-pane",
+                "#schedules-inspector-pane",
+            ),
             ("#schedules-follow-in-console",),
             ("#schedules-empty-state", "#schedules-console-unavailable"),
             "#schedules-detail-pane",
@@ -1147,7 +1322,11 @@ async def test_operational_destinations_use_timing_or_procedure_workbench(
             "workflows",
             "#workflows-mode-strip",
             "#workflows-workbench",
-            ("#workflows-list-pane", "#workflows-detail-pane", "#workflows-inspector-pane"),
+            (
+                "#workflows-list-pane",
+                "#workflows-detail-pane",
+                "#workflows-inspector-pane",
+            ),
             ("#workflows-launch-in-console",),
             ("#workflows-console-unavailable",),
             "#workflows-detail-pane",
@@ -1244,77 +1423,147 @@ async def test_operational_loading_states_preserve_workbench_geometry(
         )
 
 
+async def _assert_advanced_run_reachable(screen, pilot) -> None:
+    """The Advanced "Run Action" button is mounted and (when actions exist) focusable.
+
+    #mcp-adv-run is the direct successor of the retired
+    #unified-mcp-action-run, but unlike its predecessor it is NOT an
+    always-visible column action: the inspector's Advanced escape hatch is a
+    scrollable section, and in the default loaded state the rendered section
+    content pushes the run button below the scroll fold (verified — an
+    in-viewport assertion on it fails at both 140x42 and 100x32). The
+    genuinely visible primary action is the rail row; this asserts the
+    Advanced runner's surviving contract instead: mounted, not scrolled out
+    via `display: none`, and focusable whenever the current section actually
+    has actions.
+
+    The button is legitimately *disabled* when the current section has zero
+    actions (mirrors the legacy panel's `_sync_action_controls()`, which
+    also disables `#unified-mcp-action-run` for a zero-descriptor section —
+    see unified_mcp_panel.py). Phase 1's default "Overview" section has no
+    actions, so `#mcp-adv-run` starts disabled by default; that is not a
+    regression, it is `MCPInspector._refresh_advanced_actions()` correctly
+    reflecting the loaded section instead of the stale action set the mount
+    happened to compute before the section finished loading.
+
+    T12: the whole Advanced block now lives inside a `Collapsible` that
+    defaults to collapsed (`display: none` on its contents), so this expands
+    it first when needed -- this check's actual subject (does the button get
+    lost to overflow/CSS once the pane IS open) is unchanged by that; it
+    would otherwise trivially fail on every run against the new default.
+    """
+    try:
+        collapsible = screen.query_one("#mcp-adv-collapsible", Collapsible)
+    except NoMatches:
+        collapsible = None
+    if collapsible is not None and collapsible.collapsed:
+        collapsible.collapsed = False
+        await pilot.pause()
+    adv_run = screen.query_one("#mcp-adv-run", Button)
+    assert _is_effectively_displayed(adv_run), "#mcp-adv-run is not displayed"
+    if not adv_run.disabled:
+        assert adv_run.can_focus, "#mcp-adv-run is not focusable"
+
+
 @pytest.mark.asyncio
 async def test_mcp_uses_visible_server_detail_readiness_layout_without_overflow():
+    """Realigned from the retired `UnifiedMCPPanel` 3-column embed.
+
+    Task 8 replaced the embedded panel with the rail/canvas/inspector
+    `MCPWorkbench` triad. Same product intent -- server list, server detail,
+    and readiness/actions each get a fully visible, non-overflowing pane --
+    verified against the new `#mcp-hub-rail` / `#mcp-hub-canvas` /
+    `#mcp-hub-inspector` landmarks.
+    """
     app = _build_test_app()
     host = DestinationHarness(app, "mcp")
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#mcp-workbench")
+        await _wait_for_selector(screen, pilot, "#mcp-hub-workbench")
         _assert_strip_compact(screen, "#mcp-title", max_height=1)
         _assert_strip_compact(screen, "#mcp-purpose", max_height=1)
         _assert_ascii_workbench_contract(
             screen,
-            workbench="#mcp-workbench",
+            workbench="#mcp-hub-workbench",
             strip="#mcp-mode-strip",
-            panes=("#mcp-server-tree-pane", "#mcp-detail-pane", "#mcp-readiness-pane"),
-            actions=("#unified-mcp-action-run",),
+            panes=("#mcp-hub-rail", "#mcp-hub-canvas", "#mcp-hub-inspector"),
+            actions=("#mcp-rail-row-0",),
             height=42,
             min_pane_rows=30,
         )
+        await _assert_advanced_run_reachable(screen, pilot)
 
 
 @pytest.mark.asyncio
 async def test_mcp_unavailable_or_local_default_state_keeps_workbench_geometry():
+    """Realigned from the retired `UnifiedMCPPanel` embed (same intent as above).
+
+    Verifies the default local-source state (no server selected, only the
+    built-in server present) does not break the workbench triad's geometry,
+    and that the servers-mode overview content stays confined to the canvas
+    pane rather than escaping it (successor to the old
+    `#unified-mcp-content` inside `#mcp-detail-pane` check).
+    """
     app = _build_test_app()
     host = DestinationHarness(app, "mcp")
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#mcp-workbench")
+        await _wait_for_selector(screen, pilot, "#mcp-hub-workbench")
         _assert_ascii_workbench_contract(
             screen,
-            workbench="#mcp-workbench",
+            workbench="#mcp-hub-workbench",
             strip="#mcp-mode-strip",
-            panes=("#mcp-server-tree-pane", "#mcp-detail-pane", "#mcp-readiness-pane"),
-            actions=("#unified-mcp-action-run",),
+            panes=("#mcp-hub-rail", "#mcp-hub-canvas", "#mcp-hub-inspector"),
+            actions=("#mcp-rail-row-0",),
             height=42,
         )
+        await _assert_advanced_run_reachable(screen, pilot)
         _assert_marker_inside_container(
             screen,
-            "#unified-mcp-content",
-            "#mcp-detail-pane",
-            context="MCP loading/status content escaped detail pane",
+            "#mcp-overview-summary",
+            "#mcp-hub-canvas",
+            context="MCP servers-mode overview content escaped canvas pane",
         )
 
 
 @pytest.mark.asyncio
 async def test_mcp_forced_loading_state_stays_inside_workbench(monkeypatch):
-    async def keep_initial_loading_state(self):
-        return self.context
+    """Realigned from the retired `UnifiedMCPPanel.load_context` monkeypatch.
 
-    monkeypatch.setattr(
-        unified_mcp_panel_module.UnifiedMCPPanel,
-        "load_context",
-        keep_initial_loading_state,
-    )
+    `UnifiedMCPPanel` is no longer mounted anywhere in the MCP screen's
+    component chain (Task 8 replaced it with `MCPWorkbench`), so forcing
+    *its* `load_context()` to hang no longer has any effect. Same product
+    intent -- force the surface to sit in a still-loading state and verify
+    nothing overflows its pane geometry -- reproduced by no-op'ing
+    `MCPWorkbench.reload()`, which pins the rail/canvas/inspector to their
+    just-mounted, pre-reload compose shape (empty rail besides "All servers";
+    inspector's default "Select a server" prompt) for the whole test. A no-op
+    rather than a hung await: `MCPWorkbench.on_mount` awaits `reload()`
+    inline, so an await that never resolves would deadlock app teardown.
+    """
+
+    async def keep_loading(self):
+        return None
+
+    monkeypatch.setattr(MCPWorkbench, "reload", keep_loading)
     app = _build_test_app()
     host = DestinationHarness(app, "mcp")
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#unified-mcp-content")
+        await _wait_for_selector(screen, pilot, "#mcp-hub-inspector")
         _assert_ascii_workbench_contract(
             screen,
-            workbench="#mcp-workbench",
+            workbench="#mcp-hub-workbench",
             strip="#mcp-mode-strip",
-            panes=("#mcp-server-tree-pane", "#mcp-detail-pane", "#mcp-readiness-pane"),
-            actions=("#unified-mcp-action-run",),
+            panes=("#mcp-hub-rail", "#mcp-hub-canvas", "#mcp-hub-inspector"),
+            actions=("#mcp-adv-run",),
             height=42,
         )
         _assert_marker_inside_container(
             screen,
-            "#unified-mcp-content",
-            "#mcp-detail-pane",
-            context="MCP forced loading state escaped detail pane",
+            "#mcp-inspector-state",
+            "#mcp-hub-inspector",
+            context="MCP forced loading state escaped inspector pane",
         )
 
 
@@ -1332,7 +1581,11 @@ async def test_mcp_forced_loading_state_stays_inside_workbench(monkeypatch):
             "settings",
             "#settings-category-strip",
             "#settings-workbench",
-            ("#settings-category-pane", "#settings-detail-pane", "#settings-impact-pane"),
+            (
+                "#settings-category-pane",
+                "#settings-detail-pane",
+                "#settings-impact-pane",
+            ),
             ("#settings-open-appearance",),
         ),
     ],
@@ -1372,7 +1625,11 @@ async def test_runtime_and_settings_destinations_use_pane_layouts(
             "settings",
             "#settings-category-strip",
             "#settings-workbench",
-            ("#settings-category-pane", "#settings-detail-pane", "#settings-impact-pane"),
+            (
+                "#settings-category-pane",
+                "#settings-detail-pane",
+                "#settings-impact-pane",
+            ),
             ("#settings-open-appearance",),
             ("#settings-boundary-note",),
             "#settings-impact-pane",
@@ -1412,7 +1669,7 @@ async def test_settings_dirty_category_status_has_visual_marker_class():
 
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
-        await pilot.click("#settings-category-console-behavior")
+        await _click_settings_category(screen, pilot, "console-behavior")
         await pilot.click("#settings-console-collapse-large-pastes-toggle")
         status = screen.query_one("#settings-category-console-behavior-status")
 
@@ -1427,7 +1684,7 @@ async def test_settings_advanced_config_controls_use_action_and_status_rows():
 
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
-        await pilot.click("#settings-category-advanced-config")
+        await _click_settings_category(screen, pilot, "advanced-config")
         await _wait_for_selector(screen, pilot, "#settings-advanced-config-editor")
 
         actions = screen.query_one("#settings-advanced-config-actions")
@@ -1489,14 +1746,22 @@ COMPACT_DESTINATION_CONTRACTS = {
         "workbench": "#home-triage-grid",
         "object": "#home-rail",
         "detail": "#home-canvas",
-        "actions": ("#home-primary-action", "#home-open-details", "#home-open-chatbook-details"),
+        "actions": (
+            "#home-primary-action",
+            "#home-open-details",
+            "#home-open-chatbook-details",
+        ),
     },
     "chat": {
-        "identity": "#console-title",
+        "identity": "#console-workbench-header",
         "workbench": "#console-workspace-grid",
         "object": "#console-left-rail",
         "detail": "#console-session-surface",
-        "actions": ("#console-send-message", "#console-attach-context", "#console-save-chatbook"),
+        "actions": (
+            "#console-send-message",
+            "#console-attach-context",
+            "#console-save-chatbook",
+        ),
     },
     "library": {
         # #library-title / #library-contract-grid / #library-source-browser
@@ -1528,7 +1793,7 @@ COMPACT_DESTINATION_CONTRACTS = {
         ),
     },
     "personas": {
-        "identity": "#personas-title",
+        "identity": "#personas-header",
         "workbench": "#personas-workbench",
         "object": "#personas-library-pane",
         "detail": "#personas-work-area",
@@ -1556,11 +1821,22 @@ COMPACT_DESTINATION_CONTRACTS = {
         "actions": ("#workflows-launch-in-console",),
     },
     "mcp": {
+        # #mcp-workbench / #mcp-server-tree-pane / #mcp-detail-pane /
+        # #mcp-readiness-pane are all retired (see test_destination_shells.py):
+        # Task 8 replaced the embedded `UnifiedMCPPanel` with the
+        # rail/canvas/inspector `MCPWorkbench` triad, mounted as
+        # #mcp-hub-workbench. Same intent -- rail (server list) as "object",
+        # canvas (server detail/overview) as "detail" -- verified against the
+        # new landmarks. The compact-viewport visible action is the
+        # always-visible rail row: #mcp-adv-run (successor of the retired
+        # #unified-mcp-action-run) sits below the inspector's Advanced scroll
+        # fold at 100x32 (verified), and is covered by
+        # _assert_advanced_run_reachable + the tab-order test instead.
         "identity": "#mcp-title",
-        "workbench": "#mcp-workbench",
-        "object": "#mcp-server-tree-pane",
-        "detail": "#mcp-detail-pane",
-        "actions": ("#unified-mcp-action-run",),
+        "workbench": "#mcp-hub-workbench",
+        "object": "#mcp-hub-rail",
+        "detail": "#mcp-hub-canvas",
+        "actions": ("#mcp-rail-row-0",),
     },
     "acp": {
         "identity": "#acp-title",
@@ -1593,13 +1869,16 @@ COMPACT_DESTINATION_CONTRACTS = {
 
 
 TOP_LEVEL_WORKBENCH_SELECTORS = {
-    route: contract["workbench"] for route, contract in COMPACT_DESTINATION_CONTRACTS.items()
+    route: contract["workbench"]
+    for route, contract in COMPACT_DESTINATION_CONTRACTS.items()
 }
 
 
 @pytest.mark.parametrize("route,contract", COMPACT_DESTINATION_CONTRACTS.items())
 @pytest.mark.asyncio
-async def test_top_level_destinations_keep_primary_workbench_visible_at_compact_size(route, contract):
+async def test_top_level_destinations_keep_primary_workbench_visible_at_compact_size(
+    route, contract
+):
     app = _build_test_app()
     if route == "home":
         host = HomeHarness(app)
@@ -1611,10 +1890,16 @@ async def test_top_level_destinations_keep_primary_workbench_visible_at_compact_
         screen = host.screen_stack[-1]
         await _wait_for_selector(screen, pilot, contract["workbench"])
         nav = screen.query_one(MainNavigationBar)
-        assert nav.region.y == 0, f"{route}: global nav is not docked at top: {nav.region}"
+        assert nav.region.y == 0, (
+            f"{route}: global nav is not docked at top: {nav.region}"
+        )
         assert nav.region.height <= 3, f"{route}: global nav is too tall: {nav.region}"
-        _assert_visible_in_viewport(nav, height=32, context=f"{route}:global-nav", viewport_width=100)
-        assert list(nav.query(Button)), f"{route}: global nav has no visible destination buttons"
+        _assert_visible_in_viewport(
+            nav, height=32, context=f"{route}:global-nav", viewport_width=100
+        )
+        assert list(nav.query(Button)), (
+            f"{route}: global nav has no visible destination buttons"
+        )
         for required in ("identity", "workbench", "object", "detail"):
             _assert_visible_in_viewport(
                 screen.query_one(contract[required]),
@@ -1632,8 +1917,18 @@ async def test_top_level_destinations_keep_primary_workbench_visible_at_compact_
 
 
 VISIBLE_FOCUS_TARGETS = {
-    "home": {"home-primary-action", "home-open-details", "home-open-in-console", "home-open-chatbook-details"},
-    "chat": {"console-send-message", "console-attach-context", "console-save-chatbook", "console-run-library-rag"},
+    "home": {
+        "home-primary-action",
+        "home-open-details",
+        "home-open-in-console",
+        "home-open-chatbook-details",
+    },
+    "chat": {
+        "console-send-message",
+        "console-attach-context",
+        "console-save-chatbook",
+        "console-run-library-rag",
+    },
     # The retired #library-open-* buttons lived only in the never-mounted
     # #library-source-browser; the always-visible rail rows are the
     # surviving tab-focusable primary actions.
@@ -1650,13 +1945,26 @@ VISIBLE_FOCUS_TARGETS = {
         "artifacts-use-in-console",
     },
     "personas": {"personas-library-new", "personas-attach-to-console"},
-    "watchlists_collections": {"wc-open-watchlists", "wc-attach-to-console", "watchlists-follow-in-console"},
+    "watchlists_collections": {
+        "wc-open-watchlists",
+        "wc-attach-to-console",
+        "watchlists-follow-in-console",
+    },
     "schedules": {"schedules-follow-in-console"},
     "workflows": {"workflows-launch-in-console"},
-    "mcp": {"unified-mcp-action-run"},
+    # #unified-mcp-action-run is retired with the `UnifiedMCPPanel` embed
+    # (Task 8); its direct successor is #mcp-adv-run, the workbench
+    # inspector's Advanced "Run Action" button. It is legitimately disabled
+    # by default (Phase 1's default "Overview" section has no actions --
+    # see _assert_advanced_run_reachable), so #mcp-rail-row-0 ("All
+    # servers", always enabled) is listed alongside it as the genuinely
+    # reachable default primary action.
+    "mcp": {"mcp-rail-row-0", "mcp-adv-run"},
     "acp": {"acp-follow-in-console", "acp-launch-agent"},
     "skills": {"skills-import-skill", "skills-attach-to-console"},
-    "settings": {"settings-open-appearance"},
+    # Theme and Splash Screen are now first-class sidebar categories, so the
+    # primary tab-focusable actions on Settings are the category rail buttons.
+    "settings": {"settings-category-overview", "settings-category-providers-models"},
 }
 
 
@@ -1680,7 +1988,9 @@ async def test_tab_order_reaches_visible_primary_action(route, targets):
             for target in targets
             if list(screen.query(f"#{target}"))
         ]
-        enabled_targets = {button.id for button in target_buttons if button.id and not button.disabled}
+        enabled_targets = {
+            button.id for button in target_buttons if button.id and not button.disabled
+        }
         if not enabled_targets:
             _assert_any_action_visible(
                 screen,
@@ -1701,4 +2011,6 @@ async def test_tab_order_reaches_visible_primary_action(route, targets):
                     viewport_width=140,
                 )
                 return
-        pytest.fail(f"{route} did not focus a visible primary action from {sorted(enabled_targets)}")
+        pytest.fail(
+            f"{route} did not focus a visible primary action from {sorted(enabled_targets)}"
+        )

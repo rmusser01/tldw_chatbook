@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Iterable
 
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserInputRow,
     ReverseKey,
+    console_conversation_status_detail,
+    format_console_relative_age,
 )
 
 CONSOLE_SWITCHER_RESULT_LIMIT = 20
@@ -35,6 +38,12 @@ def _matches(row: ConsoleConversationBrowserInputRow, tokens: list[str]) -> bool
     ``workspace_label``, and ``status`` are coerced through ``str(... or "")``
     before joining -- a ``None`` in any field must not raise ``TypeError``.
 
+    The haystack includes BOTH the raw ``status`` and its friendly detail
+    (``console_conversation_status_detail``): TASK-356 made that friendly label
+    the one shown in the subtitle, so a query for the visible word ("saved")
+    must match even though the persisted status is still "in-progress"; the raw
+    token stays searchable for back-compat.
+
     Args:
         row: Candidate browser input row.
         tokens: Lowercased query tokens that must all match.
@@ -43,7 +52,13 @@ def _matches(row: ConsoleConversationBrowserInputRow, tokens: list[str]) -> bool
         True if every token is a substring of the row's joined text.
     """
     haystack = " ".join(
-        str(part or "") for part in (row.title, row.workspace_label, row.status)
+        str(part or "")
+        for part in (
+            row.title,
+            row.workspace_label,
+            row.status,
+            console_conversation_status_detail(row.status),
+        )
     ).lower()
     return all(token in haystack for token in tokens)
 
@@ -53,6 +68,7 @@ def build_console_switcher_entries(
     *,
     query: str = "",
     limit: int = CONSOLE_SWITCHER_RESULT_LIMIT,
+    now: datetime | None = None,
 ) -> tuple[ConsoleSwitcherEntry, ...]:
     """Build deduped, recent-first switcher results for a query.
 
@@ -61,6 +77,9 @@ def build_console_switcher_entries(
         query: Whitespace-separated tokens; every token must match the row's
             title, workspace label, or status (case-insensitive substring).
         limit: Maximum number of entries returned.
+        now: Reference time used to derive a recency label from ``updated_sort``
+            when a row carries no precomputed ``updated_label``; defaults to the
+            current UTC time.
 
     Returns:
         Up to ``limit`` entries, active row first, then most recent.
@@ -85,11 +104,20 @@ def build_console_switcher_entries(
             row.row_key,
         )
     )
+    reference_now = now or datetime.now(timezone.utc)
     entries = []
     for row in deduped[: max(0, int(limit))]:
+        # TASK-356: one state vocabulary across surfaces ("saved chat", not
+        # the raw "in-progress"), and always show recency — deriving it from
+        # updated_sort when the row carries no precomputed age label (the
+        # switcher's input rows usually don't, unlike the rail's).
+        status_detail = console_conversation_status_detail(row.status)
+        recency = str(row.updated_label or "").strip() or format_console_relative_age(
+            str(row.updated_sort or ""), now=reference_now
+        )
         subtitle = " - ".join(
             part
-            for part in (row.workspace_label, row.status, row.updated_label)
+            for part in (row.workspace_label, status_detail, recency)
             if str(part or "").strip()
         )
         entries.append(

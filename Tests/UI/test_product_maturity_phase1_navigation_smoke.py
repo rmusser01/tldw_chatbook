@@ -16,11 +16,17 @@ from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORD
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EVIDENCE = Path("Docs/superpowers/qa/product-maturity/phase-1/2026-05-05-phase-1-3-navigation-smoke.md")
+EVIDENCE = Path(
+    "Docs/superpowers/qa/product-maturity/phase-1/2026-05-05-phase-1-3-navigation-smoke.md"
+)
 TRACKER = Path("Docs/superpowers/trackers/product-maturity-roadmap.md")
 PHASE_1_README = Path("Docs/superpowers/qa/product-maturity/phase-1/README.md")
-TASK = Path("backlog/tasks/task-8.3 - Product-Maturity-Phase-1.3-Top-Level-Navigation-Smoke-Walkthrough.md")
-TOP_LEVEL_DESTINATION_IDS = tuple(destination.destination_id for destination in SHELL_DESTINATION_ORDER)
+TASK = Path(
+    "backlog/tasks/task-8.3 - Product-Maturity-Phase-1.3-Top-Level-Navigation-Smoke-Walkthrough.md"
+)
+TOP_LEVEL_DESTINATION_IDS = tuple(
+    destination.destination_id for destination in SHELL_DESTINATION_ORDER
+)
 
 
 def _text(path: Path) -> str:
@@ -95,7 +101,15 @@ async def test_destination_body_text_helper_excludes_navigation_chrome(
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                # Nav strip + docked hint mount a tick after the screen swap;
+                # wait for the full chrome before asserting/clicking.
+                lambda: (
+                    app.current_tab == "home"
+                    and app.screen.__class__.__name__ == "HomeScreen"
+                    and len(app.screen.query(".nav-button"))
+                    == len(TOP_LEVEL_DESTINATION_IDS)
+                    and len(app.screen.query("#nav-overflow-hint")) == 1
+                ),
             )
 
             screen_text = _screen_text(app)
@@ -114,18 +128,30 @@ async def test_clean_run_top_level_navigation_reaches_every_destination(
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                # Nav strip + docked hint mount a tick after the screen swap;
+                # wait for the full chrome before asserting/clicking.
+                lambda: (
+                    app.current_tab == "home"
+                    and app.screen.__class__.__name__ == "HomeScreen"
+                    and len(app.screen.query(".nav-button"))
+                    == len(TOP_LEVEL_DESTINATION_IDS)
+                    and len(app.screen.query("#nav-overflow-hint")) == 1
+                ),
             )
 
             nav_bar = app.screen.query_one(MainNavigationBar)
-            nav_ids = tuple(button.id.removeprefix("nav-") for button in nav_bar.query(Button))
+            nav_ids = tuple(
+                button.id.removeprefix("nav-") for button in nav_bar.query(Button)
+            )
             assert nav_ids == TOP_LEVEL_DESTINATION_IDS
-            assert "Ctrl+P" in str(app.screen.query_one("#nav-overflow-hint", Static).renderable)
+            assert "Ctrl+P" in str(
+                app.screen.query_one("#nav-overflow-hint", Static).renderable
+            )
 
             reached: dict[str, str] = {}
             for destination in SHELL_DESTINATION_ORDER:
-                expected_screen_name, expected_tab, expected_screen_class = app._resolve_screen_navigation_target(
-                    destination.primary_route
+                expected_screen_name, expected_tab, expected_screen_class = (
+                    app._resolve_screen_navigation_target(destination.primary_route)
                 )
                 assert expected_screen_class is not None, destination.primary_route
 
@@ -134,7 +160,8 @@ async def test_clean_run_top_level_navigation_reaches_every_destination(
                     pilot,
                     lambda expected_tab=expected_tab, expected_screen_class=expected_screen_class: (
                         app.current_tab == expected_tab
-                        and app.screen.__class__.__name__ == expected_screen_class.__name__
+                        and app.screen.__class__.__name__
+                        == expected_screen_class.__name__
                     ),
                 )
 
@@ -156,29 +183,49 @@ async def test_top_level_navigation_activates_visible_tab_border_from_cached_con
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                # Nav strip + docked hint mount a tick after the screen swap;
+                # wait for the full chrome before asserting/clicking.
+                lambda: (
+                    app.current_tab == "home"
+                    and app.screen.__class__.__name__ == "HomeScreen"
+                    and len(app.screen.query(".nav-button"))
+                    == len(TOP_LEVEL_DESTINATION_IDS)
+                    and len(app.screen.query("#nav-overflow-hint")) == 1
+                ),
             )
 
             await pilot.click("#nav-console")
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
+                lambda: (
+                    app.current_tab == "chat"
+                    and app.screen.__class__.__name__ == "ChatScreen"
+                ),
             )
 
             _press_nav_button(app, "#nav-settings")
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "settings" and app.screen.__class__.__name__ == "SettingsScreen",
+                lambda: (
+                    app.current_tab == "settings"
+                    and app.screen.__class__.__name__ == "SettingsScreen"
+                ),
             )
 
             _press_nav_button(app, "#nav-console")
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
+                lambda: (
+                    app.current_tab == "chat"
+                    and app.screen.__class__.__name__ == "ChatScreen"
+                ),
             )
 
             _press_nav_button(app, "#nav-settings")
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "settings" and app.screen.__class__.__name__ == "SettingsScreen",
+                lambda: (
+                    app.current_tab == "settings"
+                    and app.screen.__class__.__name__ == "SettingsScreen"
+                ),
             )

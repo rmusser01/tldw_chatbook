@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
-from tldw_chatbook.runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
-from tldw_chatbook.runtime_policy.types import PolicyDeniedError
-from tldw_chatbook.tldw_api import (
-    ChatKnowledgeSaveRequest,
-    ChatLoopApprovalDecisionRequest,
-    ChatLoopStartRequest,
-    CharacterChatSessionCreate,
-    ConversationShareLinkCreateRequest,
-    ConversationUpdateRequest,
-    TLDWAPIClient,
+from tldw_chatbook.runtime_policy.bootstrap import (
+    build_runtime_api_client_provider_from_config,
 )
+from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api import (
+        CharacterChatSessionCreate,
+        ChatKnowledgeSaveRequest,
+        ChatLoopStartRequest,
+        ConversationShareLinkCreateRequest,
+        ConversationUpdateRequest,
+        TLDWAPIClient,
+    )
 
 
 class ServerChatConversationService:
@@ -57,13 +60,17 @@ class ServerChatConversationService:
             return self.client
         if self.client_provider is not None:
             return self.client_provider.build_client()
-        raise ValueError("TLDW API client is required for server chat conversation operations.")
+        raise ValueError(
+            "TLDW API client is required for server chat conversation operations."
+        )
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -72,10 +79,14 @@ class ServerChatConversationService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
-                    user_message=getattr(decision, "user_message", None) or "Server chat action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
+                    user_message=getattr(decision, "user_message", None)
+                    or "Server chat action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @staticmethod
@@ -83,25 +94,41 @@ class ServerChatConversationService:
         return f"chat.{action}.server"
 
     @staticmethod
-    def _update_request(update_data: ConversationUpdateRequest | Mapping[str, Any]) -> ConversationUpdateRequest:
+    def _update_request(
+        update_data: ConversationUpdateRequest | Mapping[str, Any],
+    ) -> ConversationUpdateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import ConversationUpdateRequest
+
         if isinstance(update_data, ConversationUpdateRequest):
             return update_data
         return ConversationUpdateRequest(**dict(update_data))
 
     @staticmethod
-    def _loop_start_request(messages: list[dict[str, Any]], extras: Mapping[str, Any]) -> ChatLoopStartRequest:
+    def _loop_start_request(
+        messages: list[dict[str, Any]], extras: Mapping[str, Any]
+    ) -> ChatLoopStartRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import ChatLoopStartRequest
+
         payload = dict(extras)
         payload["messages"] = messages
         return ChatLoopStartRequest(**payload)
 
     @staticmethod
     def _knowledge_save_request(payload: Mapping[str, Any]) -> ChatKnowledgeSaveRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import ChatKnowledgeSaveRequest
+
         return ChatKnowledgeSaveRequest(**dict(payload))
 
     @staticmethod
     def _share_link_create_request(
         payload: ConversationShareLinkCreateRequest | Mapping[str, Any],
     ) -> ConversationShareLinkCreateRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import ConversationShareLinkCreateRequest
+
         if isinstance(payload, ConversationShareLinkCreateRequest):
             return payload
         return ConversationShareLinkCreateRequest(**dict(payload))
@@ -110,11 +137,17 @@ class ServerChatConversationService:
     def _chat_session_create_request(
         payload: CharacterChatSessionCreate | Mapping[str, Any],
     ) -> CharacterChatSessionCreate:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import CharacterChatSessionCreate
+
         if isinstance(payload, CharacterChatSessionCreate):
             return payload
         request_payload = dict(payload)
         has_character_identity = request_payload.get("character_id") is not None
-        has_assistant_identity = bool(request_payload.get("assistant_kind") and request_payload.get("assistant_id"))
+        has_assistant_identity = bool(
+            request_payload.get("assistant_kind")
+            and request_payload.get("assistant_id")
+        )
         if not has_character_identity and not has_assistant_identity:
             raise ValueError(
                 "Server conversation create requires character_id or assistant_kind + assistant_id; "
@@ -126,9 +159,13 @@ class ServerChatConversationService:
         self._enforce(self._action_id("list"))
         return await self._require_client().list_chat_conversations(**kwargs)
 
-    async def get_conversation(self, conversation_id: str, **kwargs: Any) -> dict[str, Any]:
+    async def get_conversation(
+        self, conversation_id: str, **kwargs: Any
+    ) -> dict[str, Any]:
         self._enforce(self._action_id("detail"))
-        return await self._require_client().get_chat_conversation(conversation_id, **kwargs)
+        return await self._require_client().get_chat_conversation(
+            conversation_id, **kwargs
+        )
 
     async def update_conversation(
         self,
@@ -143,17 +180,27 @@ class ServerChatConversationService:
             **kwargs,
         )
 
-    async def get_conversation_tree(self, conversation_id: str, **kwargs: Any) -> dict[str, Any]:
+    async def get_conversation_tree(
+        self, conversation_id: str, **kwargs: Any
+    ) -> dict[str, Any]:
         self._enforce(self._action_id("detail"))
-        return await self._require_client().get_chat_conversation_tree(conversation_id, **kwargs)
+        return await self._require_client().get_chat_conversation_tree(
+            conversation_id, **kwargs
+        )
 
-    async def get_messages_with_context(self, conversation_id: str, **kwargs: Any) -> list[dict[str, Any]]:
+    async def get_messages_with_context(
+        self, conversation_id: str, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         self._enforce(self._action_id("detail"))
-        return await self._require_client().get_chat_conversation_messages_with_context(conversation_id, **kwargs)
+        return await self._require_client().get_chat_conversation_messages_with_context(
+            conversation_id, **kwargs
+        )
 
     async def get_citations(self, conversation_id: str) -> dict[str, Any]:
         self._enforce(self._action_id("detail"))
-        return await self._require_client().get_chat_conversation_citations(conversation_id)
+        return await self._require_client().get_chat_conversation_citations(
+            conversation_id
+        )
 
     async def list_commands(self) -> Any:
         self._enforce("chat.commands.list.server")
@@ -161,7 +208,9 @@ class ServerChatConversationService:
 
     async def save_knowledge(self, **kwargs: Any) -> Any:
         self._enforce("chat.knowledge.create.server")
-        return await self._require_client().save_chat_knowledge(self._knowledge_save_request(kwargs))
+        return await self._require_client().save_chat_knowledge(
+            self._knowledge_save_request(kwargs)
+        )
 
     async def create_share_link(
         self,
@@ -178,9 +227,13 @@ class ServerChatConversationService:
 
     async def list_share_links(self, conversation_id: str, **kwargs: Any) -> Any:
         self._enforce("chat.share_links.list.server")
-        return await self._require_client().list_chat_conversation_share_links(conversation_id, **kwargs)
+        return await self._require_client().list_chat_conversation_share_links(
+            conversation_id, **kwargs
+        )
 
-    async def revoke_share_link(self, conversation_id: str, share_id: str, **kwargs: Any) -> Any:
+    async def revoke_share_link(
+        self, conversation_id: str, share_id: str, **kwargs: Any
+    ) -> Any:
         self._enforce("chat.share_links.revoke.server")
         return await self._require_client().revoke_chat_conversation_share_link(
             conversation_id,
@@ -190,7 +243,9 @@ class ServerChatConversationService:
 
     async def resolve_share_token(self, share_token: str, *, limit: int = 200) -> Any:
         self._enforce("chat.share_links.detail.server")
-        return await self._require_client().resolve_chat_conversation_share_token(share_token, limit=limit)
+        return await self._require_client().resolve_chat_conversation_share_token(
+            share_token, limit=limit
+        )
 
     async def get_analytics(self, **kwargs: Any) -> Any:
         self._enforce("chat.analytics.observe.server")
@@ -204,16 +259,26 @@ class ServerChatConversationService:
 
     async def list_loop_events(self, run_id: str, *, after_seq: int = 0) -> Any:
         self._enforce("chat.loop.observe.server")
-        return await self._require_client().list_chat_loop_events(run_id, after_seq=after_seq)
+        return await self._require_client().list_chat_loop_events(
+            run_id, after_seq=after_seq
+        )
 
     async def approve_loop_call(self, run_id: str, *, approval_id: str) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import ChatLoopApprovalDecisionRequest
+
         self._enforce("chat.loop.approve.server")
         return await self._require_client().approve_chat_loop_call(
             run_id,
-            ChatLoopApprovalDecisionRequest(approval_id=approval_id, decision="approve"),
+            ChatLoopApprovalDecisionRequest(
+                approval_id=approval_id, decision="approve"
+            ),
         )
 
     async def reject_loop_call(self, run_id: str, *, approval_id: str) -> Any:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import ChatLoopApprovalDecisionRequest
+
         self._enforce("chat.loop.approve.server")
         return await self._require_client().reject_chat_loop_call(
             run_id,
@@ -225,6 +290,9 @@ class ServerChatConversationService:
         return await self._require_client().cancel_chat_loop_run(run_id)
 
     async def create_conversation(self, **kwargs: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import CharacterChatSessionCreate
+
         self._enforce(self._action_id("create"))
         payload = dict(kwargs)
         seed_first_message = bool(payload.pop("seed_first_message", False))

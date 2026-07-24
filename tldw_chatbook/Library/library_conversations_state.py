@@ -6,10 +6,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
-from tldw_chatbook.Workspaces.conversation_browser_state import format_console_relative_age
+from tldw_chatbook.Workspaces.conversation_browser_state import (
+    format_console_relative_age,
+)
 
 LIBRARY_CONVERSATIONS_EMPTY_COPY = (
-    "No saved conversations yet. Save a Console chat and it appears here."
+    "No conversations yet. Chat in Console and it appears here."
 )
 
 _ID_KEYS = ("id", "conversation_id", "uuid")
@@ -31,6 +33,7 @@ class LibraryConversationRow:
     title: str
     secondary: str
     selected: bool = False
+    checked: bool = False
 
 
 @dataclass(frozen=True)
@@ -43,6 +46,8 @@ class LibraryConversationsCanvasState:
     selected_id: str
     preview_lines: tuple[str, ...]
     query: str
+    select_mode: bool = False
+    selected_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -120,6 +125,8 @@ def build_library_conversations_state(
     selected_id: str = "",
     now: datetime | None = None,
     limit: int = 75,
+    select_mode: bool = False,
+    selected_ids: frozenset[str] = frozenset(),
 ) -> LibraryConversationsCanvasState:
     """Build the Library Browse ▸ Conversations canvas display state.
 
@@ -168,7 +175,9 @@ def build_library_conversations_state(
     resolved_selected_id = str(selected_id or "")
     displayed_ids = {entry.conversation_id for entry in limited_entries}
     if resolved_selected_id not in displayed_ids:
-        resolved_selected_id = limited_entries[0].conversation_id if limited_entries else ""
+        resolved_selected_id = (
+            limited_entries[0].conversation_id if limited_entries else ""
+        )
 
     rows = tuple(
         LibraryConversationRow(
@@ -179,9 +188,11 @@ def build_library_conversations_state(
                 format_console_relative_age(entry.updated_raw, now=reference_now),
             ),
             selected=entry.conversation_id == resolved_selected_id,
+            checked=entry.conversation_id in selected_ids,
         )
         for entry in limited_entries
     )
+    selected_count = sum(1 for r in rows if r.checked)
 
     if normalized_query:
         # match_count is from the filtered-but-unlimited entries list, not the limited rows
@@ -199,7 +210,11 @@ def build_library_conversations_state(
         empty_copy = LIBRARY_CONVERSATIONS_EMPTY_COPY
 
     selected_entry = next(
-        (entry for entry in limited_entries if entry.conversation_id == resolved_selected_id),
+        (
+            entry
+            for entry in limited_entries
+            if entry.conversation_id == resolved_selected_id
+        ),
         None,
     )
     if selected_entry is None:
@@ -224,4 +239,6 @@ def build_library_conversations_state(
         selected_id=resolved_selected_id,
         preview_lines=preview_lines,
         query=normalized_query,
+        select_mode=select_mode,
+        selected_count=selected_count,
     )

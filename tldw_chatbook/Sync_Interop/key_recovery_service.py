@@ -5,7 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from tldw_chatbook.Sync_Interop.crypto import wrap_dataset_key_for_recovery
-from tldw_chatbook.Sync_Interop.sync_state import SyncV2ProfileMode, is_local_first_sync_profile_mode
+from tldw_chatbook.Sync_Interop.sync_state import (
+    SyncV2ProfileMode,
+    is_local_first_sync_profile_mode,
+)
 
 
 class SyncKeyRecoveryService:
@@ -42,19 +45,27 @@ class SyncKeyRecoveryService:
         if profile is None:
             raise ValueError("local_first Sync v2 profile is required")
         if not is_local_first_sync_profile_mode(profile.get("profile_mode")):
-            raise ValueError("key recovery setup requires a local_first Sync v2 profile")
-        profile_mode = str(profile.get("profile_mode") or SyncV2ProfileMode.LOCAL_FIRST_SYNC.value)
+            raise ValueError(
+                "key recovery setup requires a local_first Sync v2 profile"
+            )
+        profile_mode = str(
+            profile.get("profile_mode") or SyncV2ProfileMode.LOCAL_FIRST_SYNC.value
+        )
 
         dataset_id = profile.get("dataset_id")
         device_id = profile.get("device_id")
         if not dataset_id or not device_id:
-            raise ValueError("local_first Sync v2 profile requires device_id and dataset_id")
+            raise ValueError(
+                "local_first Sync v2 profile requires device_id and dataset_id"
+            )
 
         resolved_dataset_id = str(dataset_id)
         resolved_device_id = str(device_id)
         resolved_key = dataset_key or self.dataset_keys.get(resolved_dataset_id)
         if resolved_key is None:
-            raise ValueError("dataset key is required to configure Sync v2 key recovery")
+            raise ValueError(
+                "dataset key is required to configure Sync v2 key recovery"
+            )
 
         bundle = wrap_dataset_key_for_recovery(
             resolved_key,
@@ -115,5 +126,7 @@ class SyncKeyRecoveryService:
         if isinstance(value, list):
             return [SyncKeyRecoveryService._dump(item) for item in value]
         if isinstance(value, dict):
-            return {key: SyncKeyRecoveryService._dump(item) for key, item in value.items()}
+            return {
+                key: SyncKeyRecoveryService._dump(item) for key, item in value.items()
+            }
         return value

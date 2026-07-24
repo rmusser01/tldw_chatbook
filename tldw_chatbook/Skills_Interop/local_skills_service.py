@@ -15,18 +15,6 @@ from typing import Any
 import yaml
 
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    SkillContextPayload,
-    SkillCreate,
-    SkillExecuteRequest,
-    SkillExecutionResult,
-    SkillImportRequest,
-    SkillResponse,
-    SkillsListResponse,
-    SkillSummary,
-    SkillUpdate,
-)
-from ..tldw_api.skills_schemas import _normalize_skill_name
 from ..Utils.input_validation import sanitize_string, validate_text_input
 from ..Utils.path_validation import get_safe_relative_path, validate_path_simple
 from .skill_trust_models import SkillTrustBlockedError
@@ -66,6 +54,7 @@ _TEXT_FIELD_LIMITS = {
 }
 _TRUST_STATUS_SERVICE_UNAVAILABLE = "trust_locked"
 _TRUST_REASON_SERVICE_UNAVAILABLE = "trust_service_unavailable"
+SKILL_FILE_READ_CAP_CHARS = 100_000
 
 
 class LocalSkillsService:
@@ -88,14 +77,18 @@ class LocalSkillsService:
         self.index_path = self.store_dir / _INDEX_FILENAME
         self.policy_enforcer = policy_enforcer
         self.trust_service = trust_service
-        self.allow_untrusted_without_trust_service = allow_untrusted_without_trust_service
+        self.allow_untrusted_without_trust_service = (
+            allow_untrusted_without_trust_service
+        )
         self._lock = asyncio.Lock()
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -104,10 +97,14 @@ class LocalSkillsService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
-                    user_message=getattr(decision, "user_message", None) or "Local skill action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "local",
-                    authority_owner=getattr(decision, "authority_owner", None) or "local",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
+                    user_message=getattr(decision, "user_message", None)
+                    or "Local skill action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "local",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "local",
                 )
 
     @staticmethod
@@ -144,6 +141,9 @@ class LocalSkillsService:
         temp_path.replace(self.index_path)
 
     def _skill_dir(self, skill_name: str) -> Path:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.skills_schemas import _normalize_skill_name
+
         return self.skills_dir / _normalize_skill_name(skill_name)
 
     @staticmethod
@@ -152,6 +152,14 @@ class LocalSkillsService:
         temp_path = path.with_name(f"{path.name}.tmp")
         with temp_path.open("w", encoding="utf-8") as handle:
             handle.write(content)
+        temp_path.replace(path)
+
+    @staticmethod
+    def _write_bytes_atomic(path: Path, data: bytes) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = path.with_name(f"{path.name}.tmp")
+        with temp_path.open("wb") as handle:
+            handle.write(data)
         temp_path.replace(path)
 
     @staticmethod
@@ -166,7 +174,11 @@ class LocalSkillsService:
             raw_metadata = {}
         if not isinstance(raw_metadata, dict):
             raw_metadata = {}
-        metadata = {str(key): value for key, value in raw_metadata.items() if str(key) in _METADATA_FIELDS}
+        metadata = {
+            str(key): value
+            for key, value in raw_metadata.items()
+            if str(key) in _METADATA_FIELDS
+        }
         return metadata, content[match.end() :]
 
     @classmethod
@@ -246,7 +258,9 @@ class LocalSkillsService:
         return None
 
     @classmethod
-    def _agent_skill_validation(cls, *, directory_name: str, front_matter: dict[str, Any]) -> dict[str, Any]:
+    def _agent_skill_validation(
+        cls, *, directory_name: str, front_matter: dict[str, Any]
+    ) -> dict[str, Any]:
         errors: list[str] = []
         agent_skill_name = front_matter.get("name")
         description = front_matter.get("description")
@@ -284,6 +298,10 @@ class LocalSkillsService:
         skill_dir: Path,
         existing: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.skills_schemas import _normalize_skill_name
+        from ..tldw_api import SkillSummary
+
         front_matter, _ = cls._parse_front_matter(content)
         now = cls._now_iso()
         base = {
@@ -380,21 +398,101 @@ class LocalSkillsService:
         return base
 
     @staticmethod
-    def _read_supporting_files(skill_dir: Path) -> dict[str, str] | None:
+    def _iter_bundle_files(skill_dir: Path):
+        """Yield (relative_posix, abs_path) for every non-junk file, junk dirs pruned.
+
+        Skips the top-level ``SKILL.md`` body by comparing the POSIX relative
+        path to exactly ``"SKILL.md"`` -- not by a fragile ``Path(root) ==
+        skill_dir`` comparison. A nested file literally named ``SKILL.md``
+        (e.g. ``references/SKILL.md``) is therefore NOT skipped here; it is
+        later rejected by ``validate_supporting_file_path``, which is the
+        correct handling for a shadow body file.
+        """
+        from .skill_trust_scanner import SUPPORTING_JUNK_DIRS, _is_junk  # reuse
+        import os
+        from pathlib import PurePosixPath
+
         if not skill_dir.exists():
-            return None
+            return
+        for root, dirs, files in os.walk(skill_dir, followlinks=False):
+            dirs[:] = [d for d in dirs if d not in SUPPORTING_JUNK_DIRS]
+            for name in files:
+                if _is_junk(name):
+                    continue
+                abs_path = Path(root) / name
+                relative_path = str(
+                    PurePosixPath(abs_path.relative_to(skill_dir).as_posix())
+                )
+                if relative_path == _SKILL_FILENAME:
+                    continue
+                yield relative_path, abs_path
+
+    @staticmethod
+    def _read_supporting_files(skill_dir: Path) -> dict[str, str] | None:
+        from ..tldw_api.skills_schemas import validate_supporting_file_path
+
         supporting_files: dict[str, str] = {}
-        for path in sorted(skill_dir.iterdir(), key=lambda item: item.name):
-            if not path.is_file() or path.name == _SKILL_FILENAME:
+        for relative_path, path in sorted(
+            LocalSkillsService._iter_bundle_files(skill_dir), key=lambda x: x[0]
+        ):
+            # Skip symlinks and non-regular files (FIFOs/sockets/device nodes):
+            # opening a FIFO with no writer would block read_bytes() forever.
+            # Mirrors the guard in _read_bundle_manifest.
+            if path.is_symlink() or not path.is_file():
                 continue
-            supporting_files[path.name] = LocalSkillsService._read_text_preserving_newlines(
-                path,
-                base_dir=skill_dir,
-            )
+            try:
+                validate_supporting_file_path(relative_path)
+            except ValueError:
+                continue
+            try:
+                raw = path.read_bytes()
+            except OSError:
+                continue
+            if b"\x00" in raw:
+                continue
+            try:
+                supporting_files[relative_path] = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                continue  # binary — excluded from the text view, never raises
         return supporting_files or None
 
     @staticmethod
-    def _read_text_preserving_newlines(path: Path, *, base_dir: Path | None = None) -> str:
+    def _read_bundle_manifest(skill_dir: Path) -> list[dict[str, Any]] | None:
+        import stat
+
+        from ..tldw_api.skills_schemas import validate_supporting_file_path
+
+        manifest: list[dict[str, Any]] = []
+        for relative_path, path in sorted(
+            LocalSkillsService._iter_bundle_files(skill_dir), key=lambda x: x[0]
+        ):
+            if path.is_symlink() or not path.is_file():
+                continue
+            try:
+                validate_supporting_file_path(relative_path)
+                raw = path.read_bytes()
+            except (ValueError, OSError):
+                continue
+            is_text = b"\x00" not in raw
+            if is_text:
+                try:
+                    raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    is_text = False
+            manifest.append(
+                {
+                    "path": relative_path,
+                    "size": len(raw),
+                    "executable": bool(path.stat().st_mode & stat.S_IXUSR),
+                    "is_text": is_text,
+                }
+            )
+        return manifest or None
+
+    @staticmethod
+    def _read_text_preserving_newlines(
+        path: Path, *, base_dir: Path | None = None
+    ) -> str:
         base_dir = validate_path_simple(base_dir or path.parent)
         if base_dir.is_symlink():
             raise ValueError("unsafe local skill path")
@@ -406,6 +504,9 @@ class LocalSkillsService:
         return safe_path.read_bytes().decode("utf-8")
 
     def _response_for_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillResponse
+
         skill_name = str(record["name"])
         skill_dir = self._skill_dir(skill_name)
         content = self._read_text_preserving_newlines(
@@ -416,12 +517,16 @@ class LocalSkillsService:
             **record,
             content=content,
             supporting_files=self._read_supporting_files(skill_dir),
+            bundle_files=self._read_bundle_manifest(skill_dir),
         )
         payload = self._dump(response)
         payload.update(self._trust_fields_for_record(record))
         return payload
 
     def _summary_for_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillSummary
+
         summary = LocalSkillsService._dump(
             SkillSummary(
                 name=record["name"],
@@ -432,7 +537,13 @@ class LocalSkillsService:
                 context=record.get("context", "inline"),
             )
         )
-        for field in ("agent_skill_name", "validation_status", "validation_errors", "record_id", "backend"):
+        for field in (
+            "agent_skill_name",
+            "validation_status",
+            "validation_errors",
+            "record_id",
+            "backend",
+        ):
             if field in record:
                 summary[field] = record[field]
         summary.update(self._trust_fields_for_record(record))
@@ -457,7 +568,9 @@ class LocalSkillsService:
                 "trust_manifest_generation": None,
                 "trust_last_verified_at": None,
             }
-        return self.trust_service.status_for_skill(str(record["name"])).response_fields()
+        return self.trust_service.status_for_skill(
+            str(record["name"])
+        ).response_fields()
 
     def _require_trusted_skill(self, skill_name: str) -> None:
         if self.trust_service is None:
@@ -470,7 +583,9 @@ class LocalSkillsService:
             )
         self.trust_service.ensure_skill_trusted(skill_name)
 
-    def _trust_after_approved_mutation(self, skill_name: str, *, trust_approved: bool) -> None:
+    def _trust_after_approved_mutation(
+        self, skill_name: str, *, trust_approved: bool
+    ) -> None:
         if not trust_approved:
             return
         # Writes and index updates intentionally happen before re-trust. If this
@@ -505,7 +620,12 @@ class LocalSkillsService:
             supporting_files=skill.get("supporting_files"),
         )
 
-    def _require_record(self, skill_name: str, records: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    def _require_record(
+        self, skill_name: str, records: dict[str, dict[str, Any]]
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.skills_schemas import _normalize_skill_name
+
         normalized_name = _normalize_skill_name(skill_name)
         record = records.get(normalized_name)
         if record is None:
@@ -513,16 +633,29 @@ class LocalSkillsService:
         return record
 
     @staticmethod
-    def _check_expected_version(skill_name: str, record: dict[str, Any], expected_version: int | None) -> None:
-        if expected_version is not None and int(record.get("version", 0)) != expected_version:
+    def _check_expected_version(
+        skill_name: str, record: dict[str, Any], expected_version: int | None
+    ) -> None:
+        if (
+            expected_version is not None
+            and int(record.get("version", 0)) != expected_version
+        ):
             raise ValueError(f"local_skill_version_conflict:{skill_name}")
 
     @staticmethod
-    def _apply_supporting_files(skill_dir: Path, supporting_files: dict[str, str | None] | None) -> None:
+    def _apply_supporting_files(
+        skill_dir: Path, supporting_files: dict[str, str | None] | None
+    ) -> None:
+        from ..tldw_api.skills_schemas import validate_supporting_file_path
+
         if supporting_files is None:
             return
+        base = skill_dir.resolve()
         for filename, content in supporting_files.items():
+            validate_supporting_file_path(filename)  # raises on traversal/bad name
             path = skill_dir / filename
+            if base not in path.resolve().parents and path.resolve() != base:
+                raise ValueError(f"unsafe supporting file path: {filename}")
             if content is None:
                 if path.exists():
                     path.unlink()
@@ -531,6 +664,9 @@ class LocalSkillsService:
 
     @staticmethod
     def _derive_name_from_filename(filename: str) -> str:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.skills_schemas import _normalize_skill_name
+
         candidate = PurePosixPath(filename).name
         if candidate.lower().endswith(".zip"):
             candidate = candidate[:-4]
@@ -543,13 +679,52 @@ class LocalSkillsService:
 
     @staticmethod
     def _validate_archive_member(name: str) -> str:
-        posix_path = PurePosixPath(name)
-        if posix_path.is_absolute() or ".." in posix_path.parts or len(posix_path.parts) != 1:
-            raise ValueError(f"local_skill_invalid_archive:{name}")
-        filename = posix_path.name
-        if not filename:
-            raise ValueError(f"local_skill_invalid_archive:{name}")
-        return filename
+        from ..tldw_api.skills_schemas import validate_supporting_file_path
+
+        posix = PurePosixPath(name)
+        if str(posix) == _SKILL_FILENAME:
+            return _SKILL_FILENAME
+        return validate_supporting_file_path(str(posix))
+
+    @staticmethod
+    def _read_zip_member_bounded(
+        archive: "zipfile.ZipFile",
+        member: "zipfile.ZipInfo",
+        member_name: str,
+        max_bytes: int,
+    ) -> bytes:
+        """Read a zip member with a bounded, streaming decompress.
+
+        Pulls fixed-size chunks via ``archive.open(member)`` so the transient
+        decompressor allocation is capped at ~one chunk regardless of the
+        member's (possibly forged/understated) declared ``file_size`` -- unlike
+        ``archive.read(member)``, which decompresses the whole member into RAM
+        before truncating output, letting a high-ratio DEFLATE bomb spike memory
+        to hundreds of MB from a few-hundred-KB upload. Aborts the moment
+        cumulative bytes exceed ``max_bytes``; a corrupt/forged member (CRC
+        mismatch, bad deflate stream) surfaces as the standard ``ValueError``
+        contract, never a raw ``zipfile.BadZipFile``.
+        """
+        import zlib
+
+        chunk_size = 65536
+        buffer = bytearray()
+        try:
+            with archive.open(member) as handle:
+                while True:
+                    chunk = handle.read(chunk_size)
+                    if not chunk:
+                        break
+                    buffer.extend(chunk)
+                    if len(buffer) > max_bytes:
+                        raise ValueError(
+                            f"local_skill_file_too_large:{member_name}"
+                        )
+        except (zipfile.BadZipFile, zlib.error, OSError) as exc:
+            raise ValueError(
+                f"local_skill_invalid_archive:corrupt_member:{member_name}"
+            ) from exc
+        return bytes(buffer)
 
     async def list_skills(
         self,
@@ -558,13 +733,29 @@ class LocalSkillsService:
         limit: int = 100,
         offset: int = 0,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillsListResponse
+
         self._enforce("skills.list.local")
         records = self._load_index()
-        summaries = [self._summary_for_record(record) for _, record in sorted(records.items())]
+        summaries = [
+            self._summary_for_record(record) for _, record in sorted(records.items())
+        ]
         page = summaries[offset : offset + limit]
-        return self._dump(SkillsListResponse(skills=page, count=len(page), total=len(summaries), limit=limit, offset=offset))
+        return self._dump(
+            SkillsListResponse(
+                skills=page,
+                count=len(page),
+                total=len(summaries),
+                limit=limit,
+                offset=offset,
+            )
+        )
 
     async def get_context(self) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillContextPayload
+
         self._enforce("skills.context.list.local")
         records = self._load_index()
         available: list[dict[str, Any]] = []
@@ -577,8 +768,14 @@ class LocalSkillsService:
             available.append(summary)
         context_lines = []
         for summary in available:
-            description = f": {summary['description']}" if summary.get("description") else ""
-            argument_hint = f" (args: {summary['argument_hint']})" if summary.get("argument_hint") else ""
+            description = (
+                f": {summary['description']}" if summary.get("description") else ""
+            )
+            argument_hint = (
+                f" (args: {summary['argument_hint']})"
+                if summary.get("argument_hint")
+                else ""
+            )
             context_lines.append(f"- {summary['name']}{description}{argument_hint}")
         payload = self._dump(
             SkillContextPayload(
@@ -588,6 +785,24 @@ class LocalSkillsService:
         )
         payload["blocked_skills"] = blocked
         return payload
+
+    async def count_skills(self) -> int:
+        """Return the total managed skills count, trusted plus needs-review.
+
+        Reuses ``get_context`` so the count always matches what it would
+        enumerate: both the trusted ``available_skills`` population and the
+        ``blocked_skills`` (trust needs-review) population, per the Skills
+        spec's blocked-skills visibility rule -- a skill pending trust
+        review is still a managed skill even though it can't be invoked
+        yet.
+
+        Returns:
+            ``len(available_skills) + len(blocked_skills)``.
+        """
+        ctx = await self.get_context()
+        return len(ctx.get("available_skills") or []) + len(
+            ctx.get("blocked_skills") or []
+        )
 
     async def get_skill(self, skill_name: str) -> dict[str, Any]:
         self._enforce("skills.detail.local")
@@ -602,8 +817,13 @@ class LocalSkillsService:
         supporting_files: dict[str, str] | None = None,
         trust_approved: bool = False,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillCreate
+
         self._enforce("skills.create.local")
-        request = SkillCreate(name=name, content=content, supporting_files=supporting_files)
+        request = SkillCreate(
+            name=name, content=content, supporting_files=supporting_files
+        )
         async with self._lock:
             records = self._load_index()
             skill_name = request.name
@@ -619,7 +839,9 @@ class LocalSkillsService:
                 skill_dir=skill_dir,
             )
             self._save_index(records)
-            self._trust_after_approved_mutation(skill_name, trust_approved=trust_approved)
+            self._trust_after_approved_mutation(
+                skill_name, trust_approved=trust_approved
+            )
             return self._response_for_record(records[skill_name])
 
     async def update_skill(
@@ -631,6 +853,10 @@ class LocalSkillsService:
         expected_version: int | None = None,
         trust_approved: bool = False,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.skills_schemas import _normalize_skill_name
+        from ..tldw_api import SkillUpdate
+
         self._enforce("skills.update.local")
         request = SkillUpdate(content=content, supporting_files=supporting_files)
         async with self._lock:
@@ -655,10 +881,17 @@ class LocalSkillsService:
             next_record["version"] = int(record.get("version", 0)) + 1
             records[normalized_name] = next_record
             self._save_index(records)
-            self._trust_after_approved_mutation(normalized_name, trust_approved=trust_approved)
+            self._trust_after_approved_mutation(
+                normalized_name, trust_approved=trust_approved
+            )
             return self._response_for_record(next_record)
 
-    async def delete_skill(self, skill_name: str, *, expected_version: int | None = None) -> bool:
+    async def delete_skill(
+        self, skill_name: str, *, expected_version: int | None = None
+    ) -> bool:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.skills_schemas import _normalize_skill_name
+
         self._enforce("skills.delete.local")
         async with self._lock:
             records = self._load_index()
@@ -679,6 +912,9 @@ class LocalSkillsService:
         overwrite: bool = False,
         trust_approved: bool = False,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillImportRequest
+
         self._enforce("skills.import.launch.local")
         request = SkillImportRequest(
             name=name,
@@ -686,7 +922,9 @@ class LocalSkillsService:
             supporting_files=supporting_files,
             overwrite=overwrite,
         )
-        skill_name = request.name or self._derive_name_from_filename("imported-skill.md")
+        skill_name = request.name or self._derive_name_from_filename(
+            "imported-skill.md"
+        )
         async with self._lock:
             records = self._load_index()
             if skill_name in records and not request.overwrite:
@@ -708,7 +946,108 @@ class LocalSkillsService:
                 record["version"] = int(existing.get("version", 0)) + 1
             records[skill_name] = record
             self._save_index(records)
-            self._trust_after_approved_mutation(skill_name, trust_approved=trust_approved)
+            self._trust_after_approved_mutation(
+                skill_name, trust_approved=trust_approved
+            )
+            return self._response_for_record(record)
+
+    async def import_skill_directory(
+        self,
+        source_dir: Path,
+        *,
+        name: str,
+        overwrite: bool = False,
+        trust_approved: bool = False,
+    ) -> dict[str, Any]:
+        import os
+        import stat
+        from pathlib import PurePosixPath
+
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillImportRequest
+        from ..tldw_api.skills_schemas import (
+            MAX_SUPPORTING_FILE_BYTES,
+            MAX_SUPPORTING_FILES_COUNT,
+            MAX_SUPPORTING_FILES_TOTAL_BYTES,
+            _normalize_skill_name,
+            validate_supporting_file_path,
+        )
+
+        self._enforce("skills.import.launch.local")
+        skill_name = _normalize_skill_name(name)
+        source_dir = Path(source_dir)
+        body = source_dir / _SKILL_FILENAME
+        # A symlinked SKILL.md would read its (out-of-bundle) target into the
+        # skill body -- reject it as an invalid body, not follow it.
+        if body.is_symlink() or not body.is_file():
+            raise ValueError("local_skill_missing_skill_md")
+        content = body.read_text(encoding="utf-8", errors="strict")
+        # Enforce the same body-length bounds ``import_skill`` gets for free from
+        # ``SkillImportRequest`` -- this path builds the record directly rather
+        # than routing content through that model, so the check is explicit here.
+        SkillImportRequest(name=skill_name, content=content)
+        # Collect the faithful file set (junk pruned, symlinks skipped, caps enforced).
+        files: list[tuple[str, Path]] = []
+        total = 0
+        for relative_path, abs_path in self._iter_bundle_files(source_dir):
+            # Skip symlinks and non-regular files (FIFOs/sockets/device nodes):
+            # opening a FIFO with no writer would block read_bytes() forever --
+            # and this runs under self._lock, so it would wedge the whole store.
+            # Mirrors the guard in _read_supporting_files/_read_bundle_manifest.
+            if abs_path.is_symlink() or not abs_path.is_file():
+                continue  # skip-not-fail
+            try:
+                validate_supporting_file_path(relative_path)
+            except ValueError:
+                continue
+            size = abs_path.stat().st_size
+            if size > MAX_SUPPORTING_FILE_BYTES:
+                raise ValueError(f"local_skill_file_too_large:{relative_path}")
+            total += size
+            files.append((relative_path, abs_path))
+        if len(files) > MAX_SUPPORTING_FILES_COUNT:
+            raise ValueError("local_skill_too_many_files")
+        if total > MAX_SUPPORTING_FILES_TOTAL_BYTES:
+            raise ValueError("local_skill_bundle_too_large")
+        async with self._lock:
+            records = self._load_index()
+            if skill_name in records and not overwrite:
+                raise ValueError(f"local_skill_exists:{skill_name}")
+            skill_dir = self._skill_dir(skill_name)
+            if overwrite and skill_dir.exists():
+                shutil.rmtree(skill_dir)
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            existing = records.get(skill_name) if overwrite else None
+            self._write_text_atomic(skill_dir / _SKILL_FILENAME, content)
+            # Belt-and-braces containment, mirroring the zip-import path's own
+            # resolve-and-contain check (~:1127): every relative_path here was
+            # already collected via _iter_bundle_files + validate_supporting_
+            # file_path above, so this should never actually trip -- but a
+            # filesystem write is cheap insurance to assert against, not a
+            # place to trust a single upstream validation layer.
+            base = skill_dir.resolve()
+            for relative_path, abs_path in files:
+                dest = skill_dir / PurePosixPath(relative_path)
+                if base not in dest.resolve().parents:
+                    raise ValueError(f"local_skill_invalid_bundle_path:{relative_path}")
+                self._write_bytes_atomic(dest, abs_path.read_bytes())
+                if abs_path.stat().st_mode & stat.S_IXUSR:
+                    # Trust only the owner-exec fingerprint; adding 0o755 would
+                    # widen a non-world-readable source to world-r/x.
+                    os.chmod(dest, dest.stat().st_mode | 0o100)
+            record = self._metadata_from_content(
+                name=skill_name,
+                content=content,
+                skill_dir=skill_dir,
+                existing=existing,
+            )
+            if existing is not None:
+                record["version"] = int(existing.get("version", 0)) + 1
+            records[skill_name] = record
+            self._save_index(records)
+            self._trust_after_approved_mutation(
+                skill_name, trust_approved=trust_approved
+            )
             return self._response_for_record(record)
 
     async def import_skill_file(
@@ -721,7 +1060,10 @@ class LocalSkillsService:
         trust_approved: bool = False,
     ) -> dict[str, Any]:
         self._enforce("skills.import.launch.local")
-        is_zip = content_type in {"application/zip", "application/x-zip-compressed"} or filename.lower().endswith(".zip")
+        is_zip = content_type in {
+            "application/zip",
+            "application/x-zip-compressed",
+        } or filename.lower().endswith(".zip")
         if not is_zip:
             return await self.import_skill(
                 name=self._derive_name_from_filename(filename),
@@ -730,43 +1072,135 @@ class LocalSkillsService:
                 trust_approved=trust_approved,
             )
 
-        supporting_files: dict[str, str] = {}
+        import stat as _stat
+        from .skill_trust_scanner import SUPPORTING_JUNK_DIRS, _is_junk
+        from ..tldw_api.skills_schemas import (
+            MAX_SUPPORTING_FILES_COUNT, MAX_SUPPORTING_FILE_BYTES,
+            MAX_SUPPORTING_FILES_TOTAL_BYTES,
+        )
+        skill_name = self._derive_name_from_filename(filename)
+        # Compute the (not-yet-created) destination dir up front so every member
+        # can be fully validated -- caps, zip-slip containment, decodability --
+        # BEFORE import_skill creates SKILL.md + an index entry. A rejection then
+        # leaves no partial trust-pending skill behind (atomicity).
+        skill_dir = self._skill_dir(skill_name)
+        base = skill_dir.resolve()
+        members: list[tuple[Path, bytes, bool]] = []
         skill_content: str | None = None
+        total = 0
+        count = 0
+        seen_lower: set[str] = set()
         with zipfile.ZipFile(io.BytesIO(file_content), "r") as archive:
             for member in archive.infolist():
                 if member.is_dir():
                     continue
-                member_name = self._validate_archive_member(member.filename)
-                data = archive.read(member).decode("utf-8")
+                mode = (member.external_attr >> 16) & 0xFFFF
+                if _stat.S_ISLNK(mode):
+                    continue                       # symlink member: skip-not-fail
+                parts = PurePosixPath(member.filename).parts
+                if not parts:
+                    continue                       # empty/all-slash member name: skip-not-fail
+                if any(p in SUPPORTING_JUNK_DIRS for p in parts) or _is_junk(parts[-1]):
+                    continue                       # junk pruned
+                member_name = self._validate_archive_member(member.filename)  # raises on zip-slip
+                lower = member_name.lower()
+                if lower in seen_lower:             # case-fold collision on a case-insensitive FS
+                    raise ValueError(f"local_skill_invalid_archive:case_collision:{member_name}")
+                seen_lower.add(lower)
+                # DoS guard, fast path: reject an obviously-oversized DECLARED
+                # size (free from the zip header) without even opening the
+                # member. The real defense is the bounded streaming read below
+                # -- a forged/understated header cannot slip past it because it
+                # aborts on CUMULATIVE bytes actually read, not the declared size.
+                if member.file_size > MAX_SUPPORTING_FILE_BYTES:
+                    raise ValueError(f"local_skill_file_too_large:{member_name}")
+                total += member.file_size
+                if total > MAX_SUPPORTING_FILES_TOTAL_BYTES:     # early exit before more reads
+                    raise ValueError("local_skill_bundle_too_large")
                 if member_name == _SKILL_FILENAME:
-                    skill_content = data
-                else:
-                    supporting_files[member_name] = data
+                    data = self._read_zip_member_bounded(
+                        archive, member, member_name, MAX_SUPPORTING_FILE_BYTES
+                    )
+                    try:
+                        skill_content = data.decode("utf-8")
+                    except UnicodeDecodeError as exc:
+                        raise ValueError(
+                            f"local_skill_invalid_archive:non_utf8_body:{member_name}"
+                        ) from exc
+                    continue
+                count += 1
+                if count > MAX_SUPPORTING_FILES_COUNT:           # early exit before more reads
+                    raise ValueError("local_skill_too_many_files")
+                # Zip-slip containment resolved against the computed dest BEFORE
+                # anything is created on disk.
+                dest = skill_dir / PurePosixPath(member_name)
+                if base not in dest.resolve().parents:
+                    raise ValueError(f"local_skill_invalid_archive:{member_name}")
+                data = self._read_zip_member_bounded(
+                    archive, member, member_name, MAX_SUPPORTING_FILE_BYTES
+                )
+                members.append((dest, data, bool(mode & 0o111)))
         if skill_content is None:
             raise ValueError("local_skill_invalid_archive:missing_skill_md")
-        return await self.import_skill(
-            name=self._derive_name_from_filename(filename),
-            content=skill_content,
-            supporting_files=supporting_files or None,
-            overwrite=overwrite,
-            trust_approved=trust_approved,
+        await self.import_skill(
+            name=skill_name, content=skill_content, overwrite=overwrite,
+            trust_approved=False,   # re-trusted below only if approved
         )
+        import os as _os
+        for dest, data, executable in members:
+            # Every dest was contained-checked during collection; write only now.
+            self._write_bytes_atomic(dest, data)
+            if executable:
+                # Trust only the owner-exec fingerprint; adding 0o755 would
+                # widen a non-world-readable source to world-r/x.
+                _os.chmod(dest, dest.stat().st_mode | 0o100)
+        # Re-derive trust state now that the full bundle is on disk.
+        self._trust_after_approved_mutation(skill_name, trust_approved=trust_approved)
+        return self._response_for_record(self._load_index()[skill_name])
 
     async def export_skill(self, skill_name: str) -> Any:
+        import stat
+
+        from ..tldw_api.skills_schemas import _normalize_skill_name
+
         self._enforce("skills.export.launch.local")
-        skill = await self.get_skill(skill_name)
+        normalized = _normalize_skill_name(skill_name)
+        skill_dir = self._skill_dir(normalized)
         archive_buffer = io.BytesIO()
-        with zipfile.ZipFile(archive_buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr(_SKILL_FILENAME, skill["content"])
-            for filename, content in sorted((skill.get("supporting_files") or {}).items()):
-                archive.writestr(filename, content)
+        with zipfile.ZipFile(
+            archive_buffer, "w", compression=zipfile.ZIP_DEFLATED
+        ) as archive:
+            body = skill_dir / _SKILL_FILENAME
+            # Same guard every other body read in this service already has
+            # (e.g. import_skill_directory's own check): a corrupted store
+            # (index entry present, on-disk body missing) must fail with a
+            # domain error, not a raw FileNotFoundError -- and a symlinked
+            # body must be rejected, not followed, to avoid archiving
+            # content from outside the bundle.
+            if body.is_symlink() or not body.is_file():
+                raise ValueError(f"local_skill_missing_skill_md:{normalized}")
+            archive.writestr(_SKILL_FILENAME, body.read_bytes())
+            for relative_path, path in sorted(
+                self._iter_bundle_files(skill_dir), key=lambda x: x[0]
+            ):
+                if path.is_symlink() or not path.is_file():
+                    continue
+                info = zipfile.ZipInfo(relative_path)
+                mode = path.stat().st_mode
+                info.external_attr = (mode & 0xFFFF) << 16
+                archive.writestr(info, path.read_bytes())
         return {
             "content": archive_buffer.getvalue(),
-            "filename": f"{skill['name']}.zip",
+            "filename": f"{normalized}.zip",
             "content_type": "application/zip",
         }
 
-    async def execute_skill(self, skill_name: str, *, args: str | None = None) -> dict[str, Any]:
+    async def execute_skill(
+        self, skill_name: str, *, args: str | None = None
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SkillExecuteRequest, SkillExecutionResult
+
         self._enforce("skills.execute.launch.local")
         self._require_trusted_skill(skill_name)
         request = SkillExecuteRequest(args=args)
@@ -774,7 +1208,18 @@ class LocalSkillsService:
         self._verify_exact_skill_content(skill)
         _, body = self._parse_front_matter(skill["content"])
         rendered_prompt = body.strip().replace("{{args}}", request.args or "")
-        return self._dump(
+        # get_skill's payload already carries the bundle manifest — derive from
+        # it rather than re-walking the skill directory a second time.
+        bundle_files = skill.get("bundle_files")
+        reference_files = (
+            [
+                {"path": entry["path"], "size": entry["size"], "is_text": entry["is_text"]}
+                for entry in bundle_files
+            ]
+            if bundle_files
+            else None
+        )
+        payload = self._dump(
             SkillExecutionResult(
                 skill_name=skill["name"],
                 rendered_prompt=rendered_prompt,
@@ -782,8 +1227,100 @@ class LocalSkillsService:
                 model_override=skill.get("model"),
                 execution_mode=skill.get("context") or "inline",
                 fork_output=None,
+                reference_files=reference_files,
             )
         )
+        if reference_files is None:
+            # Omit (rather than null) when there's no bundle — preserves the
+            # exact-dict-equality contract existing execute_skill callers rely on.
+            payload.pop("reference_files", None)
+        return payload
+
+    async def read_skill_file(
+        self, skill_name: str, relative_path: str
+    ) -> dict[str, Any]:
+        """Read one bundled file of a trusted skill, contained + capped.
+
+        The runtime `skill_file` tool's single backing seam. Order is
+        load-bearing: policy gate, per-READ trust re-verification (a skill
+        revoked mid-run stops being readable immediately), path validation,
+        containment (checked before any filesystem stat, so an escape can
+        never be distinguished from a genuinely missing file), then the same
+        read discipline `_read_text_preserving_newlines` already applies to
+        the skill body. The exact canonical body path (``"SKILL.md"``) is
+        readable through this seam too -- only that literal path skips the
+        supporting-file validator's case-insensitive rejection; any nested
+        or differently-cased variant still goes through it unchanged.
+
+        Args:
+            skill_name: Canonical skill name.
+            relative_path: POSIX relative path within the skill's bundle
+                (or the literal ``"SKILL.md"`` for the body itself).
+
+        Returns:
+            ``{"content", "truncated", "size"}``; a binary file yields a
+            clean refusal string as ``content`` (never bytes, never raises).
+
+        Raises:
+            SkillTrustBlockedError: Skill not currently trusted.
+            ValueError: Bad path, unknown skill, or missing file
+                (``local_skill_file_not_found:...``).
+        """
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.skills_schemas import validate_supporting_file_path
+
+        self._enforce("skills.read_file.launch.local")
+        self._require_trusted_skill(skill_name)
+        # The canonical body path is exempted from the supporting-file
+        # validator (which otherwise rejects any-case "skill.md" as a
+        # shadow-body attempt) -- the spec says the body IS readable
+        # through this seam. Exact match only: a nested or wrong-case
+        # variant (e.g. "references/SKILL.md", "skill.md") still goes
+        # through the validator and is rejected exactly as before.
+        # Containment is still enforced below via the same contained read.
+        if relative_path != _SKILL_FILENAME:
+            validate_supporting_file_path(relative_path)
+        skill_dir = self._skill_dir(skill_name)
+        if not skill_dir.is_dir():
+            raise ValueError(f"local_skill_not_found:{skill_name}")
+        path = skill_dir / PurePosixPath(relative_path)
+        # Containment is checked BEFORE any is_file()/stat() touches the
+        # candidate path (Qodo/PR#814 hardening): an intermediate symlinked
+        # directory planted inside the bundle between the trust re-scan and
+        # this read would otherwise let is_file()/stat() follow it and act
+        # as an existence/size oracle for paths outside the bundle -- an
+        # escape that resolves to a real file would raise a DIFFERENT error
+        # ("unsafe local skill path" from the read below) than a genuinely
+        # missing one. Checking containment first means every path whose
+        # resolution escapes skill_dir short-circuits to the SAME
+        # "local_skill_file_not_found" error as a missing file, before
+        # is_file()/stat() ever run on it.
+        if get_safe_relative_path(path, skill_dir) is None:
+            raise ValueError(f"local_skill_file_not_found:{relative_path}")
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"local_skill_file_not_found:{relative_path}")
+        raw_size = path.stat().st_size
+        try:
+            text = self._read_text_preserving_newlines(path, base_dir=skill_dir)
+        except UnicodeDecodeError:
+            return {
+                "content": f"binary file — {raw_size} bytes; not readable as text",
+                "truncated": False,
+                "size": raw_size,
+            }
+        if "\x00" in text:
+            return {
+                "content": f"binary file — {raw_size} bytes; not readable as text",
+                "truncated": False,
+                "size": raw_size,
+            }
+        if len(text) > SKILL_FILE_READ_CAP_CHARS:
+            text = (
+                text[:SKILL_FILE_READ_CAP_CHARS]
+                + f"\n[truncated — file is {raw_size} bytes; showing first {SKILL_FILE_READ_CAP_CHARS} characters]"
+            )
+            return {"content": text, "truncated": True, "size": raw_size}
+        return {"content": text, "truncated": False, "size": raw_size}
 
     async def seed_builtin_skills(self, *, overwrite: bool = False) -> dict[str, Any]:
         self._enforce("skills.seed.launch.local")

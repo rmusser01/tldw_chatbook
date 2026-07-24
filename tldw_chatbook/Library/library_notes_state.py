@@ -7,7 +7,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
-from tldw_chatbook.Workspaces.conversation_browser_state import format_console_relative_age
+from tldw_chatbook.Workspaces.conversation_browser_state import (
+    format_console_relative_age,
+)
 
 NOTES_SORT_MODES = ("newest", "oldest", "title")
 _UPDATED_KEYS = ("last_modified", "updated_at", "created_at")
@@ -29,11 +31,13 @@ class LibraryNotesListRow:
         age_label: Relative-age label (e.g. ``"3m"``, ``"1d"``) derived
             from the note's most recent modified/created timestamp, or
             ``""`` when no timestamp is available.
+        checked: Whether this row is checked in multi-select mode.
     """
 
     note_id: str
     title: str
     age_label: str
+    checked: bool = False
 
 
 @dataclass(frozen=True)
@@ -47,12 +51,16 @@ class LibraryNotesListState:
             results"``), or ``""`` when no filter is active.
         empty_copy: Empty-state copy shown when ``rows`` is empty, or
             ``""`` when there are rows to render.
+        select_mode: Whether multi-select mode is active.
+        selected_count: Number of rendered rows currently checked.
     """
 
     rows: tuple[LibraryNotesListRow, ...]
     header_copy: str
     status_copy: str
     empty_copy: str
+    select_mode: bool = False
+    selected_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -94,12 +102,16 @@ def _updated_raw(record: Mapping[str, Any]) -> str:
     return ""
 
 
-def _row(record: Mapping[str, Any], *, now: datetime) -> LibraryNotesListRow:
+def _row(
+    record: Mapping[str, Any], *, now: datetime, selected_ids: frozenset[str]
+) -> LibraryNotesListRow:
     raw = _updated_raw(record)
+    note_id = _text(record.get("id"))
     return LibraryNotesListRow(
-        note_id=_text(record.get("id")),
+        note_id=note_id,
         title=_text(record.get("title")) or "Untitled",
         age_label=format_console_relative_age(raw, now=now) if raw else "",
+        checked=note_id in selected_ids,
     )
 
 
@@ -108,6 +120,8 @@ def build_library_notes_list_state(
     *,
     filter_note: str = "",
     now: datetime | None = None,
+    select_mode: bool = False,
+    selected_ids: frozenset[str] = frozenset(),
 ) -> LibraryNotesListState:
     """Build the Library notes canvas's list-view display state.
 
@@ -122,13 +136,15 @@ def build_library_notes_list_state(
             result-count status copy; ``""`` when no filter is active.
         now: Reference time for relative-age labels; defaults to the
             current UTC time.
+        select_mode: Whether multi-select mode is active.
+        selected_ids: The currently checked note ids.
 
     Returns:
         The list view's display state.
     """
     reference_now = now if now is not None else datetime.now(timezone.utc)
     rows = tuple(
-        _row(record, now=reference_now)
+        _row(record, now=reference_now, selected_ids=selected_ids)
         for record in (records or ())
         if isinstance(record, Mapping) and _text(record.get("id"))
     )
@@ -136,12 +152,51 @@ def build_library_notes_list_state(
     if filter_note:
         noun = "result" if len(rows) == 1 else "results"
         status_copy = f"filter: {filter_note} · {len(rows)} {noun}"
+    selected_count = sum(1 for r in rows if r.checked)
     return LibraryNotesListState(
         rows=rows,
         header_copy=f"Notes ({len(rows)})",
         status_copy=status_copy,
         empty_copy="" if rows else _EMPTY_NOTES_COPY,
+        select_mode=select_mode,
+        selected_count=selected_count,
     )
+
+
+def patch_note_records_after_save(
+    records: Sequence[Mapping[str, Any]] | None,
+    note_id: str,
+    *,
+    title: str,
+    modified_at: str,
+) -> tuple[Mapping[str, Any], ...]:
+    """Return ``records`` with the just-saved note's list fields refreshed.
+
+    A successful in-canvas note save persists to the DB but the notes LIST
+    is rendered from the screen's cached source-record snapshot -- without
+    this patch the list keeps showing the pre-save title, stale relative
+    age, and stale Newest ordering until the next full snapshot refetch.
+
+    Args:
+        records: The cached note records (any Mapping shape), or ``None``.
+        note_id: The saved note's id.
+        title: The saved title to reflect in the list row.
+        modified_at: ISO-8601 timestamp of the save, written to the
+            record's ``last_modified`` (the first key ``_updated_raw``
+            consults for both the age label and Newest/Oldest sorting).
+
+    Returns:
+        A new tuple with the matching record replaced by a patched copy;
+        non-matching (and non-mapping) entries pass through unchanged.
+    """
+    target_id = _text(note_id)
+    patched: list[Mapping[str, Any]] = []
+    for record in records or ():
+        if isinstance(record, Mapping) and _text(record.get("id")) == target_id:
+            patched.append({**record, "title": title, "last_modified": modified_at})
+        else:
+            patched.append(record)
+    return tuple(patched)
 
 
 def next_notes_sort_mode(mode: str) -> str:
@@ -226,8 +281,13 @@ def build_library_note_editor_state(
     """
     if not isinstance(detail, Mapping) or not _text(detail.get("id")):
         return LibraryNoteEditorState(
-            note_id="", title="", content="", keywords_text="",
-            version=None, meta_line="", has_note=False,
+            note_id="",
+            title="",
+            content="",
+            keywords_text="",
+            version=None,
+            meta_line="",
+            has_note=False,
         )
     reference_now = now if now is not None else datetime.now(timezone.utc)
     version_raw = detail.get("version")
@@ -238,10 +298,14 @@ def build_library_note_editor_state(
     parts: list[str] = []
     created = _text(detail.get("created_at"))
     if created:
-        parts.append(f"Created {format_console_relative_age(created, now=reference_now)}")
+        parts.append(
+            f"Created {format_console_relative_age(created, now=reference_now)}"
+        )
     modified = _updated_raw(detail)
     if modified:
-        parts.append(f"Modified {format_console_relative_age(modified, now=reference_now)}")
+        parts.append(
+            f"Modified {format_console_relative_age(modified, now=reference_now)}"
+        )
     if version is not None:
         parts.append(f"v{version}")
     return LibraryNoteEditorState(
@@ -284,7 +348,9 @@ def build_note_export_content(
         The rendered export text.
     """
     current_title = (title or "").strip() or "Untitled Note"
-    timestamp = (now if now is not None else datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = (now if now is not None else datetime.now()).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
     if export_format == "markdown":
         return (
             f"---\n"
@@ -328,7 +394,9 @@ def notes_autosave_status_text(state: str, *, word_count: int) -> str:
     return f"{base}{suffix}"
 
 
-def resolve_note_template_placeholders(text: str, *, now: datetime | None = None) -> str:
+def resolve_note_template_placeholders(
+    text: str, *, now: datetime | None = None
+) -> str:
     """Resolve ``{date}``/``{time}``/``{datetime}`` placeholders in template text.
 
     Mirrors the standalone Notes screen's substitution (same placeholder

@@ -2,35 +2,35 @@
 # Description: Study tab with Structured Learning, Anki/Flashcards, and Mindmaps
 #
 # Imports
-from typing import Optional, Dict, Any, List, TYPE_CHECKING
-from pathlib import Path
+from typing import Any, TYPE_CHECKING
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer, Container
-from textual.widgets import Label, Button, TextArea, Select, Input, Static, ListView, ListItem, Tree, Switch
+from textual.widgets import (
+    Label,
+    Button,
+    TextArea,
+    Select,
+    Input,
+    Static,
+    ListView,
+    Tree,
+)
 from textual.widget import Widget
 from textual.reactive import reactive
-from textual.message import Message
-from textual import work
-from textual.binding import Binding
-from loguru import logger
 
 # Local imports
-from tldw_chatbook.config import get_cli_setting
-from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.UI.Study_Modules import (
-    FLASHCARD_DELETE_DECK_SERVER_TOOLTIP,
-    FLASHCARD_SCOPE_UNAVAILABLE_TOOLTIP,
     StudyFlashcardsController,
     StudyQuizzesController,
 )
 from .Screens.study_scope_models import StudyScopeType
 # StudyDB import removed - using ChaChaNotes_DB instead
 
-QUIZ_SCOPE_UNAVAILABLE_TOOLTIP = (
-    "Workspace Study requires server mode. Switch to server mode or use Global Study to edit quizzes."
+QUIZ_SCOPE_UNAVAILABLE_TOOLTIP = "Workspace Study requires server mode. Switch to server mode or use Global Study to edit quizzes."
+QUIZ_ATTEMPT_ACTIVE_TOOLTIP = (
+    "Submit the active quiz attempt before editing quizzes or starting another attempt."
 )
-QUIZ_ATTEMPT_ACTIVE_TOOLTIP = "Submit the active quiz attempt before editing quizzes or starting another attempt."
 QUIZ_SUBMIT_INACTIVE_TOOLTIP = "Start a quiz attempt before submitting an answer."
 
 # Type checking imports
@@ -41,9 +41,10 @@ if TYPE_CHECKING:
 #
 # Classes:
 
+
 class StructuredLearningWidget(Widget):
     """Widget for structured learning paths and topics"""
-    
+
     DEFAULT_CSS = """
     StructuredLearningWidget {
         height: 100%;
@@ -74,18 +75,18 @@ class StructuredLearningWidget(Widget):
         margin-bottom: 1;
     }
     """
-    
+
     def compose(self) -> ComposeResult:
         """Compose the Structured Learning UI"""
         with ScrollableContainer(classes="structured-learning-container"):
             yield Label("📚 Structured Learning", classes="section-title")
-            
+
             with Horizontal():
                 # Topic tree on the left
                 with Vertical(classes="topic-tree-container"):
                     yield Label("Learning Topics:", classes="subsection-title")
                     yield Tree("Learning Paths", id="topic-tree", classes="topic-tree")
-                
+
                 # Content display on the right
                 with Vertical(classes="topic-content-container"):
                     yield Label("Topic Content:", classes="subsection-title")
@@ -93,9 +94,9 @@ class StructuredLearningWidget(Widget):
                         "Select a topic from the tree to view content...",
                         id="topic-content",
                         classes="topic-content",
-                        disabled=True
+                        disabled=True,
                     )
-            
+
             # Add new topic section
             yield Label("Add New Topic:", classes="subsection-title")
             with Horizontal(classes="form-row"):
@@ -105,7 +106,7 @@ class StructuredLearningWidget(Widget):
 
 class AnkiFlashcardsWidget(Widget):
     """Widget for Anki-compatible flashcards with spaced repetition"""
-    
+
     DEFAULT_CSS = """
     AnkiFlashcardsWidget {
         height: 100%;
@@ -165,27 +166,31 @@ class AnkiFlashcardsWidget(Widget):
         margin-top: 1;
     }
     """
-    
+
     def compose(self) -> ComposeResult:
         """Compose the Anki/Flashcards UI"""
         with ScrollableContainer(classes="flashcards-container"):
             yield Label("🗂️ Anki/Flashcards", classes="section-title")
-            
+
             # Card creation section
             with Vertical(classes="card-editor"):
                 yield Label("Decks:", classes="subsection-title")
-                
+
                 with Horizontal(classes="deck-controls"):
                     yield Label("Deck:", classes="form-label")
                     yield Select(
                         options=[("No decks available", Select.BLANK)],
                         allow_blank=True,
                         prompt="Select deck...",
-                        id="deck-select"
+                        id="deck-select",
                     )
                 with Horizontal(classes="deck-controls"):
-                    yield Input(placeholder="New deck name...", id="new-deck-name-input")
-                    yield Button("Create Deck", id="create-deck-button", variant="primary")
+                    yield Input(
+                        placeholder="New deck name...", id="new-deck-name-input"
+                    )
+                    yield Button(
+                        "Create Deck", id="create-deck-button", variant="primary"
+                    )
 
                 with Vertical(classes="deck-lifecycle-controls"):
                     yield Label("Deck Actions:", classes="subsection-title")
@@ -203,8 +208,14 @@ class AnkiFlashcardsWidget(Widget):
                             prompt="Select target deck...",
                             id="move-card-target-select",
                         )
-                        yield Button("Move Selected Card", id="move-selected-card-button")
-                        yield Button("Delete Selected Card", id="delete-selected-card-button", variant="error")
+                        yield Button(
+                            "Move Selected Card", id="move-selected-card-button"
+                        )
+                        yield Button(
+                            "Delete Selected Card",
+                            id="delete-selected-card-button",
+                            variant="error",
+                        )
                     yield Button(
                         "Delete Deck",
                         id="delete-deck-button",
@@ -214,35 +225,30 @@ class AnkiFlashcardsWidget(Widget):
 
                 yield Label("Search Cards:", classes="subsection-title")
                 with Horizontal(classes="search-row"):
-                    yield Input(placeholder="Search selected deck...", id="flashcard-search-input")
+                    yield Input(
+                        placeholder="Search selected deck...",
+                        id="flashcard-search-input",
+                    )
                     yield Button("Refresh", id="flashcard-refresh-button")
 
                 yield Label("Create New Card:", classes="subsection-title")
-                
+
                 yield Label("Front (Question):")
-                yield TextArea(
-                    "",
-                    id="card-front",
-                    classes="card-input"
-                )
-                
+                yield TextArea("", id="card-front", classes="card-input")
+
                 yield Label("Back (Answer):")
-                yield TextArea(
-                    "",
-                    id="card-back",
-                    classes="card-input"
-                )
-                
+                yield TextArea("", id="card-back", classes="card-input")
+
                 with Horizontal(classes="form-row"):
                     yield Label("Tags:", classes="form-label")
                     yield Input(placeholder="space-separated tags", id="card-tags")
-                
+
                 yield Button("Create Card", id="create-card-btn", variant="primary")
-            
+
             # Card list
             yield Label("Your Cards:", classes="subsection-title")
             yield ListView(id="card-list", classes="card-list")
-            
+
             # Review section
             with Vertical(classes="review-area"):
                 yield Label("Review Cards:", classes="subsection-title")
@@ -316,27 +322,45 @@ class QuizzesWidget(Widget):
                 yield Label("Create New Quiz:", classes="subsection-title")
                 with Horizontal(classes="form-row"):
                     yield Input(placeholder="Quiz name...", id="new-quiz-name-input")
-                    yield Input(placeholder="Description...", id="new-quiz-description-input")
+                    yield Input(
+                        placeholder="Description...", id="new-quiz-description-input"
+                    )
                 with Horizontal(classes="quiz-actions"):
-                    yield Button("Create Quiz", id="create-quiz-button", variant="primary")
-                    yield Button("Delete Quiz", id="delete-quiz-button", variant="error")
+                    yield Button(
+                        "Create Quiz", id="create-quiz-button", variant="primary"
+                    )
+                    yield Button(
+                        "Delete Quiz", id="delete-quiz-button", variant="error"
+                    )
 
                 yield Label("Add Fill Blank Question:", classes="subsection-title")
                 yield Label("Question Text:")
                 yield TextArea("", id="quiz-question-text", classes="card-input")
                 with Horizontal(classes="form-row"):
                     yield Label("Correct Answer:", classes="form-label")
-                    yield Input(placeholder="Correct answer...", id="quiz-correct-answer-input")
+                    yield Input(
+                        placeholder="Correct answer...", id="quiz-correct-answer-input"
+                    )
                 with Horizontal(classes="quiz-actions"):
-                    yield Button("Add Question", id="create-quiz-question-button", variant="primary")
-                    yield Button("Delete Selected Question", id="delete-quiz-question-button", variant="error")
+                    yield Button(
+                        "Add Question",
+                        id="create-quiz-question-button",
+                        variant="primary",
+                    )
+                    yield Button(
+                        "Delete Selected Question",
+                        id="delete-quiz-question-button",
+                        variant="error",
+                    )
 
             yield Label("Quiz Questions:", classes="subsection-title")
             yield ListView(id="quiz-question-list", classes="quiz-list")
 
             with Vertical(classes="quiz-attempt-area"):
                 yield Label("Attempt Quiz:", classes="subsection-title")
-                yield Static("Create a quiz to begin practicing.", id="quiz-attempt-status")
+                yield Static(
+                    "Create a quiz to begin practicing.", id="quiz-attempt-status"
+                )
                 yield Static("", id="quiz-attempt-question")
                 yield Label("Attempt History:", classes="subsection-title")
                 with Horizontal(classes="form-row"):
@@ -350,15 +374,25 @@ class QuizzesWidget(Widget):
                 yield Static("", id="quiz-attempt-history-summary")
                 with Horizontal(classes="form-row"):
                     yield Label("Your Answer:", classes="form-label")
-                    yield Input(placeholder="Enter your answer...", id="quiz-answer-input")
+                    yield Input(
+                        placeholder="Enter your answer...", id="quiz-answer-input"
+                    )
                 with Horizontal(classes="quiz-actions"):
-                    yield Button("Start Attempt", id="start-quiz-attempt-button", variant="primary")
-                    yield Button("Submit Answer", id="submit-quiz-answer-button", variant="success")
+                    yield Button(
+                        "Start Attempt",
+                        id="start-quiz-attempt-button",
+                        variant="primary",
+                    )
+                    yield Button(
+                        "Submit Answer",
+                        id="submit-quiz-answer-button",
+                        variant="success",
+                    )
 
 
 class MindmapsWidget(Widget):
     """Widget for creating and viewing mindmaps"""
-    
+
     DEFAULT_CSS = """
     MindmapsWidget {
         height: 100%;
@@ -387,36 +421,40 @@ class MindmapsWidget(Widget):
         margin-bottom: 1;
     }
     """
-    
+
     def compose(self) -> ComposeResult:
         """Compose the Mindmaps UI"""
         with ScrollableContainer(classes="mindmaps-container"):
             yield Label("🧠 Mindmaps", classes="section-title")
-            
+
             with Horizontal():
                 # Mindmap display
                 yield Tree("Root Topic", id="mindmap-tree", classes="mindmap-tree")
-                
+
                 # Controls
                 with Vertical(classes="mindmap-controls"):
                     yield Label("Add Node:", classes="subsection-title")
                     yield Input(placeholder="Node text...", id="node-text")
                     yield Button("Add Child", id="add-child-btn", variant="primary")
                     yield Button("Add Sibling", id="add-sibling-btn", variant="default")
-                    
+
                     yield Label("Actions:", classes="subsection-title")
                     yield Button("Delete Node", id="delete-node-btn", variant="error")
                     yield Button("Edit Node", id="edit-node-btn", variant="default")
-                    
+
                     yield Label("Import/Export:", classes="subsection-title")
                     yield Button("Import from Notes", id="import-notes-btn")
                     yield Button("Export to Markdown", id="export-md-btn")
-                    yield Button("Generate from LLM", id="generate-mindmap-btn", variant="success")
+                    yield Button(
+                        "Generate from LLM",
+                        id="generate-mindmap-btn",
+                        variant="success",
+                    )
 
 
 class CourseCreationWidget(Widget):
     """Widget for creating and managing courses"""
-    
+
     DEFAULT_CSS = """
     CourseCreationWidget {
         height: 100%;
@@ -445,50 +483,52 @@ class CourseCreationWidget(Widget):
         margin-bottom: 1;
     }
     """
-    
+
     def compose(self) -> ComposeResult:
         """Compose the Course Creation UI"""
         with ScrollableContainer(classes="course-creation-container"):
             yield Label("📖 Course Creation", classes="section-title")
-            
+
             # Course details form
             with Vertical(classes="course-form"):
                 yield Label("Course Details:", classes="subsection-title")
-                
+
                 yield Label("Course Title:")
                 yield Input(placeholder="Enter course title...", id="course-title")
-                
+
                 yield Label("Description:")
                 yield TextArea(
                     "Enter course description...",
                     id="course-description",
-                    classes="course-description"
+                    classes="course-description",
                 )
-                
+
                 with Horizontal(classes="form-row"):
                     yield Label("Level:", classes="form-label")
                     yield Select(
                         options=[
                             ("beginner", "Beginner"),
                             ("intermediate", "Intermediate"),
-                            ("advanced", "Advanced")
+                            ("advanced", "Advanced"),
                         ],
-                        id="course-level"
+                        id="course-level",
                     )
-                
+
                 yield Label("Prerequisites:")
-                yield Input(placeholder="Enter prerequisites...", id="course-prerequisites")
-                
+                yield Input(
+                    placeholder="Enter prerequisites...", id="course-prerequisites"
+                )
+
                 yield Button("Create Course", id="create-course-btn", variant="primary")
-            
+
             # Module management
             yield Label("Course Modules:", classes="subsection-title")
             yield ListView(id="module-list", classes="module-list")
-            
+
             with Horizontal(classes="form-row"):
                 yield Input(placeholder="Module name...", id="module-name")
                 yield Button("Add Module", id="add-module-btn")
-            
+
             # Export options
             yield Label("Export Options:", classes="subsection-title")
             with Horizontal(classes="form-row"):
@@ -499,7 +539,7 @@ class CourseCreationWidget(Widget):
 
 class StudyGuideWidget(Widget):
     """Widget for creating and managing study guides"""
-    
+
     DEFAULT_CSS = """
     StudyGuideWidget {
         height: 100%;
@@ -530,53 +570,52 @@ class StudyGuideWidget(Widget):
         margin-bottom: 1;
     }
     """
-    
+
     def compose(self) -> ComposeResult:
         """Compose the Study Guide UI"""
         with ScrollableContainer(classes="study-guide-container"):
             yield Label("📋 Study Guide", classes="section-title")
-            
+
             # Topic selection
             with Horizontal(classes="form-row"):
                 yield Label("Topic:", classes="form-label")
-                yield Select(
-                    options=[("new", "New Topic")],
-                    id="guide-topic-select"
-                )
-            
+                yield Select(options=[("new", "New Topic")], id="guide-topic-select")
+
             yield Label("Guide Title:")
             yield Input(placeholder="Enter guide title...", id="guide-title")
-            
+
             # Guide content
             yield Label("Guide Content:")
             yield TextArea(
                 "Enter or generate study guide content...",
                 id="guide-content",
-                classes="guide-content"
+                classes="guide-content",
             )
-            
+
             # Key concepts section
             yield Label("Key Concepts:", classes="subsection-title")
             yield ListView(id="key-concepts-list", classes="key-concepts")
-            
+
             with Horizontal(classes="form-row"):
                 yield Input(placeholder="Add key concept...", id="concept-input")
                 yield Button("Add", id="add-concept-btn")
-            
+
             # Practice questions
             yield Label("Practice Questions:", classes="subsection-title")
             yield ListView(id="practice-questions-list", classes="practice-questions")
-            
+
             # Action buttons
             with Horizontal(classes="form-row"):
-                yield Button("Generate from Topic", id="generate-guide-btn", variant="success")
+                yield Button(
+                    "Generate from Topic", id="generate-guide-btn", variant="success"
+                )
                 yield Button("Generate Questions", id="generate-questions-btn")
                 yield Button("Save Guide", id="save-guide-btn", variant="primary")
 
 
 class LearningMapWidget(Widget):
     """Widget for visualizing and managing learning paths"""
-    
+
     DEFAULT_CSS = """
     LearningMapWidget {
         height: 100%;
@@ -606,16 +645,16 @@ class LearningMapWidget(Widget):
         margin-bottom: 1;
     }
     """
-    
+
     def compose(self) -> ComposeResult:
         """Compose the Learning Map UI"""
         with ScrollableContainer(classes="learning-map-container"):
             yield Label("🗺️ Learning Map", classes="section-title")
-            
+
             with Horizontal():
                 # Learning path visualization
                 yield Tree("Learning Path", id="learning-map-tree", classes="map-tree")
-                
+
                 # Controls and info
                 with Vertical(classes="map-controls"):
                     # Progress display
@@ -624,28 +663,36 @@ class LearningMapWidget(Widget):
                         yield Static("0% Complete", id="overall-progress")
                         yield Label("Current Topic:", classes="subsection-title")
                         yield Static("None selected", id="current-topic")
-                    
+
                     yield Label("Path Actions:", classes="subsection-title")
-                    yield Button("Add Milestone", id="add-milestone-btn", variant="primary")
-                    yield Button("Mark Complete", id="mark-complete-btn", variant="success")
+                    yield Button(
+                        "Add Milestone", id="add-milestone-btn", variant="primary"
+                    )
+                    yield Button(
+                        "Mark Complete", id="mark-complete-btn", variant="success"
+                    )
                     yield Button("Set Dependencies", id="set-dependencies-btn")
-                    
+
                     yield Label("Import/Export:", classes="subsection-title")
                     yield Button("Import from Course", id="import-course-btn")
                     yield Button("Export Path", id="export-path-btn")
-                    yield Button("Generate Suggestions", id="generate-suggestions-btn", variant="success")
+                    yield Button(
+                        "Generate Suggestions",
+                        id="generate-suggestions-btn",
+                        variant="success",
+                    )
 
 
 class StudyWindow(Container):
     """Main Study window containing all sub-windows"""
-    
-    def __init__(self, app_instance: 'TldwCli', *, show_sidebar: bool = True, **kwargs):
+
+    def __init__(self, app_instance: "TldwCli", *, show_sidebar: bool = True, **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self.show_sidebar = show_sidebar
         self.flashcards_controller = StudyFlashcardsController(self)
         self.quizzes_controller = StudyQuizzesController(self)
-    
+
     DEFAULT_CSS = """
     StudyWindow {
         layout: horizontal;
@@ -712,34 +759,71 @@ class StudyWindow(Container):
         margin-bottom: 1;
     }
     """
-    
+
     # Reactive property to track current view
     current_view = reactive("structured_learning")
-    
+
     def compose(self) -> ComposeResult:
         """Compose the Study window"""
         if self.show_sidebar:
             with Vertical(classes="study-sidebar"):
                 yield Label("Study Menu", classes="section-title")
-                yield Button("📚 Structured Learning", id="view-structured-btn", classes="sidebar-button", variant="primary")
-                yield Button("🗂️ Anki/Flashcards", id="view-flashcards-btn", classes="sidebar-button")
-                yield Button("📝 Quizzes", id="view-quizzes-btn", classes="sidebar-button")
-                yield Button("🧠 Mindmaps", id="view-mindmaps-btn", classes="sidebar-button")
-                yield Button("📖 Course Creation", id="view-course-btn", classes="sidebar-button")
-                yield Button("📋 Study Guide", id="view-study-guide-btn", classes="sidebar-button")
-                yield Button("🗺️ Learning Map", id="view-learning-map-btn", classes="sidebar-button")
-        
+                yield Button(
+                    "📚 Structured Learning",
+                    id="view-structured-btn",
+                    classes="sidebar-button",
+                    variant="primary",
+                )
+                yield Button(
+                    "🗂️ Anki/Flashcards",
+                    id="view-flashcards-btn",
+                    classes="sidebar-button",
+                )
+                yield Button(
+                    "📝 Quizzes", id="view-quizzes-btn", classes="sidebar-button"
+                )
+                yield Button(
+                    "🧠 Mindmaps", id="view-mindmaps-btn", classes="sidebar-button"
+                )
+                yield Button(
+                    "📖 Course Creation", id="view-course-btn", classes="sidebar-button"
+                )
+                yield Button(
+                    "📋 Study Guide",
+                    id="view-study-guide-btn",
+                    classes="sidebar-button",
+                )
+                yield Button(
+                    "🗺️ Learning Map",
+                    id="view-learning-map-btn",
+                    classes="sidebar-button",
+                )
+
         # Content area
         with Vertical(classes="study-content"):
-            scope_banner = Container(id="study-scope-banner", classes="study-scope-banner")
+            scope_banner = Container(
+                id="study-scope-banner", classes="study-scope-banner"
+            )
             scope_banner.display = False
             with scope_banner:
-                yield Static("Workspace Study", id="study-scope-title", classes="section-title")
-                yield Static("", id="study-scope-workspace-name", classes="study-scope-row")
-                yield Static("", id="study-scope-backend-status", classes="study-scope-row")
+                yield Static(
+                    "Workspace Study", id="study-scope-title", classes="section-title"
+                )
+                yield Static(
+                    "", id="study-scope-workspace-name", classes="study-scope-row"
+                )
+                yield Static(
+                    "", id="study-scope-backend-status", classes="study-scope-row"
+                )
                 with Horizontal(classes="study-scope-actions"):
-                    yield Button("Back to Workspace", id="study-back-to-workspace-button")
-                    yield Button("Switch To Global Study", id="study-switch-global-button", variant="primary")
+                    yield Button(
+                        "Back to Workspace", id="study-back-to-workspace-button"
+                    )
+                    yield Button(
+                        "Switch To Global Study",
+                        id="study-switch-global-button",
+                        variant="primary",
+                    )
 
             with Container(id="study-view-container", classes="study-view-container"):
                 # Show structured learning by default
@@ -759,7 +843,9 @@ class StudyWindow(Container):
         try:
             banner = self.query_one("#study-scope-banner", Container)
             scope_state = self._current_scope_state()
-            is_workspace_scope = getattr(scope_state, "scope_type", None) == StudyScopeType.WORKSPACE
+            is_workspace_scope = (
+                getattr(scope_state, "scope_type", None) == StudyScopeType.WORKSPACE
+            )
             banner.display = is_workspace_scope
             if not is_workspace_scope:
                 return
@@ -773,7 +859,9 @@ class StudyWindow(Container):
             available = bool(getattr(scope_state, "workspace_scope_available", False))
 
             self.query_one("#study-scope-title", Static).update("Workspace Study")
-            self.query_one("#study-scope-workspace-name", Static).update(f"Workspace: {workspace_name}")
+            self.query_one("#study-scope-workspace-name", Static).update(
+                f"Workspace: {workspace_name}"
+            )
             self.query_one("#study-scope-backend-status", Static).update(
                 f"Backend availability: {'available' if available else 'unavailable'} on {backend}"
             )
@@ -794,18 +882,21 @@ class StudyWindow(Container):
         notifier = getattr(screen, "sync_shell_from_window", None)
         if callable(notifier):
             notifier()
-    
+
     def watch_current_view(self, old_view: str, new_view: str) -> None:
         """Handle view changes"""
         if old_view == "flashcards":
-            self.run_worker(self.flashcards_controller.end_review_session_if_needed(), exclusive=True)
+            self.run_worker(
+                self.flashcards_controller.end_review_session_if_needed(),
+                exclusive=True,
+            )
 
         # Remove old content
         content_container = self.query_one("#study-view-container", Container)
-        
+
         # Clear existing content
         content_container.remove_children()
-        
+
         # Add new content based on view
         if new_view == "structured_learning":
             content_container.mount(StructuredLearningWidget())
@@ -821,7 +912,7 @@ class StudyWindow(Container):
             content_container.mount(StudyGuideWidget())
         elif new_view == "learning_map":
             content_container.mount(LearningMapWidget())
-        
+
         # Update button states
         self.update_button_states(new_view)
         self._sync_scope_banner()
@@ -832,7 +923,7 @@ class StudyWindow(Container):
             self.call_after_refresh(self._schedule_quizzes_refresh)
         else:
             self.call_after_refresh(self._notify_shell_state_changed)
-    
+
     def update_button_states(self, active_view: str) -> None:
         """Update sidebar button variants based on active view"""
         if not self.show_sidebar:
@@ -844,13 +935,13 @@ class StudyWindow(Container):
             "mindmaps": "#view-mindmaps-btn",
             "course_creation": "#view-course-btn",
             "study_guide": "#view-study-guide-btn",
-            "learning_map": "#view-learning-map-btn"
+            "learning_map": "#view-learning-map-btn",
         }
-        
+
         for view, button_id in buttons.items():
             button = self.query_one(button_id, Button)
             button.variant = "primary" if view == active_view else "default"
-    
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle sidebar button presses"""
         button_id = event.button.id
@@ -869,7 +960,7 @@ class StudyWindow(Container):
             return
         if button_id is None or not button_id.startswith("view-"):
             return
-        
+
         if button_id == "view-structured-btn":
             self.current_view = "structured_learning"
         elif button_id == "view-flashcards-btn":
@@ -884,7 +975,7 @@ class StudyWindow(Container):
             self.current_view = "study_guide"
         elif button_id == "view-learning-map-btn":
             self.current_view = "learning_map"
-    
+
     def on_mount(self) -> None:
         """Initialize the window"""
         # Set up initial state
@@ -892,13 +983,13 @@ class StudyWindow(Container):
             self.update_button_states("structured_learning")
         self._sync_scope_banner()
         self._notify_shell_state_changed()
-        
+
         # Note: Study functionality now uses ChaChaNotes_DB from the app instance
 
     def on_show(self) -> None:
         self._sync_scope_banner()
         self._notify_shell_state_changed()
-    
+
     def _is_server_mode(self) -> bool:
         candidates = (
             getattr(self, "runtime_backend", None),
@@ -913,17 +1004,16 @@ class StudyWindow(Container):
 
     def _configure_flashcards_lifecycle_controls(self) -> None:
         try:
-            delete_deck_button = self.query_one("#delete-deck-button", Button)
+            self.query_one("#delete-deck-button", Button)
             delete_deck_note = self.query_one("#delete-deck-note", Static)
         except Exception:
             return
 
         server_mode = self._is_server_mode()
-        scope_enabled = True
         controller = getattr(self, "flashcards_controller", None)
         scope_checker = getattr(controller, "_scope_is_available", None)
         if callable(scope_checker):
-            scope_enabled = bool(scope_checker())
+            bool(scope_checker())
 
         delete_deck_note.display = server_mode
         delete_deck_note.display = server_mode
@@ -943,17 +1033,27 @@ class StudyWindow(Container):
             quiz_select = self.query_one("#quiz-select", Select)
             quiz_question_list = self.query_one("#quiz-question-list", ListView)
             quiz_name_input = self.query_one("#new-quiz-name-input", Input)
-            quiz_description_input = self.query_one("#new-quiz-description-input", Input)
+            quiz_description_input = self.query_one(
+                "#new-quiz-description-input", Input
+            )
             quiz_question_text = self.query_one("#quiz-question-text", TextArea)
-            quiz_correct_answer_input = self.query_one("#quiz-correct-answer-input", Input)
+            quiz_correct_answer_input = self.query_one(
+                "#quiz-correct-answer-input", Input
+            )
             quiz_answer_input = self.query_one("#quiz-answer-input", Input)
             create_quiz_button = self.query_one("#create-quiz-button", Button)
             delete_quiz_button = self.query_one("#delete-quiz-button", Button)
-            create_question_button = self.query_one("#create-quiz-question-button", Button)
-            delete_question_button = self.query_one("#delete-quiz-question-button", Button)
+            create_question_button = self.query_one(
+                "#create-quiz-question-button", Button
+            )
+            delete_question_button = self.query_one(
+                "#delete-quiz-question-button", Button
+            )
             start_attempt_button = self.query_one("#start-quiz-attempt-button", Button)
             submit_answer_button = self.query_one("#submit-quiz-answer-button", Button)
-            load_attempt_button = self.query_one("#load-quiz-attempt-history-button", Button)
+            load_attempt_button = self.query_one(
+                "#load-quiz-attempt-history-button", Button
+            )
             history_select = self.query_one("#quiz-attempt-history-select", Select)
         except Exception:
             return
@@ -1006,7 +1106,9 @@ class StudyWindow(Container):
         )
         for button in mutation_buttons:
             button.tooltip = QUIZ_ATTEMPT_ACTIVE_TOOLTIP if attempt_active else None
-        submit_answer_button.tooltip = None if attempt_active else QUIZ_SUBMIT_INACTIVE_TOOLTIP
+        submit_answer_button.tooltip = (
+            None if attempt_active else QUIZ_SUBMIT_INACTIVE_TOOLTIP
+        )
 
     @on(Button.Pressed, "#create-deck-button")
     def handle_create_deck(self) -> None:
@@ -1056,7 +1158,9 @@ class StudyWindow(Container):
     @on(Button.Pressed, "#review-rating-5")
     def handle_review_rating(self, event: Button.Pressed) -> None:
         rating = int(str(event.button.id).rsplit("-", 1)[-1])
-        self.run_worker(self.flashcards_controller.submit_rating(rating), exclusive=True)
+        self.run_worker(
+            self.flashcards_controller.submit_rating(rating), exclusive=True
+        )
 
     @on(Select.Changed, "#deck-select")
     def handle_deck_select_changed(self, event: Select.Changed) -> None:

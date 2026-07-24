@@ -7,15 +7,21 @@ import time
 from pathlib import Path
 
 import pytest
+from rich.cells import cell_len
 from textual.widgets import Button, Input, Static
 
 from Tests.UI.test_destination_shells import _wait_for_selector
-from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Widgets.Console import (
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceSwitcherModal,
+)
+from tldw_chatbook.Widgets.Console.console_workspace_context import (
+    ConsoleWorkspaceStatusPair,
 )
 from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
@@ -47,7 +53,9 @@ def _visible_text(screen) -> str:
     visible_chunks: list[str] = []
     for widget in screen.query(Static):
         if widget.display and hasattr(widget, "renderable"):
-            visible_chunks.append(getattr(widget.renderable, "plain", str(widget.renderable)))
+            visible_chunks.append(
+                getattr(widget.renderable, "plain", str(widget.renderable))
+            )
     for button in screen.query(Button):
         if button.display:
             visible_chunks.append(str(button.label))
@@ -119,7 +127,7 @@ def _section_state(
         workspace_id="ws-a",
         collapsed=collapsed,
         query=query,
-        selected_summary="Conversation 2 - saved workspace",
+        selected_summary="Conversation 2 - saved chat",
         rows=conversation_rows,
         workspace_total_count=rows,
         result_total_count=None,
@@ -262,6 +270,95 @@ def _base_grouped_workspace_state(
     )
 
 
+def test_console_conversation_status_labels_use_saved_chat_vocabulary() -> None:
+    """Persisted-but-not-archived chats read "saved chat" everywhere.
+
+    Membership roles ("workspace-thread"/"workspace") and the default
+    persisted conversation state ("in-progress") all describe the same
+    user-visible thing: a chat saved locally that is not open in a tab.
+    Library Browse ▸ Conversations lists the same records, so these labels
+    must not contradict its copy (task-179 vocabulary alignment).
+    """
+    detail = ConsoleWorkspaceContextTray._conversation_detail_status
+    status = ConsoleWorkspaceContextTray._conversation_status
+
+    assert detail("workspace-thread") == "saved chat"
+    assert detail("workspace") == "saved chat"
+    assert detail("in-progress") == "saved chat"
+    assert detail("active") == "active session"
+    assert detail("open") == "open session"
+
+    assert status("workspace-thread") == "saved"
+    assert status("workspace") == "saved"
+    assert status("in-progress") == "saved"
+    assert status("active") == "active"
+    assert status("open") == "open"
+
+
+def test_conversation_row_secondary_drops_boilerplate_keeps_differentiator() -> None:
+    """TASK-374 AC#2: the row subtitle compresses to just the differentiator.
+
+    Every row previously repeated ``<workspace> - saved chat - <age>``, so only
+    the age digits differed and half the section's vertical space carried no
+    information. The subtitle now keeps the age always and the state ONLY when it
+    is not the default ``saved chat``; the section-level workspace label is dropped.
+    """
+    secondary = ConsoleWorkspaceContextTray._conversation_row_secondary
+
+    # Default saved state -> only the differentiating age remains.
+    assert secondary("saved chat", "2d") == "2d"
+    # A non-default state IS the differentiator and is kept alongside the age.
+    assert secondary("active session", "5m") == "active session - 5m"
+    assert secondary("open session", "1h") == "open session - 1h"
+    # Degenerate inputs stay sane.
+    assert secondary("active session", "") == "active session"
+    assert secondary("saved chat", "") == ""
+    # The repeated workspace label is never part of the compressed grouped subtitle.
+    assert "Workspace" not in secondary("saved chat", "3d")
+
+    # Qodo #812: header-less sections (the cross-workspace Starred section) pass
+    # the workspace explicitly, and it leads the subtitle as the differentiator
+    # so same-titled conversations from different workspaces stay distinguishable.
+    assert secondary("saved chat", "3d", workspace_label="Workspace A") == "Workspace A - 3d"
+    assert (
+        secondary("active session", "5m", workspace_label="Workspace B")
+        == "Workspace B - active session - 5m"
+    )
+
+
+@pytest.mark.asyncio
+async def test_starred_row_keeps_workspace_disambiguation() -> None:
+    """Qodo #812: the Starred section pins conversations across workspaces with no
+    workspace group header, so its rows must still show the owning workspace even
+    though grouped rows drop it as redundant."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 50)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+
+        # Row 0 is the starred conversation (Workspace A) in the header-less
+        # Starred section; its subtitle must name the workspace.
+        starred_label = str(
+            console.query_one("#console-workspace-conversation-0", Button).label
+        )
+        assert "Workspace A" in starred_label
+
+        # The same conversation under its Workspaces group header drops it.
+        grouped_labels = [
+            str(button.label)
+            for button in console.query(".console-workspace-conversation-row")
+            if button.display and "\nWorkspace A" not in str(button.label)
+        ]
+        assert grouped_labels, "expected at least one grouped row without a workspace prefix"
+
+
 def test_console_workspace_conversation_section_state_defaults() -> None:
     section = ConsoleWorkspaceConversationSectionState(
         workspace_id="ws-a",
@@ -288,11 +385,16 @@ async def test_console_workspace_context_renders_grouped_conversation_browser() 
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
         tray.sync_state(_base_grouped_workspace_state())
         await pilot.pause()
 
-        assert _static_plain(console, "#console-conversation-browser-starred-title") == "Starred"
+        assert (
+            _static_plain(console, "#console-conversation-browser-starred-title")
+            == "Starred"
+        )
         assert "Workspaces" in _visible_text(console)
         assert "Chats" in _visible_text(console)
         assert len(console.query("#console-workspace-conversation-search")) == 1
@@ -324,7 +426,117 @@ async def test_console_workspace_context_renders_grouped_conversation_browser() 
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_context_preserves_duplicate_starred_workspace_row_keys() -> None:
+async def test_rail_title_budget_scales_with_terminal_width() -> None:
+    """TASK-374 AC#1: titles get the available width instead of a fixed cap.
+
+    The review saw 17-char titles on a wide terminal (pre-width-aware code). The
+    grouped-browser title budget is now measured from the real rail width, so it
+    grows as the terminal widens -- a wide terminal yields 25+ char titles. This
+    locks that responsiveness so it cannot regress to a fixed cap.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+        narrow_budget = tray._browser_title_budget()
+
+        await pilot.resize_terminal(260, 60)
+        await pilot.pause()
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+        wide_budget = tray._browser_title_budget()
+
+    assert wide_budget > narrow_budget, (
+        f"title budget must grow with rail width, not stay fixed "
+        f"(narrow={narrow_budget}, wide={wide_budget})"
+    )
+    assert wide_budget >= 25, (
+        f"a wide terminal must give titles the available width (25+ cells), "
+        f"got {wide_budget}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_star_uses_recognizable_star_glyphs():
+    """TASK-357: the star toggle must use a recognizable ★/☆ pair, not the
+    near-invisible one-cell '*'/'.' distinction."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+
+        for star in console.query(".console-conversation-star"):
+            label = str(star.label)
+            assert "*" not in label and label.strip() != "."
+            if getattr(star, "starred", False):
+                assert "★" in label
+            else:
+                assert "☆" in label
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_star_press_confirms_the_toggle():
+    """TASK-357: starring must confirm the change ('Starred "<title>"') rather
+    than toggle state silently (the review saw an accidental star go unnoticed)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+
+        star = next(
+            s
+            for s in console.query(".console-conversation-star")
+            if not getattr(s, "starred", False)
+        )
+        # A title with Rich markup must be escaped in the toast, not interpreted.
+        star.conversation_title = "[b]Plan[/b]"
+
+        class _Marks:
+            def is_starred(self, conversation_id):
+                return False
+
+            def star_conversation(self, conversation_id):
+                return None
+
+            def unstar_conversation(self, conversation_id):
+                return None
+
+        console.app_instance.conversation_local_marks_service = _Marks()
+        notes: list[str] = []
+        console.app_instance.notify = lambda message, **kwargs: notes.append(message)
+
+        await console.on_button_pressed(Button.Pressed(star))
+
+        assert any("Starred" in note for note in notes)
+        # The markup is escaped (literal backslash-brackets), never interpreted.
+        assert any(r"\[b]Plan\[/b]" in note for note in notes)
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_context_preserves_duplicate_starred_workspace_row_keys() -> (
+    None
+):
     rows = (
         _browser_row(
             "conv-duplicate",
@@ -340,7 +552,9 @@ async def test_console_workspace_context_preserves_duplicate_starred_workspace_r
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
         tray.sync_state(_base_grouped_workspace_state(rows=rows))
         await pilot.pause()
 
@@ -361,12 +575,18 @@ async def test_console_workspace_context_preserves_duplicate_starred_workspace_r
         assert len({button.id for button in star_buttons}) == len(star_buttons)
         assert len(duplicate_rows) == 2
         assert len(duplicate_stars) == 2
-        assert all(button.conversation_id == "conv-duplicate" for button in duplicate_rows)
-        assert all(button.conversation_id == "conv-duplicate" for button in duplicate_stars)
+        assert all(
+            button.conversation_id == "conv-duplicate" for button in duplicate_rows
+        )
+        assert all(
+            button.conversation_id == "conv-duplicate" for button in duplicate_stars
+        )
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_context_keeps_status_rows_below_grouped_browser() -> None:
+async def test_console_workspace_context_keeps_status_rows_below_grouped_browser() -> (
+    None
+):
     rows = tuple(
         _browser_row(
             f"conv-{index}",
@@ -381,7 +601,9 @@ async def test_console_workspace_context_keeps_status_rows_below_grouped_browser
     async with host.run_test(size=(120, 34)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
         tray.sync_state(_base_grouped_workspace_state(rows=rows))
         # Status rows now live in the collapsible Details section below the
         # grouped conversation browser; expand it to lay out those rows.
@@ -393,7 +615,9 @@ async def test_console_workspace_context_keeps_status_rows_below_grouped_browser
         left_rail_body = console.query_one("#console-left-rail-body")
         conversation_list = console.query_one("#console-workspace-conversations")
         sync_label = console.query_one("#console-workspace-sync-label")
-        server_readiness = console.query_one("#console-workspace-server-readiness-label")
+        server_readiness = console.query_one(
+            "#console-workspace-server-readiness-label"
+        )
         handoff_label = console.query_one("#console-workspace-handoff-label")
         composer = console.query_one("#console-native-composer")
         details_bottom = details_tray.region.y + details_tray.region.height
@@ -414,7 +638,9 @@ async def test_console_workspace_context_keeps_status_rows_below_grouped_browser
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_context_renders_disabled_star_for_unpersisted_native_session() -> None:
+async def test_console_workspace_context_renders_disabled_star_for_unpersisted_native_session() -> (
+    None
+):
     rows = (
         _browser_row(
             "native:native-session-1",
@@ -431,7 +657,9 @@ async def test_console_workspace_context_renders_disabled_star_for_unpersisted_n
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
         tray.sync_state(_base_grouped_workspace_state(rows=rows))
         await pilot.pause()
 
@@ -443,14 +671,18 @@ async def test_console_workspace_context_renders_disabled_star_for_unpersisted_n
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_context_disables_star_controls_when_marks_unavailable() -> None:
+async def test_console_workspace_context_disables_star_controls_when_marks_unavailable() -> (
+    None
+):
     app = _build_test_app()
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
         tray.sync_state(_base_grouped_workspace_state(marks_available=False))
         await pilot.pause()
 
@@ -470,12 +702,16 @@ async def test_console_workspace_context_search_controls_keep_stable_ids() -> No
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
         tray.sync_state(_base_grouped_workspace_state(query="planning"))
         await pilot.pause()
 
         search = console.query_one("#console-workspace-conversation-search", Input)
-        clear = console.query_one("#console-workspace-conversation-search-clear", Button)
+        clear = console.query_one(
+            "#console-workspace-conversation-search-clear", Button
+        )
         list_container = console.query_one("#console-workspace-conversations")
 
         assert search.value == "planning"
@@ -505,6 +741,20 @@ def test_console_workspace_context_grouped_browser_styles_are_declared() -> None
         assert "overflow-y: auto" not in list_block
         assert "scrollbar-size:" not in list_block
         assert "#console-workspace-conversations:focus {" in css
+
+        # Row lines must size to their explicitly-heighted buttons; Textual's
+        # Horizontal defaults to `height: 1fr`, which divides the list height
+        # equally and breaks mixed wrapped/badge row heights.
+        row_line_block = css.split(
+            ".console-conversation-browser-row-line {", 1
+        )[1].split("}", 1)[0]
+        assert "height: auto" in row_line_block
+        # Reserve the scrollbar cell permanently so row-wrap width does not
+        # depend on scroll state (scrollbar toggle <-> rewrap feedback loop).
+        rail_body_block = css.split("#console-left-rail-body {", 1)[1].split(
+            "}", 1
+        )[0]
+        assert "scrollbar-gutter: stable" in rail_body_block
 
 
 def test_console_workspace_conversation_visible_rows_are_clamped() -> None:
@@ -556,7 +806,9 @@ def _configure_native_ready_console(app, model: str = "local-model") -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_conversations_render_bounded_expanded_section() -> None:
+async def test_console_workspace_conversations_render_bounded_expanded_section() -> (
+    None
+):
     app = _build_test_app()
     section = _section_state(collapsed=False, rows=8)
     host = ConsoleHarness(app)
@@ -564,12 +816,20 @@ async def test_console_workspace_conversations_render_bounded_expanded_section()
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
         tray.sync_state(_base_workspace_state(section))
         await pilot.pause()
 
-        assert _static_plain(console, "#console-workspace-conversations-title") == "Conversations (8)"
-        assert _static_plain(console, "#console-workspace-selected-conversation") == "Conversation 2 - saved workspace"
+        assert (
+            _static_plain(console, "#console-workspace-conversations-title")
+            == "Conversations (8)"
+        )
+        assert (
+            _static_plain(console, "#console-workspace-selected-conversation")
+            == "Conversation 2 - saved chat"
+        )
         assert len(console.query("#console-workspace-conversation-search")) == 1
         assert len(console.query("#console-workspace-conversation-search-clear")) == 1
         assert len(console.query("#console-new-workspace-conversation")) == 1
@@ -581,7 +841,9 @@ async def test_console_workspace_conversations_render_bounded_expanded_section()
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_conversations_collapsed_shows_selected_summary_only() -> None:
+async def test_console_workspace_conversations_collapsed_shows_selected_summary_only() -> (
+    None
+):
     app = _build_test_app()
     section = _section_state(collapsed=True, rows=8)
     host = ConsoleHarness(app)
@@ -589,19 +851,29 @@ async def test_console_workspace_conversations_collapsed_shows_selected_summary_
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
         tray.sync_state(_base_workspace_state(section))
         await pilot.pause()
 
-        assert _static_plain(console, "#console-workspace-conversations-title") == "Conversations (8)"
-        assert _static_plain(console, "#console-workspace-selected-conversation") == "Conversation 2 - saved workspace"
+        assert (
+            _static_plain(console, "#console-workspace-conversations-title")
+            == "Conversations (8)"
+        )
+        assert (
+            _static_plain(console, "#console-workspace-selected-conversation")
+            == "Conversation 2 - saved chat"
+        )
         assert len(console.query("#console-workspace-conversation-search")) == 0
         assert len(console.query("#console-workspace-conversations")) == 0
         assert len(console.query("#console-new-workspace-conversation")) == 0
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_legacy_conversation_toggle_collapses_and_expands() -> None:
+async def test_console_workspace_legacy_conversation_toggle_collapses_and_expands() -> (
+    None
+):
     app = _build_test_app()
     section = _section_state(collapsed=False, rows=3)
     host = ConsoleHarness(app)
@@ -609,38 +881,51 @@ async def test_console_workspace_legacy_conversation_toggle_collapses_and_expand
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
         tray.sync_state(_base_workspace_state(section))
         await pilot.pause()
 
         toggle = console.query_one("#console-workspace-conversations-toggle", Button)
         assert toggle.disabled is False
         assert len(console.query("#console-workspace-conversations")) == 1
-        assert any("Conversation 0" in text for text in _conversation_row_texts(console))
+        assert any(
+            "Conversation 0" in text for text in _conversation_row_texts(console)
+        )
 
         toggle.press()
         await pilot.pause(0.1)
         assert len(console.query("#console-workspace-conversations-toggle")) == 1
         assert len(console.query("#console-workspace-conversations")) == 0
-        assert _static_plain(
-            console,
-            "#console-workspace-selected-conversation",
-        ) == "Conversation 2 - saved workspace"
-        assert app.app_config["console"]["conversation_section"]["ws-a"][
-            "collapsed"
-        ] is True
+        assert (
+            _static_plain(
+                console,
+                "#console-workspace-selected-conversation",
+            )
+            == "Conversation 2 - saved chat"
+        )
+        assert (
+            app.app_config["console"]["conversation_section"]["ws-a"]["collapsed"]
+            is True
+        )
 
         console.query_one("#console-workspace-conversations-toggle", Button).press()
         await pilot.pause(0.1)
         assert len(console.query("#console-workspace-conversations")) == 1
-        assert any("Conversation 0" in text for text in _conversation_row_texts(console))
-        assert app.app_config["console"]["conversation_section"]["ws-a"][
-            "collapsed"
-        ] is False
+        assert any(
+            "Conversation 0" in text for text in _conversation_row_texts(console)
+        )
+        assert (
+            app.app_config["console"]["conversation_section"]["ws-a"]["collapsed"]
+            is False
+        )
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_conversations_fallback_disables_unowned_controls() -> None:
+async def test_console_workspace_conversations_fallback_disables_unowned_controls() -> (
+    None
+):
     app = _build_test_app()
     section = _section_state(collapsed=False, rows=3)
     state = _base_workspace_state(section)
@@ -664,11 +949,15 @@ async def test_console_workspace_conversations_fallback_disables_unowned_control
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
         tray.sync_state(legacy_state)
         await pilot.pause()
 
-        search_input = console.query_one("#console-workspace-conversation-search", Input)
+        search_input = console.query_one(
+            "#console-workspace-conversation-search", Input
+        )
         clear_button = console.query_one(
             "#console-workspace-conversation-search-clear",
             Button,
@@ -697,11 +986,15 @@ async def test_console_workspace_conversations_clear_requires_enabled_search() -
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
-        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
         tray.sync_state(_base_workspace_state(section))
         await pilot.pause()
 
-        search_input = console.query_one("#console-workspace-conversation-search", Input)
+        search_input = console.query_one(
+            "#console-workspace-conversation-search", Input
+        )
         clear_button = console.query_one(
             "#console-workspace-conversation-search-clear",
             Button,
@@ -712,7 +1005,9 @@ async def test_console_workspace_conversations_clear_requires_enabled_search() -
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_many_conversations_keep_lower_status_reachable() -> None:
+async def test_console_workspace_many_conversations_keep_lower_status_reachable() -> (
+    None
+):
     app = _build_test_app()
     _configure_native_ready_console(app)
     service = app.workspace_registry_service
@@ -740,8 +1035,12 @@ async def test_console_workspace_many_conversations_keep_lower_status_reachable(
         details_tray = console.query_one("#console-workspace-details")
         left_rail_body = console.query_one("#console-left-rail-body")
         conversation_list = console.query_one("#console-workspace-conversations")
-        new_conversation = console.query_one("#console-new-workspace-conversation", Button)
-        server_readiness = console.query_one("#console-workspace-server-readiness-label")
+        new_conversation = console.query_one(
+            "#console-new-workspace-conversation", Button
+        )
+        server_readiness = console.query_one(
+            "#console-workspace-server-readiness-label"
+        )
         handoff_label = console.query_one("#console-workspace-handoff-label")
         composer = console.query_one("#console-native-composer")
         hit_x = new_conversation.region.x + max(0, new_conversation.region.width // 2)
@@ -752,8 +1051,14 @@ async def test_console_workspace_many_conversations_keep_lower_status_reachable(
         details_bottom = details_tray.region.y + details_tray.region.height
 
         assert conversation_list.region.height > left_rail_body.region.height
-        assert new_conversation.region.y + new_conversation.region.height <= composer.region.y
-        assert new_conversation.region.y + new_conversation.region.height <= workspace_bottom
+        assert (
+            new_conversation.region.y + new_conversation.region.height
+            <= composer.region.y
+        )
+        assert (
+            new_conversation.region.y + new_conversation.region.height
+            <= workspace_bottom
+        )
         assert hit_widget is new_conversation
         assert server_readiness.region.y > conversation_list.region.y
 
@@ -769,7 +1074,9 @@ async def test_console_workspace_many_conversations_keep_lower_status_reachable(
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_sync_while_scrolled_keeps_scroll_range_stable() -> None:
+async def test_console_workspace_sync_while_scrolled_keeps_scroll_range_stable() -> (
+    None
+):
     app = _build_test_app()
     _configure_native_ready_console(app)
     service = app.workspace_registry_service
@@ -846,7 +1153,9 @@ async def test_console_workspace_browser_group_collapse_persists_locally() -> No
 
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-conversation-search"
+        )
         assert (
             console.query_one(
                 "#console-workspace-conversation-search",
@@ -855,11 +1164,19 @@ async def test_console_workspace_browser_group_collapse_persists_locally() -> No
             is False
         )
         assert len(console.query("#console-workspace-conversations-toggle")) == 0
-        assert any("Collapse Chat A" in text for text in _conversation_row_texts(console))
+        # Row names wrap at the rail budget, so match against the
+        # whitespace-normalized label rather than a single raw line.
+        assert any(
+            "Collapse Chat A" in " ".join(text.split())
+            for text in _conversation_row_texts(console)
+        )
 
         _browser_group_toggle(console, "section:chats").press()
         await pilot.pause(0.1)
-        assert all("Collapse Chat A" not in text for text in _conversation_row_texts(console))
+        assert all(
+            "Collapse Chat A" not in " ".join(text.split())
+            for text in _conversation_row_texts(console)
+        )
         collapsed_groups = app.app_config["console"]["conversation_browser"][
             "collapsed_groups"
         ]
@@ -869,20 +1186,25 @@ async def test_console_workspace_browser_group_collapse_persists_locally() -> No
         console._sync_console_workspace_context()
         await pilot.pause(0.1)
         assert len(console.query("#console-workspace-conversations")) == 1
-        assert all("Collapse Chat A" not in text for text in _conversation_row_texts(console))
+        assert all(
+            "Collapse Chat A" not in " ".join(text.split())
+            for text in _conversation_row_texts(console)
+        )
 
         service.set_active_workspace(default_workspace.workspace_id)
         console._sync_console_workspace_context()
         await pilot.pause(0.1)
         assert len(console.query("#console-workspace-conversations")) == 1
-        assert all("Collapse Chat A" not in text for text in _conversation_row_texts(console))
+        assert all(
+            "Collapse Chat A" not in " ".join(text.split())
+            for text in _conversation_row_texts(console)
+        )
 
 
 async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):
     for _ in range(40):
-        if (
-            host.screen_stack
-            and host.screen_stack[-1].query("#console-workspace-switcher-modal")
+        if host.screen_stack and host.screen_stack[-1].query(
+            "#console-workspace-switcher-modal"
         ):
             await pilot.pause()
             return host.screen_stack[-1]
@@ -959,25 +1281,25 @@ async def test_console_left_rail_splits_staged_context_from_workspace_context() 
         left_rail = console.query_one("#console-left-rail")
         staged_context = console.query_one("#console-staged-context-tray")
         workspace_context = console.query_one("#console-workspace-context")
-        # Session (workspace context) now precedes Context (staged sources) in
-        # the four-section left rail, so workspace context renders above staged.
-        assert workspace_context.region.y < staged_context.region.y
-        assert staged_context.region.x == workspace_context.region.x
-        assert staged_context.region.x >= left_rail.region.x
-        assert (
-            staged_context.region.x + staged_context.region.width
-            <= left_rail.region.x + left_rail.region.width
+        # Task-400: staged sources (Context) split out of the left rail
+        # entirely -- the tray renders in the Inspector rail body while the
+        # workspace context keeps the left rail's Session section.
+        assert workspace_context.parent.id == "console-rail-section-body-session"
+        assert staged_context.parent.id == "console-inspector-rail-body"
+        assert not list(left_rail.query("#console-staged-context-tray"))
+        conversations_title = console.query_one(
+            "#console-workspace-conversations-title"
         )
-        assert staged_context.region.width == workspace_context.region.width
-        assert workspace_context.region.height > staged_context.region.height
-        conversations_title = console.query_one("#console-workspace-conversations-title")
         assert conversations_title.region.y > workspace_context.region.y
         assert len(console.query("#console-workspace-recovery")) == 0
-        assert len(console.query("#console-change-workspace")) == 0
-        new_conversation = console.query_one("#console-new-workspace-conversation", Button)
+        switch_button = console.query_one("#console-change-workspace", Button)
+        assert switch_button.disabled is True
+        new_conversation = console.query_one(
+            "#console-new-workspace-conversation", Button
+        )
         assert new_conversation.disabled is False
         text = _visible_text(console)
-        assert "Staged Context" in text
+        assert "Sources" in text
         # The workspace context tray no longer renders its own heading; the
         # "Session" rail-section header labels this section instead.
         assert "Session" in text
@@ -993,7 +1315,9 @@ async def test_console_left_rail_splits_staged_context_from_workspace_context() 
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_context_exposes_new_conversation_for_default_workspace() -> None:
+async def test_console_workspace_context_exposes_new_conversation_for_default_workspace() -> (
+    None
+):
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -1001,7 +1325,9 @@ async def test_console_workspace_context_exposes_new_conversation_for_default_wo
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
 
-        new_conversation = console.query_one("#console-new-workspace-conversation", Button)
+        new_conversation = console.query_one(
+            "#console-new-workspace-conversation", Button
+        )
         assert new_conversation.disabled is False
 
         text = _visible_text(console)
@@ -1035,7 +1361,8 @@ async def test_console_workspace_selector_is_compact_plain_status_row() -> None:
         await _wait_for_selector(console, pilot, "#console-active-workspace")
 
         active_workspace = console.query_one("#console-active-workspace")
-        rendered_label = str(active_workspace.renderable)
+        value = active_workspace.query_one("#console-active-workspace-value", Static)
+        rendered_label = str(value.renderable)
         border = active_workspace.styles.border
 
         assert rendered_label == "Default"
@@ -1044,6 +1371,95 @@ async def test_console_workspace_selector_is_compact_plain_status_row() -> None:
         assert border.right[0] in {"", "none"}
         assert border.bottom[0] in {"", "none"}
         assert border.left[0] in {"", "none"}
+
+
+@pytest.mark.asyncio
+async def test_session_tray_shows_workspace_scope_and_new_button() -> None:
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    service.create_workspace(workspace_id="ws-a", name="Research Sprint")
+    service.set_active_workspace("ws-a")
+    service.link_membership(
+        "ws-a",
+        item_type="conversation",
+        item_id="conv-1",
+        role="workspace-thread",
+        title="Planning thread",
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-active-workspace")
+
+        workspace_label = console.query_one(
+            "#console-active-workspace .console-workspace-status-label", Static
+        )
+        scope_label = console.query_one(
+            "#console-active-scope .console-workspace-status-label", Static
+        )
+        assert "Workspace" in str(workspace_label.renderable)
+        assert "Scope" in str(scope_label.renderable)
+
+        new_button = console.query_one("#console-new-workspace", Button)
+        assert new_button.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_status_label_width_is_twelve() -> None:
+    from textual.app import App
+
+    class TestApp(App):
+        def compose(self):
+            yield ConsoleWorkspaceStatusPair(
+                "Workspace", "demo", label_id="l", value_id="v"
+            )
+
+    app = TestApp()
+    async with app.run_test():
+        label = app.query_one(".console-workspace-status-label")
+        assert label.styles.width.value == 12
+
+
+@pytest.mark.asyncio
+async def test_status_pair_value_truncates_instead_of_letter_stacking() -> None:
+    """TASK-384: at a narrow rail the value column shrinks to a few cells; the
+    value must nowrap+ellipsize (so "Default" reads "De…") rather than word-wrap
+    into a "Def / aul / t" letter stack, with the full value on hover."""
+    from textual.app import App
+    from textual.widgets import Static
+
+    class TestApp(App):
+        def compose(self):
+            yield ConsoleWorkspaceStatusPair(
+                "Workspace", "Default", label_id="l", value_id="v"
+            )
+
+    app = TestApp()
+    async with app.run_test():
+        value = app.query_one("#v", Static)
+        assert value.styles.text_wrap == "nowrap"
+        assert value.styles.text_overflow == "ellipsis"
+        assert value.tooltip == "Default"
+
+
+@pytest.mark.asyncio
+async def test_status_pair_value_tooltip_escapes_markup() -> None:
+    """Qodo #821: the value tooltip renders Rich markup, so a value with bracket
+    tokens must be escaped (shown literally, not interpreted)."""
+    from textual.app import App
+    from textual.widgets import Static
+
+    class TestApp(App):
+        def compose(self):
+            yield ConsoleWorkspaceStatusPair(
+                "Workspace", "[b]danger[/b]", label_id="l", value_id="v"
+            )
+
+    app = TestApp()
+    async with app.run_test():
+        value = app.query_one("#v", Static)
+        assert value.tooltip == r"\[b]danger\[/b]"
 
 
 @pytest.mark.asyncio
@@ -1111,7 +1527,9 @@ async def test_console_workspace_conversation_list_expands_for_multiple_rows() -
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_context_renders_server_readiness_handoff_and_acp_contracts() -> None:
+async def test_console_workspace_context_renders_server_readiness_handoff_and_acp_contracts() -> (
+    None
+):
     app = _build_test_app()
     app.workspace_server_adapter_state = ConsoleWorkspaceServerAdapterState(
         available=False,
@@ -1194,6 +1612,38 @@ async def test_console_workspace_context_renders_server_readiness_handoff_and_ac
 
 @pytest.mark.asyncio
 async def test_console_workspace_context_syncs_active_conversation_marker() -> None:
+    """The active-row glyph marks whichever row is the live native session.
+
+    task-195 root cause: this test predates two later, unrelated changes
+    that invalidated its original form: (1) 0cb02fa5 replaced the literal
+    ``"> "`` marker with the shared glyph language's ``GLYPH_ACTIVE``
+    (``"▸ "``) -- a deliberate rename this test never picked up; and
+    (2) a667ffbd added the grouped conversation browser, which renders a
+    *second*, independently-selected native-session placeholder row
+    alongside the workspace-membership row. Driving the marker purely
+    through ``sync_shell_bar_from_session_data`` with a ``ChatSessionData``
+    that is not bound to any real native session (as the old test did)
+    leaves that placeholder stuck showing the active glyph too, producing
+    two "active" rows for one conversation -- not a genuine product
+    regression, since ``sync_shell_bar_from_session_data``'s only
+    production caller (``ChatTabContainer.ActiveSessionChanged``) is not
+    reachable from the Console screen (``ChatTabContainer`` is only
+    mounted by the legacy ``Chat_Window``/``Chat_Window_Enhanced``).
+
+    The real, reachable way Console marks a conversation active is
+    ``ConsoleChatStore.restore_persisted_session`` (see
+    ``ChatScreen`` resume-saved-conversation flow), which binds the
+    native session's ``persisted_conversation_id`` so it merges with the
+    membership row into a single selected row -- exactly the contract
+    ``test_console_send_after_workspace_switch_persists_to_selected_workspace``
+    (Tests/UI/test_console_native_chat_flow.py, the "shared-open-chat"
+    case) already locks in. This test now drives the marker the same way.
+
+    Since the flush-left row rework, rows no longer carry a textual
+    ``GLYPH_ACTIVE`` prefix; the active row is marked solely by the
+    ``console-workspace-conversation-row-selected`` class, which is what
+    this test asserts on.
+    """
     app = _build_test_app()
     service = app.workspace_registry_service
     service.create_workspace(workspace_id="ws-a", name="Research Sprint")
@@ -1211,12 +1661,30 @@ async def test_console_workspace_context_syncs_active_conversation_marker() -> N
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
 
+        store = console._ensure_console_chat_store()
+        store.restore_persisted_session(
+            title="Planning thread",
+            workspace_id="ws-a",
+            persisted_conversation_id="conv-1",
+            all_nodes=(),
+            active_leaf_persisted_id=None,
+        )
+
         console.sync_shell_bar_from_session_data(
             ChatSessionData(tab_id="tab-1", conversation_id="conv-1")
         )
         await pilot.pause()
 
-        assert "> Planning thread" in _visible_text(console)
+        active_row_texts = [
+            " ".join(str(row.label).split())
+            for row in console.query(".console-workspace-conversation-row")
+            if row.display
+            and row.has_class("console-workspace-conversation-row-selected")
+        ]
+        assert active_row_texts == [
+            text for text in active_row_texts if "Planning thread" in text
+        ]
+        assert len(active_row_texts) == 1
 
 
 @pytest.mark.asyncio
@@ -1244,7 +1712,9 @@ async def test_console_workspace_context_renders_markup_titles_literally() -> No
 
 
 @pytest.mark.asyncio
-async def test_console_change_workspace_switches_active_context_and_conversation_rows() -> None:
+async def test_console_change_workspace_switches_active_context_and_conversation_rows() -> (
+    None
+):
     app = _build_test_app()
     service = app.workspace_registry_service
     service.create_workspace(workspace_id="ws-a", name="Workspace A")
@@ -1326,3 +1796,328 @@ def test_console_workspace_conversation_subsection_styles_are_declared() -> None
     assert "overflow-y: auto" not in list_block
     assert "scrollbar-size:" not in list_block
     assert "#console-left-rail-body:focus {" in css
+
+
+def test_console_workspace_aggregate_height_pins_badge_row_cost() -> None:
+    """Aggregate row height includes badge row up-charge.
+
+    Regression: row height calculation must sum plain (3px) and badge (4px)
+    rows correctly. Under-counting silently overlaps rows on non-scrolling
+    Vertical containers.
+    """
+    from tldw_chatbook.Widgets.Console.console_workspace_context import (
+        ConsoleWorkspaceContextTray,
+    )
+    from tldw_chatbook.Workspaces.conversation_browser_state import (
+        ConsoleConversationBrowserRow,
+    )
+
+    # At budget 20 every title here is a single name line, so:
+    # Plain row (no subagent_count): costs 3px (1 name + 1 metadata + 1 margin).
+    # Badge row (subagent_count > 0): costs 4px (plus a dedicated badge line).
+    plain_rows = tuple(
+        ConsoleConversationBrowserRow(
+            row_key=f"plain-{i}",
+            conversation_id=f"conv-plain-{i}",
+            native_session_id=None,
+            title=f"Plain row {i}",
+            status="workspace-thread",
+            selected=False,
+            subagent_count=0,
+            scope_type="workspace",
+            workspace_id="ws-a",
+            workspace_label="Workspace A",
+            updated_label="1d",
+            star_enabled=True,
+            starred=False,
+        )
+        for i in range(3)
+    )
+    badge_rows = tuple(
+        ConsoleConversationBrowserRow(
+            row_key=f"badge-{i}",
+            conversation_id=f"conv-badge-{i}",
+            native_session_id=None,
+            title=f"Badge row {i}",
+            status="workspace-thread",
+            selected=False,
+            subagent_count=1,  # Has badge.
+            scope_type="workspace",
+            workspace_id="ws-a",
+            workspace_label="Workspace A",
+            updated_label="1d",
+            star_enabled=True,
+            starred=False,
+        )
+        for i in range(2)
+    )
+    mixed_rows = plain_rows + badge_rows
+
+    # Expected sum: 3 plain rows * 3px/row + 2 badge rows * 4px/row = 17px.
+    expected_height = 3 * 3 + 2 * 4
+    actual_height = ConsoleWorkspaceContextTray._conversation_browser_rows_height(
+        mixed_rows, 20
+    )
+
+    assert actual_height == expected_height == 17
+    assert (
+        actual_height
+        == ConsoleWorkspaceContextTray._conversation_browser_rows_height(
+            plain_rows, 20
+        )
+        + ConsoleWorkspaceContextTray._conversation_browser_rows_height(
+            badge_rows, 20
+        )
+    )
+
+
+_LONG_ROW_TITLE = (
+    "A very long conversation title that overflows the rail width easily"
+)
+
+
+def _long_title_grouped_state():
+    return _base_grouped_workspace_state(
+        rows=(
+            _browser_row(
+                "conv-long",
+                _LONG_ROW_TITLE,
+                selected=True,
+                updated_sort="2026-06-27T09:00:00",
+            ),
+        )
+    )
+
+
+def _first_row_name_lines(console) -> list[str]:
+    row_button = console.query_one("#console-workspace-conversation-0", Button)
+    lines = str(row_button.label).splitlines()
+    # Last line is the metadata line; badge rows are not used in this fixture.
+    return lines[:-1]
+
+
+@pytest.mark.asyncio
+async def test_console_rail_titles_wrap_at_measured_width() -> None:
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_long_title_grouped_state())
+        await pilot.pause()
+        await pilot.pause()
+
+        # The fit pass replaced the pre-measurement fallback with the real
+        # measured width.
+        assert tray._row_content_width == tray.content_region.width
+        budget = tray._browser_title_budget()
+        name_lines = _first_row_name_lines(console)
+        assert 1 <= len(name_lines) <= 2
+        assert all(cell_len(line) <= budget for line in name_lines)
+        # Flush left: no marker prefix on the name.
+        assert not name_lines[0].startswith(" ")
+
+        # Stability: further fit passes must not flap the labels (guarded
+        # relabel -- no recompose oscillation).
+        settled = str(
+            console.query_one("#console-workspace-conversation-0", Button).label
+        )
+        await pilot.pause()
+        await pilot.pause()
+        assert (
+            str(
+                console.query_one(
+                    "#console-workspace-conversation-0", Button
+                ).label
+            )
+            == settled
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_rail_list_height_matches_rendered_rows() -> None:
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_long_title_grouped_state())
+        await pilot.pause()
+        await pilot.pause()
+
+        conversation_list = console.query_one("#console-workspace-conversations")
+        # Scope every query to the list: `console-workspace-empty-copy` is
+        # also used by status statics OUTSIDE the conversation list, which
+        # would overcount the expected height.
+        row_buttons = list(
+            conversation_list.query(
+                ".console-workspace-conversation-row"
+            ).results(Button)
+        )
+        assert row_buttons
+        rows_height = sum(
+            int(button.styles.height.value) + 1 for button in row_buttons
+        )
+        header_count = len(
+            conversation_list.query(".console-conversation-browser-section-header")
+        ) + len(
+            conversation_list.query(".console-conversation-browser-group-header")
+        )
+        empty_copies = len(
+            conversation_list.query(".console-workspace-empty-copy")
+        )
+        assert (
+            int(conversation_list.styles.height.value)
+            == rows_height + header_count + empty_copies
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_rail_wrap_budget_tracks_terminal_width() -> None:
+    """Spec: the same long title must wrap at different budgets at different
+    terminal widths (the rail is 3fr, not fixed)."""
+    budgets: dict[str, int] = {}
+    for label, size in (("wide", (200, 44)), ("narrow", (100, 44))):
+        app = _build_test_app()
+        host = ConsoleHarness(app)
+        async with host.run_test(size=size) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-workspace-context")
+            tray = console.query_one(
+                "#console-workspace-context", ConsoleWorkspaceContextTray
+            )
+            tray.sync_state(_long_title_grouped_state())
+            await pilot.pause()
+            await pilot.pause()
+            budget = tray._browser_title_budget()
+            budgets[label] = budget
+            name_lines = _first_row_name_lines(console)
+            assert all(cell_len(line) <= budget for line in name_lines)
+    assert budgets["narrow"] < budgets["wide"]
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_row_loading_toggles_on_matching_row() -> None:
+    """task-457(b): the rail must be able to flag a conversation row as loading
+    (spinner) so a slow open reads as acknowledged, and clear it, matching by
+    conversation id; an unknown id is a no-op that never raises."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(rows=(_browser_row("conv-x", "Saved chat"),))
+        )
+        await pilot.pause()
+
+        row = console.query_one("#console-workspace-conversation-0", Button)
+        assert getattr(row, "conversation_id", "") == "conv-x"
+        assert row.loading is False
+
+        console._set_console_conversation_row_loading("conv-x", True)
+        assert row.loading is True
+
+        console._set_console_conversation_row_loading("conv-x", False)
+        assert row.loading is False
+
+        # Unknown id must not raise or touch the row.
+        console._set_console_conversation_row_loading("nope", True)
+        assert row.loading is False
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_row_click_shows_loading_until_resume_finishes() -> None:
+    """task-457(b): clicking a not-yet-open persisted conversation awaits the
+    resume inline; the pressed row must show a loading acknowledgment for the
+    duration and clear it once the resume settles, so a slow/failed open no
+    longer reads as a dead click."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(rows=(_browser_row("conv-y", "Saved chat"),))
+        )
+        await pilot.pause()
+
+        row = console.query_one("#console-workspace-conversation-0", Button)
+        assert getattr(row, "conversation_id", "") == "conv-y"
+
+        loading_during_resume: list[bool] = []
+
+        async def _fake_resume(conversation_id, **kwargs):
+            # The pressed row must already read as loading before the slow
+            # resume work runs, and match the clicked conversation.
+            assert conversation_id == "conv-y"
+            loading_during_resume.append(
+                console.query_one(
+                    "#console-workspace-conversation-0", Button
+                ).loading
+            )
+            return False
+
+        console._resume_console_workspace_conversation = _fake_resume
+
+        await console.on_button_pressed(Button.Pressed(row))
+
+        assert loading_during_resume == [True]
+        # Once the resume settles (here: not resumable) the row is not left
+        # stuck spinning.
+        assert (
+            console.query_one("#console-workspace-conversation-0", Button).loading
+            is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_row_loading_cleared_when_resume_raises() -> None:
+    """task-457(b): if the inline resume RAISES, the `finally` must still clear
+    the row's loading spinner so a failed open never leaves it stuck (the error
+    itself still propagates out of the handler)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(
+            _base_grouped_workspace_state(rows=(_browser_row("conv-z", "Saved chat"),))
+        )
+        await pilot.pause()
+
+        row = console.query_one("#console-workspace-conversation-0", Button)
+        assert getattr(row, "conversation_id", "") == "conv-z"
+
+        async def _raising_resume(conversation_id, **kwargs):
+            raise RuntimeError("resume boom")
+
+        console._resume_console_workspace_conversation = _raising_resume
+
+        with pytest.raises(RuntimeError):
+            await console.on_button_pressed(Button.Pressed(row))
+
+        assert (
+            console.query_one("#console-workspace-conversation-0", Button).loading
+            is False
+        )

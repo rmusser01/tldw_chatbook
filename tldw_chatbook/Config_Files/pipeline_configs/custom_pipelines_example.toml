@@ -32,8 +32,7 @@ tags = ["legal", "contracts", "compliance"]
 [pipelines.legal_search.parameters]
 chunk_size = 800  # Larger chunks to preserve legal context
 chunk_type = "paragraphs"  # Preserve paragraph structure
-bm25_weight = 0.6  # Favor exact term matching
-vector_weight = 0.4
+hybrid_alpha = 0.4  # Vector-leg weight (0 = FTS only, 1 = vector only); favors exact term matching
 preserve_formatting = true
 include_line_numbers = true  # For legal citations
 

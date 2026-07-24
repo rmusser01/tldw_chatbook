@@ -57,16 +57,22 @@ def normalize_quiz_question_record(backend: str, record: Any) -> dict[str, Any]:
         "quiz_backing_id": quiz_id,
         "question_type": payload.get("question_type"),
         "question_text": payload.get("question_text"),
-        "options": list(payload.get("options") or []) if payload.get("options") is not None else None,
+        "options": list(payload.get("options") or [])
+        if payload.get("options") is not None
+        else None,
         "correct_answer": correct_answer,
         "explanation": explanation,
         "answer_visible": correct_answer is not None or explanation is not None,
         "hint": payload.get("hint"),
         "hint_penalty_points": int(payload.get("hint_penalty_points") or 0),
-        "source_citations": list(payload.get("source_citations") or []) if payload.get("source_citations") is not None else None,
+        "source_citations": list(payload.get("source_citations") or [])
+        if payload.get("source_citations") is not None
+        else None,
         "points": int(payload.get("points") or 0),
         "order_index": int(payload.get("order_index") or 0),
-        "tags": list(payload.get("tags") or []) if payload.get("tags") is not None else None,
+        "tags": list(payload.get("tags") or [])
+        if payload.get("tags") is not None
+        else None,
         "created_at": payload.get("created_at"),
         "updated_at": payload.get("last_modified") or payload.get("updated_at"),
         "deleted": bool(payload.get("deleted", False)),
@@ -93,7 +99,9 @@ def normalize_quiz_attempt_record(backend: str, record: Any) -> dict[str, Any]:
             {
                 "question_id": question_id,
                 "question_record_id": (
-                    f"{normalized_backend}:quiz_question:{question_id}" if question_id is not None else None
+                    f"{normalized_backend}:quiz_question:{question_id}"
+                    if question_id is not None
+                    else None
                 ),
                 "user_answer": answer.get("user_answer"),
                 "is_correct": bool(answer.get("is_correct", False)),

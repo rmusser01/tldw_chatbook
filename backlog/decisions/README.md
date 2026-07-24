@@ -17,6 +17,11 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-009](009-local-skill-trust-boundary.md) | Accepted | Use a passphrase-rooted authenticated trust boundary with logical quarantine for Chatbook-managed local skills. |
 | [ADR-010](010-console-conversation-local-marks.md) | Accepted | Keep Console conversation stars as durable local-only marks outside conversation metadata, sync, server payloads, and chat metadata mirror reports. |
 | [ADR-011](011-chatbook-workbench-ui-system.md) | Accepted | Adopt a shared Textual-native Workbench UI System with stable composition, explicit state, visible workflow controls, responsiveness gates, and route-owner migration policy. |
+| [ADR-013](013-media-search-plain-text-fts-boundary.md) | Accepted | Keep raw media search text separate from optional preformatted FTS MATCH expressions across the local media-reading boundary. |
+| [ADR-016](016-palette-liveness-and-hotkey-layer.md) | Accepted | Palette commands must be live (notify-only commands deleted or wired); Ctrl+N destination hotkey layer zipped from `SHELL_DESTINATION_ORDER`; generic BINDINGS-driven F1 help. |
+| [ADR-018](018-watchlists-tui-screen.md) | Proposed | Replace the placeholder Watchlists destination shell with a full three-pane TUI screen reusing the local/server scope service and mirroring `tldw_server` Watchlists IA. |
+| [ADR-022](022-textual-8-runtime-floor.md) | Accepted | Support Textual 8.x, test MCP against exactly 8.0.0, and fail closed on unreviewed future major versions. |
+| [ADR-025](025-shared-stt-artifacts-and-runtime-routing.md) | Accepted | Use Parakeet ONNX for explicit supported languages, faster-whisper for automatic/broad routing, transcribe.cpp for curated optional breadth, and a shared verified model-artifact core. |
 
 ## Historical Decision Material
 

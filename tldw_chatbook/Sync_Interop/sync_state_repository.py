@@ -7,12 +7,14 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, TYPE_CHECKING
 
 from tldw_chatbook.DB.base_db import BaseDB
 from tldw_chatbook.DB.sql_validation import validate_column_name
 from tldw_chatbook.runtime_policy.server_parity_models import SourceAuthority
-from tldw_chatbook.tldw_api import SyncV2Envelope
+
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api import SyncV2Envelope
 
 
 _MAPPING_STATUSES = {
@@ -27,7 +29,12 @@ _MAPPING_STATUSES = {
 _BOTH_SIDE_STATUSES = {"confirmed", "stale", "conflict"}
 _LOCAL_NULL_ALLOWED = {"candidate", "orphaned_remote", "unsupported"}
 _REMOTE_NULL_ALLOWED = {"candidate", "orphaned_local", "unsupported"}
-_SYNC_V2_PROFILE_MODES = {"local_only", "local_first", "local_first_sync", "server_frontend"}
+_SYNC_V2_PROFILE_MODES = {
+    "local_only",
+    "local_first",
+    "local_first_sync",
+    "server_frontend",
+}
 _SYNC_V2_OUTBOX_STATUSES = {"pending", "dispatched"}
 _SYNC_V2_CONFLICT_RESOLUTION_STATUSES = {
     "open",
@@ -815,6 +822,8 @@ class SyncStateRepository(BaseDB):
         envelope: SyncV2Envelope | Mapping[str, Any],
     ) -> dict[str, Any]:
         """Persist a client envelope until a local-first sync push accepts it."""
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import SyncV2Envelope
 
         parsed = (
             envelope
@@ -1154,16 +1163,23 @@ class SyncStateRepository(BaseDB):
     ) -> list[dict[str, Any]]:
         """Return durable Sync v2 conflict review rows for one profile dataset."""
 
-        if resolution_status is not None and resolution_status not in _SYNC_V2_CONFLICT_RESOLUTION_STATUSES:
+        if (
+            resolution_status is not None
+            and resolution_status not in _SYNC_V2_CONFLICT_RESOLUTION_STATUSES
+        ):
             allowed = ", ".join(sorted(_SYNC_V2_CONFLICT_RESOLUTION_STATUSES))
             raise ValueError(f"resolution_status must be one of: {allowed}")
-        limit = _normalize_optional_limit(limit) or SYNC_V2_CONFLICT_REVIEW_DEFAULT_LIMIT
+        limit = (
+            _normalize_optional_limit(limit) or SYNC_V2_CONFLICT_REVIEW_DEFAULT_LIMIT
+        )
         source_scope_key = _sync_v2_outbox_scope_key(
             server_profile_id=server_profile_id,
             authenticated_principal_id=authenticated_principal_id,
             workspace_scope=workspace_scope,
         )
-        domain_values = tuple(dict.fromkeys(str(domain) for domain in domains or () if str(domain)))
+        domain_values = tuple(
+            dict.fromkeys(str(domain) for domain in domains or () if str(domain))
+        )
         domain_clause = ""
         params: list[Any] = [
             source_scope_key,
@@ -1281,7 +1297,9 @@ class SyncStateRepository(BaseDB):
         return {
             "source_authority": row["source_authority"],
             "server_profile_id": _restore_scope_value(row["server_profile_id"]),
-            "authenticated_principal_id": _restore_scope_value(row["authenticated_principal_id"]),
+            "authenticated_principal_id": _restore_scope_value(
+                row["authenticated_principal_id"]
+            ),
             "workspace_scope": _restore_scope_value(row["workspace_scope"]),
             "last_error": row["last_error"],
             "last_mirror_report_id": row["last_mirror_report_id"],
@@ -1401,7 +1419,9 @@ class SyncStateRepository(BaseDB):
         return {
             "source_authority": row["source_authority"],
             "server_profile_id": _restore_scope_value(row["server_profile_id"]),
-            "authenticated_principal_id": _restore_scope_value(row["authenticated_principal_id"]),
+            "authenticated_principal_id": _restore_scope_value(
+                row["authenticated_principal_id"]
+            ),
             "workspace_scope": _restore_scope_value(row["workspace_scope"]),
             "profile_mode": row["profile_mode"],
             "device_id": row["device_id"],
@@ -1465,7 +1485,9 @@ class SyncStateRepository(BaseDB):
             cursor = {
                 "remote_collection": str(dataset_id),
                 "remote_cursor": cursor_record.cursor,
-                "profile_cursor": dict(profile.get("dataset_cursors") or {}).get("sync_v2"),
+                "profile_cursor": dict(profile.get("dataset_cursors") or {}).get(
+                    "sync_v2"
+                ),
             }
             outbox = self._sync_v2_outbox_summary(
                 server_profile_id=server_profile_id,
@@ -1484,10 +1506,14 @@ class SyncStateRepository(BaseDB):
             authenticated_principal_id=authenticated_principal_id,
             workspace_scope=workspace_scope,
         )
-        last_mirror_report = self._get_mirror_report_by_id(profile.get("last_mirror_report_id"))
+        last_mirror_report = self._get_mirror_report_by_id(
+            profile.get("last_mirror_report_id")
+        )
 
         return {
-            "status": _sync_v2_profile_status(profile, outbox=outbox, conflicts=conflicts),
+            "status": _sync_v2_profile_status(
+                profile, outbox=outbox, conflicts=conflicts
+            ),
             "profile": {
                 "source_authority": profile["source_authority"],
                 "server_profile_id": profile["server_profile_id"],
@@ -1660,10 +1686,7 @@ class SyncStateRepository(BaseDB):
         legacy_latest = [dict(row) for row in rows]
         for report in legacy_latest:
             report["details"] = json.loads(report["details"])
-        v2_latest = [
-            self._sync_v2_conflict_review_from_row(row)
-            for row in review_rows
-        ]
+        v2_latest = [self._sync_v2_conflict_review_from_row(row) for row in review_rows]
         latest = sorted(
             legacy_latest + v2_latest,
             key=_sync_v2_conflict_summary_sort_key,
@@ -1791,7 +1814,9 @@ class SyncStateRepository(BaseDB):
             "outbox_id": int(row["outbox_id"]),
             "source_scope_key": row["source_scope_key"],
             "server_profile_id": _restore_scope_value(row["server_profile_id"]),
-            "authenticated_principal_id": _restore_scope_value(row["authenticated_principal_id"]),
+            "authenticated_principal_id": _restore_scope_value(
+                row["authenticated_principal_id"]
+            ),
             "workspace_scope": _restore_scope_value(row["workspace_scope"]),
             "dataset_id": row["dataset_id"],
             "domain": row["domain"],
@@ -1811,7 +1836,9 @@ class SyncStateRepository(BaseDB):
             "conflict_review_id": int(row["conflict_review_id"]),
             "source_scope_key": row["source_scope_key"],
             "server_profile_id": _restore_scope_value(row["server_profile_id"]),
-            "authenticated_principal_id": _restore_scope_value(row["authenticated_principal_id"]),
+            "authenticated_principal_id": _restore_scope_value(
+                row["authenticated_principal_id"]
+            ),
             "workspace_scope": _restore_scope_value(row["workspace_scope"]),
             "dataset_id": row["dataset_id"],
             "domain": row["domain"],
@@ -1846,14 +1873,18 @@ class SyncStateRepository(BaseDB):
         for column_name, definition in column_defs.items():
             if column_name not in existing_columns:
                 if not validate_column_name(column_name, "sync_profile_state"):
-                    raise ValueError(f"Invalid sync_profile_state column name: {column_name}")
+                    raise ValueError(
+                        f"Invalid sync_profile_state column name: {column_name}"
+                    )
                 conn.execute(
                     f"ALTER TABLE sync_profile_state ADD COLUMN {column_name} {definition}"
                 )
 
     @staticmethod
     def _record_schema_version(conn: sqlite3.Connection) -> None:
-        current_version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+        current_version = conn.execute(
+            "SELECT MAX(version) FROM schema_version"
+        ).fetchone()[0]
         if current_version is None or int(current_version) < SYNC_STATE_SCHEMA_VERSION:
             conn.execute(
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (?)",
@@ -1915,12 +1946,20 @@ def _validate_mapping_status(
     if mapping_status not in _MAPPING_STATUSES:
         allowed = ", ".join(sorted(_MAPPING_STATUSES))
         raise ValueError(f"mapping_status must be one of: {allowed}")
-    if mapping_status in _BOTH_SIDE_STATUSES and (not local_entity_id or not remote_entity_id):
-        raise ValueError(f"{mapping_status} mapping requires local and remote entity IDs")
+    if mapping_status in _BOTH_SIDE_STATUSES and (
+        not local_entity_id or not remote_entity_id
+    ):
+        raise ValueError(
+            f"{mapping_status} mapping requires local and remote entity IDs"
+        )
     if local_entity_id is None and mapping_status not in _LOCAL_NULL_ALLOWED:
-        raise ValueError(f"{mapping_status} mapping does not allow missing local entity ID")
+        raise ValueError(
+            f"{mapping_status} mapping does not allow missing local entity ID"
+        )
     if remote_entity_id is None and mapping_status not in _REMOTE_NULL_ALLOWED:
-        raise ValueError(f"{mapping_status} mapping does not allow missing remote entity ID")
+        raise ValueError(
+            f"{mapping_status} mapping does not allow missing remote entity ID"
+        )
 
 
 def _source_scope_key(
@@ -2120,7 +2159,9 @@ def _conflict_report_filters(
         )
     ):
         if source_authority is _FILTER_UNSET:
-            raise ValueError("source_authority is required for scoped conflict report reads")
+            raise ValueError(
+                "source_authority is required for scoped conflict report reads"
+            )
         if domain is None:
             raise ValueError("domain is required for scoped conflict report reads")
         prefix = _source_scope_prefix(
@@ -2148,7 +2189,9 @@ def _source_scope_prefix(
 ) -> str:
     if source_authority not in {"local", "server"}:
         raise ValueError("source_authority must be one of: local, server")
-    if source_authority == "server" and (server_profile_id is _FILTER_UNSET or not server_profile_id):
+    if source_authority == "server" and (
+        server_profile_id is _FILTER_UNSET or not server_profile_id
+    ):
         raise ValueError("server_profile_id is required for server sync state")
     return ":".join(
         [

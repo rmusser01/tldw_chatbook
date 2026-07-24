@@ -55,6 +55,7 @@ OPENAI_AVAILABLE = _module_available("openai")
 
 class OCRBackendType(Enum):
     """Supported OCR backend types."""
+
     DOCLING = "docling"
     TESSERACT = "tesseract"
     EASYOCR = "easyocr"
@@ -69,17 +70,18 @@ class OCRBackendType(Enum):
 @dataclass
 class OCRResult:
     """Standardized OCR result container."""
+
     text: str
     confidence: float  # Overall confidence score (0-1)
     language: str  # Detected or specified language
     backend: str  # Backend used
-    
+
     # Optional detailed results
     words: Optional[List[Dict[str, Any]]] = None  # Word-level results
     lines: Optional[List[Dict[str, Any]]] = None  # Line-level results
     blocks: Optional[List[Dict[str, Any]]] = None  # Block/paragraph-level results
     layout_info: Optional[Dict[str, Any]] = None  # Document layout information
-    
+
     # Metadata
     processing_time: Optional[float] = None  # Time taken in seconds
     image_size: Optional[Tuple[int, int]] = None  # (width, height)
@@ -88,7 +90,7 @@ class OCRResult:
 
 class OCRBackend(abc.ABC):
     """Abstract base class for OCR backends."""
-    
+
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
         Initialize the OCR backend.
@@ -122,53 +124,51 @@ class OCRBackend(abc.ABC):
     def is_available(self) -> bool:
         """Check if this backend is available and properly configured."""
         pass
-    
+
     @abc.abstractmethod
     def initialize(self) -> None:
         """Initialize the backend (load models, etc.)."""
         pass
-    
+
     @abc.abstractmethod
-    def process_image(self, 
-                     image_path: Union[str, Path], 
-                     language: str = "en",
-                     **kwargs) -> OCRResult:
+    def process_image(
+        self, image_path: Union[str, Path], language: str = "en", **kwargs
+    ) -> OCRResult:
         """
         Process an image and extract text.
-        
+
         Args:
             image_path: Path to the image file
             language: Language code for OCR
             **kwargs: Backend-specific options
-            
+
         Returns:
             OCRResult with extracted text and metadata
         """
         pass
-    
+
     @abc.abstractmethod
-    def process_pdf(self,
-                   pdf_path: Union[str, Path],
-                   language: str = "en",
-                   **kwargs) -> List[OCRResult]:
+    def process_pdf(
+        self, pdf_path: Union[str, Path], language: str = "en", **kwargs
+    ) -> List[OCRResult]:
         """
         Process a PDF and extract text from all pages.
-        
+
         Args:
             pdf_path: Path to the PDF file
             language: Language code for OCR
             **kwargs: Backend-specific options
-            
+
         Returns:
             List of OCRResult, one per page
         """
         pass
-    
+
     @abc.abstractmethod
     def get_supported_languages(self) -> List[str]:
         """Get list of supported language codes."""
         pass
-    
+
     def cleanup(self) -> None:
         """Cleanup resources (models, memory, etc.)."""
         pass
@@ -176,7 +176,7 @@ class OCRBackend(abc.ABC):
 
 class DoclingOCRBackend(OCRBackend):
     """OCR backend using IBM's Docling library."""
-    
+
     def is_available(self) -> bool:
         """Check if Docling is available."""
         if self._import_broken:
@@ -198,24 +198,24 @@ class DoclingOCRBackend(OCRBackend):
             except Exception as e:
                 logger.error(f"Failed to initialize Docling: {e}")
                 raise
-    
-    def process_image(self, 
-                     image_path: Union[str, Path], 
-                     language: str = "en",
-                     **kwargs) -> OCRResult:
+
+    def process_image(
+        self, image_path: Union[str, Path], language: str = "en", **kwargs
+    ) -> OCRResult:
         """Process image with Docling (converts to PDF internally if needed)."""
         # Validate path to prevent directory traversal
-        base_dir = kwargs.get('base_directory', os.getcwd())
-        validated_path = validate_path(image_path, base_dir)
-        
+        base_dir = kwargs.get("base_directory", os.getcwd())
+        validate_path(image_path, base_dir)
+
         # Docling primarily works with PDFs, so for images we might need to convert
         # For now, we'll raise NotImplementedError
-        raise NotImplementedError("Docling backend currently only supports PDF processing")
-    
-    def process_pdf(self,
-                   pdf_path: Union[str, Path],
-                   language: str = "en",
-                   **kwargs) -> List[OCRResult]:
+        raise NotImplementedError(
+            "Docling backend currently only supports PDF processing"
+        )
+
+    def process_pdf(
+        self, pdf_path: Union[str, Path], language: str = "en", **kwargs
+    ) -> List[OCRResult]:
         """Process PDF with Docling OCR."""
         if not self._initialized:
             self.initialize()
@@ -227,33 +227,39 @@ class DoclingOCRBackend(OCRBackend):
             raise
         try:
             # Validate path to prevent directory traversal
-            base_dir = kwargs.get('base_directory', os.getcwd())
+            base_dir = kwargs.get("base_directory", os.getcwd())
             validated_path = validate_path(pdf_path, base_dir)
             # Configure pipeline options
             pipeline_options = PdfPipelineOptions()
             pipeline_options.do_ocr = True
-            pipeline_options.do_table_structure = kwargs.get('extract_tables', True)
-            
-            if hasattr(pipeline_options, 'ocr_lang'):
+            pipeline_options.do_table_structure = kwargs.get("extract_tables", True)
+
+            if hasattr(pipeline_options, "ocr_lang"):
                 pipeline_options.ocr_lang = language
-            
+
             # Convert document
-            result = self.converter.convert(str(validated_path), pipeline_options=pipeline_options)
-            
+            result = self.converter.convert(
+                str(validated_path), pipeline_options=pipeline_options
+            )
+
             # Extract text and create OCR results
             ocr_results = []
-            
+
             # Process each page
-            if hasattr(result.document, 'pages'):
+            if hasattr(result.document, "pages"):
                 for page_idx, page in enumerate(result.document.pages):
-                    page_text = page.export_to_markdown() if hasattr(page, 'export_to_markdown') else str(page)
-                    
+                    page_text = (
+                        page.export_to_markdown()
+                        if hasattr(page, "export_to_markdown")
+                        else str(page)
+                    )
+
                     ocr_result = OCRResult(
                         text=page_text,
                         confidence=0.95,  # Docling doesn't provide confidence scores
                         language=language,
                         backend="docling",
-                        layout_info={"page_number": page_idx + 1}
+                        layout_info={"page_number": page_idx + 1},
                     )
                     ocr_results.append(ocr_result)
             else:
@@ -263,16 +269,16 @@ class DoclingOCRBackend(OCRBackend):
                     text=full_text,
                     confidence=0.95,
                     language=language,
-                    backend="docling"
+                    backend="docling",
                 )
                 ocr_results.append(ocr_result)
-            
+
             return ocr_results
-            
+
         except Exception as e:
             logger.error(f"Docling OCR failed: {e}")
             raise
-    
+
     def get_supported_languages(self) -> List[str]:
         """Get supported languages (Docling supports many languages)."""
         # This is a subset; Docling supports many more
@@ -281,7 +287,7 @@ class DoclingOCRBackend(OCRBackend):
 
 class TesseractOCRBackend(OCRBackend):
     """OCR backend using Tesseract."""
-    
+
     def is_available(self) -> bool:
         """Check if Tesseract is available."""
         if self._import_broken:
@@ -315,23 +321,24 @@ class TesseractOCRBackend(OCRBackend):
                 # Get available languages
                 self.available_langs = pytesseract.get_languages()
                 self._initialized = True
-                logger.info(f"Tesseract OCR backend initialized with languages: {self.available_langs}")
+                logger.info(
+                    f"Tesseract OCR backend initialized with languages: {self.available_langs}"
+                )
             except Exception as e:
                 logger.error(f"Failed to initialize Tesseract: {e}")
                 raise
-    
-    def process_image(self, 
-                     image_path: Union[str, Path], 
-                     language: str = "en",
-                     **kwargs) -> OCRResult:
+
+    def process_image(
+        self, image_path: Union[str, Path], language: str = "en", **kwargs
+    ) -> OCRResult:
         """Process image with Tesseract."""
         if not self._initialized:
             self.initialize()
-        
+
         try:
             # Validate path to prevent directory traversal
             # Use current working directory as base if not specified
-            base_dir = kwargs.get('base_directory', os.getcwd())
+            base_dir = kwargs.get("base_directory", os.getcwd())
             validated_path = validate_path(image_path, base_dir)
             # Map common language codes to Tesseract codes
             lang_map = {
@@ -345,13 +352,14 @@ class TesseractOCRBackend(OCRBackend):
                 "zh": "chi_sim",
                 "ja": "jpn",
                 "ko": "kor",
-                "ar": "ara"
+                "ar": "ara",
             }
             tesseract_lang = lang_map.get(language, language)
 
             # Get OCR data
             import time
             import pytesseract
+
             start_time = time.time()
 
             # Get text with confidence scores
@@ -359,39 +367,42 @@ class TesseractOCRBackend(OCRBackend):
                 str(validated_path),
                 lang=tesseract_lang,
                 output_type=pytesseract.Output.DICT,
-                config=kwargs.get('config', '')
+                config=kwargs.get("config", ""),
             )
-            
+
             # Extract text and calculate confidence
             text_parts = []
             confidences = []
             words_data = []
-            
-            for i in range(len(data['text'])):
-                txt = data['text'][i].strip()
+
+            for i in range(len(data["text"])):
+                txt = data["text"][i].strip()
                 if txt:
                     text_parts.append(txt)
-                    conf = float(data['conf'][i])
+                    conf = float(data["conf"][i])
                     if conf > 0:  # Tesseract uses -1 for no confidence
                         confidences.append(conf / 100.0)  # Convert to 0-1 range
-                    
-                    words_data.append({
-                        'text': txt,
-                        'confidence': conf / 100.0 if conf > 0 else 0,
-                        'bbox': {
-                            'x': data['left'][i],
-                            'y': data['top'][i],
-                            'width': data['width'][i],
-                            'height': data['height'][i]
+
+                    words_data.append(
+                        {
+                            "text": txt,
+                            "confidence": conf / 100.0 if conf > 0 else 0,
+                            "bbox": {
+                                "x": data["left"][i],
+                                "y": data["top"][i],
+                                "width": data["width"][i],
+                                "height": data["height"][i],
+                            },
                         }
-                    })
-            
-            full_text = ' '.join(text_parts)
+                    )
+
+            full_text = " ".join(text_parts)
             avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
-            
+
             # Get image size
             if PIL_AVAILABLE:
                 from PIL import Image
+
                 with Image.open(image_path) as img:
                     image_size = img.size
             else:
@@ -406,30 +417,31 @@ class TesseractOCRBackend(OCRBackend):
                 backend="tesseract",
                 words=words_data,
                 processing_time=processing_time,
-                image_size=image_size
+                image_size=image_size,
             )
-            
+
         except Exception as e:
             logger.error(f"Tesseract OCR failed: {e}")
             raise
-    
-    def process_pdf(self,
-                   pdf_path: Union[str, Path],
-                   language: str = "en",
-                   **kwargs) -> List[OCRResult]:
+
+    def process_pdf(
+        self, pdf_path: Union[str, Path], language: str = "en", **kwargs
+    ) -> List[OCRResult]:
         """Process PDF by converting pages to images first."""
         # Validate path to prevent directory traversal
-        base_dir = kwargs.get('base_directory', os.getcwd())
-        validated_path = validate_path(pdf_path, base_dir)
-        
+        base_dir = kwargs.get("base_directory", os.getcwd())
+        validate_path(pdf_path, base_dir)
+
         # This would require pdf2image or similar
-        raise NotImplementedError("PDF processing not implemented for Tesseract backend. Convert to images first.")
-    
+        raise NotImplementedError(
+            "PDF processing not implemented for Tesseract backend. Convert to images first."
+        )
+
     def get_supported_languages(self) -> List[str]:
         """Get supported languages."""
         if not self._initialized:
             self.initialize()
-        
+
         # Map Tesseract language codes to standard codes
         lang_map = {
             "eng": "en",
@@ -442,15 +454,15 @@ class TesseractOCRBackend(OCRBackend):
             "chi_sim": "zh",
             "jpn": "ja",
             "kor": "ko",
-            "ara": "ar"
+            "ara": "ar",
         }
-        
+
         return [lang_map.get(lang, lang) for lang in self.available_langs]
 
 
 class EasyOCRBackend(OCRBackend):
     """OCR backend using EasyOCR."""
-    
+
     def is_available(self) -> bool:
         """Check if EasyOCR is available."""
         if self._import_broken:
@@ -467,21 +479,21 @@ class EasyOCRBackend(OCRBackend):
                 raise
             try:
                 # Default to English if no language specified
-                default_langs = self.config.get('languages', ['en'])
+                default_langs = self.config.get("languages", ["en"])
                 self.reader = easyocr.Reader(
-                    default_langs,
-                    gpu=self.config.get('use_gpu', True)
+                    default_langs, gpu=self.config.get("use_gpu", True)
                 )
                 self._initialized = True
-                logger.info(f"EasyOCR backend initialized with languages: {default_langs}")
+                logger.info(
+                    f"EasyOCR backend initialized with languages: {default_langs}"
+                )
             except Exception as e:
                 logger.error(f"Failed to initialize EasyOCR: {e}")
                 raise
 
-    def process_image(self,
-                     image_path: Union[str, Path],
-                     language: str = "en",
-                     **kwargs) -> OCRResult:
+    def process_image(
+        self, image_path: Union[str, Path], language: str = "en", **kwargs
+    ) -> OCRResult:
         """Process image with EasyOCR."""
         try:
             import easyocr
@@ -490,46 +502,52 @@ class EasyOCRBackend(OCRBackend):
             raise
         if not self._initialized or language not in self.reader.lang_list:
             # Reinitialize with requested language
-            self.reader = easyocr.Reader([language], gpu=self.config.get('use_gpu', True))
+            self.reader = easyocr.Reader(
+                [language], gpu=self.config.get("use_gpu", True)
+            )
             self._initialized = True
 
         try:
             # Validate path to prevent directory traversal
-            base_dir = kwargs.get('base_directory', os.getcwd())
+            base_dir = kwargs.get("base_directory", os.getcwd())
             validated_path = validate_path(image_path, base_dir)
             import time
+
             start_time = time.time()
-            
+
             # Perform OCR
             results = self.reader.readtext(
                 str(validated_path),
                 detail=1,  # Get bounding boxes and confidence
-                paragraph=kwargs.get('paragraph', True)
+                paragraph=kwargs.get("paragraph", True),
             )
-            
+
             # Extract text and metadata
             text_parts = []
             confidences = []
             lines_data = []
-            
+
             for bbox, text, confidence in results:
                 text_parts.append(text)
                 confidences.append(confidence)
-                
-                lines_data.append({
-                    'text': text,
-                    'confidence': confidence,
-                    'bbox': {
-                        'points': bbox  # EasyOCR returns polygon points
+
+                lines_data.append(
+                    {
+                        "text": text,
+                        "confidence": confidence,
+                        "bbox": {
+                            "points": bbox  # EasyOCR returns polygon points
+                        },
                     }
-                })
-            
-            full_text = ' '.join(text_parts)
+                )
+
+            full_text = " ".join(text_parts)
             avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
-            
+
             # Get image size
             if PIL_AVAILABLE:
                 from PIL import Image
+
                 with Image.open(image_path) as img:
                     image_size = img.size
             else:
@@ -544,33 +562,49 @@ class EasyOCRBackend(OCRBackend):
                 backend="easyocr",
                 lines=lines_data,
                 processing_time=processing_time,
-                image_size=image_size
+                image_size=image_size,
             )
-            
+
         except Exception as e:
             logger.error(f"EasyOCR failed: {e}")
             raise
-    
-    def process_pdf(self,
-                   pdf_path: Union[str, Path],
-                   language: str = "en",
-                   **kwargs) -> List[OCRResult]:
+
+    def process_pdf(
+        self, pdf_path: Union[str, Path], language: str = "en", **kwargs
+    ) -> List[OCRResult]:
         """Process PDF by converting pages to images first."""
         # Validate path to prevent directory traversal
-        base_dir = kwargs.get('base_directory', os.getcwd())
-        validated_path = validate_path(pdf_path, base_dir)
-        
-        raise NotImplementedError("PDF processing not implemented for EasyOCR backend. Convert to images first.")
-    
+        base_dir = kwargs.get("base_directory", os.getcwd())
+        validate_path(pdf_path, base_dir)
+
+        raise NotImplementedError(
+            "PDF processing not implemented for EasyOCR backend. Convert to images first."
+        )
+
     def get_supported_languages(self) -> List[str]:
         """Get supported languages."""
         # EasyOCR supports 80+ languages
-        return ['en', 'zh', 'ja', 'ko', 'de', 'fr', 'es', 'pt', 'it', 'ru', 'ar', 'hi', 'th', 'vi']
+        return [
+            "en",
+            "zh",
+            "ja",
+            "ko",
+            "de",
+            "fr",
+            "es",
+            "pt",
+            "it",
+            "ru",
+            "ar",
+            "hi",
+            "th",
+            "vi",
+        ]
 
 
 class PaddleOCRBackend(OCRBackend):
     """OCR backend using PaddleOCR."""
-    
+
     def is_available(self) -> bool:
         """Check if PaddleOCR is available."""
         if self._import_broken:
@@ -588,8 +622,8 @@ class PaddleOCRBackend(OCRBackend):
             try:
                 self.ocr = PaddleOCR(
                     use_angle_cls=True,
-                    lang=self.config.get('lang', 'en'),
-                    use_gpu=self.config.get('use_gpu', True)
+                    lang=self.config.get("lang", "en"),
+                    use_gpu=self.config.get("use_gpu", True),
                 )
                 self._initialized = True
                 logger.info("PaddleOCR backend initialized")
@@ -597,10 +631,9 @@ class PaddleOCRBackend(OCRBackend):
                 logger.error(f"Failed to initialize PaddleOCR: {e}")
                 raise
 
-    def process_image(self,
-                     image_path: Union[str, Path],
-                     language: str = "en",
-                     **kwargs) -> OCRResult:
+    def process_image(
+        self, image_path: Union[str, Path], language: str = "en", **kwargs
+    ) -> OCRResult:
         """Process image with PaddleOCR."""
         try:
             from paddleocr import PaddleOCR
@@ -612,46 +645,48 @@ class PaddleOCRBackend(OCRBackend):
             self.ocr = PaddleOCR(
                 use_angle_cls=True,
                 lang=language,
-                use_gpu=self.config.get('use_gpu', True)
+                use_gpu=self.config.get("use_gpu", True),
             )
             self._initialized = True
 
         try:
             # Validate path to prevent directory traversal
-            base_dir = kwargs.get('base_directory', os.getcwd())
+            base_dir = kwargs.get("base_directory", os.getcwd())
             validated_path = validate_path(image_path, base_dir)
-            
+
             import time
+
             start_time = time.time()
-            
+
             # Perform OCR
             result = self.ocr.ocr(str(validated_path), cls=True)
-            
+
             # Extract text and metadata
             text_parts = []
             confidences = []
             lines_data = []
-            
+
             if result and result[0]:
                 for line in result[0]:
                     bbox, (text, confidence) = line
                     text_parts.append(text)
                     confidences.append(confidence)
-                    
-                    lines_data.append({
-                        'text': text,
-                        'confidence': confidence,
-                        'bbox': {
-                            'points': bbox
+
+                    lines_data.append(
+                        {
+                            "text": text,
+                            "confidence": confidence,
+                            "bbox": {"points": bbox},
                         }
-                    })
-            
-            full_text = ' '.join(text_parts)
+                    )
+
+            full_text = " ".join(text_parts)
             avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
-            
+
             # Get image size
             if PIL_AVAILABLE:
                 from PIL import Image
+
                 with Image.open(image_path) as img:
                     image_size = img.size
             else:
@@ -666,65 +701,66 @@ class PaddleOCRBackend(OCRBackend):
                 backend="paddleocr",
                 lines=lines_data,
                 processing_time=processing_time,
-                image_size=image_size
+                image_size=image_size,
             )
-            
+
         except Exception as e:
             logger.error(f"PaddleOCR failed: {e}")
             raise
-    
-    def process_pdf(self,
-                   pdf_path: Union[str, Path],
-                   language: str = "en",
-                   **kwargs) -> List[OCRResult]:
+
+    def process_pdf(
+        self, pdf_path: Union[str, Path], language: str = "en", **kwargs
+    ) -> List[OCRResult]:
         """Process PDF by converting pages to images first."""
         # Validate path to prevent directory traversal
-        base_dir = kwargs.get('base_directory', os.getcwd())
-        validated_path = validate_path(pdf_path, base_dir)
-        
-        raise NotImplementedError("PDF processing not implemented for PaddleOCR backend. Convert to images first.")
-    
+        base_dir = kwargs.get("base_directory", os.getcwd())
+        validate_path(pdf_path, base_dir)
+
+        raise NotImplementedError(
+            "PDF processing not implemented for PaddleOCR backend. Convert to images first."
+        )
+
     def get_supported_languages(self) -> List[str]:
         """Get supported languages."""
         # PaddleOCR supports many languages
-        return ['en', 'ch', 'ja', 'ko', 'de', 'fr', 'es', 'pt', 'it', 'ru', 'ar']
+        return ["en", "ch", "ja", "ko", "de", "fr", "es", "pt", "it", "ru", "ar"]
 
 
 class DocextOCRBackend(OCRBackend):
     """OCR backend using NanoNets docext - Vision-Language Model based document understanding."""
-    
+
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """Initialize docext backend with configuration."""
         super().__init__(config)
-        self.mode = self.config.get('mode', 'api')  # 'api', 'model', or 'openai'
-        self.api_url = self.config.get('api_url', 'http://localhost:7860')
-        self.model_name = self.config.get('model_name', 'nanonets/Nanonets-OCR-s')
+        self.mode = self.config.get("mode", "api")  # 'api', 'model', or 'openai'
+        self.api_url = self.config.get("api_url", "http://localhost:7860")
+        self.model_name = self.config.get("model_name", "nanonets/Nanonets-OCR-s")
         # Get credentials from config or environment, no defaults for security
-        self.username = self.config.get('username') or os.environ.get('DOCEXT_USERNAME')
-        self.password = self.config.get('password') or os.environ.get('DOCEXT_PASSWORD')
-        self.max_new_tokens = self.config.get('max_new_tokens', 4096)
+        self.username = self.config.get("username") or os.environ.get("DOCEXT_USERNAME")
+        self.password = self.config.get("password") or os.environ.get("DOCEXT_PASSWORD")
+        self.max_new_tokens = self.config.get("max_new_tokens", 4096)
         self.client = None
         self.model = None
         self.processor = None
         self.tokenizer = None
-    
+
     def is_available(self) -> bool:
         """Check if docext backend is available based on mode."""
         if self._import_broken:
             return False
-        if self.mode == 'api':
+        if self.mode == "api":
             return DOCEXT_AVAILABLE and GRADIO_CLIENT_AVAILABLE
-        elif self.mode == 'model':
+        elif self.mode == "model":
             return DOCEXT_AVAILABLE and TRANSFORMERS_AVAILABLE
-        elif self.mode == 'openai':
+        elif self.mode == "openai":
             return DOCEXT_AVAILABLE and OPENAI_AVAILABLE
         return False
-    
+
     def initialize(self) -> None:
         """Initialize the backend based on selected mode."""
         if not self._initialized:
             try:
-                if self.mode == 'api':
+                if self.mode == "api":
                     # Initialize Gradio client
                     try:
                         from gradio_client import Client
@@ -737,18 +773,26 @@ class DocextOCRBackend(OCRBackend):
                         auth = (self.username, self.password)
                         logger.info("Using authentication for Docext API")
                     elif self.username or self.password:
-                        logger.warning("Both username and password must be provided for authentication")
+                        logger.warning(
+                            "Both username and password must be provided for authentication"
+                        )
 
                     self.client = Client(self.api_url, auth=auth)
                     logger.info(f"Docext API client initialized at {self.api_url}")
 
-                elif self.mode == 'model':
+                elif self.mode == "model":
                     # Initialize transformers model directly
                     if not TRANSFORMERS_AVAILABLE:
-                        raise ImportError("transformers library not available for model mode")
+                        raise ImportError(
+                            "transformers library not available for model mode"
+                        )
 
                     try:
-                        from transformers import AutoTokenizer, AutoProcessor, AutoModelForImageTextToText
+                        from transformers import (
+                            AutoTokenizer,
+                            AutoProcessor,
+                            AutoModelForImageTextToText,
+                        )
                     except Exception as import_err:
                         self._mark_import_broken(import_err)
                         raise
@@ -756,34 +800,38 @@ class DocextOCRBackend(OCRBackend):
                         self.model_name,
                         torch_dtype="auto",
                         device_map="auto",
-                        attn_implementation="flash_attention_2"
+                        attn_implementation="flash_attention_2",
                     )
                     self.model.eval()
                     self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
                     self.processor = AutoProcessor.from_pretrained(self.model_name)
                     logger.info(f"Docext model loaded: {self.model_name}")
 
-                elif self.mode == 'openai':
+                elif self.mode == "openai":
                     # Initialize OpenAI-compatible client
                     if not OPENAI_AVAILABLE:
-                        raise ImportError("openai library not available for OpenAI mode")
+                        raise ImportError(
+                            "openai library not available for OpenAI mode"
+                        )
 
                     try:
                         from openai import OpenAI
                     except Exception as import_err:
                         self._mark_import_broken(import_err)
                         raise
-                    base_url = self.config.get('openai_base_url', 'http://localhost:8000/v1')
-                    api_key = self.config.get('openai_api_key', '123')
+                    base_url = self.config.get(
+                        "openai_base_url", "http://localhost:8000/v1"
+                    )
+                    api_key = self.config.get("openai_api_key", "123")
                     self.client = OpenAI(api_key=api_key, base_url=base_url)
                     logger.info(f"Docext OpenAI client initialized at {base_url}")
-                
+
                 self._initialized = True
-                
+
             except Exception as e:
                 logger.error(f"Failed to initialize docext backend: {e}")
                 raise
-    
+
     def _get_docext_prompt(self) -> str:
         """Get the standard docext prompt for document extraction."""
         return """Extract the text from the above document as if you were reading it naturally.
@@ -793,23 +841,23 @@ If there is an image in the document and image caption is not present, add a sma
 Watermarks should be wrapped in brackets.
 Ex: <page_number>14</page_number> or <page_number>9/22</page_number>.
 Prefer using ☐ and ☑ for check boxes."""
-    
-    def process_image(self, 
-                     image_path: Union[str, Path], 
-                     language: str = "en",
-                     **kwargs) -> OCRResult:
+
+    def process_image(
+        self, image_path: Union[str, Path], language: str = "en", **kwargs
+    ) -> OCRResult:
         """Process image with docext."""
         if not self._initialized:
             self.initialize()
-        
+
         try:
             # Validate path to prevent directory traversal
-            base_dir = kwargs.get('base_directory', os.getcwd())
+            base_dir = kwargs.get("base_directory", os.getcwd())
             validated_path = validate_path(image_path, base_dir)
             import time
+
             start_time = time.time()
-            
-            if self.mode == 'api':
+
+            if self.mode == "api":
                 # Use Gradio API
                 try:
                     from gradio_client import handle_file
@@ -818,7 +866,7 @@ Prefer using ☐ and ☑ for check boxes."""
                     raise
                 result = self.client.predict(
                     images=[{"image": handle_file(str(image_path))}],
-                    api_name="/process_markdown_streaming"
+                    api_name="/process_markdown_streaming",
                 )
 
                 # Extract text from result
@@ -827,55 +875,52 @@ Prefer using ☐ and ☑ for check boxes."""
                 else:
                     text = str(result)
 
-            elif self.mode == 'model':
+            elif self.mode == "model":
                 # Use transformers directly
                 from PIL import Image
-                prompt = kwargs.get('prompt', self._get_docext_prompt())
+
+                prompt = kwargs.get("prompt", self._get_docext_prompt())
 
                 image = Image.open(validated_path)
                 messages = [
                     {"role": "system", "content": "You are a helpful assistant."},
-                    {"role": "user", "content": [
-                        {"type": "image", "image": f"file://{validated_path}"},
-                        {"type": "text", "text": prompt},
-                    ]},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image", "image": f"file://{validated_path}"},
+                            {"type": "text", "text": prompt},
+                        ],
+                    },
                 ]
-                
+
                 text_input = self.processor.apply_chat_template(
-                    messages, 
-                    tokenize=False, 
-                    add_generation_prompt=True
+                    messages, tokenize=False, add_generation_prompt=True
                 )
                 inputs = self.processor(
-                    text=[text_input], 
-                    images=[image], 
-                    padding=True, 
-                    return_tensors="pt"
+                    text=[text_input], images=[image], padding=True, return_tensors="pt"
                 )
                 inputs = inputs.to(self.model.device)
-                
+
                 output_ids = self.model.generate(
-                    **inputs, 
-                    max_new_tokens=self.max_new_tokens, 
-                    do_sample=False
+                    **inputs, max_new_tokens=self.max_new_tokens, do_sample=False
                 )
                 generated_ids = [
-                    output_ids[len(input_ids):] 
+                    output_ids[len(input_ids) :]
                     for input_ids, output_ids in zip(inputs.input_ids, output_ids)
                 ]
                 text = self.processor.batch_decode(
-                    generated_ids, 
-                    skip_special_tokens=True, 
-                    clean_up_tokenization_spaces=True
+                    generated_ids,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=True,
                 )[0]
-                
-            elif self.mode == 'openai':
+
+            elif self.mode == "openai":
                 # Use OpenAI-compatible API
                 import base64
-                
+
                 with open(image_path, "rb") as image_file:
                     img_base64 = base64.b64encode(image_file.read()).decode("utf-8")
-                
+
                 response = self.client.chat.completions.create(
                     model=self.model_name,
                     messages=[
@@ -884,59 +929,64 @@ Prefer using ☐ and ☑ for check boxes."""
                             "content": [
                                 {
                                     "type": "image_url",
-                                    "image_url": {"url": f"data:image/png;base64,{img_base64}"},
+                                    "image_url": {
+                                        "url": f"data:image/png;base64,{img_base64}"
+                                    },
                                 },
                                 {
                                     "type": "text",
-                                    "text": kwargs.get('prompt', self._get_docext_prompt())
-                                }
-                            ]
+                                    "text": kwargs.get(
+                                        "prompt", self._get_docext_prompt()
+                                    ),
+                                },
+                            ],
                         }
                     ],
-                    max_tokens=self.max_new_tokens
+                    max_tokens=self.max_new_tokens,
                 )
                 text = response.choices[0].message.content
-            
+
             processing_time = time.time() - start_time
-            
+
             # Parse structured content from markdown
             lines_data = []
             blocks_data = []
             layout_info = {}
-            
+
             # Extract special tags
             import re
-            
+
             # Extract tables
-            tables = re.findall(r'<table>.*?</table>', text, re.DOTALL)
+            tables = re.findall(r"<table>.*?</table>", text, re.DOTALL)
             if tables:
-                layout_info['tables'] = tables
-            
+                layout_info["tables"] = tables
+
             # Extract equations
-            equations = re.findall(r'\$\$.*?\$\$|\$.*?\$', text, re.DOTALL)
+            equations = re.findall(r"\$\$.*?\$\$|\$.*?\$", text, re.DOTALL)
             if equations:
-                layout_info['equations'] = equations
-            
+                layout_info["equations"] = equations
+
             # Extract page numbers
-            page_nums = re.findall(r'<page_number>(.*?)</page_number>', text)
+            page_nums = re.findall(r"<page_number>(.*?)</page_number>", text)
             if page_nums:
-                layout_info['page_numbers'] = page_nums
-            
+                layout_info["page_numbers"] = page_nums
+
             # Extract images
-            images = re.findall(r'<img>(.*?)</img>', text, re.DOTALL)
+            images = re.findall(r"<img>(.*?)</img>", text, re.DOTALL)
             if images:
-                layout_info['image_descriptions'] = images
-            
+                layout_info["image_descriptions"] = images
+
             # Get image size if available
             image_size = None
             if PIL_AVAILABLE:
                 try:
                     from PIL import Image
+
                     with Image.open(image_path) as img:
                         image_size = img.size
                 except (OSError, IOError, AttributeError) as e:
                     logger.debug(f"Could not get image size from {image_path}: {e}")
-            
+
             return OCRResult(
                 text=text,
                 confidence=0.95,  # Docext doesn't provide confidence scores
@@ -946,74 +996,109 @@ Prefer using ☐ and ☑ for check boxes."""
                 blocks=blocks_data if blocks_data else None,
                 layout_info=layout_info if layout_info else None,
                 processing_time=processing_time,
-                image_size=image_size
+                image_size=image_size,
             )
-            
+
         except Exception as e:
             logger.error(f"Docext processing failed: {e}")
             raise
-    
-    def process_pdf(self,
-                   pdf_path: Union[str, Path],
-                   language: str = "en",
-                   **kwargs) -> List[OCRResult]:
+
+    def process_pdf(
+        self, pdf_path: Union[str, Path], language: str = "en", **kwargs
+    ) -> List[OCRResult]:
         """Process PDF with docext by converting pages to images."""
         # Validate path to prevent directory traversal
-        base_dir = kwargs.get('base_directory', os.getcwd())
+        base_dir = kwargs.get("base_directory", os.getcwd())
         validated_path = validate_path(pdf_path, base_dir)
-        
+
         # For PDFs, we need to extract pages as images first
         try:
             import pymupdf
-            
+
             results = []
             doc = pymupdf.open(str(validated_path))
-            
+
             for page_num, page in enumerate(doc):
                 # Convert page to image
-                pix = page.get_pixmap(matrix=pymupdf.Matrix(2, 2))  # 2x scaling for better quality
+                pix = page.get_pixmap(
+                    matrix=pymupdf.Matrix(2, 2)
+                )  # 2x scaling for better quality
                 img_data = pix.tobytes("png")
-                
+
                 # Save to temporary file
                 import tempfile
-                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                     tmp.write(img_data)
                     tmp_path = tmp.name
-                
+
                 try:
                     # Process with docext
                     result = self.process_image(tmp_path, language=language, **kwargs)
                     result.layout_info = result.layout_info or {}
-                    result.layout_info['page_number'] = page_num + 1
+                    result.layout_info["page_number"] = page_num + 1
                     results.append(result)
                 finally:
                     # Clean up temp file
                     try:
                         os.unlink(tmp_path)
                     except (OSError, FileNotFoundError) as e:
-                        logger.debug(f"Failed to clean up temporary file {tmp_path}: {e}")
-            
+                        logger.debug(
+                            f"Failed to clean up temporary file {tmp_path}: {e}"
+                        )
+
             doc.close()
             return results
-            
+
         except ImportError:
-            raise NotImplementedError("PDF processing requires pymupdf. Install with: pip install pymupdf")
+            raise NotImplementedError(
+                "PDF processing requires pymupdf. Install with: pip install pymupdf"
+            )
         except Exception as e:
             logger.error(f"Docext PDF processing failed: {e}")
             raise
-    
+
     def get_supported_languages(self) -> List[str]:
         """Get supported languages (docext is multilingual)."""
         # Docext uses vision-language models so it supports many languages implicitly
-        return ['en', 'es', 'fr', 'de', 'it', 'pt', 'ru', 'zh', 'ja', 'ko', 'ar', 'hi', 'multi']
-    
+        return [
+            "en",
+            "es",
+            "fr",
+            "de",
+            "it",
+            "pt",
+            "ru",
+            "zh",
+            "ja",
+            "ko",
+            "ar",
+            "hi",
+            "multi",
+        ]
+
     def cleanup(self) -> None:
         """Cleanup resources."""
-        if self.mode == 'model' and self.model is not None:
+        if self.mode == "model" and self.model is not None:
             # Clear model from memory
             del self.model
             self.model = None
-            if hasattr(torch, 'cuda') and torch.cuda.is_available():
+            # ``torch`` was never imported in this module (this class only
+            # imports ``transformers`` lazily in 'model' mode -- see
+            # __init__/_initialize -- torch itself was referenced here
+            # unimported, a NameError on this, until now unreached, code
+            # path). Reaching 'model' mode implies transformers (and thus
+            # its torch dependency) already imported successfully, so this
+            # guarded import is expected to always succeed here.
+            try:
+                import torch
+            except ImportError:
+                torch = None
+            if (
+                torch is not None
+                and hasattr(torch, "cuda")
+                and torch.cuda.is_available()
+            ):
                 torch.cuda.empty_cache()
         self._initialized = False
 
@@ -1102,8 +1187,11 @@ class OCRManager:
 
     def get_available_backends(self) -> List[str]:
         """Get list of available backend names."""
-        return [name for name, backend in self.backends.items()
-                if not backend._import_broken]
+        return [
+            name
+            for name, backend in self.backends.items()
+            if not backend._import_broken
+        ]
 
     def get_backend(self, name: Optional[str] = None) -> OCRBackend:
         """
@@ -1134,16 +1222,20 @@ class OCRManager:
                 backend = None
 
             if backend is None:
-                raise ValueError(f"OCR backend '{backend_name}' not available. "
-                               f"Available backends: {self.get_available_backends()}")
+                raise ValueError(
+                    f"OCR backend '{backend_name}' not available. "
+                    f"Available backends: {self.get_available_backends()}"
+                )
 
             return backend
 
-    def process_image(self,
-                     image_path: Union[str, Path],
-                     language: str = "en",
-                     backend: Optional[str] = None,
-                     **kwargs) -> OCRResult:
+    def process_image(
+        self,
+        image_path: Union[str, Path],
+        language: str = "en",
+        backend: Optional[str] = None,
+        **kwargs,
+    ) -> OCRResult:
         """
         Process an image using specified or default backend.
 
@@ -1173,11 +1265,13 @@ class OCRManager:
                         continue
                 raise
 
-    def process_pdf(self,
-                   pdf_path: Union[str, Path],
-                   language: str = "en",
-                   backend: Optional[str] = None,
-                   **kwargs) -> List[OCRResult]:
+    def process_pdf(
+        self,
+        pdf_path: Union[str, Path],
+        language: str = "en",
+        backend: Optional[str] = None,
+        **kwargs,
+    ) -> List[OCRResult]:
         """
         Process a PDF using specified or default backend.
 

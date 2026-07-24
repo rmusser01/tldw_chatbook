@@ -4,17 +4,16 @@ from functools import partial
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from textual.app import App, ComposeResult
-from textual.widgets import ListView, Static
 
-from tldw_chatbook.Character_Chat.Character_Chat_Lib import fetch_all_dictionaries, fetch_character_names
-from tldw_chatbook.Character_Chat.character_persona_scope_service import CharacterPersonaScopeService
+from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
+    fetch_all_dictionaries,
+    fetch_character_names,
+)
 from tldw_chatbook.UI.CCP_Modules import (
     CCPCharacterHandler,
     CCPConversationHandler,
     CCPMessageManager,
     CCPPersonaHandler,
-    CCPPromptHandler,
     PersonaMessage,
     ViewChangeMessage,
 )
@@ -63,7 +62,9 @@ def mock_window():
     backend.list_chat_greetings = AsyncMock(
         return_value={
             "chat_id": "chat.server.alice",
-            "greetings": [{"index": 0, "text": "Hello there.", "preview": "Hello there."}],
+            "greetings": [
+                {"index": 0, "text": "Hello there.", "preview": "Hello there."}
+            ],
             "current_selection": 0,
         }
     )
@@ -80,9 +81,15 @@ def mock_window():
             "presets": [{"preset_id": "default", "name": "Default", "builtin": True}],
         }
     )
-    backend.create_chat_preset = AsyncMock(return_value={"preset_id": "custom-alpha", "name": "Custom Alpha"})
-    backend.update_chat_preset = AsyncMock(return_value={"preset_id": "custom-alpha", "name": "Custom Beta"})
-    backend.delete_chat_preset = AsyncMock(return_value={"status": "deleted", "preset_id": "custom-alpha"})
+    backend.create_chat_preset = AsyncMock(
+        return_value={"preset_id": "custom-alpha", "name": "Custom Alpha"}
+    )
+    backend.update_chat_preset = AsyncMock(
+        return_value={"preset_id": "custom-alpha", "name": "Custom Beta"}
+    )
+    backend.delete_chat_preset = AsyncMock(
+        return_value={"status": "deleted", "preset_id": "custom-alpha"}
+    )
     window.app_instance.character_persona_scope_service = backend
     window.run_worker = Mock()
     window.post_message = Mock()
@@ -148,7 +155,9 @@ class TestCCPConversationHandler:
     """Conversation handler coverage for string-first IDs."""
 
     @pytest.mark.asyncio
-    async def test_load_conversation_wrapper_accepts_string_identifier(self, mock_window):
+    async def test_load_conversation_wrapper_accepts_string_identifier(
+        self, mock_window
+    ):
         handler = CCPConversationHandler(mock_window)
 
         await handler.load_conversation("conv-1")
@@ -158,7 +167,9 @@ class TestCCPConversationHandler:
         assert call_args[0][0] == handler._load_conversation_sync
         assert call_args[0][1] == "conv-1"
 
-    def test_search_excludes_workspace_scoped_conversations_from_general_results(self, mock_window):
+    def test_search_excludes_workspace_scoped_conversations_from_general_results(
+        self, mock_window
+    ):
         class FakeConversationDb:
             def search_conversations_by_title(self, title_query, limit=100):
                 return [
@@ -182,7 +193,9 @@ class TestCCPConversationHandler:
         mock_window.state.selected_persona_id = None
         handler = CCPConversationHandler(mock_window)
 
-        CCPConversationHandler._search_conversations_sync.__wrapped__(handler, "Alpha", "title")
+        CCPConversationHandler._search_conversations_sync.__wrapped__(
+            handler, "Alpha", "title"
+        )
 
         assert [row["id"] for row in handler.search_results] == ["conv-global-1"]
 
@@ -217,6 +230,34 @@ class TestCCPCharacterHandler:
             mode="server",
         )
         assert payload["current_selection"] == 0
+
+    @pytest.mark.asyncio
+    async def test_handle_import_character_cards_filter_accepts_webp_not_md(
+        self, mock_window
+    ):
+        """Legacy CCP import route (task-431 AC#1): stay in sync with the
+        destination-native Personas import filter - accept .webp cards, and
+        never treat .md as a "Character Cards" match here either (this route
+        never included .md, so this pins the no-regression side)."""
+        from pathlib import Path
+
+        mock_window.app.push_screen = AsyncMock(return_value=None)
+        handler = CCPCharacterHandler(mock_window)
+
+        await handler.handle_import()
+
+        mock_window.app.push_screen.assert_awaited_once()
+        picker = mock_window.app.push_screen.call_args[0][0]
+        filter_by_name = {
+            name: picker.filters[filter_id]
+            for name, filter_id in picker.filters.selections
+        }
+        character_cards = filter_by_name["Character Cards"]
+
+        assert character_cards(Path("x.webp")) is True
+        assert character_cards(Path("x.png")) is True
+        assert character_cards(Path("x.json")) is True
+        assert character_cards(Path("README.md")) is False
 
 
 class TestCCPPersonaHandler:
@@ -340,7 +381,9 @@ class TestCCPPersonaHandler:
         assert payload["presets"][0]["preset_id"] == "default"
 
     @pytest.mark.asyncio
-    async def test_select_chat_greeting_notifies_when_current_mode_cannot_use_it(self, mock_window):
+    async def test_select_chat_greeting_notifies_when_current_mode_cannot_use_it(
+        self, mock_window
+    ):
         handler = CCPPersonaHandler(mock_window)
         mock_window.state.runtime_backend = "local"
         mock_window.app_instance.character_persona_scope_service.select_chat_greeting = AsyncMock(
@@ -356,44 +399,22 @@ class TestCCPPersonaHandler:
         )
 
 
-class TestCCPPromptHandler:
-    """Prompt handler Library empty-state coverage."""
-
-    @pytest.mark.asyncio
-    async def test_empty_prompt_search_results_keep_library_guidance(self, mock_window):
-        class TestApp(App):
-            def compose(self) -> ComposeResult:
-                yield ListView(id="ccp-prompts-listview")
-
-        app = TestApp()
-        async with app.run_test() as pilot:
-            list_view = pilot.app.query_one("#ccp-prompts-listview", ListView)
-            mock_window.query_one.return_value = list_view
-            handler = CCPPromptHandler(mock_window)
-            handler.search_results = []
-
-            await handler._update_search_results_ui()
-            await pilot.pause()
-
-            assert len(list_view.children) == 1
-            empty_text = str(list_view.children[0].query_one(Static).render())
-            assert "No prompts yet." in empty_text
-            assert "Create New Prompt" in empty_text
-            assert "Chat instructions" in empty_text
-
-
 class TestCCPMessageManager:
     """Message manager coverage for string session IDs."""
 
     @pytest.mark.asyncio
-    async def test_load_conversation_messages_accepts_string_identifier(self, mock_window):
+    async def test_load_conversation_messages_accepts_string_identifier(
+        self, mock_window
+    ):
         manager = CCPMessageManager(mock_window)
 
         with patch(
             "tldw_chatbook.UI.CCP_Modules.ccp_message_manager.fetch_messages_for_conversation",
             return_value=[{"id": "msg-1", "role": "user", "content": "hello"}],
         ) as mock_fetch:
-            await CCPMessageManager.load_conversation_messages.__wrapped__(manager, "conv-1")
+            await CCPMessageManager.load_conversation_messages.__wrapped__(
+                manager, "conv-1"
+            )
 
         mock_fetch.assert_called_with("conv-1")
         assert manager.current_messages[0]["id"] == "msg-1"

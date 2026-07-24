@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
@@ -57,6 +58,64 @@ class LibraryMediaCanvas(Vertical):
             classes="library-canvas-action",
             compact=True,
         )
+        select_mode = getattr(self.canvas, "select_mode", False)
+        # Gate/label off the RENDERED rows, not ``canvas.count`` -- the latter
+        # is the pre-filter total across ALL media types, so with a media-type
+        # filter active it overstates what's shown (and stays > 0 when the
+        # filter renders nothing). ``handle_library_media_select_all`` already
+        # selects only the rendered rows, so this keeps the copy/gate honest.
+        # Also portable to the conversations canvas state, which has no
+        # ``.count`` field.
+        rendered_count = len(self.canvas.rows)
+        export_btn = Button(
+            "Export…",
+            id="library-media-export",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        export_btn.display = not select_mode
+        yield export_btn
+        select_btn = Button(
+            "Done" if select_mode else "Select",
+            id="library-media-select-toggle",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        # Disable only when there's nothing to select AND we're not already in
+        # select mode -- in select mode the button is "Done" and must always be
+        # pressable so the user can exit even if the rows dropped to zero
+        # (e.g. a background snapshot refresh emptied the list).
+        select_btn.disabled = rendered_count == 0 and not select_mode
+        yield select_btn
+        if select_mode:
+            action_row = Horizontal(classes="ds-toolbar")
+            action_row.styles.height = "auto"
+            with action_row:
+                yield Static(
+                    f"{self.canvas.selected_count} selected",
+                    id="library-media-selected-count",
+                    markup=False,
+                )
+                yield Button(
+                    f"Select all {rendered_count} shown",
+                    id="library-media-select-all",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
+                    "Clear",
+                    id="library-media-select-clear",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                export_selected = Button(
+                    "Export selected",
+                    id="library-media-export-selected",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                export_selected.disabled = self.canvas.selected_count == 0
+                yield export_selected
 
         status_text = self.canvas.status_copy or self.canvas.empty_copy
         status = Static(
@@ -71,16 +130,27 @@ class LibraryMediaCanvas(Vertical):
         media_list.styles.height = "auto"
         with media_list:
             for index, row in enumerate(self.canvas.rows):
-                marker = "▸" if row.selected else " "
+                if select_mode:
+                    marker = "☑" if row.checked else "☐"
+                else:
+                    marker = "▸" if row.selected else " "
+                # task-281 (PR #665 review): the in-place toggle needs the
+                # marker-less RAW label to rebuild from -- reading it back
+                # off the mounted Button un-escapes user titles (both
+                # ``.plain`` and Textual 8's ``str(Content)`` return
+                # rendered text), so the raw remainder is stashed here at
+                # the single point of truth.
+                label_rest = f" {_visible_row_title(row.title)}\n    {row.secondary}"
                 button = Button(
-                    f"{marker} {_visible_row_title(row.title)}"
-                    f"\n    {row.secondary}",
+                    f"{marker}{label_rest}",
                     id=f"library-media-row-{index}",
                     classes="library-media-row",
                     compact=True,
                 )
                 button.media_id = row.media_id
-                button.tooltip = row.title
+                button._library_row_label_rest = label_rest
+                # Tooltips are rendered as markup too -- escape user titles.
+                button.tooltip = escape_markup(row.title)
                 button.set_class(row.selected, "library-media-row-selected")
                 button.styles.height = 2
                 button.styles.min_height = 2
@@ -99,9 +169,14 @@ class LibraryMediaCanvas(Vertical):
             toolbar = Horizontal(classes="ds-toolbar")
             toolbar.styles.height = "auto"
             with toolbar:
+                # Opens the selected item in the IN-LIBRARY media viewer
+                # (nav stays on Library), so the label must not promise the
+                # legacy Media manager -- that escape hatch lives on the
+                # full viewer's own action row (`#library-media-open`,
+                # `LibraryMediaViewer`), which genuinely navigates there.
                 yield Button(
-                    "Open in Media manager",
-                    id="library-media-open",
+                    "Open in viewer",
+                    id="library-media-open-viewer",
                     classes="library-canvas-action",
                     compact=True,
                 )

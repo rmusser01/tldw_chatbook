@@ -23,7 +23,9 @@ from tldw_chatbook.tldw_api import PersonaProfileCreate
 from tldw_chatbook.UI.Navigation.shortcut_context import ShortcutAction, ShortcutContext
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
-from tldw_chatbook.Widgets.Persona_Widgets.personas_messages import PersonaActionRequested
+from tldw_chatbook.Widgets.Persona_Widgets.personas_messages import (
+    PersonaActionRequested,
+)
 from tldw_chatbook.Widgets.Persona_Widgets.personas_inspector_pane import (
     PersonasInspectorPane,
 )
@@ -44,9 +46,15 @@ CHARACTERS = [
         "name": "Detective Sam",
         "description": "Noir detective",
         "first_message": "The name's {{char}}. Who's asking?",
+        "alternate_greetings": ["An alternate opener.", "A third opener."],
         "version": 1,
     },
-    {"id": 2, "name": "Lab Assistant", "description": "Helpful scientist", "version": 1},
+    {
+        "id": 2,
+        "name": "Lab Assistant",
+        "description": "Helpful scientist",
+        "version": 1,
+    },
 ]
 
 PROFILE = {
@@ -80,8 +88,12 @@ def stub_scope_service(mock_app_instance):
 
 @pytest.fixture
 def stub_characters(monkeypatch):
+    from Tests.UI.test_personas_dictionaries import patch_character_paging
+
     monkeypatch.setattr(
-        character_handler_module, "fetch_all_characters", lambda: [dict(c) for c in CHARACTERS]
+        character_handler_module,
+        "fetch_all_characters",
+        lambda: [dict(c) for c in CHARACTERS],
     )
     monkeypatch.setattr(
         character_handler_module,
@@ -90,17 +102,30 @@ def stub_characters(monkeypatch):
             dict(c) for c in CHARACTERS if str(c["id"]) == str(character_id)
         ),
     )
+    # Task 4: the library pages from the DB seam now; mirror fetch_all_characters
+    # (read live so tests that swap it mid-run for create/delete stay consistent).
+    patch_character_paging(monkeypatch)
 
 
 class PersonasTestApp(App):
     def __init__(self, mock_app_instance):
         super().__init__()
         self._mock = mock_app_instance
-        self.character_persona_scope_service = mock_app_instance.character_persona_scope_service
+        self.character_persona_scope_service = (
+            mock_app_instance.character_persona_scope_service
+        )
 
     # Delegating these to a MagicMock would make Textual see phantom dynamic
     # hooks (``compute_*``/``watch_*``/...) on the App and crash at mount.
-    _NON_DELEGATED_PREFIXES = ("_", "watch_", "compute_", "validate_", "action_", "key_", "on_")
+    _NON_DELEGATED_PREFIXES = (
+        "_",
+        "watch_",
+        "compute_",
+        "validate_",
+        "action_",
+        "key_",
+        "on_",
+    )
 
     def __getattr__(self, name):
         if name.startswith(self._NON_DELEGATED_PREFIXES):
@@ -108,9 +133,14 @@ class PersonasTestApp(App):
         return getattr(self.__dict__["_mock"], name)
 
     def compose(self):
-        # Mirrors the real app: the footer lives on the app's default screen
-        # (see app.py compose), which is exactly where the screen's
-        # ``self.app.query_one("AppFooterStatus")`` lookup resolves.
+        # Mirrors the real app: an `AppFooterStatus` composed directly on
+        # the app's own default screen (see app.py's `compose()`).
+        # Task-264: `PersonasScreen` (via `BaseAppScreen.compose()`) now
+        # mounts its OWN `AppFooterStatus` too, and
+        # `PersonasScreen._register_footer_shortcuts()` resolves that
+        # screen-owned instance via ``self.query_one("AppFooterStatus")`` --
+        # so this default-screen widget is only kept around as a foil (the
+        # tests below assert the registration does NOT land here).
         yield AppFooterStatus(id="app-footer-status")
 
     def on_mount(self) -> None:
@@ -142,13 +172,16 @@ async def _mounted(pilot):
 
 
 class TestWorkbenchShell:
-    async def test_route_renders_destination_workbench(self, mock_app_instance, stub_characters):
+    async def test_route_renders_destination_workbench(
+        self, mock_app_instance, stub_characters
+    ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
-            title = screen.query_one("#personas-title", Static)
-            assert "Personas" in str(title.renderable)
-            assert "ds-destination-header" in title.classes
+            header = screen.query_one("#personas-header")
+            assert "ds-destination-header" in header.classes
+            title = screen.query_one("#personas-header #workbench-header-title", Static)
+            assert "Roleplay" in str(title.renderable)
             assert screen.query_one("#personas-mode-strip")
             assert screen.query_one("#personas-library-pane")
             assert screen.query_one("#personas-work-area")
@@ -174,7 +207,11 @@ class TestWorkbenchShell:
 
             assert hasattr(screen, "loading_manager")
             assert (
-                getattr(screen.character_handler.__class__, "_personas_character_enhanced", False)
+                getattr(
+                    screen.character_handler.__class__,
+                    "_personas_character_enhanced",
+                    False,
+                )
                 is True
             )
 
@@ -273,8 +310,21 @@ class TestWorkbenchShell:
                 "personas-workbench-compact"
             )
 
-            def fail_query(*_args, **_kwargs):
-                raise AssertionError("unchanged compact state should not query panes")
+            # Guard only the pane/workbench selectors `_sync_responsive_workbench()`
+            # itself would touch if it (incorrectly) did work on an unchanged
+            # compact state. A blanket fail-on-any-call patch is too broad now
+            # that the screen's own `on_unmount` teardown legitimately calls
+            # `self.query_one("AppFooterStatus")` (task-264, per-screen footer)
+            # -- that unrelated call happens when this `async with` block exits
+            # and would otherwise trip this guard as a false positive.
+            original_query_one = screen.query_one
+
+            def fail_query(selector, *args, **kwargs):
+                if isinstance(selector, str) and selector.startswith("#personas-"):
+                    raise AssertionError(
+                        "unchanged compact state should not query panes"
+                    )
+                return original_query_one(selector, *args, **kwargs)
 
             monkeypatch.setattr(screen, "query_one", fail_query)
             screen._sync_responsive_workbench()
@@ -286,7 +336,9 @@ class TestWorkbenchShell:
         assert "Args:" in docstring
         assert "event:" in docstring
 
-    async def test_characters_mode_lists_library_rows(self, mock_app_instance, stub_characters):
+    async def test_characters_mode_lists_library_rows(
+        self, mock_app_instance, stub_characters
+    ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
@@ -294,7 +346,9 @@ class TestWorkbenchShell:
             rows = screen.query(".personas-library-row")
             assert [_row_text(r) for r in rows] == ["Detective Sam", "Lab Assistant"]
 
-    async def test_footer_shortcut_context_set_and_cleared(self, mock_app_instance, stub_characters):
+    async def test_footer_shortcut_context_set_and_cleared(
+        self, mock_app_instance, stub_characters
+    ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
@@ -302,15 +356,28 @@ class TestWorkbenchShell:
             rendered = context.render()
             assert "new" in rendered.lower()
             assert "search" in rendered.lower()
-            assert "save" in rendered.lower()
-            assert "attach" in rendered.lower()
+            # task-445: unavailable actions (nothing is being edited/selected
+            # at fresh mount) are dropped from the rendered hint entirely
+            # rather than shown with a literal "unavailable" suffix.
+            assert "save" not in rendered.lower()
+            assert "attach" not in rendered.lower()
             assert context.source == "personas"
-            footer = pilot.app.query_one(AppFooterStatus)
+            # task-264: the registration lands on the SCREEN's own footer,
+            # not the harness's default-screen stand-in.
+            footer = screen.query_one(AppFooterStatus)
             assert "new" in footer.shortcut_text.lower()
             assert "search" in footer.shortcut_text.lower()
             await pilot.app.pop_screen()
             await pilot.pause()
-            assert footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+            # task-264: the context dies WITH the screen -- its footer is
+            # detached from the DOM along with it (Textual's `is_mounted`
+            # flag is stale after removal; `parent is None` is the reliable
+            # signal), so no stale personas hints can leak to another
+            # surface. The default-screen stand-in (never registered
+            # against) shows the default shortcuts.
+            assert footer.parent is None
+            default_footer = pilot.app.query_one(AppFooterStatus)
+            assert default_footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
 
     async def test_unmount_clear_does_not_stomp_other_screens_context(
         self, mock_app_instance, stub_characters
@@ -318,7 +385,9 @@ class TestWorkbenchShell:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
-            footer = pilot.app.query_one(AppFooterStatus)
+            # task-264: the registration lands on the SCREEN's own footer,
+            # not the harness's default-screen stand-in.
+            footer = screen.query_one(AppFooterStatus)
             # Another screen registers its context (switch_screen mounts the
             # incoming screen before unmounting the outgoing one).
             footer.set_shortcut_context(
@@ -340,31 +409,109 @@ class TestWorkbenchShell:
             await pilot.pause()
             status = screen.query_one("#personas-status-row", Static)
             assert "Characters: 2" in str(status.renderable)
-            assert "Source: Local" in str(status.renderable)
+            assert str(status.renderable) == "Characters: 2"
             await pilot.click("#personas-mode-personas")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             assert "Personas: 1" in str(status.renderable)
-            await pilot.click("#personas-mode-prompts")
+            # "prompts" is retired from the Personas mode strip (Task 7):
+            # "dictionaries" is the next still-unwired placeholder mode.
+            await pilot.click("#personas-mode-dictionaries")
             await pilot.pause()
-            assert "Mode: Prompts" in str(status.renderable)
+            assert "Mode: Dictionaries" in str(status.renderable)
 
-    async def test_placeholder_modes_show_placeholder_panel(self, mock_app_instance, stub_characters):
+    async def test_placeholder_modes_show_placeholder_panel(
+        self, mock_app_instance, stub_characters
+    ):
+        """ "prompts" is the one remaining placeholder mode: dictionaries shipped
+        in Roleplay P1a and lore shipped in Roleplay P2a (Task 6); prompts is
+        retired to the Library (Task 7) and has no chip, so it is reached
+        directly via ``_apply_mode`` rather than a chip click."""
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
-            await pilot.click("#personas-mode-prompts")
+            await screen._apply_mode("prompts")
             await pilot.pause()
             assert screen.state.active_mode == "prompts"
             placeholder = screen.query_one("#personas-mode-placeholder", Static)
             assert placeholder.display is True
-            assert "not available yet" in str(placeholder.renderable)
-            assert "is-active" in screen.query_one("#personas-mode-prompts", Button).classes
+            assert "moving to the Library" in str(placeholder.renderable)
+
+    async def test_mode_chips_are_self_explaining_and_mark_coming_soon(
+        self, mock_app_instance, stub_characters
+    ):
+        """All chip modes are live now (Lore shipped in Roleplay P2a Task 6);
+        no chip carries the "soon" suffix anymore."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            lore_chip = screen.query_one("#personas-mode-lore", Button)
+            assert lore_chip.tooltip == "Lore — world facts injected on keywords."
+            assert "soon" not in str(lore_chip.label).lower()
+            char_chip = screen.query_one("#personas-mode-characters", Button)
+            assert "soon" not in str(char_chip.label).lower()
+
+    async def test_coming_soon_mode_shows_inviting_copy(
+        self, mock_app_instance, stub_characters
+    ):
+        """ "prompts" is the last mode still rendered as a placeholder (retired
+        to the Library, Task 7) - lore now has its own live detail view."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await screen._apply_mode("prompts")
+            await pilot.pause()
+            body = str(
+                screen.query_one("#personas-mode-placeholder", Static).renderable
+            )
+            assert "moving to the library" in body.lower()
+            assert "not available yet" not in body.lower()
+
+    async def test_title_reframed_to_roleplay_keeps_state_suffix(
+        self, mock_app_instance, stub_characters
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            title = screen.query_one("#personas-header #workbench-header-title", Static)
+            assert str(title.renderable).startswith("Roleplay")
+            status = screen.query_one(
+                "#personas-header #workbench-header-status", Static
+            )
+            assert str(status.renderable) == "Ready"
+            # dynamic suffix still appends in create mode
+            screen._edit_mode = "create"
+            screen._update_title()
+            await pilot.pause()
+            subtitle = str(
+                screen.query_one(
+                    "#personas-header #workbench-header-subtitle", Static
+                ).renderable
+            )
+            assert "New character" in subtitle
+
+    async def test_purpose_shows_active_mode_descriptor_and_updates_on_switch(
+        self, mock_app_instance, stub_characters
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            purpose = screen.query_one("#personas-purpose", Static)
+            assert "who the AI plays" in str(
+                purpose.renderable
+            )  # characters is the default mode
+            await screen._apply_mode("personas")
+            await pilot.pause()
+            assert "who you are" in str(
+                screen.query_one("#personas-purpose", Static).renderable
+            )
 
 
 class TestCharacterSelectionAndEdit:
-    async def test_row_selection_shows_card_and_inspector(self, mock_app_instance, stub_characters):
+    async def test_row_selection_shows_card_and_inspector(
+        self, mock_app_instance, stub_characters
+    ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
@@ -377,7 +524,9 @@ class TestCharacterSelectionAndEdit:
                 screen.query_one("#personas-selected-name", Static).renderable
             )
 
-    async def test_card_body_populates_on_selection(self, mock_app_instance, stub_characters):
+    async def test_card_body_populates_on_selection(
+        self, mock_app_instance, stub_characters
+    ):
         """The card's BODY must populate: placeholder hidden, fields filled.
 
         Mirrors the screenshot QA defect where the inspector and preview
@@ -399,7 +548,9 @@ class TestCharacterSelectionAndEdit:
             name = screen.query_one("#personas-character-card-name", Static)
             assert "Detective Sam" in str(name.renderable)
 
-    async def test_new_button_opens_editor_in_create_mode(self, mock_app_instance, stub_characters):
+    async def test_new_button_opens_editor_in_create_mode(
+        self, mock_app_instance, stub_characters
+    ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
@@ -424,7 +575,9 @@ class TestCharacterSelectionAndEdit:
             )
             assert "blocked" in readiness
 
-    async def test_ctrl_n_opens_editor_in_create_mode(self, mock_app_instance, stub_characters):
+    async def test_ctrl_n_opens_editor_in_create_mode(
+        self, mock_app_instance, stub_characters
+    ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
@@ -434,10 +587,12 @@ class TestCharacterSelectionAndEdit:
             assert screen._edit_mode == "create"
             assert screen.query_one("#ccp-character-editor-view").display is True
 
-    async def test_ctrl_f_focuses_library_search(self, mock_app_instance, stub_characters):
+    async def test_ctrl_f_focuses_library_search(
+        self, mock_app_instance, stub_characters
+    ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
-            screen = await _mounted(pilot)
+            await _mounted(pilot)
             await pilot.pause()
             await pilot.press("ctrl+f")
             await pilot.pause()
@@ -445,13 +600,16 @@ class TestCharacterSelectionAndEdit:
             assert focused is not None
             assert focused.id == "personas-library-search"
 
-    async def test_save_with_missing_name_blocks_and_shows_validation(self, mock_app_instance, stub_characters, monkeypatch):
+    async def test_save_with_missing_name_blocks_and_shows_validation(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
         """Blocked saves render in the editor footer; the inspector says
         "editing..." while an editor is open (the footer is the single
         in-editor validation surface)."""
         created = []
         monkeypatch.setattr(
-            character_handler_module, "create_character",
+            character_handler_module,
+            "create_character",
             lambda data: created.append(data) or 99,
         )
         app = PersonasTestApp(mock_app_instance)
@@ -463,7 +621,10 @@ class TestCharacterSelectionAndEdit:
             from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
                 CharacterSaveRequested,
             )
-            screen.post_message(CharacterSaveRequested({"name": "", "first_message": "Hi"}))
+
+            screen.post_message(
+                CharacterSaveRequested({"name": "", "first_message": "Hi"})
+            )
             await pilot.pause()
             editor_validation = screen.query_one(
                 "#personas-char-editor-validation", Static
@@ -480,7 +641,8 @@ class TestCharacterSelectionAndEdit:
         """Screen-side validation (character_book) renders in the editor footer."""
         created = []
         monkeypatch.setattr(
-            character_handler_module, "create_character",
+            character_handler_module,
+            "create_character",
             lambda data: created.append(data) or 99,
         )
         app = PersonasTestApp(mock_app_instance)
@@ -492,6 +654,7 @@ class TestCharacterSelectionAndEdit:
             from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
                 CharacterSaveRequested,
             )
+
             # entries is required (and must be a list) when a book is present.
             screen.post_message(
                 CharacterSaveRequested(
@@ -570,10 +733,13 @@ class TestCharacterSelectionAndEdit:
             await pilot.pause()
             assert "Validation: OK" in str(summary.renderable)
 
-    async def test_save_calls_create_and_refreshes(self, mock_app_instance, stub_characters, monkeypatch):
+    async def test_save_calls_create_and_refreshes(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
         created = []
         monkeypatch.setattr(
-            character_handler_module, "create_character",
+            character_handler_module,
+            "create_character",
             lambda data: created.append(data) or 99,
         )
 
@@ -595,7 +761,10 @@ class TestCharacterSelectionAndEdit:
             from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
                 CharacterSaveRequested,
             )
-            screen.post_message(CharacterSaveRequested({"name": "New Hero", "first_message": "Hi"}))
+
+            screen.post_message(
+                CharacterSaveRequested({"name": "New Hero", "first_message": "Hi"})
+            )
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
@@ -603,7 +772,9 @@ class TestCharacterSelectionAndEdit:
             assert screen._edit_mode == "view"
         assert created and created[0]["name"] == "New Hero"
 
-    async def test_edit_requested_for_mismatched_character_is_ignored(self, mock_app_instance, stub_characters):
+    async def test_edit_requested_for_mismatched_character_is_ignored(
+        self, mock_app_instance, stub_characters
+    ):
         from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
             EditCharacterRequested,
         )
@@ -632,7 +803,9 @@ class TestCharacterSelectionAndEdit:
             created.append(data)
             return 99
 
-        monkeypatch.setattr(character_handler_module, "create_character", blocking_create)
+        monkeypatch.setattr(
+            character_handler_module, "create_character", blocking_create
+        )
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
@@ -642,7 +815,10 @@ class TestCharacterSelectionAndEdit:
             from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
                 CharacterSaveRequested,
             )
-            screen.post_message(CharacterSaveRequested({"name": "New Hero", "first_message": "Hi"}))
+
+            screen.post_message(
+                CharacterSaveRequested({"name": "New Hero", "first_message": "Hi"})
+            )
             await pilot.pause()  # Save worker is now blocked inside create_character.
             await screen._apply_mode("prompts")
             await pilot.pause()
@@ -682,7 +858,9 @@ class TestPersonasMode:
     async def test_personas_mode_service_failure_shows_recovery_state(
         self, mock_app_instance, stub_characters, stub_scope_service
     ):
-        stub_scope_service.list_persona_profiles.side_effect = RuntimeError("scope offline")
+        stub_scope_service.list_persona_profiles.side_effect = RuntimeError(
+            "scope offline"
+        )
 
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
@@ -702,9 +880,13 @@ class TestPersonasMode:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await self._enter_personas_mode(pilot)
-            assert [_row_text(r) for r in screen.query(".personas-library-row")] == ["Archivist"]
+            assert [_row_text(r) for r in screen.query(".personas-library-row")] == [
+                "Archivist"
+            ]
 
-            stub_scope_service.list_persona_profiles.side_effect = RuntimeError("scope offline")
+            stub_scope_service.list_persona_profiles.side_effect = RuntimeError(
+                "scope offline"
+            )
             screen._refresh_profile_rows_worker()
             await pilot.pause()
             await app.workers.wait_for_complete()
@@ -716,14 +898,19 @@ class TestPersonasMode:
     async def test_personas_mode_empty_state_copy_unchanged(
         self, mock_app_instance, stub_characters, stub_scope_service
     ):
-        stub_scope_service.list_persona_profiles.return_value = {"items": [], "total": 0}
+        stub_scope_service.list_persona_profiles.return_value = {
+            "items": [],
+            "total": 0,
+        }
 
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await self._enter_personas_mode(pilot)
 
             empty = screen.query_one("#personas-library-empty", Static)
-            assert str(empty.renderable) == "No persona profiles yet - use New to add one."
+            assert (
+                str(empty.renderable) == "No persona profiles yet - use New to add one."
+            )
             assert not list(screen.query("#personas-service-error"))
 
     async def test_profile_selection_shows_card(
@@ -754,7 +941,10 @@ class TestPersonasMode:
             await app.workers.wait_for_complete()
             await pilot.pause()
             stub_scope_service.create_persona_profile.assert_awaited_once()
-            assert screen._edit_mode == "view"
+            # Save-in-place: create -> edit, the editor stays open (not the
+            # read-only card).
+            assert screen._edit_mode == "edit"
+            assert screen.query_one("#ccp-persona-editor-view").display is True
 
     async def test_profile_save_refresh_failure_updates_status_row_and_recovery(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -766,7 +956,9 @@ class TestPersonasMode:
                 screen.query_one("#personas-status-row", Static).renderable
             )
 
-            stub_scope_service.list_persona_profiles.side_effect = RuntimeError("scope offline")
+            stub_scope_service.list_persona_profiles.side_effect = RuntimeError(
+                "scope offline"
+            )
             await pilot.click("#personas-library-new")
             await pilot.pause()
             screen.post_message(PersonaProfileSaveRequested({"name": "Mentor"}))
@@ -800,7 +992,9 @@ class TestPersonasMode:
             await pilot.pause()
             stub_scope_service.update_persona_profile.assert_awaited_once()
             assert stub_scope_service.update_persona_profile.await_args.args[0] == "p-1"
-            assert screen._edit_mode == "view"
+            # Save-in-place: the editor stays open after an edit save too.
+            assert screen._edit_mode == "edit"
+            assert screen.query_one("#ccp-persona-editor-view").display is True
 
     async def test_profile_save_failure_keeps_editor_open(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -808,8 +1002,8 @@ class TestPersonasMode:
         stub_scope_service.create_persona_profile.side_effect = RuntimeError("boom")
         notifications: list[tuple[str, str]] = []
         app = PersonasTestApp(mock_app_instance)
-        app.notify = lambda message, severity="information", **kwargs: notifications.append(
-            (str(message), severity)
+        app.notify = lambda message, severity="information", **kwargs: (
+            notifications.append((str(message), severity))
         )
         async with app.run_test() as pilot:
             screen = await self._enter_personas_mode(pilot)
@@ -879,14 +1073,26 @@ class TestPersonasMode:
 
 
 PROFILES_FOR_SEARCH = [
-    {"id": "p-1", "name": "Archivist", "description": "Preserve and retrieve", "system_prompt": "You are a meticulous archivist."},
-    {"id": "p-2", "name": "Navigator", "description": "Charts the course", "system_prompt": "You guide the user."},
+    {
+        "id": "p-1",
+        "name": "Archivist",
+        "description": "Preserve and retrieve",
+        "system_prompt": "You are a meticulous archivist.",
+    },
+    {
+        "id": "p-2",
+        "name": "Navigator",
+        "description": "Charts the course",
+        "system_prompt": "You guide the user.",
+    },
 ]
 
 
 class TestSearch:
     async def _wait_for_search_render(self, pilot: Any) -> None:
-        await pilot.pause(personas_screen_module.PERSONAS_SEARCH_DEBOUNCE_SECONDS + 0.05)
+        await pilot.pause(
+            personas_screen_module.PERSONAS_SEARCH_DEBOUNCE_SECONDS + 0.05
+        )
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
@@ -964,7 +1170,9 @@ class TestSearch:
                 return [{"id": 1, "name": "Detective Sam"}]
 
             monkeypatch.setattr(library, "update_rows", observe_update_rows)
-            monkeypatch.setattr(personas_screen_module.asyncio, "to_thread", fake_to_thread)
+            monkeypatch.setattr(
+                personas_screen_module.asyncio, "to_thread", fake_to_thread
+            )
 
             screen.state.search_query = "sam"
             await screen._render_search_query(query="sam", mode="characters")
@@ -972,7 +1180,9 @@ class TestSearch:
 
             assert rendered_rows == []
 
-    async def test_search_filters_loaded_characters_locally(self, mock_app_instance, stub_characters):
+    async def test_search_filters_loaded_characters_locally(
+        self, mock_app_instance, stub_characters
+    ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
@@ -984,9 +1194,14 @@ class TestSearch:
             rows = screen.query(".personas-library-row")
             assert [_row_text(r) for r in rows] == ["Detective Sam"]
             count = str(screen.query_one("#personas-library-count", Static).renderable)
-            assert "1 of 2 characters" in count
+            # Task 4: the library pages from the DB seam, so a search reports the
+            # match count as the page total (no separate "of <library>" copy).
+            # task-445: a total of exactly 1 reads singular ("1 character").
+            assert "1 character" in count
 
-    async def test_clearing_search_restores_all_rows(self, mock_app_instance, stub_characters):
+    async def test_clearing_search_restores_all_rows(
+        self, mock_app_instance, stub_characters
+    ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
@@ -1038,7 +1253,9 @@ class TestSearch:
             rows = screen.query(".personas-library-row")
             assert [_row_text(r) for r in rows] == ["Navigator"]
             count = str(screen.query_one("#personas-library-count", Static).renderable)
-            assert "1 of 2 persona profiles" in count
+            # Task 4: personas paginate in-memory; the count is the match total.
+            # task-445: a total of exactly 1 reads singular ("1 persona profile").
+            assert "1 persona profile" in count
 
     async def test_mode_switch_clears_search(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -1067,91 +1284,15 @@ class TestSearch:
             # Search input is cleared
             assert screen.query_one("#personas-library-search").value == ""
 
-    async def test_fts_path_used_for_large_libraries(
-        self, mock_app_instance, stub_characters, monkeypatch
-    ):
-        fts_calls: list[str] = []
-
-        def fake_fts(search_term: str, limit: int = 50):
-            fts_calls.append(search_term)
-            return [{"id": 1, "name": "Detective Sam"}]
-
-        monkeypatch.setattr(character_handler_module, "search_characters_fts", fake_fts)
-
-        app = PersonasTestApp(mock_app_instance)
-        async with app.run_test() as pilot:
-            screen = await _mounted(pilot)
-            await pilot.pause()
-            # Lower the threshold so the 2-character stub library triggers FTS
-            screen.LIBRARY_FTS_THRESHOLD = 2
-            search_input = screen.query_one("#personas-library-search")
-            search_input.value = "sam"
-            await self._wait_for_search_render(pilot)
-            assert fts_calls == ["sam"]
-            rows = screen.query(".personas-library-row")
-            assert [_row_text(r) for r in rows] == ["Detective Sam"]
-
-    async def test_fts_search_count_uses_unbounded_full_library_copy(
-        self,
-        mock_app_instance: Any,
-        stub_characters: Any,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """FTS search copy must not use the truncated loaded-page denominator.
-
-        Args:
-            mock_app_instance: Mounted test app fixture.
-            stub_characters: Character-list fixture for the Personas library.
-            monkeypatch: Pytest monkeypatch fixture used to force the FTS path.
-
-        Returns:
-            None.
-        """
-
-        def fake_fts(search_term: str, limit: int = 50) -> list[dict[str, Any]]:
-            return [{"id": 1, "name": "Detective Sam"}]
-
-        monkeypatch.setattr(character_handler_module, "search_characters_fts", fake_fts)
-
-        app = PersonasTestApp(mock_app_instance)
-        async with app.run_test() as pilot:
-            screen = await _mounted(pilot)
-            await pilot.pause()
-            screen.LIBRARY_FTS_THRESHOLD = 2
-            screen.query_one("#personas-library-search").value = "sam"
-            await self._wait_for_search_render(pilot)
-
-            count = str(screen.query_one("#personas-library-count", Static).renderable)
-            assert count == "Showing 1 character match from full library"
-
-    async def test_fts_search_runs_off_the_event_loop(
-        self, mock_app_instance, stub_characters, monkeypatch
-    ):
-        """The FTS query must not run synchronously on the UI loop."""
-        import asyncio
-
-        loop_seen: list[bool] = []
-
-        def fake_fts(search_term: str, limit: int = 50):
-            try:
-                asyncio.get_running_loop()
-                loop_seen.append(True)
-            except RuntimeError:
-                loop_seen.append(False)
-            return [{"id": 1, "name": "Detective Sam"}]
-
-        monkeypatch.setattr(character_handler_module, "search_characters_fts", fake_fts)
-
-        app = PersonasTestApp(mock_app_instance)
-        async with app.run_test() as pilot:
-            screen = await _mounted(pilot)
-            await pilot.pause()
-            screen.LIBRARY_FTS_THRESHOLD = 2
-            screen.query_one("#personas-library-search").value = "sam"
-            await self._wait_for_search_render(pilot)
-            assert loop_seen == [False]
-            rows = screen.query(".personas-library-row")
-            assert [_row_text(r) for r in rows] == ["Detective Sam"]
+    # NOTE (P3a Task 4): the old in-memory-vs-FTS hybrid search (gated on
+    # LIBRARY_FTS_THRESHOLD, using ccp_character_handler.search_characters_fts and
+    # the "Showing N ... from full library" copy) was replaced by a single paged
+    # DB search (get_character_page_for_ui / count_character_page). The former
+    # tests test_fts_path_used_for_large_libraries,
+    # test_fts_search_count_uses_unbounded_full_library_copy, and
+    # test_fts_search_runs_off_the_event_loop covered that removed path; the
+    # off-thread guarantee for the new path is covered in
+    # Tests/UI/test_personas_library_scale.py.
 
     async def test_concurrent_renders_do_not_duplicate_rows(
         self, mock_app_instance, stub_characters
@@ -1241,6 +1382,63 @@ class TestImportExport:
             assert screen.query_one("#personas-library-search").value == ""
             rows = screen.query(".personas-library-row")
             assert "Imported Hero" in [_row_text(r) for r in rows]
+
+    async def test_import_success_notification_lingers_past_the_app_default(
+        self, mock_app_instance, stub_characters, monkeypatch, tmp_path
+    ):
+        """task-445: the review saw the import-success toast flash by --
+        it fired at the same instant the card view/inspector swapped in,
+        against the app's plain 5s default. It must now request an explicit
+        timeout longer than that default so it reads at normal pace."""
+        imported_paths: list[str] = []
+
+        def fake_import(file_path):
+            imported_paths.append(file_path)
+            return 3
+
+        monkeypatch.setattr(
+            character_handler_module, "import_character_card", fake_import
+        )
+
+        def fetch_all_with_imported():
+            characters = [dict(c) for c in CHARACTERS]
+            if imported_paths:
+                characters.append({"id": 3, "name": "Imported Hero", "version": 1})
+            return characters
+
+        monkeypatch.setattr(
+            character_handler_module, "fetch_all_characters", fetch_all_with_imported
+        )
+        monkeypatch.setattr(
+            character_handler_module,
+            "fetch_character_by_id",
+            lambda character_id: next(
+                (
+                    dict(c)
+                    for c in fetch_all_with_imported()
+                    if str(c["id"]) == str(character_id)
+                ),
+                None,
+            ),
+        )
+        app = PersonasTestApp(mock_app_instance)
+        calls: list[tuple[str, str, dict]] = []
+        app.notify = lambda message, severity="information", **kwargs: calls.append(
+            (str(message), severity, kwargs)
+        )
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await screen._import_character_from_path(str(tmp_path / "card.json"))
+            await pilot.pause()
+        matches = [c for c in calls if c[0] == "Character imported."]
+        assert matches, f"no 'Character imported.' notify call in {calls}"
+        message, severity, kwargs = matches[-1]
+        assert severity == "information"
+        timeout = kwargs.get("timeout")
+        assert timeout is not None and timeout > 5, (
+            f"import-success notify must linger past the 5s app default, got {timeout!r}"
+        )
 
     async def test_import_markdown_routes_through_character_import_helper(
         self, mock_app_instance, stub_characters, monkeypatch, tmp_path
@@ -1364,7 +1562,9 @@ class TestImportExport:
                 "already existed" in message and severity == "information"
                 for message, severity in notifications
             )
-            assert not any("Character imported." in message for message, _ in notifications)
+            assert not any(
+                "Character imported." in message for message, _ in notifications
+            )
 
     async def test_import_failure_shows_recovery_copy(
         self, mock_app_instance, stub_characters, monkeypatch, tmp_path
@@ -1390,6 +1590,97 @@ class TestImportExport:
             )
             assert screen.state.selected_entity_id == "1"
 
+    async def test_duplicate_copies_character_under_disambiguated_name(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        """Task-443 AC2: characters gained a Duplicate seam (the library-rail
+        button now shows in Characters mode too), reusing the same
+        ``create_character`` seam a normal Save-as-new already calls -
+        mirrors ``test_duplicate_copies_entries_and_strategy`` (dictionaries)
+        and the lore equivalent."""
+        created_payloads: list[dict] = []
+        characters = [dict(c) for c in CHARACTERS]
+
+        def fake_create(data):
+            record = dict(data)
+            record["id"] = 99
+            record["version"] = 1
+            characters.append(record)
+            created_payloads.append(data)
+            return 99
+
+        monkeypatch.setattr(character_handler_module, "create_character", fake_create)
+        monkeypatch.setattr(
+            character_handler_module, "fetch_all_characters", lambda: list(characters)
+        )
+        monkeypatch.setattr(
+            character_handler_module,
+            "fetch_character_by_id",
+            lambda character_id: next(
+                (dict(c) for c in characters if str(c["id"]) == str(character_id)),
+                None,
+            ),
+        )
+        app = PersonasTestApp(mock_app_instance)
+        # Button-press tests need a real-terminal-sized layout: at the
+        # default 80x24 the center panels overlap the library toolbar's
+        # coordinates, so a Duplicate click silently lands on the
+        # character-dictionaries panel instead (same reason
+        # TestConsoleActions runs at 160x50).
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            # Duplicate now applies to characters (task-443) - the library
+            # rail button must be visible in the default characters mode.
+            assert screen.query_one("#personas-library-duplicate", Button).display
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            await pilot.click("#personas-library-duplicate")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert len(created_payloads) == 1
+            payload = created_payloads[0]
+            assert payload["name"] == "Detective Sam (copy)"
+            assert payload["description"] == "Noir detective"
+            assert payload["first_message"] == "The name's {{char}}. Who's asking?"
+            assert payload["alternate_greetings"] == [
+                "An alternate opener.",
+                "A third opener.",
+            ]
+            assert screen.state.selected_entity_id == "99"
+            rows = screen.query(".personas-library-row")
+            assert "Detective Sam (copy)" in [_row_text(r) for r in rows]
+
+    async def test_duplicate_name_conflict_notifies_error(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError
+
+        def fake_create(data):
+            raise ConflictError(
+                "already exists", entity="character_cards", entity_id=data["name"]
+            )
+
+        monkeypatch.setattr(character_handler_module, "create_character", fake_create)
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        # 200x60: see test_duplicate_copies_character_under_disambiguated_name.
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            await pilot.click("#personas-library-duplicate")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.state.selected_entity_id == "1"
+            assert any(
+                "already exists" in message and severity == "error"
+                for message, severity in notifications
+            )
+
     async def test_stage_character_avatar_from_path_updates_editor_and_dirty_state(
         self, mock_app_instance, stub_characters, tmp_path
     ):
@@ -1409,7 +1700,11 @@ class TestImportExport:
             editor = screen.query_one(PersonasCharacterEditorWidget)
             assert editor.get_character_data()["image"] == b"\x89PNG staged avatar"
             assert (
-                str(screen.query_one("#personas-char-editor-avatar-status", Static).renderable)
+                str(
+                    screen.query_one(
+                        "#personas-char-editor-avatar-status", Static
+                    ).renderable
+                )
                 == "Avatar: embedded"
             )
             assert screen.state.has_unsaved_changes is True
@@ -1434,7 +1729,9 @@ class TestImportExport:
             editor = screen.query_one(PersonasCharacterEditorWidget)
             assert "image" not in editor.get_character_data()
             assert screen.state.has_unsaved_changes is False
-            assert any("Unsupported avatar image type" in msg for msg, _ in notifications)
+            assert any(
+                "Unsupported avatar image type" in msg for msg, _ in notifications
+            )
 
     async def test_stage_character_avatar_rejects_oversize_without_mutation(
         self, mock_app_instance, stub_characters, tmp_path
@@ -1478,7 +1775,9 @@ class TestImportExport:
                 await screen._begin_create_character()
                 return b"\x89PNG stale avatar"
 
-            monkeypatch.setattr(personas_screen_module.asyncio, "to_thread", fake_to_thread)
+            monkeypatch.setattr(
+                personas_screen_module.asyncio, "to_thread", fake_to_thread
+            )
 
             await screen._stage_character_avatar_from_path(str(avatar))
             await pilot.pause()
@@ -1972,8 +2271,7 @@ class TestConversationsPanel:
             screen = await self._open_conversation(pilot)
             view = screen.query_one("#personas-conversation-transcript-view")
             texts = [
-                str(line.renderable)
-                for line in view.query(".personas-transcript-line")
+                str(line.renderable) for line in view.query(".personas-transcript-line")
             ]
             assert texts == [
                 "You: Hello there",
@@ -2003,7 +2301,10 @@ class TestConversationsPanel:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._open_conversation(pilot)
-            assert screen.query_one("#personas-conversation-transcript-view").display is True
+            assert (
+                screen.query_one("#personas-conversation-transcript-view").display
+                is True
+            )
             assert screen.query_one("#ccp-character-card-view").display is False
 
     async def test_back_returns_to_card(
@@ -2015,7 +2316,10 @@ class TestConversationsPanel:
             await pilot.click("#personas-conversation-back")
             await pilot.pause()
             assert screen.query_one("#ccp-character-card-view").display is True
-            assert screen.query_one("#personas-conversation-transcript-view").display is False
+            assert (
+                screen.query_one("#personas-conversation-transcript-view").display
+                is False
+            )
 
     async def test_continue_in_console_stages_payload(
         self, mock_app_instance, stub_characters, stub_conversations
@@ -2058,8 +2362,8 @@ class TestConversationsPanel:
     ):
         notifications: list[tuple[str, str]] = []
         app = _NavCaptureApp(mock_app_instance)
-        app.notify = lambda message, severity="information", **kwargs: notifications.append(
-            (str(message), severity)
+        app.notify = lambda message, severity="information", **kwargs: (
+            notifications.append((str(message), severity))
         )
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
@@ -2080,7 +2384,9 @@ class TestConversationsPanel:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
             assert screen.state.selected_entity_id == "1"
-            await screen.conversations.apply_conversation_rows("999", (("conv-x", "X"),))
+            await screen.conversations.apply_conversation_rows(
+                "999", (("conv-x", "X"),)
+            )
             await pilot.pause()
             rows = screen.query(".personas-conversation-row")
             assert [_row_text(r) for r in rows] == ["First case"]
@@ -2120,7 +2426,10 @@ class TestConversationsPanel:
         app.open_chat_with_handoff.assert_called_once()
         payload = app.open_chat_with_handoff.call_args.args[0]
         assert payload.body_truncated is True
-        assert len(payload.body) <= conversations_controller_module._HANDOFF_TRANSCRIPT_CHAR_LIMIT
+        assert (
+            len(payload.body)
+            <= conversations_controller_module._HANDOFF_TRANSCRIPT_CHAR_LIMIT
+        )
         assert payload.source_id == "conv-1"
 
     async def test_continue_blocked_while_loading(
@@ -2130,8 +2439,8 @@ class TestConversationsPanel:
         notifications: list[tuple[str, str]] = []
         app = PersonasTestApp(mock_app_instance)
         app.open_chat_with_handoff = Mock()
-        app.notify = lambda message, severity="information", **kwargs: notifications.append(
-            (str(message), severity)
+        app.notify = lambda message, severity="information", **kwargs: (
+            notifications.append((str(message), severity))
         )
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._open_conversation(pilot)
@@ -2164,8 +2473,8 @@ class TestConversationsPanel:
         notifications: list[tuple[str, str]] = []
         app = PersonasTestApp(mock_app_instance)
         app.open_chat_with_handoff = Mock()
-        app.notify = lambda message, severity="information", **kwargs: notifications.append(
-            (str(message), severity)
+        app.notify = lambda message, severity="information", **kwargs: (
+            notifications.append((str(message), severity))
         )
 
         async with app.run_test(size=(160, 50)) as pilot:
@@ -2178,7 +2487,9 @@ class TestConversationsPanel:
             # thus simulating an in-flight reload whose result hasn't arrived
             # yet. We patch on the controller instance so subsequent calls
             # within this test are bypassed.
-            screen.conversations.load_conversation_messages = lambda *args, **kwargs: None
+            screen.conversations.load_conversation_messages = lambda *args, **kwargs: (
+                None
+            )
 
             # Re-select the same conversation by posting the message directly to the
             # screen — this exercises _handle_conversation_row_selected →
@@ -2309,18 +2620,205 @@ class TestConsoleActions:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
-            assert screen.query_one("#personas-attach-to-console", Button).disabled is False
+            assert (
+                screen.query_one("#personas-attach-to-console", Button).disabled
+                is False
+            )
 
             screen._console_action_allowed = lambda: False
             screen._console_action_block_reason = lambda: "prompts are not attachable"
-            screen._register_footer_shortcuts()
+            screen._sync_title_and_console_actions()
             await pilot.pause()
 
-            assert screen.query_one("#personas-attach-to-console", Button).disabled is True
+            assert (
+                screen.query_one("#personas-attach-to-console", Button).disabled is True
+            )
             assert screen.query_one("#personas-start-chat", Button).disabled is True
             assert "Console blocked: prompts are not attachable" in str(
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
+
+    async def test_readiness_surfaces_reflect_unready_character_provider(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Task-440: honest readiness copy when the handoff provider is unready.
+
+        The configured chat_defaults provider (which a fresh Start-Chat
+        Console session resolves - the native Console never reads
+        character_defaults) has no API key - the handoff send would fail, so
+        neither readiness surface may claim things are ready. Per-intent gating
+        (task-523): Start Chat is DISABLED (it needs an immediate reply) while
+        Attach stays enabled (it stages context; the reply is deferred).
+        """
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+
+            readiness_text = str(
+                screen.query_one("#personas-readiness-console", Static).renderable
+            )
+            assert readiness_text != "Console ready"
+            assert readiness_text.startswith("Start Chat blocked:")
+            assert "anthropic" in readiness_text.lower()
+            assert (
+                "api key" in readiness_text.lower()
+                or "api_settings" in readiness_text.lower()
+            )
+            # Per-intent gating (task-523): an unready handoff provider blocks
+            # Start Chat (it needs an immediate reply) but NOT Attach (it only
+            # stages context; the reply is deferred). The user can still stage
+            # the card and fix the provider before sending.
+            assert screen.query_one("#personas-start-chat", Button).disabled is True
+            assert (
+                screen.query_one("#personas-attach-to-console", Button).disabled
+                is False
+            )
+
+            header_status = str(
+                screen.query_one(
+                    "#personas-header #workbench-header-status", Static
+                ).renderable
+            )
+            assert header_status != "Ready"
+
+    async def test_readiness_surfaces_stay_ready_with_a_configured_provider(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Provider ready -> existing "Console ready"/"Ready" copy is unchanged."""
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "api_settings": {"anthropic": {"api_key": "unit-test-placeholder-key"}},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+
+            assert "Console ready" in str(
+                screen.query_one("#personas-readiness-console", Static).renderable
+            )
+            assert (
+                str(
+                    screen.query_one(
+                        "#personas-header #workbench-header-status", Static
+                    ).renderable
+                )
+                == "Ready"
+            )
+            assert (
+                screen.query_one("#personas-attach-to-console", Button).disabled
+                is False
+            )
+            assert (
+                screen.query_one("#personas-start-chat", Button).disabled is False
+            )
+
+    async def test_readiness_blocked_when_handoff_provider_unready_despite_ready_character_provider(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Task-440 review: readiness mirrors the Start-Chat HANDOFF resolution.
+
+        Attach/Start Chat create a fresh native-Console session resolved from
+        chat_defaults (chat_screen._start_character_console_session ->
+        _default_console_session_settings); the native Console never reads
+        character_defaults. Shipped-defaults failure shape: only an Anthropic
+        key configured (character_defaults=anthropic READY) while
+        chat_defaults points at OpenAI (UNREADY) - the real handoff send
+        would fail, so neither surface may claim ready. A
+        character_defaults-first readiness short-circuits ready here, which
+        is exactly the dishonesty under review.
+        """
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "openai", "model": "gpt-4o"},
+            "api_settings": {"anthropic": {"api_key": "unit-test-placeholder-key"}},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+
+            readiness_text = str(
+                screen.query_one("#personas-readiness-console", Static).renderable
+            )
+            assert readiness_text != "Console ready"
+            assert readiness_text.startswith("Start Chat blocked:")
+            assert "openai" in readiness_text.lower()
+            assert (
+                str(
+                    screen.query_one(
+                        "#personas-header #workbench-header-status", Static
+                    ).renderable
+                )
+                != "Ready"
+            )
+            # Per-intent gating (task-523): Start Chat disabled, Attach enabled.
+            assert (
+                screen.query_one("#personas-start-chat", Button).disabled is True
+            )
+            assert (
+                screen.query_one("#personas-attach-to-console", Button).disabled is False
+            )
+
+    async def test_readiness_ready_when_handoff_provider_ready_despite_unready_character_provider(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Handoff provider ready => ready surfaces, whatever character_defaults says."""
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "openai", "model": "gpt-4o"},
+            "api_settings": {"openai": {"api_key": "unit-test-placeholder-key"}},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+
+            assert "Console ready" in str(
+                screen.query_one("#personas-readiness-console", Static).renderable
+            )
+            assert (
+                str(
+                    screen.query_one(
+                        "#personas-header #workbench-header-status", Static
+                    ).renderable
+                )
+                == "Ready"
+            )
+
+    async def test_action_gate_precedes_provider_readiness_on_both_surfaces(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Qodo #824-2: with the action gate closed (unsaved edits), the
+        provider axis is NOT operative -- the inspector shows the ACTION
+        reason (never provider copy) and the header keeps its pre-task-440
+        semantics rather than claiming a conflicting provider-"Blocked".
+        One precedence rule on both surfaces: action gate first, provider
+        readiness only once the gate opens."""
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "openai", "model": "gpt-4o"},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen.state.has_unsaved_changes = True
+            screen._sync_title_and_console_actions()
+            await pilot.pause()
+
+            readiness_text = str(
+                screen.query_one("#personas-readiness-console", Static).renderable
+            )
+            assert readiness_text == "Console blocked: unsaved edits"
+            assert "openai" not in readiness_text.lower()  # no provider copy
+            header_status = str(
+                screen.query_one(
+                    "#personas-header #workbench-header-status", Static
+                ).renderable
+            )
+            assert header_status == "Ready"  # pre-task-440 header semantics
 
     async def test_selection_pushes_console_gate_before_async_followup(
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
@@ -2370,7 +2868,9 @@ class TestConsoleActions:
                     not screen.query_one("#personas-attach-to-console", Button).disabled
                 )
 
-            monkeypatch.setattr(screen.character_handler, "load_character", observe_load)
+            monkeypatch.setattr(
+                screen.character_handler, "load_character", observe_load
+            )
 
             await screen._after_character_save("1", "Detective Sam")
             await pilot.pause()
@@ -2378,7 +2878,12 @@ class TestConsoleActions:
         assert observed_enabled == [True]
 
     async def test_profile_save_pushes_console_gate_before_row_render(
-        self, mock_app_instance, stub_characters, stub_conversations, stub_scope_service, monkeypatch
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_conversations,
+        stub_scope_service,
+        monkeypatch,
     ):
         """Profile save completion should not wait for row rendering to sync gates."""
         app = PersonasTestApp(mock_app_instance)
@@ -2421,7 +2926,9 @@ class TestConsoleActions:
             # Change-based dirty tracking: make a real edit first.
             from textual.widgets import TextArea
 
-            screen.query_one("#personas-char-editor-description", TextArea).text = "edited"
+            screen.query_one(
+                "#personas-char-editor-description", TextArea
+            ).text = "edited"
             await pilot.pause()
             assert screen.state.has_unsaved_changes is True
             await pilot.press("ctrl+enter")
@@ -2438,6 +2945,13 @@ class TestConsoleActions:
         destination screen is active; the workbench therefore uses the
         app-level ``open_chat_with_handoff`` API with an intent marker.
         """
+        # Start Chat now needs a ready handoff provider (task-523 per-intent);
+        # give a keyless local provider so the button is enabled and the guard
+        # passes.
+        mock_app_instance.app_config = {
+            "chat_defaults": {"provider": "llama_cpp", "model": "local.gguf"},
+            "api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:8181"}},
+        }
         app = PersonasTestApp(mock_app_instance)
         app.open_chat_with_handoff = Mock()
         async with app.run_test(size=(160, 50)) as pilot:
@@ -2450,6 +2964,116 @@ class TestConsoleActions:
         assert payload.metadata["intent"] == "start_chat"
         assert payload.metadata["selected_target_id"] == "local:character:1"
         assert payload.suggested_prompt == "Respond as Detective Sam."
+
+    async def test_start_chat_action_guard_blocks_unready_provider(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Task-523: the Start-Chat action path refuses to stage a handoff
+        while the resolved provider is unready. The visible button is disabled,
+        so this defends against a press racing a config change - invoked via the
+        action path directly since ``.press()`` on a disabled button is a no-op.
+        """
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+        captured: list[tuple[str, str]] = []
+        app.notify = lambda message, severity="information", **kwargs: captured.append(
+            (str(message), severity)
+        )
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            await screen._attach_selection_to_console(intent="start_chat")
+            await pilot.pause()
+        app.open_chat_with_handoff.assert_not_called()
+        assert any(
+            msg.startswith("Start Chat blocked:") and severity == "warning"
+            for msg, severity in captured
+        )
+
+    async def test_attach_action_not_gated_on_provider_readiness(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Task-523: the per-intent guard is Start-Chat-only. Attach still
+        stages the card with an unready provider (its reply is deferred), so
+        no ``intent=start_chat`` marker and a real handoff is created."""
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen.query_one("#personas-attach-to-console", Button).press()
+            await pilot.pause()
+        app.open_chat_with_handoff.assert_called_once()
+        payload = app.open_chat_with_handoff.call_args.args[0]
+        assert payload.metadata.get("intent") != "start_chat"
+
+    async def test_header_carries_blocked_class_when_provider_unready(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Task-523: the header carries the ``status-blocked`` class (the red
+        cue's CSS hook) while the staged handoff provider is unready, and drops
+        it once the provider becomes ready."""
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            header = screen.query_one("#personas-header")
+            assert header.has_class("status-blocked") is True
+
+            mock_app_instance.app_config["api_settings"] = {
+                "anthropic": {"api_key": "unit-test-placeholder-key"}
+            }
+            screen._sync_title_and_console_actions()
+            await pilot.pause()
+            assert header.has_class("status-blocked") is False
+
+    async def test_blocked_header_badge_renders_red_under_real_bundle(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Task-523 regression guard for the red cue's CSS cascade.
+
+        The colour rule MUST live in app-tier CSS: a widget ``DEFAULT_CSS``
+        rule is outranked by the bundle's ``.ds-status-badge`` (color:
+        $ds-text-primary) regardless of selector specificity, so the badge
+        would stay primary and the cue would never render. Uses
+        ``StyledPersonasTestApp`` (loads the real bundle) and asserts the
+        blocked-state badge colour DIFFERS from the ready-state colour - if the
+        rule were outranked, both states would render the identical primary
+        colour and this fails.
+        """
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+        }
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            badge = screen.query_one(
+                "#personas-header #workbench-header-status", Static
+            )
+            assert screen.query_one("#personas-header").has_class("status-blocked")
+            blocked_color = badge.styles.color
+
+            mock_app_instance.app_config["api_settings"] = {
+                "anthropic": {"api_key": "unit-test-placeholder-key"}
+            }
+            screen._sync_title_and_console_actions()
+            await pilot.pause()
+            assert not screen.query_one("#personas-header").has_class(
+                "status-blocked"
+            )
+            ready_color = badge.styles.color
+
+        assert blocked_color != ready_color
 
     async def test_attach_stages_profile_payload(
         self, mock_app_instance, stub_characters, stub_conversations, stub_scope_service
@@ -2554,19 +3178,13 @@ class TestConsoleActions:
     async def test_footer_shortcut_attach_available(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
-        """The attach hint is truthful: available only with a saved selection."""
+        """The attach action is truthful: allowed only with a saved selection."""
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
-            context = screen._shortcut_context()
-            attach = next(a for a in context.actions if a.label == "attach")
-            assert attach.key == "ctrl+enter"
-            assert attach.available is False  # nothing selected yet
+            assert screen._console_action_allowed() is False  # nothing selected yet
             await self._select_first_character(pilot)
-            attach = next(
-                a for a in screen._shortcut_context().actions if a.label == "attach"
-            )
-            assert attach.available is True
+            assert screen._console_action_allowed() is True
 
 
 class _FakePreviewGateway:
@@ -2588,6 +3206,7 @@ class _FakePreviewGateway:
         gate=None,
         mid_gate=None,
         error=None,
+        resolve_error=None,
         error_after_first=False,
         stream_failures=0,
     ):
@@ -2595,6 +3214,7 @@ class _FakePreviewGateway:
         self.gate = gate
         self.mid_gate = mid_gate
         self.error = error
+        self.resolve_error = resolve_error
         self.error_after_first = error_after_first
         self.stream_failures = stream_failures
         self.requests: list[list[dict]] = []
@@ -2602,9 +3222,13 @@ class _FakePreviewGateway:
         self.closed = False
 
     async def resolve_for_send(self, selection):
-        from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
+        from tldw_chatbook.Chat.console_provider_gateway import (
+            ConsoleProviderResolution,
+        )
 
         self.selections.append(selection)
+        if self.resolve_error is not None:
+            raise self.resolve_error
         return ConsoleProviderResolution(
             provider="openai", base_url="", model="test-model", ready=True
         )
@@ -2627,6 +3251,46 @@ class _FakePreviewGateway:
 
     async def aclose(self):
         self.closed = True
+
+
+class ReadinessMapPreviewGateway(_FakePreviewGateway):
+    """Fake gateway whose readiness depends on the selection's provider.
+
+    Providers in ``ready_providers`` resolve ready; anything else resolves
+    blocked with Console-style visible copy, so tests can drive the
+    character-defaults -> chat_defaults fallback (task-425).
+    """
+
+    def __init__(self, ready_providers, resolve_error_providers=None, **kwargs):
+        super().__init__(**kwargs)
+        self.ready_providers = {p.lower() for p in ready_providers}
+        self.resolve_error_providers = {
+            p.lower() for p in (resolve_error_providers or set())
+        }
+
+    async def resolve_for_send(self, selection):
+        from tldw_chatbook.Chat.console_provider_gateway import (
+            ConsoleProviderResolution,
+        )
+
+        self.selections.append(selection)
+        provider = (selection.provider or "").lower()
+        if provider in self.resolve_error_providers:
+            raise RuntimeError(f"{provider} resolution exploded")
+        if provider in self.ready_providers:
+            return ConsoleProviderResolution(
+                provider=provider,
+                base_url="",
+                model=selection.explicit_model or "test-model",
+                ready=True,
+            )
+        return ConsoleProviderResolution(
+            provider=provider,
+            base_url="",
+            model=selection.explicit_model or "",
+            ready=False,
+            visible_copy=f"{provider or 'provider'} is not ready: Missing API key.",
+        )
 
 
 class TestPreviewIntegration:
@@ -2679,6 +3343,44 @@ class TestPreviewIntegration:
             work_area = screen.query_one("#personas-work-area")
             assert pane in work_area.children
 
+    async def test_mode_switch_resets_stale_character_speaker_label(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        # task-437: after selecting a character then leaving Characters mode,
+        # the preview must not keep the previous character's speaker label
+        # (else a persona Test Reply would render under the stale name).
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            pane = screen.query_one("#personas-preview-pane", PersonasPreviewPane)
+            assert pane._character_label == "Detective Sam"
+            await screen._apply_mode("personas")
+            await pilot.pause()
+            assert pane._character_label == "character"
+
+    async def test_delete_selected_character_resets_speaker_label(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        # task-437 review: deleting the selected character drops its speaker
+        # label so a later Test Reply isn't labelled with the deleted name (the
+        # preview stays live/visible in Characters mode).
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            pane = screen.query_one("#personas-preview-pane", PersonasPreviewPane)
+            assert pane._character_label == "Detective Sam"
+            await screen._after_delete("character")
+            await pilot.pause()
+            assert pane._character_label == "character"
+
     async def test_greeting_seeds_after_character_load(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
@@ -2698,7 +3400,7 @@ class TestPreviewIntegration:
             await pilot.pause()
             pane = screen.query_one(PersonasPreviewPane)
             assert (
-                "character: The name's Detective Sam. Who's asking?"
+                "Detective Sam: The name's Detective Sam. Who's asking?"
                 in pane.transcript_text()
             )
 
@@ -2724,7 +3426,7 @@ class TestPreviewIntegration:
             await _select(pilot, "#personas-library-row-character-2")
             await _select(pilot, "#personas-library-row-character-1")
             pane = screen.query_one(PersonasPreviewPane)
-            greeting_line = "character: The name's Detective Sam. Who's asking?"
+            greeting_line = "Detective Sam: The name's Detective Sam. Who's asking?"
             lines = [line for line in pane.transcript_text().splitlines() if line]
             assert lines == [greeting_line]
 
@@ -2749,7 +3451,7 @@ class TestPreviewIntegration:
             screen = await self._select_first_character(pilot)
             pane = screen.query_one(PersonasPreviewPane)
             assert (
-                "character: The name's Detective Sam. Who's asking?"
+                "Detective Sam: The name's Detective Sam. Who's asking?"
                 in pane.transcript_text()
             )
 
@@ -2766,14 +3468,328 @@ class TestPreviewIntegration:
             )
             await pilot.pause()
             assert pane.transcript_text() == (
-                "character: The name's Detective Sam. Who's asking?"
+                "Detective Sam: The name's Detective Sam. Who's asking?"
             )
             screen.query_one("#personas-preview-reset", Button).press()
             await pilot.pause()
 
             assert pane.transcript_text() == (
-                "character: Edited opener from Detective Sam to User."
+                "Detective Sam: Edited opener from Detective Sam to User."
             )
+
+    async def test_alternate_greeting_selector_seeds_and_reset_returns_to_choice(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """TASK-438: picking an alternate greeting re-seeds the preview, and
+        Reset returns to the CHOSEN greeting, not the primary."""
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            pane = screen.query_one("#personas-preview-pane", PersonasPreviewPane)
+            assert screen.query_one("#personas-preview-greeting-row").display is True
+            # choose alternate index 1
+            await screen.preview.handle_greeting_selected(1)
+            await pilot.pause()
+            assert "An alternate opener." in pane.transcript_text()
+            # send a turn, then Reset -> returns to the CHOSEN alternate, not primary
+            pane.append_user("hi")
+            pane.append_reply("hello")
+            await pilot.pause()
+            await pane.reset()
+            await pilot.pause()
+            assert "An alternate opener." in pane.transcript_text()
+            assert "hi" not in pane.transcript_text()
+
+    async def test_reload_preserves_chosen_alternate_greeting(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """TASK-438 review: a same-character reload (edit+save) that preserves the
+        in-progress transcript keeps the CHOSEN alternate greeting, so Reset still
+        returns to it rather than silently reverting to the primary."""
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            pane = screen.query_one("#personas-preview-pane", PersonasPreviewPane)
+            await screen.preview.handle_greeting_selected(1)  # choose alternate
+            await pilot.pause()
+            pane.append_user("hi")
+            pane.append_reply("hello")
+            await pilot.pause()
+            # Same-character reload (the task-437 preserve path): CharacterMessage.Loaded
+            await screen.preview.handle_character_loaded(
+                character_id="1",
+                card_data={
+                    "name": "Detective Sam",
+                    "first_message": "The name's {{char}}. Who's asking?",
+                    "alternate_greetings": ["An alternate opener.", "A third opener."],
+                },
+            )
+            await pilot.pause()
+            # the chosen index is preserved (selector + Reset seed), not reset to 0
+            assert screen.preview._current_greeting_index == 1
+            await pane.reset()
+            await pilot.pause()
+            assert "An alternate opener." in pane.transcript_text()
+            assert "Who's asking" not in pane.transcript_text()
+
+    async def test_reload_via_real_select_does_not_wipe_transcript(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """TASK-438 review: choosing an alternate through the REAL Select widget
+        then a same-character reload must NOT wipe the in-progress transcript —
+        the programmatic set_options() must not fire a spurious re-seed."""
+        from textual.widgets import Select
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            pane = screen.query_one("#personas-preview-pane", PersonasPreviewPane)
+            # pick alternate index 1 via the real widget (fires Select.Changed)
+            pane.query_one("#personas-preview-greeting-select", Select).value = 1
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            pane.append_user("hi")
+            pane.append_reply("hello")
+            await pilot.pause()
+            # same-character reload (edit+save path)
+            await screen.preview.handle_character_loaded(
+                character_id="1",
+                card_data={
+                    "name": "Detective Sam",
+                    "first_message": "The name's {{char}}. Who's asking?",
+                    "alternate_greetings": ["An alternate opener.", "A third opener."],
+                },
+            )
+            await pilot.pause()
+            text = pane.transcript_text()
+            assert "hi" in text and "hello" in text  # conversation survived
+            assert screen.preview._current_greeting_index == 1
+
+    async def test_greeting_selector_hidden_without_alternates(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """A character without ``alternate_greetings`` keeps the row hidden."""
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-row-character-2")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            screen.query_one("#personas-preview-pane", PersonasPreviewPane)
+            assert screen.query_one("#personas-preview-greeting-row").display is False
+
+    async def _readout_text(self, screen):
+        from textual.widgets import Static as _Static
+
+        return str(
+            screen.query_one("#personas-preview-provider", _Static).renderable
+        )
+
+    async def test_provider_readout_shows_character_and_fallback(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """The readout names the character provider/model and fallback target
+        (task-426)."""
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "llama_cpp", "model": "local.gguf"},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            text = await self._readout_text(screen)
+            assert "Anthropic" in text
+            assert "claude-3-haiku" in text
+            # The Console-default fallback target is named too.
+            assert "llama.cpp" in text
+
+    async def test_provider_readout_no_fallback_note_when_same_provider(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """No fallback note when chat_defaults matches character_defaults."""
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "openai", "model": "gpt-4o"},
+            "chat_defaults": {"provider": "openai", "model": "gpt-4o"},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            text = await self._readout_text(screen)
+            assert "OpenAI" in text
+            assert "gpt-4o" in text
+            assert "Console default" not in text
+
+    async def test_provider_readout_falls_to_chat_when_no_character_provider(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """With no character provider, the chat default is what answers."""
+        mock_app_instance.app_config = {
+            "character_defaults": {},
+            "chat_defaults": {"provider": "llama_cpp", "model": "local.gguf"},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            text = await self._readout_text(screen)
+            assert "llama.cpp" in text
+            assert "local.gguf" in text
+            assert "Console default" in text
+
+    async def test_provider_readout_uses_effective_provider_model(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """The readout and send share the model inherited from provider config."""
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic"},
+            "api_settings": {
+                "anthropic": {"model": "claude-3-5-haiku-latest"},
+            },
+        }
+        fake = ReadinessMapPreviewGateway(ready_providers={"anthropic"})
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen.preview.ensure_gateway = lambda: fake
+            text = await self._readout_text(screen)
+            assert text == "Provider: Anthropic / claude-3-5-haiku-latest"
+
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert fake.selections[0].provider == "anthropic"
+            assert fake.selections[0].explicit_model is None
+            assert (
+                fake.selections[0].configured_model
+                == "claude-3-5-haiku-latest"
+            )
+
+    async def test_provider_readout_normalizes_whitespace_defaults(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Readout and send normalize whitespace before Console resolution."""
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "   ", "model": " ignored "},
+            "chat_defaults": {
+                "provider": "  llama_cpp  ",
+                "model": "  local.gguf  ",
+            },
+        }
+        fake = ReadinessMapPreviewGateway(ready_providers={"llama_cpp"})
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen.preview.ensure_gateway = lambda: fake
+            text = await self._readout_text(screen)
+            assert text == "Provider: llama.cpp / local.gguf (Console default)"
+            assert screen.preview._readout_nav_provider == "llama_cpp"
+
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert [selection.provider for selection in fake.selections] == [
+                "",
+                "llama_cpp",
+            ]
+            fallback = fake.selections[-1]
+            assert fallback.explicit_model == "local.gguf"
+            assert fake.requests, "Normalized fallback selection should answer"
+
+    async def test_configure_button_navigates_to_settings_providers(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """The Configure affordance deep-links to Settings > Providers & Models
+        with the character provider preselected (task-426)."""
+        from textual.widgets import Button
+
+        from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+        from tldw_chatbook.UI.Screens.settings_config_models import (
+            SettingsCategoryId,
+        )
+
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "llama_cpp", "model": "local.gguf"},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            posted: list[NavigateToScreen] = []
+            original = screen.post_message
+
+            def _record(message):
+                if isinstance(message, NavigateToScreen):
+                    posted.append(message)
+                return original(message)
+
+            screen.post_message = _record
+            screen.query_one("#personas-preview-configure", Button).press()
+            await pilot.pause()
+            assert posted, "Configure should post a navigation message"
+            nav = posted[-1]
+            assert nav.screen_name == "settings"
+            category = nav.screen_context.get("category")
+            category_value = getattr(category, "value", category)
+            assert category_value == SettingsCategoryId.PROVIDERS_MODELS.value
+            assert nav.screen_context.get("provider") == "anthropic"
+
+    async def test_post_send_readout_reflects_resolved_fallback_provider(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """After a fallback reply, the readout reflects the provider that
+        actually answered (task-425/426)."""
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "llama_cpp", "model": "local.gguf"},
+        }
+        fake = ReadinessMapPreviewGateway(ready_providers={"llama_cpp"})
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen.preview.ensure_gateway = lambda: fake
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            text = await self._readout_text(screen)
+            assert "llama.cpp" in text
+            assert "Console default" in text
+            # Configure still targets the character-configured provider (the
+            # one to make ready), not the fallback that happened to answer.
+            assert screen.preview._readout_nav_provider == "anthropic"
 
     async def test_blocked_provider_shows_readable_status(
         self, mock_app_instance, stub_characters, stub_conversations
@@ -2820,7 +3836,7 @@ class TestPreviewIntegration:
             await app.workers.wait_for_complete()
             await pilot.pause()
             pane = screen.query_one(PersonasPreviewPane)
-            assert "character: Hello, world." in pane.transcript_text()
+            assert "Detective Sam: Hello, world." in pane.transcript_text()
             assert screen.preview.history == [
                 {"role": "user", "content": "Hi there"},
                 {"role": "assistant", "content": "Hello, world."},
@@ -2859,10 +3875,10 @@ class TestPreviewIntegration:
             await pilot.pause()
             # The first chunk must be visible WHILE the stream is held open.
             for _ in range(50):
-                if "character: Hello, " in pane.transcript_text():
+                if "Detective Sam: Hello, " in pane.transcript_text():
                     break
                 await pilot.pause()
-            assert "character: Hello, " in pane.transcript_text()
+            assert "Detective Sam: Hello, " in pane.transcript_text()
             # History gets the consolidated entry only at the end.
             assert not any(
                 entry["role"] == "assistant" for entry in screen.preview.history
@@ -2871,9 +3887,9 @@ class TestPreviewIntegration:
             await app.workers.wait_for_complete()
             await pilot.pause()
             lines = pane.transcript_text().splitlines()
-            assert lines.count("character: Hello, world.") == 1
-            assert "character: Hello, " not in [
-                line for line in lines if line != "character: Hello, world."
+            assert lines.count("Detective Sam: Hello, world.") == 1
+            assert "Detective Sam: Hello, " not in [
+                line for line in lines if line != "Detective Sam: Hello, world."
             ]
             assert screen.preview.history[-1] == {
                 "role": "assistant",
@@ -2905,10 +3921,10 @@ class TestPreviewIntegration:
             screen.post_message(PreviewReplyRequested("Hi"))
             await pilot.pause()
             for _ in range(50):
-                if "character: Hello, " in pane.transcript_text():
+                if "Detective Sam: Hello, " in pane.transcript_text():
                     break
                 await pilot.pause()
-            assert "character: Hello, " in pane.transcript_text()
+            assert "Detective Sam: Hello, " in pane.transcript_text()
             screen.query_one("#personas-preview-reset", _Button).press()
             await pilot.pause()
             mid_gate.set()
@@ -2916,7 +3932,7 @@ class TestPreviewIntegration:
             await pilot.pause()
             assert "Hello" not in pane.transcript_text()
             assert pane.transcript_text() == (
-                "character: The name's Detective Sam. Who's asking?"
+                "Detective Sam: The name's Detective Sam. Who's asking?"
             )
             assert not any(
                 entry["role"] == "assistant" for entry in screen.preview.history
@@ -2945,10 +3961,10 @@ class TestPreviewIntegration:
             screen.post_message(PreviewReplyRequested("Hi"))
             await pilot.pause()
             for _ in range(50):
-                if "character: Hello, " in pane.transcript_text():
+                if "Detective Sam: Hello, " in pane.transcript_text():
                     break
                 await pilot.pause()
-            assert "character: Hello, " in pane.transcript_text()
+            assert "Detective Sam: Hello, " in pane.transcript_text()
             await pilot.click("#personas-library-row-character-2")
             await pilot.pause()
             mid_gate.set()
@@ -3052,6 +4068,241 @@ class TestPreviewIntegration:
         assert extra["resolved_model"] == "test-model"
         assert isinstance(extra["generation"], int)
 
+    async def test_resolution_failure_logs_safe_preview_context(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Resolution exceptions retain the standard structured preview context."""
+        from loguru import logger as loguru_logger
+
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+
+        records: list[dict[str, Any]] = []
+        sink_id = loguru_logger.add(
+            lambda message: records.append(message.record), level="ERROR"
+        )
+        mock_app_instance.app_config = {
+            "character_defaults": {
+                "provider": "anthropic",
+                "model": "claude-3-haiku",
+            },
+            "chat_defaults": {
+                "provider": "llama_cpp",
+                "model": "local.gguf",
+                "streaming": False,
+            },
+        }
+        fake = ReadinessMapPreviewGateway(
+            ready_providers=set(),
+            resolve_error_providers={"llama_cpp"},
+        )
+        app = PersonasTestApp(mock_app_instance)
+        try:
+            async with app.run_test(size=(160, 50)) as pilot:
+                screen = await self._select_first_character(pilot)
+                screen.preview.ensure_gateway = lambda: fake
+                screen.post_message(PreviewReplyRequested("Hi"))
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+        finally:
+            loguru_logger.remove(sink_id)
+
+        failure = next(
+            record
+            for record in records
+            if record["message"] == "Preview provider resolution failed."
+        )
+        assert failure["exception"] is not None
+        extra = failure["extra"]
+        assert extra["operation"] == "personas_preview_reply"
+        assert extra["provider"] == "llama_cpp"
+        assert extra["model"] == "local.gguf"
+        assert extra["selection_kind"] == "character"
+        assert extra["selection_id"] == "1"
+        assert extra["streaming"] is False
+        assert extra["attempt"] == "resolve"
+        assert isinstance(extra["generation"], int)
+
+    async def test_unready_character_provider_falls_back_to_chat_defaults(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """The preview falls back to a ready chat_defaults provider (task-425).
+
+        First-run configs carry the shipped ``[character_defaults]`` template
+        (Anthropic) verbatim, so the fallback keys on readiness, not on the
+        section's presence.
+        """
+        from textual.widgets import Static as _Static
+
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {
+                "provider": "llama_cpp",
+                "model": "local.gguf",
+                "streaming": False,
+                "temperature": 0.42,
+                "top_p": 0.77,
+                "max_tokens": 321,
+            },
+            "api_settings": {
+                "llama_cpp": {
+                    "api_url": "http://127.0.0.1:8181/v1/chat/completions"
+                }
+            },
+        }
+        fake = ReadinessMapPreviewGateway(ready_providers={"llama_cpp"})
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen.preview.ensure_gateway = lambda: fake
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            pane = screen.query_one(PersonasPreviewPane)
+            assert "Detective Sam: Hello, world." in pane.transcript_text()
+            assert [s.provider for s in fake.selections] == ["anthropic", "llama_cpp"]
+            fallback = fake.selections[-1]
+            assert fallback.explicit_model == "local.gguf"
+            assert fallback.base_url == "http://127.0.0.1:8181"
+            assert fallback.streaming is False
+            assert fallback.temperature == 0.42
+            assert fallback.top_p == 0.77
+            assert fallback.max_tokens == 321
+            status = str(
+                screen.query_one("#personas-preview-status", _Static).renderable
+            )
+            assert "via Console default" in status
+            assert "llama_cpp" in status
+
+    async def test_ready_character_provider_wins_over_chat_defaults(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """A usable character_defaults provider is used without fallback."""
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        mock_app_instance.app_config = {
+            "character_defaults": {
+                "provider": "anthropic",
+                "model": "claude-3-haiku",
+                "streaming": False,
+                "temperature": 0.81,
+                "top_p": 0.88,
+                "max_tokens": 2048,
+            },
+            "chat_defaults": {
+                "provider": "llama_cpp",
+                "model": "local.gguf",
+                "streaming": True,
+                "temperature": 0.2,
+            },
+        }
+        fake = ReadinessMapPreviewGateway(ready_providers={"anthropic", "llama_cpp"})
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen.preview.ensure_gateway = lambda: fake
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            pane = screen.query_one(PersonasPreviewPane)
+            assert "Detective Sam: Hello, world." in pane.transcript_text()
+            assert [s.provider for s in fake.selections] == ["anthropic"]
+            character_selection = fake.selections[0]
+            assert character_selection.streaming is False
+            assert character_selection.temperature == 0.81
+            assert character_selection.top_p == 0.88
+            assert character_selection.max_tokens == 2048
+
+    async def test_both_providers_unready_names_settings_remedy(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """When neither provider is ready the status points at Settings."""
+        from textual.widgets import Static as _Static
+
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "llama_cpp", "model": "local.gguf"},
+        }
+        fake = ReadinessMapPreviewGateway(ready_providers=set())
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen.preview.ensure_gateway = lambda: fake
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            status = str(
+                screen.query_one("#personas-preview-status", _Static).renderable
+            )
+            assert "Settings" in status
+            assert "Traceback" not in status
+            # Both providers were attempted before giving up.
+            assert [s.provider for s in fake.selections] == ["anthropic", "llama_cpp"]
+            # The surfaced blocker is the chat_defaults provider the user
+            # actually configured, not the shipped character default.
+            assert "llama_cpp" in status
+            assert "anthropic" not in status
+
+    async def test_fallback_provider_survives_non_streaming_retry(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """A streaming failure re-resolves the fallback provider, not the
+        character default (task-425)."""
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "llama_cpp", "model": "local.gguf"},
+        }
+        # First stream_chat raises -> non-streaming retry re-resolves.
+        fake = ReadinessMapPreviewGateway(
+            ready_providers={"llama_cpp"}, stream_failures=1
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen.preview.ensure_gateway = lambda: fake
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            pane = screen.query_one(PersonasPreviewPane)
+            assert "Detective Sam: Hello, world." in pane.transcript_text()
+            # anthropic (unready) -> llama_cpp (ready, streaming) ->
+            # llama_cpp (non-streaming retry re-resolve).
+            assert [s.provider for s in fake.selections] == [
+                "anthropic",
+                "llama_cpp",
+                "llama_cpp",
+            ]
+            assert fake.selections[-1].streaming is False
+
     async def test_draft_aware_system_prompt_uses_editor_data(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
@@ -3100,7 +4351,7 @@ class TestPreviewIntegration:
         assert payload.item_type == "preview-conversation"
         assert payload.title == "Personas preview conversation"
         assert "you: Hi" in payload.body
-        assert "character: Hello." in payload.body
+        assert "Detective Sam: Hello." in payload.body
         assert payload.suggested_prompt == "Continue this conversation in character."
 
     async def test_stale_reply_is_dropped_after_selection_change(
@@ -3138,7 +4389,7 @@ class TestPreviewIntegration:
             await app.workers.wait_for_complete()
             await pilot.pause()
             pane = screen.query_one(PersonasPreviewPane)
-            assert "character: Hello, world." not in pane.transcript_text()
+            assert "Detective Sam: Hello, world." not in pane.transcript_text()
             assert not any(
                 entry["role"] == "assistant" for entry in screen.preview.history
             )
@@ -3209,7 +4460,7 @@ class TestPreviewIntegration:
             await app.workers.wait_for_complete()
             await pilot.pause()
             pane = screen.query_one(PersonasPreviewPane)
-            assert "character: Hello, world." not in pane.transcript_text()
+            assert "Detective Sam: Hello, world." not in pane.transcript_text()
             assert not any(
                 entry["role"] == "assistant" for entry in screen.preview.history
             )
@@ -3242,9 +4493,7 @@ class TestPreviewIntegration:
             await app.workers.wait_for_complete()
             await pilot.pause()
             # History: no trailing unanswered user entry.
-            assert not any(
-                entry["role"] == "user" for entry in screen.preview.history
-            )
+            assert not any(entry["role"] == "user" for entry in screen.preview.history)
             # Transcript: the user line stays visible.
             assert "you: Hi" in pane.transcript_text()
             status = str(
@@ -3279,7 +4528,7 @@ class TestPreviewIntegration:
             assert [s.streaming for s in fake.selections] == [True, False]
             assert len(fake.requests) == 2
             pane = screen.query_one(PersonasPreviewPane)
-            assert "character: Hello, world." in pane.transcript_text()
+            assert "Detective Sam: Hello, world." in pane.transcript_text()
             assert screen.preview.history[-1] == {
                 "role": "assistant",
                 "content": "Hello, world.",
@@ -3406,9 +4655,7 @@ class TestPreviewIntegration:
             gate.set()
             await app.workers.wait_for_complete()
             await pilot.pause()
-            user_messages = [
-                m for m in fake.requests[1] if m["role"] == "user"
-            ]
+            user_messages = [m for m in fake.requests[1] if m["role"] == "user"]
             assert user_messages == [{"role": "user", "content": "Hi\nAgain"}]
 
 
@@ -3551,10 +4798,9 @@ class TestDelete:
         monkeypatch.setattr(
             character_handler_module,
             "delete_character",
-            lambda character_id, expected_version: deleted.append(
-                (character_id, expected_version)
-            )
-            or True,
+            lambda character_id, expected_version: (
+                deleted.append((character_id, expected_version)) or True
+            ),
         )
         app = PersonasTestApp(mock_app_instance)
         notifications = self._capture_notifications(app)
@@ -3595,10 +4841,9 @@ class TestDelete:
         monkeypatch.setattr(
             character_handler_module,
             "delete_character",
-            lambda character_id, expected_version: deleted.append(
-                (character_id, expected_version)
-            )
-            or True,
+            lambda character_id, expected_version: (
+                deleted.append((character_id, expected_version)) or True
+            ),
         )
         app = PersonasTestApp(mock_app_instance)
         notifications = self._capture_notifications(app)
@@ -3614,6 +4859,127 @@ class TestDelete:
             assert any(
                 "not loaded" in message and severity == "warning"
                 for message, severity in notifications
+            )
+
+
+class TestCharactersEmptyStateGuidance:
+    """task-436: Characters mode shows onboarding guidance when nothing is
+    selected, instead of a blank center pane that reads as broken."""
+
+    @pytest.fixture
+    def stub_conversations(self, monkeypatch):
+        """Mirrors TestDelete.stub_conversations: stub the DB resolver and
+        conversation listing so a real character selection/delete round-trip
+        doesn't hit an unstubbed DB."""
+        monkeypatch.setattr(
+            character_handler_module, "_default_character_db", lambda: object()
+        )
+        monkeypatch.setattr(
+            conversations_controller_module,
+            "list_character_conversations",
+            lambda db, character_id, limit=50, offset=0: [
+                {"id": "conv-1", "title": "First case"}
+            ],
+        )
+
+    @staticmethod
+    def _bypass_confirm(screen, result: bool) -> None:
+        async def _confirm(name: str) -> bool:
+            return result
+
+        screen._confirm_delete = _confirm
+
+    async def _select_first_character(self, pilot):
+        screen = await _mounted(pilot)
+        await pilot.pause()
+        await pilot.click("#personas-library-row-character-1")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        return screen
+
+    async def test_guidance_shown_when_no_selection(
+        self, mock_app_instance, stub_characters
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            assert screen.state.active_mode == "characters"
+            assert not screen.state.selected_entity_id
+            guidance = screen.query_one("#personas-characters-empty", Static)
+            assert guidance.display is True
+            body = str(guidance.renderable)
+            assert "New" in body and "Import" in body
+            assert screen.query_one("#ccp-character-card-view").display is False
+
+    async def test_guidance_hidden_after_selection(
+        self, mock_app_instance, stub_characters
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            # Guidance is visible before any selection (pins the transition so
+            # the "hidden after" assertion below is non-vacuous).
+            assert (
+                screen.query_one("#personas-characters-empty", Static).display
+                is True
+            )
+            # ... and disappears the moment a character is selected (AC#2).
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.state.selected_entity_id
+            assert (
+                screen.query_one("#personas-characters-empty", Static).display
+                is False
+            )
+            assert screen.query_one("#ccp-character-card-view").display is True
+
+    async def test_guidance_hidden_in_other_modes(
+        self, mock_app_instance, stub_characters
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await screen._apply_mode("lore")
+            await pilot.pause()
+            assert (
+                screen.query_one("#personas-characters-empty", Static).display
+                is False
+            )
+            await screen._apply_mode("characters")
+            await pilot.pause()
+            assert (
+                screen.query_one("#personas-characters-empty", Static).display
+                is True
+            )
+
+    async def test_guidance_returns_after_delete(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        monkeypatch.setattr(
+            character_handler_module,
+            "delete_character",
+            lambda character_id, expected_version: True,
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            assert (
+                screen.query_one("#personas-characters-empty", Static).display
+                is False
+            )
+            self._bypass_confirm(screen, True)
+            screen.query_one("#personas-delete", Button).press()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert not screen.state.selected_entity_id
+            assert (
+                screen.query_one("#personas-characters-empty", Static).display
+                is True
             )
 
 
@@ -3747,7 +5113,8 @@ class TestKeyboardInteraction:
     ):
         created = []
         monkeypatch.setattr(
-            character_handler_module, "create_character",
+            character_handler_module,
+            "create_character",
             lambda data: created.append(data) or 99,
         )
         app = PersonasTestApp(mock_app_instance)
@@ -3796,7 +5163,8 @@ class TestKeyboardInteraction:
     ):
         created = []
         monkeypatch.setattr(
-            character_handler_module, "create_character",
+            character_handler_module,
+            "create_character",
             lambda data: created.append(data) or 99,
         )
         app = PersonasTestApp(mock_app_instance)
@@ -3813,10 +5181,15 @@ class TestKeyboardInteraction:
     async def test_footer_save_hint_flips_with_edit_mode(
         self, mock_app_instance, stub_characters
     ):
+        # ctrl+s stays hidden in the native Footer; edit-mode transitions still
+        # gate whether saving is meaningful (no-op in view mode).
+        bindings_by_key = {binding.key: binding for binding in PersonasScreen.BINDINGS}
+        assert bindings_by_key["ctrl+s"].show is False
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
+            assert screen._edit_mode == "view"
 
             def _save_action(context):
                 return next(a for a in context.actions if a.label == "save")
@@ -3824,9 +5197,12 @@ class TestKeyboardInteraction:
             assert _save_action(screen._shortcut_context()).available is False
             await pilot.press("ctrl+n")
             await pilot.pause()
+            assert screen._edit_mode == "create"
             assert _save_action(screen._shortcut_context()).available is True
             # The footer was re-registered on the transition.
-            footer = pilot.app.query_one(AppFooterStatus)
+            # task-264: the registration lands on the SCREEN's own footer,
+            # not the harness's default-screen stand-in.
+            footer = screen.query_one(AppFooterStatus)
             assert "ctrl+s save unavailable" not in footer.shortcut_text
             assert "ctrl+s save" in footer.shortcut_text
             confirms = self._bypass_confirm(screen, True)
@@ -3837,8 +5213,11 @@ class TestKeyboardInteraction:
             # A pristine create session cancels without the discard dialog
             # (change-based dirty tracking).
             assert confirms == []
+            assert screen._edit_mode == "view"
             assert _save_action(screen._shortcut_context()).available is False
-            assert "ctrl+s save unavailable" in footer.shortcut_text
+            # task-445: unavailable hints are dropped entirely rather than
+            # rendered with a literal "unavailable" suffix.
+            assert "ctrl+s save" not in footer.shortcut_text
 
     async def test_mode_keys_switch_modes(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -3853,9 +5232,11 @@ class TestKeyboardInteraction:
             await pilot.pause()
             assert screen.state.active_mode == "personas"
             # ]/[ cycle through the strip order from the active mode.
+            # "prompts" is retired from the strip (Task 7), so "dictionaries"
+            # is next after "personas".
             await pilot.press("right_square_bracket")
             await pilot.pause()
-            assert screen.state.active_mode == "prompts"
+            assert screen.state.active_mode == "dictionaries"
             await pilot.press("left_square_bracket")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
@@ -4039,22 +5420,24 @@ class TestDirtyTracking:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._edit_first_character(pilot)
-            title = screen.query_one("#personas-title", Static)
-            text = str(title.renderable)
+            subtitle = screen.query_one(
+                "#personas-header #workbench-header-subtitle", Static
+            )
+            text = str(subtitle.renderable)
             assert "Editing Detective Sam" in text
             assert "unsaved" not in text
             await self._type_in_description(pilot, screen)
-            assert "Editing Detective Sam - unsaved" in str(title.renderable)
+            assert "Editing Detective Sam - unsaved" in str(subtitle.renderable)
             await pilot.press("ctrl+s")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            # Back to Ready; "Local" stays out of the title (the status row
-            # already carries "Source: Local").
-            assert (
-                str(title.renderable)
-                == "Personas | Behavior profiles for chat and agents | Ready"
-            )
+            # Save-in-place: the editor stays open, so the header keeps
+            # showing "Editing <name>" (just without the "- unsaved" suffix
+            # now that the save cleared it).
+            assert str(subtitle.renderable) == "Editing Detective Sam"
+            title = screen.query_one("#personas-header #workbench-header-title", Static)
+            assert str(title.renderable) == "Roleplay & Chat Dictionaries"
 
     async def test_active_row_gets_unsaved_badge(
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
@@ -4095,10 +5478,10 @@ class TestDirtyTracking:
             assert screen.state.selected_entity_id == "2"
             assert not screen.query(".personas-library-row.is-unsaved")
 
-    async def test_import_reregisters_footer(
+    async def test_import_refreshes_attach_action(
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
     ):
-        """UX-E2 carryover: import-selection must refresh the attach hint."""
+        """UX-E2 carryover: import-selection must enable the attach action."""
         monkeypatch.setattr(
             character_handler_module, "import_character_card", lambda path: 1
         )
@@ -4106,22 +5489,22 @@ class TestDirtyTracking:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
+            assert screen._console_action_allowed() is False  # no prior selection
             attach = next(
                 a for a in screen._shortcut_context().actions if a.label == "attach"
             )
             assert attach.available is False  # no prior selection
-            footer = pilot.app.query_one(AppFooterStatus)
-            assert "ctrl+enter attach unavailable" in footer.shortcut_text
+            # task-264: the registration lands on the SCREEN's own footer,
+            # not the harness's default-screen stand-in.
+            footer = screen.query_one(AppFooterStatus)
+            # task-445: unavailable hints are dropped entirely rather than
+            # rendered with a literal "unavailable" suffix.
+            assert "ctrl+enter attach" not in footer.shortcut_text
             await screen._import_character_from_path("/tmp/card.json")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            attach = next(
-                a for a in screen._shortcut_context().actions if a.label == "attach"
-            )
-            assert attach.available is True
-            assert "ctrl+enter attach unavailable" not in footer.shortcut_text
-            assert "ctrl+enter attach" in footer.shortcut_text
+            assert screen._console_action_allowed() is True
 
 
 class TestConfirmationDialogEscape:
@@ -4214,12 +5597,50 @@ class TestImportExportFilters:
                 for name, filter_id in picker.filters.selections
             }
 
+            # Markdown stays importable via its own dedicated sub-filter, but
+            # is NOT part of the broad "Character Cards" default (task-431
+            # AC#1): a plain docs folder full of .md files should not read
+            # as a folder of character cards.
             assert "Markdown Files" in filter_by_name
-            assert filter_by_name["Character Cards"](Path("character.md")) is True
-            assert filter_by_name["Character Cards"](Path("character.markdown")) is True
+            assert filter_by_name["Character Cards"](Path("character.md")) is False
+            assert (
+                filter_by_name["Character Cards"](Path("character.markdown"))
+                is False
+            )
             assert filter_by_name["Markdown Files"](Path("character.md")) is True
             assert filter_by_name["Markdown Files"](Path("character.markdown")) is True
             assert filter_by_name["Markdown Files"](Path("character.json")) is False
+
+    async def test_import_filters_character_cards_accepts_webp_not_md(
+        self, mock_app_instance, stub_characters
+    ):
+        """task-431 AC#1: primary filter accepts .webp, drops .md as a card."""
+        from pathlib import Path
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            picker = await self._capture_picker(
+                pilot, screen, screen._import_dialog_worker
+            )
+            filter_by_name = {
+                name: picker.filters[filter_id]
+                for name, filter_id in picker.filters.selections
+            }
+
+            character_cards = filter_by_name["Character Cards"]
+            assert character_cards(Path("x.webp")) is True
+            assert character_cards(Path("x.png")) is True
+            assert character_cards(Path("x.json")) is True
+            assert character_cards(Path("README.md")) is False
+            assert character_cards(Path("x.markdown")) is False
+
+            assert "Card Images (PNG/WebP)" in filter_by_name
+            card_images = filter_by_name["Card Images (PNG/WebP)"]
+            assert card_images(Path("x.png")) is True
+            assert card_images(Path("x.webp")) is True
+            assert card_images(Path("x.json")) is False
+
 
     async def test_export_json_filters_are_callable(
         self, mock_app_instance, stub_characters
@@ -4278,6 +5699,33 @@ class TestImportExportFilters:
             self._assert_filters_callable(picker.filters)
             editor = screen.query_one(PersonasCharacterEditorWidget)
             if outcome == "selection":
-                assert editor.get_character_data()["image"] == b"\x89PNG selected avatar"
+                assert (
+                    editor.get_character_data()["image"] == b"\x89PNG selected avatar"
+                )
             else:
                 assert "image" not in editor.get_character_data()
+
+
+async def test_character_import_filters_helper_accepts_webp_not_md():
+    """Unit-level guard on the module-level filter helper itself (task-431 AC#1).
+
+    Exercises ``_character_import_filters`` directly (no screen mount) so the
+    primary "Character Cards" tester's behavior is pinned independently of
+    the dialog-worker integration test in ``TestImportExportFilters``. Marked
+    ``async`` (with no ``await``) only to match this module's file-wide
+    ``pytestmark = pytest.mark.asyncio`` and avoid its inapplicable-mark
+    warning on sync functions.
+    """
+    from pathlib import Path
+
+    filters = personas_screen_module._character_import_filters()
+    filter_by_name = {
+        name: filters[filter_id] for name, filter_id in filters.selections
+    }
+    character_cards = filter_by_name["Character Cards"]
+
+    assert character_cards(Path("x.webp")) is True
+    assert character_cards(Path("x.png")) is True
+    assert character_cards(Path("x.json")) is True
+    assert character_cards(Path("README.md")) is False
+    assert character_cards(Path("x.markdown")) is False

@@ -2,20 +2,24 @@
 Service helpers for server-backed chatbook import/export flows.
 """
 
+from __future__ import annotations
+
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Mapping, Optional, Union
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    ChatbookContinueExportRequest,
-    ChatbookExportRequest,
-    ChatbookImportRequest,
-    ReadingExportResponse,
-    TLDWAPIClient,
-)
 from .chatbook_models import ChatbookManifest, ContentType
+
+if TYPE_CHECKING:
+    from ..tldw_api import (
+        ChatbookContinueExportRequest,
+        ChatbookExportRequest,
+        ChatbookImportRequest,
+        ReadingExportResponse,
+        TLDWAPIClient,
+    )
 
 
 SelectionKey = Union[str, ContentType]
@@ -92,7 +96,9 @@ def build_server_import_selections_from_manifest(
         return selections
 
     for item in manifest.content_items:
-        content_type = item.type.value if isinstance(item.type, ContentType) else str(item.type)
+        content_type = (
+            item.type.value if isinstance(item.type, ContentType) else str(item.type)
+        )
         if content_type == ContentType.MEDIA.value and not import_media:
             continue
         if content_type == ContentType.EMBEDDING.value and not import_embeddings:
@@ -137,7 +143,9 @@ def get_server_job_records(app_instance: Any) -> List[Dict[str, Any]]:
     return list(getattr(app_instance, "_chatbook_server_jobs", []))
 
 
-def record_server_job(app_instance: Any, job_record: Mapping[str, Any]) -> List[Dict[str, Any]]:
+def record_server_job(
+    app_instance: Any, job_record: Mapping[str, Any]
+) -> List[Dict[str, Any]]:
     records = get_server_job_records(app_instance)
     records.insert(0, dict(job_record))
     setattr(app_instance, "_chatbook_server_jobs", records)
@@ -149,7 +157,9 @@ def _to_plain_dict(value: Any) -> Dict[str, Any]:
         return value.model_dump(mode="json")
     if isinstance(value, Mapping):
         return dict(value)
-    raise TypeError(f"Expected mapping-like chatbook response, got {type(value).__name__}")
+    raise TypeError(
+        f"Expected mapping-like chatbook response, got {type(value).__name__}"
+    )
 
 
 class ServerChatbookService:
@@ -188,7 +198,9 @@ class ServerChatbookService:
             )
         return cls(
             client=None,
-            client_provider=build_runtime_api_client_provider_from_config(app_config or {}),
+            client_provider=build_runtime_api_client_provider_from_config(
+                app_config or {}
+            ),
             policy_enforcer=policy_enforcer,
         )
 
@@ -221,7 +233,9 @@ class ServerChatbookService:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -230,10 +244,14 @@ class ServerChatbookService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
-                    user_message=getattr(decision, "user_message", None) or "Server chatbook action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
+                    user_message=getattr(decision, "user_message", None)
+                    or "Server chatbook action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @staticmethod
@@ -273,6 +291,9 @@ class ServerChatbookService:
         categories: Optional[List[str]] = None,
         async_mode: bool = False,
     ) -> ChatbookExportRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChatbookExportRequest
+
         return ChatbookExportRequest(
             name=name,
             description=description,
@@ -296,11 +317,16 @@ class ServerChatbookService:
         import_embeddings: bool = False,
         async_mode: bool = False,
     ) -> ChatbookImportRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChatbookImportRequest
+
         normalized_selections = self.normalize_content_selections(selections)
         unsupported = self.validate_server_import_selection(normalized_selections)
         if unsupported:
             unsupported_text = ", ".join(unsupported)
-            raise ValueError(f"Unsupported server import content types: {unsupported_text}")
+            raise ValueError(
+                f"Unsupported server import content types: {unsupported_text}"
+            )
 
         if hasattr(conflict_resolution, "value"):
             conflict_resolution = conflict_resolution.value
@@ -314,36 +340,60 @@ class ServerChatbookService:
             async_mode=async_mode,
         )
 
-    def _coerce_export_request(self, request_data: ChatbookExportRequest | Mapping[str, Any]) -> ChatbookExportRequest:
+    def _coerce_export_request(
+        self, request_data: ChatbookExportRequest | Mapping[str, Any]
+    ) -> ChatbookExportRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChatbookExportRequest
+
         if isinstance(request_data, ChatbookExportRequest):
             return request_data
         payload = dict(request_data)
         if "content_selections" in payload:
-            payload["content_selections"] = self.normalize_content_selections(payload.get("content_selections"))
+            payload["content_selections"] = self.normalize_content_selections(
+                payload.get("content_selections")
+            )
         return ChatbookExportRequest(**payload)
 
     def _coerce_continue_export_request(
         self,
         request_data: ChatbookContinueExportRequest | Mapping[str, Any],
     ) -> ChatbookContinueExportRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChatbookContinueExportRequest
+
         if isinstance(request_data, ChatbookContinueExportRequest):
             return request_data
         return ChatbookContinueExportRequest(**dict(request_data))
 
-    def _coerce_import_request(self, request_data: ChatbookImportRequest | Mapping[str, Any]) -> ChatbookImportRequest:
+    def _coerce_import_request(
+        self, request_data: ChatbookImportRequest | Mapping[str, Any]
+    ) -> ChatbookImportRequest:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChatbookImportRequest
+
         if isinstance(request_data, ChatbookImportRequest):
             return request_data
         payload = dict(request_data)
-        if "content_selections" in payload and payload.get("content_selections") is not None:
-            payload["content_selections"] = self.normalize_content_selections(payload.get("content_selections"))
+        if (
+            "content_selections" in payload
+            and payload.get("content_selections") is not None
+        ):
+            payload["content_selections"] = self.normalize_content_selections(
+                payload.get("content_selections")
+            )
         return ChatbookImportRequest(**payload)
 
-    async def preview_chatbook(self, chatbook_file_path: Union[str, Path]) -> Dict[str, Any]:
+    async def preview_chatbook(
+        self, chatbook_file_path: Union[str, Path]
+    ) -> Dict[str, Any]:
         self._enforce(self._action_id("detail"))
         client = self._require_client()
         return await client.preview_chatbook(str(chatbook_file_path))
 
-    async def export_chatbook(self, request_data: ChatbookExportRequest) -> Dict[str, Any]:
+    async def export_chatbook(
+        self, request_data: ChatbookExportRequest
+    ) -> Dict[str, Any]:
         self._enforce(self._action_id("export"))
         client = self._require_client()
         return await client.export_chatbook(self._coerce_export_request(request_data))
@@ -354,7 +404,11 @@ class ServerChatbookService:
     ) -> Dict[str, Any]:
         self._enforce(self._action_id("export"))
         client = self._require_client()
-        return _to_plain_dict(await client.continue_chatbook_export(self._coerce_continue_export_request(request_data)))
+        return _to_plain_dict(
+            await client.continue_chatbook_export(
+                self._coerce_continue_export_request(request_data)
+            )
+        )
 
     async def export_chatbook_from_selection(
         self,
@@ -392,7 +446,9 @@ class ServerChatbookService:
     ) -> Dict[str, Any]:
         self._enforce(self._action_id("import"))
         client = self._require_client()
-        return await client.import_chatbook(str(chatbook_file_path), self._coerce_import_request(request_data))
+        return await client.import_chatbook(
+            str(chatbook_file_path), self._coerce_import_request(request_data)
+        )
 
     async def import_chatbook_from_selection(
         self,
@@ -420,7 +476,9 @@ class ServerChatbookService:
         return _to_plain_dict(await client.get_chatbook_export_job(job_id))
 
     @staticmethod
-    def _download_response_to_record(job_id: str, response: ReadingExportResponse | Mapping[str, Any]) -> Dict[str, Any]:
+    def _download_response_to_record(
+        job_id: str, response: ReadingExportResponse | Mapping[str, Any]
+    ) -> Dict[str, Any]:
         if isinstance(response, Mapping):
             payload = dict(response)
         else:
@@ -456,15 +514,23 @@ class ServerChatbookService:
     async def continue_import(self, job_id: str) -> Dict[str, Any]:
         return await self.get_import_job(job_id)
 
-    async def list_export_jobs(self, *, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+    async def list_export_jobs(
+        self, *, limit: int = 100, offset: int = 0
+    ) -> Dict[str, Any]:
         self._enforce(self._job_action_id("export", "list"))
         client = self._require_client()
-        return _to_plain_dict(await client.list_chatbook_export_jobs(limit=limit, offset=offset))
+        return _to_plain_dict(
+            await client.list_chatbook_export_jobs(limit=limit, offset=offset)
+        )
 
-    async def list_import_jobs(self, *, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+    async def list_import_jobs(
+        self, *, limit: int = 100, offset: int = 0
+    ) -> Dict[str, Any]:
         self._enforce(self._job_action_id("import", "list"))
         client = self._require_client()
-        return _to_plain_dict(await client.list_chatbook_import_jobs(limit=limit, offset=offset))
+        return _to_plain_dict(
+            await client.list_chatbook_import_jobs(limit=limit, offset=offset)
+        )
 
     async def cancel_export_job(self, job_id: str) -> Dict[str, Any]:
         self._enforce(self._job_action_id("export", "update"))
@@ -486,7 +552,9 @@ class ServerChatbookService:
         client = self._require_client()
         return _to_plain_dict(await client.remove_chatbook_import_job(job_id))
 
-    async def download_export_job(self, job_id: str, destination: Union[str, Path]) -> Path:
+    async def download_export_job(
+        self, job_id: str, destination: Union[str, Path]
+    ) -> Path:
         self._enforce(self._job_action_id("export", "export"))
         client = self._require_client()
         response = await client.download_chatbook_export(job_id)

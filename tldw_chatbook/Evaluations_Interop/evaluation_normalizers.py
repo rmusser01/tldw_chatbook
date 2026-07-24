@@ -85,7 +85,9 @@ def _normalize_dataset_samples(samples: Any) -> list[dict[str, Any]] | None:
     return normalized
 
 
-def _normalize_local_eval_payload(data: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+def _normalize_local_eval_payload(
+    data: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
     eval_spec = _coerce_json_mapping(data.get("config_data"))
     metadata = _as_mapping(eval_spec.pop(RESERVED_LOCAL_METADATA_KEY, None))
 
@@ -96,7 +98,9 @@ def _normalize_local_eval_payload(data: Mapping[str, Any]) -> tuple[dict[str, An
     return eval_spec, metadata
 
 
-def _normalize_progress(value: Any, *, completed_samples: Any = None, total_samples: Any = None) -> dict[str, Any] | None:
+def _normalize_progress(
+    value: Any, *, completed_samples: Any = None, total_samples: Any = None
+) -> dict[str, Any] | None:
     payload = _as_mapping(value)
     completed = _safe_int(payload.get("completed_samples"))
     total = _safe_int(payload.get("total_samples"))
@@ -113,7 +117,13 @@ def _normalize_progress(value: Any, *, completed_samples: Any = None, total_samp
     current_sample = _safe_int(payload.get("current_sample"))
     estimated_completion = _clean_timestamp(payload.get("estimated_completion"))
 
-    if completed is None and total is None and percent is None and current_sample is None and estimated_completion is None:
+    if (
+        completed is None
+        and total is None
+        and percent is None
+        and current_sample is None
+        and estimated_completion is None
+    ):
         return None
 
     return {
@@ -243,7 +253,9 @@ def normalize_evaluation_run_record(backend: str, payload: Any) -> dict[str, Any
 
     if backend == "local":
         evaluation_id = data.get("task_id")
-        target_model = data.get("target_model") or data.get("model_name") or data.get("model_id")
+        target_model = (
+            data.get("target_model") or data.get("model_name") or data.get("model_id")
+        )
     else:
         evaluation_id = data.get("eval_id")
         target_model = data.get("target_model")
@@ -259,7 +271,9 @@ def normalize_evaluation_run_record(backend: str, payload: Any) -> dict[str, Any
         "target_model": target_model,
         "created_at": _clean_timestamp(data.get("created_at"), data.get("created")),
         "started_at": _clean_timestamp(data.get("started_at"), data.get("start_time")),
-        "completed_at": _clean_timestamp(data.get("completed_at"), data.get("end_time")),
+        "completed_at": _clean_timestamp(
+            data.get("completed_at"), data.get("end_time")
+        ),
         "progress": progress,
         "error_message": data.get("error_message"),
         "results": results,

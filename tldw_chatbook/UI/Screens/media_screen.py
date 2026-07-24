@@ -7,6 +7,8 @@ from textual.app import ComposeResult
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..MediaWindow_v2 import MediaWindow
+from ..Workbench.workbench_state import WorkbenchHeaderState
+from ..Workbench.workbench_widgets import DestinationHeader
 from .media_runtime_state import MediaRuntimeState
 
 if TYPE_CHECKING:
@@ -18,7 +20,7 @@ class MediaScreen(BaseAppScreen):
     Media management screen wrapper.
     """
 
-    def __init__(self, app_instance: 'TldwCli', **kwargs):
+    def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(app_instance, "media", **kwargs)
         self.media_window = None
         self.media_runtime_state: MediaRuntimeState = app_instance.media_runtime_state
@@ -29,9 +31,19 @@ class MediaScreen(BaseAppScreen):
         self._pending_media_restore: Optional[Dict[str, Any]] = None
 
     def compose_content(self) -> ComposeResult:
-        """Compose the media window content."""
+        """Compose the media window content with its destination header."""
+        yield DestinationHeader(
+            WorkbenchHeaderState(
+                title="Media",
+                subtitle="Browse and manage your media library.",
+                status="ready",
+            ),
+            id="media-destination-header",
+        )
         self.media_window = MediaWindow(self.app_instance, classes="window")
         self.media_window.runtime_state = self.media_runtime_state
+        # Leave room for the destination header above the window.
+        self.media_window.styles.height = "1fr"
         # Yield the window widget directly
         yield self.media_window
 
@@ -47,7 +59,9 @@ class MediaScreen(BaseAppScreen):
             try:
                 self.media_window.apply_restored_view_state(self._pending_media_restore)
             except Exception:
-                logger.opt(exception=True).error("Error applying restored Media view state")
+                logger.opt(exception=True).error(
+                    "Error applying restored Media view state"
+                )
             self._pending_media_restore = None
 
     def save_state(self) -> Dict[str, Any]:
@@ -67,22 +81,30 @@ class MediaScreen(BaseAppScreen):
         try:
             state["media_active_type"] = window.active_media_type
         except Exception:
-            logger.opt(exception=True).debug("Could not read Media active_media_type for save_state")
+            logger.opt(exception=True).debug(
+                "Could not read Media active_media_type for save_state"
+            )
         try:
             state["media_selected_id"] = window.selected_media_id
         except Exception:
-            logger.opt(exception=True).debug("Could not read Media selected_media_id for save_state")
+            logger.opt(exception=True).debug(
+                "Could not read Media selected_media_id for save_state"
+            )
 
         search_panel = getattr(window, "search_panel", None)
         if search_panel is not None:
             try:
                 state["media_search_term"] = search_panel.search_term
             except Exception:
-                logger.opt(exception=True).debug("Could not read Media search_term for save_state")
+                logger.opt(exception=True).debug(
+                    "Could not read Media search_term for save_state"
+                )
             try:
                 state["media_keyword_filter"] = search_panel.keyword_filter
             except Exception:
-                logger.opt(exception=True).debug("Could not read Media keyword_filter for save_state")
+                logger.opt(exception=True).debug(
+                    "Could not read Media keyword_filter for save_state"
+                )
         return state
 
     def restore_state(self, state: Dict[str, Any]) -> None:

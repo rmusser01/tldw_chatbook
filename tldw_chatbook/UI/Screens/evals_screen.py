@@ -3,47 +3,77 @@
 from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult
-from textual.containers import Container
-from textual.widgets import Static
+from textual.binding import Binding
 
+from ..Evals.evals_window_v3 import EvalsWindowV3
+from ..Evals.navigation import EvalNavigationScreen, NavigateToEvalScreen
 from ..Navigation.base_app_screen import BaseAppScreen
-from ..Evals.navigation import EvalNavigationScreen
+from ..Workbench.workbench_state import WorkbenchHeaderState
+from ..Workbench.workbench_widgets import DestinationHeader
+from .lab_mode_strip import LabModeStrip
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
 
 
 class EvalsScreen(BaseAppScreen):
+    """Evals destination seat hosting the evaluation workbench in the shell.
+
+    The evaluation hub used to be pushed as a separate screen on mount, which
+    hid the shell chrome, left its card navigation unhandled, and stranded
+    users on a permanent "Loading Evaluation Lab..." placeholder when they
+    pressed Escape. The workbench now renders inline: the destination nav,
+    status line, and footer stay visible, card navigation works through
+    EvalsWindowV3, and Escape walks the workbench's own back stack.
     """
-    Evaluations screen wrapper that directly pushes the navigation screen.
-    """
-    
-    def __init__(self, app_instance: 'TldwCli', **kwargs):
+
+    BINDINGS = [
+        Binding("escape", "evals_back", "Back", show=False),
+        Binding("1", "evals_open('quick_test')", "Quick Test", show=False),
+        Binding("2", "evals_open('comparison')", "Comparison", show=False),
+        Binding("3", "evals_open('batch_eval')", "Batch Eval", show=False),
+        Binding("4", "evals_open('results')", "Results", show=False),
+        Binding("5", "evals_open('tasks')", "Tasks", show=False),
+        Binding("6", "evals_open('models')", "Models", show=False),
+    ]
+
+    def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(app_instance, "evals", **kwargs)
-    
+
     def compose_content(self) -> ComposeResult:
-        """Compose a placeholder that will be replaced by the navigation screen."""
-        # Create a placeholder container
-        yield Container(
-            Static("Loading Evaluation Lab..."),
-            id="evals-placeholder"
+        """Compose the Evals seat: identity header plus the inline workbench."""
+        yield DestinationHeader(
+            WorkbenchHeaderState(
+                title="Evals",
+                subtitle="Run and review evaluation jobs.",
+                status="ready",
+            ),
+            id="evals-destination-header",
         )
-    
-    def on_mount(self) -> None:
-        """When mounted, push the actual evaluation navigation screen."""
-        super().on_mount()
-        
-        # Push the evaluation navigation screen
-        eval_nav_screen = EvalNavigationScreen(self.app_instance)
-        self.app.push_screen(eval_nav_screen)
-    
+        yield LabModeStrip(active_route="evals", id="lab-mode-strip")
+        yield EvalsWindowV3(self.app_instance, id="evals-window")
+
+    def action_evals_back(self) -> None:
+        """Walk the evaluation workbench back stack, if it has one."""
+        window = self.query_one(EvalsWindowV3)
+        if window.screen_stack:
+            window.go_back()
+
+    def action_evals_open(self, screen_id: str) -> None:
+        """Open an evaluation workflow by number shortcut from the hub.
+
+        Only active while the navigation hub is current, mirroring the "Press
+        [n]" hints on its cards. Text inputs consume digit keys first, so
+        forms inside workflows are unaffected.
+        """
+        window = self.query_one(EvalsWindowV3)
+        if isinstance(window.current_screen, EvalNavigationScreen):
+            window.handle_navigation(NavigateToEvalScreen(screen_id))
+
     def save_state(self):
         """Save evals screen state."""
-        state = super().save_state()
-        # Add any evals-specific state here
-        return state
-    
+        return super().save_state()
+
     def restore_state(self, state):
         """Restore evals screen state."""
         super().restore_state(state)
-        # Restore any evals-specific state here

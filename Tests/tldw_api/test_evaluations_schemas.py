@@ -17,7 +17,11 @@ def test_evaluation_dataset_create_request_round_trips_samples_and_metadata():
         name="demo_dataset",
         description="Demo dataset",
         samples=[
-            {"input": "What is 2+2?", "expected": "4", "metadata": {"difficulty": "easy"}},
+            {
+                "input": "What is 2+2?",
+                "expected": "4",
+                "metadata": {"difficulty": "easy"},
+            },
             {"input": "What is 3+3?", "expected": "6"},
         ],
         metadata={"source": "local"},
@@ -34,7 +38,9 @@ def test_create_evaluation_request_round_trips_eval_spec():
         name="demo_eval",
         description="Demo evaluation",
         eval_type="exact_match",
-        eval_spec=EvaluationSpec(metrics=["accuracy"], threshold=0.85, model="gpt-4.1-mini"),
+        eval_spec=EvaluationSpec(
+            metrics=["accuracy"], threshold=0.85, model="gpt-4.1-mini"
+        ),
         dataset_id="dataset_123",
         metadata=EvaluationMetadata(project="demo", version="v1", tags=["parity"]),
     )
@@ -47,7 +53,9 @@ def test_create_evaluation_request_round_trips_eval_spec():
 
 def test_update_evaluation_request_is_partial():
     payload = UpdateEvaluationRequest(description="Updated evaluation")
-    assert payload.model_dump(exclude_none=True) == {"description": "Updated evaluation"}
+    assert payload.model_dump(exclude_none=True) == {
+        "description": "Updated evaluation"
+    }
 
 
 def test_evaluation_response_parses_timestamps_and_metadata():

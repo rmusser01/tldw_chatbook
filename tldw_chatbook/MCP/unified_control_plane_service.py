@@ -1,11 +1,30 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
+import json
+import time
+from collections.abc import Mapping
 from dataclasses import replace
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
+from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
+from .execution_log import MCPExecutionLog, RESULT_EXCERPT_LIMIT, build_record
+from .hub_tool_catalog import HubTool
+from .permission_store import (
+    EffectiveToolState,
+    MCPPermissionStore,
+    definition_hash,
+    resolve_effective_state,
+    resolve_effective_state_by_key,
+)
+from .redaction import redact_mapping
 from .server_target_store import ConfiguredServerTargetStore
 from .unified_context_store import UnifiedMCPContextStore
 from .unified_control_models import ServerAccessContext, UnifiedMCPContext
@@ -26,7 +45,18 @@ class UnifiedMCPControlPlaneService:
         self.context_store = context_store
         self.local_service = local_service
         self.server_service = server_service
-        self.context = self.context_store.load() if self.context_store is not None else UnifiedMCPContext()
+        self.context = (
+            self.context_store.load()
+            if self.context_store is not None
+            else UnifiedMCPContext()
+        )
+        self._execution_log: MCPExecutionLog | None = None
+        self._permission_store: MCPPermissionStore | None = None
+        # Chat bridge (Phase 5): in-memory-only, app-run-lifetime session
+        # approvals. Never persisted -- a fresh process/instance starts
+        # empty, and `clear_session_approvals()` is the only other way
+        # entries leave this set.
+        self._session_approvals: set[tuple[str, str]] = set()
 
     @property
     def selected_source(self) -> str:
@@ -38,9 +68,14 @@ class UnifiedMCPControlPlaneService:
         return self.context
 
     async def select_source(self, source: str) -> UnifiedMCPContext:
-        normalized_source = "server" if str(source or "").strip() == "server" else "local"
+        normalized_source = (
+            "server" if str(source or "").strip() == "server" else "local"
+        )
         self.context = replace(self.context, selected_source=normalized_source)
-        if normalized_source == "server" and self.context.selected_active_server_id is None:
+        if (
+            normalized_source == "server"
+            and self.context.selected_active_server_id is None
+        ):
             default_target = self._resolve_target(None)
             if default_target is not None:
                 return await self.select_server_target(default_target.server_id)
@@ -54,19 +89,26 @@ class UnifiedMCPControlPlaneService:
         if self.server_service is None:
             raise ValueError("Server Unified MCP service is unavailable.")
 
-        restored_state = self.context.per_server_state.get(target.server_id, ServerAccessContext(server_id=target.server_id))
+        restored_state = self.context.per_server_state.get(
+            target.server_id, ServerAccessContext(server_id=target.server_id)
+        )
         access_context = await self._maybe_await(
             self.server_service.resolve_access_context(
                 target=target,
-                selected_scope=restored_state.selected_scope or self.context.selected_scope,
-                selected_scope_ref=restored_state.selected_scope_ref or self.context.selected_scope_ref,
-                selected_section=restored_state.selected_section or self.context.selected_section,
+                selected_scope=restored_state.selected_scope
+                or self.context.selected_scope,
+                selected_scope_ref=restored_state.selected_scope_ref
+                or self.context.selected_scope_ref,
+                selected_section=restored_state.selected_section
+                or self.context.selected_section,
             )
         )
         self._apply_server_access_context(target.server_id, access_context)
         return self.context
 
-    async def select_scope(self, scope: str | None, scope_ref: str | None = None) -> UnifiedMCPContext:
+    async def select_scope(
+        self, scope: str | None, scope_ref: str | None = None
+    ) -> UnifiedMCPContext:
         if self.context.selected_source != "server":
             self.context = replace(
                 self.context,
@@ -115,7 +157,9 @@ class UnifiedMCPControlPlaneService:
                 await self.select_server_target(target.server_id)
                 access_context = self.context.per_server_state.get(target.server_id)
             if access_context is None:
-                raise RuntimeError("Failed to resolve Unified MCP server access context.")
+                raise RuntimeError(
+                    "Failed to resolve Unified MCP server access context."
+                )
             if access_context.selected_section != effective_section:
                 await self.select_section(effective_section)
                 access_context = self.context.per_server_state[target.server_id]
@@ -194,7 +238,9 @@ class UnifiedMCPControlPlaneService:
             return {
                 "source": "local",
                 "section": "governance",
-                "rules": list(await self._maybe_await(self.local_service.get_governance())),
+                "rules": list(
+                    await self._maybe_await(self.local_service.get_governance())
+                ),
             }
         if effective_section == "advanced":
             return await self._maybe_await(self.local_service.get_advanced())
@@ -205,7 +251,9 @@ class UnifiedMCPControlPlaneService:
             return await value
         return value
 
-    def _with_server_context(self, payload: dict[str, Any], *, section: str) -> dict[str, Any]:
+    def _with_server_context(
+        self, payload: dict[str, Any], *, section: str
+    ) -> dict[str, Any]:
         return {
             **dict(payload or {}),
             "source": "server",
@@ -313,19 +361,19 @@ class UnifiedMCPControlPlaneService:
                         "name": "runtime.protocol.inspect",
                         "label": "Inspect Local Protocol",
                         "action_id": "mcp.runtime.observe.local",
-                        "payload_template": '{}',
+                        "payload_template": "{}",
                     },
                     {
                         "name": "runtime.health.get",
                         "label": "Get Local Runtime Health",
                         "action_id": "mcp.runtime.observe.local",
-                        "payload_template": '{}',
+                        "payload_template": "{}",
                     },
                     {
                         "name": "approval_requests.list",
                         "label": "List Local Approval Requests",
                         "action_id": "mcp.governance.observe.local",
-                        "payload_template": '{}',
+                        "payload_template": "{}",
                     },
                     {
                         "name": "approval_request.approve",
@@ -349,7 +397,7 @@ class UnifiedMCPControlPlaneService:
                         "name": "runtime.status.get",
                         "label": "Get Local Runtime Status",
                         "action_id": "mcp.runtime.observe.local",
-                        "payload_template": '{}',
+                        "payload_template": "{}",
                     },
                     {
                         "name": "runtime.request",
@@ -367,7 +415,11 @@ class UnifiedMCPControlPlaneService:
             return []
 
         if (self.context.selected_section or "overview") == "catalogs":
-            if (self.context.selected_scope or "personal") not in {"team", "org", "system_admin"}:
+            if (self.context.selected_scope or "personal") not in {
+                "team",
+                "org",
+                "system_admin",
+            }:
                 return []
             return [
                 {
@@ -397,7 +449,11 @@ class UnifiedMCPControlPlaneService:
             ]
 
         if (self.context.selected_section or "overview") == "external_servers":
-            if (self.context.selected_scope or "personal") not in {"team", "org", "system_admin"}:
+            if (self.context.selected_scope or "personal") not in {
+                "team",
+                "org",
+                "system_admin",
+            }:
                 return []
             return [
                 {
@@ -805,7 +861,11 @@ class UnifiedMCPControlPlaneService:
                     "payload_template": '{"workspace_set_object_id":6,"workspace_id":"ws-1"}',
                 },
             ]
-            if (self.context.selected_scope or "personal") in {"team", "org", "system_admin"}:
+            if (self.context.selected_scope or "personal") in {
+                "team",
+                "org",
+                "system_admin",
+            }:
                 actions[0:0] = [
                     {
                         "name": "capability_mapping.preview",
@@ -872,71 +932,122 @@ class UnifiedMCPControlPlaneService:
         access_context = None
         if target is not None:
             access_context = self.context.per_server_state.get(target.server_id)
-        target_status = access_context.target_status if access_context is not None else None
+        target_status = (
+            access_context.target_status if access_context is not None else None
+        )
         return RuntimeSourceState(
             active_source="server",
-            active_server_id=(target.server_id if target is not None else self.context.selected_active_server_id),
+            active_server_id=(
+                target.server_id
+                if target is not None
+                else self.context.selected_active_server_id
+            ),
             server_configured=target is not None,
             server_reachability=(
                 target_status.last_known_reachability
-                if target_status is not None and target_status.last_known_reachability is not None
+                if target_status is not None
+                and target_status.last_known_reachability is not None
                 else "reachable"
             ),
             server_auth_state=(
                 target_status.last_known_auth_state
-                if target_status is not None and target_status.last_known_auth_state is not None
+                if target_status is not None
+                and target_status.last_known_auth_state is not None
                 else "authenticated"
             ),
             last_known_server_label=(
                 target_status.last_known_server_label
-                if target_status is not None and target_status.last_known_server_label is not None
+                if target_status is not None
+                and target_status.last_known_server_label is not None
                 else (target.label if target is not None else None)
             ),
         )
 
-    async def run_action(self, action_name: str, payload: dict[str, Any] | None = None) -> Any:
+    async def run_action(
+        self, action_name: str, payload: dict[str, Any] | None = None
+    ) -> Any:
         payload = dict(payload or {})
         if self.context.selected_source != "server":
             if action_name == "profile.save":
-                return await self._maybe_await(self.local_service.save_external_profile(payload))
+                return await self._maybe_await(
+                    self.local_service.save_external_profile(payload)
+                )
             if action_name == "profile.delete":
-                return await self._maybe_await(self.local_service.delete_external_profile(self._require_field(payload, "profile_id")))
+                return await self._maybe_await(
+                    self.local_service.delete_external_profile(
+                        self._require_field(payload, "profile_id")
+                    )
+                )
             if action_name == "profile.connect":
-                return await self._maybe_await(self.local_service.connect_profile(self._require_field(payload, "profile_id")))
+                return await self._maybe_await(
+                    self.local_service.connect_profile(
+                        self._require_field(payload, "profile_id")
+                    )
+                )
             if action_name == "profile.disconnect":
-                return await self._maybe_await(self.local_service.disconnect_profile(self._require_field(payload, "profile_id")))
+                return await self._maybe_await(
+                    self.local_service.disconnect_profile(
+                        self._require_field(payload, "profile_id")
+                    )
+                )
             if action_name == "profile.test":
-                return await self._maybe_await(self.local_service.test_external_profile(self._require_field(payload, "profile_id")))
+                return await self._maybe_await(
+                    self.local_service.test_external_profile(
+                        self._require_field(payload, "profile_id")
+                    )
+                )
             if action_name == "profile.refresh":
-                return await self._maybe_await(self.local_service.refresh_external_profile(self._require_field(payload, "profile_id")))
+                return await self._maybe_await(
+                    self.local_service.refresh_external_profile(
+                        self._require_field(payload, "profile_id")
+                    )
+                )
             if action_name == "tool.execute":
                 return await self._maybe_await(
                     self.local_service.execute_tool(
                         self._require_field(payload, "tool_name"),
-                        payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {},
+                        payload.get("arguments")
+                        if isinstance(payload.get("arguments"), dict)
+                        else {},
                     )
                 )
             if action_name == "resource.read":
                 return await self._maybe_await(
-                    self.local_service.read_resource(self._require_field(payload, "resource_uri"))
+                    self.local_service.read_resource(
+                        self._require_field(payload, "resource_uri")
+                    )
                 )
             if action_name == "prompt.get":
                 return await self._maybe_await(
                     self.local_service.get_prompt(
                         self._require_field(payload, "prompt_name"),
-                        payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {},
+                        payload.get("arguments")
+                        if isinstance(payload.get("arguments"), dict)
+                        else {},
                     )
                 )
             if action_name == "governance_rule.save":
-                return await self._maybe_await(self.local_service.save_governance_rule(payload))
+                return await self._maybe_await(
+                    self.local_service.save_governance_rule(payload)
+                )
             if action_name == "governance_rule.preview":
                 return await self._maybe_await(
-                    self.local_service.preview_governance_decision(self._require_field(payload, "capability_id"))
+                    self.local_service.preview_governance_decision(
+                        self._require_field(payload, "capability_id")
+                    )
                 )
             if action_name == "governance_rule.delete":
-                return await self._maybe_await(self.local_service.delete_governance_rule(self._require_field(payload, "rule_id")))
+                return await self._maybe_await(
+                    self.local_service.delete_governance_rule(
+                        self._require_field(payload, "rule_id")
+                    )
+                )
             if action_name == "runtime.access.preview":
-                nested_payload = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+                nested_payload = (
+                    payload.get("payload")
+                    if isinstance(payload.get("payload"), dict)
+                    else {}
+                )
                 return await self._maybe_await(
                     self.local_service.preview_runtime_access(
                         self._require_field(payload, "action_name"),
@@ -944,9 +1055,15 @@ class UnifiedMCPControlPlaneService:
                     )
                 )
             if action_name == "runtime.activity.list":
-                return await self._maybe_await(self.local_service.get_runtime_activity(int(payload.get("limit", 20))))
+                return await self._maybe_await(
+                    self.local_service.get_runtime_activity(
+                        int(payload.get("limit", 20))
+                    )
+                )
             if action_name == "runtime.protocol.inspect":
-                return await self._maybe_await(self.local_service.get_runtime_protocol_diagnostics())
+                return await self._maybe_await(
+                    self.local_service.get_runtime_protocol_diagnostics()
+                )
             if action_name == "runtime.health.get":
                 return await self._maybe_await(self.local_service.get_runtime_health())
             if action_name == "approval_requests.list":
@@ -955,20 +1072,28 @@ class UnifiedMCPControlPlaneService:
                 return await self._maybe_await(
                     self.local_service.list_approval_requests(
                         str(status).strip() if status is not None else None,
-                        str(resolved_action_id).strip() if resolved_action_id is not None else None,
+                        str(resolved_action_id).strip()
+                        if resolved_action_id is not None
+                        else None,
                     )
                 )
             if action_name == "approval_request.approve":
                 return await self._maybe_await(
-                    self.local_service.approve_approval_request(self._require_field(payload, "request_id"))
+                    self.local_service.approve_approval_request(
+                        self._require_field(payload, "request_id")
+                    )
                 )
             if action_name == "approval_request.deny":
                 return await self._maybe_await(
-                    self.local_service.deny_approval_request(self._require_field(payload, "request_id"))
+                    self.local_service.deny_approval_request(
+                        self._require_field(payload, "request_id")
+                    )
                 )
             if action_name == "approval_request.delete":
                 return await self._maybe_await(
-                    self.local_service.delete_approval_request(self._require_field(payload, "request_id"))
+                    self.local_service.delete_approval_request(
+                        self._require_field(payload, "request_id")
+                    )
                 )
             if action_name == "runtime.status.get":
                 return await self._maybe_await(self.local_service.get_runtime_status())
@@ -976,14 +1101,18 @@ class UnifiedMCPControlPlaneService:
                 return await self._maybe_await(
                     self.local_service.run_runtime_request(
                         self._require_field(payload, "method"),
-                        payload.get("params") if isinstance(payload.get("params"), dict) else {},
+                        payload.get("params")
+                        if isinstance(payload.get("params"), dict)
+                        else {},
                     )
                 )
             if action_name == "runtime.batch":
                 requests = payload.get("requests")
                 if not isinstance(requests, list):
                     raise ValueError("Unified MCP action requires 'requests'.")
-                return await self._maybe_await(self.local_service.run_runtime_batch(requests))
+                return await self._maybe_await(
+                    self.local_service.run_runtime_batch(requests)
+                )
             raise ValueError(f"Unsupported Unified MCP local action: {action_name}")
 
         target = self._require_active_server_target()
@@ -993,11 +1122,15 @@ class UnifiedMCPControlPlaneService:
 
         if action_name == "catalog.create":
             return await self._maybe_await(
-                self.server_service.create_catalog(target=target, access_context=access_context, payload=payload)
+                self.server_service.create_catalog(
+                    target=target, access_context=access_context, payload=payload
+                )
             )
         if action_name == "catalog.entry.create":
             catalog_id = self._require_field(payload, "catalog_id")
-            entry_payload = {key: value for key, value in payload.items() if key != "catalog_id"}
+            entry_payload = {
+                key: value for key, value in payload.items() if key != "catalog_id"
+            }
             return await self._maybe_await(
                 self.server_service.create_catalog_entry(
                     target=target,
@@ -1025,11 +1158,15 @@ class UnifiedMCPControlPlaneService:
             )
         if action_name == "external_server.create":
             return await self._maybe_await(
-                self.server_service.create_external_server(target=target, access_context=access_context, payload=payload)
+                self.server_service.create_external_server(
+                    target=target, access_context=access_context, payload=payload
+                )
             )
         if action_name == "external_server.update":
             server_id = self._require_field(payload, "server_id")
-            update_payload = {key: value for key, value in payload.items() if key != "server_id"}
+            update_payload = {
+                key: value for key, value in payload.items() if key != "server_id"
+            }
             return await self._maybe_await(
                 self.server_service.update_external_server(
                     target=target,
@@ -1056,7 +1193,9 @@ class UnifiedMCPControlPlaneService:
             )
         if action_name == "external_server.auth_template.update":
             server_id = self._require_field(payload, "server_id")
-            update_payload = {key: value for key, value in payload.items() if key != "server_id"}
+            update_payload = {
+                key: value for key, value in payload.items() if key != "server_id"
+            }
             return await self._maybe_await(
                 self.server_service.update_external_server_auth_template(
                     target=target,
@@ -1075,7 +1214,9 @@ class UnifiedMCPControlPlaneService:
             )
         if action_name == "external_server.slot.create":
             server_id = self._require_field(payload, "server_id")
-            slot_payload = {key: value for key, value in payload.items() if key != "server_id"}
+            slot_payload = {
+                key: value for key, value in payload.items() if key != "server_id"
+            }
             return await self._maybe_await(
                 self.server_service.create_external_server_credential_slot(
                     target=target,
@@ -1148,7 +1289,9 @@ class UnifiedMCPControlPlaneService:
             )
         if action_name == "permission_profile.update":
             profile_id = self._require_field(payload, "profile_id")
-            update_payload = {key: value for key, value in payload.items() if key != "profile_id"}
+            update_payload = {
+                key: value for key, value in payload.items() if key != "profile_id"
+            }
             return await self._maybe_await(
                 self.server_service.update_permission_profile(
                     target=target,
@@ -1175,7 +1318,9 @@ class UnifiedMCPControlPlaneService:
             )
         if action_name == "policy_assignment.update":
             assignment_id = self._require_field(payload, "assignment_id")
-            update_payload = {key: value for key, value in payload.items() if key != "assignment_id"}
+            update_payload = {
+                key: value for key, value in payload.items() if key != "assignment_id"
+            }
             return await self._maybe_await(
                 self.server_service.update_policy_assignment(
                     target=target,
@@ -1202,7 +1347,9 @@ class UnifiedMCPControlPlaneService:
             )
         if action_name == "policy_assignment.override.upsert":
             assignment_id = self._require_field(payload, "assignment_id")
-            override_payload = {key: value for key, value in payload.items() if key != "assignment_id"}
+            override_payload = {
+                key: value for key, value in payload.items() if key != "assignment_id"
+            }
             return await self._maybe_await(
                 self.server_service.upsert_policy_assignment_override(
                     target=target,
@@ -1247,7 +1394,9 @@ class UnifiedMCPControlPlaneService:
                 self.server_service.delete_approval_policy(
                     target=target,
                     access_context=access_context,
-                    approval_policy_id=self._require_field(payload, "approval_policy_id"),
+                    approval_policy_id=self._require_field(
+                        payload, "approval_policy_id"
+                    ),
                 )
             )
         if action_name == "approval_decision.create":
@@ -1448,7 +1597,9 @@ class UnifiedMCPControlPlaneService:
             )
         if action_name == "acp_profile.update":
             profile_id = self._require_field(payload, "profile_id")
-            update_payload = {key: value for key, value in payload.items() if key != "profile_id"}
+            update_payload = {
+                key: value for key, value in payload.items() if key != "profile_id"
+            }
             return await self._maybe_await(
                 self.server_service.update_acp_profile(
                     target=target,
@@ -1502,7 +1653,9 @@ class UnifiedMCPControlPlaneService:
                 self.server_service.check_governance_pack_updates(
                     target=target,
                     access_context=access_context,
-                    governance_pack_id=self._require_field(payload, "governance_pack_id"),
+                    governance_pack_id=self._require_field(
+                        payload, "governance_pack_id"
+                    ),
                 )
             )
         if action_name == "governance_pack.prepare_upgrade_candidate":
@@ -1510,7 +1663,9 @@ class UnifiedMCPControlPlaneService:
                 self.server_service.prepare_governance_pack_upgrade_candidate(
                     target=target,
                     access_context=access_context,
-                    governance_pack_id=self._require_field(payload, "governance_pack_id"),
+                    governance_pack_id=self._require_field(
+                        payload, "governance_pack_id"
+                    ),
                 )
             )
         if action_name == "governance_pack.dry_run_upgrade":
@@ -1566,7 +1721,9 @@ class UnifiedMCPControlPlaneService:
                 self.server_service.get_governance_pack_detail(
                     target=target,
                     access_context=access_context,
-                    governance_pack_id=self._require_field(payload, "governance_pack_id"),
+                    governance_pack_id=self._require_field(
+                        payload, "governance_pack_id"
+                    ),
                 )
             )
         if action_name == "governance_pack.upgrade_history.list":
@@ -1574,7 +1731,9 @@ class UnifiedMCPControlPlaneService:
                 self.server_service.list_governance_pack_upgrade_history(
                     target=target,
                     access_context=access_context,
-                    governance_pack_id=self._require_field(payload, "governance_pack_id"),
+                    governance_pack_id=self._require_field(
+                        payload, "governance_pack_id"
+                    ),
                 )
             )
         if action_name == "path_scope_object.create":
@@ -1587,7 +1746,11 @@ class UnifiedMCPControlPlaneService:
             )
         if action_name == "path_scope_object.update":
             path_scope_object_id = self._require_field(payload, "path_scope_object_id")
-            update_payload = {key: value for key, value in payload.items() if key != "path_scope_object_id"}
+            update_payload = {
+                key: value
+                for key, value in payload.items()
+                if key != "path_scope_object_id"
+            }
             return await self._maybe_await(
                 self.server_service.update_path_scope_object(
                     target=target,
@@ -1601,7 +1764,9 @@ class UnifiedMCPControlPlaneService:
                 self.server_service.delete_path_scope_object(
                     target=target,
                     access_context=access_context,
-                    path_scope_object_id=self._require_field(payload, "path_scope_object_id"),
+                    path_scope_object_id=self._require_field(
+                        payload, "path_scope_object_id"
+                    ),
                 )
             )
         if action_name == "capability_mapping.preview":
@@ -1621,7 +1786,9 @@ class UnifiedMCPControlPlaneService:
                 )
             )
         if action_name == "capability_mapping.update":
-            capability_adapter_mapping_id = self._require_field(payload, "capability_adapter_mapping_id")
+            capability_adapter_mapping_id = self._require_field(
+                payload, "capability_adapter_mapping_id"
+            )
             update_payload = {
                 key: value
                 for key, value in payload.items()
@@ -1640,7 +1807,9 @@ class UnifiedMCPControlPlaneService:
                 self.server_service.delete_capability_mapping(
                     target=target,
                     access_context=access_context,
-                    capability_adapter_mapping_id=self._require_field(payload, "capability_adapter_mapping_id"),
+                    capability_adapter_mapping_id=self._require_field(
+                        payload, "capability_adapter_mapping_id"
+                    ),
                 )
             )
         if action_name == "workspace_set_object.create":
@@ -1652,7 +1821,9 @@ class UnifiedMCPControlPlaneService:
                 )
             )
         if action_name == "workspace_set_object.update":
-            workspace_set_object_id = self._require_field(payload, "workspace_set_object_id")
+            workspace_set_object_id = self._require_field(
+                payload, "workspace_set_object_id"
+            )
             update_payload = {
                 key: value
                 for key, value in payload.items()
@@ -1671,7 +1842,9 @@ class UnifiedMCPControlPlaneService:
                 self.server_service.delete_workspace_set_object(
                     target=target,
                     access_context=access_context,
-                    workspace_set_object_id=self._require_field(payload, "workspace_set_object_id"),
+                    workspace_set_object_id=self._require_field(
+                        payload, "workspace_set_object_id"
+                    ),
                 )
             )
         if action_name == "workspace_set_object.members.list":
@@ -1679,11 +1852,15 @@ class UnifiedMCPControlPlaneService:
                 self.server_service.list_workspace_set_members(
                     target=target,
                     access_context=access_context,
-                    workspace_set_object_id=self._require_field(payload, "workspace_set_object_id"),
+                    workspace_set_object_id=self._require_field(
+                        payload, "workspace_set_object_id"
+                    ),
                 )
             )
         if action_name == "workspace_set_object.member.add":
-            workspace_set_object_id = self._require_field(payload, "workspace_set_object_id")
+            workspace_set_object_id = self._require_field(
+                payload, "workspace_set_object_id"
+            )
             member_payload = {
                 key: value
                 for key, value in payload.items()
@@ -1702,7 +1879,9 @@ class UnifiedMCPControlPlaneService:
                 self.server_service.delete_workspace_set_member(
                     target=target,
                     access_context=access_context,
-                    workspace_set_object_id=self._require_field(payload, "workspace_set_object_id"),
+                    workspace_set_object_id=self._require_field(
+                        payload, "workspace_set_object_id"
+                    ),
                     workspace_id=self._require_field(payload, "workspace_id"),
                 )
             )
@@ -1734,7 +1913,9 @@ class UnifiedMCPControlPlaneService:
                 self.server_service.delete_shared_workspace(
                     target=target,
                     access_context=access_context,
-                    shared_workspace_id=self._require_field(payload, "shared_workspace_id"),
+                    shared_workspace_id=self._require_field(
+                        payload, "shared_workspace_id"
+                    ),
                 )
             )
         raise ValueError(f"Unsupported Unified MCP server action: {action_name}")
@@ -1778,3 +1959,664 @@ class UnifiedMCPControlPlaneService:
         if value in (None, ""):
             raise ValueError(f"Unified MCP action requires '{field_name}'.")
         return value
+
+    # ---- Typed local lifecycle/mutation seam (Phase 2) ----------------------
+    # Shared by the Hub UI now and by the Phase 5 chat bridge / agent-runtime
+    # MCPToolProvider (task-201) later. Governance enforcement stays inside
+    # the local service exactly as run_action's branches rely on it.
+
+    def _lifecycle_timeout(self) -> float:
+        try:
+            return float(get_cli_setting("mcp", "hub_lifecycle_timeout_seconds", 45))
+        except (TypeError, ValueError):
+            return 45.0
+
+    def _record_local_attempt(
+        self, profile_id: str, action: str, *, ok: bool, error: str | None
+    ) -> None:
+        store = getattr(self.local_service, "store", None)
+        if store is None:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            previous = store.get_profile_runtime_state(profile_id) or {}
+            store.save_profile_runtime_state(
+                profile_id,
+                {
+                    "last_attempt_at": now,
+                    "last_action": action,
+                    "ok": ok,
+                    "last_ok_at": now if ok else previous.get("last_ok_at"),
+                    "last_error": None if ok else (error or "")[:300],
+                },
+            )
+        except Exception as exc:
+            # Recording is best-effort: it must never mask the lifecycle
+            # result or the original exception being propagated.
+            logger.warning(
+                f"MCP lifecycle attempt record failed for {profile_id}: {exc}"
+            )
+
+    async def _run_local_lifecycle(self, action: str, profile_id: str, coro):
+        timeout = self._lifecycle_timeout()
+        try:
+            result = await asyncio.wait_for(coro, timeout=timeout)
+        except asyncio.TimeoutError:
+            message = f"Timed out after {timeout:.0f}s"
+            self._record_local_attempt(profile_id, action, ok=False, error=message)
+            raise RuntimeError(message) from None
+        except asyncio.CancelledError:
+            self._record_local_attempt(profile_id, action, ok=False, error="Cancelled")
+            raise
+        except Exception as exc:
+            self._record_local_attempt(profile_id, action, ok=False, error=str(exc))
+            raise
+        self._record_local_attempt(profile_id, action, ok=True, error=None)
+        return result
+
+    async def connect_local_profile(self, profile_id: str) -> dict:
+        return await self._run_local_lifecycle(
+            "connect", profile_id, self.local_service.connect_profile(profile_id)
+        )
+
+    async def disconnect_local_profile(self, profile_id: str) -> bool:
+        return await self._run_local_lifecycle(
+            "disconnect", profile_id, self.local_service.disconnect_profile(profile_id)
+        )
+
+    async def test_local_profile(self, profile_id: str) -> dict:
+        return await self._run_local_lifecycle(
+            "test", profile_id, self.local_service.test_external_profile(profile_id)
+        )
+
+    async def refresh_local_profile(self, profile_id: str) -> dict:
+        return await self._run_local_lifecycle(
+            "refresh",
+            profile_id,
+            self.local_service.refresh_external_profile(profile_id),
+        )
+
+    async def save_local_profile(self, payload: dict) -> dict:
+        return self.local_service.save_external_profile(dict(payload or {}))
+
+    async def delete_local_profile(self, profile_id: str) -> bool:
+        return bool(self.local_service.delete_external_profile(profile_id))
+
+    async def local_external_catalog(self) -> list[dict]:
+        # Records (profile fields + discovery_snapshot + is_connected) still
+        # come from the local service so governance enforcement and
+        # is_connected (read from the live client sessions) are unchanged.
+        # `runtime_state` is merged in from a single store bundle load
+        # rather than one `get_profile_runtime_state()` load per record.
+        records = list(self.local_service.get_external_servers() or [])
+        store = getattr(self.local_service, "store", None)
+        runtime_state_by_profile: dict[str, Any] = (
+            store.get_catalog_bundle()["profile_runtime_state"] if store else {}
+        )
+        for record in records:
+            profile_id = str(record.get("profile_id") or "")
+            record["runtime_state"] = runtime_state_by_profile.get(profile_id)
+        return records
+
+    # ---- Typed tool-execution seam (Phase 3) ---------------------------
+    # Shared by the Hub Tools mode now and by the Phase 5 chat bridge /
+    # agent-runtime MCPToolProvider (task-201) later. Keep this UI-free.
+
+    @property
+    def execution_log(self) -> MCPExecutionLog | None:
+        if self._execution_log is not None:
+            return self._execution_log
+        store = getattr(self.local_service, "store", None)
+        if store is None:
+            return None
+        log_path = Path(store.path).with_name("mcp_execution_log.jsonl")
+        self._execution_log = MCPExecutionLog(log_path)
+        return self._execution_log
+
+    def _record_tool_execution(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        ok: bool,
+        duration_ms: int,
+        error: str | None,
+        arguments: dict[str, Any],
+        result: Any,
+        initiator: str = "test",
+        decision: str = "allowed",
+    ) -> None:
+        # Recording is best-effort: it must never mask the tool result or
+        # the tool error being propagated (Phase 2 masking lesson). N1: the
+        # `self.execution_log` property access itself must be inside this
+        # try too -- it can raise (e.g. `Path(store.path)` oddities), and
+        # sitting outside would let that raise straight out of
+        # `_record_tool_execution()` into the caller's own try/except
+        # around test_hub_tool()'s / execute_hub_tool()'s success/failure
+        # paths, masking the tool result exactly like an append() failure
+        # would.
+        #
+        # `initiator`/`decision` default to "test"/"allowed" -- the values
+        # `test_hub_tool()` has always recorded -- so callers that don't
+        # pass them (there are none left in this module, but external
+        # callers via reflection/monkeypatching should not break) keep the
+        # original byte-compatible record shape.
+        try:
+            log = self.execution_log
+            if log is None:
+                return
+            record = build_record(
+                server_key=server_key,
+                tool_name=tool_name,
+                initiator=initiator,
+                decision=decision,
+                ok=ok,
+                duration_ms=duration_ms,
+                error=error,
+                arguments=arguments,
+                # I2: `build_record()`/`MCPExecutionLog.append()` only
+                # redact `arguments`, never the result -- a Mapping result
+                # (the common shape: `test_hub_tool()`'s MCP call_tool
+                # response) is redacted here first, mirroring the UI's own
+                # result-formatting path (mcp_workbench.py's
+                # `_run_tool_test()`), so a secret echoed back in a tool's
+                # result can never reach disk unredacted.
+                result_excerpt=(
+                    json.dumps(redact_mapping(result), default=str)[
+                        :RESULT_EXCERPT_LIMIT
+                    ]
+                    if isinstance(result, Mapping)
+                    else str(result)[:RESULT_EXCERPT_LIMIT]
+                ),
+                # Coerce: a mis-typed config string like "false" is truthy,
+                # which would silently keep argument capture ON against the
+                # user's stated intent (Qodo #639 finding).
+                capture_args=coerce_bool_setting(
+                    get_cli_setting("mcp", "log_tool_arguments", True), True
+                ),
+            )
+            log.append(record)
+        except Exception as exc:
+            logger.warning(
+                f"MCP execution log record failed for {server_key}/{tool_name}: {exc}"
+            )
+
+    async def execute_hub_tool(
+        self,
+        server_key: str,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+        *,
+        initiator: str = "test",
+        decision: str = "allowed",
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        """Execute one tool call against a local or built-in server.
+
+        The shared execute seam for the Hub's Test Tool runner and the
+        Phase 5 chat bridge / agent-runtime ``MCPToolProvider``. Same
+        ``local:``/``builtin:`` routing and error semantics as the
+        original ``test_hub_tool()`` body this generalizes; callers
+        distinguish themselves via ``initiator``/``decision`` so the
+        execution-log record reflects who ran the tool and under what
+        permission decision. Every attempt — success, failure, or
+        timeout — is recorded to the execution log best-effort before the
+        result or error propagates.
+
+        Args:
+            server_key: Prefixed server key (``local:<profile_id>`` or
+                ``builtin:<id>``). Server-source keys are display-only
+                and rejected here.
+            tool_name: Name of the tool to execute.
+            arguments: Tool arguments; defaults to an empty dict.
+            initiator: Who initiated the call, recorded on the execution
+                log (e.g. ``"test"`` for the Hub UI, ``"agent"`` for the
+                chat bridge).
+            decision: The permission decision under which the call ran
+                (e.g. ``"allowed"``, ``"approved"``), recorded on the
+                execution log.
+            timeout_seconds: Per-call timeout override; defaults to
+                :meth:`_tool_call_timeout` (``[mcp]
+                tool_call_timeout_seconds``) when omitted.
+
+        Returns:
+            The raw result payload from the underlying service call.
+
+        Raises:
+            ValueError: If ``server_key`` is not a local/builtin key.
+            RuntimeError: If the tool call fails or exceeds the
+                effective timeout.
+        """
+        normalized_key = str(server_key or "").strip()
+        normalized_tool_name = str(tool_name or "").strip()
+        normalized_arguments = dict(arguments or {})
+
+        if normalized_key.startswith("local:"):
+            profile_id = normalized_key.split(":", 1)[1]
+            coro = self.local_service.execute_external_tool(
+                profile_id, normalized_tool_name, normalized_arguments
+            )
+        elif normalized_key.startswith("builtin:"):
+            coro = self.local_service.execute_tool(
+                normalized_tool_name, normalized_arguments
+            )
+        else:
+            raise ValueError("Server-source tools are display-only.")
+
+        timeout = (
+            timeout_seconds
+            if timeout_seconds is not None
+            else self._tool_call_timeout()
+        )
+        started = time.monotonic()
+        try:
+            result = await asyncio.wait_for(coro, timeout=timeout)
+        except asyncio.TimeoutError:
+            duration_ms = int((time.monotonic() - started) * 1000)
+            message = f"Timed out after {timeout:.0f}s"
+            self._record_tool_execution(
+                normalized_key,
+                normalized_tool_name,
+                ok=False,
+                duration_ms=duration_ms,
+                error=message,
+                arguments=normalized_arguments,
+                result=None,
+                initiator=initiator,
+                decision=decision,
+            )
+            raise RuntimeError(message) from None
+        except Exception as exc:
+            duration_ms = int((time.monotonic() - started) * 1000)
+            self._record_tool_execution(
+                normalized_key,
+                normalized_tool_name,
+                ok=False,
+                duration_ms=duration_ms,
+                error=str(exc),
+                arguments=normalized_arguments,
+                result=None,
+                initiator=initiator,
+                decision=decision,
+            )
+            raise
+
+        duration_ms = int((time.monotonic() - started) * 1000)
+        self._record_tool_execution(
+            normalized_key,
+            normalized_tool_name,
+            ok=True,
+            duration_ms=duration_ms,
+            error=None,
+            arguments=normalized_arguments,
+            result=result,
+            initiator=initiator,
+            decision=decision,
+        )
+        return result
+
+    async def test_hub_tool(
+        self,
+        server_key: str,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Execute one tool test against a local or built-in server.
+
+        Thin delegate to :meth:`execute_hub_tool` fixed to the Hub Test
+        Tool runner's semantics: ``initiator="test"``,
+        ``decision="allowed"``, and the lifecycle timeout
+        (``[mcp] hub_lifecycle_timeout_seconds`` via
+        :meth:`_lifecycle_timeout`) rather than the chat-bridge's
+        per-call timeout knob -- preserved unchanged so existing callers
+        and their pinned tests keep seeing identical behavior.
+
+        Args:
+            server_key: Prefixed server key (``local:<profile_id>`` or
+                ``builtin:<id>``). Server-source keys are display-only
+                and rejected here.
+            tool_name: Name of the tool to execute.
+            arguments: Tool arguments; defaults to an empty dict.
+
+        Returns:
+            The raw result payload from the underlying service call.
+
+        Raises:
+            ValueError: If ``server_key`` is not a local/builtin key.
+            RuntimeError: If the tool call fails or exceeds the
+                configured lifecycle timeout.
+        """
+        return await self.execute_hub_tool(
+            server_key,
+            tool_name,
+            arguments,
+            initiator="test",
+            decision="allowed",
+            timeout_seconds=self._lifecycle_timeout(),
+        )
+
+    # ---- Chat bridge seam (Phase 5) -------------------------------------
+    # Timeout knobs, in-memory session approvals, and best-effort decision
+    # recording for tool calls that stop before execution (denied / timed
+    # out waiting for approval). Backs the chat bridge / agent-runtime
+    # MCPToolProvider (task-201); UI-free.
+
+    def _tool_call_timeout(self) -> float:
+        """Resolve the per-call tool execution timeout.
+
+        Mirrors :meth:`_lifecycle_timeout`'s config-read/fallback guard,
+        but reads a distinct config key: the Hub's Test Tool runner and
+        the chat bridge intentionally have independently tunable
+        timeouts.
+
+        Returns:
+            The configured ``[mcp] tool_call_timeout_seconds`` value in
+            seconds, falling back to ``60.0`` when unset or unparsable.
+        """
+        try:
+            return float(get_cli_setting("mcp", "tool_call_timeout_seconds", 60.0))
+        except (TypeError, ValueError):
+            return 60.0
+
+    def approval_timeout_seconds(self) -> float:
+        """Resolve how long the chat bridge waits for a human approval.
+
+        Mirrors :meth:`_lifecycle_timeout`'s config-read/fallback guard.
+
+        Returns:
+            The configured ``[mcp] approval_timeout_seconds`` value in
+            seconds, falling back to ``120.0`` when unset or unparsable.
+        """
+        try:
+            return float(get_cli_setting("mcp", "approval_timeout_seconds", 120.0))
+        except (TypeError, ValueError):
+            return 120.0
+
+    def approve_for_session(self, server_key: str, tool_name: str) -> None:
+        """Grant a session-scoped approval for one server/tool pair.
+
+        Session approvals are held in memory only, for the lifetime of
+        this service instance (an app-run singleton) -- they are never
+        persisted to disk and do not survive an app restart or a fresh
+        instance of this service.
+
+        Args:
+            server_key: Prefixed server key the tool belongs to.
+            tool_name: Name of the tool being approved.
+        """
+        self._session_approvals.add((server_key, tool_name))
+
+    def is_session_approved(self, server_key: str, tool_name: str) -> bool:
+        """Check whether a server/tool pair has a session-scoped approval.
+
+        Args:
+            server_key: Prefixed server key the tool belongs to.
+            tool_name: Name of the tool to check.
+
+        Returns:
+            ``True`` if :meth:`approve_for_session` was called for this
+            exact pair since the last :meth:`clear_session_approvals`
+            call (or since this service instance was constructed);
+            ``False`` otherwise. Always ``False`` on a fresh instance or
+            after an app restart -- the grant is not persisted.
+        """
+        return (server_key, tool_name) in self._session_approvals
+
+    def clear_session_approvals(self) -> None:
+        """Discard every in-memory session approval on this instance."""
+        self._session_approvals.clear()
+
+    def record_tool_decision(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        decision: str,
+        initiator: str = "agent",
+        error: str | None = None,
+    ) -> None:
+        """Best-effort log a tool-call decision that never executed.
+
+        For approval outcomes that stop the call before the tool runs
+        (denied, timed out waiting for approval) so the execution log
+        keeps a complete decision trail even for calls that never
+        reached :meth:`execute_hub_tool`. Same never-raise contract as
+        :meth:`_record_tool_execution` -- and, per that method's N1
+        lesson, the ``self.execution_log`` property access happens
+        *inside* the try, since the property itself can raise.
+
+        Args:
+            server_key: Prefixed server key the tool belongs to.
+            tool_name: Name of the tool the decision applies to.
+            decision: Outcome of the decision (e.g. ``"denied"``,
+                ``"timeout"``).
+            initiator: Who/what produced the decision; defaults to
+                ``"agent"``.
+            error: Optional human-readable detail for the record.
+        """
+        try:
+            log = self.execution_log
+            if log is None:
+                return
+            record = build_record(
+                server_key=server_key,
+                tool_name=tool_name,
+                initiator=initiator,
+                decision=decision,
+                ok=False,
+                duration_ms=0,
+                error=error,
+            )
+            log.append(record)
+        except Exception as exc:
+            logger.warning(
+                f"MCP tool decision record failed for {server_key}/{tool_name}: {exc}"
+            )
+
+    # ---- Typed permission methods (Phase 4) ----------------------------
+    # Backs the Hub's Permissions mode: effective-state resolution (with
+    # the rug-pull downgrade audit), the state setters, and the Test Tool
+    # gate. Keep this UI-free -- the Phase 5 chat bridge / agent-runtime
+    # MCPToolProvider will call `gate_tool_test`-shaped resolution too.
+
+    @property
+    def permission_store(self) -> MCPPermissionStore | None:
+        if self._permission_store is not None:
+            return self._permission_store
+        store = getattr(self.local_service, "store", None)
+        if store is None:
+            return None
+        permissions_path = Path(store.path).with_name("mcp_permissions.json")
+        self._permission_store = MCPPermissionStore(permissions_path)
+        return self._permission_store
+
+    def effective_tool_states(
+        self, tools: list[HubTool]
+    ) -> dict[tuple[str, str], EffectiveToolState]:
+        """Resolve the effective allow/ask/deny state for every tool in ``tools``.
+
+        Loads the permission-store payload once and resolves every tool
+        against it (Task 2's `resolve_effective_state`). Any tool whose
+        resolution flags a hash mismatch against an explicit tool-level
+        ``allow`` (`EffectiveToolState.config_changed`) has that mismatch
+        persisted via `store.mark_config_changed()`; the *first* time that
+        transition happens for a given tool, exactly one
+        ``decision="downgraded"`` audit record is appended to the
+        execution log, best-effort, mirroring `_record_tool_execution`'s
+        never-raise contract -- a logging failure must never prevent the
+        resolved states from being returned. Later calls see the marker
+        already set (`mark_config_changed` returns False) and skip the
+        audit.
+
+        `config_changed` is only ever True when the tool carries an
+        *explicit* tool-level ``allow`` entry (see
+        `resolve_effective_state`): a tool that inherits its state from a
+        server or global default has nothing to compare hashes against,
+        so it can never trigger a marker or an audit here.
+
+        No store configured -> every tool resolves to
+        `EffectiveToolState(state="ask", origin="global_default")` (fail
+        closed).
+        """
+        store = self.permission_store
+        if store is None:
+            return {
+                (tool.server_key, tool.name): EffectiveToolState(
+                    state="ask", origin="global_default"
+                )
+                for tool in tools
+            }
+
+        payload = store.load()
+        results: dict[tuple[str, str], EffectiveToolState] = {}
+        for tool in tools:
+            effective = resolve_effective_state(payload, tool)
+            results[(tool.server_key, tool.name)] = effective
+            if effective.config_changed:
+                self._audit_downgrade_if_fresh(store, tool)
+        return results
+
+    def _audit_downgrade_if_fresh(
+        self, store: MCPPermissionStore, tool: HubTool
+    ) -> None:
+        # Best-effort, same never-raise contract as `_record_tool_execution`:
+        # a persistence/logging failure here must never propagate out of
+        # `effective_tool_states()` and mask the resolved states it already
+        # computed.
+        try:
+            newly_marked = store.mark_config_changed(tool.server_key, tool.name)
+            if not newly_marked:
+                return
+            log = self.execution_log
+            if log is None:
+                return
+            record = build_record(
+                server_key=tool.server_key,
+                tool_name=tool.name,
+                initiator="system",
+                decision="downgraded",
+                ok=False,
+                duration_ms=0,
+                error=f"{tool.name} definition changed since you allowed it — review and re-allow",
+            )
+            log.append(record)
+        except Exception as exc:
+            logger.warning(
+                f"MCP permission downgrade audit failed for {tool.server_key}/{tool.name}: {exc}"
+            )
+
+    def set_tool_state(
+        self,
+        server_key: str,
+        tool_name: str,
+        ui_state: str | None,
+        *,
+        tool: HubTool | None = None,
+    ) -> None:
+        """Set (or clear, when ``ui_state`` is None) a tool-level override.
+
+        Args:
+            server_key: Owning server's stable key.
+            tool_name: Tool name within that server.
+            ui_state: One of ``None`` (inherit), ``"allow"``, ``"ask"``,
+                ``"deny"``.
+            tool: Required when ``ui_state`` is ``"allow"`` -- its
+                description/input_schema are fingerprinted into the stored
+                ``definition_hash`` the rug-pull guard compares against
+                later.
+
+        Raises:
+            ValueError: ``ui_state`` is ``"allow"`` but ``tool`` is None.
+        """
+        store = self.permission_store
+        if store is None:
+            return
+        hash_value: str | None = None
+        if ui_state == "allow":
+            if tool is None:
+                raise ValueError(
+                    "tool is required to set state 'allow' (need its description/input_schema)"
+                )
+            hash_value = definition_hash(tool.description, tool.input_schema)
+        store.set_tool_state(
+            server_key, tool_name, ui_state, definition_hash=hash_value
+        )
+
+    def set_server_default(self, server_key: str, state: str | None) -> None:
+        store = self.permission_store
+        if store is None:
+            return
+        store.set_server_default(server_key, state)
+
+    def set_global_default(self, state: str) -> None:
+        store = self.permission_store
+        if store is None:
+            return
+        store.set_global_default(state)
+
+    def get_kill_switch(self) -> bool:
+        store = self.permission_store
+        if store is None:
+            return False
+        return store.get_kill_switch()
+
+    def set_kill_switch(self, value: bool) -> None:
+        store = self.permission_store
+        if store is None:
+            return
+        store.set_kill_switch(value)
+
+    def gate_tool_test(self, tool: HubTool) -> EffectiveToolState:
+        """Resolve one tool's effective state for the Hub's Test Tool gate.
+
+        A single fresh `load()` + resolve -- no batching, no audit
+        emission (the `effective_tool_states()` sync/render pass owns the
+        rug-pull downgrade audit; calling both for the same mismatch would
+        double-count it).
+
+        Deliberately ignores the kill switch: the switch gates chat
+        send-time tool-call assembly for the Phase 5 chat bridge /
+        agent-runtime MCPToolProvider, not this operator-initiated Hub
+        diagnostic -- an operator explicitly running Test Tool from the
+        Hub UI should see the tool's real allow/ask/deny state regardless
+        of whether the kill switch happens to be on.
+
+        No store configured -> `EffectiveToolState(state="ask",
+        origin="global_default")` (fail closed).
+        """
+        store = self.permission_store
+        if store is None:
+            return EffectiveToolState(state="ask", origin="global_default")
+        payload = store.load()
+        return resolve_effective_state(payload, tool)
+
+    def gate_tool_test_by_key(
+        self, server_key: str, tool_name: str
+    ) -> EffectiveToolState:
+        """Resolve one tool's Test Tool gate from the store alone, with no
+        live ``HubTool`` to fingerprint.
+
+        I1: the counterpart `gate_tool_test()` needs a `HubTool` to
+        hash-compare an explicit ``allow`` against its stored
+        ``definition_hash`` (the rug-pull guard) -- this is the seam for
+        when the workbench can't produce one anymore (`_tool_for()` came
+        back empty: the tool dropped out of `_last_hub_tools` since the
+        Test panel opened, e.g. a resync racing a rug-pull refresh).
+        Without this, `MCPWorkbench._resolve_test_gate()` had nothing to
+        gate a vanished-but-still-denied tool against and fell through to
+        an ungated dispatch.
+
+        Deny/ask verdicts resolve at full fidelity (no hash check is
+        needed to trust those); an "allow" verdict -- explicit or
+        inherited -- can't be trusted without the live definition, so it
+        resolves to "ask" instead (see `resolve_effective_state_by_key`).
+
+        No store configured -> `EffectiveToolState(state="ask",
+        origin="global_default")` (fail closed), matching
+        `gate_tool_test()`.
+        """
+        store = self.permission_store
+        if store is None:
+            return EffectiveToolState(state="ask", origin="global_default")
+        payload = store.load()
+        return resolve_effective_state_by_key(payload, server_key, tool_name)

@@ -1,21 +1,22 @@
 """
 tldw_chatbook - A Textual TUI for chatting with LLMs
 
-A sophisticated Terminal User Interface (TUI) application built with the Textual 
-framework for interacting with various Large Language Model APIs. Provides a 
-complete ecosystem for AI-powered interactions including conversation management, 
-character/persona chat, notes with bidirectional file sync, media ingestion, 
+A sophisticated Terminal User Interface (TUI) application built with the Textual
+framework for interacting with various Large Language Model APIs. Provides a
+complete ecosystem for AI-powered interactions including conversation management,
+character/persona chat, notes with bidirectional file sync, media ingestion,
 and advanced RAG (Retrieval-Augmented Generation) capabilities.
 """
 
 # Disable progress bars early to prevent interference with TUI
 # This must be done before any libraries that use progress bars are imported
 import os
-os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
-os.environ['TQDM_DISABLE'] = '1'
-os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
-os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
-os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+os.environ["TQDM_DISABLE"] = "1"
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
 def _install_textual_compatibility_shims() -> None:

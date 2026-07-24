@@ -27,6 +27,50 @@ def _parse_browser_timestamp(value: str) -> datetime | None:
     return parsed
 
 
+# TASK-356: ONE state vocabulary for persisted-but-not-archived chats across
+# the rail AND the Ctrl+K switcher. Rows reach here with a workspace-
+# membership role ("workspace-thread"/"workspace") or the "in-progress"
+# state normalize_conversation_row assigns — all meaning "a chat saved
+# locally, not open in a tab". The switcher used the raw status
+# ("in-progress"), contradicting the rail's "saved chat"; both now call this.
+_CONSOLE_CONVERSATION_STATUS_DETAIL = {
+    "workspace-thread": "saved chat",
+    "workspace": "saved chat",
+    "in-progress": "saved chat",
+    "active": "active session",
+    "open": "open session",
+}
+
+#: The default state a persisted-but-not-open conversation reports. Rows in this
+#: state are the common case, so the rail suppresses it from the per-row subtitle
+#: (TASK-374) -- only a non-default state ("active session"/"open session") is a
+#: differentiator worth the vertical space.
+CONSOLE_DEFAULT_CONVERSATION_DETAIL = "saved chat"
+
+
+def console_conversation_status_detail(status: str) -> str:
+    """Return the shared friendly state label for a conversation row status.
+
+    The one vocabulary used by both the rail conversation browser and the
+    Ctrl+K switcher (TASK-356) so the two surfaces never contradict each other:
+    ``saved chat`` / ``active session`` / ``open session``.
+
+    Args:
+        status: Raw persisted/internal status (e.g. ``in-progress``,
+            ``workspace-thread``, ``active``); ``None`` is tolerated.
+
+    Returns:
+        The friendly label, an empty string for a blank status, or the status
+        with dashes spaced out when it is not a known state.
+    """
+    normalized = str(status or "").strip().lower()
+    if not normalized:
+        return ""
+    return _CONSOLE_CONVERSATION_STATUS_DETAIL.get(
+        normalized, normalized.replace("-", " ")
+    )
+
+
 def format_console_relative_age(value: str, *, now: datetime) -> str:
     """Return a compact age label such as ``2m``, ``1h``, ``3d`` for a timestamp.
 
@@ -58,6 +102,33 @@ def format_console_relative_age(value: str, *, now: datetime) -> str:
     if days < 365:
         return f"{weeks}w"
     return f"{days // 365}y"
+
+
+def console_persisted_row_updated_sort(item: Mapping[str, object]) -> str:
+    """Return the recency timestamp for a persisted conversation browser row.
+
+    The rail orders conversations recency-first and derives their age labels
+    from this value, so it must reflect last *activity*. TASK-355: the persisted
+    payload comes from ``normalize_conversation_row``, which exposes
+    ``last_modified``/``created_at`` but NO ``updated_at`` key — so reading only
+    ``updated_at`` silently degraded every persisted row to its creation time
+    (a just-used conversation looked stale and sorted wrong). ``last_modified``
+    (bumped to now on every conversation write) is the recency field; it is
+    preferred over ``created_at`` while an explicit ``updated_at`` still wins for
+    any caller that does provide one.
+
+    Args:
+        item: Normalized conversation row mapping.
+
+    Returns:
+        The best available recency timestamp as a string, or ``""`` when none is
+        present. ``None`` values in any field are skipped, never stringified.
+    """
+    for key in ("updated_at", "last_modified", "created_at", "last_updated"):
+        value = item.get(key)
+        if value:
+            return str(value)
+    return ""
 
 
 @dataclass(frozen=True)
@@ -117,6 +188,8 @@ class ConsoleConversationBrowserRow:
         starred: Whether this row is locally starred.
         star_enabled: Whether the UI may toggle a local star for this row.
         source_kind: Source of the row.
+        subagent_count: Historical sub-agent count for this conversation, when
+            known. Only persisted rows can carry a non-zero count.
     """
 
     row_key: str
@@ -132,6 +205,7 @@ class ConsoleConversationBrowserRow:
     starred: bool = False
     star_enabled: bool = True
     source_kind: str = "persisted"
+    subagent_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -220,6 +294,7 @@ def build_console_conversation_browser_state(
     result_total_count: int | None = None,
     result_limit: int = CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
     group_row_limit: int = CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
+    subagent_counts: Mapping[str, int] | None = None,
     now: datetime | None = None,
 ) -> ConsoleConversationBrowserState:
     """Build a deterministic grouped conversation browser snapshot.
@@ -238,6 +313,9 @@ def build_console_conversation_browser_state(
             larger search result count.
         result_limit: Caller-level result cap retained on the resulting state.
         group_row_limit: Maximum visible rows per section or workspace group.
+        subagent_counts: Historical sub-agent count keyed by conversation id.
+            Only persisted rows can carry a non-zero count; missing/None
+            entries default to 0.
         now: Reference time for computing relative age labels. Defaults to now.
 
     Returns:
@@ -245,6 +323,7 @@ def build_console_conversation_browser_state(
     """
 
     preferences = dict(group_collapse_preferences or {})
+    counts = dict(subagent_counts or {})
     normalized_query = str(query or "").strip().lower()
     query_active = bool(normalized_query)
     safe_result_limit = max(1, int(result_limit))
@@ -252,7 +331,9 @@ def build_console_conversation_browser_state(
     reference_now = now or datetime.now(timezone.utc)
     prepared_rows = tuple(_normalize_input_row(row, now=reference_now) for row in rows)
     filtered_rows = tuple(
-        row for row in prepared_rows if not query_active or _row_matches(row, normalized_query)
+        row
+        for row in prepared_rows
+        if not query_active or _row_matches(row, normalized_query)
     )
 
     starred_rows = _dedupe_rows(
@@ -286,6 +367,7 @@ def build_console_conversation_browser_state(
         query_active=query_active,
         group_row_limit=safe_group_row_limit,
         empty_copy="No starred conversations.",
+        counts=counts,
     )
     workspace_groups = _build_workspace_groups(
         rows_by_group=workspace_rows_by_group,
@@ -294,6 +376,7 @@ def build_console_conversation_browser_state(
         preferences=preferences,
         query_active=query_active,
         group_row_limit=safe_group_row_limit,
+        counts=counts,
     )
     workspaces_preference_collapsed = _resolve_collapsed(
         preferences,
@@ -330,6 +413,7 @@ def build_console_conversation_browser_state(
         query_active=query_active,
         group_row_limit=safe_group_row_limit,
         empty_copy="No chats.",
+        counts=counts,
     )
 
     sections = (starred_section, workspaces_section, chats_section)
@@ -342,6 +426,7 @@ def build_console_conversation_browser_state(
         query_active=query_active,
         total_count=effective_total_count,
         displayed_count=_displayed_row_count(sections),
+        capped_hidden_count=_capped_hidden_count(sections),
     )
 
     return ConsoleConversationBrowserState(
@@ -351,7 +436,9 @@ def build_console_conversation_browser_state(
         status_copy=status_copy,
         error_copy=str(error_copy or ""),
         marks_available=bool(marks_available),
-        result_total_count=effective_total_count if query_active else result_total_count,
+        result_total_count=effective_total_count
+        if query_active
+        else result_total_count,
         result_limit=safe_result_limit,
     )
 
@@ -385,7 +472,11 @@ def _normalize_input_row(
     )
 
 
-def _to_browser_row(row: ConsoleConversationBrowserInputRow) -> ConsoleConversationBrowserRow:
+def _to_browser_row(
+    row: ConsoleConversationBrowserInputRow,
+    counts: Mapping[str, int] | None = None,
+) -> ConsoleConversationBrowserRow:
+    subagent_count = int((counts or {}).get(row.conversation_id or "", 0))
     return ConsoleConversationBrowserRow(
         row_key=row.row_key,
         conversation_id=row.conversation_id,
@@ -400,6 +491,7 @@ def _to_browser_row(row: ConsoleConversationBrowserInputRow) -> ConsoleConversat
         starred=row.starred,
         star_enabled=row.star_enabled,
         source_kind=row.source_kind,
+        subagent_count=subagent_count,
     )
 
 
@@ -412,9 +504,10 @@ def _build_row_section(
     query_active: bool,
     group_row_limit: int,
     empty_copy: str,
+    counts: Mapping[str, int] | None = None,
 ) -> ConsoleConversationBrowserSection:
     collapsed = preference_collapsed and not (query_active and bool(rows))
-    visible_rows, hidden_count = _visible_rows(rows, collapsed, group_row_limit)
+    visible_rows, hidden_count = _visible_rows(rows, collapsed, group_row_limit, counts)
     return ConsoleConversationBrowserSection(
         section_id=section_id,
         label=label,
@@ -434,12 +527,17 @@ def _build_workspace_groups(
     preferences: Mapping[str, bool],
     query_active: bool,
     group_row_limit: int,
+    counts: Mapping[str, int] | None = None,
 ) -> tuple[ConsoleConversationBrowserGroup, ...]:
-    groups: list[tuple[str, str, str, tuple[ConsoleConversationBrowserInputRow, ...]]] = []
+    groups: list[
+        tuple[str, str, str, tuple[ConsoleConversationBrowserInputRow, ...]]
+    ] = []
     for group_id, group_rows in rows_by_group.items():
         deduped_rows = _sort_normal_rows(_dedupe_rows(group_rows))
         latest_sort = max((row.updated_sort for row in deduped_rows), default="")
-        groups.append((group_id, str(labels.get(group_id) or group_id), latest_sort, deduped_rows))
+        groups.append(
+            (group_id, str(labels.get(group_id) or group_id), latest_sort, deduped_rows)
+        )
 
     groups.sort(key=lambda group: _workspace_group_sort_key(group, active_workspace_id))
 
@@ -453,7 +551,9 @@ def _build_workspace_groups(
             default_collapsed=default_collapsed,
         )
         collapsed = preference_collapsed and not (query_active and bool(group_rows))
-        visible_rows, hidden_count = _visible_rows(group_rows, collapsed, group_row_limit)
+        visible_rows, hidden_count = _visible_rows(
+            group_rows, collapsed, group_row_limit, counts
+        )
         browser_groups.append(
             ConsoleConversationBrowserGroup(
                 group_id=group_id,
@@ -473,12 +573,15 @@ def _visible_rows(
     rows: tuple[ConsoleConversationBrowserInputRow, ...],
     collapsed: bool,
     group_row_limit: int,
+    counts: Mapping[str, int] | None = None,
 ) -> tuple[tuple[ConsoleConversationBrowserRow, ...], int]:
     if collapsed:
         return (), 0
     visible_input_rows = rows[:group_row_limit] if group_row_limit else ()
     hidden_count = max(0, len(rows) - len(visible_input_rows))
-    return tuple(_to_browser_row(row) for row in visible_input_rows), hidden_count
+    return tuple(
+        _to_browser_row(row, counts) for row in visible_input_rows
+    ), hidden_count
 
 
 def _dedupe_rows(
@@ -531,11 +634,15 @@ def _workspace_group_sort_key(
     active_workspace_id: str | None,
 ) -> tuple[bool, "ReverseKey", str, str]:
     group_id, label, latest_sort, _rows = group
-    is_active = group_id == f"workspace:{active_workspace_id}" if active_workspace_id else False
+    is_active = (
+        group_id == f"workspace:{active_workspace_id}" if active_workspace_id else False
+    )
     return (not is_active, ReverseKey(latest_sort), label.casefold(), group_id)
 
 
-def _row_matches(row: ConsoleConversationBrowserInputRow, normalized_query: str) -> bool:
+def _row_matches(
+    row: ConsoleConversationBrowserInputRow, normalized_query: str
+) -> bool:
     haystack = " ".join(
         (
             row.title,
@@ -558,7 +665,10 @@ def _scope_copy(row: ConsoleConversationBrowserInputRow) -> str:
 
 
 def _belongs_to_chats(row: ConsoleConversationBrowserInputRow) -> bool:
-    return row.scope_type == "global" or row.workspace_id in (None, DEFAULT_WORKSPACE_ID)
+    return row.scope_type == "global" or row.workspace_id in (
+        None,
+        DEFAULT_WORKSPACE_ID,
+    )
 
 
 def _resolve_collapsed(
@@ -581,20 +691,45 @@ def _selected_summary(rows: tuple[ConsoleConversationBrowserInputRow, ...]) -> s
     return selected.title or selected.workspace_label
 
 
+def _capped_hidden_count(
+    sections: tuple[ConsoleConversationBrowserSection, ...],
+) -> int:
+    """Return the rows hidden by the per-group cap in the current render.
+
+    TASK-354: excludes collapsed sections — their rows are hidden by an explicit
+    user collapse (reversible by expanding the section, which the toggle in the
+    section header invites), not by the silent cap, so they are not "silently"
+    lost and must not inflate the disclosure. A non-collapsed section's
+    ``hidden_count`` is pure cap overflow (``_visible_rows`` reports 0 for
+    collapsed groups), so summing it across expanded sections yields exactly the
+    silently-dropped total.
+    """
+    return sum(
+        section.hidden_count for section in sections if not section.collapsed
+    )
+
+
 def _build_status_copy(
     *,
     query_active: bool,
     total_count: int,
     displayed_count: int,
+    capped_hidden_count: int = 0,
 ) -> str:
-    if not query_active:
-        return ""
-    match_label = "match" if total_count == 1 else "matches"
-    status = f"{total_count} {match_label}"
-    shown_count = min(total_count, displayed_count)
-    if total_count > shown_count:
-        status = f"{status}. Showing {shown_count} of {total_count}"
-    return status
+    if query_active:
+        match_label = "match" if total_count == 1 else "matches"
+        status = f"{total_count} {match_label}"
+        shown_count = min(total_count, displayed_count)
+        if total_count > shown_count:
+            status = f"{status}. Showing {shown_count} of {total_count}"
+        return status
+    # TASK-354: with no search active the per-group cap can silently drop the
+    # oldest conversations, so they read as deleted. Disclose the count and point
+    # at the search that reaches them (Ctrl+K fuzzy-finds capped rows).
+    if capped_hidden_count > 0:
+        row_label = "conversation" if capped_hidden_count == 1 else "conversations"
+        return f"{capped_hidden_count} more {row_label} — search with Ctrl+K"
+    return ""
 
 
 def _displayed_row_count(

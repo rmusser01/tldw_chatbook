@@ -7,7 +7,8 @@ from importlib import import_module
 
 from loguru import logger
 
-from tldw_chatbook.Constants import TAB_CCP, TAB_LLM, TAB_MCP, TAB_SUBSCRIPTIONS
+from tldw_chatbook.Constants import TAB_CCP, TAB_LLM, TAB_MCP
+from .shell_destinations import resolve_shell_route
 
 
 @dataclass(frozen=True)
@@ -39,7 +40,9 @@ class ScreenRoute:
         """Load the screen class, returning None when an optional screen is unavailable."""
 
         if not self.dependencies_available():
-            logger.warning(f"Screen route unavailable due to missing dependencies: {self.screen_name}")
+            logger.warning(
+                f"Screen route unavailable due to missing dependencies: {self.screen_name}"
+            )
             return None
         try:
             module = import_module(self.module_path)
@@ -50,63 +53,158 @@ class ScreenRoute:
 
 
 _SCREEN_ROUTES: dict[str, ScreenRoute] = {
-    "home": ScreenRoute("home", "home", "tldw_chatbook.UI.Screens.home_screen", "HomeScreen"),
-    "chat": ScreenRoute("chat", "chat", "tldw_chatbook.UI.Screens.chat_screen", "ChatScreen"),
-    "library": ScreenRoute("library", "library", "tldw_chatbook.UI.Screens.library_screen", "LibraryScreen"),
-    "artifacts": ScreenRoute("artifacts", "artifacts", "tldw_chatbook.UI.Screens.artifacts_screen", "ArtifactsScreen"),
-    "personas": ScreenRoute("personas", "personas", "tldw_chatbook.UI.Screens.personas_screen", "PersonasScreen"),
+    "home": ScreenRoute(
+        "home", "home", "tldw_chatbook.UI.Screens.home_screen", "HomeScreen"
+    ),
+    "chat": ScreenRoute(
+        "chat", "chat", "tldw_chatbook.UI.Screens.chat_screen", "ChatScreen"
+    ),
+    "library": ScreenRoute(
+        "library", "library", "tldw_chatbook.UI.Screens.library_screen", "LibraryScreen"
+    ),
+    "artifacts": ScreenRoute(
+        "artifacts",
+        "artifacts",
+        "tldw_chatbook.UI.Screens.artifacts_screen",
+        "ArtifactsScreen",
+    ),
+    "personas": ScreenRoute(
+        "personas",
+        "personas",
+        "tldw_chatbook.UI.Screens.personas_screen",
+        "PersonasScreen",
+    ),
     "watchlists_collections": ScreenRoute(
         "watchlists_collections",
         "watchlists_collections",
         "tldw_chatbook.UI.Screens.watchlists_collections_screen",
         "WatchlistsCollectionsScreen",
     ),
-    "schedules": ScreenRoute("schedules", "schedules", "tldw_chatbook.UI.Screens.schedules_screen", "SchedulesScreen"),
-    "workflows": ScreenRoute("workflows", "workflows", "tldw_chatbook.UI.Screens.workflows_screen", "WorkflowsScreen"),
-    "mcp": ScreenRoute("mcp", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"),
-    "acp": ScreenRoute("acp", "acp", "tldw_chatbook.UI.Screens.acp_screen", "ACPScreen"),
-    "skills": ScreenRoute("skills", "skills", "tldw_chatbook.UI.Screens.skills_screen", "SkillsScreen"),
-    "settings": ScreenRoute("settings", "settings", "tldw_chatbook.UI.Screens.settings_screen", "SettingsScreen"),
-    "ingest": ScreenRoute("ingest", "ingest", "tldw_chatbook.UI.Screens.media_ingest_screen", "MediaIngestScreen"),
-    "coding": ScreenRoute("coding", "coding", "tldw_chatbook.UI.Screens.coding_screen", "CodingScreen"),
+    "schedules": ScreenRoute(
+        "schedules",
+        "schedules",
+        "tldw_chatbook.UI.Screens.scheduling.schedules_workbench",
+        "SchedulesWorkbench",
+    ),
+    "workflows": ScreenRoute(
+        "workflows",
+        "workflows",
+        "tldw_chatbook.UI.Screens.workflows_screen",
+        "WorkflowsScreen",
+    ),
+    "mcp": ScreenRoute(
+        "mcp", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"
+    ),
+    "acp": ScreenRoute(
+        "acp", "acp", "tldw_chatbook.UI.Screens.acp_screen", "ACPScreen"
+    ),
+    "settings": ScreenRoute(
+        "settings",
+        "settings",
+        "tldw_chatbook.UI.Screens.settings_screen",
+        "SettingsScreen",
+    ),
+    "ingest": ScreenRoute(
+        "ingest",
+        "ingest",
+        "tldw_chatbook.UI.Screens.media_ingest_screen",
+        "MediaIngestScreen",
+    ),
     "conversation": ScreenRoute(
         "conversation",
         "conversation",
         "tldw_chatbook.UI.Screens.library_conversations_screen",
         "LibraryConversationsScreen",
     ),
-    "ccp": ScreenRoute("ccp", "personas", "tldw_chatbook.UI.Screens.personas_screen", "PersonasScreen"),
-    "media": ScreenRoute("media", "media", "tldw_chatbook.UI.Screens.media_screen", "MediaScreen"),
-    "search": ScreenRoute("search", "search", "tldw_chatbook.UI.Screens.search_screen", "SearchScreen"),
-    "evals": ScreenRoute("evals", "evals", "tldw_chatbook.UI.Screens.evals_screen", "EvalsScreen"),
-    "tools_settings": ScreenRoute("tools_settings", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"),
-    "llm": ScreenRoute("llm", TAB_LLM, "tldw_chatbook.UI.Screens.llm_screen", "LLMScreen"),
-    "customize": ScreenRoute("customize", "customize", "tldw_chatbook.UI.Screens.customize_screen", "CustomizeScreen"),
-    "logs": ScreenRoute("logs", "logs", "tldw_chatbook.UI.Screens.logs_screen", "LogsScreen"),
-    "stats": ScreenRoute("stats", "stats", "tldw_chatbook.UI.Screens.stats_screen", "StatsScreen"),
-    "stts": ScreenRoute("stts", "stts", "tldw_chatbook.UI.Screens.stts_screen", "STTSScreen"),
-    "study": ScreenRoute("study", "study", "tldw_chatbook.UI.Screens.study_screen", "StudyScreen"),
-    "writing": ScreenRoute("writing", "writing", "tldw_chatbook.UI.Screens.writing_screen", "WritingScreen"),
-    "research": ScreenRoute("research", "research", "tldw_chatbook.UI.Screens.research_screen", "ResearchScreen"),
-    "chatbooks": ScreenRoute("chatbooks", "chatbooks", "tldw_chatbook.UI.Screens.chatbooks_screen", "ChatbooksScreen"),
-    "subscriptions": ScreenRoute(
-        "subscriptions",
-        TAB_SUBSCRIPTIONS,
-        "tldw_chatbook.UI.Screens.subscription_screen",
-        "SubscriptionScreen",
-        dependency_check="check_subscriptions_deps",
+    "ccp": ScreenRoute(
+        "ccp", "personas", "tldw_chatbook.UI.Screens.personas_screen", "PersonasScreen"
+    ),
+    "media": ScreenRoute(
+        "media", "media", "tldw_chatbook.UI.Screens.media_screen", "MediaScreen"
+    ),
+    "search": ScreenRoute(
+        "search", "search", "tldw_chatbook.UI.Screens.search_screen", "SearchScreen"
+    ),
+    "evals": ScreenRoute(
+        "evals", "evals", "tldw_chatbook.UI.Screens.evals_screen", "EvalsScreen"
+    ),
+    "tools_settings": ScreenRoute(
+        "tools_settings", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"
+    ),
+    "llm": ScreenRoute(
+        "llm", TAB_LLM, "tldw_chatbook.UI.Screens.llm_screen", "LLMScreen"
+    ),
+    "customize": ScreenRoute(
+        "customize",
+        "customize",
+        "tldw_chatbook.UI.Screens.customize_screen",
+        "CustomizeScreen",
+    ),
+    "logs": ScreenRoute(
+        "logs", "logs", "tldw_chatbook.UI.Screens.logs_screen", "LogsScreen"
+    ),
+    "stats": ScreenRoute(
+        "stats", "stats", "tldw_chatbook.UI.Screens.stats_screen", "StatsScreen"
+    ),
+    "stts": ScreenRoute(
+        "stts", "stts", "tldw_chatbook.UI.Screens.stts_screen", "STTSScreen"
+    ),
+    "study": ScreenRoute(
+        "study", "study", "tldw_chatbook.UI.Screens.study_screen", "StudyScreen"
+    ),
+    "writing": ScreenRoute(
+        "writing", "writing", "tldw_chatbook.UI.Screens.writing_screen", "WritingScreen"
+    ),
+    "chatbooks": ScreenRoute(
+        "chatbooks",
+        "chatbooks",
+        "tldw_chatbook.UI.Screens.chatbooks_screen",
+        "ChatbooksScreen",
     ),
 }
 
 _SCREEN_ALIASES = {
     TAB_CCP: "ccp",
     TAB_LLM: "llm",
-    "subscription": "subscriptions",
+    "subscriptions": "watchlists_collections",
+    "subscription": "watchlists_collections",
     # The standalone Notes tab is retired: Notes now lives entirely inside
     # Library. Existing startup configs / callers using the legacy "notes"
     # route id still resolve to a real screen (Library) instead of erroring
     # or silently falling back to Chat.
     "notes": "library",
+    # The Personas "prompts" mode chip is retired (Task 7): prompt
+    # management now lives entirely inside Library. Existing startup
+    # configs / callers using the legacy "prompts" route id resolve to
+    # Library instead of Personas.
+    "prompts": "library",
+    # The standalone Skills tab is retired (Skills sub-project Task 5):
+    # skill management now lives entirely inside Library (its own Skills
+    # rail row, built in Tasks 1-4). Existing startup configs / callers
+    # using the legacy "skills" route id resolve to Library instead of the
+    # standalone SkillsScreen -- mirrors the "notes"/"prompts" aliases
+    # above exactly. ``skills_screen.py``/``SkillsScreen`` are NOT deleted:
+    # the class is still directly exercised by its own destination-shell
+    # test suite, and its trust passphrase modal is reused by the Library
+    # skill editor's trust panel (Task 4).
+    "skills": "library",
+    # The orphan "research" screen registration is removed (Task 255, from
+    # the 2026-07-12 RAG module audit): no shell destination or navigation
+    # call ever targeted it, and the Workbench route inventory already maps
+    # research -> library. TAB_RESEARCH remains in ALL_TABS (command palette
+    # direct command) and startup configs may still say "research", so the
+    # route id resolves to Library instead of dead-ending -- mirrors the
+    # "notes"/"prompts"/"skills" aliases above. ``Research_Window.py`` /
+    # ``Research_Modules/`` are intentionally NOT deleted here; that is a
+    # separate, larger decision.
+    "research": "library",
+    # The standalone Coding screen is retired (merged into Console). Legacy
+    # "coding" route ids still resolve to a real screen (Console) instead of
+    # erroring; the shell destination model owns the same fold.
+    "coding": "chat",
+    # The standalone Customize screen is retired: theme/splash management now
+    # lives inside Settings. Legacy "customize" route ids resolve to Settings.
+    "customize": "settings",
 }
 
 
@@ -131,10 +229,30 @@ def registered_screen_aliases() -> tuple[str, ...]:
 
 
 def resolve_screen_target(target: str) -> tuple[str, str, type | None]:
-    """Resolve a navigation target to a screen route without importing unrelated screens."""
+    """Resolve a navigation target to a screen route without importing unrelated screens.
+
+    Resolution order: explicit screen aliases, then direct screen routes,
+    then the shell destination model. The last leg covers destination ids
+    that are not themselves screen routes (``"lab"`` -> ``"llm"``,
+    ``"console"`` -> ``"chat"``) and legacy route ids the destination model
+    folds onto a primary route (e.g. ``"characters"`` -> ``"personas"``).
+    Unknown targets keep the ``(target, target, None)`` miss shape so the
+    navigation handler logs and stays on the current screen.
+
+    Args:
+        target: The requested route id or alias.
+
+    Returns:
+        A tuple of ``(screen_name, canonical_tab, screen_class)``.
+        ``screen_class`` is ``None`` when the target cannot be resolved.
+    """
 
     route_id = _SCREEN_ALIASES.get(target, target)
     route = _SCREEN_ROUTES.get(route_id)
     if route is None:
-        return route_id, route_id, None
+        canonical_route = resolve_shell_route(route_id).canonical_route
+        route_id = _SCREEN_ALIASES.get(canonical_route, canonical_route)
+        route = _SCREEN_ROUTES.get(route_id)
+        if route is None:
+            return route_id, route_id, None
     return route.screen_name, route.canonical_tab, route.load_screen_class()

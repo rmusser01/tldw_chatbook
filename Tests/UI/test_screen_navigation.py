@@ -5,7 +5,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from textual import on
 from textual.app import App
 from textual.widgets import Button, Input
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -15,32 +14,51 @@ from tldw_chatbook.Chat import (
     ChatConversationScopeService,
     ServerChatConversationService,
 )
-from tldw_chatbook.Auth_Account_Interop import AuthAccountScopeService, ServerAuthAccountService
+from tldw_chatbook.Auth_Account_Interop import (
+    AuthAccountScopeService,
+    ServerAuthAccountService,
+)
 from tldw_chatbook.Audio_Services_Interop import (
     AudioServicesScopeService,
     LocalAudioServicesService,
     ServerAudioServicesService,
 )
-from tldw_chatbook.Character_Chat.chat_dictionary_scope_service import ChatDictionaryScopeService
-from tldw_chatbook.Character_Chat.character_persona_scope_service import CharacterPersonaScopeService
-from tldw_chatbook.Character_Chat.local_chat_dictionary_service import LocalChatDictionaryService
-from tldw_chatbook.Character_Chat.local_character_persona_service import LocalCharacterPersonaService
-from tldw_chatbook.Character_Chat.server_chat_dictionary_service import ServerChatDictionaryService
-from tldw_chatbook.Character_Chat.server_character_persona_service import ServerCharacterPersonaService
+from tldw_chatbook.Character_Chat.chat_dictionary_scope_service import (
+    ChatDictionaryScopeService,
+)
+from tldw_chatbook.Character_Chat.character_persona_scope_service import (
+    CharacterPersonaScopeService,
+)
+from tldw_chatbook.Character_Chat.local_chat_dictionary_service import (
+    LocalChatDictionaryService,
+)
+from tldw_chatbook.Character_Chat.local_character_persona_service import (
+    LocalCharacterPersonaService,
+)
+from tldw_chatbook.Character_Chat.server_chat_dictionary_service import (
+    ServerChatDictionaryService,
+)
+from tldw_chatbook.Character_Chat.server_character_persona_service import (
+    ServerCharacterPersonaService,
+)
 from tldw_chatbook.Media import (
     LocalMediaReadingService,
     MediaReadingScopeService,
     ServerMediaReadingService,
 )
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
-from tldw_chatbook.Notes.server_notes_workspace_service import ServerNotesWorkspaceService
+from tldw_chatbook.Notes.server_notes_workspace_service import (
+    ServerNotesWorkspaceService,
+)
 from tldw_chatbook.Meetings_Interop import MeetingsScopeService, ServerMeetingsService
 from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
 from tldw_chatbook.MCP.local_store import LocalMCPStore
 from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
 from tldw_chatbook.MCP.server_unified_service import ServerUnifiedMCPService
 from tldw_chatbook.MCP.unified_context_store import UnifiedMCPContextStore
-from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+from tldw_chatbook.MCP.unified_control_plane_service import (
+    UnifiedMCPControlPlaneService,
+)
 from tldw_chatbook.Notifications import (
     ClientNotificationsDB,
     ClientNotificationsService,
@@ -59,7 +77,10 @@ from tldw_chatbook.Prompt_Management import (
     PromptChatbookScopeService,
     ServerPromptService,
 )
-from tldw_chatbook.Prompt_Studio_Interop import PromptStudioScopeService, ServerPromptStudioService
+from tldw_chatbook.Prompt_Studio_Interop import (
+    PromptStudioScopeService,
+    ServerPromptStudioService,
+)
 from tldw_chatbook.Research_Interop import (
     LocalResearchSearchService,
     LocalResearchService,
@@ -75,18 +96,40 @@ from tldw_chatbook.Chat_Grammars_Interop import (
     ServerChatGrammarsService,
 )
 from tldw_chatbook.Claims_Interop import ClaimsScopeService, ServerClaimsService
-from tldw_chatbook.Companion_Interop import CompanionScopeService, ServerCompanionService
-from tldw_chatbook.Collections_Interop import CollectionsFeedsScopeService, ServerCollectionsFeedsService
-from tldw_chatbook.External_Connectors_Interop import ConnectorsScopeService, ServerConnectorsService
-from tldw_chatbook.Feedback_Interop import FeedbackScopeService, LocalFeedbackService, ServerFeedbackService
-from tldw_chatbook.Home.active_work_adapter import LocalNotificationHomeActiveWorkAdapter
-from tldw_chatbook.Kanban_Interop import KanbanScopeService, LocalKanbanService, ServerKanbanService
+from tldw_chatbook.Companion_Interop import (
+    CompanionScopeService,
+    ServerCompanionService,
+)
+from tldw_chatbook.Collections_Interop import (
+    CollectionsFeedsScopeService,
+    ServerCollectionsFeedsService,
+)
+from tldw_chatbook.External_Connectors_Interop import (
+    ConnectorsScopeService,
+    ServerConnectorsService,
+)
+from tldw_chatbook.Feedback_Interop import (
+    FeedbackScopeService,
+    LocalFeedbackService,
+    ServerFeedbackService,
+)
+from tldw_chatbook.Home.active_work_adapter import (
+    LocalNotificationHomeActiveWorkAdapter,
+)
+from tldw_chatbook.Kanban_Interop import (
+    KanbanScopeService,
+    LocalKanbanService,
+    ServerKanbanService,
+)
 from tldw_chatbook.LLM_Provider_Catalog import (
     LLMProviderCatalogScopeService,
     LocalLLMProviderCatalogService,
     ServerLLMProviderCatalogService,
 )
-from tldw_chatbook.Server_Runtime_Interop import ServerRuntimeScopeService, ServerRuntimeService
+from tldw_chatbook.Server_Runtime_Interop import (
+    ServerRuntimeScopeService,
+    ServerRuntimeService,
+)
 from tldw_chatbook.Sharing_Interop import ServerSharingService, SharingScopeService
 from tldw_chatbook.Skills_Interop import (
     LocalSkillsService,
@@ -103,19 +146,41 @@ from tldw_chatbook.Sync_Interop import (
 )
 from tldw_chatbook.Text2SQL_Interop import ServerText2SQLService, Text2SQLScopeService
 from tldw_chatbook.Tools_Interop import ServerToolsService, ToolsScopeService
-from tldw_chatbook.MCP_Governance_Interop import MCPGovernanceScopeService, ServerMCPGovernanceService
-from tldw_chatbook.User_Governance_Interop import ServerUserGovernanceService, UserGovernanceScopeService
-from tldw_chatbook.Web_Clipper_Interop import ServerWebClipperService, WebClipperScopeService
-from tldw_chatbook.Web_Scraping_Interop import ServerWebScrapingService, WebScrapingScopeService
+from tldw_chatbook.MCP_Governance_Interop import (
+    MCPGovernanceScopeService,
+    ServerMCPGovernanceService,
+)
+from tldw_chatbook.User_Governance_Interop import (
+    ServerUserGovernanceService,
+    UserGovernanceScopeService,
+)
+from tldw_chatbook.Web_Clipper_Interop import (
+    ServerWebClipperService,
+    WebClipperScopeService,
+)
+from tldw_chatbook.Web_Scraping_Interop import (
+    ServerWebScrapingService,
+    WebScrapingScopeService,
+)
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
-from tldw_chatbook.Writing_Interop import LocalWritingService, ServerWritingService, WritingScopeService
+from tldw_chatbook.Writing_Interop import (
+    LocalWritingService,
+    ServerWritingService,
+    WritingScopeService,
+)
 from tldw_chatbook.Subscriptions import (
     LocalWatchlistsService,
     ServerWatchlistsService,
     WatchlistScopeService,
 )
-from tldw_chatbook.Translation_Interop import ServerTranslationService, TranslationScopeService
-from tldw_chatbook.Voice_Assistant_Interop import ServerVoiceAssistantService, VoiceAssistantScopeService
+from tldw_chatbook.Translation_Interop import (
+    ServerTranslationService,
+    TranslationScopeService,
+)
+from tldw_chatbook.Voice_Assistant_Interop import (
+    ServerVoiceAssistantService,
+    VoiceAssistantScopeService,
+)
 from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_SUBSCRIPTIONS
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
@@ -124,10 +189,19 @@ from tldw_chatbook.UI.Screens.media_ingest_screen import MediaIngestScreen
 from tldw_chatbook.UI.Screens.media_screen import MediaScreen
 from tldw_chatbook.UI.Screens.search_screen import SearchScreen
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
-from tldw_chatbook.runtime_policy.server_capabilities import ActiveServerCapabilityService
-from tldw_chatbook.runtime_policy import KeyringServerCredentialStore, RuntimeServerContextProvider
-from tldw_chatbook.runtime_policy.server_credentials import UnavailableServerCredentialStore
-from tldw_chatbook.runtime_policy.server_parity_state import ServerParityStateRepositories
+from tldw_chatbook.runtime_policy.server_capabilities import (
+    ActiveServerCapabilityService,
+)
+from tldw_chatbook.runtime_policy import (
+    KeyringServerCredentialStore,
+    RuntimeServerContextProvider,
+)
+from tldw_chatbook.runtime_policy.server_credentials import (
+    UnavailableServerCredentialStore,
+)
+from tldw_chatbook.runtime_policy.server_parity_state import (
+    ServerParityStateRepositories,
+)
 
 
 PRIMARY_ROUTE_IDS = [
@@ -171,7 +245,9 @@ def test_master_shell_route_inventory_has_known_legacy_routes(monkeypatch):
     app = _build_test_app()
     unresolved = []
     for route in expected_legacy_routes:
-        _screen_name, _tab_id, screen_class = app._resolve_screen_navigation_target(route)
+        _screen_name, _tab_id, screen_class = app._resolve_screen_navigation_target(
+            route
+        )
         if screen_class is None:
             unresolved.append(route)
 
@@ -181,11 +257,23 @@ def test_master_shell_route_inventory_has_known_legacy_routes(monkeypatch):
 def test_home_route_resolves_to_home_screen():
     app = _build_test_app()
 
-    screen_name, current_tab, screen_class = app._resolve_screen_navigation_target("home")
+    screen_name, current_tab, screen_class = app._resolve_screen_navigation_target(
+        "home"
+    )
 
     assert screen_name == "home"
     assert current_tab == "home"
     assert screen_class.__name__ == "HomeScreen"
+
+
+def test_customize_route_resolves_to_settings_screen():
+    app = _build_test_app()
+
+    screen_name, current_tab, screen_class = app._resolve_screen_navigation_target("customize")
+
+    assert screen_name == "settings"
+    assert current_tab == "settings"
+    assert screen_class.__name__ == "SettingsScreen"
 
 
 def test_first_run_initial_route_defaults_to_home():
@@ -297,7 +385,9 @@ def test_notes_is_not_a_navigable_tab():
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
     assert "notes" not in ALL_TABS
-    assert not hasattr(__import__("tldw_chatbook.Constants", fromlist=["TAB_NOTES"]), "TAB_NOTES")
+    assert not hasattr(
+        __import__("tldw_chatbook.Constants", fromlist=["TAB_NOTES"]), "TAB_NOTES"
+    )
 
     _screen_name, _canonical_tab, screen_class = resolve_screen_target("notes")
     assert screen_class is LibraryScreen
@@ -323,6 +413,55 @@ def test_open_notes_workspace_routes_to_library_notes_list():
     assert message.screen_context == {"mode": "notes"}
 
 
+def test_prompts_route_resolves_to_library_screen():
+    """The Personas "prompts" mode chip is retired (Task 7): prompt
+    management now lives entirely inside Library. The legacy "prompts"
+    route id must resolve to ``LibraryScreen`` instead of ``PersonasScreen``,
+    mirroring the "notes" compatibility alias above.
+    """
+    from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    _screen_name, _canonical_tab, screen_class = resolve_screen_target("prompts")
+    assert screen_class is LibraryScreen
+
+
+def test_skills_route_resolves_to_library_screen():
+    """The standalone Skills tab is retired (Skills sub-project Task 5):
+    skill management now lives entirely inside Library (its own Skills
+    rail row, built in Tasks 1-4). The legacy "skills" route id must
+    resolve to ``LibraryScreen`` instead of ``SkillsScreen``, mirroring the
+    "notes"/"prompts" compatibility aliases above. ``SkillsScreen`` itself
+    is not deleted -- its passphrase modal is reused by the Library skill
+    editor's trust panel, and it stays directly reachable by its own
+    destination-shell test suite (``Tests/UI/test_destination_shells.py``).
+    """
+    from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    _screen_name, _canonical_tab, screen_class = resolve_screen_target("skills")
+    assert screen_class is LibraryScreen
+
+
+def test_research_route_resolves_to_library_screen():
+    """Verify the retired "research" route id resolves to ``LibraryScreen``.
+
+    The orphan "research" screen registration is removed (Task 255): no
+    shell destination or navigation call ever targeted it, and the Workbench
+    route inventory already mapped research -> library. The legacy "research"
+    route id (still a command-palette direct command via ``TAB_RESEARCH`` and
+    valid in saved startup configs) must resolve to ``LibraryScreen`` instead
+    of dead-ending, mirroring the "notes"/"prompts"/"skills" compatibility
+    aliases above. ``ResearchScreen`` itself is deleted; ``ResearchWindow``/
+    ``Research_Modules`` remain (their removal is a separate decision).
+    """
+    from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    _screen_name, _canonical_tab, screen_class = resolve_screen_target("research")
+    assert screen_class is LibraryScreen
+
+
 def test_all_master_shell_primary_routes_resolve_before_nav_exposure():
     app = _build_test_app()
     expected_routes = {
@@ -337,13 +476,14 @@ def test_all_master_shell_primary_routes_resolve_before_nav_exposure():
         "workflows",
         "mcp",
         "acp",
-        "skills",
         "settings",
     }
 
     unresolved = []
     for route in expected_routes:
-        _screen_name, _tab_id, screen_class = app._resolve_screen_navigation_target(route)
+        _screen_name, _tab_id, screen_class = app._resolve_screen_navigation_target(
+            route
+        )
         if screen_class is None:
             unresolved.append(route)
 
@@ -361,66 +501,53 @@ def test_lazy_screen_registry_resolves_visible_shell_destinations():
         "artifacts": "ArtifactsScreen",
         "personas": "PersonasScreen",
         "watchlists_collections": "WatchlistsCollectionsScreen",
-        "schedules": "SchedulesScreen",
+        "schedules": "SchedulesWorkbench",
         "workflows": "WorkflowsScreen",
         "mcp": "MCPScreen",
         "acp": "ACPScreen",
-        "skills": "SkillsScreen",
+        "llm": "LLMScreen",
+        "logs": "LogsScreen",
         "settings": "SettingsScreen",
     }
 
     resolved = {}
     for destination in SHELL_DESTINATION_ORDER:
-        _screen_name, _tab_id, screen_class = resolve_screen_target(destination.primary_route)
-        resolved[destination.primary_route] = screen_class.__name__ if screen_class else None
+        _screen_name, _tab_id, screen_class = resolve_screen_target(
+            destination.primary_route
+        )
+        resolved[destination.primary_route] = (
+            screen_class.__name__ if screen_class else None
+        )
 
     assert resolved == expected_class_names
 
 
-def test_optional_screen_registry_route_skips_import_when_dependency_guard_fails(monkeypatch):
+def test_subscriptions_route_resolves_to_watchlists_collections_via_alias():
     from tldw_chatbook.UI.Navigation import screen_registry
-
-    imported_modules = []
-
-    def fake_import_module(module_name):
-        imported_modules.append(module_name)
-        if module_name == "tldw_chatbook.Utils.optional_deps":
-            return SimpleNamespace(check_subscriptions_deps=lambda: False)
-        raise AssertionError(f"Optional screen should not import when dependencies are missing: {module_name}")
-
-    monkeypatch.setattr(screen_registry, "import_module", fake_import_module)
 
     screen_name, canonical_tab, screen_class = screen_registry.resolve_screen_target("subscriptions")
 
-    assert screen_name == "subscriptions"
-    assert canonical_tab == TAB_SUBSCRIPTIONS
-    assert screen_class is None
-    assert imported_modules == ["tldw_chatbook.Utils.optional_deps"]
+    assert screen_name == "watchlists_collections"
+    assert canonical_tab == "watchlists_collections"
+    assert screen_class.__name__ == "WatchlistsCollectionsScreen"
 
 
-def test_optional_screen_registry_route_handles_import_error(monkeypatch):
+def test_subscription_route_resolves_to_watchlists_collections_via_alias():
     from tldw_chatbook.UI.Navigation import screen_registry
 
-    def fake_import_module(module_name):
-        if module_name == "tldw_chatbook.Utils.optional_deps":
-            return SimpleNamespace(check_subscriptions_deps=lambda: True)
-        if module_name == "tldw_chatbook.UI.Screens.subscription_screen":
-            raise ImportError("missing optional subscription dependency")
-        raise AssertionError(f"Unexpected import: {module_name}")
+    screen_name, canonical_tab, screen_class = screen_registry.resolve_screen_target("subscription")
 
-    monkeypatch.setattr(screen_registry, "import_module", fake_import_module)
-
-    screen_name, canonical_tab, screen_class = screen_registry.resolve_screen_target("subscriptions")
-
-    assert screen_name == "subscriptions"
-    assert canonical_tab == TAB_SUBSCRIPTIONS
-    assert screen_class is None
+    assert screen_name == "watchlists_collections"
+    assert canonical_tab == "watchlists_collections"
+    assert screen_class.__name__ == "WatchlistsCollectionsScreen"
 
 
 def test_conversation_route_uses_library_conversation_context():
     app = _build_test_app()
 
-    screen_name, current_tab, screen_class = app._resolve_screen_navigation_target("conversation")
+    screen_name, current_tab, screen_class = app._resolve_screen_navigation_target(
+        "conversation"
+    )
 
     assert screen_name == "conversation"
     assert current_tab == "conversation"
@@ -430,7 +557,9 @@ def test_conversation_route_uses_library_conversation_context():
 def test_legacy_tools_settings_route_uses_mcp_context():
     app = _build_test_app()
 
-    screen_name, current_tab, screen_class = app._resolve_screen_navigation_target("tools_settings")
+    screen_name, current_tab, screen_class = app._resolve_screen_navigation_target(
+        "tools_settings"
+    )
 
     assert screen_name == "tools_settings"
     assert current_tab == "mcp"
@@ -549,6 +678,61 @@ async def test_navigation_flushes_outgoing_screen_and_honors_veto(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_navigation_flush_exception_warns_and_aborts_switch(monkeypatch):
+    """A broken outgoing flush must fail closed while pending edits may exist."""
+    app = _build_test_app()
+    created_screens = []
+    switched_screens = []
+    saved_states = []
+    notifications = []
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            created_screens.append(app_instance)
+
+    class FakeOutgoingScreen:
+        screen_name = "library"
+
+        async def flush_pending_work(self):
+            raise RuntimeError("simulated flush failure")
+
+        def save_state(self):
+            saved_states.append(True)
+            return {}
+
+    async def fake_switch_screen(screen):
+        switched_screens.append(screen)
+
+    monkeypatch.setattr(
+        app,
+        "_resolve_screen_navigation_target",
+        lambda target: ("chat", "chat", FakeTargetScreen),
+    )
+    monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **kwargs: notifications.append((message, kwargs)),
+    )
+    outgoing = FakeOutgoingScreen()
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+
+    await app.handle_screen_navigation(NavigateToScreen("chat"))
+
+    assert switched_screens == []
+    assert created_screens == []
+    assert saved_states == []
+    assert notifications == [
+        (
+            "Couldn't save pending changes before switching screens.",
+            {"severity": "warning"},
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_rapid_tab_switch_storm_leaves_no_zombie_widgets():
     """Live-repro regression lock for the rapid-tab-switch freeze.
 
@@ -568,7 +752,9 @@ async def test_rapid_tab_switch_storm_leaves_no_zombie_widgets():
             await pilot.pause(0.02)
             if type(app.screen).__name__ != "Screen":
                 break
-        assert type(app.screen).__name__ != "Screen", "app never mounted its initial screen"
+        assert type(app.screen).__name__ != "Screen", (
+            "app never mounted its initial screen"
+        )
         routes = ("home", "library", "workflows", "schedules")
         for _round in range(3):
             for route in routes:
@@ -583,9 +769,7 @@ async def test_rapid_tab_switch_storm_leaves_no_zombie_widgets():
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen.is_running
         zombies = [
-            widget
-            for widget in app.screen.walk_children()
-            if not widget.is_running
+            widget for widget in app.screen.walk_children() if not widget.is_running
         ]
         assert not zombies, f"zombie widgets on active screen: {zombies[:5]}"
         # One more hop for responsiveness.
@@ -612,26 +796,86 @@ def _build_test_app(configured_default: str | None = None) -> TldwCli:
         return context
 
     def fake_cli_setting(_section, _key=None, default=None):
-        if _section == "general" and _key == "default_tab" and configured_default is not None:
+        if (
+            _section == "general"
+            and _key == "default_tab"
+            and configured_default is not None
+        ):
             return configured_default
         return default
 
-    with patch("tldw_chatbook.app.load_settings", return_value={"tldw_api": {"base_url": "http://localhost:8000"}}):
+    with patch(
+        "tldw_chatbook.app.load_settings",
+        return_value={"tldw_api": {"base_url": "http://localhost:8000"}},
+    ):
         with patch("tldw_chatbook.app.get_cli_setting", side_effect=fake_cli_setting):
             with patch("tldw_chatbook.app.get_chachanotes_db_lazy", return_value=None):
-                with patch("tldw_chatbook.app.ServerNotesWorkspaceService.from_config", return_value=MagicMock()):
-                    with patch("tldw_chatbook.app.ServerCharacterPersonaService.from_config", return_value=MagicMock()):
-                        with patch.object(TldwCli, "_init_notes_service", lambda self, _user: setattr(self, "notes_service", None)):
-                            with patch.object(TldwCli, "_init_prompts_service", lambda self: setattr(self, "prompts_service_initialized", False)):
-                                with patch.object(TldwCli, "_init_providers_models", lambda self: setattr(self, "providers_models", {})):
-                                    with patch.object(TldwCli, "_init_media_db", lambda self: (setattr(self, "media_db", None), setattr(self, "_media_types_for_ui", ["All Media"]))):
-                                        with patch("tldw_chatbook.app.load_runtime_policy_for_app", side_effect=fake_runtime_policy):
-                                            with patch("tldw_chatbook.app.get_notifications_db_path", return_value=":memory:"):
-                                                with patch("tldw_chatbook.app.get_subscriptions_db_path", return_value=":memory:"):
-                                                    with patch("tldw_chatbook.app.get_research_db_path", return_value=":memory:"):
-                                                        with patch("tldw_chatbook.app.get_writing_db_path", return_value=":memory:"):
-                                                            with patch("tldw_chatbook.app.get_user_data_dir", return_value=user_data_dir):
-                                                                with patch("tldw_chatbook.app.get_workspaces_db_path", return_value=user_data_dir / "workspaces.sqlite"):
+                with patch(
+                    "tldw_chatbook.app.ServerNotesWorkspaceService.from_config",
+                    return_value=MagicMock(),
+                ):
+                    with patch(
+                        "tldw_chatbook.app.ServerCharacterPersonaService.from_config",
+                        return_value=MagicMock(),
+                    ):
+                        with patch.object(
+                            TldwCli,
+                            "_init_notes_service",
+                            lambda self, _user: setattr(self, "notes_service", None),
+                        ):
+                            with patch.object(
+                                TldwCli,
+                                "_init_prompts_service",
+                                lambda self: setattr(
+                                    self, "prompts_service_initialized", False
+                                ),
+                            ):
+                                with patch.object(
+                                    TldwCli,
+                                    "_init_providers_models",
+                                    lambda self: setattr(self, "providers_models", {}),
+                                ):
+                                    with patch.object(
+                                        TldwCli,
+                                        "_init_media_db",
+                                        lambda self: (
+                                            setattr(self, "media_db", None),
+                                            setattr(
+                                                self,
+                                                "_media_types_for_ui",
+                                                ["All Media"],
+                                            ),
+                                        ),
+                                    ):
+                                        with patch(
+                                            "tldw_chatbook.app.load_runtime_policy_for_app",
+                                            side_effect=fake_runtime_policy,
+                                        ):
+                                            with patch(
+                                                "tldw_chatbook.app.get_notifications_db_path",
+                                                return_value=":memory:",
+                                            ):
+                                                with patch(
+                                                    "tldw_chatbook.app.get_subscriptions_db_path",
+                                                    return_value=":memory:",
+                                                ):
+                                                    with patch(
+                                                        "tldw_chatbook.app.get_research_db_path",
+                                                        return_value=":memory:",
+                                                    ):
+                                                        with patch(
+                                                            "tldw_chatbook.app.get_writing_db_path",
+                                                            return_value=":memory:",
+                                                        ):
+                                                            with patch(
+                                                                "tldw_chatbook.app.get_user_data_dir",
+                                                                return_value=user_data_dir,
+                                                            ):
+                                                                with patch(
+                                                                    "tldw_chatbook.app.get_workspaces_db_path",
+                                                                    return_value=user_data_dir
+                                                                    / "workspaces.sqlite",
+                                                                ):
                                                                     return TldwCli()
 
 
@@ -644,17 +888,38 @@ def test_app_uses_screen_navigation_and_wires_media_services():
     assert isinstance(app.server_media_reading_service, ServerMediaReadingService)
     assert isinstance(app.media_reading_scope_service, MediaReadingScopeService)
     assert app.media_runtime_state.runtime_backend == "local"
-    assert app.auth_account_scope_service.server_context_provider is app.server_context_provider
-    assert app.server_media_reading_service.client_provider is app.server_context_provider
-    assert app.server_chat_conversation_service.client_provider is app.server_context_provider
-    assert app.server_notes_workspace_service.client_provider is app.server_context_provider
-    assert app.server_character_persona_service.client_provider is app.server_context_provider
-    assert app.server_chat_dictionary_service.client_provider is app.server_context_provider
+    assert (
+        app.auth_account_scope_service.server_context_provider
+        is app.server_context_provider
+    )
+    assert (
+        app.server_media_reading_service.client_provider is app.server_context_provider
+    )
+    assert (
+        app.server_chat_conversation_service.client_provider
+        is app.server_context_provider
+    )
+    assert (
+        app.server_notes_workspace_service.client_provider
+        is app.server_context_provider
+    )
+    assert (
+        app.server_character_persona_service.client_provider
+        is app.server_context_provider
+    )
+    assert (
+        app.server_chat_dictionary_service.client_provider
+        is app.server_context_provider
+    )
     assert app.server_prompt_service.client_provider is app.server_context_provider
     assert app.server_chatbook_service.client_provider is app.server_context_provider
-    assert app.server_prompt_studio_service.client_provider is app.server_context_provider
+    assert (
+        app.server_prompt_studio_service.client_provider is app.server_context_provider
+    )
     assert app.server_runtime_service.client_provider is app.server_context_provider
-    assert app.server_auth_account_service.client_provider is app.server_context_provider
+    assert (
+        app.server_auth_account_service.client_provider is app.server_context_provider
+    )
 
 
 @pytest.mark.asyncio
@@ -674,6 +939,58 @@ async def test_app_shutdown_helper_closes_server_context_provider_cached_client(
     assert provider.close_calls == 1
 
 
+@pytest.mark.asyncio
+async def test_app_shutdown_helper_disconnects_local_mcp_client_with_sessions():
+    class FakeMCPClient:
+        def __init__(self, sessions) -> None:
+            self.sessions = sessions
+            self.disconnect_calls = 0
+
+        async def disconnect_all(self) -> None:
+            self.disconnect_calls += 1
+
+    client = FakeMCPClient({"srv": object()})
+    app_like = SimpleNamespace(local_mcp_control_service=SimpleNamespace(client=client))
+
+    await TldwCli._disconnect_local_mcp_client(app_like)
+
+    assert client.disconnect_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_app_shutdown_helper_skips_mcp_disconnect_when_no_sessions():
+    class FakeMCPClient:
+        def __init__(self, sessions) -> None:
+            self.sessions = sessions
+            self.disconnect_calls = 0
+
+        async def disconnect_all(self) -> None:
+            self.disconnect_calls += 1
+
+    client = FakeMCPClient({})
+    app_like = SimpleNamespace(local_mcp_control_service=SimpleNamespace(client=client))
+
+    await TldwCli._disconnect_local_mcp_client(app_like)
+
+    assert client.disconnect_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_app_shutdown_helper_skips_mcp_disconnect_when_client_never_connected():
+    """`LocalMCPControlService.client` stays `None` until a profile is
+    actually connected -- must be a no-op, not an AttributeError."""
+    app_like = SimpleNamespace(local_mcp_control_service=SimpleNamespace(client=None))
+
+    await TldwCli._disconnect_local_mcp_client(app_like)  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_app_shutdown_helper_skips_mcp_disconnect_when_service_missing():
+    app_like = SimpleNamespace()
+
+    await TldwCli._disconnect_local_mcp_client(app_like)  # must not raise
+
+
 def test_app_wires_local_and_server_skills_services():
     app = _build_test_app()
 
@@ -691,17 +1008,33 @@ def test_app_wires_local_and_server_skills_services():
     assert isinstance(app.notification_dispatch_service, NotificationDispatchService)
     assert isinstance(app.server_notifications_service, ServerNotificationsService)
     assert isinstance(app.notifications_scope_service, NotificationsScopeService)
-    assert app.notifications_scope_service.local_service is app.client_notifications_service
-    assert isinstance(app.home_active_work_adapter, LocalNotificationHomeActiveWorkAdapter)
-    assert app.home_active_work_adapter.notification_service is app.client_notifications_service
-    assert app.home_active_work_adapter.watchlist_service is app.local_watchlists_service
+    assert (
+        app.notifications_scope_service.local_service
+        is app.client_notifications_service
+    )
+    assert isinstance(
+        app.home_active_work_adapter, LocalNotificationHomeActiveWorkAdapter
+    )
+    assert (
+        app.home_active_work_adapter.notification_service
+        is app.client_notifications_service
+    )
+    assert (
+        app.home_active_work_adapter.watchlist_service is app.local_watchlists_service
+    )
     assert app.home_active_work_adapter.chatbook_service is app.local_chatbook_service
     assert isinstance(app.server_outputs_service, ServerOutputsService)
     assert isinstance(app.outputs_scope_service, OutputsScopeService)
     assert isinstance(app.local_research_service, LocalResearchService)
-    assert app.local_research_service.notification_dispatcher is app.notification_dispatch_service
+    assert (
+        app.local_research_service.notification_dispatcher
+        is app.notification_dispatch_service
+    )
     assert app.local_research_service.notification_app is app
-    assert app.local_media_reading_service.notification_dispatcher is app.notification_dispatch_service
+    assert (
+        app.local_media_reading_service.notification_dispatcher
+        is app.notification_dispatch_service
+    )
     assert app.local_media_reading_service.notification_app is app
     assert isinstance(app.server_research_service, ServerResearchService)
     assert isinstance(app.research_scope_service, ResearchScopeService)
@@ -733,15 +1066,22 @@ def test_app_wires_local_and_server_skills_services():
     assert isinstance(app.companion_scope_service, CompanionScopeService)
     assert isinstance(app.server_personalization_service, ServerPersonalizationService)
     assert isinstance(app.personalization_scope_service, PersonalizationScopeService)
-    assert isinstance(app.server_collections_feeds_service, ServerCollectionsFeedsService)
+    assert isinstance(
+        app.server_collections_feeds_service, ServerCollectionsFeedsService
+    )
     assert isinstance(app.collections_feeds_scope_service, CollectionsFeedsScopeService)
-    assert app.collections_feeds_scope_service.local_service is app.local_watchlists_service
+    assert (
+        app.collections_feeds_scope_service.local_service
+        is app.local_watchlists_service
+    )
     assert isinstance(app.server_connectors_service, ServerConnectorsService)
     assert isinstance(app.connectors_scope_service, ConnectorsScopeService)
     assert isinstance(app.local_skills_service, LocalSkillsService)
     assert isinstance(app.local_skill_trust_service, SkillTrustService)
     assert app.local_skill_trust_service is app.local_skills_service.trust_service
-    assert app.local_skill_trust_service.skills_dir == app.local_skills_service.skills_dir
+    assert (
+        app.local_skill_trust_service.skills_dir == app.local_skills_service.skills_dir
+    )
     assert isinstance(app.server_skills_service, ServerSkillsService)
     assert isinstance(app.skills_scope_service, SkillsScopeService)
     assert app.skills_scope_service.local_service is app.local_skills_service
@@ -770,13 +1110,18 @@ def test_app_wires_local_and_server_skills_services():
     assert isinstance(app.sync_scope_service, SyncScopeService)
     assert isinstance(app.local_first_sync_service, LocalFirstSyncService)
     assert isinstance(app.manual_sync_control_service, ManualSyncControlService)
-    assert app.manual_sync_control_service.local_first_sync_service is app.local_first_sync_service
+    assert (
+        app.manual_sync_control_service.local_first_sync_service
+        is app.local_first_sync_service
+    )
     assert app.media_reading_scope_service.sync_scope_service is app.sync_scope_service
     assert app.notes_scope_service.sync_scope_service is app.sync_scope_service
     assert app.research_scope_service.sync_scope_service is app.sync_scope_service
     assert isinstance(app.server_runtime_service, ServerRuntimeService)
     assert isinstance(app.server_runtime_scope_service, ServerRuntimeScopeService)
-    assert isinstance(app.active_server_capability_service, ActiveServerCapabilityService)
+    assert isinstance(
+        app.active_server_capability_service, ActiveServerCapabilityService
+    )
     assert isinstance(
         app.server_credential_store,
         (KeyringServerCredentialStore, UnavailableServerCredentialStore),
@@ -785,9 +1130,15 @@ def test_app_wires_local_and_server_skills_services():
     assert app.server_context_provider.runtime_context is app.runtime_policy
     assert app.server_context_provider.target_store is app.unified_mcp_target_store
     assert app.server_context_provider.credential_store is app.server_credential_store
-    assert isinstance(app.local_llm_provider_catalog_service, LocalLLMProviderCatalogService)
-    assert isinstance(app.server_llm_provider_catalog_service, ServerLLMProviderCatalogService)
-    assert isinstance(app.llm_provider_catalog_scope_service, LLMProviderCatalogScopeService)
+    assert isinstance(
+        app.local_llm_provider_catalog_service, LocalLLMProviderCatalogService
+    )
+    assert isinstance(
+        app.server_llm_provider_catalog_service, ServerLLMProviderCatalogService
+    )
+    assert isinstance(
+        app.llm_provider_catalog_scope_service, LLMProviderCatalogScopeService
+    )
     assert isinstance(app.server_auth_account_service, ServerAuthAccountService)
     assert isinstance(app.auth_account_scope_service, AuthAccountScopeService)
     assert isinstance(app.local_audio_services_service, LocalAudioServicesService)
@@ -804,11 +1155,15 @@ def test_app_wires_local_and_server_skills_services():
     assert isinstance(app.local_writing_service, LocalWritingService)
     assert isinstance(app.server_writing_service, ServerWritingService)
     assert isinstance(app.writing_scope_service, WritingScopeService)
-    assert isinstance(app.server_chat_conversation_service, ServerChatConversationService)
+    assert isinstance(
+        app.server_chat_conversation_service, ServerChatConversationService
+    )
     assert isinstance(app.chat_conversation_scope_service, ChatConversationScopeService)
     assert isinstance(app.server_notes_workspace_service, ServerNotesWorkspaceService)
     assert isinstance(app.notes_scope_service, NotesScopeService)
-    assert isinstance(app.server_character_persona_service, ServerCharacterPersonaService)
+    assert isinstance(
+        app.server_character_persona_service, ServerCharacterPersonaService
+    )
     assert isinstance(app.local_character_persona_service, LocalCharacterPersonaService)
     assert isinstance(app.character_persona_scope_service, CharacterPersonaScopeService)
     assert isinstance(app.server_chat_dictionary_service, ServerChatDictionaryService)
@@ -827,9 +1182,9 @@ def test_media_screen_uses_shared_runtime_state():
 
     widgets = list(screen.compose_content())
 
-    assert len(widgets) == 1
+    assert len(widgets) == 2  # destination header + media window
     assert screen.media_runtime_state is app.media_runtime_state
-    assert screen.media_window is widgets[0]
+    assert screen.media_window is widgets[1]
     assert screen.media_window.runtime_state is app.media_runtime_state
 
 
@@ -843,38 +1198,6 @@ def test_media_ingest_screen_uses_shared_runtime_state():
     assert screen.media_runtime_state is app.media_runtime_state
     assert screen.media_ingest_window is widgets[0]
     assert screen.media_ingest_window.runtime_state is app.media_runtime_state
-
-
-@pytest.mark.asyncio
-async def test_tab_links_emit_navigation_messages():
-    from tldw_chatbook.UI.Tab_Links import TabLinks
-
-    messages_received = []
-
-    class TestApp(App):
-        def compose(self):
-            yield TabLinks(tab_ids=ALL_TABS, initial_active_tab="chat")
-
-        @on(NavigateToScreen)
-        def capture_navigation(self, message: NavigateToScreen) -> None:
-            messages_received.append(message)
-
-    app = TestApp()
-
-    async with app.run_test() as pilot:
-        tab_links = pilot.app.query_one(TabLinks)
-        media_link = tab_links.query_one("#tab-link-media")
-
-        original_get_widget_at = tab_links.app.get_widget_at
-        tab_links.app.get_widget_at = lambda _x, _y: (media_link, None)
-        try:
-            await tab_links.on_click(SimpleNamespace(screen_x=0, screen_y=0))
-            await pilot.pause(0.05)
-        finally:
-            tab_links.app.get_widget_at = original_get_widget_at
-
-    assert len(messages_received) == 1
-    assert messages_received[0].screen_name == "media"
 
 
 @pytest.mark.asyncio
@@ -928,17 +1251,18 @@ def test_screen_lifecycle_methods():
 @pytest.mark.asyncio
 async def test_main_navigation_copy_and_order():
     expected_button_order = [
-        ("nav-home", "Home"),
-        ("nav-console", "Console"),
-        ("nav-library", "Library"),
-        ("nav-artifacts", "Artifacts"),
-        ("nav-personas", "Personas"),
-        ("nav-watchlists_collections", "Watchlists"),
-        ("nav-schedules", "Schedules"),
-        ("nav-workflows", "Workflows"),
-        ("nav-mcp", "MCP"),
-        ("nav-acp", "ACP"),
-        ("nav-skills", "Skills"),
+        ("nav-home", "1 Home"),
+        ("nav-console", "2 Console"),
+        ("nav-library", "3 Library"),
+        ("nav-artifacts", "4 Artifacts"),
+        ("nav-personas", "5 RP&CD"),
+        ("nav-watchlists_collections", "6 Watchlists"),
+        ("nav-schedules", "7 Schedules"),
+        ("nav-workflows", "8 Workflows"),
+        ("nav-mcp", "9 MCP"),
+        ("nav-acp", "0 ACP"),
+        ("nav-lab", "Lab"),
+        ("nav-logs", "Logs"),
         ("nav-settings", "Settings"),
     ]
 
@@ -952,10 +1276,12 @@ async def test_main_navigation_copy_and_order():
         await pilot.pause(0.1)
 
         nav_buttons = list(app.query(".nav-button"))
-        actual_button_order = [(button.id, str(button.label).strip()) for button in nav_buttons]
+        actual_button_order = [
+            (button.id, str(button.label).strip()) for button in nav_buttons
+        ]
 
         assert actual_button_order == expected_button_order
-        assert str(app.query_one("#nav-console", Button).label).strip() == "Console"
+        assert str(app.query_one("#nav-console", Button).label).strip() == "2 Console"
         assert nav_buttons[0].id == "nav-home"
         assert nav_buttons[1].id == "nav-console"
         assert nav_buttons[-1].id == "nav-settings"
@@ -981,8 +1307,7 @@ async def test_main_navigation_buttons_explain_compact_labels():
         await pilot.pause(0.1)
 
         actual_tooltips = {
-            button.id: str(button.tooltip)
-            for button in app.query(".nav-button")
+            button.id: str(button.tooltip) for button in app.query(".nav-button")
         }
 
         assert actual_tooltips == expected_tooltips
@@ -1011,11 +1336,7 @@ async def test_main_navigation_route_ids_match_shell_destinations():
 
 
 @pytest.mark.asyncio
-async def test_screen_navigation_routes_reach_real_app_handler(monkeypatch):
-    monkeypatch.setattr(
-        "tldw_chatbook.Utils.optional_deps.check_subscriptions_deps",
-        lambda: True,
-    )
+async def test_screen_navigation_routes_reach_real_app_handler():
     app = _build_test_app()
     captured_destinations = []
 
@@ -1026,7 +1347,7 @@ async def test_screen_navigation_routes_reach_real_app_handler(monkeypatch):
 
     cases = [
         ("chatbooks", "ChatbooksScreen"),
-        ("subscriptions", "SubscriptionScreen"),
+        ("watchlists_collections", "WatchlistsCollectionsScreen"),
         ("study", "StudyScreen"),
         ("stts", "STTSScreen"),
     ]
@@ -1049,7 +1370,9 @@ def test_primary_routed_screens_use_base_app_screen():
 
     offenders = []
     for route_id in PRIMARY_ROUTE_IDS:
-        _screen_name, _tab_id, screen_class = app._resolve_screen_navigation_target(route_id)
+        _screen_name, _tab_id, screen_class = app._resolve_screen_navigation_target(
+            route_id
+        )
         if screen_class is None or not issubclass(screen_class, BaseAppScreen):
             offenders.append((route_id, screen_class))
 
@@ -1086,9 +1409,8 @@ async def test_library_screen_round_trip_restores_rag_query_and_rail_selection()
         app.post_message(NavigateToScreen("library"))
         for _ in range(150):
             await pilot.pause(0.02)
-            if (
-                type(app.screen).__name__ == "LibraryScreen"
-                and app.screen.query("#library-row-browse-search")
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-browse-search"
             ):
                 break
         assert type(app.screen).__name__ == "LibraryScreen"
@@ -1116,9 +1438,8 @@ async def test_library_screen_round_trip_restores_rag_query_and_rail_selection()
         app.post_message(NavigateToScreen("library"))
         for _ in range(150):
             await pilot.pause(0.02)
-            if (
-                type(app.screen).__name__ == "LibraryScreen"
-                and app.screen.query("#library-rag-query-input")
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-rag-query-input"
             ):
                 break
 
@@ -1128,6 +1449,71 @@ async def test_library_screen_round_trip_restores_rag_query_and_rail_selection()
         assert restored_screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
         query_input = restored_screen.query_one("#library-rag-query-input", Input)
         assert query_input.value == "roadmap notes"
+
+
+@pytest.mark.asyncio
+async def test_prompts_route_lands_on_library_with_prompts_row_selected():
+    """``NavigateToScreen("prompts")`` must land on Library with the prompts
+    rail row selected. The Personas "prompts" mode chip is retired (Task 7)
+    and the legacy route now re-points into Library, mirroring how
+    ``open_notes_workspace`` re-points "notes" via a
+    ``LIBRARY_NAV_CONTEXT_MODE`` nav-context selection -- except "prompts"
+    has no dedicated re-entry action to carry that context (the retired
+    Personas mode chip had no equivalent workspace to return to), so the
+    bare alias route itself must supply it.
+    """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_PROMPTS
+
+    app = _build_test_app()
+
+    async with app.run_test(size=(170, 48)) as pilot:
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ != "Screen":
+                break
+
+        app.post_message(NavigateToScreen("prompts"))
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-browse-prompts"
+            ):
+                break
+
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
+
+
+@pytest.mark.asyncio
+async def test_skills_route_lands_on_library_with_skills_row_selected():
+    """``NavigateToScreen("skills")`` must land on Library with the skills
+    rail row selected. The standalone Skills tab is retired (Skills
+    sub-project Task 5) and the legacy route now re-points into Library,
+    mirroring ``test_prompts_route_lands_on_library_with_prompts_row_selected``
+    exactly -- "skills" (like "prompts") has no dedicated re-entry action to
+    carry a nav-context, so the bare alias route itself must supply it via
+    ``_LEGACY_ROUTE_LIBRARY_NAV_CONTEXT``.
+    """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SKILLS
+
+    app = _build_test_app()
+
+    async with app.run_test(size=(170, 48)) as pilot:
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ != "Screen":
+                break
+
+        app.post_message(NavigateToScreen("skills"))
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
+                "#library-row-browse-skills"
+            ):
+                break
+
+        assert type(app.screen).__name__ == "LibraryScreen"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
 
 
 @pytest.mark.asyncio
@@ -1158,9 +1544,8 @@ async def test_media_screen_round_trip_restores_type_filter_and_search_term():
         app.post_message(NavigateToScreen("media"))
         for _ in range(150):
             await pilot.pause(0.02)
-            if (
-                type(app.screen).__name__ == "MediaScreen"
-                and app.screen.query("#media-nav-all-media")
+            if type(app.screen).__name__ == "MediaScreen" and app.screen.query(
+                "#media-nav-all-media"
             ):
                 break
         assert type(app.screen).__name__ == "MediaScreen"
@@ -1191,9 +1576,8 @@ async def test_media_screen_round_trip_restores_type_filter_and_search_term():
         app.post_message(NavigateToScreen("media"))
         for _ in range(150):
             await pilot.pause(0.02)
-            if (
-                type(app.screen).__name__ == "MediaScreen"
-                and app.screen.query("#search-input")
+            if type(app.screen).__name__ == "MediaScreen" and app.screen.query(
+                "#search-input"
             ):
                 break
 
@@ -1202,9 +1586,14 @@ async def test_media_screen_round_trip_restores_type_filter_and_search_term():
         assert restored_screen.media_window.active_media_type == "all-media"
         for _ in range(150):
             await pilot.pause(0.02)
-            if restored_screen.media_window.search_panel.search_term == "quarterly report":
+            if (
+                restored_screen.media_window.search_panel.search_term
+                == "quarterly report"
+            ):
                 break
-        assert restored_screen.media_window.search_panel.search_term == "quarterly report"
+        assert (
+            restored_screen.media_window.search_panel.search_term == "quarterly report"
+        )
         restored_input = restored_screen.query_one("#search-input", Input)
         assert restored_input.value == "quarterly report"
 
@@ -1227,9 +1616,8 @@ async def test_search_screen_round_trip_restores_query_input():
         app.post_message(NavigateToScreen("search"))
         for _ in range(150):
             await pilot.pause(0.02)
-            if (
-                type(app.screen).__name__ == "SearchScreen"
-                and app.screen.query("#search-query-input")
+            if type(app.screen).__name__ == "SearchScreen" and app.screen.query(
+                "#search-query-input"
             ):
                 break
         assert type(app.screen).__name__ == "SearchScreen"
@@ -1248,9 +1636,8 @@ async def test_search_screen_round_trip_restores_query_input():
         app.post_message(NavigateToScreen("search"))
         for _ in range(150):
             await pilot.pause(0.02)
-            if (
-                type(app.screen).__name__ == "SearchScreen"
-                and app.screen.query("#search-query-input")
+            if type(app.screen).__name__ == "SearchScreen" and app.screen.query(
+                "#search-query-input"
             ):
                 break
 
@@ -1329,7 +1716,11 @@ def test_search_screen_restore_state_stashes_pending_dict_for_on_mount():
     screen = SearchScreen(app)
 
     screen.restore_state(
-        {"search_query": "hello", "search_mode": "hybrid", "search_active_tab": "history-tab"}
+        {
+            "search_query": "hello",
+            "search_mode": "hybrid",
+            "search_active_tab": "history-tab",
+        }
     )
 
     assert screen._pending_search_restore == {

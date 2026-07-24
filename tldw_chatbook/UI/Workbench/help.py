@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
@@ -20,15 +21,29 @@ class WorkbenchHelpState:
     title: str
     actions: tuple[WorkbenchAction, ...] = ()
     shortcuts: tuple[tuple[str, str], ...] = ()
+    #: TASK-362: grouped keyboard map (group name -> (key, label) pairs). When
+    #: present it replaces the flat ``shortcuts`` list so the help can surface the
+    #: full vocabulary (panes, transcript, composer, modals), not just the handful
+    #: of top-level bindings.
+    shortcut_groups: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = ()
 
     def render_text(self) -> str:
         """Render visible actions and explicit shortcuts as plain text."""
         lines = [self.title]
-        visible_actions = tuple(action for action in self.actions if not action.disabled)
+        visible_actions = tuple(
+            action for action in self.actions if not action.disabled
+        )
         if visible_actions:
             lines.append("Actions:")
             lines.extend(f"- {action.label}" for action in visible_actions)
-        if self.shortcuts:
+        if self.shortcut_groups:
+            lines.append("Shortcuts:")
+            for group_name, group_shortcuts in self.shortcut_groups:
+                lines.append(f"  {group_name}:")
+                lines.extend(
+                    f"    {key}: {label}" for key, label in group_shortcuts
+                )
+        elif self.shortcuts:
             lines.append("Shortcuts:")
             lines.extend(f"- {key}: {label}" for key, label in self.shortcuts)
         return "\n".join(lines)
@@ -36,6 +51,8 @@ class WorkbenchHelpState:
 
 class WorkbenchHelpPanel(ModalScreen[None]):
     """Modal panel showing contextual Workbench help."""
+
+    BINDINGS = [Binding("escape", "dismiss", "Close", show=False)]
 
     def __init__(self, state: WorkbenchHelpState) -> None:
         super().__init__()

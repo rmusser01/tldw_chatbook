@@ -6,7 +6,10 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
-from .evaluation_normalizers import RESERVED_LOCAL_DATASET_SAMPLES_KEY, RESERVED_LOCAL_METADATA_KEY
+from .evaluation_normalizers import (
+    RESERVED_LOCAL_DATASET_SAMPLES_KEY,
+    RESERVED_LOCAL_METADATA_KEY,
+)
 
 
 class LocalEvaluationsService:
@@ -118,7 +121,9 @@ class LocalEvaluationsService:
             return {"samples": self._coerce_json_list(value)}
         if isinstance(value, str) and value.strip():
             return {"dataset_name": value.strip()}
-        raise ValueError("Local evaluation dataset_override must be a mapping, sample list, or dataset path string.")
+        raise ValueError(
+            "Local evaluation dataset_override must be a mapping, sample list, or dataset path string."
+        )
 
     def _build_run_config_overrides(
         self,
@@ -142,12 +147,16 @@ class LocalEvaluationsService:
             overrides["webhook_url"] = normalized_webhook_url
         return overrides
 
-    def _split_task_payload(self, task_record: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    def _split_task_payload(
+        self, task_record: Mapping[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         config_data = self._coerce_json_mapping(task_record.get("config_data"))
         metadata = self._as_mapping(config_data.pop(RESERVED_LOCAL_METADATA_KEY, None))
         return config_data, metadata
 
-    def _build_task_payload(self, *, eval_spec: Any, metadata: Any = None) -> dict[str, Any]:
+    def _build_task_payload(
+        self, *, eval_spec: Any, metadata: Any = None
+    ) -> dict[str, Any]:
         payload = self._coerce_json_mapping(eval_spec)
         metadata_payload = self._as_mapping(metadata)
         if metadata_payload:
@@ -193,7 +202,9 @@ class LocalEvaluationsService:
             return f"{provider}:{model_id}"
         return str(model_id or model_record.get("name") or model_record.get("id") or "")
 
-    def _find_model(self, *, target_id: str | None = None, target_model: str | None = None) -> dict[str, Any]:
+    def _find_model(
+        self, *, target_id: str | None = None, target_model: str | None = None
+    ) -> dict[str, Any]:
         db = self._require_db()
 
         if target_id:
@@ -207,7 +218,11 @@ class LocalEvaluationsService:
 
         for record in models:
             candidate = dict(record)
-            if normalized_target_id and str(candidate.get("id") or "").strip().lower() == normalized_target_id:
+            if (
+                normalized_target_id
+                and str(candidate.get("id") or "").strip().lower()
+                == normalized_target_id
+            ):
                 return candidate
             if normalized_target:
                 aliases = {
@@ -223,7 +238,9 @@ class LocalEvaluationsService:
 
     def _enrich_run(self, run_record: Mapping[str, Any]) -> dict[str, Any]:
         enriched = dict(run_record)
-        enriched["config_overrides"] = self._coerce_json_mapping(enriched.get("config_overrides"))
+        enriched["config_overrides"] = self._coerce_json_mapping(
+            enriched.get("config_overrides")
+        )
 
         model_id = enriched.get("model_id")
         if model_id:
@@ -231,9 +248,13 @@ class LocalEvaluationsService:
             if model_record:
                 enriched.setdefault("provider", model_record.get("provider"))
                 enriched.setdefault("configured_model_id", model_record.get("model_id"))
-                enriched.setdefault("target_model", self._target_model_string(model_record))
+                enriched.setdefault(
+                    "target_model", self._target_model_string(model_record)
+                )
                 if not enriched.get("model_name"):
-                    enriched["model_name"] = model_record.get("name") or model_record.get("model_id")
+                    enriched["model_name"] = model_record.get(
+                        "name"
+                    ) or model_record.get("model_id")
 
         metrics_summary = self._flatten_metrics(enriched.get("metrics_summary"))
         if not metrics_summary:
@@ -251,7 +272,10 @@ class LocalEvaluationsService:
         eval_type: str | None = None,
     ) -> list[dict[str, Any]]:
         return list(
-            self._require_db().list_tasks(task_type=eval_type, limit=limit, offset=offset) or []
+            self._require_db().list_tasks(
+                task_type=eval_type, limit=limit, offset=offset
+            )
+            or []
         )
 
     def get_evaluation(self, eval_id: str) -> dict[str, Any]:
@@ -282,7 +306,9 @@ class LocalEvaluationsService:
             description=description,
             task_type=eval_type,
             config_format="custom",
-            config_data=self._build_task_payload(eval_spec=eval_spec, metadata=metadata),
+            config_data=self._build_task_payload(
+                eval_spec=eval_spec, metadata=metadata
+            ),
             dataset_id=dataset_id,
         )
         self._dispatch_local_notification(
@@ -290,7 +316,11 @@ class LocalEvaluationsService:
             message=f"Local evaluation created: {name}",
             source_entity_id=str(task_id),
             source_entity_kind="evaluation",
-            payload={"action": "evaluation_created", "evaluation_id": str(task_id), "eval_type": eval_type},
+            payload={
+                "action": "evaluation_created",
+                "evaluation_id": str(task_id),
+                "eval_type": eval_type,
+            },
         )
         return task_id
 
@@ -310,8 +340,16 @@ class LocalEvaluationsService:
 
         if eval_spec is not None or metadata is not None:
             existing_spec, existing_metadata = self._split_task_payload(existing)
-            next_spec = self._coerce_json_mapping(eval_spec) if eval_spec is not None else existing_spec
-            next_metadata = self._as_mapping(metadata) if metadata is not None else existing_metadata
+            next_spec = (
+                self._coerce_json_mapping(eval_spec)
+                if eval_spec is not None
+                else existing_spec
+            )
+            next_metadata = (
+                self._as_mapping(metadata)
+                if metadata is not None
+                else existing_metadata
+            )
             update_kwargs["config_data"] = self._build_task_payload(
                 eval_spec=next_spec,
                 metadata=next_metadata,
@@ -330,10 +368,14 @@ class LocalEvaluationsService:
         if not deleted:
             raise ValueError(f"Local evaluation '{eval_id}' could not be deleted.")
 
-    def list_datasets(self, *, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+    def list_datasets(
+        self, *, limit: int = 100, offset: int = 0
+    ) -> list[dict[str, Any]]:
         return [
             self._enrich_dataset(record)
-            for record in list(self._require_db().list_datasets(limit=limit, offset=offset) or [])
+            for record in list(
+                self._require_db().list_datasets(limit=limit, offset=offset) or []
+            )
         ]
 
     def get_dataset(self, dataset_id: str) -> dict[str, Any]:
@@ -360,7 +402,9 @@ class LocalEvaluationsService:
             metadata_payload["inline_samples"] = True
             source_path = source_path or f"inline:{name}"
         if not source_path:
-            raise ValueError("Local evaluation dataset creation requires source_path or inline samples.")
+            raise ValueError(
+                "Local evaluation dataset creation requires source_path or inline samples."
+            )
         dataset_id = self._require_db().create_dataset(
             name=name,
             format=format or "custom",
@@ -402,7 +446,11 @@ class LocalEvaluationsService:
         existing_sample_count = existing_metadata.get("sample_count")
         existing_inline_samples = existing_metadata.get("inline_samples")
 
-        metadata_payload = self._as_mapping(metadata) if metadata is not None else dict(existing_metadata)
+        metadata_payload = (
+            self._as_mapping(metadata)
+            if metadata is not None
+            else dict(existing_metadata)
+        )
         metadata_payload.pop(RESERVED_LOCAL_DATASET_SAMPLES_KEY, None)
         metadata_payload.pop("sample_count", None)
         metadata_payload.pop("inline_samples", None)
@@ -412,9 +460,15 @@ class LocalEvaluationsService:
             metadata_payload[RESERVED_LOCAL_DATASET_SAMPLES_KEY] = normalized_samples
             metadata_payload["sample_count"] = len(normalized_samples)
             metadata_payload["inline_samples"] = True
-            source_path = source_path or existing.get("source_path") or f"inline:{name or existing.get('name') or dataset_id}"
+            source_path = (
+                source_path
+                or existing.get("source_path")
+                or f"inline:{name or existing.get('name') or dataset_id}"
+            )
         elif isinstance(existing_samples, list):
-            preserved_samples = [self._as_mapping(sample) for sample in existing_samples]
+            preserved_samples = [
+                self._as_mapping(sample) for sample in existing_samples
+            ]
             metadata_payload[RESERVED_LOCAL_DATASET_SAMPLES_KEY] = preserved_samples
             metadata_payload["sample_count"] = len(preserved_samples)
             metadata_payload["inline_samples"] = True
@@ -432,7 +486,9 @@ class LocalEvaluationsService:
             metadata=metadata_payload,
         )
         if not updated:
-            raise ValueError(f"Local evaluation dataset '{dataset_id}' could not be updated.")
+            raise ValueError(
+                f"Local evaluation dataset '{dataset_id}' could not be updated."
+            )
 
         self._dispatch_local_notification(
             title="Local evaluation dataset updated",
@@ -446,7 +502,9 @@ class LocalEvaluationsService:
     def delete_dataset(self, dataset_id: str) -> None:
         deleted = self._require_db().delete_dataset(dataset_id)
         if not deleted:
-            raise ValueError(f"Local evaluation dataset '{dataset_id}' could not be deleted.")
+            raise ValueError(
+                f"Local evaluation dataset '{dataset_id}' could not be deleted."
+            )
 
     def list_targets(
         self,
@@ -455,7 +513,12 @@ class LocalEvaluationsService:
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        return list(self._require_db().list_models(provider=provider, limit=limit, offset=offset) or [])
+        return list(
+            self._require_db().list_models(
+                provider=provider, limit=limit, offset=offset
+            )
+            or []
+        )
 
     def list_runs(
         self,
@@ -492,7 +555,8 @@ class LocalEvaluationsService:
     ) -> dict[str, Any]:
         model_record = self._find_model(target_id=target_id, target_model=target_model)
         run_id = self._require_db().create_run(
-            name=run_name or f"{self.get_evaluation(eval_id).get('name') or 'eval_run'}",
+            name=run_name
+            or f"{self.get_evaluation(eval_id).get('name') or 'eval_run'}",
             task_id=eval_id,
             model_id=str(model_record.get("id")),
             config_overrides=self._build_run_config_overrides(
@@ -503,9 +567,13 @@ class LocalEvaluationsService:
         )
         record = self._require_db().get_run(run_id)
         if not record:
-            raise ValueError(f"Local evaluation run '{run_id}' was not found after creation.")
+            raise ValueError(
+                f"Local evaluation run '{run_id}' was not found after creation."
+            )
         created_run = dict(record)
-        created_run["config_overrides"] = self._coerce_json_mapping(created_run.get("config_overrides"))
+        created_run["config_overrides"] = self._coerce_json_mapping(
+            created_run.get("config_overrides")
+        )
         created_run.setdefault("target_model", self._target_model_string(model_record))
         self._dispatch_local_notification(
             title="Local evaluation run created",
@@ -526,8 +594,12 @@ class LocalEvaluationsService:
         run = self.get_run(run_id)
         return {
             "run": run,
-            "metrics": self._flatten_metrics(self._require_db().get_run_metrics(run_id)),
-            "results": list(self._require_db().get_run_results(run_id, limit=1000, offset=0) or []),
+            "metrics": self._flatten_metrics(
+                self._require_db().get_run_metrics(run_id)
+            ),
+            "results": list(
+                self._require_db().get_run_results(run_id, limit=1000, offset=0) or []
+            ),
             "detail_available": True,
         }
 
@@ -538,6 +610,10 @@ class LocalEvaluationsService:
             message=f"Local evaluation run cancelled: {run_id}",
             source_entity_id=str(run_id),
             source_entity_kind="evaluation_run",
-            payload={"action": "run_cancelled", "run_id": str(run_id), "status": "cancelled"},
+            payload={
+                "action": "run_cancelled",
+                "run_id": str(run_id),
+                "status": "cancelled",
+            },
         )
         return {"id": run_id, "status": "cancelled"}

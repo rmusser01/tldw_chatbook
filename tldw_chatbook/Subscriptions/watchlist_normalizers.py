@@ -106,13 +106,16 @@ def normalize_local_subscription_row(row: Mapping[str, Any]) -> dict[str, Any]:
         "group_ids": [],
         "settings": _local_source_settings(row),
         "status_summary": status_summary,
-        "last_checked_or_scraped_at": row.get("last_checked") or row.get("last_successful_check"),
+        "last_checked_or_scraped_at": row.get("last_checked")
+        or row.get("last_successful_check"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
     }
 
 
-def normalize_server_watchlist_source(source: Mapping[str, Any] | Any) -> dict[str, Any]:
+def normalize_server_watchlist_source(
+    source: Mapping[str, Any] | Any,
+) -> dict[str, Any]:
     """Normalize a server watchlist source response as a watch item."""
     payload = _model_to_dict(source)
     source_id = payload["id"]
@@ -130,18 +133,23 @@ def normalize_server_watchlist_source(source: Mapping[str, Any] | Any) -> dict[s
         "group_ids": list(payload.get("group_ids") or []),
         "settings": dict(payload.get("settings") or {}),
         "status_summary": "active" if payload.get("active", True) else "inactive",
-        "last_checked_or_scraped_at": payload.get("last_checked_at") or payload.get("last_scraped_at"),
+        "last_checked_or_scraped_at": payload.get("last_checked_at")
+        or payload.get("last_scraped_at"),
         "created_at": payload.get("created_at"),
         "updated_at": payload.get("updated_at"),
     }
 
 
-def normalize_server_delete_response(response: Mapping[str, Any] | Any, *, source_id: Any) -> dict[str, Any]:
+def normalize_server_delete_response(
+    response: Mapping[str, Any] | Any, *, source_id: Any
+) -> dict[str, Any]:
     """Normalize server reversible-delete metadata."""
     payload = _model_to_dict(response)
     return {
         "success": bool(payload.get("success", True)),
-        "id": build_watchlist_item_id("server", "watchlist_source", payload.get("source_id", source_id)),
+        "id": build_watchlist_item_id(
+            "server", "watchlist_source", payload.get("source_id", source_id)
+        ),
         "backend": "server",
         "entity_kind": "watchlist_source",
         "source_id": payload.get("source_id", source_id),
@@ -150,7 +158,9 @@ def normalize_server_delete_response(response: Mapping[str, Any] | Any, *, sourc
     }
 
 
-def normalize_watchlist_run(source: str, run: Mapping[str, Any] | Any) -> dict[str, Any]:
+def normalize_watchlist_run(
+    source: str, run: Mapping[str, Any] | Any
+) -> dict[str, Any]:
     """Normalize local or server watchlist run metadata."""
     payload = _model_to_dict(run)
     run_id = payload["id"]
@@ -192,7 +202,9 @@ def _coerce_condition_value(value: Any) -> dict[str, Any]:
     return {"value": value}
 
 
-def normalize_watchlist_alert_rule(source: str, rule: Mapping[str, Any] | Any) -> dict[str, Any]:
+def normalize_watchlist_alert_rule(
+    source: str, rule: Mapping[str, Any] | Any
+) -> dict[str, Any]:
     """Normalize local or server watchlist alert-rule metadata."""
     payload = _model_to_dict(rule)
     rule_id = payload["id"]
@@ -212,4 +224,25 @@ def normalize_watchlist_alert_rule(source: str, rule: Mapping[str, Any] | Any) -
         "severity": payload.get("severity") or "warning",
         "created_at": payload.get("created_at"),
         "updated_at": payload.get("updated_at"),
+    }
+
+
+def normalize_watchlist_item(source: str, row: Mapping[str, Any]) -> dict[str, Any]:
+    """Normalize a local subscriptions DB item row as a watchlist item."""
+    item_id = row["id"]
+    return {
+        "id": build_watchlist_item_id(source, "watchlist_item", item_id),
+        "backend": source,
+        "entity_kind": "watchlist_item",
+        "item_id": item_id,
+        "source_id": row.get("subscription_id"),
+        "source_name": row.get("subscription_name"),
+        "source_type": row.get("subscription_type"),
+        "title": row.get("title") or "Untitled item",
+        "url": row.get("url") or row.get("canonical_url"),
+        "status": row.get("status") or "new",
+        "author": row.get("author"),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+        "published_date": row.get("published_date"),
     }

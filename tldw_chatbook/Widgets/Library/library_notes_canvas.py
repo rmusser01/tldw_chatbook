@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Input, Markdown, Static, TextArea
@@ -105,42 +106,138 @@ class LibraryNotesCanvas(Vertical):
         list_state = self.list_state
         if list_state is None:
             return
-        yield Static(list_state.header_copy, id="library-notes-header",
-                     classes="destination-section", markup=False)
+        yield Static(
+            list_state.header_copy,
+            id="library-notes-header",
+            classes="destination-section",
+            markup=False,
+        )
         yield Input(
             placeholder="Filter notes… (Enter)",
             id="library-notes-filter",
             value=self.filter_value,
         )
-        yield Button(
-            f"sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')} ▸",
-            id="library-notes-sort", classes="library-canvas-action", compact=True,
-        )
-        # A separate toolbar row (stacked, not a Horizontal) under the sort
-        # button -- mixing a 1fr sibling with fixed-width action buttons in
-        # a Horizontal is the known non-rendering failure mode for this
-        # canvas, so every row here is bare, full-width-flowing Buttons.
-        yield Button(
-            "Sync", id="library-notes-sync-open",
-            classes="library-canvas-action", compact=True,
-        )
-        yield Button(
-            "Import note", id="library-notes-import",
-            classes="library-canvas-action", compact=True,
-        )
+        select_mode = list_state.select_mode
+        # Gate/label off the RENDERED rows, not any total-count field -- only
+        # rendered rows are selectable, matching the media/conversations
+        # canvases' ``len(rows)`` convention.
+        rendered_count = len(list_state.rows)
+        # One horizontal ds-toolbar row for sort/Sync/Import note/Export…/
+        # Select (2026-07 UAT: the previous bare stacked Buttons rendered as
+        # an overlapped vertical pile eating into the first list row). Safe
+        # here because every child is a fixed-width compact Button -- the
+        # known non-rendering failure mode for this canvas family is only
+        # a Horizontal mixing a 1fr sibling with fixed-width children,
+        # exactly the ds-toolbar shape `_compose_editor` already proves out.
+        toolbar = Horizontal(classes="ds-toolbar")
+        toolbar.styles.height = "auto"
+        with toolbar:
+            yield Button(
+                f"sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')} ▸",
+                id="library-notes-sort",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            yield Button(
+                "Sync",
+                id="library-notes-sync-open",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            yield Button(
+                "Import note",
+                id="library-notes-import",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            export_btn = Button(
+                "Export…",
+                id="library-notes-export",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            export_btn.display = not select_mode
+            yield export_btn
+            select_btn = Button(
+                "Done" if select_mode else "Select",
+                id="library-notes-select-toggle",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            # Disable only when nothing to select AND not already in select mode
+            # -- in select mode "Done" must stay pressable so the user can exit
+            # even if the rows dropped to zero (e.g. a background refresh).
+            select_btn.disabled = rendered_count == 0 and not select_mode
+            yield select_btn
+        if select_mode:
+            action_row = Horizontal(classes="ds-toolbar")
+            action_row.styles.height = "auto"
+            with action_row:
+                yield Static(
+                    f"{list_state.selected_count} selected",
+                    id="library-notes-selected-count",
+                    markup=False,
+                )
+                yield Button(
+                    f"Select all {rendered_count} shown",
+                    id="library-notes-select-all",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
+                    "Clear",
+                    id="library-notes-select-clear",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                export_selected = Button(
+                    "Export selected",
+                    id="library-notes-export-selected",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                export_selected.disabled = list_state.selected_count == 0
+                yield export_selected
         if list_state.status_copy:
-            yield Static(list_state.status_copy, id="library-notes-status", markup=False)
+            yield Static(
+                list_state.status_copy, id="library-notes-status", markup=False
+            )
         if not list_state.rows:
             yield Static(list_state.empty_copy, id="library-notes-empty", markup=False)
             return
         with Vertical(id="library-notes-list"):
             for index, row in enumerate(list_state.rows):
+                # Button labels are parsed as Rich markup: escape the
+                # user-supplied title so "[draft] Q3 plan [wip]" renders
+                # verbatim instead of eating bracketed segments as tags
+                # (or crashing on an unmatched closing tag) -- the same
+                # fix class as the escaped search-history Button labels.
+                title = escape_markup(row.title)
+                if select_mode:
+                    # Notes rows had no marker at all before select mode
+                    # existed -- normal mode keeps that markerless label
+                    # (no ``▸``, unlike the media/conversations rows). The 2-col
+                    # glyph shifts line 1, so indent the age line by 2 to keep it
+                    # aligned under the title rather than under the checkbox.
+                    glyph = "☑ " if row.checked else "☐ "
+                    label_rest = (
+                        f"{title}\n  {row.age_label}" if row.age_label else title
+                    )
+                    label = f"{glyph}{label_rest}"
+                else:
+                    label_rest = f"{title}\n{row.age_label}" if row.age_label else title
+                    label = label_rest
                 button = Button(
-                    f"{row.title}\n{row.age_label}" if row.age_label else row.title,
+                    label,
                     id=f"library-notes-row-{index}",
-                    classes="library-notes-row", compact=True,
+                    classes="library-notes-row",
+                    compact=True,
                 )
                 button.note_id = row.note_id
+                # task-281 (PR #665 review): raw marker-less label for the
+                # in-place toggle (reading it back off the Button un-escapes
+                # user titles).
+                button._library_row_label_rest = label_rest
                 yield button
 
     def _compose_editor(self) -> ComposeResult:

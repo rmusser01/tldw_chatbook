@@ -26,6 +26,8 @@ PersonaAction = Literal[
     "create",
     "import",
     "export",
+    "duplicate",
+    "toggle_enabled",
     "attach_to_console",
     "start_chat",
     "save",
@@ -85,12 +87,31 @@ class PersonaActionRequested(Message):
         self.entity_id = entity_id
 
 
+class PersonaSortCycleRequested(Message):
+    """The user asked to advance the library sort (screen decides the next key)."""
+
+
+class PersonaTagFilterRequested(Message):
+    """The user asked to open the tag filter (characters only)."""
+
+
+class PersonaPageChanged(Message):
+    """The user asked to move the library page window."""
+
+    def __init__(self, delta: int) -> None:
+        super().__init__()
+        self.delta = delta
+
+
 __all__ = [
     "PersonaAction",
     "PersonaActionRequested",
     "PersonaEntityKind",
     "PersonaEntitySelected",
     "PersonaModeChanged",
+    "PersonaPageChanged",
     "PersonaSearchChanged",
+    "PersonaSortCycleRequested",
+    "PersonaTagFilterRequested",
     "PersonaWorkbenchMode",
 ]

@@ -97,19 +97,18 @@ async def test_conversation_rows_carry_subdued_class():
         assert row.has_class("console-action-subdued")
 
 
-async def test_show_selection_enables_export_and_shows_authority():
+async def test_show_selection_enables_export_actions():
     app = InspectorApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
-        pane.show_selection(name="Detective Sam", kind="character", authority="Local")
+        pane.show_selection(name="Detective Sam", kind="character")
         await pilot.pause()
         assert "Selected: Detective Sam" in str(
             pilot.app.query_one("#personas-selected-name", Static).renderable
         )
-        assert "Authority: Local" in str(
-            pilot.app.query_one("#personas-selected-authority", Static).renderable
+        assert (
+            pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
         )
-        assert pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
         assert pilot.app.query_one("#personas-start-chat", Button).disabled is True
         assert pilot.app.query_one("#personas-export-json", Button).disabled is False
         assert pilot.app.query_one("#personas-export-png", Button).disabled is False
@@ -122,24 +121,133 @@ async def test_persona_selection_disables_png_export():
     app = InspectorApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
-        pane.show_selection(name="Archivist", kind="persona_profile", authority="Local")
+        pane.show_selection(name="Archivist", kind="persona_profile")
         await pilot.pause()
         assert pilot.app.query_one("#personas-export-json", Button).disabled is False
         assert pilot.app.query_one("#personas-export-png", Button).disabled is True
+
+
+async def test_character_selection_renders_all_actions():
+    """Task-443: character is the applicable kind for every action button."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Detective Sam", kind="character")
+        await pilot.pause()
+        for button_id in (
+            "#personas-attach-to-console",
+            "#personas-start-chat",
+            "#personas-export-json",
+            "#personas-export-png",
+            "#personas-delete",
+        ):
+            assert (
+                pilot.app.query_one(button_id, Button).display is True
+            ), button_id
+
+
+async def test_persona_selection_hides_only_export_png():
+    """Task-443 AC1: personas have no PNG card, so Export PNG does not
+    render for a persona_profile selection - Attach/Start Chat/Export JSON
+    still apply (the readiness gate, not kind, controls their disabled
+    state)."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Archivist", kind="persona_profile")
+        await pilot.pause()
+        for button_id in (
+            "#personas-attach-to-console",
+            "#personas-start-chat",
+            "#personas-export-json",
+            "#personas-delete",
+        ):
+            assert (
+                pilot.app.query_one(button_id, Button).display is True
+            ), button_id
+        assert pilot.app.query_one("#personas-export-png", Button).display is False
+
+
+async def test_dictionary_selection_hides_console_and_export_actions():
+    """Task-443 AC1: dictionaries can never Attach/Start Chat/export a card -
+    those buttons must not render at all (not merely stay disabled), while
+    Delete (which does apply) stays visible."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Combat Slang", kind="dictionary")
+        await pilot.pause()
+        for button_id in (
+            "#personas-attach-to-console",
+            "#personas-start-chat",
+            "#personas-export-json",
+            "#personas-export-png",
+        ):
+            assert (
+                pilot.app.query_one(button_id, Button).display is False
+            ), button_id
+        assert pilot.app.query_one("#personas-delete", Button).display is True
+
+
+async def test_lore_selection_hides_console_and_export_actions():
+    """Task-443 AC1: same as dictionaries - lore books never Attach/Start
+    Chat/export a card."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Frontier World", kind="lore")
+        await pilot.pause()
+        for button_id in (
+            "#personas-attach-to-console",
+            "#personas-start-chat",
+            "#personas-export-json",
+            "#personas-export-png",
+        ):
+            assert (
+                pilot.app.query_one(button_id, Button).display is False
+            ), button_id
+        assert pilot.app.query_one("#personas-delete", Button).display is True
+
+
+async def test_clear_selection_restores_action_visibility():
+    """Task-443: leaving a dictionary/lore selection (kind -> None) must not
+    leave the never-applies buttons permanently hidden - the pre-selection
+    baseline shows every action (disabled, with the "select an item"
+    reason), same as before any selection was ever made."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Combat Slang", kind="dictionary")
+        await pilot.pause()
+        assert pilot.app.query_one("#personas-start-chat", Button).display is False
+        await pane.clear_selection()
+        await pilot.pause()
+        for button_id in (
+            "#personas-attach-to-console",
+            "#personas-start-chat",
+            "#personas-export-json",
+            "#personas-export-png",
+            "#personas-delete",
+        ):
+            assert (
+                pilot.app.query_one(button_id, Button).display is True
+            ), button_id
 
 
 async def test_console_action_enablement_is_explicitly_screen_owned():
     app = InspectorApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
-        pane.show_selection(name="Tutor", kind="character", authority="Local")
+        pane.show_selection(name="Tutor", kind="character")
         await pilot.pause()
 
         # Selection/export state is inspector-local, but Console attach/start
         # availability is pushed by PersonasScreen from _console_action_allowed().
         assert pilot.app.query_one("#personas-export-json", Button).disabled is False
         assert pilot.app.query_one("#personas-delete", Button).disabled is False
-        assert pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
+        assert (
+            pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
+        )
         assert pilot.app.query_one("#personas-start-chat", Button).disabled is True
         assert "Console blocked: select an item" in str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
@@ -148,7 +256,9 @@ async def test_console_action_enablement_is_explicitly_screen_owned():
         pane.set_console_actions_enabled(True)
         await pilot.pause()
 
-        assert pilot.app.query_one("#personas-attach-to-console", Button).disabled is False
+        assert (
+            pilot.app.query_one("#personas-attach-to-console", Button).disabled is False
+        )
         assert pilot.app.query_one("#personas-start-chat", Button).disabled is False
         assert "Console ready" in str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
@@ -159,7 +269,9 @@ async def test_console_action_enablement_is_explicitly_screen_owned():
 
         assert pilot.app.query_one("#personas-export-json", Button).disabled is False
         assert pilot.app.query_one("#personas-delete", Button).disabled is False
-        assert pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
+        assert (
+            pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
+        )
         assert pilot.app.query_one("#personas-start-chat", Button).disabled is True
         assert "Console blocked: prompts are not attachable" in str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
@@ -170,7 +282,7 @@ async def test_unsaved_disables_attach_and_export_with_reason():
     app = InspectorApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
-        pane.show_selection(name="Tutor", kind="character", authority="Local")
+        pane.show_selection(name="Tutor", kind="character")
         pane.set_console_actions_enabled(True)
         pane.set_unsaved(True)
         pane.set_console_actions_enabled(False, reason="unsaved edits")
@@ -185,7 +297,9 @@ async def test_unsaved_disables_attach_and_export_with_reason():
         pane.set_unsaved(False)
         pane.set_console_actions_enabled(True)
         await pilot.pause()
-        assert pilot.app.query_one("#personas-attach-to-console", Button).disabled is False
+        assert (
+            pilot.app.query_one("#personas-attach-to-console", Button).disabled is False
+        )
 
 
 async def test_show_validation_errors_renders_messages_and_clears():
@@ -194,7 +308,9 @@ async def test_show_validation_errors_renders_messages_and_clears():
         pane = pilot.app.query_one(PersonasInspectorPane)
         pane.show_validation(("name: required", "first_message: required"))
         await pilot.pause()
-        summary = str(pilot.app.query_one("#personas-validation-summary", Static).renderable)
+        summary = str(
+            pilot.app.query_one("#personas-validation-summary", Static).renderable
+        )
         assert "name: required" in summary
         assert "first_message: required" in summary
         pane.show_validation(())
@@ -208,13 +324,17 @@ async def test_conversations_panel_rows_post_selection():
     received = []
 
     class CaptureApp(InspectorApp):
-        def on_conversation_row_selected(self, message: ConversationRowSelected) -> None:
+        def on_conversation_row_selected(
+            self, message: ConversationRowSelected
+        ) -> None:
             received.append(message.conversation_id)
 
     app = CaptureApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
-        await pane.show_conversations((("conv-1", "First case"), ("conv-2", "Cold trail")))
+        await pane.show_conversations(
+            (("conv-1", "First case"), ("conv-2", "Cold trail"))
+        )
         await pilot.pause()
         assert len(pilot.app.query(".personas-conversation-row")) == 2
         await pilot.click("#personas-conversation-row-conv-1")
@@ -226,7 +346,9 @@ async def test_conversation_click_after_rerender_posts_new_id():
     received = []
 
     class CaptureApp(InspectorApp):
-        def on_conversation_row_selected(self, message: ConversationRowSelected) -> None:
+        def on_conversation_row_selected(
+            self, message: ConversationRowSelected
+        ) -> None:
             received.append(message.conversation_id)
 
     app = CaptureApp()
@@ -245,14 +367,20 @@ async def test_conversation_list_arrow_enter():
     received = []
 
     class CaptureApp(InspectorApp):
-        def on_conversation_row_selected(self, message: ConversationRowSelected) -> None:
+        def on_conversation_row_selected(
+            self, message: ConversationRowSelected
+        ) -> None:
             received.append(message.conversation_id)
 
     app = CaptureApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
         await pane.show_conversations(
-            (("conv-1", "First case"), ("conv-2", "Cold trail"), ("conv-3", "Closed file"))
+            (
+                ("conv-1", "First case"),
+                ("conv-2", "Cold trail"),
+                ("conv-3", "Closed file"),
+            )
         )
         await pilot.pause()
         list_view = pilot.app.query_one("#personas-conversations-list", ListView)
@@ -272,7 +400,7 @@ async def test_clear_selection_resets_everything():
     app = InspectorApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
-        pane.show_selection(name="Detective Sam", kind="character", authority="Server")
+        pane.show_selection(name="Detective Sam", kind="character")
         await pane.show_conversations((("conv-1", "First case"),))
         pane.set_unsaved(True)
         await pilot.pause()
@@ -282,10 +410,8 @@ async def test_clear_selection_resets_everything():
             pilot.app.query_one("#personas-selected-name", Static).renderable
         )
         assert (
-            str(pilot.app.query_one("#personas-selected-authority", Static).renderable)
-            == "Authority: Local"
+            pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
         )
-        assert pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
         assert len(pilot.app.query(".personas-conversation-row")) == 0
         assert "Validation: OK" in str(
             pilot.app.query_one("#personas-validation-summary", Static).renderable

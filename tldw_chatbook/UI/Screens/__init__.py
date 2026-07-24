@@ -12,29 +12,25 @@ from importlib import import_module
 _SCREEN_EXPORTS = {
     "ChatScreen": ".chat_screen",
     "MediaIngestScreen": ".media_ingest_screen",
-    "CodingScreen": ".coding_screen",
     "MediaScreen": ".media_screen",
     "SearchScreen": ".search_screen",
     "EvalsScreen": ".evals_screen",
     "ToolsSettingsScreen": ".tools_settings_screen",
     "LLMScreen": ".llm_screen",
-    "CustomizeScreen": ".customize_screen",
     "LogsScreen": ".logs_screen",
     "StatsScreen": ".stats_screen",
 }
 
 __all__ = [
-    'ChatScreen',
-    'MediaIngestScreen',
-    'CodingScreen',
-    'MediaScreen',
-    'SearchScreen',
-    'EvalsScreen',
-    'ToolsSettingsScreen',
-    'LLMScreen',
-    'CustomizeScreen',
-    'LogsScreen',
-    'StatsScreen',
+    "ChatScreen",
+    "MediaIngestScreen",
+    "MediaScreen",
+    "SearchScreen",
+    "EvalsScreen",
+    "ToolsSettingsScreen",
+    "LLMScreen",
+    "LogsScreen",
+    "StatsScreen",
 ]
 
 

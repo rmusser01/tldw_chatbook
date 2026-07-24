@@ -12,7 +12,9 @@ PHASES = {
         "status": "verified",
         "parent_task": "TASK-4",
         "closeout_task": "TASK-4.8",
-        "parent_task_file": Path("backlog/tasks/task-4 - Phase-2-Home-Operational-Control.md"),
+        "parent_task_file": Path(
+            "backlog/tasks/task-4 - Phase-2-Home-Operational-Control.md"
+        ),
         "task_file": Path(
             "backlog/tasks/task-4.8 - Phase-2.8-Replay-Home-operational-control-maturity-gate.md"
         ),
@@ -31,7 +33,9 @@ PHASES = {
         "status": "verified",
         "parent_task": "TASK-3",
         "closeout_task": "TASK-3.11",
-        "parent_task_file": Path("backlog/tasks/task-3 - Phase-3-Console-Live-Work-Hub.md"),
+        "parent_task_file": Path(
+            "backlog/tasks/task-3 - Phase-3-Console-Live-Work-Hub.md"
+        ),
         "task_file": Path(
             "backlog/tasks/task-3.11 - Phase-3.11-Replay-Console-live-work-maturity-gate.md"
         ),
@@ -50,7 +54,9 @@ PHASES = {
         "status": "verified",
         "parent_task": "TASK-5",
         "closeout_task": "TASK-5.6",
-        "parent_task_file": Path("backlog/tasks/task-5 - Phase-4-Destination-Service-Adoption.md"),
+        "parent_task_file": Path(
+            "backlog/tasks/task-5 - Phase-4-Destination-Service-Adoption.md"
+        ),
         "task_file": Path(
             "backlog/tasks/task-5.6 - Phase-4.6-Replay-destination-service-adoption-maturity-gate.md"
         ),
@@ -65,6 +71,7 @@ PHASES = {
         "task_status": "Done",
     },
 }
+
 
 def _text(path: Path) -> str:
     resolved_path = path if path.is_absolute() else REPO_ROOT / path
@@ -110,9 +117,9 @@ def test_phase_two_three_four_closeout_tasks_record_current_parent_status():
         assert "not render-only or click-only behavior" in closeout_text
 
         parent_text = _text(phase["parent_task_file"])
-        expected_parent_status = "Done" if phase["status"] == "verified" else "In Progress"
+        expected_parent_status = (
+            "Done" if phase["status"] == "verified" else "In Progress"
+        )
         assert f"status: {expected_parent_status}" in parent_text
         assert phase["closeout_task"] in parent_text
         assert "maturity-gate QA" in parent_text
-
-

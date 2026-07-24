@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
+import time
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from html import escape as html_escape
@@ -16,11 +18,14 @@ from rich.markup import escape
 from tldw_chatbook.Chat.answer_citations import summarize_citation_artifact_metadata
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIngestJob
 from tldw_chatbook.Library.library_ingest_state import short_ingest_error
-from tldw_chatbook.Notifications.notifications_scope_service import ServerEventScopeRequiredError
+from tldw_chatbook.Notifications.notifications_scope_service import (
+    ServerEventScopeRequiredError,
+)
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.Utils.path_validation import validate_path
 from .dashboard_state import (
+    LOCAL_INGEST_ITEM_ID_PREFIX,
     HomeActiveWorkItem,
     HomeDashboardInput,
     SERVER_EVENT_STATE_AVAILABLE,
@@ -61,13 +66,26 @@ _HOME_INGEST_JOB_ACTIVE_STATES = frozenset(
         IngestJobState.FAILED,
     }
 )
+# B3 (task-282): short cross-visit TTL cache for the three sync
+# seam queries build_dashboard_input used to run inline on every compose,
+# triage sync, and rail click. Small enough that Home's "every visit
+# re-reads the real seams" contract still holds -- a stale window of a few
+# seconds is invisible to a human clicking around, but collapses bursts of
+# calls (rapid rail clicks, back-to-back triage syncs) onto one real query.
+_ACTIVE_WORK_CACHE_TTL_SECONDS = 3.0
 _HOME_RECENT_WORK_LIMIT = 8
 _MAX_CHATBOOK_ARTIFACT_PREVIEW_CHARS = 1000
 _MAX_CHATBOOK_FILE_PATH_CHARS = 2000
 _MAX_CHATBOOK_PAYLOAD_TEXT_CHARS = 1000
 _MAX_CHATBOOK_METADATA_TEXT_CHARS = 256
 _HOME_SERVER_EVENT_FEED_LIMIT = 20
-_DANGEROUS_TEXT_PATTERNS = ("<script", "</script", "javascript:", "onclick=", "onerror=")
+_DANGEROUS_TEXT_PATTERNS = (
+    "<script",
+    "</script",
+    "javascript:",
+    "onclick=",
+    "onerror=",
+)
 
 
 class HomeControlAction(StrEnum):
@@ -217,6 +235,14 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         self._chatbook_artifact_snapshot: tuple[Mapping[str, Any], ...] = ()
         self._chatbook_artifact_snapshot_lock = RLock()
         self._flashcards_due_count: int = 0
+        # B3 (task-282): cache for the watchlist-run/notification/server-event
+        # seam queries. This adapter instance lives on the app (not the
+        # per-visit HomeScreen), so unlike HomeScreen's own
+        # ``_home_content_snapshot`` (explicitly per-instance/per-visit by
+        # contract), this cache is intentionally cross-visit.
+        self._active_work_cache_lock = RLock()
+        self._active_work_cache: dict[str, Any] | None = None
+        self._active_work_cache_at: float = 0.0
 
     def refresh_flashcards_due_snapshot(self) -> None:
         """Refresh the cached due-flashcards count off the Home compose path.
@@ -246,7 +272,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         if self.chatbook_service is None:
             self._set_chatbook_artifact_snapshot(())
             return
-        list_snapshot = getattr(self.chatbook_service, "list_home_artifact_snapshot", None)
+        list_snapshot = getattr(
+            self.chatbook_service, "list_home_artifact_snapshot", None
+        )
         if not callable(list_snapshot):
             self._set_chatbook_artifact_snapshot(())
             return
@@ -260,7 +288,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             tuple(record for record in records if isinstance(record, Mapping))
         )
 
-    def _set_chatbook_artifact_snapshot(self, records: tuple[Mapping[str, Any], ...]) -> None:
+    def _set_chatbook_artifact_snapshot(
+        self, records: tuple[Mapping[str, Any], ...]
+    ) -> None:
         with self._chatbook_artifact_snapshot_lock:
             self._chatbook_artifact_snapshot = records
 
@@ -274,11 +304,12 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             providers_models=providers_models,
             has_recent_work=has_recent_work,
         )
-        runs = self._watchlist_run_snapshot()
+        fields = self._active_work_fields()
+        runs = fields["runs"]
         return replace(
             dashboard_input,
-            notification_count=self._unread_notification_count(),
-            **self._server_event_status_fields(),
+            notification_count=fields["notification_count"],
+            **fields["server_event_fields"],
             active_work_items=tuple(
                 [
                     *self._local_watchlist_run_items(runs),
@@ -297,7 +328,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         target_id: str | None = None,
         target_route: str | None = None,
     ) -> HomeControlResult:
-        if action is HomeControlAction.OPEN_DETAILS and _is_local_watchlist_run_id(target_id):
+        if action is HomeControlAction.OPEN_DETAILS and _is_local_watchlist_run_id(
+            target_id
+        ):
             run = self._local_watchlist_run_by_id(str(target_id))
             if run is not None:
                 title = self._watchlist_run_title(run)
@@ -308,7 +341,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                     target_route=target_route or "subscriptions",
                     target_id=target_id,
                 )
-        if action is HomeControlAction.OPEN_IN_CONSOLE and _is_local_watchlist_run_id(target_id):
+        if action is HomeControlAction.OPEN_IN_CONSOLE and _is_local_watchlist_run_id(
+            target_id
+        ):
             run = self._local_watchlist_run_by_id(str(target_id))
             if run is not None:
                 title = self._watchlist_run_title(run)
@@ -321,12 +356,16 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                         source="Watchlists",
                         title=title,
                         payload=self._watchlist_console_payload(run, str(target_id)),
-                        status=str(_mapping_value(run, "status") or "pending").strip().lower(),
+                        status=str(_mapping_value(run, "status") or "pending")
+                        .strip()
+                        .lower(),
                         recovery="Review the Watchlists run details or retry from Watchlists.",
                         action_label="Open Watchlists run",
                     ),
                 )
-        if action is HomeControlAction.OPEN_DETAILS and _is_local_chatbook_id(target_id):
+        if action is HomeControlAction.OPEN_DETAILS and _is_local_chatbook_id(
+            target_id
+        ):
             record = self._local_chatbook_artifact_by_id(str(target_id))
             if record is not None:
                 title = self._chatbook_title(record)
@@ -337,7 +376,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                     target_route=target_route or "artifacts",
                     target_id=target_id,
                 )
-        if action is HomeControlAction.OPEN_IN_CONSOLE and _is_local_chatbook_id(target_id):
+        if action is HomeControlAction.OPEN_IN_CONSOLE and _is_local_chatbook_id(
+            target_id
+        ):
             record = self._local_chatbook_artifact_by_id(str(target_id))
             if record is not None:
                 title = self._chatbook_title(record)
@@ -355,7 +396,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                         action_label="Open Chatbook artifact",
                     ),
                 )
-        if action is HomeControlAction.OPEN_DETAILS and _is_local_ingest_job_id(target_id):
+        if action is HomeControlAction.OPEN_DETAILS and _is_local_ingest_job_id(
+            target_id
+        ):
             # Library ingest jobs are ephemeral, in-memory registry entries
             # (see library_ingest_jobs.py) -- routing back to the Library
             # ingest canvas does not require the job to still be present in
@@ -385,7 +428,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             )
         except Exception:
             return 0
-        return sum(1 for notification in notifications if _notification_is_unread(notification))
+        return sum(
+            1 for notification in notifications if _notification_is_unread(notification)
+        )
 
     def _server_event_status_fields(self) -> dict[str, object]:
         if self.server_event_service is None:
@@ -394,7 +439,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                 "server_event_state": SERVER_EVENT_STATE_UNAVAILABLE,
                 "server_event_recovery": "Server event feed is unavailable.",
             }
-        list_feed = getattr(self.server_event_service, "list_observed_server_feed", None)
+        list_feed = getattr(
+            self.server_event_service, "list_observed_server_feed", None
+        )
         if not callable(list_feed):
             return {
                 "server_event_count": 0,
@@ -460,6 +507,132 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             ),
         }
 
+    def _compute_active_work_fields(self) -> dict[str, Any]:
+        """Run the three sync seam queries this adapter is built around.
+
+        Isolated as its own leaf (B3/task-282) so it can run either inline
+        (``_active_work_fields``'s cold-cache fallback, since
+        ``build_dashboard_input`` must stay synchronous -- Home's
+        ``compose_content`` is a plain generator and cannot await) or via
+        ``asyncio.to_thread`` from ``refresh_active_work_cache_async``.
+        """
+        runs = self._watchlist_run_snapshot()
+        return {
+            "runs": runs,
+            "notification_count": self._unread_notification_count(),
+            "server_event_fields": self._server_event_status_fields(),
+        }
+
+    def _active_work_fields(self) -> dict[str, Any]:
+        """Return the cached active-work fields, computing inline if stale.
+
+        This is the synchronous path ``build_dashboard_input`` always used
+        to pay directly on every call. With the cache, a cold/stale read
+        still blocks (compose_content cannot await), but Home's on-mount
+        worker (``HomeScreen._refresh_home_active_work_cache``) keeps this
+        warm off the event loop via ``refresh_active_work_cache_async``, so
+        in practice most calls -- including the "no cross-visit cache"
+        complaint from the audit, since this adapter outlives any single
+        HomeScreen instance -- hit the cache instead of the DB/services.
+        """
+        with self._active_work_cache_lock:
+            cached = self._active_work_cache
+            fresh = (
+                cached is not None
+                and (time.monotonic() - self._active_work_cache_at)
+                < _ACTIVE_WORK_CACHE_TTL_SECONDS
+            )
+            if fresh:
+                return cached
+        fields = self._compute_active_work_fields()
+        self._store_active_work_cache(fields)
+        return fields
+
+    def _store_active_work_cache(self, fields: dict[str, Any]) -> None:
+        with self._active_work_cache_lock:
+            self._active_work_cache = fields
+            self._active_work_cache_at = time.monotonic()
+
+    def invalidate_active_work_cache(self) -> None:
+        """Force the next read to recompute.
+
+        Wired to Home's triage-action controls (approve/reject/pause/
+        resume/retry, ``TldwCli._handle_home_control_action``) so an action
+        that changes watchlist-run or notification state is not masked by
+        a stale cache for up to the TTL window.
+        """
+        with self._active_work_cache_lock:
+            self._active_work_cache = None
+            self._active_work_cache_at = 0.0
+
+    def _active_work_seams_confirmed_file_backed(self) -> bool:
+        """True only when every present sqlite seam is positively file-backed.
+
+        ``ClientNotificationsDB`` (the ``notification_service``'s backing
+        store, also reused as ``server_event_service.local_service`` in
+        this app's wiring) caches a single sqlite connection for
+        ``:memory:`` paths rather than opening thread-local ones like
+        ChaChaNotes does -- sqlite defaults to ``check_same_thread=True``,
+        so calling it from a background thread would raise, not silently
+        read an empty DB. Threading is therefore allowed only when each
+        seam that exists exposes ``store.is_memory_db`` as False; a
+        missing store/attribute (an unrecognized service shape, e.g. a
+        test double) counts as unconfirmed and keeps the compute inline,
+        so don't-thread really is the fallback for unknown shapes
+        (PR #683 review).
+        """
+        seams = []
+        if self.notification_service is not None:
+            seams.append(getattr(self.notification_service, "store", None))
+        server_event_local = getattr(self.server_event_service, "local_service", None)
+        if server_event_local is not None:
+            seams.append(getattr(server_event_local, "store", None))
+        for store in seams:
+            is_memory = getattr(store, "is_memory_db", None)
+            if is_memory is None or bool(is_memory):
+                return False
+        return True
+
+    async def refresh_active_work_cache_async(self) -> bool:
+        """Warm/refresh the active-work cache off the event loop.
+
+        Called from ``HomeScreen._refresh_home_active_work_cache`` (an
+        async worker started on mount, mirroring
+        ``HomeScreen._home_content_seam_call``'s ``asyncio.to_thread``
+        pattern). Degrades to an inline (still off the caller's awaiting
+        coroutine, but not off *this* thread) computation unless every
+        backing seam is positively confirmed file-backed -- a
+        per-connection ``:memory:`` store or an unrecognized service
+        shape both stay inline.
+
+        No-ops when the cache is already fresh: Home's compose path
+        cold-computes (and stores) the fields moments before the on-mount
+        worker runs, so recomputing here would double the mount-time cost
+        -- and in the memory-backed case that recompute runs on the event
+        loop, where it measurably delayed Home's initial child mount
+        (caught by the core-usability smoke gate during task-282
+        verification).
+
+        Returns:
+            True when the cache was actually refreshed (caller should
+            re-sync the triage surface), False when it was already fresh
+            and nothing changed.
+        """
+        with self._active_work_cache_lock:
+            fresh = (
+                self._active_work_cache is not None
+                and (time.monotonic() - self._active_work_cache_at)
+                < _ACTIVE_WORK_CACHE_TTL_SECONDS
+            )
+        if fresh:
+            return False
+        if self._active_work_seams_confirmed_file_backed():
+            fields = await asyncio.to_thread(self._compute_active_work_fields)
+        else:
+            fields = self._compute_active_work_fields()
+        self._store_active_work_cache(fields)
+        return True
+
     def _watchlist_run_snapshot(self) -> list[Any]:
         """Fetch the watchlist run snapshot once per dashboard build."""
         if self.watchlist_service is None:
@@ -490,7 +663,11 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                 str(
                     _mapping_value(run, "title")
                     or _mapping_value(run, "source_title")
-                    or (f"Watchlist run {run_id}" if run_id is not None else "Watchlist run")
+                    or (
+                        f"Watchlist run {run_id}"
+                        if run_id is not None
+                        else "Watchlist run"
+                    )
                 )
             )
             items.append(
@@ -506,7 +683,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             )
         return items
 
-    def _local_recent_work_items(self, runs: list[Any]) -> tuple[HomeActiveWorkItem, ...]:
+    def _local_recent_work_items(
+        self, runs: list[Any]
+    ) -> tuple[HomeActiveWorkItem, ...]:
         """Return terminal local work as recent rows, most recent first."""
         recents: list[HomeActiveWorkItem] = []
         for run in runs:
@@ -601,7 +780,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                 continue
             items.append(
                 HomeActiveWorkItem(
-                    item_id=f"local:ingest:{job.job_id}",
+                    item_id=f"{LOCAL_INGEST_ITEM_ID_PREFIX}{job.job_id}",
                     title=_ingest_job_title(job),
                     source="Library",
                     status=job.state.value,
@@ -618,9 +797,12 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                     # any brackets in the error. Titles stay escaped -- they
                     # DO reach a markup-parsing Button label in the rail.
                     status_detail=(
-                        short_ingest_error(job.error)
-                        if job.state == IngestJobState.FAILED and job.error
-                        else ""
+                        (
+                            short_ingest_error(job.error)
+                            if job.state == IngestJobState.FAILED and job.error
+                            else ""
+                        )
+                        + _ingest_retry_suffix(job)
                     ),
                     # M4 (fix batch F1b): a permanent (validation-class)
                     # failure fails the same way on every retry -- Home
@@ -629,7 +811,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                     # (IngestQueueRow.can_retry). Non-FAILED jobs keep the
                     # default True; it's meaningless for them either way.
                     retry_available=(
-                        not job.permanent if job.state == IngestJobState.FAILED else True
+                        not job.permanent
+                        if job.state == IngestJobState.FAILED
+                        else True
                     ),
                 )
             )
@@ -651,7 +835,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                 continue
             items.append(
                 HomeActiveWorkItem(
-                    item_id=f"local:ingest:{job.job_id}",
+                    item_id=f"{LOCAL_INGEST_ITEM_ID_PREFIX}{job.job_id}",
                     title=_ingest_job_title(job),
                     source="Library",
                     status="done",
@@ -682,7 +866,11 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             logger.warning(f"Failed to fetch local watchlist run details for Home: {e}")
             return None
         return next(
-            (run for run in runs if self._local_watchlist_run_item_id(run) == target_id),
+            (
+                run
+                for run in runs
+                if self._local_watchlist_run_item_id(run) == target_id
+            ),
             None,
         )
 
@@ -734,7 +922,9 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
 
     @staticmethod
     def _local_chatbook_item_id(record: Any) -> str:
-        chatbook_id = _mapping_value(record, "chatbook_id") or _mapping_value(record, "id")
+        chatbook_id = _mapping_value(record, "chatbook_id") or _mapping_value(
+            record, "id"
+        )
         return f"local:chatbook:{chatbook_id}" if chatbook_id not in (None, "") else ""
 
     @staticmethod
@@ -746,8 +936,12 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         )
 
     @classmethod
-    def _chatbook_console_payload(cls, record: Any, target_id: str) -> Mapping[str, Any]:
-        chatbook_id = _mapping_value(record, "chatbook_id") or _mapping_value(record, "id")
+    def _chatbook_console_payload(
+        cls, record: Any, target_id: str
+    ) -> Mapping[str, Any]:
+        chatbook_id = _mapping_value(record, "chatbook_id") or _mapping_value(
+            record, "id"
+        )
         payload: dict[str, Any] = {
             "target_id": target_id,
             "chatbook_id": chatbook_id,
@@ -784,6 +978,18 @@ def _ingest_job_title(job: LibraryIngestJob) -> str:
     Chatbook artifact titles.
     """
     return escape(Path(str(job.source_path)).name or str(job.source_path))
+
+
+def _ingest_retry_suffix(job) -> str:
+    """Return a `` · retry {n}`` suffix once a job has been requeued.
+
+    ``job.retry_count`` (0 until ``LibraryIngestJobRegistry.requeue`` bumps
+    it -- see ``library_ingest_jobs.py``) survives an app restart via the
+    persisted store (backlog 161), so a job restored after a restart and
+    retried again from Home still shows how many attempts it has had.
+    Markup-safe plain text, consistent with ``status_detail``'s
+    ``markup=False`` rendering (no escaping needed/wanted here either)."""
+    return f" · retry {job.retry_count}" if job.retry_count else ""
 
 
 def _item_updated_at(record: Any) -> str:
@@ -824,7 +1030,7 @@ def _is_local_chatbook_id(value: str | None) -> bool:
 
 
 def _is_local_ingest_job_id(value: str | None) -> bool:
-    return bool(value and str(value).startswith("local:ingest:"))
+    return bool(value and str(value).startswith(LOCAL_INGEST_ITEM_ID_PREFIX))
 
 
 def _runtime_server_status_fields(runtime_policy: Any | None) -> dict[str, object]:
@@ -852,7 +1058,10 @@ def _csv(value: Any) -> str | None:
     if value is None:
         return None
     if isinstance(value, str):
-        return _safe_payload_text(value, max_length=_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS) or None
+        return (
+            _safe_payload_text(value, max_length=_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS)
+            or None
+        )
     if isinstance(value, (list, tuple)):
         text = ", ".join(
             _safe_payload_text(item, max_length=_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS)
@@ -861,7 +1070,9 @@ def _csv(value: Any) -> str | None:
         )
         text = _safe_payload_text(text, max_length=_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS)
         return text or None
-    return _safe_payload_text(value, max_length=_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS) or None
+    return (
+        _safe_payload_text(value, max_length=_MAX_CHATBOOK_PAYLOAD_TEXT_CHARS) or None
+    )
 
 
 def _safe_payload_text(
@@ -885,7 +1096,9 @@ def _safe_payload_text(
     return escape(html_escape(text, quote=False))
 
 
-def _safe_metadata_value(value: Any, *, max_length: int = _MAX_CHATBOOK_METADATA_TEXT_CHARS) -> Any | None:
+def _safe_metadata_value(
+    value: Any, *, max_length: int = _MAX_CHATBOOK_METADATA_TEXT_CHARS
+) -> Any | None:
     if isinstance(value, bool):
         return value
     if isinstance(value, (int, float)):
@@ -895,7 +1108,9 @@ def _safe_metadata_value(value: Any, *, max_length: int = _MAX_CHATBOOK_METADATA
 
 
 def _safe_file_path(value: Any) -> str | None:
-    text = sanitize_string(str(value or ""), max_length=_MAX_CHATBOOK_FILE_PATH_CHARS).strip()
+    text = sanitize_string(
+        str(value or ""), max_length=_MAX_CHATBOOK_FILE_PATH_CHARS
+    ).strip()
     if not text:
         return None
     text = " ".join(text.split())
@@ -904,18 +1119,25 @@ def _safe_file_path(value: Any) -> str | None:
         base_directory = path.parent if path.is_absolute() else Path.cwd()
         validated = validate_path(path, base_directory)
     except ValueError:
-        logger.warning(f"Rejected unsafe Chatbook artifact file path for Home payload: {text!r}")
+        logger.warning(
+            f"Rejected unsafe Chatbook artifact file path for Home payload: {text!r}"
+        )
         return None
-    return _safe_payload_text(
-        str(validated),
-        max_length=_MAX_CHATBOOK_FILE_PATH_CHARS,
-    ) or None
+    return (
+        _safe_payload_text(
+            str(validated),
+            max_length=_MAX_CHATBOOK_FILE_PATH_CHARS,
+        )
+        or None
+    )
 
 
 def _console_metadata_payload(metadata: Any) -> dict[str, Any]:
     if not isinstance(metadata, Mapping):
         return {}
-    artifact_source = _safe_metadata_value(metadata.get("artifact_source"), max_length=128)
+    artifact_source = _safe_metadata_value(
+        metadata.get("artifact_source"), max_length=128
+    )
     artifact_kind = _safe_metadata_value(metadata.get("artifact_kind"), max_length=128)
     if str(artifact_source or "").strip().lower() != "console":
         return {}

@@ -1,11 +1,14 @@
 """Server-trusted M1 apply adapter for notes.note (cleartext, idempotent)."""
+
 from __future__ import annotations
 
 from html import escape as html_escape
-from typing import Any, Callable
+from typing import Any, Callable, TYPE_CHECKING
 
 from tldw_chatbook.Utils.input_validation import sanitize_string
-from tldw_chatbook.tldw_api import SyncV2Envelope
+
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api import SyncV2Envelope
 
 
 class NotesM1SyncAdapter:
@@ -19,7 +22,9 @@ class NotesM1SyncAdapter:
         record_conflict: Callable[..., dict[str, Any]],
     ) -> dict[str, Any]:
         if notes_mirror is None or dataset_id is None:
-            raise ValueError("notes_mirror and dataset_id must be provided to NotesM1SyncAdapter")
+            raise ValueError(
+                "notes_mirror and dataset_id must be provided to NotesM1SyncAdapter"
+            )
         object_id = envelope.object_id or envelope.entity_id
         if object_id is None:
             return record_conflict(
@@ -35,7 +40,10 @@ class NotesM1SyncAdapter:
             if existing.object_revision > revision:
                 # Stale envelope (older revision than local) — drop, do not overwrite.
                 return {"status": "noop", "object_id": object_id}
-            if existing.object_revision == revision and existing.object_hash == payload_hash:
+            if (
+                existing.object_revision == revision
+                and existing.object_hash == payload_hash
+            ):
                 # Exact duplicate already applied.
                 return {"status": "noop", "object_id": object_id}
 
@@ -51,8 +59,11 @@ class NotesM1SyncAdapter:
                 )
             local_store.upsert_note(object_id, payload, object_revision=revision)
         notes_mirror.record(
-            dataset_id, object_id,
-            object_revision=revision, object_hash=payload_hash, server_cursor=cursor,
+            dataset_id,
+            object_id,
+            object_revision=revision,
+            object_hash=payload_hash,
+            server_cursor=cursor,
         )
         return {"status": "applied", "object_id": object_id}
 

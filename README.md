@@ -39,9 +39,9 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -e .
 
 # Run the application
+python3 -m tldw_chatbook
+# Installed command alternative:
 tldw-cli
-# Or: 
-python3 -m tldw_chatbook.app
 
 # Run in web browser (requires 'web' feature)
 pip install -e ".[web]"

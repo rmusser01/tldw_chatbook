@@ -10,6 +10,14 @@ The RAG module now uses a single, highly configurable V2 service with predefined
 - **Configuration Profiles** - Predefined settings for different use cases
 - **Custom Overrides** - Fine-tune any profile with specific settings
 
+### Configuration source of truth
+
+The active profile (`[rag.service].profile`) is the single source of RAG
+config — both ingestion and search resolve via
+`active_config.resolve_active_rag_config` (profile base + env overrides). The
+old `[AppRAGSearchConfig.rag.*]` value keys are deprecated in favor of
+profiles.
+
 ## Available Profiles
 
 ### Basic Search Profiles
@@ -57,12 +65,8 @@ The RAG module now uses a single, highly configurable V2 service with predefined
 Add to your `~/.config/tldw_cli/config.toml`:
 
 ```toml
-[rag_search.service]
+[rag.service]
 profile = "hybrid_basic"  # Choose your profile
-
-# Optional: Override specific settings
-[rag_search.service.custom_overrides]
-enable_reranking = true
 ```
 
 ### 2. Programmatic Usage
@@ -143,4 +147,24 @@ To migrate from base to v2:
 - `simplified/search_service.py` - MCP integration with auto-selection
 - `config.py` - Added service configuration section
 - `SearchRAGWindow.py` - Uses factory for service creation
-- `config_examples/rag_v2_example.toml` - Example configurations
+- `rag_config_example.toml` - Example configuration
+
+## Removed Features
+
+Late chunking, standalone context assembly, and LLM query expansion modules
+were removed as dead code (task-252); no profile or service ever invoked them.
+
+### Collection fingerprinting (index isolation)
+
+Each vector collection is named `<base>__<fingerprint>` where the fingerprint
+is a versioned hash of the index-determining config (embedding model +
+max_length, all chunking fields, distance metric). Ingestion and search
+resolve to the same fingerprinted collection, so changing an index-determining
+setting points at a fresh (empty-until-backfilled) collection rather than
+mixing incompatible vectors. Admin helpers: `collection_indexes.list_indexes`,
+`delete_index`, `index_status`. Legacy pre-fingerprint `default` collections
+are adopted on first run (`maybe_adopt_legacy_collection`). This auto-adoption
+only recognizes the canonical `default` collection name: if you had already
+set a custom `[rag.vector_store].collection_name`, that data is left on disk
+under its old name and you'll need to re-index into the new fingerprinted
+collection.

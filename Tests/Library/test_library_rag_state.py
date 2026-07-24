@@ -6,6 +6,7 @@ import pytest
 
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_EMPTY_STATE_SELECTOR,
+    LIBRARY_RAG_NO_SOURCES_GATE_COPY,
     LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
     LibraryRagPanelState,
     LibraryRagQueryState,
@@ -21,6 +22,7 @@ def test_scope_state_exposes_library_source_scope_and_empty_recovery() -> None:
         notes=2,
         media=1,
         conversations=0,
+        prompts=0,
         workspaces=0,
         collections=0,
         selected=("notes", "media"),
@@ -33,6 +35,7 @@ def test_scope_state_exposes_library_source_scope_and_empty_recovery() -> None:
         "notes",
         "media",
         "conversations",
+        "prompts",
         "workspaces",
         "collections",
     )
@@ -40,20 +43,28 @@ def test_scope_state_exposes_library_source_scope_and_empty_recovery() -> None:
     assert scope.option_by_type("notes").count_label == "2 sources"
     assert scope.option_by_type("notes").selected is True
     assert scope.option_by_type("conversations").available is False
-    assert "No conversations available" in scope.option_by_type("conversations").recovery
+    assert (
+        "No conversations available" in scope.option_by_type("conversations").recovery
+    )
+    assert scope.option_by_type("prompts").label == "Prompts"
+    assert scope.option_by_type("prompts").available is False
 
     empty_scope = LibraryRagScopeState.from_source_counts(
         notes=0,
         media=0,
         conversations=0,
+        prompts=0,
         workspaces=0,
         collections=0,
     )
 
     assert empty_scope.has_available_sources is False
     assert empty_scope.status == "blocked"
-    assert "Owner: Library source index." in empty_scope.recovery_copy
-    assert "Next: Add or import Library sources before querying." in empty_scope.recovery_copy
+    # (task-185) The no-sources state is ONE quiet gate line -- never the
+    # retired Unavailable/Why/Next/Recovery/Owner dump or its checklist.
+    assert empty_scope.recovery_copy == LIBRARY_RAG_NO_SOURCES_GATE_COPY
+    assert "Owner:" not in empty_scope.recovery_copy
+    assert "Recovery checklist" not in empty_scope.recovery_copy
 
 
 def test_query_state_blocks_empty_query_and_runtime_blockers() -> None:
@@ -281,7 +292,10 @@ def test_row_badge_label_joins_with_middle_dot_not_pipe() -> None:
         }
     )
 
-    assert row.row_badge_label == "media · workspace-a · 1 citation · excluded from context"
+    assert (
+        row.row_badge_label
+        == "media · workspace-a · 1 citation · excluded from context"
+    )
     assert "|" not in row.row_badge_label
 
 
@@ -302,7 +316,10 @@ def test_panel_state_tracks_retrieval_status_and_console_action_readiness() -> N
     assert blocked.use_in_console_action.disabled_reason == (
         "Run a query and select usable evidence before sending to Console."
     )
-    assert "Owner: Library source index." in blocked.recovery_copy
+    # (task-185) The panel's no-sources recovery copy is the single quiet
+    # gate line, and the inspector's next action stays user-facing.
+    assert blocked.recovery_copy == LIBRARY_RAG_NO_SOURCES_GATE_COPY
+    assert blocked.next_action == "Import media or create notes, then search."
 
     result = LibraryRagResultRow.from_result(
         {
@@ -322,7 +339,10 @@ def test_panel_state_tracks_retrieval_status_and_console_action_readiness() -> N
     )
 
     assert ready.retrieval_status == "ready"
-    assert ready.next_action == "Review cited evidence or send the selected result to Console."
+    assert (
+        ready.next_action
+        == "Review cited evidence or send the selected result to Console."
+    )
     assert ready.use_in_console_action.enabled is True
     assert ready.selected_result == result
 
@@ -400,7 +420,55 @@ def test_explicit_empty_scope_selection_is_not_defaulted_to_all_sources() -> Non
 
     assert panel.scope.has_selected_sources is False
     assert panel.retrieval_status == "blocked"
-    assert panel.query_state.run_action.disabled_reason == "Select at least one Library source."
+    assert (
+        panel.query_state.run_action.disabled_reason
+        == "Select at least one Library source."
+    )
+
+
+# --- Task 6: prompts as a Search source -----------------------------------
+
+
+def test_prompts_source_toggle_label_and_gate_with_four_sources() -> None:
+    """`Prompts (N)` toggle label composes from `label`/`count`, and the
+    "select at least one source" gate keeps working once a 4th real source
+    (prompts) exists alongside notes/media/conversations.
+    """
+    scope = LibraryRagScopeState.from_source_counts(
+        notes=1,
+        media=1,
+        conversations=1,
+        prompts=5,
+        selected=("notes", "media", "conversations", "prompts"),
+    )
+
+    prompts_option = scope.option_by_type("prompts")
+    assert prompts_option.label == "Prompts"
+    assert prompts_option.count == 5
+    assert prompts_option.available is True
+    assert prompts_option.selected is True
+
+    panel = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1, "media": 1, "conversations": 1, "prompts": 5},
+        selected_source_types=(),
+        query="Find policy evidence",
+    )
+
+    assert panel.scope.has_selected_sources is False
+    assert panel.retrieval_status == "blocked"
+    assert (
+        panel.query_state.run_action.disabled_reason
+        == "Select at least one Library source."
+    )
+
+    ready = LibraryRagPanelState.from_values(
+        source_counts={"notes": 0, "media": 0, "conversations": 0, "prompts": 5},
+        selected_source_types=("prompts",),
+        query="Find policy evidence",
+    )
+
+    assert ready.scope.selected_source_types == ("prompts",)
+    assert ready.retrieval_status == "ready"
 
 
 class TestUpdateSearchHistory:
@@ -436,23 +504,51 @@ class TestSearchingStatusLine:
 class TestResultRowOpenTarget:
     def test_note_result_opens_notes(self):
         row = LibraryRagResultRow.from_result(
-            {"source_id": "note-42", "title": "T", "snippet": "s",
-             "provenance": {"source_type": "note"}}
+            {
+                "source_id": "note-42",
+                "title": "T",
+                "snippet": "s",
+                "provenance": {"source_type": "note"},
+            }
         )
         assert row.open_source_type == "notes"
         assert row.can_open is True
 
     def test_media_and_conversation_map(self):
         media = LibraryRagResultRow.from_result(
-            {"source_id": "7", "title": "T", "snippet": "s",
-             "provenance": {"source_type": "media"}}
+            {
+                "source_id": "7",
+                "title": "T",
+                "snippet": "s",
+                "provenance": {"source_type": "media"},
+            }
         )
         convo = LibraryRagResultRow.from_result(
-            {"source_id": "c1", "title": "T", "snippet": "s",
-             "provenance": {"source_type": "conversation"}}
+            {
+                "source_id": "c1",
+                "title": "T",
+                "snippet": "s",
+                "provenance": {"source_type": "conversation"},
+            }
         )
         assert media.open_source_type == "media"
         assert convo.open_source_type == "conversations"
+
+    def test_prompt_result_opens_prompt_singular_not_plural(self):
+        """Task 6: prompts' open-target is the singular "prompt" -- distinct
+        from the "prompts" scope-toggle/source key -- because
+        `_open_library_item_by_id`'s dispatch key is "prompt" (singular).
+        """
+        row = LibraryRagResultRow.from_result(
+            {
+                "source_id": "5",
+                "title": "T",
+                "snippet": "s",
+                "provenance": {"source_type": "prompt"},
+            }
+        )
+        assert row.open_source_type == "prompt"
+        assert row.can_open is True
 
     def test_unknown_type_or_missing_id_cannot_open(self):
         no_type = LibraryRagResultRow.from_result(

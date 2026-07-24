@@ -1,30 +1,42 @@
 """Pure display-state contracts for the Library notes canvas."""
+
 from datetime import datetime, timezone
 
 from tldw_chatbook.Library.library_notes_state import (
-    NOTES_SORT_MODES,
-    LibraryNoteEditorState,
     LibraryNotesListRow,
     build_library_note_editor_state,
     build_library_notes_list_state,
     build_note_export_content,
     next_notes_sort_mode,
     notes_autosave_status_text,
+    patch_note_records_after_save,
     sort_notes_records,
 )
 
 NOW = datetime(2026, 7, 7, 12, 0, tzinfo=timezone.utc)
 
-NOTE_A = {"id": "n-1", "title": "Q3 retro", "content": "alpha body",
-          "last_modified": "2026-07-07T11:57:00+00:00", "version": 2}
-NOTE_B = {"id": "n-2", "title": "Reading list", "content": "bravo body",
-          "last_modified": "2026-07-06T12:00:00+00:00", "version": 1}
+NOTE_A = {
+    "id": "n-1",
+    "title": "Q3 retro",
+    "content": "alpha body",
+    "last_modified": "2026-07-07T11:57:00+00:00",
+    "version": 2,
+}
+NOTE_B = {
+    "id": "n-2",
+    "title": "Reading list",
+    "content": "bravo body",
+    "last_modified": "2026-07-06T12:00:00+00:00",
+    "version": 1,
+}
 
 
 def test_list_state_builds_rows_with_age_and_header():
     state = build_library_notes_list_state([NOTE_A, NOTE_B], now=NOW)
     assert state.header_copy == "Notes (2)"
-    assert state.rows[0] == LibraryNotesListRow(note_id="n-1", title="Q3 retro", age_label="3m")
+    assert state.rows[0] == LibraryNotesListRow(
+        note_id="n-1", title="Q3 retro", age_label="3m"
+    )
     assert state.rows[1].age_label == "1d"
     assert state.empty_copy == ""
 
@@ -63,10 +75,15 @@ def test_sort_records_newest_oldest_title():
 
 
 def test_editor_state_builds_fields_and_meta_line():
-    detail = {"id": "n-1", "title": "Q3 retro", "content": "alpha body",
-              "version": 2, "last_modified": "2026-07-07T11:57:00+00:00",
-              "created_at": "2026-07-01T10:00:00+00:00",
-              "keywords": ["retro", "q3"]}
+    detail = {
+        "id": "n-1",
+        "title": "Q3 retro",
+        "content": "alpha body",
+        "version": 2,
+        "last_modified": "2026-07-07T11:57:00+00:00",
+        "created_at": "2026-07-01T10:00:00+00:00",
+        "keywords": ["retro", "q3"],
+    }
     state = build_library_note_editor_state(detail, now=NOW)
     assert state.note_id == "n-1"
     assert state.title == "Q3 retro"
@@ -88,7 +105,10 @@ def test_autosave_status_text_variants():
     assert notes_autosave_status_text("idle", word_count=2) == "2 words"
     assert notes_autosave_status_text("saving", word_count=2) == "2 words · saving…"
     assert notes_autosave_status_text("saved", word_count=2) == "2 words · saved"
-    assert notes_autosave_status_text("conflict", word_count=2) == "2 words · changed elsewhere"
+    assert (
+        notes_autosave_status_text("conflict", word_count=2)
+        == "2 words · changed elsewhere"
+    )
     assert notes_autosave_status_text("error", word_count=2) == "2 words · save failed"
 
 
@@ -120,7 +140,9 @@ def test_export_content_text_has_header_and_rule():
 
 
 def test_export_content_blank_title_falls_back_to_untitled():
-    markdown_text = build_note_export_content("   ", "body", "", "n-2", "markdown", now=EXPORT_NOW)
+    markdown_text = build_note_export_content(
+        "   ", "body", "", "n-2", "markdown", now=EXPORT_NOW
+    )
     assert "title: Untitled Note\n" in markdown_text
     assert "# Untitled Note" in markdown_text
     text = build_note_export_content("", "body", "", "n-2", "text", now=EXPORT_NOW)
@@ -136,7 +158,9 @@ def test_export_content_now_defaults_when_omitted():
 
 
 def test_resolve_note_template_placeholders_substitutes_known_keys():
-    from tldw_chatbook.Library.library_notes_state import resolve_note_template_placeholders
+    from tldw_chatbook.Library.library_notes_state import (
+        resolve_note_template_placeholders,
+    )
 
     resolved = resolve_note_template_placeholders(
         "T - {date} {time} {datetime}", now=datetime(2026, 7, 8, 9, 30)
@@ -145,7 +169,9 @@ def test_resolve_note_template_placeholders_substitutes_known_keys():
 
 
 def test_resolve_note_template_placeholders_degrades_on_malformed():
-    from tldw_chatbook.Library.library_notes_state import resolve_note_template_placeholders
+    from tldw_chatbook.Library.library_notes_state import (
+        resolve_note_template_placeholders,
+    )
 
     assert resolve_note_template_placeholders("{unknown_key}") == "{unknown_key}"
     assert resolve_note_template_placeholders("stray { brace") == "stray { brace"
@@ -154,7 +180,9 @@ def test_resolve_note_template_placeholders_degrades_on_malformed():
 def test_resolve_note_template_placeholders_resolves_known_keys_leaves_unknown_literal():
     """A per-key resolution: an unknown placeholder sitting alongside a
     known one must not block the known one from being substituted."""
-    from tldw_chatbook.Library.library_notes_state import resolve_note_template_placeholders
+    from tldw_chatbook.Library.library_notes_state import (
+        resolve_note_template_placeholders,
+    )
 
     resolved = resolve_note_template_placeholders(
         "X {date} {unknown}", now=datetime(2026, 7, 8, 9, 30)
@@ -165,7 +193,10 @@ def test_resolve_note_template_placeholders_resolves_known_keys_leaves_unknown_l
 def test_note_template_keywords_parses_comma_string_and_sequences():
     from tldw_chatbook.Library.library_notes_state import note_template_keywords
 
-    assert note_template_keywords({"keywords": "meeting, notes"}) == ("meeting", "notes")
+    assert note_template_keywords({"keywords": "meeting, notes"}) == (
+        "meeting",
+        "notes",
+    )
     assert note_template_keywords({"keywords": ["a", " b ", ""]}) == ("a", "b")
     assert note_template_keywords({"keywords": ""}) == ()
     assert note_template_keywords({}) == ()
@@ -173,10 +204,16 @@ def test_note_template_keywords_parses_comma_string_and_sequences():
 
 
 def test_build_note_template_rows_excludes_blank_and_resolves_titles():
-    from tldw_chatbook.Library.library_notes_state import build_library_note_template_rows
+    from tldw_chatbook.Library.library_notes_state import (
+        build_library_note_template_rows,
+    )
 
     templates = {
-        "blank": {"title": "New Note", "content": "", "description": "Empty note template"},
+        "blank": {
+            "title": "New Note",
+            "content": "",
+            "description": "Empty note template",
+        },
         "meeting": {
             "title": "Meeting Notes - {date}",
             "content": "x",
@@ -191,7 +228,9 @@ def test_build_note_template_rows_excludes_blank_and_resolves_titles():
 
 
 def test_build_note_template_rows_malformed_value_degrades_to_key_label():
-    from tldw_chatbook.Library.library_notes_state import build_library_note_template_rows
+    from tldw_chatbook.Library.library_notes_state import (
+        build_library_note_template_rows,
+    )
 
     rows = build_library_note_template_rows({"bug_report": "not-a-mapping"})
 
@@ -201,7 +240,9 @@ def test_build_note_template_rows_malformed_value_degrades_to_key_label():
 
 
 def test_build_note_template_rows_drops_secondary_when_it_repeats_label():
-    from tldw_chatbook.Library.library_notes_state import build_library_note_template_rows
+    from tldw_chatbook.Library.library_notes_state import (
+        build_library_note_template_rows,
+    )
 
     templates = {"todo": {"title": "Todo list", "description": "Todo list template"}}
     rows = build_library_note_template_rows(templates)
@@ -216,14 +257,67 @@ def test_build_note_template_rows_project_and_research_resolve_dateful_titles():
     as an empty/awkward secondary line. Both now carry a real ``{date}``
     placeholder like every other non-blank template, so their resolved
     title is a real secondary rather than a blank or truncated one."""
-    from tldw_chatbook.Library.library_notes_state import build_library_note_template_rows
+    from tldw_chatbook.Library.library_notes_state import (
+        build_library_note_template_rows,
+    )
 
     templates = {
-        "project": {"title": "Project Plan - {date}", "description": "Project planning template"},
-        "research": {"title": "Research Notes - {date}", "description": "Research notes template"},
+        "project": {
+            "title": "Project Plan - {date}",
+            "description": "Project planning template",
+        },
+        "research": {
+            "title": "Research Notes - {date}",
+            "description": "Research notes template",
+        },
     }
     rows = build_library_note_template_rows(templates, now=datetime(2026, 7, 8, 9, 30))
     rows_by_key = {row.template_key: row for row in rows}
 
     assert rows_by_key["project"].resolved_title == "Project Plan - 2026-07-08"
     assert rows_by_key["research"].resolved_title == "Research Notes - 2026-07-08"
+
+
+# (task-184) patch_note_records_after_save: the in-memory list refresh
+# applied by a successful in-canvas save, so Back-to-list shows the new
+# title, a fresh relative age, and correct Newest ordering immediately.
+
+
+def test_patch_note_records_after_save_updates_title_and_last_modified():
+    saved_stamp = "2026-07-07T12:00:00+00:00"
+    patched = patch_note_records_after_save(
+        [NOTE_A, NOTE_B], "n-2", title="Reading list (edited)", modified_at=saved_stamp
+    )
+
+    assert patched[0] == NOTE_A
+    assert patched[1]["title"] == "Reading list (edited)"
+    assert patched[1]["last_modified"] == saved_stamp
+    # Other fields pass through untouched.
+    assert patched[1]["content"] == "bravo body"
+    assert patched[1]["version"] == 1
+    # The original record is never mutated in place.
+    assert NOTE_B["title"] == "Reading list"
+
+
+def test_patch_note_records_after_save_resorts_to_front_with_fresh_age():
+    saved_stamp = NOW.isoformat()
+    patched = patch_note_records_after_save(
+        [NOTE_A, NOTE_B], "n-2", title="Reading list (edited)", modified_at=saved_stamp
+    )
+
+    ordered = sort_notes_records(list(patched), "newest")
+    state = build_library_notes_list_state(ordered, now=NOW)
+
+    assert state.rows[0].note_id == "n-2"
+    assert state.rows[0].title == "Reading list (edited)"
+    assert state.rows[0].age_label == "now"
+
+
+def test_patch_note_records_after_save_leaves_unknown_ids_and_shapes_alone():
+    records = [NOTE_A, "not-a-mapping"]
+    patched = patch_note_records_after_save(
+        records, "missing-id", title="X", modified_at="2026-07-07T12:00:00+00:00"
+    )
+
+    assert patched == (NOTE_A, "not-a-mapping")
+    assert patch_note_records_after_save(None, "n-1", title="X", modified_at="s") == ()

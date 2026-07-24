@@ -2,9 +2,9 @@ from __future__ import annotations
 
 """Typed client models for server-owned reminders and notification feeds."""
 
-from typing import Any, Literal
+from typing import Any, Literal  # noqa: E402
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator  # noqa: E402
 
 
 ReminderScheduleKind = Literal["one_time", "recurring"]

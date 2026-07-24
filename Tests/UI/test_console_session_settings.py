@@ -30,16 +30,25 @@ from tldw_chatbook.UI.Screens.chat_screen import (
     ChatScreen,
 )
 from tldw_chatbook.UI.Screens import provider_model_resolution
+from tldw_chatbook.Chat.local_server_discovery import LocalModelProbeResult
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
     MODAL_BODY_MIN_HEIGHT,
     MODAL_CONTROL_HEIGHT,
+    MODEL_DISCOVER_BUTTON_ID,
+    MODEL_DISCOVER_STATUS_ID,
     ConsoleSettingsInput,
     ConsoleSettingsModal,
     _settings_screen_region,
 )
-from tldw_chatbook.Widgets.Console import console_settings_summary as settings_summary_module
-from tldw_chatbook.Widgets.Console.console_settings_summary import ConsoleSettingsSummary
-from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import MergedModelEntry
+from tldw_chatbook.Widgets.Console import (
+    console_settings_summary as settings_summary_module,
+)
+from tldw_chatbook.Widgets.Console.console_settings_summary import (
+    ConsoleSettingsSummary,
+)
+from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+    MergedModelEntry,
+)
 from tldw_chatbook.config import API_MODELS_BY_PROVIDER, DEFAULT_CONFIG_FROM_TOML
 
 
@@ -98,13 +107,19 @@ class ModalHarness(App[None]):
 
 class StyledModalHarness(ModalHarness):
     CSS_PATH = str(
-        Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
     )
 
 
 class StyledConsoleHarness(ConsoleHarness):
     CSS_PATH = str(
-        Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
     )
 
 
@@ -207,7 +222,9 @@ async def _wait_for_focused_id(host: App[None], pilot, widget_id: str) -> None:
         if focused_id == widget_id:
             return
         await pilot.pause(0.05)
-    raise AssertionError(f"Expected focus on {widget_id!r}, found {getattr(host.focused, 'id', None)!r}")
+    raise AssertionError(
+        f"Expected focus on {widget_id!r}, found {getattr(host.focused, 'id', None)!r}"
+    )
 
 
 async def _press_new_console_tab(console, store, pilot) -> str:
@@ -301,7 +318,9 @@ async def test_console_settings_summary_renders_rows_and_button() -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_settings_summary_uses_direct_choose_model_action_when_setup_blocked() -> None:
+async def test_console_settings_summary_uses_direct_choose_model_action_when_setup_blocked() -> (
+    None
+):
     state = ConsoleSettingsSummaryState(
         provider_row="Provider: llama.cpp",
         model_row="Model: Missing",
@@ -386,8 +405,12 @@ def test_pending_launch_inspector_auto_open_docstring_is_google_style() -> None:
 def test_summary_state_appends_non_ready_readiness_to_model_row() -> None:
     state = build_console_settings_summary_state(
         ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
-        ConsoleSettingsContextEstimate(used_tokens=12, token_limit=4096, label="12 / 4k"),
-        ConsoleSettingsReadiness(label="WIP", detail="Provider not wired yet.", native_send_supported=False),
+        ConsoleSettingsContextEstimate(
+            used_tokens=12, token_limit=4096, label="12 / 4k"
+        ),
+        ConsoleSettingsReadiness(
+            label="WIP", detail="Provider not wired yet.", native_send_supported=False
+        ),
     )
 
     assert state.provider_row == "Provider: llama_cpp"
@@ -451,7 +474,9 @@ def test_default_console_session_settings_prefers_provider_model_profile() -> No
     assert settings.streaming is True
 
 
-def test_default_console_session_settings_prefers_chat_defaults_over_provider_scalars() -> None:
+def test_default_console_session_settings_prefers_chat_defaults_over_provider_scalars() -> (
+    None
+):
     app_config = {
         "chat_defaults": {
             "provider": "OpenAI",
@@ -498,11 +523,18 @@ def test_console_session_settings_accepts_documented_effort_values() -> None:
         thinking_effort="max",
     )
 
-    assert validate_console_session_settings(openai_settings, app_config=app_config) == []
-    assert validate_console_session_settings(anthropic_settings, app_config=app_config) == []
+    assert (
+        validate_console_session_settings(openai_settings, app_config=app_config) == []
+    )
+    assert (
+        validate_console_session_settings(anthropic_settings, app_config=app_config)
+        == []
+    )
 
 
-def test_default_console_session_settings_reads_enable_streaming_as_compatibility_fallback() -> None:
+def test_default_console_session_settings_reads_enable_streaming_as_compatibility_fallback() -> (
+    None
+):
     app_config = {
         "chat_defaults": {
             "provider": "OpenAI",
@@ -525,7 +557,9 @@ def test_default_console_session_settings_reads_enable_streaming_as_compatibilit
     assert settings.streaming is False
 
 
-def test_default_console_session_settings_prefers_canonical_streaming_over_enable_streaming() -> None:
+def test_default_console_session_settings_prefers_canonical_streaming_over_enable_streaming() -> (
+    None
+):
     app_config = {
         "chat_defaults": {
             "provider": "OpenAI",
@@ -549,7 +583,9 @@ def test_default_console_session_settings_prefers_canonical_streaming_over_enabl
     assert settings.streaming is True
 
 
-def test_default_console_session_settings_uses_global_fallbacks_when_profile_is_absent() -> None:
+def test_default_console_session_settings_uses_global_fallbacks_when_profile_is_absent() -> (
+    None
+):
     app_config = {
         "chat_defaults": {
             "provider": "OpenAI",
@@ -613,7 +649,9 @@ def test_default_console_session_settings_skips_blank_model_profile_values() -> 
 def test_summary_state_keeps_missing_model_row_compact() -> None:
     state = build_console_settings_summary_state(
         ConsoleSessionSettings(provider="llama_cpp", model=None),
-        ConsoleSettingsContextEstimate(used_tokens=None, token_limit=None, label="unknown"),
+        ConsoleSettingsContextEstimate(
+            used_tokens=None, token_limit=None, label="unknown"
+        ),
         ConsoleSettingsReadiness(
             label="Missing model",
             detail="Select a model before sending.",
@@ -632,7 +670,9 @@ def test_summary_state_exposes_safe_credential_source() -> None:
     """Show safe env/config credential sources without exposing secret values."""
     env_state = build_console_settings_summary_state(
         ConsoleSessionSettings(provider="openai", model="gpt-4.1"),
-        ConsoleSettingsContextEstimate(used_tokens=12, token_limit=4096, label="12 / 4k"),
+        ConsoleSettingsContextEstimate(
+            used_tokens=12, token_limit=4096, label="12 / 4k"
+        ),
         ConsoleSettingsReadiness(
             label="Ready",
             detail="OpenAI is ready. API key found via env:OPENAI_API_KEY.",
@@ -641,7 +681,9 @@ def test_summary_state_exposes_safe_credential_source() -> None:
     )
     config_state = build_console_settings_summary_state(
         ConsoleSessionSettings(provider="anthropic", model="claude-sonnet-4-20250514"),
-        ConsoleSettingsContextEstimate(used_tokens=12, token_limit=4096, label="12 / 4k"),
+        ConsoleSettingsContextEstimate(
+            used_tokens=12, token_limit=4096, label="12 / 4k"
+        ),
         ConsoleSettingsReadiness(
             label="Ready",
             detail="Anthropic is ready. API key found via config:api_settings.anthropic.api_key.",
@@ -650,14 +692,19 @@ def test_summary_state_exposes_safe_credential_source() -> None:
     )
 
     assert env_state.credential_row == "Credential: env OPENAI_API_KEY"
-    assert config_state.credential_row == "Credential: config api_settings.anthropic.api_key"
+    assert (
+        config_state.credential_row
+        == "Credential: config api_settings.anthropic.api_key"
+    )
 
 
 def test_summary_state_handles_empty_credential_source_names() -> None:
     """Collapse empty env/config credential-source identifiers without padding."""
     env_state = build_console_settings_summary_state(
         ConsoleSessionSettings(provider="openai", model="gpt-4.1"),
-        ConsoleSettingsContextEstimate(used_tokens=12, token_limit=4096, label="12 / 4k"),
+        ConsoleSettingsContextEstimate(
+            used_tokens=12, token_limit=4096, label="12 / 4k"
+        ),
         ConsoleSettingsReadiness(
             label="Ready",
             detail="OpenAI is ready. API key found via env:   .",
@@ -666,7 +713,9 @@ def test_summary_state_handles_empty_credential_source_names() -> None:
     )
     config_state = build_console_settings_summary_state(
         ConsoleSessionSettings(provider="anthropic", model="claude-sonnet-4-20250514"),
-        ConsoleSettingsContextEstimate(used_tokens=12, token_limit=4096, label="12 / 4k"),
+        ConsoleSettingsContextEstimate(
+            used_tokens=12, token_limit=4096, label="12 / 4k"
+        ),
         ConsoleSettingsReadiness(
             label="Ready",
             detail="Anthropic is ready. API key found via config:   .",
@@ -682,7 +731,9 @@ def test_summary_state_ignores_warning_lines_after_credential_source() -> None:
     """Keep appended readiness warnings out of the credential summary row."""
     state = build_console_settings_summary_state(
         ConsoleSessionSettings(provider="openai", model="gpt-4.1"),
-        ConsoleSettingsContextEstimate(used_tokens=12, token_limit=4096, label="12 / 4k"),
+        ConsoleSettingsContextEstimate(
+            used_tokens=12, token_limit=4096, label="12 / 4k"
+        ),
         ConsoleSettingsReadiness(
             label="Ready",
             detail=(
@@ -698,9 +749,15 @@ def test_summary_state_ignores_warning_lines_after_credential_source() -> None:
 
 def test_summary_state_appends_optional_sampling_fields_only_when_set() -> None:
     without_optional = build_console_settings_summary_state(
-        ConsoleSessionSettings(provider="llama_cpp", model="model-a", temperature=0.7, top_p=0.95),
-        ConsoleSettingsContextEstimate(used_tokens=12, token_limit=4096, label="12 / 4k"),
-        ConsoleSettingsReadiness(label="Ready", detail="Ready.", native_send_supported=True),
+        ConsoleSessionSettings(
+            provider="llama_cpp", model="model-a", temperature=0.7, top_p=0.95
+        ),
+        ConsoleSettingsContextEstimate(
+            used_tokens=12, token_limit=4096, label="12 / 4k"
+        ),
+        ConsoleSettingsReadiness(
+            label="Ready", detail="Ready.", native_send_supported=True
+        ),
     )
     with_optional = build_console_settings_summary_state(
         ConsoleSessionSettings(
@@ -712,19 +769,30 @@ def test_summary_state_appends_optional_sampling_fields_only_when_set() -> None:
             top_k=40,
             max_tokens=512,
         ),
-        ConsoleSettingsContextEstimate(used_tokens=12, token_limit=4096, label="12 / 4k"),
-        ConsoleSettingsReadiness(label="Ready", detail="Ready.", native_send_supported=True),
+        ConsoleSettingsContextEstimate(
+            used_tokens=12, token_limit=4096, label="12 / 4k"
+        ),
+        ConsoleSettingsReadiness(
+            label="Ready", detail="Ready.", native_send_supported=True
+        ),
     )
 
     assert without_optional.sampling_row == "Sampling: T 0.70, P 0.95"
-    assert with_optional.sampling_row == "Sampling: T 0.70, P 0.95, min_p 0.05, top_k 40, max_tokens 512"
+    assert (
+        with_optional.sampling_row
+        == "Sampling: T 0.70, P 0.95, min_p 0.05, top_k 40, max_tokens 512"
+    )
 
 
 def test_summary_state_normalizes_unknown_context_label() -> None:
     state = build_console_settings_summary_state(
         ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
-        ConsoleSettingsContextEstimate(used_tokens=None, token_limit=None, label="Context: unknown"),
-        ConsoleSettingsReadiness(label="Ready", detail="Ready.", native_send_supported=True),
+        ConsoleSettingsContextEstimate(
+            used_tokens=None, token_limit=None, label="Context: unknown"
+        ),
+        ConsoleSettingsReadiness(
+            label="Ready", detail="Ready.", native_send_supported=True
+        ),
     )
 
     assert state.context_row == "Context: unavailable"
@@ -738,18 +806,32 @@ def test_summary_state_prefers_character_label_over_persona_label() -> None:
             persona_label="General",
             character_label="Ada",
         ),
-        ConsoleSettingsContextEstimate(used_tokens=12, token_limit=4096, label="12 / 4k"),
-        ConsoleSettingsReadiness(label="Ready", detail="Ready.", native_send_supported=True),
+        ConsoleSettingsContextEstimate(
+            used_tokens=12, token_limit=4096, label="12 / 4k"
+        ),
+        ConsoleSettingsReadiness(
+            label="Ready", detail="Ready.", native_send_supported=True
+        ),
     )
     persona = build_console_settings_summary_state(
-        ConsoleSessionSettings(provider="llama_cpp", model="model-a", persona_label="Mentor"),
-        ConsoleSettingsContextEstimate(used_tokens=12, token_limit=4096, label="12 / 4k"),
-        ConsoleSettingsReadiness(label="Ready", detail="Ready.", native_send_supported=True),
+        ConsoleSessionSettings(
+            provider="llama_cpp", model="model-a", persona_label="Mentor"
+        ),
+        ConsoleSettingsContextEstimate(
+            used_tokens=12, token_limit=4096, label="12 / 4k"
+        ),
+        ConsoleSettingsReadiness(
+            label="Ready", detail="Ready.", native_send_supported=True
+        ),
     )
     fallback = build_console_settings_summary_state(
         ConsoleSessionSettings(provider="llama_cpp", model="model-a", persona_label=""),
-        ConsoleSettingsContextEstimate(used_tokens=12, token_limit=4096, label="12 / 4k"),
-        ConsoleSettingsReadiness(label="Ready", detail="Ready.", native_send_supported=True),
+        ConsoleSettingsContextEstimate(
+            used_tokens=12, token_limit=4096, label="12 / 4k"
+        ),
+        ConsoleSettingsReadiness(
+            label="Ready", detail="Ready.", native_send_supported=True
+        ),
     )
 
     assert character.identity_row == "Character: Ada"
@@ -788,7 +870,10 @@ async def test_console_model_resolution_includes_runtime_discovered_models() -> 
     )
 
     assert [option.model_id for option in options] == ["gpt-4.1", "gpt-5"]
-    assert options[1].warning == "Capabilities unknown until saved or verified; text chat is assumed."
+    assert (
+        options[1].warning
+        == "Capabilities unknown until saved or verified; text chat is assumed."
+    )
     assert scope.merge_calls == [
         {
             "mode": "local",
@@ -798,7 +883,9 @@ async def test_console_model_resolution_includes_runtime_discovered_models() -> 
 
 
 @pytest.mark.asyncio
-async def test_console_model_resolution_failure_logs_provider_context(monkeypatch) -> None:
+async def test_console_model_resolution_failure_logs_provider_context(
+    monkeypatch,
+) -> None:
     app = _build_test_app()
     app.providers_models = {"openai": ["gpt-4.1"]}
     app.llm_provider_catalog_scope_service = FailingConsoleModelDiscoveryScope()
@@ -826,7 +913,9 @@ async def test_console_model_resolution_failure_logs_provider_context(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_console_settings_model_resolution_preserves_configured_alternatives() -> None:
+async def test_console_settings_model_resolution_preserves_configured_alternatives() -> (
+    None
+):
     app = _build_test_app()
     app.providers_models = {
         "local_llamacpp": ["uat-local-model", "uat-alt-local-model"],
@@ -917,9 +1006,14 @@ async def test_console_settings_modal_save_returns_validated_settings() -> None:
         await app.push_screen(modal, callback=app.capture_saved_settings)
         await pilot.pause()
         readiness = app.screen.query_one("#console-settings-readiness", Static)
-        provider_model_section = app.screen.query_one("#console-settings-provider-model-section")
+        provider_model_section = app.screen.query_one(
+            "#console-settings-provider-model-section"
+        )
         assert "Choose a model to enable sending." not in str(readiness.renderable)
-        assert provider_model_section.has_class("console-settings-primary-section") is False
+        assert (
+            provider_model_section.has_class("console-settings-primary-section")
+            is False
+        )
         app.screen.query_one("#console-settings-temperature", Input).value = "0.42"
         app.screen.query_one("#console-settings-top-p", Input).value = "0.88"
         await pilot.click("#console-settings-save")
@@ -932,7 +1026,63 @@ async def test_console_settings_modal_save_returns_validated_settings() -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_single_model_uses_readonly_value_not_dead_dropdown() -> None:
+async def test_console_settings_validation_error_clears_on_edit() -> None:
+    """TASK-363: a validation error must clear as soon as the user edits any
+    field, not linger stale until the next Save."""
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = ConsoleSettingsModal(
+            settings=settings,
+            app_config=app.app_config,
+            providers_models={"llama_cpp": ["model-a"]},
+            context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+            can_save=True,
+        )
+        await app.push_screen(modal, callback=app.capture_saved_settings)
+        await pilot.pause()
+
+        temperature = app.screen.query_one("#console-settings-temperature", Input)
+        temperature.value = ""
+        await pilot.click("#console-settings-save")
+        await pilot.pause()
+
+        error = app.screen.query_one("#console-settings-error", Static)
+        assert "Temperature is required" in str(error.renderable)
+
+        # Editing the field invalidates the stale summary immediately.
+        temperature.value = "0.5"
+        await pilot.pause()
+        assert str(error.renderable).strip() == ""
+
+
+@pytest.mark.asyncio
+async def test_console_settings_error_summary_is_visually_distinct() -> None:
+    """TASK-363: the validation summary must read as an error (bold, error
+    colour), not near-body-text salience."""
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = ConsoleSettingsModal(
+            settings=settings,
+            app_config=app.app_config,
+            providers_models={"llama_cpp": ["model-a"]},
+            context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+            can_save=True,
+        )
+        await app.push_screen(modal, callback=app.capture_saved_settings)
+        await pilot.pause()
+
+        error = app.screen.query_one("#console-settings-error", Static)
+        assert "bold" in str(error.styles.text_style)
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_single_model_uses_readonly_value_not_dead_dropdown() -> (
+    None
+):
     app = StyledModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -1109,7 +1259,9 @@ async def test_console_settings_modal_accepts_keyboard_edited_sampling_inputs(
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_body_is_scrollable_container_for_overflow_controls() -> None:
+async def test_console_settings_modal_body_is_scrollable_container_for_overflow_controls() -> (
+    None
+):
     app = StyledModalHarness()
     settings = ConsoleSessionSettings(
         provider="openai",
@@ -1144,7 +1296,9 @@ async def test_console_settings_modal_body_is_scrollable_container_for_overflow_
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_preserves_provider_specific_generation_controls() -> None:
+async def test_console_settings_modal_preserves_provider_specific_generation_controls() -> (
+    None
+):
     app = StyledModalHarness()
     settings = ConsoleSessionSettings(
         provider="openai",
@@ -1197,11 +1351,19 @@ async def test_console_settings_modal_preserves_provider_specific_generation_con
         app.screen.query_one("#console-settings-seed", Input).value = "23"
         app.screen.query_one("#console-settings-presence-penalty", Input).value = "0.6"
         app.screen.query_one("#console-settings-frequency-penalty", Input).value = "0.7"
-        app.screen.query_one("#console-settings-reasoning-effort", Input).value = "medium"
-        app.screen.query_one("#console-settings-reasoning-summary", Input).value = "concise"
+        app.screen.query_one(
+            "#console-settings-reasoning-effort", Input
+        ).value = "medium"
+        app.screen.query_one(
+            "#console-settings-reasoning-summary", Input
+        ).value = "concise"
         app.screen.query_one("#console-settings-verbosity", Input).value = "high"
-        app.screen.query_one("#console-settings-thinking-effort", Input).value = "medium"
-        app.screen.query_one("#console-settings-thinking-budget-tokens", Input).value = "4096"
+        app.screen.query_one(
+            "#console-settings-thinking-effort", Input
+        ).value = "medium"
+        app.screen.query_one(
+            "#console-settings-thinking-budget-tokens", Input
+        ).value = "4096"
         await pilot.click("#console-settings-save")
 
     assert app.saved_settings is not None
@@ -1242,8 +1404,12 @@ async def test_console_settings_modal_normalizes_provider_specific_choices() -> 
         )
         await pilot.pause()
 
-        app.screen.query_one("#console-settings-reasoning-effort", Input).value = " HIGH "
-        app.screen.query_one("#console-settings-reasoning-summary", Input).value = " AUTO "
+        app.screen.query_one(
+            "#console-settings-reasoning-effort", Input
+        ).value = " HIGH "
+        app.screen.query_one(
+            "#console-settings-reasoning-summary", Input
+        ).value = " AUTO "
         app.screen.query_one("#console-settings-verbosity", Input).value = " Medium "
         app.screen.query_one("#console-settings-thinking-effort", Input).value = " LOW "
         await pilot.click("#console-settings-save")
@@ -1258,7 +1424,9 @@ async def test_console_settings_modal_normalizes_provider_specific_choices() -> 
 @pytest.mark.asyncio
 async def test_console_settings_modal_shows_inherited_provider_endpoint() -> None:
     app = ModalHarness()
-    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a", base_url=None)
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp", model="model-a", base_url=None
+    )
 
     async with app.run_test(size=(120, 40)) as pilot:
         await app.push_screen(
@@ -1280,13 +1448,17 @@ async def test_console_settings_modal_shows_inherited_provider_endpoint() -> Non
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_prefers_api_base_url_alias_over_default_api_url() -> None:
+async def test_console_settings_modal_prefers_api_base_url_alias_over_default_api_url() -> (
+    None
+):
     app = ModalHarness()
     app.app_config["api_settings"]["llama_cpp"] = {
         "api_url": "http://localhost:8080/completion",
         "api_base_url": "http://127.0.0.1:9099/v1",
     }
-    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a", base_url=None)
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp", model="model-a", base_url=None
+    )
 
     async with app.run_test(size=(120, 40)) as pilot:
         await app.push_screen(
@@ -1309,7 +1481,9 @@ async def test_console_settings_modal_prefers_api_base_url_alias_over_default_ap
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_replaces_stale_lower_priority_endpoint_with_alias() -> None:
+async def test_console_settings_modal_replaces_stale_lower_priority_endpoint_with_alias() -> (
+    None
+):
     app = ModalHarness()
     app.app_config["api_settings"]["llama_cpp"] = {
         "api_url": "http://localhost:8080/completion",
@@ -1342,7 +1516,9 @@ async def test_console_settings_modal_replaces_stale_lower_priority_endpoint_wit
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_focus_mode_uses_ready_copy_when_model_selected() -> None:
+async def test_console_settings_modal_focus_mode_uses_ready_copy_when_model_selected() -> (
+    None
+):
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -1361,13 +1537,22 @@ async def test_console_settings_modal_focus_mode_uses_ready_copy_when_model_sele
         await pilot.pause()
 
         readiness = app.screen.query_one("#console-settings-readiness", Static)
-        provider_model_section = app.screen.query_one("#console-settings-provider-model-section")
-        assert str(readiness.renderable) == "llama_cpp is ready. No API key is required."
-        assert provider_model_section.has_class("console-settings-primary-section") is False
+        provider_model_section = app.screen.query_one(
+            "#console-settings-provider-model-section"
+        )
+        assert (
+            str(readiness.renderable) == "llama_cpp is ready. No API key is required."
+        )
+        assert (
+            provider_model_section.has_class("console-settings-primary-section")
+            is False
+        )
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_clears_setup_copy_when_dropdown_model_is_available() -> None:
+async def test_console_settings_modal_clears_setup_copy_when_dropdown_model_is_available() -> (
+    None
+):
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="custom", model=None)
 
@@ -1386,7 +1571,9 @@ async def test_console_settings_modal_clears_setup_copy_when_dropdown_model_is_a
         await pilot.pause()
 
         readiness = app.screen.query_one("#console-settings-readiness", Static)
-        provider_model_section = app.screen.query_one("#console-settings-provider-model-section")
+        provider_model_section = app.screen.query_one(
+            "#console-settings-provider-model-section"
+        )
         model_select = app.screen.query_one("#console-settings-model-select", Select)
         readiness_copy = str(readiness.renderable)
         assert "Choose a model to enable sending." not in readiness_copy
@@ -1394,11 +1581,16 @@ async def test_console_settings_modal_clears_setup_copy_when_dropdown_model_is_a
         assert "custom is ready" in str(readiness.renderable)
         assert model_select.disabled is False
         assert model_select.value == "freeform-model"
-        assert provider_model_section.has_class("console-settings-primary-section") is False
+        assert (
+            provider_model_section.has_class("console-settings-primary-section")
+            is False
+        )
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_setup_copy_preserves_blocking_readiness_detail() -> None:
+async def test_console_settings_modal_setup_copy_preserves_blocking_readiness_detail() -> (
+    None
+):
     app = ModalHarness()
     settings = ConsoleSessionSettings(
         provider="llama_cpp",
@@ -1427,7 +1619,9 @@ async def test_console_settings_modal_setup_copy_preserves_blocking_readiness_de
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_invalid_temperature_stays_open_and_renders_error() -> None:
+async def test_console_settings_modal_invalid_temperature_stays_open_and_renders_error() -> (
+    None
+):
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -1456,9 +1650,13 @@ async def test_console_settings_modal_invalid_temperature_stays_open_and_renders
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_blank_temperature_stays_open_and_renders_error() -> None:
+async def test_console_settings_modal_blank_temperature_stays_open_and_renders_error() -> (
+    None
+):
     app = ModalHarness()
-    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a", temperature=0.7)
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp", model="model-a", temperature=0.7
+    )
 
     async with app.run_test(size=(120, 40)) as pilot:
         await app.push_screen(
@@ -1477,13 +1675,17 @@ async def test_console_settings_modal_blank_temperature_stays_open_and_renders_e
         await pilot.pause()
 
         assert app.screen.query_one("#console-settings-modal") is not None
-        assert "Temperature is required." in str(app.screen.query_one("#console-settings-error", Static).renderable)
+        assert "Temperature is required." in str(
+            app.screen.query_one("#console-settings-error", Static).renderable
+        )
 
     assert app.saved_settings is None
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_blank_top_p_stays_open_and_renders_error() -> None:
+async def test_console_settings_modal_blank_top_p_stays_open_and_renders_error() -> (
+    None
+):
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a", top_p=0.95)
 
@@ -1504,7 +1706,9 @@ async def test_console_settings_modal_blank_top_p_stays_open_and_renders_error()
         await pilot.pause()
 
         assert app.screen.query_one("#console-settings-modal") is not None
-        assert "Top P is required." in str(app.screen.query_one("#console-settings-error", Static).renderable)
+        assert "Top P is required." in str(
+            app.screen.query_one("#console-settings-error", Static).renderable
+        )
 
     assert app.saved_settings is None
 
@@ -1530,7 +1734,9 @@ async def test_console_settings_modal_save_disabled_when_cannot_save() -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_has_stable_body_error_and_footer_regions() -> None:
+async def test_console_settings_modal_has_stable_body_error_and_footer_regions() -> (
+    None
+):
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -1559,7 +1765,9 @@ async def test_console_settings_modal_has_stable_body_error_and_footer_regions()
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_inputs_keep_visible_content_row_when_unfocused() -> None:
+async def test_console_settings_modal_inputs_keep_visible_content_row_when_unfocused() -> (
+    None
+):
     app = StyledModalHarness()
     settings = ConsoleSessionSettings(
         provider="llama_cpp",
@@ -1595,7 +1803,9 @@ async def test_console_settings_modal_inputs_keep_visible_content_row_when_unfoc
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_renders_context_and_identity_read_only_rows() -> None:
+async def test_console_settings_modal_renders_context_and_identity_read_only_rows() -> (
+    None
+):
     app = ModalHarness()
     settings = ConsoleSessionSettings(
         provider="llama_cpp",
@@ -1623,23 +1833,39 @@ async def test_console_settings_modal_renders_context_and_identity_read_only_row
         await pilot.pause()
 
         text = _visible_text(app)
-        assert "Current" in str(app.screen.query_one("#console-settings-context-current", Static).renderable)
+        assert "Current" in str(
+            app.screen.query_one("#console-settings-context-current", Static).renderable
+        )
         assert "10 / 4k tokens" in text
-        assert "2 staged sources" in str(app.screen.query_one("#console-settings-context-sources", Static).renderable)
+        assert "2 staged sources" in str(
+            app.screen.query_one("#console-settings-context-sources", Static).renderable
+        )
         assert "Estimate only; no truncation changes in this version." in str(
             app.screen.query_one("#console-settings-context-note", Static).renderable
         )
-        assert "Planner / Ada" in str(app.screen.query_one("#console-settings-identity-current", Static).renderable)
-        assert "Planner [read-only]" in str(
-            app.screen.query_one("#console-settings-persona-readonly", Static).renderable
+        assert "Planner / Ada" in str(
+            app.screen.query_one(
+                "#console-settings-identity-current", Static
+            ).renderable
         )
-        assert "Ada [read-only]" in str(app.screen.query_one("#console-settings-character-readonly", Static).renderable)
+        assert "Planner [read-only]" in str(
+            app.screen.query_one(
+                "#console-settings-persona-readonly", Static
+            ).renderable
+        )
+        assert "Ada [read-only]" in str(
+            app.screen.query_one(
+                "#console-settings-character-readonly", Static
+            ).renderable
+        )
         assert not app.screen.query("#console-settings-persona-input")
         assert not app.screen.query("#console-settings-character-input")
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_provider_select_lists_all_configured_providers() -> None:
+async def test_console_settings_modal_provider_select_lists_all_configured_providers() -> (
+    None
+):
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -1659,12 +1885,16 @@ async def test_console_settings_modal_provider_select_lists_all_configured_provi
         )
         await pilot.pause()
 
-        provider_values = _select_values(app.screen.query_one("#console-settings-provider", Select))
+        provider_values = _select_values(
+            app.screen.query_one("#console-settings-provider", Select)
+        )
         assert {"custom", "llama_cpp", "openai"}.issubset(provider_values)
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_uses_model_dropdown_without_configured_models() -> None:
+async def test_console_settings_modal_uses_model_dropdown_without_configured_models() -> (
+    None
+):
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="custom", model="freeform-model")
 
@@ -1692,7 +1922,9 @@ async def test_console_settings_modal_uses_model_dropdown_without_configured_mod
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_uses_first_model_when_initial_model_missing() -> None:
+async def test_console_settings_modal_uses_first_model_when_initial_model_missing() -> (
+    None
+):
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="openai", model=None)
 
@@ -1755,7 +1987,9 @@ async def test_console_settings_modal_keyboard_selects_model_from_dropdown() -> 
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_keyboard_selects_provider_and_refreshes_models() -> None:
+async def test_console_settings_modal_keyboard_selects_provider_and_refreshes_models() -> (
+    None
+):
     app = StyledModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -1799,7 +2033,9 @@ async def test_console_settings_modal_keyboard_selects_provider_and_refreshes_mo
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_tabs_to_model_select_after_provider_change() -> None:
+async def test_console_settings_modal_tabs_to_model_select_after_provider_change() -> (
+    None
+):
     app = StyledModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -1838,7 +2074,9 @@ async def test_console_settings_modal_tabs_to_model_select_after_provider_change
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_reopens_provider_select_after_input_edit() -> None:
+async def test_console_settings_modal_reopens_provider_select_after_input_edit() -> (
+    None
+):
     app = StyledModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -1872,7 +2110,9 @@ async def test_console_settings_modal_reopens_provider_select_after_input_edit()
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_opens_provider_select_click_after_input_edit() -> None:
+async def test_console_settings_modal_opens_provider_select_click_after_input_edit() -> (
+    None
+):
     app = StyledModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -1892,7 +2132,9 @@ async def test_console_settings_modal_opens_provider_select_click_after_input_ed
         )
         await pilot.pause()
 
-        temperature = app.screen.query_one("#console-settings-temperature", ConsoleSettingsInput)
+        temperature = app.screen.query_one(
+            "#console-settings-temperature", ConsoleSettingsInput
+        )
         provider_select = app.screen.query_one("#console-settings-provider", Select)
 
         await pilot.click("#console-settings-temperature")
@@ -1904,7 +2146,9 @@ async def test_console_settings_modal_opens_provider_select_click_after_input_ed
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_opens_screen_routed_select_click_after_input_edit() -> None:
+async def test_console_settings_modal_opens_screen_routed_select_click_after_input_edit() -> (
+    None
+):
     app = StyledModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -1924,7 +2168,9 @@ async def test_console_settings_modal_opens_screen_routed_select_click_after_inp
         )
         await pilot.pause()
 
-        temperature = app.screen.query_one("#console-settings-temperature", ConsoleSettingsInput)
+        temperature = app.screen.query_one(
+            "#console-settings-temperature", ConsoleSettingsInput
+        )
         provider_select = app.screen.query_one("#console-settings-provider", Select)
 
         temperature.focus()
@@ -1952,7 +2198,9 @@ async def test_console_settings_modal_opens_screen_routed_select_click_after_inp
 
 
 @pytest.mark.asyncio
-async def test_console_settings_input_releases_mouse_capture_after_click_to_replace() -> None:
+async def test_console_settings_input_releases_mouse_capture_after_click_to_replace() -> (
+    None
+):
     app = StyledModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -1968,7 +2216,9 @@ async def test_console_settings_input_releases_mouse_capture_after_click_to_repl
         )
         await pilot.pause()
 
-        temperature = app.screen.query_one("#console-settings-temperature", ConsoleSettingsInput)
+        temperature = app.screen.query_one(
+            "#console-settings-temperature", ConsoleSettingsInput
+        )
         temperature.capture_mouse()
 
         assert app.mouse_captured is temperature
@@ -1980,7 +2230,9 @@ async def test_console_settings_input_releases_mouse_capture_after_click_to_repl
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_opens_provider_select_from_redirected_input_click(monkeypatch) -> None:
+async def test_console_settings_modal_opens_provider_select_from_redirected_input_click(
+    monkeypatch,
+) -> None:
     app = StyledModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -1999,7 +2251,9 @@ async def test_console_settings_modal_opens_provider_select_from_redirected_inpu
         )
         await pilot.pause()
 
-        temperature = app.screen.query_one("#console-settings-temperature", ConsoleSettingsInput)
+        temperature = app.screen.query_one(
+            "#console-settings-temperature", ConsoleSettingsInput
+        )
         provider_select = app.screen.query_one("#console-settings-provider", Select)
         temperature.capture_mouse()
         temperature.value = "0.22"
@@ -2009,9 +2263,11 @@ async def test_console_settings_modal_opens_provider_select_from_redirected_inpu
             Select,
             "screen_region",
             property(
-                lambda widget: provider_screen_region
-                if widget is provider_select
-                else widget.region
+                lambda widget: (
+                    provider_screen_region
+                    if widget is provider_select
+                    else widget.region
+                )
             ),
             raising=False,
         )
@@ -2036,7 +2292,9 @@ async def test_console_settings_modal_opens_provider_select_from_redirected_inpu
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_ignores_plain_select_click_without_redirected_input() -> None:
+async def test_console_settings_modal_ignores_plain_select_click_without_redirected_input() -> (
+    None
+):
     app = StyledModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -2078,7 +2336,9 @@ async def test_console_settings_modal_ignores_plain_select_click_without_redirec
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_ignores_screen_routed_select_click_without_input_focus() -> None:
+async def test_console_settings_modal_ignores_screen_routed_select_click_without_input_focus() -> (
+    None
+):
     app = StyledModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -2124,7 +2384,9 @@ async def test_console_settings_modal_ignores_screen_routed_select_click_without
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_preserves_missing_registry_model_for_current_provider() -> None:
+async def test_console_settings_modal_preserves_missing_registry_model_for_current_provider() -> (
+    None
+):
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="openai", model="custom-openai-model")
 
@@ -2153,9 +2415,13 @@ async def test_console_settings_modal_preserves_missing_registry_model_for_curre
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_allows_manual_model_when_registry_has_stale_options() -> None:
+async def test_console_settings_modal_allows_manual_model_when_registry_has_stale_options() -> (
+    None
+):
     app = ModalHarness()
-    settings = ConsoleSessionSettings(provider="anthropic", model="claude-3-haiku-20240307")
+    settings = ConsoleSessionSettings(
+        provider="anthropic", model="claude-3-haiku-20240307"
+    )
 
     async with app.run_test(size=(120, 40)) as pilot:
         await app.push_screen(
@@ -2192,7 +2458,9 @@ async def test_console_settings_modal_allows_manual_model_when_registry_has_stal
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_refreshes_readiness_after_returning_to_model_list() -> None:
+async def test_console_settings_modal_refreshes_readiness_after_returning_to_model_list() -> (
+    None
+):
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -2215,13 +2483,17 @@ async def test_console_settings_modal_refreshes_readiness_after_returning_to_mod
 
         model_input = app.screen.query_one("#console-settings-model-input", Input)
         readiness = app.screen.query_one("#console-settings-readiness", Static)
-        provider_model_section = app.screen.query_one("#console-settings-provider-model-section")
+        provider_model_section = app.screen.query_one(
+            "#console-settings-provider-model-section"
+        )
         model_input.value = ""
         app.screen._sync_readiness_display()
         await pilot.pause()
 
         assert "Choose a model to enable sending." in str(readiness.renderable)
-        assert provider_model_section.has_class("console-settings-primary-section") is True
+        assert (
+            provider_model_section.has_class("console-settings-primary-section") is True
+        )
 
         app.screen._toggle_manual_model_input()
         await pilot.pause()
@@ -2229,12 +2501,19 @@ async def test_console_settings_modal_refreshes_readiness_after_returning_to_mod
         model_select = app.screen.query_one("#console-settings-model-select", Select)
         assert model_select.display is True
         assert model_select.value == "model-a"
-        assert str(readiness.renderable) == "llama_cpp is ready. No API key is required."
-        assert provider_model_section.has_class("console-settings-primary-section") is False
+        assert (
+            str(readiness.renderable) == "llama_cpp is ready. No API key is required."
+        )
+        assert (
+            provider_model_section.has_class("console-settings-primary-section")
+            is False
+        )
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_provider_change_uses_configured_provider_model() -> None:
+async def test_console_settings_modal_provider_change_uses_configured_provider_model() -> (
+    None
+):
     app = ModalHarness()
     app.app_config["api_settings"]["llama_cpp"] = {
         "api_url": "http://127.0.0.1:9099",
@@ -2346,7 +2625,9 @@ async def test_console_settings_modal_provider_change_uses_model_alias_fallbacks
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_can_select_runtime_discovered_model_with_warning() -> None:
+async def test_console_settings_modal_can_select_runtime_discovered_model_with_warning() -> (
+    None
+):
     app = _build_test_app()
     app.providers_models = {"openai": ["gpt-4.1"]}
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
@@ -2384,14 +2665,18 @@ async def test_console_settings_modal_can_select_runtime_discovered_model_with_w
                 break
             await pilot.pause(0.05)
         else:
-            raise AssertionError(f"Console summary did not show discovered-model warning: {summary_text}")
+            raise AssertionError(
+                f"Console summary did not show discovered-model warning: {summary_text}"
+            )
 
         _settings, readiness = console._active_console_settings_readiness()
         assert readiness.native_send_supported is True
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_provider_change_to_no_models_allows_freeform_model_entry() -> None:
+async def test_console_settings_modal_provider_change_to_no_models_allows_freeform_model_entry() -> (
+    None
+):
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -2429,7 +2714,9 @@ async def test_console_settings_modal_provider_change_to_no_models_allows_freefo
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_accepts_keyboard_edited_freeform_model_input() -> None:
+async def test_console_settings_modal_accepts_keyboard_edited_freeform_model_input() -> (
+    None
+):
     app = StyledModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -2466,7 +2753,9 @@ async def test_console_settings_modal_accepts_keyboard_edited_freeform_model_inp
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_provider_change_uses_target_provider_model() -> None:
+async def test_console_settings_modal_provider_change_uses_target_provider_model() -> (
+    None
+):
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -2502,7 +2791,9 @@ async def test_console_settings_modal_provider_change_uses_target_provider_model
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_provider_round_trip_ignores_none_model_sentinel() -> None:
+async def test_console_settings_modal_provider_round_trip_ignores_none_model_sentinel() -> (
+    None
+):
     app = ModalHarness()
     settings = ConsoleSessionSettings(
         provider="koboldcpp",
@@ -2541,7 +2832,9 @@ async def test_console_settings_modal_provider_round_trip_ignores_none_model_sen
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_existing_none_model_sentinel_is_not_saved() -> None:
+async def test_console_settings_modal_existing_none_model_sentinel_is_not_saved() -> (
+    None
+):
     app = ModalHarness()
     settings = ConsoleSessionSettings(
         provider="llama_cpp",
@@ -2575,7 +2868,9 @@ async def test_console_settings_modal_existing_none_model_sentinel_is_not_saved(
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_provider_change_does_not_carry_base_url_to_non_url_provider() -> None:
+async def test_console_settings_modal_provider_change_does_not_carry_base_url_to_non_url_provider() -> (
+    None
+):
     app = ModalHarness()
     settings = ConsoleSessionSettings(
         provider="llama_cpp",
@@ -2608,7 +2903,9 @@ async def test_console_settings_modal_provider_change_does_not_carry_base_url_to
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_restores_freeform_model_after_provider_round_trip() -> None:
+async def test_console_settings_modal_restores_freeform_model_after_provider_round_trip() -> (
+    None
+):
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="custom", model="freeform-model")
 
@@ -2626,7 +2923,10 @@ async def test_console_settings_modal_restores_freeform_model_after_provider_rou
         await pilot.pause()
         app.screen.query_one("#console-settings-provider", Select).value = "llama_cpp"
         await pilot.pause()
-        assert app.screen.query_one("#console-settings-model-select", Select).value == "model-a"
+        assert (
+            app.screen.query_one("#console-settings-model-select", Select).value
+            == "model-a"
+        )
 
         app.screen.query_one("#console-settings-provider", Select).value = "custom"
         await pilot.pause()
@@ -2647,7 +2947,14 @@ async def test_console_settings_modal_restores_freeform_model_after_provider_rou
 
 
 @pytest.mark.asyncio
-async def test_console_left_rail_orders_session_before_staged_context() -> None:
+async def test_console_inspector_hosts_staged_context_above_source_readiness() -> None:
+    """Task-400: the Context section tops the Inspector, not the left rail.
+
+    The tray is the FIRST child of the Inspector rail body so it is visible
+    without scrolling and reads above the run inspector's "Source Readiness"
+    section; the bottom "Live work sources" card keeps its pre-move slot
+    after the run-inspector block.
+    """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -2657,19 +2964,50 @@ async def test_console_left_rail_orders_session_before_staged_context() -> None:
 
         staged_context = console.query_one("#console-staged-context-tray")
         settings = console.query_one("#console-settings-summary")
-        workspace_context = console.query_one("#console-workspace-context")
+        rail_body = console.query_one("#console-inspector-rail-body")
+        run_inspector = console.query_one("#console-run-inspector")
+        readiness = console.query_one("#console-live-work-source-readiness")
+        left_rail = console.query_one("#console-left-rail")
 
-        # Phase 1 rail restructure: the rail is four sections in order
-        # Session (workspace context), Context (staged context), Model,
-        # Details -- so workspace context renders above staged context.
-        assert workspace_context.region.y < staged_context.region.y
+        # DOM order: tray first, then the run-inspector block (which renders
+        # the Source Readiness section), then the bottom readiness card.
         assert settings.parent.id == "console-run-inspector"
-        assert workspace_context.parent.id == "console-rail-section-body-session"
-        assert staged_context.parent.id == "console-rail-section-body-context"
+        assert staged_context.parent is rail_body
+        assert readiness.parent is rail_body
+        children = list(rail_body.children)
+        assert children.index(staged_context) == 0
+        assert children.index(staged_context) < children.index(run_inspector)
+        assert children.index(run_inspector) < children.index(readiness)
+
+        # The left rail no longer hosts a Context section (header, body, or
+        # tray): only Session, Model, Agent, and Details remain.
+        assert not list(left_rail.query("#console-staged-context-tray"))
+        assert not list(console.query("#console-rail-section-header-context"))
+        assert not list(console.query("#console-rail-section-body-context"))
+
+        # With the Inspector opened, the tray measures at the top of the rail
+        # body, above the run inspector's "Source Readiness" heading (the
+        # section the user sees) and above the bottom readiness card.
+        await pilot.click("#console-inspector-rail-open")
+        readiness_heading = console.query_one(
+            "#console-inspector-source-readiness-heading"
+        )
+        for _ in range(40):
+            if (
+                staged_context.region.height > 0
+                and readiness_heading.region.height > 0
+            ):
+                break
+            await pilot.pause(0.05)
+        assert staged_context.region.y == rail_body.region.y
+        assert staged_context.region.y < readiness_heading.region.y
+        assert staged_context.region.y < readiness.region.y
 
 
 @pytest.mark.asyncio
-async def test_console_left_rail_body_scrolls_below_fixed_header_without_settings_summary() -> None:
+async def test_console_left_rail_body_scrolls_below_fixed_header_without_settings_summary() -> (
+    None
+):
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -2681,8 +3019,6 @@ async def test_console_left_rail_body_scrolls_below_fixed_header_without_setting
         header = console.query_one(".console-rail-header")
         body = console.query_one("#console-left-rail-body")
         session_body = console.query_one("#console-rail-section-body-session")
-        context_body = console.query_one("#console-rail-section-body-context")
-        staged_context = console.query_one("#console-staged-context-tray")
         settings = console.query_one("#console-settings-summary")
         workspace_context = console.query_one("#console-workspace-context")
 
@@ -2691,12 +3027,10 @@ async def test_console_left_rail_body_scrolls_below_fixed_header_without_setting
         assert body.region.height <= left_rail.region.height - header.region.height
         assert settings.parent.id == "console-run-inspector"
         # Phase 1 nests each tray inside its own rail-section body, which is
-        # itself a direct child of the scrolling rail body.
+        # itself a direct child of the scrolling rail body. (Task-400: the
+        # staged-context tray moved to the Inspector rail.)
         assert workspace_context.parent is session_body
-        assert staged_context.parent is context_body
         assert session_body.parent is body
-        assert context_body.parent is body
-        assert staged_context.region.width == workspace_context.region.width
         assert workspace_context.region.width <= body.region.width
         assert body.region.width - workspace_context.region.width <= 2
 
@@ -2719,11 +3053,15 @@ async def test_console_settings_modal_save_updates_active_summary_only() -> None
         await _wait_for_selector(console, pilot, "#console-settings-summary")
         store = console._ensure_console_chat_store()
         first = store.ensure_session()
-        store.replace_session_settings(first.id, ConsoleSessionSettings(provider="llama_cpp", model="model-a"))
+        store.replace_session_settings(
+            first.id, ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+        )
         await console._sync_native_console_chat_ui()
 
         second_id = await _press_new_console_tab(console, store, pilot)
-        store.replace_session_settings(second_id, ConsoleSessionSettings(provider="llama_cpp", model="model-a"))
+        store.replace_session_settings(
+            second_id, ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+        )
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(console, pilot, "#console-settings-summary")
 
@@ -2768,11 +3106,15 @@ async def test_console_settings_are_isolated_between_native_tabs() -> None:
         await _wait_for_selector(console, pilot, "#console-settings-summary")
         store = console._ensure_console_chat_store()
         first = store.ensure_session()
-        store.replace_session_settings(first.id, ConsoleSessionSettings(provider="llama_cpp", model="model-a"))
+        store.replace_session_settings(
+            first.id, ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+        )
         await console._sync_native_console_chat_ui()
 
         second_id = await _press_new_console_tab(console, store, pilot)
-        store.replace_session_settings(second_id, ConsoleSessionSettings(provider="llama_cpp", model="model-a"))
+        store.replace_session_settings(
+            second_id, ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+        )
         await console._sync_native_console_chat_ui()
         settings_button = await _visible_console_settings_button(console, pilot)
         settings_button.press()
@@ -2789,7 +3131,9 @@ async def test_console_settings_are_isolated_between_native_tabs() -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_native_tab_click_switches_without_programmatic_fallback() -> None:
+async def test_console_native_tab_click_switches_without_programmatic_fallback() -> (
+    None
+):
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "model-a"
@@ -2839,9 +3183,13 @@ async def test_console_workspace_conversation_row_switches_native_tab() -> None:
         second_id = await _press_new_console_tab(console, store, pilot)
         await _wait_for_selector(console, pilot, "#console-workspace-conversation-1")
 
-        first_conversation = console.query_one("#console-workspace-conversation-1", Button)
-        assert getattr(first_conversation, "conversation_id", None) == f"native:{first_id}"
-        assert await pilot.click(first_conversation, offset=(1, 0))
+        first_conversation = console.query_one(
+            "#console-workspace-conversation-1", Button
+        )
+        assert (
+            getattr(first_conversation, "conversation_id", None) == f"native:{first_id}"
+        )
+        first_conversation.press()
         for _ in range(10):
             if store.active_session_id == first_id:
                 break
@@ -2915,7 +3263,9 @@ async def test_console_settings_modal_cancel_keeps_original_summary() -> None:
         await _wait_for_selector(console, pilot, "#console-settings-summary")
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
-        store.replace_session_settings(session.id, ConsoleSessionSettings(provider="llama_cpp", model="model-a"))
+        store.replace_session_settings(
+            session.id, ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+        )
         await console._sync_native_console_chat_ui()
         await _visible_console_settings_button(console, pilot)
         original_summary = _summary_text(console)
@@ -2937,7 +3287,9 @@ async def test_console_settings_modal_save_disabled_during_active_run() -> None:
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "model-a"
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "model-a"}
-    app.app_config["api_settings"] = {"llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "model-a"}}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "model-a"}
+    }
     app.providers_models = {"llama_cpp": ["model-a"]}
     host = ConsoleHarness(app)
 
@@ -2946,10 +3298,14 @@ async def test_console_settings_modal_save_disabled_during_active_run() -> None:
         await _wait_for_selector(console, pilot, "#console-settings-summary")
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
-        store.replace_session_settings(session.id, ConsoleSessionSettings(provider="llama_cpp", model="model-a"))
+        store.replace_session_settings(
+            session.id, ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+        )
         await console._sync_native_console_chat_ui()
         controller = console._ensure_console_chat_controller()
-        controller.run_state = ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response.")
+        controller.run_state = ConsoleRunState(
+            ConsoleRunStatus.STREAMING, "Streaming response."
+        )
 
         settings_button = await _visible_console_settings_button(console, pilot)
         settings_button.press()
@@ -2992,7 +3348,9 @@ async def test_console_settings_save_clears_stale_terminal_run_status() -> None:
         stale_copy = "Provider blocked: old llama.cpp failure."
         controller.run_state = ConsoleRunState.blocked(stale_copy)
         console._sync_console_mode_bar()
-        assert stale_copy in str(console.query_one("#console-mode-bar", Static).renderable)
+        assert stale_copy in str(
+            console.query_one("#console-mode-bar", Static).renderable
+        )
 
         settings_button = await _visible_console_settings_button(console, pilot)
         settings_button.press()
@@ -3009,7 +3367,9 @@ async def test_console_settings_save_clears_stale_terminal_run_status() -> None:
 
         assert console._build_console_provider_selection().provider == "custom"
         assert controller.run_state.status is ConsoleRunStatus.IDLE
-        assert stale_copy not in str(console.query_one("#console-mode-bar", Static).renderable)
+        assert stale_copy not in str(
+            console.query_one("#console-mode-bar", Static).renderable
+        )
 
 
 @pytest.mark.asyncio
@@ -3028,7 +3388,10 @@ async def test_console_send_blocker_uses_saved_unsupported_session_provider() ->
         await _wait_for_selector(console, pilot, "#console-native-composer")
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
-        store.replace_session_settings(session.id, ConsoleSessionSettings(provider="wip_provider", model="test-model"))
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="wip_provider", model="test-model"),
+        )
         await console._sync_native_console_chat_ui()
 
         composer = console.query_one("#console-native-composer")
@@ -3039,7 +3402,10 @@ async def test_console_send_blocker_uses_saved_unsupported_session_provider() ->
                 break
             await pilot.pause(0.05)
 
-        assert "Provider blocked: 'wip_provider' is not available in Console yet." in _screen_visible_text(console)
+        assert (
+            "Provider blocked: 'wip_provider' is not available in Console yet."
+            in _screen_visible_text(console)
+        )
 
 
 @pytest.mark.asyncio
@@ -3070,12 +3436,25 @@ async def test_console_missing_model_opens_console_settings_from_summary() -> No
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
         await _wait_for_focused_id(host, pilot, "console-settings-model-select")
 
-        assert modal_screen.query_one("#console-settings-provider", Select).value == "llama_cpp"
-        assert modal_screen.query_one("#console-settings-model-select", Select).value == "model-a"
+        assert (
+            modal_screen.query_one("#console-settings-provider", Select).value
+            == "llama_cpp"
+        )
+        assert (
+            modal_screen.query_one("#console-settings-model-select", Select).value
+            == "model-a"
+        )
         readiness = modal_screen.query_one("#console-settings-readiness", Static)
-        provider_model_section = modal_screen.query_one("#console-settings-provider-model-section")
-        assert str(readiness.renderable) == "llama_cpp is ready. No API key is required."
-        assert provider_model_section.has_class("console-settings-primary-section") is False
+        provider_model_section = modal_screen.query_one(
+            "#console-settings-provider-model-section"
+        )
+        assert (
+            str(readiness.renderable) == "llama_cpp is ready. No API key is required."
+        )
+        assert (
+            provider_model_section.has_class("console-settings-primary-section")
+            is False
+        )
 
         await pilot.click("#console-settings-save")
         await _wait_for_console_top_screen(host, console, pilot)
@@ -3103,7 +3482,9 @@ async def test_console_llamacpp_saved_missing_model_blocks_before_send() -> None
         await _wait_for_selector(console, pilot, "#console-native-composer")
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
-        store.replace_session_settings(session.id, ConsoleSessionSettings(provider="llama_cpp", model=None))
+        store.replace_session_settings(
+            session.id, ConsoleSessionSettings(provider="llama_cpp", model=None)
+        )
         await console._sync_native_console_chat_ui()
 
         composer = console.query_one("#console-native-composer")
@@ -3113,9 +3494,17 @@ async def test_console_llamacpp_saved_missing_model_blocks_before_send() -> None
         await pilot.pause(0.1)
 
         assert send_button.disabled is False
-        assert send_button.tooltip == "Choose a model in Console Settings before sending."
-        assert "Console send blocked: Select a model before sending." not in _screen_visible_text(console)
-        assert "Setup required: choose a model in Console Settings." not in _screen_visible_text(console)
+        assert (
+            send_button.tooltip == "Choose a model in Console Settings before sending."
+        )
+        assert (
+            "Console send blocked: Select a model before sending."
+            not in _screen_visible_text(console)
+        )
+        assert (
+            "Setup required: choose a model in Console Settings."
+            not in _screen_visible_text(console)
+        )
         assert composer.draft_text() == "hello"
 
 
@@ -3138,7 +3527,9 @@ def test_console_default_settings_keep_configured_model_without_legacy_model() -
     assert settings.model == "configured-model"
 
 
-def test_console_settings_summary_uses_effective_config_endpoint_for_llamacpp_defaults() -> None:
+def test_console_settings_summary_uses_effective_config_endpoint_for_llamacpp_defaults() -> (
+    None
+):
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = None
@@ -3156,7 +3547,9 @@ def test_console_settings_summary_uses_effective_config_endpoint_for_llamacpp_de
     assert summary_state.endpoint_row == "Endpoint: http://127.0.0.1:9099"
 
 
-def test_console_readiness_uses_saved_session_settings_over_stale_global_provider() -> None:
+def test_console_readiness_uses_saved_session_settings_over_stale_global_provider() -> (
+    None
+):
     app = _build_test_app()
     app.chat_api_provider_value = "openai"
     app.chat_api_model_value = "gpt-4.1"
@@ -3167,7 +3560,9 @@ def test_console_readiness_uses_saved_session_settings_over_stale_global_provide
     screen = ChatScreen(app)
     store = screen._ensure_console_chat_store()
     session = store.ensure_session()
-    store.replace_session_settings(session.id, ConsoleSessionSettings(provider="llama_cpp", model="local-model"))
+    store.replace_session_settings(
+        session.id, ConsoleSessionSettings(provider="llama_cpp", model="local-model")
+    )
 
     control_state = screen._build_console_control_state(None)
     inspector_state = screen._build_console_inspector_state(None)
@@ -3188,7 +3583,9 @@ def test_console_saved_openai_with_key_shows_ready_readiness() -> None:
     screen = ChatScreen(app)
     store = screen._ensure_console_chat_store()
     session = store.ensure_session()
-    store.replace_session_settings(session.id, ConsoleSessionSettings(provider="openai", model="gpt-4.1"))
+    store.replace_session_settings(
+        session.id, ConsoleSessionSettings(provider="openai", model="gpt-4.1")
+    )
 
     summary_state = screen._build_console_settings_summary_state()
     inspector_state = screen._build_console_inspector_state(None)
@@ -3210,11 +3607,16 @@ def test_console_missing_key_recovery_action_is_provider_specific() -> None:
     screen = ChatScreen(app)
     store = screen._ensure_console_chat_store()
     session = store.ensure_session()
-    store.replace_session_settings(session.id, ConsoleSessionSettings(provider="openai", model="gpt-4.1"))
+    store.replace_session_settings(
+        session.id, ConsoleSessionSettings(provider="openai", model="gpt-4.1")
+    )
 
     label, target, tooltip = screen._console_provider_recovery_action()
 
-    assert screen._console_provider_blocker_copy() == "Provider setup needed: OpenAI missing API key"
+    assert (
+        screen._console_provider_blocker_copy()
+        == "Provider setup needed: OpenAI missing API key"
+    )
     assert label == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
     assert target == "settings"
     assert tooltip == "Configure OpenAI API and API key in Settings"
@@ -3225,7 +3627,9 @@ def test_console_missing_key_recovery_action_is_provider_specific() -> None:
     )
 
 
-def test_console_unsaved_generic_endpoint_blocks_inspector_with_endpoint_details() -> None:
+def test_console_unsaved_generic_endpoint_blocks_inspector_with_endpoint_details() -> (
+    None
+):
     app = _build_test_app()
     app.app_config["api_settings"] = {
         "ollama": {"api_url": "http://127.0.0.1:11434", "model": "llama3"},
@@ -3260,7 +3664,9 @@ def test_console_unsaved_generic_endpoint_blocks_inspector_with_endpoint_details
     )
 
 
-def test_console_saved_llamacpp_missing_model_summary_is_not_ready_without_fallback() -> None:
+def test_console_saved_llamacpp_missing_model_summary_is_not_ready_without_fallback() -> (
+    None
+):
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = None
@@ -3271,17 +3677,24 @@ def test_console_saved_llamacpp_missing_model_summary_is_not_ready_without_fallb
     screen = ChatScreen(app)
     store = screen._ensure_console_chat_store()
     session = store.ensure_session()
-    store.replace_session_settings(session.id, ConsoleSessionSettings(provider="llama_cpp", model=None))
+    store.replace_session_settings(
+        session.id, ConsoleSessionSettings(provider="llama_cpp", model=None)
+    )
 
     summary_state = screen._build_console_settings_summary_state()
 
     assert summary_state.readiness_label != "Ready"
     assert summary_state.provider_row == "Provider: llama_cpp"
     assert summary_state.model_row == "Model: Missing"
-    assert screen._console_send_blocked_reason() == "Console send blocked: Select a model before sending."
+    assert (
+        screen._console_send_blocked_reason()
+        == "Console send blocked: Select a model before sending."
+    )
 
 
-def test_console_saved_llamacpp_missing_model_summary_ready_with_configured_fallback() -> None:
+def test_console_saved_llamacpp_missing_model_summary_ready_with_configured_fallback() -> (
+    None
+):
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = None
@@ -3295,7 +3708,9 @@ def test_console_saved_llamacpp_missing_model_summary_ready_with_configured_fall
     screen = ChatScreen(app)
     store = screen._ensure_console_chat_store()
     session = store.ensure_session()
-    store.replace_session_settings(session.id, ConsoleSessionSettings(provider="llama_cpp", model=None))
+    store.replace_session_settings(
+        session.id, ConsoleSessionSettings(provider="llama_cpp", model=None)
+    )
 
     summary_state = screen._build_console_settings_summary_state()
 
@@ -3334,7 +3749,9 @@ async def test_console_new_native_tab_receives_default_settings_snapshot() -> No
 
 
 @pytest.mark.asyncio
-async def test_console_new_native_tab_inherits_active_session_settings_snapshot() -> None:
+async def test_console_new_native_tab_inherits_active_session_settings_snapshot() -> (
+    None
+):
     app = _build_test_app()
     app.chat_api_provider_value = "openai"
     app.chat_api_model_value = "gpt-4.1"
@@ -3449,3 +3866,812 @@ async def test_console_model_switch_preserves_explicit_session_overrides() -> No
         assert updated_settings.temperature == 0.33
         assert updated_settings.top_p == 0.9
         assert updated_settings.streaming is False
+
+
+# --- task-177: readiness must follow Settings saves without an app restart ---
+
+
+def _disk_loaded_snapshot(**overrides) -> dict:
+    """Snapshot shaped like a real ``load_settings()`` boot config."""
+    snapshot = {
+        "general": {},
+        "logging": {},
+        "splash_screen": {},
+        "api_settings": {"openai": {"api_key": ""}},
+    }
+    snapshot.update(overrides)
+    return snapshot
+
+
+def test_provider_readiness_config_refreshes_disk_loaded_snapshot(monkeypatch) -> None:
+    app = _build_test_app()
+    app.app_config = _disk_loaded_snapshot()
+    console = ChatScreen(app)
+    fresh = _disk_loaded_snapshot(api_settings={"openai": {"api_key": "sk-fresh"}})
+    monkeypatch.setattr(chat_screen_module, "load_settings", lambda: fresh)
+
+    assert console._provider_readiness_app_config() is fresh
+
+
+def test_provider_readiness_config_honors_injected_test_snapshot(monkeypatch) -> None:
+    """Fakes without the disk-loaded marker sections stay authoritative."""
+    app = _build_test_app()
+    app.app_config = {"api_settings": {"openai": {"api_key": "injected"}}}
+    console = ChatScreen(app)
+
+    def _fail_load_settings():
+        raise AssertionError(
+            "load_settings must not be consulted for injected snapshots"
+        )
+
+    monkeypatch.setattr(chat_screen_module, "load_settings", _fail_load_settings)
+
+    assert console._provider_readiness_app_config() is app.app_config
+
+
+def test_provider_readiness_config_falls_back_when_load_settings_fails(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    app.app_config = _disk_loaded_snapshot()
+    console = ChatScreen(app)
+
+    def _boom():
+        raise RuntimeError("disk unavailable")
+
+    monkeypatch.setattr(chat_screen_module, "load_settings", _boom)
+
+    assert console._provider_readiness_app_config() is app.app_config
+
+
+def test_console_readiness_unblocks_after_provider_save_without_restart(
+    monkeypatch, tmp_path
+) -> None:
+    """Save a provider key via the config API after boot; readiness must see it.
+
+    Mirrors the live UAT failure: Settings saved the key, the config module
+    cache reloaded, but Console kept reading the boot-time ``app_config``
+    snapshot until restart.
+    """
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+
+    config_path = tmp_path / "console-readiness-config.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    config_module.load_settings(force_reload=True)
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    try:
+        app = _build_test_app()
+        # Boot-time snapshot: disk-loaded shape, but captured before the save.
+        app.app_config = _disk_loaded_snapshot()
+        console = ChatScreen(app)
+        settings = ConsoleSessionSettings(provider="openai", model="gpt-4o")
+
+        readiness_before = build_console_settings_readiness(
+            settings,
+            app_config=console._provider_readiness_app_config(),
+            environ={},
+        )
+        assert readiness_before.native_send_supported is False
+
+        # The Settings screen save path: config API write + cache reload.
+        assert config_module.save_setting_to_cli_config(
+            "api_settings.openai", "api_key", "sk-saved-after-boot"
+        )
+
+        readiness_after = build_console_settings_readiness(
+            settings,
+            app_config=console._provider_readiness_app_config(),
+            environ={},
+        )
+        assert readiness_after.native_send_supported is True
+        assert readiness_after.label == "Ready"
+        # The stale snapshot alone would still be blocked - proving the fresh
+        # read (not the snapshot) unblocked readiness.
+        readiness_stale = build_console_settings_readiness(
+            settings,
+            app_config=app.app_config,
+            environ={},
+        )
+        assert readiness_stale.native_send_supported is False
+    finally:
+        config_module.load_settings(force_reload=True)
+        config_module.load_cli_config_and_ensure_existence(force_reload=True)
+
+
+# --- task-178: settings modal persistence affordance, boolean streaming, focus artifact ---
+
+
+def _basic_modal(
+    settings: ConsoleSessionSettings, app: "ModalHarness", **kwargs
+) -> ConsoleSettingsModal:
+    return ConsoleSettingsModal(
+        settings=settings,
+        app_config=app.app_config,
+        providers_models=kwargs.pop("providers_models", {"llama_cpp": ["model-a"]}),
+        context_estimate=kwargs.pop(
+            "context_estimate", ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
+        ),
+        can_save=kwargs.pop("can_save", True),
+        **kwargs,
+    )
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_streaming_is_boolean_toggle() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp", model="model-a", streaming=False
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            _basic_modal(settings, app), callback=app.capture_saved_settings
+        )
+        await pilot.pause()
+        toggle = app.screen.query_one("#console-settings-streaming", Button)
+        assert str(toggle.label) == "Off"
+
+        toggle.press()
+        await pilot.pause()
+        assert str(toggle.label) == "On"
+
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.streaming is True
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_enumerated_inputs_list_accepted_values() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            _basic_modal(settings, app), callback=app.capture_saved_settings
+        )
+        await pilot.pause()
+        placeholders = {
+            "console-settings-reasoning-effort": "none, minimal, low, medium, high, xhigh",
+            "console-settings-reasoning-summary": "auto, concise, detailed, none",
+            "console-settings-verbosity": "low, medium, high",
+            "console-settings-thinking-effort": "off, low, medium, high, xhigh, max",
+        }
+        for input_id, expected in placeholders.items():
+            assert app.screen.query_one(f"#{input_id}", Input).placeholder == expected
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_scope_line_names_session_and_default_scopes() -> (
+    None
+):
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        CONSOLE_SETTINGS_SCOPE_COPY,
+    )
+
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            _basic_modal(settings, app), callback=app.capture_saved_settings
+        )
+        await pilot.pause()
+        scope = app.screen.query_one("#console-settings-scope", Static)
+        assert str(scope.renderable) == CONSOLE_SETTINGS_SCOPE_COPY
+        assert "session" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
+        assert "default" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_save_as_default_writes_through_config(
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.Widgets.Console import console_settings_modal as modal_module
+
+    captured: list[dict] = []
+
+    def fake_save(sections):
+        captured.append(sections)
+        return True
+
+    monkeypatch.setattr(modal_module, "save_settings_to_cli_config", fake_save)
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        base_url="http://127.0.0.1:9099",
+        temperature=0.6,
+        streaming=False,
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            _basic_modal(settings, app), callback=app.capture_saved_settings
+        )
+        await pilot.pause()
+        await pilot.click("#console-settings-save-default")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.model == "model-a"
+    assert len(captured) == 1
+    sections = captured[0]
+    provider_section = sections["api_settings.llama_cpp"]
+    assert provider_section["model"] == "model-a"
+    # llama_cpp already persists its endpoint under api_url in ModalHarness config.
+    assert provider_section["api_url"] == "http://127.0.0.1:9099"
+    # TASK-342: sampling values land in the Console-saved-defaults section the
+    # boot builder ranks above chat_defaults; writing them into api_settings
+    # was inert (chat_defaults deliberately outranks it, f14d22dc3).
+    assert "temperature" not in provider_section
+    saved_section = sections["console.provider_defaults.llama_cpp"]
+    assert saved_section["temperature"] == 0.6
+    # Streaming persists on the canonical chat_defaults key (bridged legacy key),
+    # and the provider itself becomes the default (PR #606 review finding:
+    # chat_defaults.provider is the ONLY source of the default provider).
+    assert sections["chat_defaults"] == {"streaming": False, "provider": "llama_cpp"}
+    # Never persist None-valued optionals.
+    assert "min_p" not in saved_section
+    assert "seed" not in saved_section
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_save_as_default_failure_keeps_modal_open(
+    monkeypatch,
+) -> None:
+    from tldw_chatbook.Widgets.Console import console_settings_modal as modal_module
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY,
+    )
+
+    monkeypatch.setattr(
+        modal_module, "save_settings_to_cli_config", lambda sections: False
+    )
+    app = ModalHarness()
+    app.saved_settings = ConsoleSessionSettings(provider="openai", model="sentinel")
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            _basic_modal(settings, app), callback=app.capture_saved_settings
+        )
+        await pilot.pause()
+        await pilot.click("#console-settings-save-default")
+        await pilot.pause()
+        error = app.screen.query_one("#console-settings-error", Static)
+        assert str(error.renderable) == CONSOLE_SETTINGS_SAVE_DEFAULT_FAILED_COPY
+        # Modal stays open (dismiss would pop it and fire the callback).
+        assert isinstance(app.screen, ConsoleSettingsModal)
+        await pilot.click("#console-settings-cancel")
+
+    assert app.saved_settings is None
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_body_scroll_container_is_not_focusable() -> None:
+    """The focused scroll body painted stray focus-outline fragments ("|")
+    through the section margins with the real app CSS; keeping it out of the
+    focus chain removes the artifact and lands first focus on a real control."""
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            _basic_modal(settings, app), callback=app.capture_saved_settings
+        )
+        await pilot.pause()
+        body = app.screen.query_one("#console-settings-body", ScrollableContainer)
+        assert body.can_focus is False
+        assert app.focused is not body
+
+
+# --- task-177 live regression: REAL journey (boot -> Settings save -> Console) ---
+
+
+def _build_live_config_test_app():
+    """Real TldwCli booted against the REAL (test-sandboxed) config file.
+
+    Unlike ``_build_test_app`` this does NOT stub ``load_settings`` /
+    ``get_cli_setting``: ``app.app_config`` is the genuine template config from
+    the sandbox ``TLDW_CONFIG_PATH``, so the disk-loaded snapshot path (and the
+    stale-snapshot bug it guards against) is exercised end to end.
+    """
+    import tempfile
+    from contextlib import ExitStack
+    from unittest.mock import MagicMock, patch
+
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+
+    user_data_dir = Path(tempfile.mkdtemp(prefix="tldw-chatbook-live-config-test-"))
+
+    def fake_runtime_policy(app):
+        context = SimpleNamespace(
+            state=RuntimeSourceState(active_source="local", server_configured=True),
+            persist=lambda: None,
+        )
+        app.runtime_policy = context
+        app.current_runtime_source = "local"
+        app.current_runtime_backend = "local"
+        return context
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch("tldw_chatbook.app.get_chachanotes_db_lazy", return_value=None)
+        )
+        stack.enter_context(
+            patch(
+                "tldw_chatbook.app.ServerNotesWorkspaceService.from_config",
+                return_value=MagicMock(),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "tldw_chatbook.app.ServerCharacterPersonaService.from_config",
+                return_value=MagicMock(),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                TldwCli,
+                "_init_notes_service",
+                lambda self, _user: setattr(self, "notes_service", None),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                TldwCli,
+                "_init_prompts_service",
+                lambda self: setattr(self, "prompts_service_initialized", False),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                TldwCli,
+                "_init_providers_models",
+                lambda self: setattr(self, "providers_models", {}),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                TldwCli,
+                "_init_media_db",
+                lambda self: (
+                    setattr(self, "media_db", None),
+                    setattr(self, "_media_types_for_ui", ["All Media"]),
+                ),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "tldw_chatbook.app.load_runtime_policy_for_app",
+                side_effect=fake_runtime_policy,
+            )
+        )
+        for db_path_getter in (
+            "get_notifications_db_path",
+            "get_subscriptions_db_path",
+            "get_research_db_path",
+            "get_writing_db_path",
+        ):
+            stack.enter_context(
+                patch(f"tldw_chatbook.app.{db_path_getter}", return_value=":memory:")
+            )
+        stack.enter_context(
+            patch("tldw_chatbook.app.get_user_data_dir", return_value=user_data_dir)
+        )
+        stack.enter_context(
+            patch(
+                "tldw_chatbook.app.get_workspaces_db_path",
+                return_value=user_data_dir / "workspaces.sqlite",
+            )
+        )
+        return TldwCli()
+
+
+async def _wait_for_screen(app, pilot, screen_type_name: str, *, attempts: int = 250):
+    for _ in range(attempts):
+        if type(app.screen).__name__ == screen_type_name:
+            return app.screen
+        await pilot.pause(0.02)
+    raise AssertionError(
+        f"Never reached {screen_type_name}; current screen: {type(app.screen).__name__}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_real_journey_settings_save_unblocks_console_without_restart(
+    monkeypatch,
+) -> None:
+    """Live-UAT regression: boot -> blocked Console -> Settings save -> Console.
+
+    Mirrors the exact live failure: the Settings adapter saves
+    chat_defaults.provider/model + the llama.cpp endpoint (config caches reload),
+    the user clicks the Console nav tab (fresh ChatScreen composes, prior screen
+    state restores), and the setup card must NOT still be blocking.
+    """
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+    from tldw_chatbook.Widgets.Console import ConsoleSetupModal
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("TLDW_CONSOLE_LLAMA_CPP_BASE_URL", raising=False)
+    # Prime the sandbox template config and keep the boot fast/deterministic.
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    assert config_module.save_setting_to_cli_config("splash_screen", "enabled", False)
+    config_module.load_settings(force_reload=True)
+
+    app = _build_live_config_test_app()
+    # Sanity: the boot snapshot must look disk-loaded (markers present) so the
+    # fresh-config branch is the one under test.
+    assert ChatScreen._console_config_snapshot_is_disk_loaded(app.app_config)
+
+    async with app.run_test(size=(180, 50)) as pilot:
+        # 1) First-run landing: Console blocked on the template OpenAI default.
+        app.post_message(NavigateToScreen("chat"))
+        console = await _wait_for_screen(app, pilot, "ChatScreen")
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
+        assert console._build_console_setup_card_state().mode == "card"
+
+        # 2) Leave Console (screen state, including session settings, is saved).
+        app.post_message(NavigateToScreen("home"))
+        await _wait_for_screen(app, pilot, "HomeScreen")
+
+        # 3) The real Settings save path (same three values as the live run).
+        adapter = SettingsConfigAdapter()
+        assert adapter.save_values(
+            "chat_defaults",
+            {"provider": "llama_cpp", "model": "Qwen3-Coder-Test.gguf"},
+        )
+        assert adapter.save_values(
+            "api_settings.llama_cpp",
+            {"api_url": "http://127.0.0.1:9099"},
+        )
+
+        # 4) Back to Console: a fresh ChatScreen composes and restores state.
+        app.post_message(NavigateToScreen("chat"))
+        console = await _wait_for_screen(app, pilot, "ChatScreen")
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
+
+        card_state = console._build_console_setup_card_state()
+        assert card_state.mode != "card", (
+            "Setup card still blocking after a provider save; "
+            f"steps={[(step.state, step.label) for step in card_state.steps]}"
+        )
+        settings, readiness = console._active_console_settings_readiness()
+        assert settings.provider == "llama_cpp"
+        assert readiness.native_send_supported is True
+
+        # The blocking modal must clear once guidance syncs.
+        for _ in range(100):
+            modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+            if not modal.is_blocking:
+                break
+            await pilot.pause(0.02)
+        assert not console.query_one(
+            "#console-setup-modal", ConsoleSetupModal
+        ).is_blocking
+
+
+def test_console_resolution_view_suppresses_boot_echo_reactives(monkeypatch) -> None:
+    """Post-save, reactives echoing the boot template defaults must not win."""
+    from tldw_chatbook.Chat.provider_readiness import provider_config_key
+
+    app = _build_test_app()
+    app.app_config = _disk_loaded_snapshot(
+        chat_defaults={"provider": "OpenAI", "model": "gpt-4o"}
+    )
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = "gpt-4o"
+    console = ChatScreen(app)
+    fresh = _disk_loaded_snapshot(
+        chat_defaults={"provider": "llama_cpp", "model": "Qwen3-Test.gguf"},
+        api_settings={"llama_cpp": {"api_url": "http://127.0.0.1:9099"}},
+    )
+    monkeypatch.setattr(chat_screen_module, "load_settings", lambda: fresh)
+
+    provider, model = console._effective_console_provider_model()
+    assert provider_config_key(str(provider)) == "llama_cpp"
+    assert str(model) == "Qwen3-Test.gguf"
+
+    # A reactive value the user actually changed (differs from the boot echo)
+    # still wins over fresh chat_defaults.
+    app.chat_api_provider_value = "Anthropic"
+    provider_after_user_pick, _model = console._effective_console_provider_model()
+    assert provider_config_key(str(provider_after_user_pick)) == "anthropic"
+
+
+def test_console_stale_default_refresh_respects_user_marked_settings() -> None:
+    """Blocked derived defaults refresh; explicit user selections never do."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "local-model"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "local-model"},
+        "openai": {"api_key": ""},
+    }
+    console = ChatScreen(app)
+    store = console._ensure_console_chat_store()
+    session = store.ensure_session()
+
+    user_choice = ConsoleSessionSettings(
+        provider="openai", model="gpt-4o", source="user"
+    )
+    store.replace_session_settings(session.id, user_choice)
+    assert console._ensure_active_console_session_settings() == user_choice
+
+    stale_derived = ConsoleSessionSettings(provider="openai", model="gpt-4o")
+    store.replace_session_settings(session.id, stale_derived)
+    refreshed = console._ensure_active_console_session_settings()
+    assert refreshed.provider == "llama_cpp"
+    assert refreshed.source == "derived"
+
+
+def test_console_stale_default_refresh_preserves_applied_system_prompt() -> None:
+    """Final-review Finding 3: the stale-default refresh must not silently
+    discard an already-applied `/system` prompt.
+
+    `set_session_system_prompt` (Task 13) keeps ``source == "derived"`` and
+    adds no message, so a message-less session where the user ran
+    `/system <name>` while its default provider was blocked (e.g. an empty
+    OpenAI API key) -- then later fixed the provider in Settings -- used to
+    have its applied ``system_prompt`` clobbered by ``fresh_defaults`` on the
+    very next settings read, since defaults never seed ``system_prompt``.
+    """
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "local-model"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "local-model"},
+        "openai": {"api_key": ""},
+    }
+    console = ChatScreen(app)
+    store = console._ensure_console_chat_store()
+    session = store.ensure_session()
+
+    # Blocked derived defaults (openai, no key) -- as if snapshotted on a
+    # fresh, never-configured session -- with a `/system` prompt applied
+    # before any message was sent.
+    stale_derived_with_system_prompt = ConsoleSessionSettings(
+        provider="openai", model="gpt-4o", system_prompt="Be concise."
+    )
+    store.replace_session_settings(session.id, stale_derived_with_system_prompt)
+
+    refreshed = console._ensure_active_console_session_settings()
+
+    assert refreshed.provider == "llama_cpp", (
+        "the provider/model default refresh must still happen"
+    )
+    assert refreshed.system_prompt == "Be concise."
+    # The store itself must carry the preserved prompt forward too, not just
+    # the returned snapshot.
+    assert store.session_settings(session.id).system_prompt == "Be concise."
+
+
+# --- task-188/191: provider display names + Discover models -----------------
+
+
+def _select_labels(select: Select) -> set[str]:
+    options = getattr(select, "options", None)
+    if options is None:
+        options = getattr(select, "_options", [])
+    labels: set[str] = set()
+    for option in options:
+        prompt = getattr(option, "prompt", None)
+        if prompt is None and isinstance(option, tuple) and option:
+            prompt = option[0]
+        if prompt is not None:
+            labels.add(str(getattr(prompt, "plain", prompt)))
+    return labels
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_provider_labels_use_catalog_display_names() -> (
+    None
+):
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"], "openai": ["gpt-4.1"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+
+        provider_select = app.screen.query_one("#console-settings-provider", Select)
+        labels = _select_labels(provider_select)
+        values = _select_values(provider_select)
+
+    # Labels render shared-catalog display names; values stay raw config keys.
+    assert "llama.cpp" in labels
+    assert "OpenAI" in labels
+    assert "Ollama" in labels
+    assert "llama_cpp" not in labels
+    assert {"llama_cpp", "openai", "ollama"}.issubset(values)
+
+
+class _RecordingProber:
+    def __init__(self, result: LocalModelProbeResult) -> None:
+        self.result = result
+        self.calls: list[tuple[str, str]] = []
+
+    async def __call__(self, base_url: str, provider_key: str) -> LocalModelProbeResult:
+        self.calls.append((base_url, provider_key))
+        return self.result
+
+
+async def _wait_for_discover_status(app, pilot, fragment: str) -> Static:
+    status = app.screen.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static)
+    for _ in range(60):
+        if fragment in str(status.renderable):
+            return status
+        await pilot.pause(0.05)
+    raise AssertionError(
+        f"discover status never showed {fragment!r}; last: {str(status.renderable)!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_discover_models_success_swaps_input_for_select() -> (
+    None
+):
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model=None)
+    prober = _RecordingProber(
+        LocalModelProbeResult(
+            ok=True,
+            base_url="http://127.0.0.1:9099",
+            model_ids=("srv-a", "srv-b"),
+        )
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": []},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+                model_prober=prober,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        app.screen.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button).press()
+        await _wait_for_discover_status(
+            app, pilot, "Found 2 models at http://127.0.0.1:9099."
+        )
+
+        assert prober.calls == [("http://127.0.0.1:9099", "llama_cpp")]
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
+        assert model_select.display is True
+        assert model_select.disabled is False
+        assert _select_values(model_select) == {"srv-a", "srv-b"}
+        assert model_select.value == "srv-a"
+        # Free-text fallback stays available after discovery.
+        model_custom = app.screen.query_one("#console-settings-model-custom", Button)
+        assert model_custom.display is True
+        assert model_custom.disabled is False
+
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.model == "srv-a"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_discover_models_failure_shows_inline_copy() -> (
+    None
+):
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model=None)
+    prober = _RecordingProber(
+        LocalModelProbeResult(
+            ok=False,
+            base_url="http://127.0.0.1:9099",
+            detail="No models endpoint at http://127.0.0.1:9099.",
+        )
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": []},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+                model_prober=prober,
+            )
+        )
+        await pilot.pause()
+
+        discover = app.screen.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        discover.press()
+        await _wait_for_discover_status(
+            app, pilot, "No models endpoint at http://127.0.0.1:9099."
+        )
+
+        # Honest inline line, button usable again, manual entry still works.
+        assert discover.disabled is False
+        model_input = app.screen.query_one("#console-settings-model-input", Input)
+        assert model_input.display is True
+        assert model_input.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_discover_button_only_for_url_based_providers() -> (
+    None
+):
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"openai": ["gpt-4.1"], "llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+
+        discover = app.screen.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        assert discover.display is False
+        assert discover.disabled is True
+
+        app.screen.query_one("#console-settings-provider", Select).value = "llama_cpp"
+        await pilot.pause()
+        assert discover.display is True
+        assert discover.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_discover_rejects_invalid_endpoint_url() -> None:
+    """PR #608 review: user-entered endpoint must pass shared URL validation
+    before any network probe; the prober must never be called."""
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        MODEL_DISCOVER_INVALID_URL_COPY,
+    )
+
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model=None,
+        base_url="http://[not-a-valid-url",
+    )
+    prober = _RecordingProber(
+        LocalModelProbeResult(ok=True, base_url="", model_ids=("x",))
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": []},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+                model_prober=prober,
+            )
+        )
+        await pilot.pause()
+
+        discover = app.screen.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+        discover.press()
+        await _wait_for_discover_status(app, pilot, MODEL_DISCOVER_INVALID_URL_COPY)
+
+    assert prober.calls == []

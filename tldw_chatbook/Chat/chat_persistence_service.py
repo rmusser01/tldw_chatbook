@@ -1,8 +1,10 @@
 import base64
-from typing import Any, Dict, List, Optional, Tuple
+import json
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from loguru import logger as _logger
 
+from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 logger = _logger.bind(module="ChatPersistenceService")
@@ -30,9 +32,13 @@ class ChatPersistenceService:
         normalized_id = (assistant_id or "").strip() or None
 
         if normalized_kind == "persona":
-            return f"Chat with {normalized_id}" if normalized_id else "Chat with Persona"
+            return (
+                f"Chat with {normalized_id}" if normalized_id else "Chat with Persona"
+            )
         if normalized_kind == "character":
-            return f"Chat with {normalized_id}" if normalized_id else "Chat with Character"
+            return (
+                f"Chat with {normalized_id}" if normalized_id else "Chat with Character"
+            )
         return "New Chat"
 
     def create_conversation(
@@ -49,6 +55,7 @@ class ChatPersistenceService:
         scope_type: Optional[str] = None,
         workspace_id: Optional[str] = None,
         conversation_title: Optional[str] = None,
+        system_prompt: Optional[str] = None,
     ) -> str:
         safe_workspace_id = self._require_workspace_scope(
             scope_type=scope_type,
@@ -60,19 +67,24 @@ class ChatPersistenceService:
             assistant_id=assistant_id,
             explicit_title=conversation_title,
         )
-        conversation_id = self.db.add_conversation({
-            "character_id": character_id,
-            "assistant_kind": assistant_kind,
-            "assistant_id": assistant_id,
-            "persona_memory_mode": persona_memory_mode,
-            "runtime_backend": runtime_backend,
-            "discovery_owner": discovery_owner,
-            "discovery_entity_id": discovery_entity_id,
-            "scope_type": scope_type,
-            "workspace_id": safe_workspace_id if safe_workspace_id is not None else workspace_id,
-            "title": title,
-            "client_id": self.db.client_id,
-        })
+        conversation_id = self.db.add_conversation(
+            {
+                "character_id": character_id,
+                "assistant_kind": assistant_kind,
+                "assistant_id": assistant_id,
+                "persona_memory_mode": persona_memory_mode,
+                "runtime_backend": runtime_backend,
+                "discovery_owner": discovery_owner,
+                "discovery_entity_id": discovery_entity_id,
+                "scope_type": scope_type,
+                "workspace_id": safe_workspace_id
+                if safe_workspace_id is not None
+                else workspace_id,
+                "title": title,
+                "system_prompt": system_prompt,
+                "client_id": self.db.client_id,
+            }
+        )
         if safe_workspace_id is not None:
             try:
                 self._link_workspace_conversation(
@@ -138,7 +150,9 @@ class ChatPersistenceService:
         if not safe_workspace_id:
             raise ValueError("Workspace conversation requires a workspace_id")
         if self.workspace_registry is None:
-            raise ValueError("Workspace registry is required for workspace conversations")
+            raise ValueError(
+                "Workspace registry is required for workspace conversations"
+            )
         workspace = self.workspace_registry.get_workspace(safe_workspace_id)
         if workspace is None:
             raise ValueError(f"Unknown workspace: {safe_workspace_id}")
@@ -178,6 +192,103 @@ class ChatPersistenceService:
             )
             raise
 
+    def update_conversation_system_prompt(
+        self,
+        *,
+        conversation_id: str,
+        system_prompt: Optional[str],
+    ) -> bool:
+        """Update the persisted system prompt for an existing conversation.
+
+        Args:
+            conversation_id: UUID of the conversation to update.
+            system_prompt: New system prompt text, or ``None``/blank to clear it.
+
+        Returns:
+            True if the update was applied.
+
+        Raises:
+            ValueError: If the conversation cannot be found.
+        """
+        current_conversation = self.db.get_conversation_by_id(conversation_id)
+        if not current_conversation:
+            raise ValueError(f"Conversation {conversation_id} not found")
+
+        return bool(
+            self.db.update_conversation(
+                conversation_id,
+                {"system_prompt": system_prompt},
+                expected_version=current_conversation["version"],
+            )
+        )
+
+    def update_conversation_pinned_prefill(
+        self,
+        *,
+        conversation_id: str,
+        pinned_prefill: str | None,
+    ) -> bool:
+        """Set or clear the pinned response prefill in conversation metadata.
+
+        Merge-safe: re-parses the current ``metadata`` JSON and rewrites only
+        its own key, preserving siblings such as ``active_dictionaries``
+        (mirrors ``LocalChatDictionaryService._write_active_dictionaries``).
+        Optimistic-lock conflicts (``ConflictError``) propagate to the caller.
+
+        Returns:
+            True when the write happened; False when the conversation does
+            not exist.
+        """
+        record = self.db.get_conversation_by_id(str(conversation_id))
+        if record is None:
+            return False
+        try:
+            meta = json.loads(record.get("metadata") or "{}")
+        except (TypeError, ValueError):
+            meta = {}
+        if not isinstance(meta, dict):
+            meta = {}
+        if pinned_prefill:
+            meta[PINNED_PREFILL_METADATA_KEY] = pinned_prefill
+        else:
+            meta.pop(PINNED_PREFILL_METADATA_KEY, None)
+        self.db.update_conversation(
+            str(conversation_id),
+            {"metadata": json.dumps(meta)},
+            expected_version=record["version"],
+        )
+        return True
+
+    def update_conversation_title(
+        self,
+        *,
+        conversation_id: str,
+        title: str,
+    ) -> bool:
+        """Update the persisted title for an existing conversation.
+
+        Args:
+            conversation_id: UUID of the conversation to update.
+            title: New conversation title (already validated non-blank).
+
+        Returns:
+            True if the update was applied.
+
+        Raises:
+            ValueError: If the conversation cannot be found.
+        """
+        current_conversation = self.db.get_conversation_by_id(conversation_id)
+        if not current_conversation:
+            raise ValueError(f"Conversation {conversation_id} not found")
+
+        return bool(
+            self.db.update_conversation(
+                conversation_id,
+                {"title": title},
+                expected_version=current_conversation["version"],
+            )
+        )
+
     def update_message_content(
         self,
         *,
@@ -189,20 +300,133 @@ class ChatPersistenceService:
         feedback: Optional[str] = None,
         update_parent: bool = False,
         update_feedback: bool = False,
+        attachments: Optional[Sequence[Mapping[str, Any]]] = None,
     ) -> bool:
+        """Update a message's content, optionally its parent/feedback, and its images.
+
+        Two mutually exclusive contracts govern how images are updated:
+
+        Legacy (``attachments=None``): ``image_data``/``image_mime_type`` are
+        the sole source of the message's single legacy image. Passing
+        ``image_data=None`` leaves any already-persisted image untouched
+        (it does NOT clear it) -- callers may pass ``None`` simply because
+        in-memory bytes were never rehydrated. Passing non-``None``
+        ``image_data`` replaces the persisted image.
+
+        Split addressing (``attachments`` is a sequence): an authoritative,
+        full rewrite of every position. Position 0 (if present) replaces the
+        legacy ``image_data``/``image_mime_type`` columns -- even when its
+        ``data``/``mime_type`` are ``None``, since supplying ``attachments``
+        at all means the caller intends to overwrite. Positions >= 1 replace
+        the ``message_attachments`` table rows via
+        ``CharactersRAGDB.set_message_attachments`` (an empty list clears any
+        stale rows). The row update and the table rewrite happen inside one
+        transaction so a table-write failure rolls back the row update too;
+        conversely, if the row update itself does not succeed (returns a
+        falsy result without raising), the table write is skipped entirely
+        so attachments never drift out of sync with unrevised content.
+        ``image_data``/``image_mime_type`` are ignored when ``attachments``
+        is supplied.
+
+        Args:
+            message_id: UUID of the message to update.
+            content: New message text content.
+            image_data: Legacy single-image bytes; ignored when
+                ``attachments`` is supplied. See the legacy contract above
+                for how ``None`` is handled.
+            image_mime_type: Legacy single-image MIME type; ignored when
+                ``attachments`` is supplied.
+            parent_message_id: New parent message id, applied only when
+                ``update_parent`` is True.
+            feedback: New feedback value, applied only when
+                ``update_feedback`` is True.
+            update_parent: Whether to update ``parent_message_id``.
+            update_feedback: Whether to update ``feedback``.
+            attachments: Optional full 0..N-1 position list of attachment
+                rows (each a mapping with ``position``, ``data``,
+                ``mime_type``, and optional ``display_name``). When
+                supplied, this is the sole, authoritative source for both
+                the legacy image columns (position 0) and the
+                ``message_attachments`` table (positions >= 1). ``None``
+                leaves all attachments/images untouched by this call except
+                via the legacy ``image_data``/``image_mime_type`` kwargs.
+
+        Returns:
+            True if the row update was applied; False if the underlying
+            update reported failure without raising (attachments are left
+            untouched in that case).
+
+        Raises:
+            ValueError: If the message cannot be found.
+            ConflictError: If the message was concurrently modified or
+                soft-deleted (optimistic-lock version mismatch).
+        """
         current_message = self.db.get_message_by_id(message_id)
         if not current_message:
             raise ValueError(f"Message {message_id} not found")
 
-        update_data: Dict[str, Any] = {
-            "content": content,
-            "image_data": image_data,
-            "image_mime_type": image_mime_type,
-        }
+        update_data: Dict[str, Any] = {"content": content}
+        # Only include the image columns when new image bytes are supplied.
+        # ``ChaChaNotes_DB.update_message`` treats an *included* ``image_data``
+        # key of ``None`` as an explicit request to NULL both image columns,
+        # but omitting the key entirely leaves any persisted image untouched.
+        # Callers here (e.g. the Console store) may pass ``image_data=None``
+        # simply because in-memory bytes were never rehydrated -- that must
+        # not wipe an image that already exists in the database.
+        #
+        # ``attachments`` (split addressing): ``None`` means "leave
+        # attachments untouched" -- the byte-identical #621/#628-era behavior
+        # above. When a caller passes a full 0..N-1 position list, position 0
+        # replaces the legacy image columns (even when ``None``, since an
+        # explicit attachments list is an authoritative rewrite) and
+        # positions >= 1 replace the ``message_attachments`` table rows.
+        if attachments is not None:
+            position_zero = next(
+                (row for row in attachments if int(row["position"]) == 0), None
+            )
+            update_data["image_data"] = position_zero["data"] if position_zero else None
+            update_data["image_mime_type"] = (
+                position_zero["mime_type"] if position_zero else None
+            )
+        elif image_data is not None:
+            update_data["image_data"] = image_data
+            update_data["image_mime_type"] = image_mime_type
         if update_parent:
             update_data["parent_message_id"] = parent_message_id
         if update_feedback:
             update_data["feedback"] = feedback
+
+        if attachments is not None:
+            extra_rows = [
+                {
+                    "position": int(row["position"]),
+                    "data": row["data"],
+                    "mime_type": row["mime_type"],
+                    "display_name": row.get("display_name", ""),
+                }
+                for row in attachments
+                if int(row["position"]) >= 1
+            ]
+            # One atomic unit: inside this outer transaction the nested
+            # update_message/set_message_attachments transactions are no-ops,
+            # so a failed table write rolls back the row update (content and
+            # legacy image columns) too. Conversely, if the row update itself
+            # fails without raising (e.g. an optimistic-lock miss reported as
+            # a plain ``False`` return instead of a ``ConflictError``), the
+            # attachments table write must be skipped -- otherwise
+            # attachments would be rewritten while content/version were not,
+            # leaving the two out of sync.
+            with self.db.transaction():
+                result = bool(
+                    self.db.update_message(
+                        message_id,
+                        update_data,
+                        expected_version=current_message["version"],
+                    )
+                )
+                if result:
+                    self.db.set_message_attachments(message_id, extra_rows)
+            return result
 
         return bool(
             self.db.update_message(
@@ -218,22 +442,133 @@ class ChatPersistenceService:
         conversation_id: str,
         sender: str,
         content: str,
-        image_data: Optional[bytes],
-        image_mime_type: Optional[str],
+        image_data: Optional[bytes] = None,
+        image_mime_type: Optional[str] = None,
         message_id: Optional[str] = None,
         parent_message_id: Optional[str] = None,
         feedback: Optional[str] = None,
+        attachments: Optional[Sequence[Mapping[str, Any]]] = None,
+        generation_metadata: Optional[Sequence[Mapping[str, Any]]] = None,
     ) -> str:
-        created_message_id = self.db.add_message({
+        """Create a new message, optionally with a legacy image or a full attachment list.
+
+        Two mutually exclusive contracts govern how images are stored,
+        mirroring ``update_message_content``:
+
+        Legacy (``attachments=None``): ``image_data``/``image_mime_type``
+        are the sole source of the message's single legacy image, stored
+        directly on the ``messages`` row. The ``message_attachments`` table
+        is never touched.
+
+        Split addressing (``attachments`` is a sequence): an authoritative
+        full 0..N-1 position list. Position 0 (if present) overrides the
+        scalar ``image_data``/``image_mime_type`` kwargs -- even overriding
+        them with ``None`` when no position-0 entry is present, since
+        supplying ``attachments`` at all means it is authoritative. Positions
+        >= 1 are written to the ``message_attachments`` table via
+        ``CharactersRAGDB.set_message_attachments``, always -- even an empty
+        list, so any stale rows a prior attempt at this same ``message_id``
+        left behind are cleared. The row insert and the table write happen
+        inside one transaction, so a table-write failure rolls back the row
+        insert too.
+
+        Args:
+            conversation_id: UUID of the parent conversation.
+            sender: Message sender/role (e.g. ``"user"``, ``"assistant"``).
+            content: Message text content.
+            image_data: Legacy single-image bytes; ignored when
+                ``attachments`` is supplied.
+            image_mime_type: Legacy single-image MIME type; ignored when
+                ``attachments`` is supplied.
+            message_id: Optional explicit message id; the DB generates one
+                when omitted.
+            parent_message_id: Optional parent message id for threading.
+            feedback: Optional feedback value applied via a follow-up update
+                once the message exists (feedback is not part of the initial
+                insert payload).
+            attachments: Optional full 0..N-1 position list of attachment
+                rows (each a mapping with ``position``, ``data``,
+                ``mime_type``, and optional ``display_name``). When
+                supplied, this is the sole, authoritative source for both
+                the legacy image columns (position 0) and the
+                ``message_attachments`` table (positions >= 1).
+            generation_metadata: Optional full list of
+                ``message_generation_metadata`` rows (each a mapping with
+                ``position``, ``prompt``, ``negative_prompt``, ``backend``,
+                ``model``, ``seed``, ``style``, ``params_json``) to persist
+                alongside the message. Written via
+                ``CharactersRAGDB.set_message_generation_metadata`` inside
+                the same transaction as the row insert and the attachments
+                write, so a sidecar-write failure rolls back everything
+                (including the message row and any attachments already
+                written this call).
+
+        Returns:
+            The newly created message's id.
+
+        Raises:
+            CharactersRAGDBError: For database integrity errors during the
+                insert, the attachment-table write, or the
+                generation-metadata write.
+        """
+        # Split addressing: when ``attachments`` is supplied it covers ALL
+        # positions (0..N-1) and is authoritative -- position 0 overrides the
+        # scalar ``image_data``/``image_mime_type`` kwargs (even overriding
+        # them with ``None`` when no position-0 entry is present), and
+        # positions >= 1 land in the ``message_attachments`` table via
+        # ``set_message_attachments``. ``attachments=None`` leaves the
+        # scalar kwargs as the sole source of the legacy image columns and
+        # never touches the attachments table -- byte-identical to the
+        # pre-split behavior.
+        effective_image_data = image_data
+        effective_image_mime_type = image_mime_type
+        extra_rows: List[Dict[str, Any]] = []
+        if attachments is not None:
+            position_zero = next(
+                (row for row in attachments if int(row["position"]) == 0), None
+            )
+            effective_image_data = position_zero["data"] if position_zero else None
+            effective_image_mime_type = (
+                position_zero["mime_type"] if position_zero else None
+            )
+            extra_rows = [
+                {
+                    "position": int(row["position"]),
+                    "data": row["data"],
+                    "mime_type": row["mime_type"],
+                    "display_name": row.get("display_name", ""),
+                }
+                for row in attachments
+                if int(row["position"]) >= 1
+            ]
+
+        message_payload = {
             "id": message_id,
             "conversation_id": conversation_id,
             "parent_message_id": parent_message_id,
             "sender": sender,
             "content": content,
-            "image_data": image_data,
-            "image_mime_type": image_mime_type,
+            "image_data": effective_image_data,
+            "image_mime_type": effective_image_mime_type,
             "client_id": self.db.client_id,
-        })
+        }
+        if attachments is not None or generation_metadata is not None:
+            # One atomic unit: inside this outer transaction the nested
+            # add_message/set_message_attachments/set_message_generation_metadata
+            # transactions are no-ops, so a failed table write rolls the
+            # message row (and any earlier write in this call) back too. The
+            # attachments write always runs when this branch is taken -- an
+            # empty list still clears any stale rows a prior attempt at this
+            # same message_id may have left behind.
+            with self.db.transaction():
+                created_message_id = self.db.add_message(message_payload)
+                self.db.set_message_attachments(created_message_id, extra_rows)
+                if generation_metadata is not None:
+                    self.db.set_message_generation_metadata(
+                        created_message_id, list(generation_metadata)
+                    )
+        else:
+            created_message_id = self.db.add_message(message_payload)
         if feedback is not None:
             created_message = self.db.get_message_by_id(created_message_id)
             self.db.update_message(
@@ -242,6 +577,104 @@ class ChatPersistenceService:
                 expected_version=created_message["version"],
             )
         return created_message_id
+
+    def append_message_attachment(
+        self,
+        message_id: str,
+        *,
+        data: bytes,
+        mime_type: str,
+        display_name: str = "",
+        generation_metadata: Optional[Mapping[str, Any]] = None,
+    ) -> int:
+        """Append one new image variant to a message, in place.
+
+        Thin passthrough to
+        ``CharactersRAGDB.append_message_attachment_with_metadata`` -- the
+        narrow, additive counterpart to the full-list
+        ``update_message_content(attachments=...)`` rewrite. Use this when a
+        new variant (e.g. a regenerated image) should be added without
+        risking any existing attachment's bytes.
+
+        Args:
+            message_id: Target message id; must already have a position-0
+                image.
+            data: The new variant's image bytes.
+            mime_type: The new variant's MIME type.
+            display_name: Optional label for the new variant.
+            generation_metadata: Optional generation-metadata fields for the
+                new position.
+
+        Returns:
+            The position assigned to the new variant (>= 1).
+
+        Raises:
+            ValueError: If the message does not exist or has no position-0
+                image.
+        """
+        return self.db.append_message_attachment_with_metadata(
+            message_id,
+            data=data,
+            mime_type=mime_type,
+            display_name=display_name,
+            generation_metadata=generation_metadata,
+        )
+
+    def keep_message_attachment(self, message_id: str, position: int) -> None:
+        """Promote a stored variant to be the message's canonical image.
+
+        Thin passthrough to
+        ``CharactersRAGDB.swap_message_attachment_with_scalar``. Swaps the
+        variant at ``position`` with the message's current position-0 image,
+        byte-identical, touching only those two variants.
+
+        Args:
+            message_id: Target message id.
+            position: The attachment position (>= 1) to promote.
+
+        Raises:
+            ValueError: If ``position < 1`` or no attachment exists there.
+        """
+        self.db.swap_message_attachment_with_scalar(message_id, position)
+
+    def get_attachments_for_messages(
+        self, message_ids: Sequence[str]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Batch-fetch extra (position >= 1) attachments for messages.
+
+        Passthrough to ``CharactersRAGDB.get_attachments_for_messages``.
+        Legacy position-0 images are not included here -- they live on the
+        ``messages`` row itself (``image_data``/``image_mime_type``).
+
+        Args:
+            message_ids: Message ids to fetch attachment rows for.
+
+        Returns:
+            A mapping of message id to its list of attachment row dicts
+            (each with ``position``, ``data``, ``mime_type``,
+            ``display_name``), ordered by position. Message ids with no
+            extra (position >= 1) attachments are omitted from the result.
+        """
+        return self.db.get_attachments_for_messages(message_ids)
+
+    def get_generation_metadata_for_messages(
+        self, message_ids: Sequence[str]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Batch-fetch generation-metadata sidecar rows for messages.
+
+        Passthrough to ``CharactersRAGDB.get_generation_metadata_for_messages``
+        -- feeds ``ConsoleChatStore.hydrate_generation_metadata`` at
+        conversation load (P2a).
+
+        Args:
+            message_ids: Message ids to fetch generation-metadata rows for.
+
+        Returns:
+            A mapping of message id to its position-ordered
+            generation-metadata row dicts; message ids with no sidecar rows
+            are omitted.
+        """
+        return self.db.get_generation_metadata_for_messages(message_ids)
 
     def save_history(
         self,
@@ -256,7 +689,8 @@ class ChatPersistenceService:
         )
         existing_by_id = {message["id"]: message for message in existing_messages}
         existing_by_position = [
-            message for message in existing_messages
+            message
+            for message in existing_messages
             if message.get("variant_of") is None
         ]
         consumed_existing_ids = set()
@@ -269,7 +703,9 @@ class ChatPersistenceService:
             if not sender or sender == "system":
                 continue
 
-            content, image_data, image_mime_type = self._extract_message_payload(message_obj)
+            content, image_data, image_mime_type = self._extract_message_payload(
+                message_obj
+            )
             if not content and not image_data:
                 continue
 
@@ -303,7 +739,8 @@ class ChatPersistenceService:
             else:
                 while (
                     fallback_index < len(existing_by_position)
-                    and existing_by_position[fallback_index]["id"] in consumed_existing_ids
+                    and existing_by_position[fallback_index]["id"]
+                    in consumed_existing_ids
                 ):
                     fallback_index += 1
 
@@ -355,7 +792,9 @@ class ChatPersistenceService:
         return saved_count
 
     @staticmethod
-    def _extract_message_payload(message_obj: Dict[str, Any]) -> Tuple[str, Optional[bytes], Optional[str]]:
+    def _extract_message_payload(
+        message_obj: Dict[str, Any],
+    ) -> Tuple[str, Optional[bytes], Optional[str]]:
         text_content_parts: List[str] = []
         image_data_bytes: Optional[bytes] = None
         image_mime_type_str: Optional[str] = None
@@ -374,18 +813,32 @@ class ChatPersistenceService:
                     if url_str.startswith("data:") and ";base64," in url_str:
                         try:
                             header, b64_data = url_str.split(";base64,", 1)
-                            image_mime_type_str = header.split("data:", 1)[1] if "data:" in header else None
+                            image_mime_type_str = (
+                                header.split("data:", 1)[1]
+                                if "data:" in header
+                                else None
+                            )
                             if image_mime_type_str:
                                 image_data_bytes = base64.b64decode(b64_data)
                             else:
-                                text_content_parts.append("<Error: Malformed image data URI in history>")
+                                text_content_parts.append(
+                                    "<Error: Malformed image data URI in history>"
+                                )
                         except Exception:
                             image_data_bytes = None
                             image_mime_type_str = None
-                            text_content_parts.append("<Error: Failed to decode image data from history>")
+                            text_content_parts.append(
+                                "<Error: Failed to decode image data from history>"
+                            )
                     elif url_str:
                         text_content_parts.append(f"<Image URL: {url_str}>")
         elif content_data is not None:
-            text_content_parts.append(f"<Unsupported content type: {type(content_data)}>")
+            text_content_parts.append(
+                f"<Unsupported content type: {type(content_data)}>"
+            )
 
-        return "\n".join(text_content_parts).strip(), image_data_bytes, image_mime_type_str
+        return (
+            "\n".join(text_content_parts).strip(),
+            image_data_bytes,
+            image_mime_type_str,
+        )

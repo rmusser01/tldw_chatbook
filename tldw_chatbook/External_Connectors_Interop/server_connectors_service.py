@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    ConnectorSourceCreateRequest,
-    ConnectorSourcePatchRequest,
-    TLDWAPIClient,
-)
+
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient
 
 
 class ServerConnectorsService:
@@ -64,7 +62,9 @@ class ServerConnectorsService:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -73,10 +73,14 @@ class ServerConnectorsService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
-                    user_message=getattr(decision, "user_message", None) or "Server connector action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
+                    user_message=getattr(decision, "user_message", None)
+                    or "Server connector action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @staticmethod
@@ -102,7 +106,9 @@ class ServerConnectorsService:
     ) -> dict[str, Any]:
         self._enforce("connectors.providers.launch.server")
         return self._dump(
-            await self._require_client().authorize_connector_provider(provider, state=state, scopes=scopes)
+            await self._require_client().authorize_connector_provider(
+                provider, state=state, scopes=scopes
+            )
         )
 
     async def complete_oauth_callback(
@@ -131,7 +137,9 @@ class ServerConnectorsService:
 
     async def delete_account(self, account_id: int) -> bool:
         self._enforce("connectors.accounts.delete.server")
-        return bool(await self._require_client().delete_connector_account(int(account_id)))
+        return bool(
+            await self._require_client().delete_connector_account(int(account_id))
+        )
 
     async def browse_sources(
         self,
@@ -163,6 +171,9 @@ class ServerConnectorsService:
         path: str | None = None,
         options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ConnectorSourceCreateRequest
+
         self._enforce("connectors.sources.create.server")
         request = ConnectorSourceCreateRequest(
             account_id=account_id,
@@ -185,21 +196,36 @@ class ServerConnectorsService:
         enabled: bool | None = None,
         options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ConnectorSourcePatchRequest
+
         self._enforce("connectors.sources.update.server")
         request = ConnectorSourcePatchRequest(enabled=enabled, options=options)
-        return self._dump(await self._require_client().update_connector_source(int(source_id), request))
+        return self._dump(
+            await self._require_client().update_connector_source(
+                int(source_id), request
+            )
+        )
 
     async def import_source(self, source_id: int) -> dict[str, Any]:
         self._enforce("connectors.sources.launch.server")
-        return self._dump(await self._require_client().import_connector_source(int(source_id)))
+        return self._dump(
+            await self._require_client().import_connector_source(int(source_id))
+        )
 
     async def get_source_sync_status(self, source_id: int) -> dict[str, Any]:
         self._enforce("connectors.sources.observe.server")
-        return self._dump(await self._require_client().get_connector_source_sync_status(int(source_id)))
+        return self._dump(
+            await self._require_client().get_connector_source_sync_status(
+                int(source_id)
+            )
+        )
 
     async def trigger_source_sync(self, source_id: int) -> dict[str, Any]:
         self._enforce("connectors.sources.launch.server")
-        return self._dump(await self._require_client().trigger_connector_source_sync(int(source_id)))
+        return self._dump(
+            await self._require_client().trigger_connector_source_sync(int(source_id))
+        )
 
     async def get_job_status(self, job_id: int | str) -> dict[str, Any]:
         self._enforce("connectors.jobs.observe.server")

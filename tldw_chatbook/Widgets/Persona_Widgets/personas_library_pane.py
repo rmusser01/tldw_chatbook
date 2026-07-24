@@ -14,7 +14,10 @@ from .personas_messages import (
     PersonaActionRequested,
     PersonaEntityKind,
     PersonaEntitySelected,
+    PersonaPageChanged,
     PersonaSearchChanged,
+    PersonaSortCycleRequested,
+    PersonaTagFilterRequested,
 )
 
 _ID_SAFE = re.compile(r"[^a-zA-Z0-9_-]")
@@ -34,6 +37,16 @@ def _singular_noun(noun: str) -> str:
     return noun
 
 
+def _noun_for_count(count: int, noun: str) -> str:
+    """Return ``noun`` in the grammatical number matching ``count``.
+
+    task-445: the count line used the plural ``noun`` unconditionally, so a
+    total of exactly one item read "1 characters".
+    """
+
+    return _singular_noun(noun) if count == 1 else noun
+
+
 @dataclass(frozen=True)
 class LibraryRow:
     """One selectable row in the workbench library list."""
@@ -42,6 +55,7 @@ class LibraryRow:
     kind: PersonaEntityKind
     name: str
     is_unsaved: bool = False
+    meta: str | None = None
 
 
 class PersonasLibraryPane(Vertical):
@@ -52,6 +66,10 @@ class PersonasLibraryPane(Vertical):
     highlighting never posts ``PersonaEntitySelected``, so unsaved-edit
     guards stay quiet while the user browses.
     """
+
+    BINDINGS = [
+        ("space", "toggle_highlighted", "Toggle on/off"),
+    ]
 
     # Structure only: colors come from the app stylesheet
     # (.console-action-subdued rows, ListView ListItem.--highlight, and
@@ -83,12 +101,36 @@ class PersonasLibraryPane(Vertical):
         text-wrap: wrap;
         text-overflow: clip;
     }
+
+    /* The generic Button min-width:16 default would push "next" past the
+       pane's narrow width (2fr of the workbench split); pin the prev/next
+       buttons to a compact width and let the page-info Static fill the rest
+       so the bar never overflows its container. */
+    PersonasLibraryPane #personas-library-pagebar Button {
+        width: 5;
+        min-width: 5;
+    }
+
+    PersonasLibraryPane #personas-library-page-info {
+        width: 1fr;
+        text-align: center;
+    }
     """
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._row_lookup: dict[str, LibraryRow] = {}
         self._import_visible: bool = True
+
+    def on_mount(self) -> None:
+        """Initialize control visibility for default characters mode.
+
+        ``PersonasScreen.on_mount`` calls ``set_mode`` immediately after this
+        pane mounts, so this only sets the very first paint; Duplicate
+        applies to characters (task-443), so it starts visible here too.
+        """
+        self.query_one("#personas-library-duplicate", Button).display = True
+        self.query_one("#personas-library-pagebar").display = False
 
     def compose(self) -> ComposeResult:
         """Compose the Library pane header, search controls, and rows.
@@ -125,13 +167,74 @@ class PersonasLibraryPane(Vertical):
                 tooltip="Import a character card (PNG or JSON).",
                 classes="console-action-secondary",
             )
+            yield Button(
+                "Duplicate",
+                id="personas-library-duplicate",
+                tooltip="Duplicate the selected item.",
+                classes="console-action-secondary",
+            )
+        with Horizontal(id="personas-library-filterbar", classes="ds-toolbar"):
+            yield Button(
+                "Sort: Name",
+                id="personas-library-sort",
+                tooltip="Cycle the list sort order.",
+                classes="console-action-secondary",
+            )
+            yield Button(
+                "Tag: All",
+                id="personas-library-tag",
+                tooltip="Filter characters by tag.",
+                classes="console-action-secondary",
+            )
         yield ListView(id="personas-library-rows")
+        with Horizontal(id="personas-library-pagebar", classes="ds-toolbar"):
+            yield Button(
+                "<",
+                id="personas-library-prev",
+                compact=True,
+                classes="console-action-secondary",
+            )
+            yield Static(
+                "", id="personas-library-page-info", classes="destination-purpose"
+            )
+            yield Button(
+                ">",
+                id="personas-library-next",
+                compact=True,
+                classes="console-action-secondary",
+            )
         yield Static("", id="personas-library-count", classes="destination-purpose")
 
     def set_mode(self, mode: str) -> None:
-        """Show Import only where it applies (Characters mode)."""
-        self._import_visible = mode == "characters"
-        self.query_one("#personas-library-import", Button).display = self._import_visible
+        """Gate the library toolbar's buttons for the active workbench mode.
+
+        Import and Duplicate render for characters/dictionaries/lore (with a
+        mode-appropriate Import tooltip); personas mode hides both (task-443).
+
+        Args:
+            mode: The active workbench mode id (``characters``/``personas``/
+                ``dictionaries``/``lore``).
+        """
+        self._import_visible = mode in ("characters", "dictionaries", "lore")
+        import_button = self.query_one("#personas-library-import", Button)
+        import_button.display = self._import_visible
+        if mode == "dictionaries":
+            import_button.tooltip = "Import a dictionary (JSON or Markdown)."
+        elif mode == "lore":
+            import_button.tooltip = "Import a world book (JSON)."
+        else:
+            import_button.tooltip = "Import a character card (PNG or JSON)."
+        self.query_one("#personas-library-duplicate", Button).display = mode in (
+            "characters",
+            "dictionaries",
+            "lore",
+        )
+        sort_visible = mode in ("characters", "personas")
+        self.query_one("#personas-library-sort", Button).display = sort_visible
+        self.query_one("#personas-library-tag", Button).display = mode == "characters"
+        if not sort_visible:
+            # dict/lore never paginate - keep the page bar hidden.
+            self.query_one("#personas-library-pagebar").display = False
 
     async def update_rows(
         self,
@@ -143,6 +246,8 @@ class PersonasLibraryPane(Vertical):
         filtered_total_unbounded: bool = False,
         recovery_copy: str | None = None,
         recovery_id: str = "personas-library-recovery",
+        page_offset: int | None = None,
+        page_size: int | None = None,
     ) -> None:
         """Replace the visible rows and count line.
 
@@ -158,6 +263,12 @@ class PersonasLibraryPane(Vertical):
                 pane renders a disabled recovery row instead of list or empty
                 rows.
             recovery_id: Stable DOM id for the recovery copy widget.
+            page_offset: Zero-based offset of ``rows`` within ``total``. When
+                given together with ``page_size``, the pane renders a page bar
+                instead of the plain count line. ``None`` (the default)
+                preserves the pre-paging behavior for callers (dictionaries,
+                lore) that never page.
+            page_size: Page window size paired with ``page_offset``.
 
         Returns:
             None.
@@ -200,21 +311,61 @@ class PersonasLibraryPane(Vertical):
             classes = "personas-library-row console-action-subdued"
             if row.is_unsaved:
                 classes += " is-unsaved"
-            items.append(
-                ListItem(Static(row.name, markup=False), id=dom_id, classes=classes)
-            )
+            if row.meta:
+                item = ListItem(
+                    Vertical(
+                        Static(row.name, markup=False),
+                        Static(
+                            row.meta,
+                            markup=False,
+                            classes="personas-library-row-meta destination-purpose",
+                        ),
+                    ),
+                    id=dom_id,
+                    classes=classes,
+                )
+                # Inline override, not CSS: app-level .console-action-subdued pins height:1 and
+                # Textual ranks app CSS above widget DEFAULT_CSS regardless of specificity/!important;
+                # inline styles beat both.
+                item.styles.height = 2
+                items.append(item)
+            else:
+                items.append(
+                    ListItem(Static(row.name, markup=False), id=dom_id, classes=classes)
+                )
         await list_view.extend(items)
+        pagebar = self.query_one("#personas-library-pagebar")
+        count_static = self.query_one("#personas-library-count", Static)
+        paginated = page_offset is not None and page_size is not None
         if recovery_copy:
-            count = f"{noun.capitalize()} unavailable"
-        elif filtered and filtered_total_unbounded:
-            match_word = "match" if len(rows) == 1 else "matches"
-            count = (
-                f"Showing {len(rows)} {_singular_noun(noun)} "
-                f"{match_word} from full library"
+            pagebar.display = False
+            count_static.update(f"{noun.capitalize()} unavailable")
+        elif paginated and total > page_size:
+            start = page_offset + 1 if total else 0
+            end = page_offset + len(rows)
+            self.query_one("#personas-library-page-info", Static).update(
+                f"{start}-{end} of {total} {noun}"
             )
+            self.query_one("#personas-library-prev", Button).disabled = page_offset <= 0
+            self.query_one("#personas-library-next", Button).disabled = (
+                page_offset + page_size >= total
+            )
+            pagebar.display = True
+            count_static.update("")
         else:
-            count = f"{len(rows)} of {total} {noun}" if filtered else f"{total} {noun}"
-        self.query_one("#personas-library-count", Static).update(count)
+            pagebar.display = False
+            if filtered and filtered_total_unbounded:
+                match_word = "match" if len(rows) == 1 else "matches"
+                count_static.update(
+                    f"Showing {len(rows)} {_singular_noun(noun)} "
+                    f"{match_word} from full library"
+                )
+            elif filtered:
+                count_static.update(
+                    f"{len(rows)} of {total} {_noun_for_count(total, noun)}"
+                )
+            else:
+                count_static.update(f"{total} {_noun_for_count(total, noun)}")
 
     def mark_active_row(self, kind: str, item_id: str) -> None:
         """Move the list highlight and the .is-active marker to one row."""
@@ -226,7 +377,18 @@ class PersonasLibraryPane(Vertical):
             if is_active:
                 list_view.index = index
 
-    def set_row_unsaved(self, kind: str | None, item_id: str | None, unsaved: bool) -> None:
+    def highlight_row(self, kind: str, item_id: str) -> None:
+        """Move only the ListView cursor to one row (no active-marker change)."""
+        target = _row_dom_id(kind, item_id)
+        list_view = self.query_one("#personas-library-rows", ListView)
+        for index, item in enumerate(list_view.children):
+            if item.id == target:
+                list_view.index = index
+                return
+
+    def set_row_unsaved(
+        self, kind: str | None, item_id: str | None, unsaved: bool
+    ) -> None:
         """Toggle the ``.is-unsaved`` badge without rebuilding the rows.
 
         Only one row (the active editing session's) may carry the badge, so
@@ -237,6 +399,14 @@ class PersonasLibraryPane(Vertical):
         list_view = self.query_one("#personas-library-rows", ListView)
         for item in list_view.children:
             item.set_class(unsaved and item.id == target, "is-unsaved")
+
+    def set_sort_label(self, text: str) -> None:
+        """Update the sort button's label (the screen owns the sort cycle/copy)."""
+        self.query_one("#personas-library-sort", Button).label = text
+
+    def set_tag_label(self, text: str) -> None:
+        """Update the tag button's label (the screen owns the active tag)."""
+        self.query_one("#personas-library-tag", Button).label = text
 
     @on(Input.Changed, "#personas-library-search")
     def _search_changed(self, event: Input.Changed) -> None:
@@ -274,6 +444,46 @@ class PersonasLibraryPane(Vertical):
     def _import_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self.post_message(PersonaActionRequested(action="import"))
+
+    @on(Button.Pressed, "#personas-library-duplicate")
+    def _duplicate_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(PersonaActionRequested(action="duplicate"))
+
+    @on(Button.Pressed, "#personas-library-sort")
+    def _sort_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(PersonaSortCycleRequested())
+
+    @on(Button.Pressed, "#personas-library-tag")
+    def _tag_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(PersonaTagFilterRequested())
+
+    @on(Button.Pressed, "#personas-library-prev")
+    def _prev_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(PersonaPageChanged(-1))
+
+    @on(Button.Pressed, "#personas-library-next")
+    def _next_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(PersonaPageChanged(1))
+
+    def action_toggle_highlighted(self) -> None:
+        """Space on a highlighted dictionary row requests an enable-toggle."""
+        list_view = self.query_one("#personas-library-rows", ListView)
+        index = list_view.index
+        if index is None or not 0 <= index < len(list_view.children):
+            return
+        row = self._row_lookup.get(str(list_view.children[index].id or ""))
+        if row is None or row.kind != "dictionary":
+            return
+        self.post_message(
+            PersonaActionRequested(
+                action="toggle_enabled", entity_kind=row.kind, entity_id=row.item_id
+            )
+        )
 
 
 __all__ = [

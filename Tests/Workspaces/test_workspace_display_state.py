@@ -46,6 +46,30 @@ def test_console_workspace_state_explains_missing_service() -> None:
     assert "service not ready" in state.recovery_copy.lower()
 
 
+def test_console_scope_shows_readable_label_not_raw_uuid(tmp_path: Path) -> None:
+    """TASK-373/387: the rail Scope shows a human-readable label with the raw
+    conversation id kept as a hover detail, not the raw UUID in the primary row."""
+    service = _registry(tmp_path)
+    service.ensure_default_workspace()
+    conversation_id = "d1ebe478-c825-46b6-83b3-d5901d7bb3a1"
+
+    state = build_console_workspace_state(
+        registry_service=service,
+        current_conversation=conversation_id,
+    )
+
+    assert state.scope_label == "This conversation"
+    assert conversation_id not in state.scope_label
+    assert state.scope_detail == conversation_id
+
+    empty = build_console_workspace_state(
+        registry_service=service,
+        current_conversation=None,
+    )
+    assert empty.scope_label == ""
+    assert empty.scope_detail == ""
+
+
 def test_console_workspace_state_explains_no_active_workspace(tmp_path: Path) -> None:
     service = _registry(tmp_path)
     service.ensure_default_workspace()
@@ -83,7 +107,9 @@ def test_console_workspace_state_allows_default_conversation_in_fallback_state(
     assert state.recovery_copy == "Workspace switching: locked"
 
 
-def test_console_workspace_state_reports_active_workspace_and_runtime(tmp_path: Path) -> None:
+def test_console_workspace_state_reports_active_workspace_and_runtime(
+    tmp_path: Path,
+) -> None:
     service = _registry(tmp_path)
     service.create_workspace(
         workspace_id="ws-a",
@@ -144,7 +170,9 @@ def test_console_workspace_state_enables_switching_with_multiple_workspaces(
     assert state.recovery_copy == ""
 
 
-def test_safe_workspaces_treats_missing_registry_as_empty_without_warning(monkeypatch) -> None:
+def test_safe_workspaces_treats_missing_registry_as_empty_without_warning(
+    monkeypatch,
+) -> None:
     warnings: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
     class FakeLogger:
@@ -157,7 +185,9 @@ def test_safe_workspaces_treats_missing_registry_as_empty_without_warning(monkey
     assert warnings == []
 
 
-def test_console_workspace_state_maps_workspace_sync_status_before_promotion(tmp_path: Path) -> None:
+def test_console_workspace_state_maps_workspace_sync_status_before_promotion(
+    tmp_path: Path,
+) -> None:
     expected_labels = {
         WorkspaceSyncStatus.NOT_CONFIGURED: "Sync: not configured",
         WorkspaceSyncStatus.SYNCING: "Sync: syncing",
@@ -360,7 +390,9 @@ def test_console_workspace_state_exposes_handoff_transfer_policy_rows(
     assert "not portable" in rows_by_id["artifact-1"].detail
 
 
-def test_console_workspace_state_preserves_handoff_rows_from_membership_iterator() -> None:
+def test_console_workspace_state_preserves_handoff_rows_from_membership_iterator() -> (
+    None
+):
     class GeneratorMembershipRegistry:
         def list_workspace_memberships(self, workspace_id: str):
             assert workspace_id == "ws-a"
@@ -414,7 +446,9 @@ def test_console_workspace_state_exposes_acp_task_run_handoff_readiness_and_audi
 
     assert state.acp_handoff_label == "ACP task/run: failed"
     assert state.acp_handoff_detail == "ACP runtime package failed preflight."
-    assert state.acp_handoff_audit == "Audit: no secrets copied; source references only."
+    assert (
+        state.acp_handoff_audit == "Audit: no secrets copied; source references only."
+    )
 
 
 def test_console_workspace_state_normalizes_acp_handoff_ready_and_blocked_states(
@@ -532,7 +566,10 @@ def test_library_workspace_depth_state_preserves_visibility_but_blocks_cross_wor
     assert "1 blocked" in state.handoff_label
     assert "Copy or link" in state.context_handoff_tooltip
     assert [row.title for row in state.source_rows] == ["Research Note", "Transcript A"]
-    assert [row.workspace_label for row in state.source_rows] == ["Workspace B", "Workspace A"]
+    assert [row.workspace_label for row in state.source_rows] == [
+        "Workspace B",
+        "Workspace A",
+    ]
     assert [row.visible for row in state.source_rows] == [True, True]
     assert state.source_rows[0].active_context_eligible is False
     assert state.source_rows[0].context_label == "Console/RAG: blocked"

@@ -6,9 +6,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
-from tldw_chatbook.Workspaces.conversation_browser_state import format_console_relative_age
+from tldw_chatbook.Workspaces.conversation_browser_state import (
+    format_console_relative_age,
+)
 
-LIBRARY_MEDIA_EMPTY_COPY = "No media in your Library yet. Ingest something to see it here."
+LIBRARY_MEDIA_EMPTY_COPY = (
+    "No media in your Library yet. Ingest something to see it here."
+)
 
 _ID_KEYS = ("id", "media_id", "uuid")
 _TYPE_KEYS = ("type", "media_type")
@@ -24,6 +28,7 @@ class LibraryMediaRow:
     media_type: str
     secondary: str
     selected: bool = False
+    checked: bool = False
 
 
 @dataclass(frozen=True)
@@ -38,6 +43,8 @@ class LibraryMediaCanvasState:
     selected_id: str
     preview_lines: tuple[str, ...]
     count: int
+    select_mode: bool = False
+    selected_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -116,6 +123,8 @@ def build_library_media_state(
     selected_id: str = "",
     now: datetime | None = None,
     limit: int = 75,
+    select_mode: bool = False,
+    selected_ids: frozenset[str] = frozenset(),
 ) -> LibraryMediaCanvasState:
     """Build the Library Browse ▸ Media canvas display state.
 
@@ -185,9 +194,11 @@ def build_library_media_state(
                 format_console_relative_age(entry.updated_raw, now=reference_now),
             ),
             selected=entry.media_id == resolved_selected_id,
+            checked=entry.media_id in selected_ids,
         )
         for entry in limited_entries
     )
+    selected_count = sum(1 for r in rows if r.checked)
 
     # Build type_options: ("All",) + sorted distinct non-empty types
     distinct_types = {entry.media_type for entry in entries if entry.media_type}
@@ -237,4 +248,6 @@ def build_library_media_state(
         selected_id=resolved_selected_id,
         preview_lines=preview_lines,
         count=total_count,
+        select_mode=select_mode,
+        selected_count=selected_count,
     )

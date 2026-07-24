@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Mapping
+from typing import Any, Mapping, TYPE_CHECKING
 
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
 from tldw_chatbook.Sync_Interop.sync_state import is_local_first_sync_profile_mode
@@ -14,7 +14,9 @@ from tldw_chatbook.Sync_Interop.validation import (
     validate_outgoing_envelope_scope,
     validate_pulled_response_scope,
 )
-from tldw_chatbook.tldw_api import SyncV2Envelope
+
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api import SyncV2Envelope
 
 
 class LocalFirstSyncService:
@@ -64,6 +66,8 @@ class LocalFirstSyncService:
             Exception: Propagates server transport and local apply failures after recording
                 sync state.
         """
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import SyncV2Envelope
 
         profile = self.state_repository.get_sync_v2_profile_state(
             server_profile_id=server_profile_id,
@@ -78,11 +82,15 @@ class LocalFirstSyncService:
         dataset_id = profile.get("dataset_id")
         device_id = profile.get("device_id")
         if not dataset_id or not device_id:
-            raise ValueError("local_first Sync v2 profile requires device_id and dataset_id")
+            raise ValueError(
+                "local_first Sync v2 profile requires device_id and dataset_id"
+            )
 
         key = dataset_key or self.dataset_keys.get(str(dataset_id))
         if key is None:
-            raise ValueError("dataset key is required for local_first Sync v2 envelopes")
+            raise ValueError(
+                "dataset key is required for local_first Sync v2 envelopes"
+            )
 
         cursor_record = self.state_repository.get_remote_pull_cursor(
             source_authority="server",
@@ -102,8 +110,7 @@ class LocalFirstSyncService:
         )
         try:
             outbox_parsed = [
-                self._coerce_envelope(entry["envelope"])
-                for entry in outbox_entries
+                self._coerce_envelope(entry["envelope"]) for entry in outbox_entries
             ]
             outgoing_parsed = [
                 self._coerce_envelope(envelope)
@@ -119,20 +126,17 @@ class LocalFirstSyncService:
             self._record_sync_error(profile=profile, stage="push", exc=exc)
             raise
         outbox_payloads = [
-            envelope.model_dump(mode="json")
-            for envelope in outbox_parsed
+            envelope.model_dump(mode="json") for envelope in outbox_parsed
         ]
         outgoing_payloads = [
-            envelope.model_dump(mode="json")
-            for envelope in outgoing_parsed
+            envelope.model_dump(mode="json") for envelope in outgoing_parsed
         ]
         push_items = [
             {"payload": payload, "outbox_entry": entry}
             for payload, entry in zip(outbox_payloads, outbox_entries)
         ]
         push_items.extend(
-            {"payload": payload, "outbox_entry": None}
-            for payload in outgoing_payloads
+            {"payload": payload, "outbox_entry": None} for payload in outgoing_payloads
         )
         push_record: dict[str, Any] = {
             "dataset_id": str(dataset_id),
@@ -151,10 +155,7 @@ class LocalFirstSyncService:
                     fallback_size=len(push_items),
                 ),
             ):
-                batch_payloads = [
-                    item["payload"]
-                    for item in batch_items
-                ]
+                batch_payloads = [item["payload"] for item in batch_items]
                 try:
                     batch_record = self._dump(
                         await self.server_service.push_v2_envelopes(
@@ -217,20 +218,21 @@ class LocalFirstSyncService:
                     push_record["next_cursor"] = push_cursor
 
                 if batch_outbox_entries:
-                    batch_result = self.state_repository.mark_sync_v2_outbox_push_results(
-                        server_profile_id=server_profile_id,
-                        authenticated_principal_id=authenticated_principal_id,
-                        workspace_scope=workspace_scope,
-                        dataset_id=str(dataset_id),
-                        accepted=batch_record.get("accepted", []),
-                        rejected=batch_record.get("rejected", []),
-                        conflicts=batch_record.get("conflicts", []),
+                    batch_result = (
+                        self.state_repository.mark_sync_v2_outbox_push_results(
+                            server_profile_id=server_profile_id,
+                            authenticated_principal_id=authenticated_principal_id,
+                            workspace_scope=workspace_scope,
+                            dataset_id=str(dataset_id),
+                            accepted=batch_record.get("accepted", []),
+                            rejected=batch_record.get("rejected", []),
+                            conflicts=batch_record.get("conflicts", []),
+                        )
                     )
                     outbox_result["dispatched"] += batch_result["dispatched"]
                     outbox_result["retained"] += batch_result["retained"]
                     processed_outbox_ids.update(
-                        int(entry["outbox_id"])
-                        for entry in batch_outbox_entries
+                        int(entry["outbox_id"]) for entry in batch_outbox_entries
                     )
 
         try:
@@ -265,17 +267,12 @@ class LocalFirstSyncService:
                 next_cursor=pulled.get("next_cursor"),
                 envelope_count=len(envelopes),
             )
-            results = [
-                applier.apply(envelope)
-                for envelope in envelopes
-            ]
+            results = [applier.apply(envelope) for envelope in envelopes]
         except Exception as exc:
             self._record_sync_error(profile=profile, stage="apply", exc=exc)
             raise
         rejected_results = [
-            result
-            for result in results
-            if result.get("status") == "rejected"
+            result for result in results if result.get("status") == "rejected"
         ]
         if rejected_results:
             rejection_message = self._rejection_message(rejected_results)
@@ -331,7 +328,9 @@ class LocalFirstSyncService:
             "outbox_dispatched": outbox_result["dispatched"],
             "outbox_retained": outbox_result["retained"],
             "pulled_envelopes": len(pulled.get("envelopes", [])),
-            "applied_envelopes": sum(1 for result in results if result.get("status") == "applied"),
+            "applied_envelopes": sum(
+                1 for result in results if result.get("status") == "applied"
+            ),
             "conflicts": conflicts,
             "next_cursor": next_cursor,
             "has_more": bool(pulled.get("has_more", False)),
@@ -345,7 +344,9 @@ class LocalFirstSyncService:
         if isinstance(value, list):
             return [LocalFirstSyncService._dump(item) for item in value]
         if isinstance(value, dict):
-            return {key: LocalFirstSyncService._dump(item) for key, item in value.items()}
+            return {
+                key: LocalFirstSyncService._dump(item) for key, item in value.items()
+            }
         return value
 
     @staticmethod
@@ -353,7 +354,12 @@ class LocalFirstSyncService:
         return LocalFirstSyncService._coerce_envelope(envelope).model_dump(mode="json")
 
     @staticmethod
-    def _coerce_envelope(envelope: SyncV2Envelope | Mapping[str, Any]) -> SyncV2Envelope:
+    def _coerce_envelope(
+        envelope: SyncV2Envelope | Mapping[str, Any],
+    ) -> SyncV2Envelope:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import SyncV2Envelope
+
         if isinstance(envelope, SyncV2Envelope):
             return envelope
         return SyncV2Envelope.model_validate(envelope)
@@ -377,7 +383,7 @@ class LocalFirstSyncService:
         batch_size: int,
     ) -> list[list[Mapping[str, Any]]]:
         return [
-            push_items[index:index + batch_size]
+            push_items[index : index + batch_size]
             for index in range(0, len(push_items), batch_size)
         ]
 
@@ -394,8 +400,7 @@ class LocalFirstSyncService:
             "dataset_id": dataset_id,
             "device_id": device_id,
             "client_envelope_ids": [
-                str(envelope.get("client_envelope_id"))
-                for envelope in envelopes
+                str(envelope.get("client_envelope_id")) for envelope in envelopes
             ],
         }
         encoded = json.dumps(
@@ -467,7 +472,11 @@ class LocalFirstSyncService:
             if not client_envelope_id:
                 continue
             outbox_entry = outbox_by_client_id.get(client_envelope_id, {})
-            envelope = outbox_entry.get("envelope") if isinstance(outbox_entry.get("envelope"), Mapping) else {}
+            envelope = (
+                outbox_entry.get("envelope")
+                if isinstance(outbox_entry.get("envelope"), Mapping)
+                else {}
+            )
             domain = str(envelope.get("domain") or conflict.get("domain") or "sync_v2")
             entity_id = str(envelope.get("entity_id") or client_envelope_id)
             self.state_repository.record_sync_v2_conflict_review(
@@ -484,7 +493,11 @@ class LocalFirstSyncService:
                     or "Remote version requires review before overwrite."
                 ),
                 source_conflict_key=client_envelope_id,
-                conflict_kind=str(conflict.get("conflict_type") or conflict.get("error_code") or "push_conflict"),
+                conflict_kind=str(
+                    conflict.get("conflict_type")
+                    or conflict.get("error_code")
+                    or "push_conflict"
+                ),
                 recovery_options=self._available_conflict_recovery_options(),
                 details=dict(conflict),
             )
@@ -578,9 +591,7 @@ class LocalFirstSyncService:
         if not rejected and not conflicts:
             return None
         codes = [
-            str(item.get("error_code"))
-            for item in rejected
-            if item.get("error_code")
+            str(item.get("error_code")) for item in rejected if item.get("error_code")
         ]
         codes.extend("conflict" for item in conflicts if item.get("client_envelope_id"))
         if not codes:

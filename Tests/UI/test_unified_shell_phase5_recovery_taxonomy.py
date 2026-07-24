@@ -1,3 +1,4 @@
+import ast
 import json
 import re
 import subprocess
@@ -31,8 +32,12 @@ PHASE_5_OPTIONAL_DEPENDENCY_RECOVERY = Path(
 PHASE_5_CLOSEOUT = Path(
     "Docs/superpowers/qa/unified-shell/phase-5/2026-05-05-phase-5-capability-recovery-closeout.md"
 )
-PHASE_5_PARENT_TASK = Path("backlog/tasks/task-6 - Phase-5-Capability-And-Recovery-System.md")
-PHASE_5_TAXONOMY_TASK = Path("backlog/tasks/task-6.1 - Phase-5.1-Create-shared-recovery-taxonomy.md")
+PHASE_5_PARENT_TASK = Path(
+    "backlog/tasks/task-6 - Phase-5-Capability-And-Recovery-System.md"
+)
+PHASE_5_TAXONOMY_TASK = Path(
+    "backlog/tasks/task-6.1 - Phase-5.1-Create-shared-recovery-taxonomy.md"
+)
 PHASE_5_DESTINATION_RECOVERY_TASK = Path(
     "backlog/tasks/task-6.2 - Phase-5.2-Apply-recovery-taxonomy-to-shell-destination-blockers.md"
 )
@@ -208,7 +213,10 @@ def test_phase_five_optional_dependency_recovery_helper_builds_required_fields()
 
     assert recovery_state.status_label == "Dependency missing"
     assert recovery_state.unavailable_what == "Search/RAG queries"
-    assert recovery_state.why == "Missing optional dependencies: torch, sentence-transformers."
+    assert (
+        recovery_state.why
+        == "Missing optional dependencies: torch, sentence-transformers."
+    )
     assert recovery_state.next_action == (
         'Install with pip install -e ".[embeddings_rag]" for source checkouts or '
         'pip install "tldw_chatbook[embeddings_rag]" for packaged installs, then restart.'
@@ -217,9 +225,14 @@ def test_phase_five_optional_dependency_recovery_helper_builds_required_fields()
     assert recovery_state.authority_owner == "optional dependency"
     assert recovery_state.stable_selector == "search-rag-dependency-missing"
     assert "Unavailable: Search/RAG queries." in recovery_state.visible_copy
-    assert "Why: Missing optional dependencies: torch, sentence-transformers." in recovery_state.visible_copy
+    assert (
+        "Why: Missing optional dependencies: torch, sentence-transformers."
+        in recovery_state.visible_copy
+    )
     assert 'pip install -e ".[embeddings_rag]"' in recovery_state.disabled_tooltip
-    assert 'pip install "tldw_chatbook[embeddings_rag]"' in recovery_state.disabled_tooltip
+    assert (
+        'pip install "tldw_chatbook[embeddings_rag]"' in recovery_state.disabled_tooltip
+    )
 
 
 def test_search_rag_window_imports_without_screens_recovery_cycle():
@@ -250,21 +263,48 @@ def test_service_backed_policy_destinations_use_async_workers_without_asyncio_ru
     # asyncio.run on the UI thread is banned. A worker-thread usage is
     # legitimate (no running loop there) but must carry an explicit
     # annotation AND appear in this allowlist with an exact count, so
-    # exceptions cannot proliferate silently.
+    # exceptions cannot proliferate silently. Only genuine call sites
+    # count: the AST walk skips prose mentions in comments/docstrings.
     allowed_annotated_asyncio_run = {
-        Path("tldw_chatbook/UI/Screens/library_screen.py"): 1,
+        Path("tldw_chatbook/UI/Screens/library_screen.py"): 3,
+    }
+    # @work(thread=True) is likewise a deliberate, reviewable exception on
+    # these service-backed screens (Library computes export counts, runs
+    # sync-body export service calls, and persists rail/search preferences
+    # on dedicated OS threads). Exact decorator counts per file keep new
+    # thread workers from slipping in silently; personas and skills stay
+    # on async workers only.
+    allowed_thread_workers = {
+        Path("tldw_chatbook/UI/Screens/library_screen.py"): 4,
     }
     for screen_path in screen_paths:
         source = _text(screen_path)
-        assert "thread=True" not in source, screen_path
+        thread_workers = sum(
+            1
+            for line in source.splitlines()
+            if line.lstrip().startswith("@work(thread=True")
+        )
+        assert thread_workers == allowed_thread_workers.get(screen_path, 0), (
+            screen_path,
+            thread_workers,
+        )
         annotated = 0
-        for line in source.splitlines():
-            if "asyncio.run" in line:
-                assert "policy-exception: worker-thread loop" in line, (
-                    screen_path,
-                    line.strip(),
-                )
-                annotated += 1
+        source_lines = source.splitlines()
+        for node in ast.walk(ast.parse(source)):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "run"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "asyncio"
+            ):
+                continue
+            call_line = source_lines[node.lineno - 1]
+            assert "policy-exception: worker-thread loop" in call_line, (
+                screen_path,
+                call_line.strip(),
+            )
+            annotated += 1
         assert annotated == allowed_annotated_asyncio_run.get(screen_path, 0), (
             screen_path,
             annotated,

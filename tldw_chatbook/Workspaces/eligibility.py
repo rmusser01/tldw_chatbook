@@ -84,7 +84,11 @@ def evaluate_workspace_eligibility(
 
 def _normalize_operation(operation: WorkspaceOperation | str) -> WorkspaceOperation:
     try:
-        return operation if isinstance(operation, WorkspaceOperation) else WorkspaceOperation(operation)
+        return (
+            operation
+            if isinstance(operation, WorkspaceOperation)
+            else WorkspaceOperation(operation)
+        )
     except ValueError as exc:
         raise ValueError("operation is invalid") from exc
 

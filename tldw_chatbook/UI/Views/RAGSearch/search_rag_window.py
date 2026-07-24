@@ -18,14 +18,13 @@ from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal, VerticalScroll, Grid
 from textual.widgets import (
     Static, Button, Input, Select, Checkbox, ListView, ListItem,
-    DataTable, Markdown, Label, TabbedContent, TabPane,
+    DataTable, Label, TabbedContent, TabPane,
     LoadingIndicator, ProgressBar, Collapsible
 )
 from textual.binding import Binding
 from textual.reactive import reactive
 from textual.css.query import NoMatches
 from rich.markup import escape
-from rich.text import Text
 from loguru import logger
 
 # Local imports
@@ -36,7 +35,7 @@ from .saved_searches_panel import SavedSearchesPanel
 from .search_handoff import build_search_chat_handoff_payload
 from .constants import (
     DEFAULT_TOP_K, DEFAULT_TEMPERATURE, DEFAULT_PARENT_SIZE,
-    MAX_CONCURRENT_SEARCHES, SEARCH_MODES, PARENT_STRATEGIES
+    SEARCH_MODES, PARENT_STRATEGIES
 )
 
 from ....Chat.chat_handoff_messages import (
@@ -45,6 +44,24 @@ from ....Chat.chat_handoff_messages import (
 )
 from ....Chat.chat_handoff_models import ChatHandoffPayload
 from ....Utils.optional_deps import DEPENDENCIES_AVAILABLE
+from ....RAG_Search.ingestion_indexing import (
+    ITEM_TYPE_CONVERSATION,
+    ITEM_TYPE_MEDIA,
+    ITEM_TYPE_NOTE,
+    backfill_semantic_index,
+    get_shared_rag_service,
+    peek_shared_rag_service,
+    semantic_indexing_available,
+)
+from ....RAG_Search.semantic_availability import (
+    SEMANTIC_DIAGNOSTICS_KEY,
+    SEMANTIC_EMPTY_INDEX_MESSAGE,
+    SEMANTIC_REASON_INIT_FAILED,
+    SEMANTIC_STATUS_EMPTY_INDEX,
+    SEMANTIC_STATUS_UNAVAILABLE,
+    SEMANTIC_UNAVAILABLE_MESSAGES,
+    trustworthy_collection_count,
+)
 from ....DB.search_history_db import SearchHistoryDB
 from ....Utils.input_validation import sanitize_string
 from ....Utils.paths import get_user_data_dir
@@ -54,6 +71,28 @@ WEB_SEARCH_AVAILABLE = DEPENDENCIES_AVAILABLE.get('websearch', False)
 USE_IN_CONSOLE_UNAVAILABLE_RECOVERY = (
     "Use in Console is unavailable because the Console live-work surface is not mounted. "
     "Open Console from the navigation, then try again."
+)
+
+#: Map of the #index-source-select options onto the backfill item-type
+#: contract from RAG_Search.ingestion_indexing (task-251).
+INDEX_SOURCE_ITEM_TYPES: Dict[str, Tuple[str, ...]] = {
+    "media": (ITEM_TYPE_MEDIA,),
+    "conversations": (ITEM_TYPE_CONVERSATION,),
+    "notes": (ITEM_TYPE_NOTE,),
+    "all": (ITEM_TYPE_MEDIA, ITEM_TYPE_NOTE, ITEM_TYPE_CONVERSATION),
+}
+
+INDEXING_ALREADY_RUNNING_MESSAGE = (
+    "Semantic indexing is already running. Wait for the current run to finish."
+)
+INDEXING_UNAVAILABLE_MESSAGE = (
+    "semantic indexing is unavailable. Install embeddings support "
+    "(pip install 'tldw_chatbook[embeddings_rag]') and ensure "
+    "[AppRAGSearchConfig.rag.indexing].enabled is not false."
+)
+INDEXING_NO_DATABASE_MESSAGE = (
+    "Cannot index: no source database is available in this session for the "
+    "selected content type."
 )
 
 
@@ -88,19 +127,9 @@ try:
         perform_plain_rag_search, perform_full_rag_pipeline, perform_hybrid_rag_search
     )
     RAG_EVENTS_AVAILABLE = True
-    
-    # Try to import pipeline integration
-    try:
-        from ....RAG_Search.pipeline_integration import get_pipeline_manager
-        PIPELINE_INTEGRATION_AVAILABLE = True
-    except ImportError:
-        logger.info("Pipeline integration not available")
-        PIPELINE_INTEGRATION_AVAILABLE = False
-        
 except ImportError as e:
     logger.warning(f"RAG event handlers not available: {e}")
     RAG_EVENTS_AVAILABLE = False
-    PIPELINE_INTEGRATION_AVAILABLE = False
     # Create placeholder functions
     async def perform_plain_rag_search(*args, **kwargs):
         raise ImportError("RAG search not available - missing dependencies")
@@ -151,7 +180,7 @@ if TYPE_CHECKING:
 logger = logger.bind(module="SearchRAGWindow")
 
 # Import event handler mixin
-from .search_event_handlers import SearchEventHandlersMixin
+from .search_event_handlers import SearchEventHandlersMixin  # noqa: E402
 
 
 class SearchRAGWindow(SearchEventHandlersMixin, Container):
@@ -186,6 +215,11 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
         self.rag_service: Optional[RAGService] = None
         self.available_collections: List[str] = []
         self.last_search_config: Optional[Dict[str, Any]] = None
+        # Semantic-leg availability diagnostics from the last pipeline run
+        # (task-250); read by _semantic_leg_notice to report honest states.
+        self.last_search_diagnostics: Dict[str, Any] = {}
+        # Single-flight guard for the Maintenance-tab bulk index run (task-251).
+        self._indexing_in_flight = False
         
         # Performance tracking
         self.last_search_time = 0.0
@@ -386,8 +420,9 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
                                 yield Static("", id="results-count", classes="results-count")
                                 yield Static("", id="search-time", classes="search-time")
                                 with Horizontal(classes="results-actions"):
+                                    # Refresh was removed (task-251): re-running
+                                    # the query is exactly the Search button.
                                     yield Button("📤 Export", id="export-results", classes="results-action-button")
-                                    yield Button("🔄 Refresh", id="refresh-results", classes="results-action-button")
                             
                             # Results list
                             with VerticalScroll(id="results-list-enhanced", classes="results-list-enhanced"):
@@ -443,20 +478,22 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
                         with Container(classes="maintenance-tab-content"):
                             yield Static("🔧 Index Management", classes="maintenance-title")
                             
-                            # Collection management
+                            # Collection management (display + refresh only:
+                            # the simplified RAG service manages one
+                            # collection per profile, so create/delete had no
+                            # real backing and were removed, task-251)
                             with Container(classes="collection-management"):
                                 yield Label("Available Collections:", classes="maintenance-label")
                                 yield ListView(id="collections-list", classes="collections-list")
-                                
+
                                 with Horizontal(classes="collection-actions"):
-                                    yield Button("➕ Create Collection", id="create-collection", classes="maintenance-button")
-                                    yield Button("🗑️ Delete Collection", id="delete-collection", classes="maintenance-button danger")
-                                    yield Button("🔄 Refresh Collections", id="refresh-collections", classes="maintenance-button")
-                            
-                            # Indexing controls
+                                    yield Button("🔄 Refresh", id="refresh-collections", classes="maintenance-button")
+
+                            # Indexing controls (wired to the real bulk
+                            # backfill path from task-247, task-251)
                             with Container(classes="indexing-controls"):
                                 yield Static("📥 Index New Content", classes="indexing-title")
-                                
+
                                 yield Select(
                                     [
                                         ("Index Media", "media"),
@@ -468,20 +505,22 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
                                     id="index-source-select",
                                     classes="index-source-select"
                                 )
-                                
+
                                 yield Button(
                                     "🚀 Start Indexing",
                                     id="start-indexing",
                                     variant="primary",
                                     classes="indexing-button"
                                 )
-                                
-                                # Indexing status
+
+                                # Indexing status (no progress bar: the
+                                # backfill total is unknown up front, so a
+                                # percentage would be fake -- real per-batch
+                                # counts go into the status text instead)
                                 with Container(id="indexing-status", classes="indexing-status hidden"):
                                     yield LoadingIndicator()
                                     yield Static("", id="indexing-status-text")
-                                    yield ProgressBar(id="indexing-progress", total=100)
-                            
+
                             # Index statistics
                             with Container(classes="index-statistics"):
                                 yield Static("📊 Index Statistics", classes="statistics-title")
@@ -537,7 +576,18 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
                 search_button.tooltip = recovery_state.disabled_tooltip
             except NoMatches:
                 pass
-        
+            # The Maintenance-tab indexing controls need the same runtime the
+            # searches do; disable them with the same recovery copy (task-251).
+            try:
+                start_indexing = self.query_one("#start-indexing", Button)
+                start_indexing.disabled = True
+                start_indexing.tooltip = recovery_state.disabled_tooltip
+                index_source = self.query_one("#index-source-select", Select)
+                index_source.disabled = True
+                index_source.tooltip = recovery_state.disabled_tooltip
+            except NoMatches:
+                pass
+
         # Setup UI components after all widgets are created
         self._setup_history_table()
         self._setup_analytics()
@@ -722,14 +772,14 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
     def _setup_collections_list(self) -> None:
         """Setup collections list for maintenance"""
         if RAG_SERVICES_AVAILABLE:
-            collections_list = self.query_one("#collections-list", ListView)
+            self.query_one("#collections-list", ListView)
             self._refresh_collections_list()
     
     def _setup_index_stats(self) -> None:
         """Setup index statistics table"""
         if RAG_SERVICES_AVAILABLE:
             table = self.query_one("#index-stats-table", DataTable)
-            table.add_columns("Collection", "Documents", "Chunks", "Size", "Last Updated")
+            table.add_columns("Collection", "Chunks", "Status")
             self._refresh_index_stats()
 
     def _load_available_collections(self) -> list[str]:
@@ -740,102 +790,411 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
         """Apply loaded collection names to mounted Textual widgets."""
         self.available_collections = list(collections)
 
-        collections_list = self.query_one("#collections-list", ListView)
-        await collections_list.clear()
+        try:
+            collections_list = self.query_one("#collections-list", ListView)
+            await collections_list.clear()
 
-        for collection in self.available_collections:
-            await collections_list.append(ListItem(Static(collection)))
+            for collection in self.available_collections:
+                await collections_list.append(ListItem(Static(collection)))
 
-        collection_select = self.query_one("#collection-select", Select)
-        collection_select.set_options(
-            [("All Collections", "all")] + [(c, c) for c in self.available_collections]
-        )
+            collection_select = self.query_one("#collection-select", Select)
+            collection_select.set_options(
+                [("All Collections", "all")] + [(c, c) for c in self.available_collections]
+            )
+        except NoMatches:
+            # The window (or its Maintenance tab) went away while the
+            # collections loader thread was in flight; nothing to update.
+            return
     
     @work(thread=True)
     def _refresh_collections_list(self) -> None:
         """Refresh the list of available collections"""
         try:
             collections = self._load_available_collections()
-            self.app.call_from_thread(lambda: self.run_worker(self._apply_available_collections(collections), exclusive=True))
+            # Dedicated group: an exclusive worker in the DEFAULT group would
+            # cancel unrelated default-group workers (e.g. an in-flight
+            # search) whenever a collections refresh lands (task-251).
+            self.app.call_from_thread(
+                lambda: self.run_worker(
+                    self._apply_available_collections(collections),
+                    exclusive=True,
+                    group="rag-collections-apply",
+                )
+            )
         except Exception as e:
             logger.error(f"Error refreshing collections: {e}")
     
-    @work(thread=True)
-    async def _refresh_index_stats(self) -> None:
-        """Refresh index statistics"""
+    def _load_index_stats(self) -> Optional[Dict[str, Any]]:
+        """Read collection stats from an ALREADY-initialized RAG runtime.
+
+        Never constructs the runtime: rendering statistics must not load an
+        embedding model as a side effect. Safe to run off the UI thread
+        (ChromaDB-backed stats can touch disk).
+
+        Returns:
+            The raw stats dict, an ``{"error": ...}`` dict when the read
+            failed, or None when no runtime exists yet.
+        """
+        service = getattr(self.app_instance, "_rag_service", None)
+        if service is None:
+            service = peek_shared_rag_service()
+        get_stats = getattr(getattr(service, "vector_store", None), "get_collection_stats", None)
+        if not callable(get_stats):
+            return None
         try:
-            if not self.rag_service:
-                return
-                
-            # Get stats for each collection
-            table = self.query_one("#index-stats-table", DataTable)
-            table.clear()
-            
-            for collection in self.available_collections:
-                # Get collection stats (placeholder - implement actual stats retrieval)
-                stats = {
-                    "documents": 0,
-                    "chunks": 0,
-                    "size": "0 MB",
-                    "last_updated": "N/A"
-                }
-                
-                table.add_row(
-                    collection,
-                    str(stats["documents"]),
-                    str(stats["chunks"]),
-                    stats["size"],
-                    stats["last_updated"]
-                )
+            stats = get_stats()
         except Exception as e:
-            logger.error(f"Error refreshing index stats: {e}")
-    
+            logger.error(
+                f"Vector-store stats read failed "
+                f"(operation=vector_store.get_collection_stats, "
+                f"service={type(service).__name__}): {e}"
+            )
+            return {"error": str(e)}
+        if not isinstance(stats, dict):
+            return {"error": "vector store returned malformed statistics"}
+        return stats
+
+    @work(thread=True, exclusive=True, group="rag-index-stats", exit_on_error=False)
+    def _refresh_index_stats(self) -> None:
+        """Refresh index statistics off the UI thread, then apply on it (task-251)."""
+        try:
+            stats = self._load_index_stats()
+            self.app.call_from_thread(self._apply_index_stats, stats)
+        except Exception as e:
+            logger.error(
+                f"Error refreshing index stats "
+                f"(operation=refresh_index_stats, worker_group=rag-index-stats): {e}"
+            )
+
+    def _apply_index_stats(self, stats: Optional[Dict[str, Any]]) -> None:
+        """Render index statistics honestly: real counts or the actual state.
+
+        Args:
+            stats: Result of :meth:`_load_index_stats` (raw stats dict,
+                ``{"error": ...}``, or None when no runtime exists yet).
+        """
+        try:
+            table = self.query_one("#index-stats-table", DataTable)
+        except NoMatches:
+            return
+        table.clear()
+        if stats is None:
+            table.add_row(
+                "semantic index",
+                "—",
+                "not initialized — run Start Indexing or a semantic search",
+            )
+            return
+        name = str(stats.get("name") or "semantic index")
+        error = stats.get("error")
+        if error:
+            table.add_row(name, "—", f"statistics unavailable: {error}")
+            return
+        count = trustworthy_collection_count(stats)
+        if count is None:
+            table.add_row(name, "—", "statistics unavailable: untrustworthy chunk count")
+            return
+        table.add_row(
+            name,
+            str(count),
+            "empty — no content indexed yet" if count == 0 else "ready",
+        )
+
+    # Bulk indexing (task-251): #start-indexing runs the real backfill path
+    def _selected_index_item_types(self) -> Tuple[str, ...]:
+        """Map the #index-source-select value onto backfill item types."""
+        try:
+            raw = self.query_one("#index-source-select", Select).value
+        except NoMatches:
+            raw = "all"
+        return INDEX_SOURCE_ITEM_TYPES.get(str(raw), INDEX_SOURCE_ITEM_TYPES["all"])
+
+    def _set_indexing_ui_running(self, running: bool, status: str = "") -> None:
+        """Toggle the Start Indexing button and status row for an active run."""
+        try:
+            self.query_one("#start-indexing", Button).disabled = running
+            status_container = self.query_one("#indexing-status")
+            if running:
+                status_container.remove_class("hidden")
+            else:
+                status_container.add_class("hidden")
+            self.query_one("#indexing-status-text", Static).update(status)
+        except NoMatches:
+            pass
+
+    def _start_indexing_run(self) -> None:
+        """Validate preconditions and launch the bulk semantic-index worker.
+
+        Honest by construction: refuses (with WHY) when embeddings support is
+        missing, a run is already in flight, or no source database backs the
+        selected content type -- it never pretends to index.
+        """
+        if not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
+            self.app_instance.notify(
+                f"Indexing did not run: {INDEXING_UNAVAILABLE_MESSAGE}",
+                severity="warning",
+            )
+            return
+        if self._indexing_in_flight:
+            self.app_instance.notify(INDEXING_ALREADY_RUNNING_MESSAGE, severity="warning")
+            return
+
+        item_types = self._selected_index_item_types()
+        media_db = (
+            getattr(self.app_instance, "media_db", None)
+            if ITEM_TYPE_MEDIA in item_types else None
+        )
+        chachanotes_db = (
+            getattr(self.app_instance, "chachanotes_db", None)
+            if (ITEM_TYPE_NOTE in item_types or ITEM_TYPE_CONVERSATION in item_types)
+            else None
+        )
+        if media_db is None and chachanotes_db is None:
+            self.app_instance.notify(INDEXING_NO_DATABASE_MESSAGE, severity="error")
+            return
+
+        self._indexing_in_flight = True
+        self._set_indexing_ui_running(True, "Starting semantic indexing…")
+        self._run_index_backfill(item_types, media_db, chachanotes_db)
+
+    @work(thread=True, exclusive=True, group="rag-index-backfill", exit_on_error=False)
+    def _run_index_backfill(
+        self,
+        item_types: Tuple[str, ...],
+        media_db: Optional[Any],
+        chachanotes_db: Optional[Any],
+    ) -> None:
+        """Thread worker: run the real bulk backfill; exceptions never escape.
+
+        Runs ``backfill_semantic_index`` inside its own event loop on this
+        worker thread (exactly like the CLI entry point), so the source-DB
+        pagination and embedding work never touch the UI event loop. Both DB
+        classes use thread-local sqlite connections, so cross-thread use is
+        safe. Progress and completion are marshalled back with
+        ``call_from_thread``.
+
+        The shared RAG service is pre-resolved here, OUTSIDE the transient
+        ``asyncio.run`` loop, so first-time service construction can never
+        happen inside a loop that closes when this run finishes (PR #700
+        review). Verified no current component binds a loop at construction
+        (plain ThreadPoolExecutor, threading.Lock circuit breaker, cache's
+        asyncio.Lock binds on first acquisition, local embeddings with no
+        HTTP client) -- pre-resolving keeps that true by construction.
+        """
+        def _progress(update: Dict[str, Any]) -> None:
+            try:
+                self.app.call_from_thread(self._update_indexing_progress, dict(update))
+            except Exception as e:
+                logger.debug(
+                    f"Indexing progress update failed "
+                    f"(operation=update_indexing_progress, "
+                    f"item_type={update.get('item_type', '?')}): {e}"
+                )
+
+        rag_service = None
+        indexing_available = False
+        try:
+            indexing_available = semantic_indexing_available()
+            if indexing_available:
+                rag_service = get_shared_rag_service()
+        except Exception as e:
+            logger.error(
+                f"Shared RAG service pre-resolution failed "
+                f"(operation=get_shared_rag_service, item_types={item_types}): {e}"
+            )
+        if indexing_available and rag_service is None:
+            # Do not enter the transient loop at all: backfill would retry
+            # service construction inside it, which is exactly what
+            # pre-resolution exists to prevent. Same outcome/copy as
+            # backfill's own service-unavailable path.
+            unavailable_summary = {
+                "status": "unavailable",
+                "indexed": 0,
+                "skipped": 0,
+                "failed": 0,
+                "errors": ["RAG service could not be created"],
+            }
+            try:
+                self.app.call_from_thread(self._finish_indexing_run, unavailable_summary)
+            except Exception as e:
+                logger.error(
+                    f"Could not deliver indexing completion to the UI "
+                    f"(operation=finish_indexing_run, item_types={item_types}, "
+                    f"summary_status=unavailable): {e}"
+                )
+                self._indexing_in_flight = False
+            return
+
+        try:
+            summary = asyncio.run(
+                backfill_semantic_index(
+                    media_db=media_db,
+                    chachanotes_db=chachanotes_db,
+                    rag_service=rag_service,
+                    item_types=item_types,
+                    progress_callback=_progress,
+                )
+            )
+        except Exception as e:
+            logger.opt(exception=True).error(
+                f"Semantic index backfill crashed "
+                f"(operation=backfill_semantic_index, item_types={item_types}): {e}"
+            )
+            summary = {
+                "status": "error",
+                "indexed": 0,
+                "skipped": 0,
+                "failed": 0,
+                "errors": [str(e)],
+            }
+        try:
+            self.app.call_from_thread(self._finish_indexing_run, summary)
+        except Exception as e:
+            logger.error(
+                f"Could not deliver indexing completion to the UI "
+                f"(operation=finish_indexing_run, item_types={item_types}, "
+                f"summary_status={summary.get('status')}): {e}"
+            )
+            self._indexing_in_flight = False
+
+    def _update_indexing_progress(self, update: Dict[str, Any]) -> None:
+        """Show real per-batch backfill counts in the indexing status row."""
+        try:
+            status_text = self.query_one("#indexing-status-text", Static)
+        except NoMatches:
+            return
+        status_text.update(
+            f"Indexing {update.get('item_type', '?')}: "
+            f"{update.get('indexed', 0)} indexed, "
+            f"{update.get('skipped', 0)} up-to-date, "
+            f"{update.get('failed', 0)} failed"
+        )
+
+    def _finish_indexing_run(self, summary: Dict[str, Any]) -> None:
+        """Report the backfill outcome honestly and refresh the real stats."""
+        self._indexing_in_flight = False
+        self._set_indexing_ui_running(False)
+
+        status = summary.get("status")
+        errors = summary.get("errors") or []
+        last_error = str(errors[-1]) if errors else None
+        if status == "unavailable":
+            self.app_instance.notify(
+                f"Indexing did not run: {last_error or INDEXING_UNAVAILABLE_MESSAGE}",
+                severity="warning",
+            )
+        elif status == "error" or summary.get("failed") or errors:
+            detail = f" Last error: {last_error}" if last_error else ""
+            self.app_instance.notify(
+                f"Indexing finished with problems: {summary.get('indexed', 0)} indexed, "
+                f"{summary.get('failed', 0)} failed.{detail}",
+                severity="error" if status == "error" else "warning",
+            )
+        else:
+            self.app_instance.notify(
+                f"Indexing complete: {summary.get('indexed', 0)} indexed, "
+                f"{summary.get('skipped', 0)} already up-to-date.",
+                severity="information",
+            )
+        self._refresh_index_stats()
+
     # Search implementation methods
+    @staticmethod
+    def _sources_from_config(config: Dict[str, Any]) -> Dict[str, bool]:
+        """Map the filter checkboxes onto the pipeline sources contract."""
+        filters = config.get('filters') or {}
+        return {
+            'media': bool(filters.get('media', True)),
+            'conversations': bool(filters.get('conversations', True)),
+            'notes': bool(filters.get('notes', True)),
+        }
+
     async def _perform_plain_search(self, query: str, config: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Perform plain RAG search"""
         if not RAG_EVENTS_AVAILABLE:
             raise ImportError("RAG search not available")
-            
-        results = await perform_plain_rag_search(
-            query=query,
-            api_choice=self.app_instance.api_endpoint,
-            filters=config.get('filters', {}),
+
+        self.last_search_diagnostics = {}
+        results, _context = await perform_plain_rag_search(
+            self.app_instance,
+            query,
+            self._sources_from_config(config),
             top_k=config.get('top_k', DEFAULT_TOP_K),
-            collection_name=config.get('collection', 'all')
         )
-        
+
         return self._format_search_results(results, "plain")
-    
+
     async def _perform_contextual_search(self, query: str, config: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Perform contextual RAG search"""
+        """Perform contextual (semantic) RAG search"""
         if not RAG_EVENTS_AVAILABLE:
             raise ImportError("RAG pipeline not available")
-            
-        results = await perform_full_rag_pipeline(
-            query=query,
-            api_choice=self.app_instance.api_endpoint,
-            filters=config.get('filters', {}),
+
+        diagnostics: Dict[str, Any] = {}
+        results, _context = await perform_full_rag_pipeline(
+            self.app_instance,
+            query,
+            self._sources_from_config(config),
             top_k=config.get('top_k', DEFAULT_TOP_K),
-            temperature=config.get('temperature', DEFAULT_TEMPERATURE),
-            collection_name=config.get('collection', 'all')
+            diagnostics=diagnostics,
         )
-        
+        self.last_search_diagnostics = diagnostics
+
         return self._format_search_results(results, "contextual")
-    
+
     async def _perform_hybrid_search(self, query: str, config: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Perform hybrid RAG search"""
         if not RAG_EVENTS_AVAILABLE:
             raise ImportError("Hybrid search not available")
-            
-        results = await perform_hybrid_rag_search(
-            query=query,
-            api_choice=self.app_instance.api_endpoint,
-            filters=config.get('filters', {}),
+
+        diagnostics: Dict[str, Any] = {}
+        results, _context = await perform_hybrid_rag_search(
+            self.app_instance,
+            query,
+            self._sources_from_config(config),
             top_k=config.get('top_k', DEFAULT_TOP_K),
-            collection_name=config.get('collection', 'all')
+            diagnostics=diagnostics,
         )
-        
+        self.last_search_diagnostics = diagnostics
+
         return self._format_search_results(results, "hybrid")
+
+    def _semantic_leg_notice(self, search_mode: str) -> Optional[Tuple[str, str]]:
+        """(short marker, full message) when the semantic leg didn't contribute.
+
+        Reads the diagnostics recorded by the last pipeline run (task-250).
+        Returns None when the semantic leg ran fine or the mode has no
+        semantic leg (plain).
+
+        Args:
+            search_mode: The mode of the search the diagnostics belong to.
+
+        Returns:
+            Tuple of a short results-header marker and the full user-facing
+            reason message, or None when there is nothing to report.
+        """
+        semantic_state = (getattr(self, 'last_search_diagnostics', None) or {}).get(
+            SEMANTIC_DIAGNOSTICS_KEY
+        ) or {}
+        status = semantic_state.get('status')
+        if status == SEMANTIC_STATUS_UNAVAILABLE:
+            message = semantic_state.get('message') or SEMANTIC_UNAVAILABLE_MESSAGES[
+                SEMANTIC_REASON_INIT_FAILED
+            ]
+            if search_mode == "hybrid":
+                return (
+                    "keyword-only (semantic unavailable)",
+                    f"Hybrid results are keyword-only (FTS): {message}",
+                )
+            return ("semantic unavailable", message)
+        if status == SEMANTIC_STATUS_EMPTY_INDEX:
+            message = semantic_state.get('message') or SEMANTIC_EMPTY_INDEX_MESSAGE
+            if search_mode == "hybrid":
+                return (
+                    "keyword-only (semantic index empty)",
+                    f"Hybrid results are keyword-only (FTS): {message}",
+                )
+            return ("semantic index empty", message)
+        return None
     
     async def _perform_web_search(self, query: str) -> List[Dict[str, Any]]:
         """Perform web search"""
@@ -949,12 +1308,27 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
         self.query_one("#prev-page", Button).disabled = self.current_page <= 1
         self.query_one("#next-page", Button).disabled = self.current_page >= total_pages
     
-    def _load_recent_search_history(self, limit: int = 20):
+    def _selected_history_days_back(self) -> Optional[int]:
+        """Read the #history-range-select value as days-back (None = all time)."""
+        try:
+            raw = self.query_one("#history-range-select", Select).value
+        except NoMatches:
+            return None
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return None
+
+    def _refresh_history_view(self) -> None:
+        """Reload the history table for the selected time range (task-251)."""
+        self._load_recent_search_history(days_back=self._selected_history_days_back())
+
+    def _load_recent_search_history(self, limit: int = 20, days_back: Optional[int] = None):
         """Load recent search history into the table"""
         table = self.query_one("#search-history-table", DataTable)
         table.clear()
-        
-        history = self.search_history_db.get_search_history(limit=limit)
+
+        history = self.search_history_db.get_search_history(limit=limit, days_back=days_back)
         for item in history:
             table.add_row(
                 item['query'],

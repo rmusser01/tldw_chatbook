@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from tldw_chatbook.Sync_Interop.crypto import unwrap_recovery_bundle
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
@@ -10,7 +10,9 @@ from tldw_chatbook.Sync_Interop.validation import (
     validate_pull_pagination_state,
     validate_pulled_response_scope,
 )
-from tldw_chatbook.tldw_api import SyncV2Envelope
+
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api import SyncV2Envelope
 
 
 class SyncRestoreService:
@@ -48,8 +50,7 @@ class SyncRestoreService:
     ) -> dict[str, Any]:
         manifest = await self.fetch_manifest(dataset_ids=dataset_ids, domains=domains)
         datasets = [
-            self._preview_dataset(dataset)
-            for dataset in manifest.get("datasets", [])
+            self._preview_dataset(dataset) for dataset in manifest.get("datasets", [])
         ]
         return {
             "datasets": datasets,
@@ -72,6 +73,9 @@ class SyncRestoreService:
         recovery_device_id: str | None = None,
         key_record_id: str | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import SyncV2Envelope
+
         key = await self._resolve_dataset_key(
             dataset_id=dataset_id,
             dataset_key=dataset_key,
@@ -106,14 +110,13 @@ class SyncRestoreService:
             next_cursor=pulled.get("next_cursor"),
             envelope_count=len(envelopes),
         )
-        results = [
-            applier.apply(envelope)
-            for envelope in envelopes
-        ]
+        results = [applier.apply(envelope) for envelope in envelopes]
         return {
             "dataset_id": dataset_id,
             "domains": list(domains),
-            "applied": sum(1 for result in results if result.get("status") == "applied"),
+            "applied": sum(
+                1 for result in results if result.get("status") == "applied"
+            ),
             "rejected": self._rejected_results(envelopes, results),
             "conflicts": [
                 result["conflict"]
@@ -139,7 +142,9 @@ class SyncRestoreService:
         if key is not None:
             return key
         if recovery_secret is None:
-            raise ValueError("dataset key is required to restore encrypted Sync v2 envelopes")
+            raise ValueError(
+                "dataset key is required to restore encrypted Sync v2 envelopes"
+            )
 
         response = self._dump(
             await self.server_service.list_v2_recovery_bundles(
@@ -156,7 +161,9 @@ class SyncRestoreService:
                 if record.get("key_record_id") == key_record_id
             ]
         if not records:
-            raise ValueError("key recovery bundle is required to restore encrypted Sync v2 envelopes")
+            raise ValueError(
+                "key recovery bundle is required to restore encrypted Sync v2 envelopes"
+            )
         last_error: ValueError | None = None
         for record in records:
             try:

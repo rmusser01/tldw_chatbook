@@ -10,39 +10,6 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    KanbanBoardCreate,
-    KanbanBoardExportRequest,
-    KanbanBoardImportRequest,
-    KanbanBoardUpdate,
-    KanbanBulkArchiveCardsRequest,
-    KanbanBulkCardLinksRequest,
-    KanbanBulkDeleteCardsRequest,
-    KanbanBulkLabelCardsRequest,
-    KanbanBulkMoveCardsRequest,
-    KanbanCardCopyRequest,
-    KanbanCardCopyWithChecklistsRequest,
-    KanbanCardCreate,
-    KanbanCardLinkCreate,
-    KanbanCardSearchRequest,
-    KanbanCardMoveRequest,
-    KanbanCardUpdate,
-    KanbanChecklistCreate,
-    KanbanChecklistItemCreate,
-    KanbanChecklistItemReorderRequest,
-    KanbanChecklistItemUpdate,
-    KanbanChecklistReorderRequest,
-    KanbanChecklistUpdate,
-    KanbanCommentCreate,
-    KanbanCommentUpdate,
-    KanbanLabelCreate,
-    KanbanLabelUpdate,
-    KanbanListCreate,
-    KanbanListUpdate,
-    KanbanReorderRequest,
-    KanbanSearchRequest,
-    KanbanToggleAllChecklistItemsRequest,
-)
 from .local_kanban_db import initialize_schema, open_connection, transaction
 from .server_kanban_service import KANBAN_OPERATION_SPECS
 
@@ -53,12 +20,15 @@ _LOCAL_ACTION_SUFFIX = ".local"
 
 def _derive_local_action_id(action_id: str) -> str:
     if not action_id.endswith(_SERVER_ACTION_SUFFIX):
-        raise ValueError(f"Kanban operation action_id must end with {_SERVER_ACTION_SUFFIX!r}: {action_id}")
-    return f"{action_id[:-len(_SERVER_ACTION_SUFFIX)]}{_LOCAL_ACTION_SUFFIX}"
+        raise ValueError(
+            f"Kanban operation action_id must end with {_SERVER_ACTION_SUFFIX!r}: {action_id}"
+        )
+    return f"{action_id[: -len(_SERVER_ACTION_SUFFIX)]}{_LOCAL_ACTION_SUFFIX}"
 
 
 LOCAL_KANBAN_OPERATION_ACTION_IDS = {
-    name: _derive_local_action_id(spec.action_id) for name, spec in KANBAN_OPERATION_SPECS.items()
+    name: _derive_local_action_id(spec.action_id)
+    for name, spec in KANBAN_OPERATION_SPECS.items()
 }
 
 
@@ -71,7 +41,9 @@ class LocalKanbanService:
 
     operations = KANBAN_OPERATION_SPECS
 
-    def __init__(self, *, db_path: str | Path, policy_enforcer: Any | None = None) -> None:
+    def __init__(
+        self, *, db_path: str | Path, policy_enforcer: Any | None = None
+    ) -> None:
         self.db_path = Path(db_path) if str(db_path) != ":memory:" else db_path
         self.policy_enforcer = policy_enforcer
         conn = self.connect()
@@ -96,7 +68,9 @@ class LocalKanbanService:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -105,10 +79,14 @@ class LocalKanbanService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
-                    user_message=getattr(decision, "user_message", None) or "Local Kanban action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "local",
-                    authority_owner=getattr(decision, "authority_owner", None) or "local",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
+                    user_message=getattr(decision, "user_message", None)
+                    or "Local Kanban action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "local",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "local",
                 )
 
     @staticmethod
@@ -136,7 +114,9 @@ class LocalKanbanService:
         try:
             rows = {
                 row["key"]: row["value"]
-                for row in conn.execute("SELECT key, value FROM local_kanban_schema_meta").fetchall()
+                for row in conn.execute(
+                    "SELECT key, value FROM local_kanban_schema_meta"
+                ).fetchall()
             }
             return {
                 "schema_version": int(rows.get("schema_version", "0")),
@@ -178,7 +158,9 @@ class LocalKanbanService:
         return bool(int(value or 0))
 
     @staticmethod
-    def _row(conn: Any, query: str, params: tuple[Any, ...], *, entity: str, entity_id: int) -> Any:
+    def _row(
+        conn: Any, query: str, params: tuple[Any, ...], *, entity: str, entity_id: int
+    ) -> Any:
         row = conn.execute(query, params).fetchone()
         if row is None:
             raise ValueError(f"local_kanban_not_found:{entity}:{entity_id}")
@@ -310,7 +292,9 @@ class LocalKanbanService:
             ),
         )
 
-    def _next_position(self, conn: Any, table: str, scope_column: str, scope_id: int) -> int:
+    def _next_position(
+        self, conn: Any, table: str, scope_column: str, scope_id: int
+    ) -> int:
         value = conn.execute(
             f"SELECT COALESCE(MAX(position), -1) + 1 FROM {table} WHERE {scope_column} = ? AND is_deleted = 0",
             (scope_id,),
@@ -318,6 +302,9 @@ class LocalKanbanService:
         return int(value)
 
     async def create_board(self, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanBoardCreate
+
         self._enforce(self._local_action_id("create_board"))
         request = KanbanBoardCreate(**dict(request_data or {}))
         now = self._now()
@@ -340,7 +327,13 @@ class LocalKanbanService:
                 ),
             )
             board_id = int(cursor.lastrowid)
-            self._record_activity(conn, board_id=board_id, action_type="create", entity_type="board", entity_id=board_id)
+            self._record_activity(
+                conn,
+                board_id=board_id,
+                action_type="create",
+                entity_type="board",
+                entity_id=board_id,
+            )
             row = self._row(
                 conn,
                 "SELECT * FROM kanban_boards WHERE id = ?",
@@ -367,7 +360,9 @@ class LocalKanbanService:
         where_sql = " AND ".join(where)
         conn = self.connect()
         try:
-            total = conn.execute(f"SELECT COUNT(*) FROM kanban_boards WHERE {where_sql}").fetchone()[0]
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM kanban_boards WHERE {where_sql}"
+            ).fetchone()[0]
             rows = conn.execute(
                 f"SELECT * FROM kanban_boards WHERE {where_sql} ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?",
                 (limit, offset),
@@ -401,6 +396,9 @@ class LocalKanbanService:
         *,
         expected_version: int | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanBoardUpdate
+
         self._enforce(self._local_action_id("update_board"))
         request = KanbanBoardUpdate(**dict(request_data or {}))
         with self.transaction() as conn:
@@ -432,23 +430,43 @@ class LocalKanbanService:
                     board_id,
                 ),
             )
-            self._record_activity(conn, board_id=board_id, action_type="update", entity_type="board", entity_id=board_id)
+            self._record_activity(
+                conn,
+                board_id=board_id,
+                action_type="update",
+                entity_type="board",
+                entity_id=board_id,
+            )
             return self._board_row_to_dict(
                 conn,
-                self._row(conn, "SELECT * FROM kanban_boards WHERE id = ?", (board_id,), entity="board", entity_id=board_id),
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_boards WHERE id = ?",
+                    (board_id,),
+                    entity="board",
+                    entity_id=board_id,
+                ),
             )
 
     async def archive_board(self, board_id: int) -> dict[str, Any]:
-        return await self._set_board_flags(board_id, archived=True, deleted=None, action_type="archive")
+        return await self._set_board_flags(
+            board_id, archived=True, deleted=None, action_type="archive"
+        )
 
     async def unarchive_board(self, board_id: int) -> dict[str, Any]:
-        return await self._set_board_flags(board_id, archived=False, deleted=None, action_type="restore")
+        return await self._set_board_flags(
+            board_id, archived=False, deleted=None, action_type="restore"
+        )
 
     async def delete_board(self, board_id: int) -> dict[str, Any]:
-        return await self._set_board_flags(board_id, archived=None, deleted=True, action_type="delete")
+        return await self._set_board_flags(
+            board_id, archived=None, deleted=True, action_type="delete"
+        )
 
     async def restore_board(self, board_id: int) -> dict[str, Any]:
-        return await self._set_board_flags(board_id, archived=None, deleted=False, action_type="restore")
+        return await self._set_board_flags(
+            board_id, archived=None, deleted=False, action_type="restore"
+        )
 
     async def _set_board_flags(
         self,
@@ -467,7 +485,13 @@ class LocalKanbanService:
         self._enforce(self._local_action_id(operation_name))
         now = self._now()
         with self.transaction() as conn:
-            self._row(conn, "SELECT * FROM kanban_boards WHERE id = ?", (board_id,), entity="board", entity_id=board_id)
+            self._row(
+                conn,
+                "SELECT * FROM kanban_boards WHERE id = ?",
+                (board_id,),
+                entity="board",
+                entity_id=board_id,
+            )
             updates = ["updated_at = ?", "version = version + 1"]
             params: list[Any] = [now]
             if archived is not None:
@@ -477,35 +501,90 @@ class LocalKanbanService:
                 updates.extend(["is_deleted = ?", "deleted_at = ?"])
                 params.extend([1 if deleted else 0, now if deleted else None])
             params.append(board_id)
-            conn.execute(f"UPDATE kanban_boards SET {', '.join(updates)} WHERE id = ?", tuple(params))
-            self._record_activity(conn, board_id=board_id, action_type=action_type, entity_type="board", entity_id=board_id)
+            conn.execute(
+                f"UPDATE kanban_boards SET {', '.join(updates)} WHERE id = ?",
+                tuple(params),
+            )
+            self._record_activity(
+                conn,
+                board_id=board_id,
+                action_type=action_type,
+                entity_type="board",
+                entity_id=board_id,
+            )
             return self._board_row_to_dict(
                 conn,
-                self._row(conn, "SELECT * FROM kanban_boards WHERE id = ?", (board_id,), entity="board", entity_id=board_id),
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_boards WHERE id = ?",
+                    (board_id,),
+                    entity="board",
+                    entity_id=board_id,
+                ),
             )
 
     async def create_list(self, board_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanListCreate
+
         self._enforce(self._local_action_id("create_list"))
         request = KanbanListCreate(**dict(request_data or {}))
         now = self._now()
         with self.transaction() as conn:
-            self._row(conn, "SELECT * FROM kanban_boards WHERE id = ?", (board_id,), entity="board", entity_id=board_id)
-            position = request.position if request.position is not None else self._next_position(conn, "kanban_lists", "board_id", board_id)
+            self._row(
+                conn,
+                "SELECT * FROM kanban_boards WHERE id = ?",
+                (board_id,),
+                entity="board",
+                entity_id=board_id,
+            )
+            position = (
+                request.position
+                if request.position is not None
+                else self._next_position(conn, "kanban_lists", "board_id", board_id)
+            )
             cursor = conn.execute(
                 """
                 INSERT INTO kanban_lists (uuid, board_id, client_id, name, position, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (self._new_uuid(), board_id, request.client_id, request.name, position, now, now),
+                (
+                    self._new_uuid(),
+                    board_id,
+                    request.client_id,
+                    request.name,
+                    position,
+                    now,
+                    now,
+                ),
             )
             list_id = int(cursor.lastrowid)
-            self._record_activity(conn, board_id=board_id, list_id=list_id, action_type="create", entity_type="list", entity_id=list_id)
+            self._record_activity(
+                conn,
+                board_id=board_id,
+                list_id=list_id,
+                action_type="create",
+                entity_type="list",
+                entity_id=list_id,
+            )
             return self._list_row_to_dict(
                 conn,
-                self._row(conn, "SELECT * FROM kanban_lists WHERE id = ?", (list_id,), entity="list", entity_id=list_id),
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_lists WHERE id = ?",
+                    (list_id,),
+                    entity="list",
+                    entity_id=list_id,
+                ),
             )
 
-    async def list_lists(self, board_id: int, *, include_archived: bool = False, include_deleted: bool = False) -> dict[str, Any]:
+    async def list_lists(
+        self,
+        board_id: int,
+        *,
+        include_archived: bool = False,
+        include_deleted: bool = False,
+    ) -> dict[str, Any]:
         self._enforce(self._local_action_id("list_lists"))
         where = ["board_id = ?"]
         if not include_archived:
@@ -528,7 +607,13 @@ class LocalKanbanService:
         try:
             return self._list_row_to_dict(
                 conn,
-                self._row(conn, "SELECT * FROM kanban_lists WHERE id = ?", (list_id,), entity="list", entity_id=list_id),
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_lists WHERE id = ?",
+                    (list_id,),
+                    entity="list",
+                    entity_id=list_id,
+                ),
             )
         finally:
             conn.close()
@@ -540,10 +625,19 @@ class LocalKanbanService:
         *,
         expected_version: int | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanListUpdate
+
         self._enforce(self._local_action_id("update_list"))
         request = KanbanListUpdate(**dict(request_data or {}))
         with self.transaction() as conn:
-            row = self._row(conn, "SELECT * FROM kanban_lists WHERE id = ?", (list_id,), entity="list", entity_id=list_id)
+            row = self._row(
+                conn,
+                "SELECT * FROM kanban_lists WHERE id = ?",
+                (list_id,),
+                entity="list",
+                entity_id=list_id,
+            )
             self._check_version("list", row, expected_version)
             conn.execute(
                 """
@@ -556,23 +650,44 @@ class LocalKanbanService:
                 """,
                 (request.name, request.position, self._now(), list_id),
             )
-            self._record_activity(conn, board_id=row["board_id"], list_id=list_id, action_type="update", entity_type="list", entity_id=list_id)
+            self._record_activity(
+                conn,
+                board_id=row["board_id"],
+                list_id=list_id,
+                action_type="update",
+                entity_type="list",
+                entity_id=list_id,
+            )
             return self._list_row_to_dict(
                 conn,
-                self._row(conn, "SELECT * FROM kanban_lists WHERE id = ?", (list_id,), entity="list", entity_id=list_id),
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_lists WHERE id = ?",
+                    (list_id,),
+                    entity="list",
+                    entity_id=list_id,
+                ),
             )
 
     async def archive_list(self, list_id: int) -> dict[str, Any]:
-        return await self._set_list_flags(list_id, archived=True, deleted=None, action_type="archive")
+        return await self._set_list_flags(
+            list_id, archived=True, deleted=None, action_type="archive"
+        )
 
     async def unarchive_list(self, list_id: int) -> dict[str, Any]:
-        return await self._set_list_flags(list_id, archived=False, deleted=None, action_type="restore")
+        return await self._set_list_flags(
+            list_id, archived=False, deleted=None, action_type="restore"
+        )
 
     async def delete_list(self, list_id: int) -> dict[str, Any]:
-        return await self._set_list_flags(list_id, archived=None, deleted=True, action_type="delete")
+        return await self._set_list_flags(
+            list_id, archived=None, deleted=True, action_type="delete"
+        )
 
     async def restore_list(self, list_id: int) -> dict[str, Any]:
-        return await self._set_list_flags(list_id, archived=None, deleted=False, action_type="restore")
+        return await self._set_list_flags(
+            list_id, archived=None, deleted=False, action_type="restore"
+        )
 
     async def _set_list_flags(
         self,
@@ -591,7 +706,13 @@ class LocalKanbanService:
         self._enforce(self._local_action_id(operation_name))
         now = self._now()
         with self.transaction() as conn:
-            row = self._row(conn, "SELECT * FROM kanban_lists WHERE id = ?", (list_id,), entity="list", entity_id=list_id)
+            row = self._row(
+                conn,
+                "SELECT * FROM kanban_lists WHERE id = ?",
+                (list_id,),
+                entity="list",
+                entity_id=list_id,
+            )
             updates = ["updated_at = ?", "version = version + 1"]
             params: list[Any] = [now]
             if archived is not None:
@@ -601,36 +722,87 @@ class LocalKanbanService:
                 updates.extend(["is_deleted = ?", "deleted_at = ?"])
                 params.extend([1 if deleted else 0, now if deleted else None])
             params.append(list_id)
-            conn.execute(f"UPDATE kanban_lists SET {', '.join(updates)} WHERE id = ?", tuple(params))
-            self._record_activity(conn, board_id=row["board_id"], list_id=list_id, action_type=action_type, entity_type="list", entity_id=list_id)
+            conn.execute(
+                f"UPDATE kanban_lists SET {', '.join(updates)} WHERE id = ?",
+                tuple(params),
+            )
+            self._record_activity(
+                conn,
+                board_id=row["board_id"],
+                list_id=list_id,
+                action_type=action_type,
+                entity_type="list",
+                entity_id=list_id,
+            )
             return self._list_row_to_dict(
                 conn,
-                self._row(conn, "SELECT * FROM kanban_lists WHERE id = ?", (list_id,), entity="list", entity_id=list_id),
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_lists WHERE id = ?",
+                    (list_id,),
+                    entity="list",
+                    entity_id=list_id,
+                ),
             )
 
     async def reorder_lists(self, board_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanReorderRequest
+
         self._enforce(self._local_action_id("reorder_lists"))
         request = KanbanReorderRequest(**dict(request_data or {}))
         with self.transaction() as conn:
-            self._row(conn, "SELECT * FROM kanban_boards WHERE id = ?", (board_id,), entity="board", entity_id=board_id)
+            self._row(
+                conn,
+                "SELECT * FROM kanban_boards WHERE id = ?",
+                (board_id,),
+                entity="board",
+                entity_id=board_id,
+            )
             for position, list_id in enumerate(request.ids or []):
-                row = self._row(conn, "SELECT * FROM kanban_lists WHERE id = ?", (list_id,), entity="list", entity_id=list_id)
+                row = self._row(
+                    conn,
+                    "SELECT * FROM kanban_lists WHERE id = ?",
+                    (list_id,),
+                    entity="list",
+                    entity_id=list_id,
+                )
                 if row["board_id"] != board_id:
                     raise ValueError(f"local_kanban_invalid_scope:list:{list_id}")
                 conn.execute(
                     "UPDATE kanban_lists SET position = ?, updated_at = ?, version = version + 1 WHERE id = ?",
                     (position, self._now(), list_id),
                 )
-            self._record_activity(conn, board_id=board_id, action_type="reorder", entity_type="list", entity_id=None, details={"ids": request.ids})
+            self._record_activity(
+                conn,
+                board_id=board_id,
+                action_type="reorder",
+                entity_type="list",
+                entity_id=None,
+                details={"ids": request.ids},
+            )
             return {"success": True, "message": None}
 
     async def create_card(self, list_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanCardCreate
+
         self._enforce(self._local_action_id("create_card"))
         request = KanbanCardCreate(**dict(request_data or {}))
         now = self._now()
         with self.transaction() as conn:
-            list_row = self._row(conn, "SELECT * FROM kanban_lists WHERE id = ?", (list_id,), entity="list", entity_id=list_id)
-            position = request.position if request.position is not None else self._next_position(conn, "kanban_cards", "list_id", list_id)
+            list_row = self._row(
+                conn,
+                "SELECT * FROM kanban_lists WHERE id = ?",
+                (list_id,),
+                entity="list",
+                entity_id=list_id,
+            )
+            position = (
+                request.position
+                if request.position is not None
+                else self._next_position(conn, "kanban_cards", "list_id", list_id)
+            )
             cursor = conn.execute(
                 """
                 INSERT INTO kanban_cards
@@ -664,10 +836,22 @@ class LocalKanbanService:
                 entity_id=card_id,
             )
             return self._card_row_to_dict(
-                self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (card_id,), entity="card", entity_id=card_id)
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_cards WHERE id = ?",
+                    (card_id,),
+                    entity="card",
+                    entity_id=card_id,
+                )
             )
 
-    async def list_cards(self, list_id: int, *, include_archived: bool = False, include_deleted: bool = False) -> dict[str, Any]:
+    async def list_cards(
+        self,
+        list_id: int,
+        *,
+        include_archived: bool = False,
+        include_deleted: bool = False,
+    ) -> dict[str, Any]:
         self._enforce(self._local_action_id("list_cards"))
         where = ["list_id = ?"]
         if not include_archived:
@@ -689,7 +873,13 @@ class LocalKanbanService:
         conn = self.connect()
         try:
             return self._card_row_to_dict(
-                self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (card_id,), entity="card", entity_id=card_id)
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_cards WHERE id = ?",
+                    (card_id,),
+                    entity="card",
+                    entity_id=card_id,
+                )
             )
         finally:
             conn.close()
@@ -701,10 +891,19 @@ class LocalKanbanService:
         *,
         expected_version: int | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanCardUpdate
+
         self._enforce(self._local_action_id("update_card"))
         request = KanbanCardUpdate(**dict(request_data or {}))
         with self.transaction() as conn:
-            row = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (card_id,), entity="card", entity_id=card_id)
+            row = self._row(
+                conn,
+                "SELECT * FROM kanban_cards WHERE id = ?",
+                (card_id,),
+                entity="card",
+                entity_id=card_id,
+            )
             self._check_version("card", row, expected_version)
             conn.execute(
                 """
@@ -742,15 +941,30 @@ class LocalKanbanService:
                 entity_id=card_id,
             )
             return self._card_row_to_dict(
-                self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (card_id,), entity="card", entity_id=card_id)
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_cards WHERE id = ?",
+                    (card_id,),
+                    entity="card",
+                    entity_id=card_id,
+                )
             )
 
     async def move_card(self, card_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanCardMoveRequest
+
         self._enforce(self._local_action_id("move_card"))
         request = KanbanCardMoveRequest(**dict(request_data or {}))
         now = self._now()
         with self.transaction() as conn:
-            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (card_id,), entity="card", entity_id=card_id)
+            card = self._row(
+                conn,
+                "SELECT * FROM kanban_cards WHERE id = ?",
+                (card_id,),
+                entity="card",
+                entity_id=card_id,
+            )
             target_list = self._row(
                 conn,
                 "SELECT * FROM kanban_lists WHERE id = ?",
@@ -758,7 +972,13 @@ class LocalKanbanService:
                 entity="list",
                 entity_id=request.target_list_id,
             )
-            position = request.position if request.position is not None else self._next_position(conn, "kanban_cards", "list_id", target_list["id"])
+            position = (
+                request.position
+                if request.position is not None
+                else self._next_position(
+                    conn, "kanban_cards", "list_id", target_list["id"]
+                )
+            )
             conn.execute(
                 """
                 UPDATE kanban_cards
@@ -775,18 +995,36 @@ class LocalKanbanService:
                 action_type="move",
                 entity_type="card",
                 entity_id=card_id,
-                details={"from_list_id": card["list_id"], "to_list_id": target_list["id"]},
+                details={
+                    "from_list_id": card["list_id"],
+                    "to_list_id": target_list["id"],
+                },
             )
             return self._card_row_to_dict(
-                self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (card_id,), entity="card", entity_id=card_id)
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_cards WHERE id = ?",
+                    (card_id,),
+                    entity="card",
+                    entity_id=card_id,
+                )
             )
 
     async def copy_card(self, card_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanCardCopyRequest
+
         self._enforce(self._local_action_id("copy_card"))
         request = KanbanCardCopyRequest(**dict(request_data or {}))
         now = self._now()
         with self.transaction() as conn:
-            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (card_id,), entity="card", entity_id=card_id)
+            card = self._row(
+                conn,
+                "SELECT * FROM kanban_cards WHERE id = ?",
+                (card_id,),
+                entity="card",
+                entity_id=card_id,
+            )
             target_list = self._row(
                 conn,
                 "SELECT * FROM kanban_lists WHERE id = ?",
@@ -794,7 +1032,13 @@ class LocalKanbanService:
                 entity="list",
                 entity_id=request.target_list_id,
             )
-            position = request.position if request.position is not None else self._next_position(conn, "kanban_cards", "list_id", target_list["id"])
+            position = (
+                request.position
+                if request.position is not None
+                else self._next_position(
+                    conn, "kanban_cards", "list_id", target_list["id"]
+                )
+            )
             cursor = conn.execute(
                 """
                 INSERT INTO kanban_cards
@@ -830,20 +1074,34 @@ class LocalKanbanService:
                 details={"source_card_id": card_id},
             )
             return self._card_row_to_dict(
-                self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (copied_id,), entity="card", entity_id=copied_id)
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_cards WHERE id = ?",
+                    (copied_id,),
+                    entity="card",
+                    entity_id=copied_id,
+                )
             )
 
     async def archive_card(self, card_id: int) -> dict[str, Any]:
-        return await self._set_card_flags(card_id, archived=True, deleted=None, action_type="archive")
+        return await self._set_card_flags(
+            card_id, archived=True, deleted=None, action_type="archive"
+        )
 
     async def unarchive_card(self, card_id: int) -> dict[str, Any]:
-        return await self._set_card_flags(card_id, archived=False, deleted=None, action_type="restore")
+        return await self._set_card_flags(
+            card_id, archived=False, deleted=None, action_type="restore"
+        )
 
     async def delete_card(self, card_id: int) -> dict[str, Any]:
-        return await self._set_card_flags(card_id, archived=None, deleted=True, action_type="delete")
+        return await self._set_card_flags(
+            card_id, archived=None, deleted=True, action_type="delete"
+        )
 
     async def restore_card(self, card_id: int) -> dict[str, Any]:
-        return await self._set_card_flags(card_id, archived=None, deleted=False, action_type="restore")
+        return await self._set_card_flags(
+            card_id, archived=None, deleted=False, action_type="restore"
+        )
 
     async def _set_card_flags(
         self,
@@ -862,7 +1120,13 @@ class LocalKanbanService:
         self._enforce(self._local_action_id(operation_name))
         now = self._now()
         with self.transaction() as conn:
-            row = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (card_id,), entity="card", entity_id=card_id)
+            row = self._row(
+                conn,
+                "SELECT * FROM kanban_cards WHERE id = ?",
+                (card_id,),
+                entity="card",
+                entity_id=card_id,
+            )
             updates = ["updated_at = ?", "version = version + 1"]
             params: list[Any] = [now]
             if archived is not None:
@@ -872,7 +1136,10 @@ class LocalKanbanService:
                 updates.extend(["is_deleted = ?", "deleted_at = ?"])
                 params.extend([1 if deleted else 0, now if deleted else None])
             params.append(card_id)
-            conn.execute(f"UPDATE kanban_cards SET {', '.join(updates)} WHERE id = ?", tuple(params))
+            conn.execute(
+                f"UPDATE kanban_cards SET {', '.join(updates)} WHERE id = ?",
+                tuple(params),
+            )
             self._record_activity(
                 conn,
                 board_id=row["board_id"],
@@ -883,30 +1150,63 @@ class LocalKanbanService:
                 entity_id=card_id,
             )
             return self._card_row_to_dict(
-                self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (card_id,), entity="card", entity_id=card_id)
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_cards WHERE id = ?",
+                    (card_id,),
+                    entity="card",
+                    entity_id=card_id,
+                )
             )
 
     async def reorder_cards(self, list_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanReorderRequest
+
         self._enforce(self._local_action_id("reorder_cards"))
         request = KanbanReorderRequest(**dict(request_data or {}))
         with self.transaction() as conn:
-            list_row = self._row(conn, "SELECT * FROM kanban_lists WHERE id = ?", (list_id,), entity="list", entity_id=list_id)
+            list_row = self._row(
+                conn,
+                "SELECT * FROM kanban_lists WHERE id = ?",
+                (list_id,),
+                entity="list",
+                entity_id=list_id,
+            )
             for position, card_id in enumerate(request.ids or []):
-                row = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (card_id,), entity="card", entity_id=card_id)
+                row = self._row(
+                    conn,
+                    "SELECT * FROM kanban_cards WHERE id = ?",
+                    (card_id,),
+                    entity="card",
+                    entity_id=card_id,
+                )
                 if row["list_id"] != list_id:
                     raise ValueError(f"local_kanban_invalid_scope:card:{card_id}")
                 conn.execute(
                     "UPDATE kanban_cards SET position = ?, updated_at = ?, version = version + 1 WHERE id = ?",
                     (position, self._now(), card_id),
                 )
-            self._record_activity(conn, board_id=list_row["board_id"], list_id=list_id, action_type="reorder", entity_type="card", entity_id=None, details={"ids": request.ids})
+            self._record_activity(
+                conn,
+                board_id=list_row["board_id"],
+                list_id=list_id,
+                action_type="reorder",
+                entity_type="card",
+                entity_id=None,
+                details={"ids": request.ids},
+            )
             return {"success": True, "message": None}
 
-    async def list_board_activities(self, board_id: int, *, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+    async def list_board_activities(
+        self, board_id: int, *, limit: int = 100, offset: int = 0
+    ) -> dict[str, Any]:
         self._enforce(self._local_action_id("list_board_activities"))
         conn = self.connect()
         try:
-            total = conn.execute("SELECT COUNT(*) FROM kanban_activities WHERE board_id = ?", (board_id,)).fetchone()[0]
+            total = conn.execute(
+                "SELECT COUNT(*) FROM kanban_activities WHERE board_id = ?", (board_id,)
+            ).fetchone()[0]
             rows = conn.execute(
                 "SELECT * FROM kanban_activities WHERE board_id = ? ORDER BY id ASC LIMIT ? OFFSET ?",
                 (board_id, limit, offset),
@@ -918,11 +1218,15 @@ class LocalKanbanService:
         finally:
             conn.close()
 
-    async def list_card_activities(self, card_id: int, *, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+    async def list_card_activities(
+        self, card_id: int, *, limit: int = 100, offset: int = 0
+    ) -> dict[str, Any]:
         self._enforce(self._local_action_id("list_card_activities"))
         conn = self.connect()
         try:
-            total = conn.execute("SELECT COUNT(*) FROM kanban_activities WHERE card_id = ?", (card_id,)).fetchone()[0]
+            total = conn.execute(
+                "SELECT COUNT(*) FROM kanban_activities WHERE card_id = ?", (card_id,)
+            ).fetchone()[0]
             rows = conn.execute(
                 "SELECT * FROM kanban_activities WHERE card_id = ? ORDER BY id ASC LIMIT ? OFFSET ?",
                 (card_id, limit, offset),
@@ -994,18 +1298,32 @@ class LocalKanbanService:
     async def get_board_export(self, board_id: int, **kwargs: Any) -> dict[str, Any]:
         return await self.export_board(board_id, kwargs)
 
-    async def export_board(self, board_id: int, request_data: Any | None = None) -> dict[str, Any]:
+    async def export_board(
+        self, board_id: int, request_data: Any | None = None
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanBoardExportRequest
+
         self._enforce(self._local_action_id("export_board"))
         request = KanbanBoardExportRequest(**dict(request_data or {}))
         conn = self.connect()
         try:
             board = self._board_row_to_dict(
                 conn,
-                self._row(conn, "SELECT * FROM kanban_boards WHERE id = ?", (board_id,), entity="board", entity_id=board_id),
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_boards WHERE id = ?",
+                    (board_id,),
+                    entity="board",
+                    entity_id=board_id,
+                ),
             )
             labels = [
                 self._label_row_to_dict(row)
-                for row in conn.execute("SELECT * FROM kanban_labels WHERE board_id = ? ORDER BY id ASC", (board_id,)).fetchall()
+                for row in conn.execute(
+                    "SELECT * FROM kanban_labels WHERE board_id = ? ORDER BY id ASC",
+                    (board_id,),
+                ).fetchall()
             ]
             list_filters = ["board_id = ?"]
             if not request.include_archived:
@@ -1029,10 +1347,20 @@ class LocalKanbanService:
                     (list_row["id"],),
                 ).fetchall():
                     card_payload = self._card_row_to_dict(card_row)
-                    card_payload["labels"] = (await self.list_card_labels(card_row["id"]))["labels"]
-                    card_payload["checklists"] = self._checklists_for_card(conn, card_row["id"])
-                    card_payload["comments"] = (await self.list_comments(card_row["id"], include_deleted=request.include_deleted))["comments"]
-                    card_payload["links"] = (await self.list_card_links(card_row["id"]))["links"]
+                    card_payload["labels"] = (
+                        await self.list_card_labels(card_row["id"])
+                    )["labels"]
+                    card_payload["checklists"] = self._checklists_for_card(
+                        conn, card_row["id"]
+                    )
+                    card_payload["comments"] = (
+                        await self.list_comments(
+                            card_row["id"], include_deleted=request.include_deleted
+                        )
+                    )["comments"]
+                    card_payload["links"] = (
+                        await self.list_card_links(card_row["id"])
+                    )["links"]
                     cards.append(card_payload)
                 list_payload["cards"] = cards
                 lists.append(list_payload)
@@ -1047,14 +1375,20 @@ class LocalKanbanService:
             conn.close()
 
     async def import_board(self, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanBoardImportRequest
+
         self._enforce(self._local_action_id("import_board"))
         request = KanbanBoardImportRequest(**dict(request_data or {}))
         data = request.data
         source_board = data.get("board") or {}
         board = await self.create_board(
             {
-                "name": request.board_name or source_board.get("name") or "Imported Board",
-                "client_id": source_board.get("client_id") or f"import-{self._new_uuid()}",
+                "name": request.board_name
+                or source_board.get("name")
+                or "Imported Board",
+                "client_id": source_board.get("client_id")
+                or f"import-{self._new_uuid()}",
                 "description": source_board.get("description"),
                 "activity_retention_days": source_board.get("activity_retention_days"),
                 "metadata": source_board.get("metadata"),
@@ -1064,16 +1398,22 @@ class LocalKanbanService:
         for label_payload in data.get("labels") or []:
             created = await self.create_label(
                 board["id"],
-                {"name": label_payload["name"], "color": label_payload.get("color") or "gray"},
+                {
+                    "name": label_payload["name"],
+                    "color": label_payload.get("color") or "gray",
+                },
             )
             label_map[int(label_payload["id"])] = created["id"]
-        lists_imported = cards_imported = checklists_imported = checklist_items_imported = comments_imported = 0
+        lists_imported = cards_imported = checklists_imported = (
+            checklist_items_imported
+        ) = comments_imported = 0
         for list_payload in data.get("lists") or []:
             created_list = await self.create_list(
                 board["id"],
                 {
                     "name": list_payload["name"],
-                    "client_id": list_payload.get("client_id") or f"import-list-{self._new_uuid()}",
+                    "client_id": list_payload.get("client_id")
+                    or f"import-list-{self._new_uuid()}",
                     "position": list_payload.get("position"),
                 },
             )
@@ -1083,7 +1423,8 @@ class LocalKanbanService:
                     created_list["id"],
                     {
                         "title": card_payload["title"],
-                        "client_id": card_payload.get("client_id") or f"import-card-{self._new_uuid()}",
+                        "client_id": card_payload.get("client_id")
+                        or f"import-card-{self._new_uuid()}",
                         "description": card_payload.get("description"),
                         "position": card_payload.get("position"),
                         "priority": card_payload.get("priority"),
@@ -1094,11 +1435,16 @@ class LocalKanbanService:
                 for label_payload in card_payload.get("labels") or []:
                     mapped_label_id = label_map.get(int(label_payload["id"]))
                     if mapped_label_id is not None:
-                        await self.assign_label_to_card(created_card["id"], mapped_label_id)
+                        await self.assign_label_to_card(
+                            created_card["id"], mapped_label_id
+                        )
                 for checklist_payload in card_payload.get("checklists") or []:
                     created_checklist = await self.create_checklist(
                         created_card["id"],
-                        {"name": checklist_payload["name"], "position": checklist_payload.get("position")},
+                        {
+                            "name": checklist_payload["name"],
+                            "position": checklist_payload.get("position"),
+                        },
                     )
                     checklists_imported += 1
                     for item_payload in checklist_payload.get("items") or []:
@@ -1113,7 +1459,9 @@ class LocalKanbanService:
                         checklist_items_imported += 1
                 for comment_payload in card_payload.get("comments") or []:
                     if not comment_payload.get("deleted"):
-                        await self.create_comment(created_card["id"], {"content": comment_payload["content"]})
+                        await self.create_comment(
+                            created_card["id"], {"content": comment_payload["content"]}
+                        )
                         comments_imported += 1
         return {
             "board": board,
@@ -1129,26 +1477,50 @@ class LocalKanbanService:
         }
 
     async def create_label(self, board_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanLabelCreate
+
         self._enforce(self._local_action_id("create_label"))
         request = KanbanLabelCreate(**dict(request_data or {}))
         now = self._now()
         with self.transaction() as conn:
-            self._row(conn, "SELECT * FROM kanban_boards WHERE id = ?", (board_id,), entity="board", entity_id=board_id)
+            self._row(
+                conn,
+                "SELECT * FROM kanban_boards WHERE id = ?",
+                (board_id,),
+                entity="board",
+                entity_id=board_id,
+            )
             cursor = conn.execute(
                 "INSERT INTO kanban_labels (uuid, board_id, name, color, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
                 (self._new_uuid(), board_id, request.name, request.color, now, now),
             )
             label_id = int(cursor.lastrowid)
-            self._record_activity(conn, board_id=board_id, action_type="label", entity_type="label", entity_id=label_id)
+            self._record_activity(
+                conn,
+                board_id=board_id,
+                action_type="label",
+                entity_type="label",
+                entity_id=label_id,
+            )
             return self._label_row_to_dict(
-                self._row(conn, "SELECT * FROM kanban_labels WHERE id = ?", (label_id,), entity="label", entity_id=label_id)
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_labels WHERE id = ?",
+                    (label_id,),
+                    entity="label",
+                    entity_id=label_id,
+                )
             )
 
     async def list_labels(self, board_id: int) -> dict[str, Any]:
         self._enforce(self._local_action_id("list_labels"))
         conn = self.connect()
         try:
-            rows = conn.execute("SELECT * FROM kanban_labels WHERE board_id = ? ORDER BY id ASC", (board_id,)).fetchall()
+            rows = conn.execute(
+                "SELECT * FROM kanban_labels WHERE board_id = ? ORDER BY id ASC",
+                (board_id,),
+            ).fetchall()
             return {"labels": [self._label_row_to_dict(row) for row in rows]}
         finally:
             conn.close()
@@ -1158,51 +1530,131 @@ class LocalKanbanService:
         conn = self.connect()
         try:
             return self._label_row_to_dict(
-                self._row(conn, "SELECT * FROM kanban_labels WHERE id = ?", (label_id,), entity="label", entity_id=label_id)
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_labels WHERE id = ?",
+                    (label_id,),
+                    entity="label",
+                    entity_id=label_id,
+                )
             )
         finally:
             conn.close()
 
     async def update_label(self, label_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanLabelUpdate
+
         self._enforce(self._local_action_id("update_label"))
         request = KanbanLabelUpdate(**dict(request_data or {}))
         with self.transaction() as conn:
-            row = self._row(conn, "SELECT * FROM kanban_labels WHERE id = ?", (label_id,), entity="label", entity_id=label_id)
+            row = self._row(
+                conn,
+                "SELECT * FROM kanban_labels WHERE id = ?",
+                (label_id,),
+                entity="label",
+                entity_id=label_id,
+            )
             conn.execute(
                 "UPDATE kanban_labels SET name = COALESCE(?, name), color = COALESCE(?, color), updated_at = ?, version = version + 1 WHERE id = ?",
                 (request.name, request.color, self._now(), label_id),
             )
-            self._record_activity(conn, board_id=row["board_id"], action_type="label", entity_type="label", entity_id=label_id)
+            self._record_activity(
+                conn,
+                board_id=row["board_id"],
+                action_type="label",
+                entity_type="label",
+                entity_id=label_id,
+            )
             return self._label_row_to_dict(
-                self._row(conn, "SELECT * FROM kanban_labels WHERE id = ?", (label_id,), entity="label", entity_id=label_id)
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_labels WHERE id = ?",
+                    (label_id,),
+                    entity="label",
+                    entity_id=label_id,
+                )
             )
 
     async def delete_label(self, label_id: int) -> dict[str, Any]:
         self._enforce(self._local_action_id("delete_label"))
         with self.transaction() as conn:
-            row = self._row(conn, "SELECT * FROM kanban_labels WHERE id = ?", (label_id,), entity="label", entity_id=label_id)
+            row = self._row(
+                conn,
+                "SELECT * FROM kanban_labels WHERE id = ?",
+                (label_id,),
+                entity="label",
+                entity_id=label_id,
+            )
             conn.execute("DELETE FROM kanban_labels WHERE id = ?", (label_id,))
-            self._record_activity(conn, board_id=row["board_id"], action_type="label", entity_type="label", entity_id=label_id, details={"deleted": True})
+            self._record_activity(
+                conn,
+                board_id=row["board_id"],
+                action_type="label",
+                entity_type="label",
+                entity_id=label_id,
+                details={"deleted": True},
+            )
             return {"detail": "deleted"}
 
     async def assign_label_to_card(self, card_id: int, label_id: int) -> dict[str, Any]:
         self._enforce(self._local_action_id("assign_label_to_card"))
         with self.transaction() as conn:
-            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (card_id,), entity="card", entity_id=card_id)
-            self._row(conn, "SELECT * FROM kanban_labels WHERE id = ?", (label_id,), entity="label", entity_id=label_id)
+            card = self._row(
+                conn,
+                "SELECT * FROM kanban_cards WHERE id = ?",
+                (card_id,),
+                entity="card",
+                entity_id=card_id,
+            )
+            self._row(
+                conn,
+                "SELECT * FROM kanban_labels WHERE id = ?",
+                (label_id,),
+                entity="label",
+                entity_id=label_id,
+            )
             conn.execute(
                 "INSERT OR IGNORE INTO kanban_card_labels (card_id, label_id, created_at) VALUES (?, ?, ?)",
                 (card_id, label_id, self._now()),
             )
-            self._record_activity(conn, board_id=card["board_id"], list_id=card["list_id"], card_id=card_id, action_type="label", entity_type="card_label", entity_id=label_id)
+            self._record_activity(
+                conn,
+                board_id=card["board_id"],
+                list_id=card["list_id"],
+                card_id=card_id,
+                action_type="label",
+                entity_type="card_label",
+                entity_id=label_id,
+            )
             return {"detail": "assigned"}
 
-    async def remove_label_from_card(self, card_id: int, label_id: int) -> dict[str, Any]:
+    async def remove_label_from_card(
+        self, card_id: int, label_id: int
+    ) -> dict[str, Any]:
         self._enforce(self._local_action_id("remove_label_from_card"))
         with self.transaction() as conn:
-            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (card_id,), entity="card", entity_id=card_id)
-            conn.execute("DELETE FROM kanban_card_labels WHERE card_id = ? AND label_id = ?", (card_id, label_id))
-            self._record_activity(conn, board_id=card["board_id"], list_id=card["list_id"], card_id=card_id, action_type="label", entity_type="card_label", entity_id=label_id, details={"removed": True})
+            card = self._row(
+                conn,
+                "SELECT * FROM kanban_cards WHERE id = ?",
+                (card_id,),
+                entity="card",
+                entity_id=card_id,
+            )
+            conn.execute(
+                "DELETE FROM kanban_card_labels WHERE card_id = ? AND label_id = ?",
+                (card_id, label_id),
+            )
+            self._record_activity(
+                conn,
+                board_id=card["board_id"],
+                list_id=card["list_id"],
+                card_id=card_id,
+                action_type="label",
+                entity_type="card_label",
+                entity_id=label_id,
+                details={"removed": True},
+            )
             return {"detail": "removed"}
 
     async def list_card_labels(self, card_id: int) -> dict[str, Any]:
@@ -1224,27 +1676,62 @@ class LocalKanbanService:
             conn.close()
 
     async def create_checklist(self, card_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanChecklistCreate
+
         self._enforce(self._local_action_id("create_checklist"))
         request = KanbanChecklistCreate(**dict(request_data or {}))
         now = self._now()
         with self.transaction() as conn:
-            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (card_id,), entity="card", entity_id=card_id)
-            position = request.position if request.position is not None else int(conn.execute("SELECT COALESCE(MAX(position), -1) + 1 FROM kanban_checklists WHERE card_id = ?", (card_id,)).fetchone()[0])
+            card = self._row(
+                conn,
+                "SELECT * FROM kanban_cards WHERE id = ?",
+                (card_id,),
+                entity="card",
+                entity_id=card_id,
+            )
+            position = (
+                request.position
+                if request.position is not None
+                else int(
+                    conn.execute(
+                        "SELECT COALESCE(MAX(position), -1) + 1 FROM kanban_checklists WHERE card_id = ?",
+                        (card_id,),
+                    ).fetchone()[0]
+                )
+            )
             cursor = conn.execute(
                 "INSERT INTO kanban_checklists (uuid, card_id, name, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
                 (self._new_uuid(), card_id, request.name, position, now, now),
             )
             checklist_id = int(cursor.lastrowid)
-            self._record_activity(conn, board_id=card["board_id"], list_id=card["list_id"], card_id=card_id, action_type="create", entity_type="checklist", entity_id=checklist_id)
+            self._record_activity(
+                conn,
+                board_id=card["board_id"],
+                list_id=card["list_id"],
+                card_id=card_id,
+                action_type="create",
+                entity_type="checklist",
+                entity_id=checklist_id,
+            )
             return self._checklist_row_to_dict(
-                self._row(conn, "SELECT * FROM kanban_checklists WHERE id = ?", (checklist_id,), entity="checklist", entity_id=checklist_id)
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_checklists WHERE id = ?",
+                    (checklist_id,),
+                    entity="checklist",
+                    entity_id=checklist_id,
+                )
             )
 
     async def list_checklists(self, card_id: int) -> dict[str, Any]:
         self._enforce(self._local_action_id("list_checklists"))
         conn = self.connect()
         try:
-            rows = conn.execute("SELECT * FROM kanban_checklists WHERE card_id = ? ORDER BY position ASC, id ASC", (card_id,)).fetchall()
+            rows = conn.execute(
+                "SELECT * FROM kanban_checklists WHERE card_id = ? ORDER BY position ASC, id ASC",
+                (card_id,),
+            ).fetchall()
             return {"checklists": [self._checklist_row_to_dict(row) for row in rows]}
         finally:
             conn.close()
@@ -1254,72 +1741,204 @@ class LocalKanbanService:
         conn = self.connect()
         try:
             return self._checklist_row_to_dict(
-                self._row(conn, "SELECT * FROM kanban_checklists WHERE id = ?", (checklist_id,), entity="checklist", entity_id=checklist_id)
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_checklists WHERE id = ?",
+                    (checklist_id,),
+                    entity="checklist",
+                    entity_id=checklist_id,
+                )
             )
         finally:
             conn.close()
 
-    async def update_checklist(self, checklist_id: int, request_data: Any) -> dict[str, Any]:
+    async def update_checklist(
+        self, checklist_id: int, request_data: Any
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanChecklistUpdate
+
         self._enforce(self._local_action_id("update_checklist"))
         request = KanbanChecklistUpdate(**dict(request_data or {}))
         with self.transaction() as conn:
-            row = self._row(conn, "SELECT * FROM kanban_checklists WHERE id = ?", (checklist_id,), entity="checklist", entity_id=checklist_id)
+            row = self._row(
+                conn,
+                "SELECT * FROM kanban_checklists WHERE id = ?",
+                (checklist_id,),
+                entity="checklist",
+                entity_id=checklist_id,
+            )
             conn.execute(
                 "UPDATE kanban_checklists SET name = COALESCE(?, name), updated_at = ?, version = version + 1 WHERE id = ?",
                 (request.name, self._now(), checklist_id),
             )
-            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (row["card_id"],), entity="card", entity_id=row["card_id"])
-            self._record_activity(conn, board_id=card["board_id"], list_id=card["list_id"], card_id=card["id"], action_type="update", entity_type="checklist", entity_id=checklist_id)
+            card = self._row(
+                conn,
+                "SELECT * FROM kanban_cards WHERE id = ?",
+                (row["card_id"],),
+                entity="card",
+                entity_id=row["card_id"],
+            )
+            self._record_activity(
+                conn,
+                board_id=card["board_id"],
+                list_id=card["list_id"],
+                card_id=card["id"],
+                action_type="update",
+                entity_type="checklist",
+                entity_id=checklist_id,
+            )
             return self._checklist_row_to_dict(
-                self._row(conn, "SELECT * FROM kanban_checklists WHERE id = ?", (checklist_id,), entity="checklist", entity_id=checklist_id)
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_checklists WHERE id = ?",
+                    (checklist_id,),
+                    entity="checklist",
+                    entity_id=checklist_id,
+                )
             )
 
     async def delete_checklist(self, checklist_id: int) -> dict[str, Any]:
         self._enforce(self._local_action_id("delete_checklist"))
         with self.transaction() as conn:
-            row = self._row(conn, "SELECT * FROM kanban_checklists WHERE id = ?", (checklist_id,), entity="checklist", entity_id=checklist_id)
-            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (row["card_id"],), entity="card", entity_id=row["card_id"])
+            row = self._row(
+                conn,
+                "SELECT * FROM kanban_checklists WHERE id = ?",
+                (checklist_id,),
+                entity="checklist",
+                entity_id=checklist_id,
+            )
+            card = self._row(
+                conn,
+                "SELECT * FROM kanban_cards WHERE id = ?",
+                (row["card_id"],),
+                entity="card",
+                entity_id=row["card_id"],
+            )
             conn.execute("DELETE FROM kanban_checklists WHERE id = ?", (checklist_id,))
-            self._record_activity(conn, board_id=card["board_id"], list_id=card["list_id"], card_id=card["id"], action_type="delete", entity_type="checklist", entity_id=checklist_id)
+            self._record_activity(
+                conn,
+                board_id=card["board_id"],
+                list_id=card["list_id"],
+                card_id=card["id"],
+                action_type="delete",
+                entity_type="checklist",
+                entity_id=checklist_id,
+            )
             return {"detail": "deleted"}
 
-    async def reorder_checklists(self, card_id: int, request_data: Any) -> dict[str, Any]:
+    async def reorder_checklists(
+        self, card_id: int, request_data: Any
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanChecklistReorderRequest
+
         self._enforce(self._local_action_id("reorder_checklists"))
         request = KanbanChecklistReorderRequest(**dict(request_data or {}))
         with self.transaction() as conn:
-            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (card_id,), entity="card", entity_id=card_id)
+            card = self._row(
+                conn,
+                "SELECT * FROM kanban_cards WHERE id = ?",
+                (card_id,),
+                entity="card",
+                entity_id=card_id,
+            )
             for position, checklist_id in enumerate(request.checklist_ids):
-                conn.execute("UPDATE kanban_checklists SET position = ?, updated_at = ? WHERE id = ? AND card_id = ?", (position, self._now(), checklist_id, card_id))
-            self._record_activity(conn, board_id=card["board_id"], list_id=card["list_id"], card_id=card_id, action_type="reorder", entity_type="checklist", entity_id=None, details={"ids": request.checklist_ids})
+                conn.execute(
+                    "UPDATE kanban_checklists SET position = ?, updated_at = ? WHERE id = ? AND card_id = ?",
+                    (position, self._now(), checklist_id, card_id),
+                )
+            self._record_activity(
+                conn,
+                board_id=card["board_id"],
+                list_id=card["list_id"],
+                card_id=card_id,
+                action_type="reorder",
+                entity_type="checklist",
+                entity_id=None,
+                details={"ids": request.checklist_ids},
+            )
             return {"success": True, "message": None}
 
-    async def create_checklist_item(self, checklist_id: int, request_data: Any) -> dict[str, Any]:
+    async def create_checklist_item(
+        self, checklist_id: int, request_data: Any
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanChecklistItemCreate
+
         self._enforce(self._local_action_id("create_checklist_item"))
         request = KanbanChecklistItemCreate(**dict(request_data or {}))
         now = self._now()
         with self.transaction() as conn:
-            checklist = self._row(conn, "SELECT * FROM kanban_checklists WHERE id = ?", (checklist_id,), entity="checklist", entity_id=checklist_id)
-            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (checklist["card_id"],), entity="card", entity_id=checklist["card_id"])
-            position = request.position if request.position is not None else int(conn.execute("SELECT COALESCE(MAX(position), -1) + 1 FROM kanban_checklist_items WHERE checklist_id = ?", (checklist_id,)).fetchone()[0])
+            checklist = self._row(
+                conn,
+                "SELECT * FROM kanban_checklists WHERE id = ?",
+                (checklist_id,),
+                entity="checklist",
+                entity_id=checklist_id,
+            )
+            card = self._row(
+                conn,
+                "SELECT * FROM kanban_cards WHERE id = ?",
+                (checklist["card_id"],),
+                entity="card",
+                entity_id=checklist["card_id"],
+            )
+            position = (
+                request.position
+                if request.position is not None
+                else int(
+                    conn.execute(
+                        "SELECT COALESCE(MAX(position), -1) + 1 FROM kanban_checklist_items WHERE checklist_id = ?",
+                        (checklist_id,),
+                    ).fetchone()[0]
+                )
+            )
             cursor = conn.execute(
                 """
                 INSERT INTO kanban_checklist_items
                     (uuid, checklist_id, name, checked, checked_at, position, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (self._new_uuid(), checklist_id, request.name, int(request.checked), now if request.checked else None, position, now, now),
+                (
+                    self._new_uuid(),
+                    checklist_id,
+                    request.name,
+                    int(request.checked),
+                    now if request.checked else None,
+                    position,
+                    now,
+                    now,
+                ),
             )
             item_id = int(cursor.lastrowid)
-            self._record_activity(conn, board_id=card["board_id"], list_id=card["list_id"], card_id=card["id"], action_type="create", entity_type="checklist_item", entity_id=item_id)
+            self._record_activity(
+                conn,
+                board_id=card["board_id"],
+                list_id=card["list_id"],
+                card_id=card["id"],
+                action_type="create",
+                entity_type="checklist_item",
+                entity_id=item_id,
+            )
             return self._checklist_item_row_to_dict(
-                self._row(conn, "SELECT * FROM kanban_checklist_items WHERE id = ?", (item_id,), entity="checklist_item", entity_id=item_id)
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_checklist_items WHERE id = ?",
+                    (item_id,),
+                    entity="checklist_item",
+                    entity_id=item_id,
+                )
             )
 
     async def list_checklist_items(self, checklist_id: int) -> dict[str, Any]:
         self._enforce(self._local_action_id("list_checklist_items"))
         conn = self.connect()
         try:
-            rows = conn.execute("SELECT * FROM kanban_checklist_items WHERE checklist_id = ? ORDER BY position ASC, id ASC", (checklist_id,)).fetchall()
+            rows = conn.execute(
+                "SELECT * FROM kanban_checklist_items WHERE checklist_id = ? ORDER BY position ASC, id ASC",
+                (checklist_id,),
+            ).fetchall()
             return {"items": [self._checklist_item_row_to_dict(row) for row in rows]}
         finally:
             conn.close()
@@ -1329,16 +1948,33 @@ class LocalKanbanService:
         conn = self.connect()
         try:
             return self._checklist_item_row_to_dict(
-                self._row(conn, "SELECT * FROM kanban_checklist_items WHERE id = ?", (item_id,), entity="checklist_item", entity_id=item_id)
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_checklist_items WHERE id = ?",
+                    (item_id,),
+                    entity="checklist_item",
+                    entity_id=item_id,
+                )
             )
         finally:
             conn.close()
 
-    async def update_checklist_item(self, item_id: int, request_data: Any) -> dict[str, Any]:
+    async def update_checklist_item(
+        self, item_id: int, request_data: Any
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanChecklistItemUpdate
+
         self._enforce(self._local_action_id("update_checklist_item"))
         request = KanbanChecklistItemUpdate(**dict(request_data or {}))
         with self.transaction() as conn:
-            row = self._row(conn, "SELECT * FROM kanban_checklist_items WHERE id = ?", (item_id,), entity="checklist_item", entity_id=item_id)
+            row = self._row(
+                conn,
+                "SELECT * FROM kanban_checklist_items WHERE id = ?",
+                (item_id,),
+                entity="checklist_item",
+                entity_id=item_id,
+            )
             checked_at = self._now() if request.checked else None
             conn.execute(
                 """
@@ -1350,13 +1986,46 @@ class LocalKanbanService:
                     version = version + 1
                 WHERE id = ?
                 """,
-                (request.name, None if request.checked is None else int(request.checked), request.checked, checked_at, self._now(), item_id),
+                (
+                    request.name,
+                    None if request.checked is None else int(request.checked),
+                    request.checked,
+                    checked_at,
+                    self._now(),
+                    item_id,
+                ),
             )
-            checklist = self._row(conn, "SELECT * FROM kanban_checklists WHERE id = ?", (row["checklist_id"],), entity="checklist", entity_id=row["checklist_id"])
-            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (checklist["card_id"],), entity="card", entity_id=checklist["card_id"])
-            self._record_activity(conn, board_id=card["board_id"], list_id=card["list_id"], card_id=card["id"], action_type="update", entity_type="checklist_item", entity_id=item_id)
+            checklist = self._row(
+                conn,
+                "SELECT * FROM kanban_checklists WHERE id = ?",
+                (row["checklist_id"],),
+                entity="checklist",
+                entity_id=row["checklist_id"],
+            )
+            card = self._row(
+                conn,
+                "SELECT * FROM kanban_cards WHERE id = ?",
+                (checklist["card_id"],),
+                entity="card",
+                entity_id=checklist["card_id"],
+            )
+            self._record_activity(
+                conn,
+                board_id=card["board_id"],
+                list_id=card["list_id"],
+                card_id=card["id"],
+                action_type="update",
+                entity_type="checklist_item",
+                entity_id=item_id,
+            )
             return self._checklist_item_row_to_dict(
-                self._row(conn, "SELECT * FROM kanban_checklist_items WHERE id = ?", (item_id,), entity="checklist_item", entity_id=item_id)
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_checklist_items WHERE id = ?",
+                    (item_id,),
+                    entity="checklist_item",
+                    entity_id=item_id,
+                )
             )
 
     async def delete_checklist_item(self, item_id: int) -> dict[str, Any]:
@@ -1365,12 +2034,20 @@ class LocalKanbanService:
             conn.execute("DELETE FROM kanban_checklist_items WHERE id = ?", (item_id,))
             return {"detail": "deleted"}
 
-    async def reorder_checklist_items(self, checklist_id: int, request_data: Any) -> dict[str, Any]:
+    async def reorder_checklist_items(
+        self, checklist_id: int, request_data: Any
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanChecklistItemReorderRequest
+
         self._enforce(self._local_action_id("reorder_checklist_items"))
         request = KanbanChecklistItemReorderRequest(**dict(request_data or {}))
         with self.transaction() as conn:
             for position, item_id in enumerate(request.item_ids):
-                conn.execute("UPDATE kanban_checklist_items SET position = ?, updated_at = ? WHERE id = ? AND checklist_id = ?", (position, self._now(), item_id, checklist_id))
+                conn.execute(
+                    "UPDATE kanban_checklist_items SET position = ?, updated_at = ? WHERE id = ? AND checklist_id = ?",
+                    (position, self._now(), item_id, checklist_id),
+                )
             return {"success": True, "message": None}
 
     async def check_checklist_item(self, item_id: int) -> dict[str, Any]:
@@ -1379,58 +2056,118 @@ class LocalKanbanService:
     async def uncheck_checklist_item(self, item_id: int) -> dict[str, Any]:
         return await self.update_checklist_item(item_id, {"checked": False})
 
-    async def toggle_all_checklist_items(self, checklist_id: int, request_data: Any) -> dict[str, Any]:
+    async def toggle_all_checklist_items(
+        self, checklist_id: int, request_data: Any
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanToggleAllChecklistItemsRequest
+
         self._enforce(self._local_action_id("toggle_all_checklist_items"))
         request = KanbanToggleAllChecklistItemsRequest(**dict(request_data or {}))
         now = self._now()
         with self.transaction() as conn:
             conn.execute(
                 "UPDATE kanban_checklist_items SET checked = ?, checked_at = ?, updated_at = ?, version = version + 1 WHERE checklist_id = ?",
-                (int(request.checked), now if request.checked else None, now, checklist_id),
+                (
+                    int(request.checked),
+                    now if request.checked else None,
+                    now,
+                    checklist_id,
+                ),
             )
             return {"success": True, "message": None}
 
     def _checklists_for_card(self, conn: Any, card_id: int) -> list[dict[str, Any]]:
         checklists = []
-        for checklist_row in conn.execute("SELECT * FROM kanban_checklists WHERE card_id = ? ORDER BY position ASC, id ASC", (card_id,)).fetchall():
+        for checklist_row in conn.execute(
+            "SELECT * FROM kanban_checklists WHERE card_id = ? ORDER BY position ASC, id ASC",
+            (card_id,),
+        ).fetchall():
             payload = self._checklist_row_to_dict(checklist_row)
-            item_rows = conn.execute("SELECT * FROM kanban_checklist_items WHERE checklist_id = ? ORDER BY position ASC, id ASC", (checklist_row["id"],)).fetchall()
-            payload["items"] = [self._checklist_item_row_to_dict(item_row) for item_row in item_rows]
+            item_rows = conn.execute(
+                "SELECT * FROM kanban_checklist_items WHERE checklist_id = ? ORDER BY position ASC, id ASC",
+                (checklist_row["id"],),
+            ).fetchall()
+            payload["items"] = [
+                self._checklist_item_row_to_dict(item_row) for item_row in item_rows
+            ]
             payload["total_items"] = len(payload["items"])
-            payload["checked_items"] = sum(1 for item in payload["items"] if item["checked"])
-            payload["progress_percent"] = int((payload["checked_items"] / payload["total_items"]) * 100) if payload["total_items"] else 0
+            payload["checked_items"] = sum(
+                1 for item in payload["items"] if item["checked"]
+            )
+            payload["progress_percent"] = (
+                int((payload["checked_items"] / payload["total_items"]) * 100)
+                if payload["total_items"]
+                else 0
+            )
             checklists.append(payload)
         return checklists
 
     async def create_comment(self, card_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanCommentCreate
+
         self._enforce(self._local_action_id("create_comment"))
         request = KanbanCommentCreate(**dict(request_data or {}))
         now = self._now()
         with self.transaction() as conn:
-            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (card_id,), entity="card", entity_id=card_id)
+            card = self._row(
+                conn,
+                "SELECT * FROM kanban_cards WHERE id = ?",
+                (card_id,),
+                entity="card",
+                entity_id=card_id,
+            )
             cursor = conn.execute(
                 "INSERT INTO kanban_comments (uuid, card_id, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
                 (self._new_uuid(), card_id, request.content, now, now),
             )
             comment_id = int(cursor.lastrowid)
-            self._record_activity(conn, board_id=card["board_id"], list_id=card["list_id"], card_id=card_id, action_type="comment", entity_type="comment", entity_id=comment_id)
+            self._record_activity(
+                conn,
+                board_id=card["board_id"],
+                list_id=card["list_id"],
+                card_id=card_id,
+                action_type="comment",
+                entity_type="comment",
+                entity_id=comment_id,
+            )
             return self._comment_row_to_dict(
-                self._row(conn, "SELECT * FROM kanban_comments WHERE id = ?", (comment_id,), entity="comment", entity_id=comment_id)
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_comments WHERE id = ?",
+                    (comment_id,),
+                    entity="comment",
+                    entity_id=comment_id,
+                )
             )
 
-    async def list_comments(self, card_id: int, *, include_deleted: bool = False, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+    async def list_comments(
+        self,
+        card_id: int,
+        *,
+        include_deleted: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
         self._enforce(self._local_action_id("list_comments"))
         where = ["card_id = ?"]
         if not include_deleted:
             where.append("is_deleted = 0")
         conn = self.connect()
         try:
-            total = conn.execute(f"SELECT COUNT(*) FROM kanban_comments WHERE {' AND '.join(where)}", (card_id,)).fetchone()[0]
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM kanban_comments WHERE {' AND '.join(where)}",
+                (card_id,),
+            ).fetchone()[0]
             rows = conn.execute(
                 f"SELECT * FROM kanban_comments WHERE {' AND '.join(where)} ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?",
                 (card_id, limit, offset),
             ).fetchall()
-            return {"comments": [self._comment_row_to_dict(row) for row in rows], "pagination": self._pagination(limit=limit, offset=offset, total=total)}
+            return {
+                "comments": [self._comment_row_to_dict(row) for row in rows],
+                "pagination": self._pagination(limit=limit, offset=offset, total=total),
+            }
         finally:
             conn.close()
 
@@ -1439,43 +2176,127 @@ class LocalKanbanService:
         conn = self.connect()
         try:
             return self._comment_row_to_dict(
-                self._row(conn, "SELECT * FROM kanban_comments WHERE id = ?", (comment_id,), entity="comment", entity_id=comment_id)
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_comments WHERE id = ?",
+                    (comment_id,),
+                    entity="comment",
+                    entity_id=comment_id,
+                )
             )
         finally:
             conn.close()
 
-    async def update_comment(self, comment_id: int, request_data: Any) -> dict[str, Any]:
+    async def update_comment(
+        self, comment_id: int, request_data: Any
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanCommentUpdate
+
         self._enforce(self._local_action_id("update_comment"))
         request = KanbanCommentUpdate(**dict(request_data or {}))
         with self.transaction() as conn:
-            row = self._row(conn, "SELECT * FROM kanban_comments WHERE id = ?", (comment_id,), entity="comment", entity_id=comment_id)
-            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (row["card_id"],), entity="card", entity_id=row["card_id"])
-            conn.execute("UPDATE kanban_comments SET content = ?, updated_at = ?, version = version + 1 WHERE id = ?", (request.content, self._now(), comment_id))
-            self._record_activity(conn, board_id=card["board_id"], list_id=card["list_id"], card_id=card["id"], action_type="comment", entity_type="comment", entity_id=comment_id)
+            row = self._row(
+                conn,
+                "SELECT * FROM kanban_comments WHERE id = ?",
+                (comment_id,),
+                entity="comment",
+                entity_id=comment_id,
+            )
+            card = self._row(
+                conn,
+                "SELECT * FROM kanban_cards WHERE id = ?",
+                (row["card_id"],),
+                entity="card",
+                entity_id=row["card_id"],
+            )
+            conn.execute(
+                "UPDATE kanban_comments SET content = ?, updated_at = ?, version = version + 1 WHERE id = ?",
+                (request.content, self._now(), comment_id),
+            )
+            self._record_activity(
+                conn,
+                board_id=card["board_id"],
+                list_id=card["list_id"],
+                card_id=card["id"],
+                action_type="comment",
+                entity_type="comment",
+                entity_id=comment_id,
+            )
             return self._comment_row_to_dict(
-                self._row(conn, "SELECT * FROM kanban_comments WHERE id = ?", (comment_id,), entity="comment", entity_id=comment_id)
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_comments WHERE id = ?",
+                    (comment_id,),
+                    entity="comment",
+                    entity_id=comment_id,
+                )
             )
 
     async def delete_comment(self, comment_id: int) -> dict[str, Any]:
         self._enforce(self._local_action_id("delete_comment"))
         with self.transaction() as conn:
-            row = self._row(conn, "SELECT * FROM kanban_comments WHERE id = ?", (comment_id,), entity="comment", entity_id=comment_id)
-            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (row["card_id"],), entity="card", entity_id=row["card_id"])
-            conn.execute("UPDATE kanban_comments SET is_deleted = 1, deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ?", (self._now(), self._now(), comment_id))
-            self._record_activity(conn, board_id=card["board_id"], list_id=card["list_id"], card_id=card["id"], action_type="comment", entity_type="comment", entity_id=comment_id, details={"deleted": True})
+            row = self._row(
+                conn,
+                "SELECT * FROM kanban_comments WHERE id = ?",
+                (comment_id,),
+                entity="comment",
+                entity_id=comment_id,
+            )
+            card = self._row(
+                conn,
+                "SELECT * FROM kanban_cards WHERE id = ?",
+                (row["card_id"],),
+                entity="card",
+                entity_id=row["card_id"],
+            )
+            conn.execute(
+                "UPDATE kanban_comments SET is_deleted = 1, deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ?",
+                (self._now(), self._now(), comment_id),
+            )
+            self._record_activity(
+                conn,
+                board_id=card["board_id"],
+                list_id=card["list_id"],
+                card_id=card["id"],
+                action_type="comment",
+                entity_type="comment",
+                entity_id=comment_id,
+                details={"deleted": True},
+            )
             return self._comment_row_to_dict(
-                self._row(conn, "SELECT * FROM kanban_comments WHERE id = ?", (comment_id,), entity="comment", entity_id=comment_id)
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_comments WHERE id = ?",
+                    (comment_id,),
+                    entity="comment",
+                    entity_id=comment_id,
+                )
             )
 
     async def bulk_move_cards(self, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanBulkMoveCardsRequest
+
         self._enforce(self._local_action_id("bulk_move_cards"))
         request = KanbanBulkMoveCardsRequest(**dict(request_data or {}))
         cards = []
         for card_id in request.card_ids:
-            cards.append(await self.move_card(card_id, {"target_list_id": request.target_list_id, "position": request.position}))
+            cards.append(
+                await self.move_card(
+                    card_id,
+                    {
+                        "target_list_id": request.target_list_id,
+                        "position": request.position,
+                    },
+                )
+            )
         return {"success": True, "moved_count": len(cards), "cards": cards}
 
     async def bulk_archive_cards(self, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanBulkArchiveCardsRequest
+
         self._enforce(self._local_action_id("bulk_archive_cards"))
         request = KanbanBulkArchiveCardsRequest(**dict(request_data or {}))
         for card_id in request.card_ids:
@@ -1483,6 +2304,9 @@ class LocalKanbanService:
         return {"success": True, "archived_count": len(request.card_ids)}
 
     async def bulk_unarchive_cards(self, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanBulkArchiveCardsRequest
+
         self._enforce(self._local_action_id("bulk_unarchive_cards"))
         request = KanbanBulkArchiveCardsRequest(**dict(request_data or {}))
         for card_id in request.card_ids:
@@ -1490,6 +2314,9 @@ class LocalKanbanService:
         return {"success": True, "unarchived_count": len(request.card_ids)}
 
     async def bulk_delete_cards(self, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanBulkDeleteCardsRequest
+
         self._enforce(self._local_action_id("bulk_delete_cards"))
         request = KanbanBulkDeleteCardsRequest(**dict(request_data or {}))
         for card_id in request.card_ids:
@@ -1497,6 +2324,9 @@ class LocalKanbanService:
         return {"success": True, "deleted_count": len(request.card_ids)}
 
     async def bulk_label_cards(self, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanBulkLabelCardsRequest
+
         self._enforce(self._local_action_id("bulk_label_cards"))
         request = KanbanBulkLabelCardsRequest(**dict(request_data or {}))
         for card_id in request.card_ids:
@@ -1526,9 +2356,17 @@ class LocalKanbanService:
             limit=limit,
             offset=offset,
         )
-        return {"cards": cards, "pagination": self._pagination(limit=limit, offset=offset, total=total)}
+        return {
+            "cards": cards,
+            "pagination": self._pagination(limit=limit, offset=offset, total=total),
+        }
 
-    async def copy_card_with_checklists(self, card_id: int, request_data: Any) -> dict[str, Any]:
+    async def copy_card_with_checklists(
+        self, card_id: int, request_data: Any
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanCardCopyWithChecklistsRequest
+
         self._enforce(self._local_action_id("copy_card_with_checklists"))
         request = KanbanCardCopyWithChecklistsRequest(**dict(request_data or {}))
         copied = await self.copy_card(
@@ -1542,8 +2380,13 @@ class LocalKanbanService:
         )
         conn = self.connect()
         try:
-            checklist_rows = conn.execute("SELECT * FROM kanban_checklists WHERE card_id = ? ORDER BY position ASC", (card_id,)).fetchall()
-            label_rows = conn.execute("SELECT label_id FROM kanban_card_labels WHERE card_id = ?", (card_id,)).fetchall()
+            checklist_rows = conn.execute(
+                "SELECT * FROM kanban_checklists WHERE card_id = ? ORDER BY position ASC",
+                (card_id,),
+            ).fetchall()
+            label_rows = conn.execute(
+                "SELECT label_id FROM kanban_card_labels WHERE card_id = ?", (card_id,)
+            ).fetchall()
         finally:
             conn.close()
         if request.copy_labels:
@@ -1551,14 +2394,30 @@ class LocalKanbanService:
                 await self.assign_label_to_card(copied["id"], row["label_id"])
         if request.copy_checklists:
             for checklist_row in checklist_rows:
-                created = await self.create_checklist(copied["id"], {"name": checklist_row["name"], "position": checklist_row["position"]})
+                created = await self.create_checklist(
+                    copied["id"],
+                    {
+                        "name": checklist_row["name"],
+                        "position": checklist_row["position"],
+                    },
+                )
                 conn = self.connect()
                 try:
-                    item_rows = conn.execute("SELECT * FROM kanban_checklist_items WHERE checklist_id = ? ORDER BY position ASC", (checklist_row["id"],)).fetchall()
+                    item_rows = conn.execute(
+                        "SELECT * FROM kanban_checklist_items WHERE checklist_id = ? ORDER BY position ASC",
+                        (checklist_row["id"],),
+                    ).fetchall()
                 finally:
                     conn.close()
                 for item_row in item_rows:
-                    await self.create_checklist_item(created["id"], {"name": item_row["name"], "position": item_row["position"], "checked": bool(item_row["checked"])})
+                    await self.create_checklist_item(
+                        created["id"],
+                        {
+                            "name": item_row["name"],
+                            "position": item_row["position"],
+                            "checked": bool(item_row["checked"]),
+                        },
+                    )
         return copied
 
     def _search_cards_raw(
@@ -1582,7 +2441,9 @@ class LocalKanbanService:
             where.append("cards.priority = ?")
             params.append(priority)
         if query:
-            where.append("(cards.title LIKE ? OR COALESCE(cards.description, '') LIKE ?)")
+            where.append(
+                "(cards.title LIKE ? OR COALESCE(cards.description, '') LIKE ?)"
+            )
             params.extend([f"%{query}%", f"%{query}%"])
         where_sql = " AND ".join(where)
         conn = self.connect()
@@ -1602,8 +2463,20 @@ class LocalKanbanService:
     def _search_result_for_card(self, card: dict[str, Any]) -> dict[str, Any]:
         conn = self.connect()
         try:
-            board = self._row(conn, "SELECT * FROM kanban_boards WHERE id = ?", (card["board_id"],), entity="board", entity_id=card["board_id"])
-            list_row = self._row(conn, "SELECT * FROM kanban_lists WHERE id = ?", (card["list_id"],), entity="list", entity_id=card["list_id"])
+            board = self._row(
+                conn,
+                "SELECT * FROM kanban_boards WHERE id = ?",
+                (card["board_id"],),
+                entity="board",
+                entity_id=card["board_id"],
+            )
+            list_row = self._row(
+                conn,
+                "SELECT * FROM kanban_lists WHERE id = ?",
+                (card["list_id"],),
+                entity="list",
+                entity_id=card["list_id"],
+            )
         finally:
             conn.close()
         labels = []
@@ -1625,15 +2498,35 @@ class LocalKanbanService:
         }
 
     async def search_cards_basic(self, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanCardSearchRequest
+
         self._enforce(self._local_action_id("search_cards_basic"))
         request = KanbanCardSearchRequest(**dict(request_data or {}))
-        cards, total = self._search_cards_raw(query=request.query, board_id=request.board_id, limit=request.limit, offset=request.offset)
-        return {"cards": cards, "pagination": self._pagination(limit=request.limit, offset=request.offset, total=total)}
+        cards, total = self._search_cards_raw(
+            query=request.query,
+            board_id=request.board_id,
+            limit=request.limit,
+            offset=request.offset,
+        )
+        return {
+            "cards": cards,
+            "pagination": self._pagination(
+                limit=request.limit, offset=request.offset, total=total
+            ),
+        }
 
-    async def search_cards_basic_get(self, query: str = "", **kwargs: Any) -> dict[str, Any]:
-        return await self.search_cards_basic({"query": query or kwargs.get("q") or kwargs.get("query", ""), **kwargs})
+    async def search_cards_basic_get(
+        self, query: str = "", **kwargs: Any
+    ) -> dict[str, Any]:
+        return await self.search_cards_basic(
+            {"query": query or kwargs.get("q") or kwargs.get("query", ""), **kwargs}
+        )
 
     async def search_cards(self, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanSearchRequest
+
         self._enforce(self._local_action_id("search_cards"))
         request = KanbanSearchRequest(**dict(request_data or {}))
         effective_mode = "fts" if self.get_storage_status()["fts_available"] else "like"
@@ -1650,13 +2543,18 @@ class LocalKanbanService:
             "query": request.query,
             "search_mode": request.search_mode,
             "effective_search_mode": effective_mode,
-            "local_search_degraded": request.search_mode in {"vector", "hybrid"} or effective_mode == "like",
+            "local_search_degraded": request.search_mode in {"vector", "hybrid"}
+            or effective_mode == "like",
             "results": results,
-            "pagination": self._pagination(limit=request.limit, offset=request.offset, total=total),
+            "pagination": self._pagination(
+                limit=request.limit, offset=request.offset, total=total
+            ),
         }
 
     async def search_cards_get(self, query: str = "", **kwargs: Any) -> dict[str, Any]:
-        return await self.search_cards({"query": query or kwargs.get("q") or kwargs.get("query", ""), **kwargs})
+        return await self.search_cards(
+            {"query": query or kwargs.get("q") or kwargs.get("query", ""), **kwargs}
+        )
 
     async def get_search_status(self) -> dict[str, Any]:
         self._enforce(self._local_action_id("get_search_status"))
@@ -1669,17 +2567,32 @@ class LocalKanbanService:
         }
 
     async def add_card_link(self, card_id: int, request_data: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanCardLinkCreate
+
         self._enforce(self._local_action_id("add_card_link"))
         request = KanbanCardLinkCreate(**dict(request_data or {}))
         now = self._now()
         with self.transaction() as conn:
-            card = self._row(conn, "SELECT * FROM kanban_cards WHERE id = ?", (card_id,), entity="card", entity_id=card_id)
+            card = self._row(
+                conn,
+                "SELECT * FROM kanban_cards WHERE id = ?",
+                (card_id,),
+                entity="card",
+                entity_id=card_id,
+            )
             cursor = conn.execute(
                 """
                 INSERT OR IGNORE INTO kanban_card_links (uuid, card_id, linked_type, linked_id, created_at)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (self._new_uuid(), card_id, request.linked_type, request.linked_id, now),
+                (
+                    self._new_uuid(),
+                    card_id,
+                    request.linked_type,
+                    request.linked_id,
+                    now,
+                ),
             )
             if cursor.lastrowid:
                 link_id = int(cursor.lastrowid)
@@ -1688,16 +2601,33 @@ class LocalKanbanService:
                     "SELECT id FROM kanban_card_links WHERE card_id = ? AND linked_type = ? AND linked_id = ?",
                     (card_id, request.linked_type, request.linked_id),
                 ).fetchone()["id"]
-            self._record_activity(conn, board_id=card["board_id"], list_id=card["list_id"], card_id=card_id, action_type="link", entity_type="card_link", entity_id=link_id)
+            self._record_activity(
+                conn,
+                board_id=card["board_id"],
+                list_id=card["list_id"],
+                card_id=card_id,
+                action_type="link",
+                entity_type="card_link",
+                entity_id=link_id,
+            )
             return self._link_row_to_dict(
-                self._row(conn, "SELECT * FROM kanban_card_links WHERE id = ?", (link_id,), entity="card_link", entity_id=link_id)
+                self._row(
+                    conn,
+                    "SELECT * FROM kanban_card_links WHERE id = ?",
+                    (link_id,),
+                    entity="card_link",
+                    entity_id=link_id,
+                )
             )
 
     async def list_card_links(self, card_id: int) -> dict[str, Any]:
         self._enforce(self._local_action_id("list_card_links"))
         conn = self.connect()
         try:
-            rows = conn.execute("SELECT * FROM kanban_card_links WHERE card_id = ? ORDER BY id ASC", (card_id,)).fetchall()
+            rows = conn.execute(
+                "SELECT * FROM kanban_card_links WHERE card_id = ? ORDER BY id ASC",
+                (card_id,),
+            ).fetchall()
             return {"links": [self._link_row_to_dict(row) for row in rows]}
         finally:
             conn.close()
@@ -1706,23 +2636,36 @@ class LocalKanbanService:
         self._enforce(self._local_action_id("get_card_link_counts"))
         conn = self.connect()
         try:
-            rows = conn.execute("SELECT linked_type, COUNT(*) AS count FROM kanban_card_links WHERE card_id = ? GROUP BY linked_type", (card_id,)).fetchall()
+            rows = conn.execute(
+                "SELECT linked_type, COUNT(*) AS count FROM kanban_card_links WHERE card_id = ? GROUP BY linked_type",
+                (card_id,),
+            ).fetchall()
             counts = {"media": 0, "note": 0}
             counts.update({row["linked_type"]: row["count"] for row in rows})
             return counts
         finally:
             conn.close()
 
-    async def remove_card_link(self, card_id: int, linked_type: str, linked_id: str) -> dict[str, Any]:
+    async def remove_card_link(
+        self, card_id: int, linked_type: str, linked_id: str
+    ) -> dict[str, Any]:
         self._enforce(self._local_action_id("remove_card_link"))
         with self.transaction() as conn:
-            conn.execute("DELETE FROM kanban_card_links WHERE card_id = ? AND linked_type = ? AND linked_id = ?", (card_id, linked_type, str(linked_id)))
+            conn.execute(
+                "DELETE FROM kanban_card_links WHERE card_id = ? AND linked_type = ? AND linked_id = ?",
+                (card_id, linked_type, str(linked_id)),
+            )
             return {"detail": "removed"}
 
-    async def remove_card_link_by_id_for_card(self, card_id: int, link_id: int) -> dict[str, Any]:
+    async def remove_card_link_by_id_for_card(
+        self, card_id: int, link_id: int
+    ) -> dict[str, Any]:
         self._enforce(self._local_action_id("remove_card_link_by_id_for_card"))
         with self.transaction() as conn:
-            conn.execute("DELETE FROM kanban_card_links WHERE card_id = ? AND id = ?", (card_id, link_id))
+            conn.execute(
+                "DELETE FROM kanban_card_links WHERE card_id = ? AND id = ?",
+                (card_id, link_id),
+            )
             return {"detail": "removed"}
 
     async def remove_card_link_by_id(self, link_id: int) -> dict[str, Any]:
@@ -1731,29 +2674,49 @@ class LocalKanbanService:
             conn.execute("DELETE FROM kanban_card_links WHERE id = ?", (link_id,))
             return {"detail": "removed"}
 
-    async def bulk_add_card_links(self, card_id: int, request_data: Any) -> dict[str, Any]:
+    async def bulk_add_card_links(
+        self, card_id: int, request_data: Any
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanBulkCardLinksRequest
+
         self._enforce(self._local_action_id("bulk_add_card_links"))
         request = KanbanBulkCardLinksRequest(**dict(request_data or {}))
         links = []
         skipped = 0
         for link_request in request.links:
-            before = (await self.get_card_link_counts(card_id))[link_request.linked_type]
+            before = (await self.get_card_link_counts(card_id))[
+                link_request.linked_type
+            ]
             link = await self.add_card_link(card_id, link_request.model_dump())
             after = (await self.get_card_link_counts(card_id))[link_request.linked_type]
             skipped += 1 if after == before else 0
             links.append(link)
-        return {"added_count": len(links) - skipped, "skipped_count": skipped, "links": links}
+        return {
+            "added_count": len(links) - skipped,
+            "skipped_count": skipped,
+            "links": links,
+        }
 
-    async def bulk_remove_card_links(self, card_id: int, request_data: Any) -> dict[str, Any]:
+    async def bulk_remove_card_links(
+        self, card_id: int, request_data: Any
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import KanbanBulkCardLinksRequest
+
         self._enforce(self._local_action_id("bulk_remove_card_links"))
         request = KanbanBulkCardLinksRequest(**dict(request_data or {}))
         removed = 0
         for link_request in request.links:
-            await self.remove_card_link(card_id, link_request.linked_type, link_request.linked_id)
+            await self.remove_card_link(
+                card_id, link_request.linked_type, link_request.linked_id
+            )
             removed += 1
         return {"removed_count": removed}
 
-    async def list_cards_by_linked_content(self, linked_type: str, linked_id: str, **_: Any) -> dict[str, Any]:
+    async def list_cards_by_linked_content(
+        self, linked_type: str, linked_id: str, **_: Any
+    ) -> dict[str, Any]:
         self._enforce(self._local_action_id("list_cards_by_linked_content"))
         conn = self.connect()
         try:
@@ -1786,6 +2749,10 @@ class LocalKanbanService:
                 }
                 for row in rows
             ]
-            return {"linked_type": linked_type, "linked_id": str(linked_id), "cards": cards}
+            return {
+                "linked_type": linked_type,
+                "linked_id": str(linked_id),
+                "cards": cards,
+            }
         finally:
             conn.close()

@@ -106,7 +106,9 @@ class NotesScopeService:
         if self._normalize_scope(scope) != ScopeType.SERVER_NOTE:
             raise ValueError("Notes graph operations are currently server-backed.")
 
-    def list_unsupported_capabilities(self, *, scope: ScopeType | str) -> list[dict[str, Any]]:
+    def list_unsupported_capabilities(
+        self, *, scope: ScopeType | str
+    ) -> list[dict[str, Any]]:
         normalized_scope = self._normalize_scope(scope)
         if normalized_scope == ScopeType.LOCAL_NOTE:
             return [dict(_LOCAL_GRAPH_UNSUPPORTED_CAPABILITY)]
@@ -126,7 +128,9 @@ class NotesScopeService:
     ) -> dict[str, Any]:
         normalized_scope = self._normalize_scope(scope)
         if normalized_scope == ScopeType.LOCAL_NOTE:
-            raise ValueError("Local note mirror reports require a server or workspace scope.")
+            raise ValueError(
+                "Local note mirror reports require a server or workspace scope."
+            )
         if normalized_scope == ScopeType.WORKSPACE:
             workspace_id = self._require_workspace_id(workspace_id)
             domain = "workspace_notes"
@@ -180,10 +184,14 @@ class NotesScopeService:
             "link_note_to_keyword",
             "unlink_note_from_keyword",
         )
-        if service is None or not all(hasattr(service, name) for name in required_methods):
+        if service is None or not all(
+            hasattr(service, name) for name in required_methods
+        ):
             return normalized_keywords
 
-        requested_keyword_map = {keyword.lower(): keyword for keyword in normalized_keywords}
+        requested_keyword_map = {
+            keyword.lower(): keyword for keyword in normalized_keywords
+        }
         existing_keyword_rows = service.get_keywords_for_note(user_id, note_id) or []
         existing_keyword_map = {
             str(row.get("keyword", "")).strip().lower(): row.get("id")
@@ -195,7 +203,9 @@ class NotesScopeService:
             if keyword_key in existing_keyword_map:
                 continue
             keyword_row = service.get_keyword_by_text(user_id, keyword_key)
-            keyword_id = keyword_row.get("id") if isinstance(keyword_row, dict) else None
+            keyword_id = (
+                keyword_row.get("id") if isinstance(keyword_row, dict) else None
+            )
             if keyword_id is None:
                 keyword_id = service.add_keyword(user_id, keyword_key)
             if keyword_id is not None:
@@ -221,7 +231,9 @@ class NotesScopeService:
 
     @staticmethod
     def _keyword_label(keyword: Mapping[str, Any]) -> str:
-        return str(keyword.get("keyword") or keyword.get("text") or keyword.get("name") or "")
+        return str(
+            keyword.get("keyword") or keyword.get("text") or keyword.get("name") or ""
+        )
 
     def _build_local_notes_graph(
         self,
@@ -305,15 +317,21 @@ class NotesScopeService:
             edges[edge_id] = edge
             for endpoint in (edge.get("source"), edge.get("target")):
                 if endpoint in nodes:
-                    nodes[str(endpoint)]["degree"] = int(nodes[str(endpoint)].get("degree") or 0) + 1
+                    nodes[str(endpoint)]["degree"] = (
+                        int(nodes[str(endpoint)].get("degree") or 0) + 1
+                    )
                     if nodes[str(endpoint)].get("type") == "tag":
-                        nodes[str(endpoint)]["tag_count"] = int(nodes[str(endpoint)].get("tag_count") or 0) + 1
+                        nodes[str(endpoint)]["tag_count"] = (
+                            int(nodes[str(endpoint)].get("tag_count") or 0) + 1
+                        )
 
         if center_note_id:
             center_note = service.get_note_by_id(user_id, center_note_id)
             seed_notes = [center_note] if isinstance(center_note, Mapping) else []
         elif hasattr(service, "list_notes"):
-            seed_notes = list(service.list_notes(user_id, limit=node_limit, offset=0) or [])
+            seed_notes = list(
+                service.list_notes(user_id, limit=node_limit, offset=0) or []
+            )
         else:
             seed_notes = []
 
@@ -385,13 +403,18 @@ class NotesScopeService:
                     continue
                 add_edge(
                     {
-                        "id": str(manual_link.get("id") or f"local:manual:{source}:{target}"),
+                        "id": str(
+                            manual_link.get("id") or f"local:manual:{source}:{target}"
+                        ),
                         "source": source,
                         "target": target,
                         "type": "manual",
                         "directed": bool(manual_link.get("directed", False)),
                         "weight": float(manual_link.get("weight", 1.0)),
-                        "label": str((manual_link.get("metadata") or {}).get("label") or "Manual link"),
+                        "label": str(
+                            (manual_link.get("metadata") or {}).get("label")
+                            or "Manual link"
+                        ),
                         "metadata": dict(manual_link.get("metadata") or {}),
                     }
                 )
@@ -639,7 +662,10 @@ class NotesScopeService:
             sync_v2_profile.get("workspace_scope"),
             allow_none=True,
         )
-        if sync_v2_profile.get("authenticated_principal_id") and authenticated_principal_id is None:
+        if (
+            sync_v2_profile.get("authenticated_principal_id")
+            and authenticated_principal_id is None
+        ):
             return None
         if sync_v2_profile.get("workspace_scope") and workspace_scope is None:
             return None
@@ -684,14 +710,39 @@ class NotesScopeService:
         user_id: Optional[str] = None,
         workspace_id: Optional[str] = None,
         workspace_notes: Optional[Sequence[dict[str, Any]]] = None,
+        fts_match_query: Optional[str] = None,
+        id_allowlist: Optional[Sequence[str]] = None,
     ) -> Any:
+        """Route a notes search to the scope's backing service.
+
+        Args:
+            fts_match_query: Optional pre-built FTS5 MATCH string for the
+                local-notes seam (e.g. Library keyword search's
+                plural/singular-widened query). Ignored for server and
+                workspace scopes; when omitted the local backend keeps its
+                exact-phrase behavior.
+            id_allowlist: Optional note ids to restrict results to
+                (rag-scope narrowing, task-6). Only meaningful for the
+                local-notes seam -- ignored for server/workspace scopes,
+                which are out of scope for conversation-level RAG scoping.
+        """
         normalized_scope = self._normalize_scope(scope)
         self._enforce_policy(self._note_action_id(normalized_scope, "list"))
         if normalized_scope == ScopeType.LOCAL_NOTE:
+            # Forward only when provided so existing local backends (and
+            # test fakes) without the parameter keep working unchanged.
+            local_kwargs = (
+                {"fts_match_query": fts_match_query}
+                if fts_match_query is not None
+                else {}
+            )
+            if id_allowlist is not None:
+                local_kwargs["id_allowlist"] = id_allowlist
             return self.local_notes_service.search_notes(
                 self._require_user_id(user_id),
                 query,
                 limit=limit,
+                **local_kwargs,
             )
         if normalized_scope == ScopeType.SERVER_NOTE:
             return await self.server_service.search_server_notes(
@@ -721,7 +772,9 @@ class NotesScopeService:
                 limit=limit,
             )
         if normalized_scope == ScopeType.SERVER_NOTE:
-            return await self.server_service.list_server_notes(limit=limit, offset=offset)
+            return await self.server_service.list_server_notes(
+                limit=limit, offset=offset
+            )
         raise ValueError("Workspace notes require a selected workspace context.")
 
     async def count_notes(
@@ -882,8 +935,10 @@ class NotesScopeService:
             return await self.server_service.get_server_note(str(note_id))
 
         resolved_workspace_id = self._require_workspace_id(workspace_id)
-        notes = list(workspace_notes) if workspace_notes is not None else await self.server_service.list_workspace_notes(
-            resolved_workspace_id
+        notes = (
+            list(workspace_notes)
+            if workspace_notes is not None
+            else await self.server_service.list_workspace_notes(resolved_workspace_id)
         )
         for note in notes:
             if str(note.get("id")) == str(note_id):
@@ -899,7 +954,9 @@ class NotesScopeService:
         normalized_scope = self._normalize_scope(scope)
         self._enforce_policy("notes.workspace.detail.server")
         if normalized_scope != ScopeType.WORKSPACE:
-            raise ValueError("Workspace context can only be loaded for workspace scope.")
+            raise ValueError(
+                "Workspace context can only be loaded for workspace scope."
+            )
         return await self.server_service.load_workspace_context(
             self._require_workspace_id(workspace_id)
         )
@@ -909,12 +966,16 @@ class NotesScopeService:
         self._enforce_policy(self._graph_action_id("list"))
         return await self.server_service.get_notes_graph(**kwargs)
 
-    async def get_note_neighbors(self, *, scope: ScopeType | str, note_id: str, **kwargs: Any) -> Any:
+    async def get_note_neighbors(
+        self, *, scope: ScopeType | str, note_id: str, **kwargs: Any
+    ) -> Any:
         self._require_server_graph_scope(scope)
         self._enforce_policy(self._graph_action_id("detail"))
         return await self.server_service.get_note_neighbors(note_id, **kwargs)
 
-    async def create_note_link(self, *, scope: ScopeType | str, note_id: str, **kwargs: Any) -> Any:
+    async def create_note_link(
+        self, *, scope: ScopeType | str, note_id: str, **kwargs: Any
+    ) -> Any:
         self._require_server_graph_scope(scope)
         self._enforce_policy(self._graph_action_id("create"))
         return await self.server_service.create_note_link(note_id, **kwargs)

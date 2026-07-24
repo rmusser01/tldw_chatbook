@@ -7,13 +7,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..tldw_api.feedback_schemas import ExplicitFeedbackRequest
-
 
 class LocalFeedbackService:
     """Persist feedback for local/offline Chatbook conversations and RAG queries."""
 
-    def __init__(self, *, store_path: str | Path, policy_enforcer: Any | None = None) -> None:
+    def __init__(
+        self, *, store_path: str | Path, policy_enforcer: Any | None = None
+    ) -> None:
         self.store_path = Path(store_path).expanduser()
         self.policy_enforcer = policy_enforcer
         self._records: list[dict[str, Any]] = []
@@ -40,7 +40,9 @@ class LocalFeedbackService:
             self._records = []
             self._next_id = 1
             return
-        records = payload.get("items", payload) if isinstance(payload, dict) else payload
+        records = (
+            payload.get("items", payload) if isinstance(payload, dict) else payload
+        )
         if not isinstance(records, list):
             return
         self._records = [dict(item) for item in records if isinstance(item, dict)]
@@ -90,11 +92,15 @@ class LocalFeedbackService:
                 return record
         raise ValueError(f"local_feedback_not_found:{feedback_id}")
 
-    def _find_by_idempotency_key(self, idempotency_key: str | None) -> dict[str, Any] | None:
+    def _find_by_idempotency_key(
+        self, idempotency_key: str | None
+    ) -> dict[str, Any] | None:
         if not idempotency_key:
             return None
         for record in self._records:
-            if record.get("idempotency_key") == idempotency_key and not record.get("deleted"):
+            if record.get("idempotency_key") == idempotency_key and not record.get(
+                "deleted"
+            ):
                 return record
         return None
 
@@ -116,6 +122,9 @@ class LocalFeedbackService:
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         self._enforce("feedback.create.local")
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.feedback_schemas import ExplicitFeedbackRequest
+
         request = ExplicitFeedbackRequest(
             conversation_id=conversation_id,
             message_id=message_id,
@@ -159,7 +168,8 @@ class LocalFeedbackService:
         records = [
             self._record_view(record)
             for record in self._records
-            if not record.get("deleted") and record.get("conversation_id") == conversation_id
+            if not record.get("deleted")
+            and record.get("conversation_id") == conversation_id
         ]
         return {"ok": True, "feedback": records}
 

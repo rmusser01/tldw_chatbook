@@ -3,7 +3,7 @@
 #
 # Imports
 import pytest
-from unittest.mock import MagicMock, patch
+
 #
 # Local Imports
 from tldw_chatbook.Utils.token_counter import (
@@ -11,44 +11,46 @@ from tldw_chatbook.Utils.token_counter import (
     get_model_token_limit,
     estimate_remaining_tokens,
     format_token_display,
-    TIKTOKEN_AVAILABLE
+    TIKTOKEN_AVAILABLE,
 )
+from tldw_chatbook.Utils.token_counter import estimate_tokens, count_tokens_messages
 #
 ########################################################################################################################
 #
 # Test Functions:
 
+
 class TestTokenCounter:
     """Test token counting functionality"""
-    
+
     def test_count_tokens_empty_history(self):
         """Test token counting with empty history"""
         result = count_tokens_chat_history([], model="gpt-3.5-turbo")
         assert result == 0
-    
+
     def test_count_tokens_single_message(self):
         """Test token counting with single message"""
         history = [{"role": "user", "content": "Hello world"}]
         result = count_tokens_chat_history(history, model="gpt-3.5-turbo")
         assert result > 0  # Should count tokens for message + overhead
-    
+
     def test_count_tokens_tuple_format(self):
         """Test token counting with tuple format history"""
         history = [("Hello from user", "Hello from assistant")]
         result = count_tokens_chat_history(history, model="gpt-3.5-turbo")
         assert result > 0
-    
+
     def test_get_model_token_limit_known_model(self):
         """Test getting token limit for known models"""
         assert get_model_token_limit("gpt-4") == 8192
         assert get_model_token_limit("gpt-4-32k") == 32768
         assert get_model_token_limit("gpt-4-turbo") == 128000
         assert get_model_token_limit("claude-3-opus-20240229") == 200000
-    
+
     def test_get_model_token_limit_unknown_model(self):
         """Test getting token limit for unknown model"""
         assert get_model_token_limit("unknown-model") == 4096  # Default
-    
+
     def test_get_model_token_limit_by_prefix(self):
         """Test getting token limit by model prefix"""
         assert get_model_token_limit("gpt-4-some-variant") == 8192
@@ -56,23 +58,58 @@ class TestTokenCounter:
         assert get_model_token_limit("claude-3-opus-20240229") == 200000
         # Unknown claude variant falls back to default
         assert get_model_token_limit("claude-3-opus-custom") == 4096
-    
+
     def test_estimate_remaining_tokens(self):
         """Test estimating remaining tokens"""
         history = [
             {"role": "user", "content": "Hello"},
-            {"role": "assistant", "content": "Hi there"}
+            {"role": "assistant", "content": "Hi there"},
         ]
         used, limit, remaining = estimate_remaining_tokens(
-            history, 
-            model="gpt-3.5-turbo",
-            max_tokens_response=1000
+            history, model="gpt-3.5-turbo", max_tokens_response=1000
         )
-        
         assert used > 0
-        assert limit == 4096  # GPT-3.5 default
-        assert remaining < limit - 1000  # Less than limit minus response reservation
-    
+        assert limit == 16385  # gpt-3.5-turbo refreshed input window
+        assert remaining < limit - 1000
+
+    def test_get_model_token_limit_current_models(self):
+        assert get_model_token_limit("gpt-4o", "openai") == 128000
+        assert get_model_token_limit("claude-3-5-sonnet-20241022", "anthropic") == 200000
+        assert get_model_token_limit("gemini-1.5-pro", "google") == 2097152
+        assert get_model_token_limit("mistral-large", "mistral") == 128000
+
+    def test_get_model_token_limit_prefers_capabilities_over_table(self, monkeypatch):
+        # Capabilities must be consulted before the table: patch get_context_window
+        # to a sentinel and confirm even a model WITH a table entry returns it.
+        import tldw_chatbook.model_capabilities as mc
+        monkeypatch.setattr(mc, "get_context_window", lambda provider, model: 999999)
+        assert get_model_token_limit("gpt-4", "openai") == 999999  # table would say 8192
+
+    def test_get_model_token_limit_longest_prefix_wins(self):
+        # No capability pattern matches "gpt-4-32k-custom"; both "gpt-4" (8192) and
+        # "gpt-4-32k" (32768) are table prefixes, so the LONGEST must win.
+        assert get_model_token_limit("gpt-4-32k-custom", "openai") == 32768
+
+    def test_get_model_token_limit_anthropic_default_bumped(self):
+        # Unknown modern Claude falls back to the 200k floor, not the stale 100k.
+        assert get_model_token_limit("claude-99-future", "anthropic") == 200000
+
+    def test_get_model_token_limit_openrouter_resolves_upstream(self):
+        # OpenRouter IDs are "upstream_provider/model"; resolve the upstream window
+        # instead of the generic 4096 default. (Qodo review #5.)
+        assert get_model_token_limit("openai/gpt-4o-mini", "openrouter") == 128000
+        assert get_model_token_limit("openai/gpt-4o-mini", "OpenRouter") == 128000
+        assert get_model_token_limit("anthropic/claude-3.7-sonnet", "openrouter") == 200000
+        assert get_model_token_limit("google/gemini-2.0-flash-001", "openrouter") == 1048576
+
+    def test_get_model_token_limit_provider_casing_insensitive(self):
+        # TitleCase provider must resolve the same conservative default as lowercase.
+        # (Qodo review #6 — provider_defaults lookup was case-sensitive.)
+        assert get_model_token_limit("unknown-model", "Anthropic") == \
+            get_model_token_limit("unknown-model", "anthropic") == 200000
+        assert get_model_token_limit("unknown-model", "OpenAI") == \
+            get_model_token_limit("unknown-model", "openai") == 4096
+
     def test_format_token_display_green(self):
         """Test token display formatting - green indicator"""
         result = format_token_display(100, 1000)
@@ -80,78 +117,136 @@ class TestTokenCounter:
         assert "100" in result
         assert "1,000" in result
         assert "10%" in result
-    
+
     def test_format_token_display_yellow(self):
         """Test token display formatting - yellow warning"""
         result = format_token_display(850, 1000)
         assert "🟡" in result
         assert "85%" in result
-    
+
     def test_format_token_display_red(self):
         """Test token display formatting - red danger"""
         result = format_token_display(980, 1000)
         assert "🔴" in result
         assert "98%" in result
-    
+
     def test_format_token_display_zero_limit(self):
         """Test token display with zero limit (edge case)"""
         result = format_token_display(100, 0)
         assert "🟢" in result  # Should handle gracefully
-    
+
     @pytest.mark.skipif(not TIKTOKEN_AVAILABLE, reason="tiktoken not installed")
     def test_tiktoken_counting(self):
         """Test accurate token counting with tiktoken if available"""
         from tldw_chatbook.Utils.token_counter import count_tokens_tiktoken
-        
+
         # Known text with predictable token count
         text = "Hello world"  # Should be 2 tokens for most models
         result = count_tokens_tiktoken(text, "gpt-3.5-turbo")
         assert result == 2
-    
+
     def test_character_estimation_fallback(self):
         """Test character-based estimation when tiktoken not available"""
         # Test with a provider that uses character estimation
         history = [{"role": "user", "content": "A" * 100}]  # 100 characters
         result = count_tokens_chat_history(history, model="unknown", provider="unknown")
-        
+
         # Should use default ratio of 0.25 tokens per char
         # Plus some overhead for message formatting
         assert result > 25  # At least 25 tokens for 100 chars
         assert result < 50  # But not too many
-    
+
     def test_provider_specific_ratios(self):
         """Test provider-specific token/character ratios"""
         text = "A" * 100
         history = [{"role": "user", "content": text}]
-        
+
         # Different providers might have different ratios
         openai_tokens = count_tokens_chat_history(history, provider="openai")
         google_tokens = count_tokens_chat_history(history, provider="google")
-        
+
         # Both should return reasonable estimates
         assert openai_tokens > 0
         assert google_tokens > 0
-    
+
     def test_system_prompt_in_estimation(self):
         """Test that system prompt is included in token estimation"""
         history = [{"role": "user", "content": "Hello"}]
-        system_prompt = "You are a helpful assistant with a very long system prompt " * 10
-        
+        system_prompt = (
+            "You are a helpful assistant with a very long system prompt " * 10
+        )
+
         used_without, _, _ = estimate_remaining_tokens(history)
-        used_with, _, _ = estimate_remaining_tokens(history, system_prompt=system_prompt)
-        
+        used_with, _, _ = estimate_remaining_tokens(
+            history, system_prompt=system_prompt
+        )
+
         assert used_with > used_without  # System prompt should add tokens
-    
+
     def test_mixed_history_formats(self):
         """Test handling of mixed history formats"""
         history = [
             ("User message", "Bot response"),  # Tuple format
             {"role": "user", "content": "Another message"},  # Dict format
-            {"role": "assistant", "content": "Another response"}
+            {"role": "assistant", "content": "Another response"},
         ]
-        
+
         result = count_tokens_chat_history(history)
         assert result > 0  # Should handle mixed formats gracefully
+
+
+class TestEstimator:
+    @pytest.fixture(autouse=True)
+    def _force_chars_path(self, monkeypatch):
+        # These tests assert the chars-floor behavior; force that path so they
+        # are deterministic regardless of whether tiktoken / a custom tokenizer
+        # happens to be installed in the running environment.
+        import tldw_chatbook.Utils.token_counter as tc
+        monkeypatch.setattr(tc, "TIKTOKEN_AVAILABLE", False)
+        monkeypatch.setattr(tc, "custom_tokenizers_available", lambda: False)
+
+    def test_empty_text_is_zero(self):
+        assert estimate_tokens("", "gpt-4o", "openai") == 0
+
+    def test_short_nonempty_text_floors_at_one(self):
+        # int() truncation must not round a short non-empty string down to 0.
+        assert estimate_tokens("hi", "gpt-4o", "openai") >= 1
+        assert estimate_tokens("a", "gpt-4o", "openai") >= 1
+
+    def test_cjk_floor_at_least_one_token_per_char(self):
+        # CJK code points are >= ~1 token each; a conservative floor never under-counts.
+        cjk = "你好世界" * 10  # 40 CJK chars
+        assert estimate_tokens(cjk, "gemini-1.5-pro", "google") >= len(cjk)
+
+    def test_cjk_punctuation_floor(self):
+        # CJK Symbols & Punctuation (U+3000-303F) must be weighted as CJK, not ASCII,
+        # so punctuation-heavy CJK text still meets the conservative floor.
+        punct = "、。" * 20  # 40 CJK-punctuation chars
+        assert estimate_tokens(punct, "gemini-1.5-pro", "google") >= len(punct)
+
+    def test_code_sample_exceeds_word_count(self):
+        code = "def f(x):\n    return [i*i for i in range(x) if i % 2 == 0]\n" * 3
+        assert estimate_tokens(code, "claude-3-5-sonnet-20241022", "anthropic") > len(code.split())
+
+    def test_ascii_100_chars_in_band(self):
+        # Keeps the pinned test_character_estimation_fallback assumptions valid.
+        assert 25 < estimate_tokens("A" * 100, "unknown", "unknown") < 50
+
+    def test_messages_and_chat_history_agree_for_one_message(self):
+        msg = [{"role": "user", "content": "hello world foo bar"}]
+        assert count_tokens_chat_history(msg, model="claude-3-5-sonnet-20241022",
+                                         provider="anthropic") == \
+            count_tokens_messages(msg, "claude-3-5-sonnet-20241022", "anthropic")
+
+    def test_chars_estimate_provider_casing_insensitive(self):
+        # The chars-path ratio lookup must be case-insensitive: "Google" (0.3)
+        # must not silently fall back to the default ratio. (Qodo review #6.)
+        text = "some plain english text " * 4
+        assert estimate_tokens(text, "gemini-1.5-pro", "Google") == \
+            estimate_tokens(text, "gemini-1.5-pro", "google")
+        # And Google's higher ratio genuinely differs from the default bucket.
+        assert estimate_tokens(text, "gemini-1.5-pro", "Google") > \
+            estimate_tokens(text, "m", "openai")
 
 
 #

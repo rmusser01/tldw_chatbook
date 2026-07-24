@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Optional
 
-from tldw_chatbook.tldw_api.prompt_chatbook_schemas import ChatbookImportRequest
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
 
 from .chatbook_creator import ChatbookCreator
@@ -19,16 +19,37 @@ from .conflict_resolver import ConflictResolution
 class LocalChatbookService:
     """Expose local chatbook import/export operations through a service contract."""
 
-    def __init__(self, db_paths: dict[str, str] | None = None, *, registry_path: str | Path | None = None):
+    def __init__(
+        self,
+        db_paths: dict[str, str] | None = None,
+        *,
+        registry_path: str | Path | None = None,
+    ):
         self.db_paths = db_paths or {}
-        self.registry_path = Path(registry_path).expanduser() if registry_path is not None else self._default_registry_path()
+        self.registry_path = (
+            Path(registry_path).expanduser()
+            if registry_path is not None
+            else self._default_registry_path()
+        )
+        # Guards every load -> mutate -> save span against overlapping registry
+        # read-modify-writes from concurrent OS threads (e.g. two overlapping
+        # `asyncio.run(...)` exports on separate `@work(thread=True)` workers).
+        self._registry_lock = threading.Lock()
 
     def _default_registry_path(self) -> Path:
         for key in ("Prompts", "ChaChaNotes", "Media"):
             db_path = self.db_paths.get(key)
             if db_path:
-                return Path(db_path).expanduser().with_name("tldw_chatbook_chatbooks.json")
-        return Path.home() / ".local" / "share" / "tldw_cli" / "tldw_chatbook_chatbooks.json"
+                return (
+                    Path(db_path).expanduser().with_name("tldw_chatbook_chatbooks.json")
+                )
+        return (
+            Path.home()
+            / ".local"
+            / "share"
+            / "tldw_cli"
+            / "tldw_chatbook_chatbooks.json"
+        )
 
     @staticmethod
     def _utc_now() -> str:
@@ -59,17 +80,24 @@ class LocalChatbookService:
             raise ValueError(f"Invalid local chatbook registry: {self.registry_path}")
         records = payload.get("records")
         if not isinstance(records, list):
-            raise ValueError(f"Invalid local chatbook registry records: {self.registry_path}")
+            raise ValueError(
+                f"Invalid local chatbook registry records: {self.registry_path}"
+            )
         next_id = int(payload.get("next_id") or 1)
         return {"next_id": next_id, "records": [dict(record) for record in records]}
 
     def _save_registry(self, payload: dict[str, Any]) -> None:
         atomic_write_json(self.registry_path, payload)
 
-    def _find_record(self, registry: dict[str, Any], chatbook_id: int | str) -> dict[str, Any]:
+    def _find_record(
+        self, registry: dict[str, Any], chatbook_id: int | str
+    ) -> dict[str, Any]:
         wanted = str(chatbook_id)
         for record in registry["records"]:
-            if str(record.get("chatbook_id")) == wanted or str(record.get("id")) == wanted:
+            if (
+                str(record.get("chatbook_id")) == wanted
+                or str(record.get("id")) == wanted
+            ):
                 return record
         raise KeyError(f"Local chatbook not found: {chatbook_id}")
 
@@ -93,15 +121,23 @@ class LocalChatbookService:
         return dict(payload)
 
     @staticmethod
-    def _normalize_content_selections(selections: dict[Any, list[Any]] | None) -> dict[ContentType, list[str]]:
+    def _normalize_content_selections(
+        selections: dict[Any, list[Any]] | None,
+    ) -> dict[ContentType, list[str]]:
         normalized: dict[ContentType, list[str]] = {}
         for content_type, ids in (selections or {}).items():
-            key = content_type if isinstance(content_type, ContentType) else ContentType(str(content_type))
+            key = (
+                content_type
+                if isinstance(content_type, ContentType)
+                else ContentType(str(content_type))
+            )
             normalized[key] = [str(item_id) for item_id in ids]
         return normalized
 
     async def preview_chatbook(self, chatbook_file_path: str | Path) -> dict[str, Any]:
-        manifest, error = ChatbookImporter(self.db_paths).preview_chatbook(Path(chatbook_file_path))
+        manifest, error = ChatbookImporter(self.db_paths).preview_chatbook(
+            Path(chatbook_file_path)
+        )
         return {
             "success": error is None,
             "message": error,
@@ -126,23 +162,33 @@ class LocalChatbookService:
                 if query in str(record.get("name") or "").lower()
                 or query in str(record.get("description") or "").lower()
                 or any(query in tag.lower() for tag in record.get("tags") or [])
-                or any(query in category.lower() for category in record.get("categories") or [])
+                or any(
+                    query in category.lower()
+                    for category in record.get("categories") or []
+                )
             ]
         return records[int(offset) : int(offset) + int(limit)]
 
     @staticmethod
     def _is_console_saved_artifact(record: dict[str, Any]) -> bool:
-        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        metadata = (
+            record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        )
         return (
             str(metadata.get("artifact_source") or "").strip().lower() == "console"
-            and str(metadata.get("artifact_kind") or "").strip().lower() == "assistant-response"
+            and str(metadata.get("artifact_kind") or "").strip().lower()
+            == "assistant-response"
         )
 
     @classmethod
     def _home_artifact_sort_key(cls, record: dict[str, Any]) -> tuple[float, int]:
-        timestamp = str(record.get("updated_at") or record.get("created_at") or "").strip()
+        timestamp = str(
+            record.get("updated_at") or record.get("created_at") or ""
+        ).strip()
         try:
-            normalized = timestamp[:-1] + "+00:00" if timestamp.endswith("Z") else timestamp
+            normalized = (
+                timestamp[:-1] + "+00:00" if timestamp.endswith("Z") else timestamp
+            )
             parsed = datetime.fromisoformat(normalized)
             if parsed.tzinfo is None:
                 parsed = parsed.replace(tzinfo=timezone.utc)
@@ -181,63 +227,77 @@ class LocalChatbookService:
         metadata: dict[str, Any] | None = None,
         **extra: Any,
     ) -> dict[str, Any]:
-        registry = self._load_registry()
-        chatbook_id = int(registry["next_id"])
-        now = self._utc_now()
-        record = {
-            "id": str(chatbook_id),
-            "chatbook_id": chatbook_id,
-            "name": str(name),
-            "description": str(description or ""),
-            "file_path": str(file_path) if file_path is not None else None,
-            "tags": self._coerce_string_list(tags),
-            "categories": self._coerce_string_list(categories),
-            "metadata": self._coerce_metadata(metadata),
-            "created_at": now,
-            "updated_at": now,
-        }
-        if extra:
-            record["metadata"].update({key: value for key, value in extra.items() if value is not None})
-        registry["records"].append(record)
-        registry["next_id"] = chatbook_id + 1
-        self._save_registry(registry)
+        with self._registry_lock:
+            registry = self._load_registry()
+            chatbook_id = int(registry["next_id"])
+            now = self._utc_now()
+            record = {
+                "id": str(chatbook_id),
+                "chatbook_id": chatbook_id,
+                "name": str(name),
+                "description": str(description or ""),
+                "file_path": str(file_path) if file_path is not None else None,
+                "tags": self._coerce_string_list(tags),
+                "categories": self._coerce_string_list(categories),
+                "metadata": self._coerce_metadata(metadata),
+                "created_at": now,
+                "updated_at": now,
+            }
+            if extra:
+                record["metadata"].update(
+                    {key: value for key, value in extra.items() if value is not None}
+                )
+            registry["records"].append(record)
+            registry["next_id"] = chatbook_id + 1
+            self._save_registry(registry)
         return self._record_copy(record)
 
-    async def update_chatbook(self, chatbook_id: int | str, **fields: Any) -> dict[str, Any]:
-        registry = self._load_registry()
-        record = self._find_record(registry, chatbook_id)
-        if "name" in fields:
-            record["name"] = str(fields["name"])
-        if "description" in fields:
-            record["description"] = str(fields["description"] or "")
-        if "file_path" in fields:
-            file_path = fields["file_path"]
-            record["file_path"] = str(file_path) if file_path is not None else None
-        if "tags" in fields:
-            record["tags"] = self._coerce_string_list(fields["tags"])
-        if "categories" in fields:
-            record["categories"] = self._coerce_string_list(fields["categories"])
-        if "metadata" in fields:
-            record["metadata"] = self._coerce_metadata(fields["metadata"])
-        record["updated_at"] = self._utc_now()
-        self._save_registry(registry)
+    async def update_chatbook(
+        self, chatbook_id: int | str, **fields: Any
+    ) -> dict[str, Any]:
+        with self._registry_lock:
+            registry = self._load_registry()
+            record = self._find_record(registry, chatbook_id)
+            if "name" in fields:
+                record["name"] = str(fields["name"])
+            if "description" in fields:
+                record["description"] = str(fields["description"] or "")
+            if "file_path" in fields:
+                file_path = fields["file_path"]
+                record["file_path"] = str(file_path) if file_path is not None else None
+            if "tags" in fields:
+                record["tags"] = self._coerce_string_list(fields["tags"])
+            if "categories" in fields:
+                record["categories"] = self._coerce_string_list(fields["categories"])
+            if "metadata" in fields:
+                record["metadata"] = self._coerce_metadata(fields["metadata"])
+            record["updated_at"] = self._utc_now()
+            self._save_registry(registry)
         return self._record_copy(record)
 
     async def delete_chatbook(self, chatbook_id: int | str) -> bool:
-        registry = self._load_registry()
-        wanted = str(chatbook_id)
-        remaining = [
-            record
-            for record in registry["records"]
-            if str(record.get("chatbook_id")) != wanted and str(record.get("id")) != wanted
-        ]
-        if len(remaining) == len(registry["records"]):
-            raise KeyError(f"Local chatbook not found: {chatbook_id}")
-        registry["records"] = remaining
-        self._save_registry(registry)
+        with self._registry_lock:
+            registry = self._load_registry()
+            wanted = str(chatbook_id)
+            remaining = [
+                record
+                for record in registry["records"]
+                if str(record.get("chatbook_id")) != wanted
+                and str(record.get("id")) != wanted
+            ]
+            if len(remaining) == len(registry["records"]):
+                raise KeyError(f"Local chatbook not found: {chatbook_id}")
+            registry["records"] = remaining
+            self._save_registry(registry)
         return True
 
-    async def export_chatbook(self, request_data: Any) -> dict[str, Any]:
+    async def export_chatbook(
+        self,
+        request_data: Any,
+        *,
+        progress_callback: Optional[Callable[[Any], None]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
+    ) -> dict[str, Any]:
         payload = self._as_dict(request_data)
         output_path = payload.pop("output_path", None)
         if output_path is None:
@@ -247,7 +307,9 @@ class LocalChatbookService:
         success, message, dependency_info = creator.create_chatbook(
             name=payload.get("name") or "Chatbook",
             description=payload.get("description") or "",
-            content_selections=self._normalize_content_selections(payload.get("content_selections")),
+            content_selections=self._normalize_content_selections(
+                payload.get("content_selections")
+            ),
             output_path=Path(output_path),
             author=payload.get("author"),
             include_media=bool(payload.get("include_media", False)),
@@ -255,6 +317,13 @@ class LocalChatbookService:
             include_embeddings=bool(payload.get("include_embeddings", False)),
             tags=payload.get("tags") or [],
             categories=payload.get("categories") or [],
+            progress_callback=progress_callback,
+            cancel_check=cancel_check,
+        )
+        cancelled = (
+            bool(dependency_info.get("cancelled", False))
+            if isinstance(dependency_info, dict)
+            else False
         )
         return {
             "success": success,
@@ -262,16 +331,26 @@ class LocalChatbookService:
             "path": str(output_path),
             "dependency_info": dependency_info,
             "name": payload.get("name") or Path(output_path).stem,
+            "cancelled": cancelled,
         }
 
-    async def import_chatbook(self, chatbook_file_path: str | Path, request_data: Any) -> dict[str, Any]:
+    async def import_chatbook(
+        self, chatbook_file_path: str | Path, request_data: Any
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.prompt_chatbook_schemas import ChatbookImportRequest
+
         payload = self._as_dict(request_data)
-        conflict_value = payload.get("conflict_resolution", ChatbookImportRequest().conflict_resolution)
+        conflict_value = payload.get(
+            "conflict_resolution", ChatbookImportRequest().conflict_resolution
+        )
         conflict_resolution = ConflictResolution(str(conflict_value))
         importer = ChatbookImporter(self.db_paths)
         success, message = importer.import_chatbook(
             Path(chatbook_file_path),
-            content_selections=self._normalize_content_selections(payload.get("content_selections")),
+            content_selections=self._normalize_content_selections(
+                payload.get("content_selections")
+            ),
             conflict_resolution=conflict_resolution,
             prefix_imported=bool(payload.get("prefix_imported", False)),
             import_media=bool(payload.get("import_media", True)),

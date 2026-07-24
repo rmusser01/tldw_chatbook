@@ -35,7 +35,9 @@ _SERVER_UNSUPPORTED_CAPABILITIES: list[dict[str, Any]] = []
 class ChatDictionaryScopeService:
     """Route chat dictionary operations to the selected backend."""
 
-    def __init__(self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None):
+    def __init__(
+        self, *, local_service: Any, server_service: Any, policy_enforcer: Any = None
+    ):
         self.local_service = local_service
         self.server_service = server_service
         self.policy_enforcer = policy_enforcer
@@ -43,7 +45,9 @@ class ChatDictionaryScopeService:
     def _normalize_mode(self, mode: str | None) -> str:
         normalized_mode = "local" if mode is None else str(mode).strip().lower()
         if normalized_mode not in {"local", "server"}:
-            raise ValueError(f"Invalid chat dictionary mode: {mode!r}. Expected 'local' or 'server'.")
+            raise ValueError(
+                f"Invalid chat dictionary mode: {mode!r}. Expected 'local' or 'server'."
+            )
         return normalized_mode
 
     def _backend(self, mode: str | None) -> Any:
@@ -88,14 +92,21 @@ class ChatDictionaryScopeService:
 
     @staticmethod
     def _backend_supports(backend: Any, method_names: tuple[str, ...]) -> bool:
-        return all(callable(getattr(backend, method_name, None)) for method_name in method_names)
+        return all(
+            callable(getattr(backend, method_name, None))
+            for method_name in method_names
+        )
 
-    def list_unsupported_capabilities(self, *, mode: str | None = None) -> list[dict[str, Any]]:
+    def list_unsupported_capabilities(
+        self, *, mode: str | None = None
+    ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == "local":
             reports = [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
             local_backend = self.local_service
-            if local_backend is not None and self._backend_supports(local_backend, ("list_activity",)):
+            if local_backend is not None and self._backend_supports(
+                local_backend, ("list_activity",)
+            ):
                 reports = [
                     item
                     for item in reports
@@ -126,7 +137,9 @@ class ChatDictionaryScopeService:
         backend = self._backend(normalized_mode)
         method = getattr(backend, method_name, None)
         if not callable(method):
-            raise ValueError(f"Chat dictionary backend does not provide {method_name}().")
+            raise ValueError(
+                f"Chat dictionary backend does not provide {method_name}()."
+            )
         return await self._maybe_await(method(*args, **kwargs))
 
     def _raise_local_activity_unsupported(self) -> None:
@@ -179,7 +192,9 @@ class ChatDictionaryScopeService:
             **kwargs,
         )
 
-    async def delete_dictionary(self, dictionary_id: int, mode: str = "local", **kwargs: Any) -> Any:
+    async def delete_dictionary(
+        self, dictionary_id: int, mode: str = "local", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         return await self._invoke(
             normalized_mode,
@@ -189,7 +204,9 @@ class ChatDictionaryScopeService:
             **kwargs,
         )
 
-    async def add_entry(self, dictionary_id: int, request_data: Any, mode: str = "local") -> Any:
+    async def add_entry(
+        self, dictionary_id: int, request_data: Any, mode: str = "local"
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         return await self._invoke(
             normalized_mode,
@@ -199,7 +216,9 @@ class ChatDictionaryScopeService:
             request_data,
         )
 
-    async def list_entries(self, dictionary_id: int, mode: str = "local", **kwargs: Any) -> Any:
+    async def list_entries(
+        self, dictionary_id: int, mode: str = "local", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         return await self._invoke(
             normalized_mode,
@@ -209,7 +228,9 @@ class ChatDictionaryScopeService:
             **kwargs,
         )
 
-    async def update_entry(self, entry_id: int | str, request_data: Any, mode: str = "local") -> Any:
+    async def update_entry(
+        self, entry_id: int | str, request_data: Any, mode: str = "local"
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         return await self._invoke(
             normalized_mode,
@@ -228,7 +249,9 @@ class ChatDictionaryScopeService:
             entry_id,
         )
 
-    async def reorder_entries(self, dictionary_id: int, request_data: Any, mode: str = "local") -> Any:
+    async def reorder_entries(
+        self, dictionary_id: int, request_data: Any, mode: str = "local"
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         return await self._invoke(
             normalized_mode,
@@ -283,35 +306,51 @@ class ChatDictionaryScopeService:
             dictionary_id,
         )
 
-    async def list_activity(self, dictionary_id: int, mode: str = "local", **kwargs: Any) -> Any:
+    async def list_activity(
+        self, dictionary_id: int, mode: str = "local", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._activity_action(normalized_mode, "list"))
         backend = self._backend(normalized_mode)
-        if normalized_mode == "local" and not callable(getattr(backend, "list_activity", None)):
+        if normalized_mode == "local" and not callable(
+            getattr(backend, "list_activity", None)
+        ):
             self._raise_local_activity_unsupported()
         return await self._maybe_await(backend.list_activity(dictionary_id, **kwargs))
 
-    async def list_versions(self, dictionary_id: int, mode: str = "local", **kwargs: Any) -> Any:
+    async def list_versions(
+        self, dictionary_id: int, mode: str = "local", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._version_action(normalized_mode, "list"))
         backend = self._backend(normalized_mode)
-        if normalized_mode == "local" and not callable(getattr(backend, "list_versions", None)):
+        if normalized_mode == "local" and not callable(
+            getattr(backend, "list_versions", None)
+        ):
             self._raise_local_versions_unsupported()
         return await self._maybe_await(backend.list_versions(dictionary_id, **kwargs))
 
-    async def get_version(self, dictionary_id: int, revision: int, mode: str = "local") -> Any:
+    async def get_version(
+        self, dictionary_id: int, revision: int, mode: str = "local"
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._version_action(normalized_mode, "detail"))
         backend = self._backend(normalized_mode)
-        if normalized_mode == "local" and not callable(getattr(backend, "get_version", None)):
+        if normalized_mode == "local" and not callable(
+            getattr(backend, "get_version", None)
+        ):
             self._raise_local_versions_unsupported()
         return await self._maybe_await(backend.get_version(dictionary_id, revision))
 
-    async def revert_version(self, dictionary_id: int, revision: int, mode: str = "local") -> Any:
+    async def revert_version(
+        self, dictionary_id: int, revision: int, mode: str = "local"
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._version_action(normalized_mode, "restore"))
         backend = self._backend(normalized_mode)
-        if normalized_mode == "local" and not callable(getattr(backend, "revert_version", None)):
+        if normalized_mode == "local" and not callable(
+            getattr(backend, "revert_version", None)
+        ):
             self._raise_local_versions_unsupported()
         return await self._maybe_await(backend.revert_version(dictionary_id, revision))
 
@@ -322,6 +361,88 @@ class ChatDictionaryScopeService:
             self._statistics_action(normalized_mode, "detail"),
             "get_statistics",
             dictionary_id,
+        )
+
+    async def attach_to_conversation(
+        self, dictionary_id: int, conversation_id: str, mode: str = "local"
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        return await self._invoke(
+            normalized_mode,
+            self._dictionary_action(normalized_mode, "update"),
+            "attach_to_conversation",
+            dictionary_id,
+            conversation_id,
+        )
+
+    async def detach_from_conversation(
+        self, dictionary_id: int, conversation_id: str, mode: str = "local"
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        return await self._invoke(
+            normalized_mode,
+            self._dictionary_action(normalized_mode, "update"),
+            "detach_from_conversation",
+            dictionary_id,
+            conversation_id,
+        )
+
+    async def list_dictionary_conversations(
+        self, dictionary_id: int, mode: str = "local"
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        return await self._invoke(
+            normalized_mode,
+            self._statistics_action(normalized_mode, "detail"),
+            "list_dictionary_conversations",
+            dictionary_id,
+        )
+
+    async def attach_to_character(
+        self, dictionary_id: int, character_id: int, mode: str = "local"
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        return await self._invoke(
+            normalized_mode,
+            self._dictionary_action(normalized_mode, "update"),
+            "attach_to_character",
+            dictionary_id,
+            character_id,
+        )
+
+    async def detach_from_character(
+        self, character_id: int, dictionary_name: str, mode: str = "local"
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        return await self._invoke(
+            normalized_mode,
+            self._dictionary_action(normalized_mode, "update"),
+            "detach_from_character",
+            character_id,
+            dictionary_name,
+        )
+
+    async def list_character_dictionaries(
+        self, character_id: int, mode: str = "local"
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        return await self._invoke(
+            normalized_mode,
+            self._statistics_action(normalized_mode, "detail"),
+            "list_character_dictionaries",
+            character_id,
+        )
+
+    async def summarize_active_dictionaries(
+        self, conversation_id, character_id, mode: str = "local"
+    ) -> Any:
+        normalized_mode = self._normalize_mode(mode)
+        return await self._invoke(
+            normalized_mode,
+            self._statistics_action(normalized_mode, "detail"),
+            "summarize_active_dictionaries",
+            conversation_id,
+            character_id,
         )
 
 

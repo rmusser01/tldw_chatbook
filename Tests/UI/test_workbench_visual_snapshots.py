@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
-from textual.widgets import Button
+from textual.widgets import Button, OptionList
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
@@ -64,8 +64,9 @@ async def _open_console(app, pilot: "Pilot") -> None:
         await app.handle_screen_navigation(NavigateToScreen("chat"))
     await _wait_until(
         pilot,
-        lambda: app.current_tab == "chat"
-        and app.screen.__class__.__name__ == "ChatScreen",
+        lambda: (
+            app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen"
+        ),
         context="Console screen",
     )
     await _wait_for_selector(app.screen, pilot, "#console-shell")
@@ -118,7 +119,11 @@ def _assert_console_inspector_evidence(svg: str) -> None:
 
 
 def _assert_command_palette_evidence(svg: str) -> None:
-    normalized_svg = unescape(svg).replace("\xa0", " ")
+    # The palette's match highlighting splits matched characters into separate
+    # <text> elements, so a command name is never contiguous in the raw SVG.
+    # Rejoin the text elements in document order before searching.
+    joined = "".join(re.findall(r"<text[^>]*>([^<]*)</text>", svg))
+    normalized_svg = unescape(joined).replace("\xa0", " ")
     assert "Console Workbench Command Palette" in normalized_svg
     assert any(
         command in normalized_svg
@@ -200,6 +205,23 @@ async def test_console_workbench_command_palette_snapshot() -> None:
             await _open_console(app, pilot)
             await pilot.press("ctrl+p")
             await pilot.pause()
+            # The palette's discover() hit order and its match-highlight text
+            # splitting are both nondeterministic in the exported SVG, so assert
+            # command evidence on the option list itself (deterministic) and use
+            # the SVG only for the visual health check.
+            for character in "New Chat":
+                await pilot.press(character)
+            palette = app.screen_stack[-1]
+            option_list = palette.query_one(OptionList)
+            for _ in range(60):
+                await pilot.pause()
+                prompts = [
+                    str(option_list.get_option_at_index(index).prompt)
+                    for index in range(option_list.option_count)
+                ]
+                if any("New Chat Conversation" in prompt for prompt in prompts):
+                    break
+            assert any("New Chat Conversation" in prompt for prompt in prompts), prompts
 
             stack_names = {
                 screen.__class__.__name__.lower() for screen in app.screen_stack
@@ -210,7 +232,6 @@ async def test_console_workbench_command_palette_snapshot() -> None:
                 simplify=True,
             )
             _assert_svg_healthy(svg)
-            _assert_command_palette_evidence(svg)
 
 
 @pytest.mark.asyncio

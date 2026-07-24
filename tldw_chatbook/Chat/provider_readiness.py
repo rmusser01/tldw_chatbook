@@ -116,7 +116,9 @@ def _default_api_key_env_var(provider_key: str) -> Optional[str]:
     """Return the conventional environment variable for known keyed providers."""
     if provider_key not in PROVIDERS_REQUIRING_API_KEY_KEYS:
         return None
-    return _DEFAULT_API_KEY_ENV_VAR_ALIASES.get(provider_key, f"{provider_key.upper()}_API_KEY")
+    return _DEFAULT_API_KEY_ENV_VAR_ALIASES.get(
+        provider_key, f"{provider_key.upper()}_API_KEY"
+    )
 
 
 def _provider_settings_for_key(
@@ -258,10 +260,10 @@ def get_provider_readiness(
 class ChatApiKeyFieldState:
     """Render + persistence state for the inline Chat-Defaults API-key input."""
 
-    value: str          # masked prefill value; "" when nothing should be shown
-    disabled: bool      # True for keyless providers or a locked/encrypted config
-    placeholder: str    # hint shown when the box is empty
-    can_persist: bool   # whether a user-entered value should be written on save
+    value: str  # masked prefill value; "" when nothing should be shown
+    disabled: bool  # True for keyless providers or a locked/encrypted config
+    placeholder: str  # hint shown when the box is empty
+    can_persist: bool  # whether a user-entered value should be written on save
 
 
 def chat_api_key_field_state(

@@ -7,18 +7,35 @@ No complex error handling or effects - just execute steps in order.
 import asyncio
 from typing import Dict, Any, List, Tuple, Optional
 from loguru import logger
-import os
 import sys
+
 if sys.version_info < (3, 11):
     import tomli as tomllib
 else:
     import tomllib
 from pathlib import Path
 
-from .pipeline_types import SearchResult, StepType, PipelineContext
+from ..Chat.rag_scope import EffectiveScope
+from .pipeline_types import SearchResult, PipelineContext
 from .pipeline_functions_simple import (
-    RETRIEVAL_FUNCTIONS, PROCESSING_FUNCTIONS, FORMATTING_FUNCTIONS
+    RETRIEVAL_FUNCTIONS,
+    PROCESSING_FUNCTIONS,
+    FORMATTING_FUNCTIONS,
 )
+from .fusion import (
+    reciprocal_rank_fusion,
+    interleave_rankings,
+    resolve_hybrid_alpha,
+    resolve_rrf_k,
+)
+from .semantic_availability import (
+    record_semantic_unavailable,
+    SEMANTIC_REASON_SEARCH_ERROR,
+)
+
+# Retrieval functions whose results form the vector (semantic) leg of hybrid
+# fusion; every other retrieval function is treated as an FTS/keyword leg.
+VECTOR_RETRIEVAL_FUNCTIONS = {"search_semantic"}
 
 
 async def execute_pipeline(
@@ -26,225 +43,400 @@ async def execute_pipeline(
     app: Any,
     query: str,
     sources: Dict[str, bool],
-    **params
+    diagnostics: Optional[Dict[str, Any]] = None,
+    scope: Optional[EffectiveScope] = None,
+    **params,
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
     Execute a pipeline based on configuration.
-    
+
     Args:
         config: Pipeline configuration from TOML
         app: TldwCli app instance
         query: Search query
         sources: Which sources to search
+        diagnostics: Optional dict that rides through the PipelineContext and
+            collects per-leg availability states (e.g. the semantic leg's
+            unavailable/empty-index reasons, task-250). Callers that pass a
+            dict can inspect it after the call; the (results, context) return
+            shape is unchanged.
+        scope: Optional resolved RAG retrieval scope (rag-scope narrowing,
+            task-4). Seeded into ``PipelineContext["scope"]`` so every
+            retrieval leg -- across builtin, parallel, and custom-TOML
+            pipeline shapes -- self-enforces it identically, regardless of
+            which step type invokes it. ``None`` performs today's
+            unrestricted retrieval (real callers resolving and passing a
+            live scope land in a follow-up task).
         **params: Additional parameters
-        
+
     Returns:
         Tuple of (results list, formatted context)
     """
-    pipeline_name = config.get('name', 'Unknown Pipeline')
-    steps = config.get('steps', [])
-    
+    pipeline_name = config.get("name", "Unknown Pipeline")
+    steps = config.get("steps", [])
+
     logger.info(f"Executing pipeline: {pipeline_name}")
-    
+
     # Initialize context
     context: PipelineContext = {
-        'app': app,
-        'query': query,
-        'sources': sources,
-        'params': {**config.get('parameters', {}), **params},
-        'results': []
+        "app": app,
+        "query": query,
+        "sources": sources,
+        "params": {**config.get("parameters", {}), **params},
+        "results": [],
+        "diagnostics": diagnostics if diagnostics is not None else {},
+        "scope": scope,
     }
-    
+
     # Execute each step
     for i, step_config in enumerate(steps):
-        step_type = step_config.get('type')
-        logger.debug(f"Step {i+1}/{len(steps)}: {step_type}")
-        
+        step_type = step_config.get("type")
+        logger.debug(f"Step {i + 1}/{len(steps)}: {step_type}")
+
         try:
-            if step_type == 'retrieve':
+            if step_type == "retrieve":
                 results = await _execute_retrieve_step(step_config, context)
-                context['results'] = results
-                
-            elif step_type == 'parallel':
+                context["results"] = results
+
+            elif step_type == "parallel":
                 results = await _execute_parallel_step(step_config, context)
-                context['results'] = results
-                
-            elif step_type == 'process':
+                context["results"] = results
+
+            elif step_type == "process":
                 results = _execute_process_step(step_config, context)
-                context['results'] = results
-                
-            elif step_type == 'format':
+                context["results"] = results
+
+            elif step_type == "format":
                 formatted = _execute_format_step(step_config, context)
                 # Return results and formatted context
-                return _results_to_dicts(context['results']), formatted
-                
+                return _results_to_dicts(context["results"]), formatted
+
         except Exception as e:
-            logger.error(f"Pipeline step {i+1} failed: {e}")
+            logger.error(f"Pipeline step {i + 1} failed: {e}")
             raise
-    
+
     # If no format step, return results with default formatting
-    max_length = context['params'].get('max_context_length', 10000)
-    formatted = FORMATTING_FUNCTIONS['format_as_context'](
-        context['results'], 
-        max_length=max_length
+    max_length = context["params"].get("max_context_length", 10000)
+    formatted = FORMATTING_FUNCTIONS["format_as_context"](
+        context["results"], max_length=max_length
     )
-    return _results_to_dicts(context['results']), formatted
+    return _results_to_dicts(context["results"]), formatted
 
 
 async def _execute_retrieve_step(
-    step_config: Dict[str, Any],
-    context: PipelineContext
+    step_config: Dict[str, Any], context: PipelineContext
 ) -> List[SearchResult]:
     """Execute a retrieval step."""
-    func_name = step_config.get('function')
+    func_name = step_config.get("function")
     if not func_name or func_name not in RETRIEVAL_FUNCTIONS:
         raise ValueError(f"Unknown retrieval function: {func_name}")
-    
+
     func = RETRIEVAL_FUNCTIONS[func_name]
-    config = {**context['params'], **step_config.get('config', {})}
-    
+    config = {**context["params"], **step_config.get("config", {})}
+    # Only forwarded when an active scope exists: keeps the unscoped call
+    # shape to every leg byte-identical to before this parameter existed
+    # (tests that monkeypatch RETRIEVAL_FUNCTIONS with narrow-signature
+    # fakes -- e.g. Tests/RAG/test_fusion.py -- never pass scope, so they
+    # never see the extra kwarg).
+    scope = context.get("scope")
+    scope_kwargs: Dict[str, Any] = {"scope": scope} if scope is not None else {}
+
     # Special handling for different retrieval functions
-    if func_name == 'parallel_search':
+    if func_name == "parallel_search":
         return await func(
-            context['app'],
-            context['query'],
-            context['sources'],
-            step_config.get('functions', [])
+            context["app"],
+            context["query"],
+            context["sources"],
+            step_config.get("functions", []),
+            diagnostics=context.setdefault("diagnostics", {}),
+            **scope_kwargs,
         )
-    elif func_name.endswith('_fts5'):
-        # FTS5 functions don't take sources parameter
+    elif func_name.endswith("_fts5"):
+        # FTS5 functions don't take sources parameter. All three FTS5 legs
+        # now accept diagnostics (media/notes gained it alongside the
+        # EMPTY-scope fail-closed guard, PR #734 review) -- forwarded only
+        # when an active scope exists, matching scope_kwargs' own
+        # zero-drift-for-unscoped-calls convention.
+        fts5_kwargs: Dict[str, Any] = dict(scope_kwargs)
+        if scope is not None:
+            fts5_kwargs["diagnostics"] = context.setdefault("diagnostics", {})
         return await func(
-            context['app'],
-            context['query'],
-            config.get('top_k', 10),
-            config.get('keyword_filter')
+            context["app"],
+            context["query"],
+            config.get("top_k", 10),
+            config.get("keyword_filter"),
+            **fts5_kwargs,
+        )
+    elif func_name == "search_semantic":
+        # Vector leg: forward only kwargs the RAG service accepts. This is
+        # the retrieve-step cousin of the task-256 parallel-step fix below:
+        # splatting the full pipeline params (top_k alongside
+        # search_semantic's own limit->top_k, chunk_*, include_citations,
+        # ...) raised TypeError inside the RAG service call, so the pure
+        # 'semantic' pipeline could never return vector results (task-250).
+        semantic_kwargs = {
+            key: config[key]
+            for key in ("score_threshold", "filter_metadata")
+            if key in config
+        }
+        return await func(
+            context["app"],
+            context["query"],
+            context["sources"],
+            limit=config.get("top_k", 10),
+            diagnostics=context.setdefault("diagnostics", {}),
+            **scope_kwargs,
+            **semantic_kwargs,
         )
     else:
-        # Semantic search takes sources
+        # Generic retrieval function takes sources
         return await func(
-            context['app'],
-            context['query'],
-            context['sources'],
-            **config
+            context["app"], context["query"], context["sources"], **config
         )
 
 
 async def _execute_parallel_step(
-    step_config: Dict[str, Any],
-    context: PipelineContext
+    step_config: Dict[str, Any], context: PipelineContext
 ) -> List[SearchResult]:
     """Execute parallel retrieval functions."""
-    functions = step_config.get('functions', [])
+    functions = step_config.get("functions", [])
     if not functions:
         return []
-    
+
+    # Only forwarded when an active scope exists: keeps the unscoped call
+    # shape to every leg byte-identical to before this parameter existed
+    # (tests that monkeypatch RETRIEVAL_FUNCTIONS with narrow-signature
+    # fakes -- e.g. Tests/RAG/test_fusion.py -- never pass scope, so they
+    # never see the extra kwarg).
+    scope = context.get("scope")
+    scope_kwargs: Dict[str, Any] = {"scope": scope} if scope is not None else {}
     tasks = []
+    task_func_names = []
     for func_config in functions:
-        func_name = func_config.get('function')
+        func_name = func_config.get("function")
         if func_name and func_name in RETRIEVAL_FUNCTIONS:
             func = RETRIEVAL_FUNCTIONS[func_name]
-            config = {**context['params'], **func_config.get('config', {})}
-            
+            config = {**context["params"], **func_config.get("config", {})}
+
             # Create appropriate task based on function
-            if func_name.endswith('_fts5'):
+            if func_name.endswith("_fts5"):
+                # All three FTS5 legs now accept diagnostics (media/notes
+                # gained it alongside the EMPTY-scope fail-closed guard,
+                # PR #734 review) -- forwarded only when an active scope
+                # exists, matching scope_kwargs' own
+                # zero-drift-for-unscoped-calls convention.
+                fts5_kwargs = dict(scope_kwargs)
+                if scope is not None:
+                    fts5_kwargs["diagnostics"] = context.setdefault(
+                        "diagnostics", {}
+                    )
                 # Only search_media_fts5 accepts keyword_filter
-                if func_name == 'search_media_fts5':
+                if func_name == "search_media_fts5":
                     task = func(
-                        context['app'],
-                        context['query'],
-                        config.get('top_k', 10),
-                        config.get('keyword_filter')
+                        context["app"],
+                        context["query"],
+                        config.get("top_k", 10),
+                        config.get("keyword_filter"),
+                        **fts5_kwargs,
                     )
                 else:
-                    # search_conversations_fts5 and search_notes_fts5
+                    # search_conversations_fts5 / search_notes_fts5
                     task = func(
-                        context['app'],
-                        context['query'],
-                        config.get('top_k', 10)
+                        context["app"],
+                        context["query"],
+                        config.get("top_k", 10),
+                        **fts5_kwargs,
                     )
+            elif func_name == "search_semantic":
+                # Vector leg: forward only kwargs the RAG service accepts.
+                # Splatting the full pipeline params (top_k alongside
+                # search_semantic's own limit->top_k, chunk_*, ...) raises
+                # TypeError inside search_semantic, which gather() swallows
+                # and the vector leg comes back silently empty.
+                semantic_kwargs = {
+                    key: config[key]
+                    for key in ("score_threshold", "filter_metadata")
+                    if key in config
+                }
+                task = func(
+                    context["app"],
+                    context["query"],
+                    context["sources"],
+                    limit=config.get("top_k", 10),
+                    diagnostics=context.setdefault("diagnostics", {}),
+                    **scope_kwargs,
+                    **semantic_kwargs,
+                )
             else:
                 task = func(
-                    context['app'],
-                    context['query'],
-                    context['sources'],
-                    **config
+                    context["app"], context["query"], context["sources"], **config
                 )
             tasks.append(task)
-    
+            task_func_names.append(func_name)
+
     # Execute in parallel
     results_lists = await asyncio.gather(*tasks, return_exceptions=True)
-    
+
     # Combine results
     all_results = []
-    for results in results_lists:
+    for func_name, results in zip(task_func_names, results_lists):
         if isinstance(results, Exception):
-            logger.error(f"Parallel search failed: {results}")
+            logger.error(f"Parallel search failed ({func_name}): {results}")
+            if func_name in VECTOR_RETRIEVAL_FUNCTIONS:
+                # The vector leg died mid-search; record it so callers can
+                # honestly say the fused results are FTS-only (task-250).
+                record_semantic_unavailable(
+                    context.setdefault("diagnostics", {}),
+                    SEMANTIC_REASON_SEARCH_ERROR,
+                )
             continue
         all_results.extend(results)
-    
+
     # Apply merge if specified
-    merge_func = step_config.get('merge')
-    if merge_func == 'weighted_merge' and 'weights' in step_config.get('config', {}):
+    merge_func = step_config.get("merge")
+    if merge_func == "rrf_merge":
+        return _rrf_merge_parallel_results(
+            task_func_names,
+            results_lists,
+            step_config.get("config", {}) or {},
+            context,
+        )
+    if merge_func == "weighted_merge" and "weights" in step_config.get("config", {}):
         # Split results back into lists for weighted merge
-        weights = step_config['config']['weights']
+        weights = step_config["config"]["weights"]
         if len(results_lists) == len(weights):
             valid_results = [r for r in results_lists if not isinstance(r, Exception)]
-            return PROCESSING_FUNCTIONS['weighted_merge'](valid_results, weights)
-    
+            return PROCESSING_FUNCTIONS["weighted_merge"](valid_results, weights)
+
     return all_results
 
 
+def _rrf_merge_parallel_results(
+    func_names: List[str],
+    results_lists: List[Any],
+    merge_config: Dict[str, Any],
+    context: PipelineContext,
+) -> List[SearchResult]:
+    """Fuse parallel retrieval legs via RRF + alpha (tldw_server parity).
+
+    The FTS5 source lists (media, conversations, notes) are interleaved
+    rank-fairly into a single FTS leg; ``search_semantic`` results form the
+    vector leg. The two legs are fused with Reciprocal Rank Fusion (k=60 by
+    default) and an alpha-weighted blend where alpha weights the vector leg
+    (0 = FTS only, 1 = vector only).
+
+    Alpha precedence: step ``config.alpha`` -> ``hybrid_alpha`` runtime
+    param -> ``[AppRAGSearchConfig.rag.retriever] hybrid_alpha`` -> 0.7.
+
+    Args:
+        func_names: Retrieval function name per results list, same order.
+        results_lists: Per-function results (exceptions already logged).
+        merge_config: The parallel step's merge config.
+        context: Pipeline execution context.
+
+    Returns:
+        Fused results sorted by fused score descending.
+    """
+    fts_lists: List[List[SearchResult]] = []
+    vector_lists: List[List[SearchResult]] = []
+    for func_name, results in zip(func_names, results_lists):
+        if isinstance(results, Exception):
+            continue
+        if func_name in VECTOR_RETRIEVAL_FUNCTIONS:
+            vector_lists.append(results)
+        else:
+            fts_lists.append(results)
+
+    def result_key(result: SearchResult):
+        return (result.source, result.id)
+
+    fts_leg = interleave_rankings(fts_lists, key=result_key)
+    vector_leg = interleave_rankings(vector_lists, key=result_key)
+
+    alpha = resolve_hybrid_alpha(
+        merge_config.get("alpha", context["params"].get("hybrid_alpha"))
+    )
+    rrf_k = resolve_rrf_k(merge_config.get("rrf_k"))
+
+    fused_entries = reciprocal_rank_fusion(
+        fts_leg, vector_leg, key=result_key, alpha=alpha, rrf_k=rrf_k
+    )
+
+    fused_results = []
+    for entry in fused_entries:
+        result = entry.item
+        result.score = entry.score
+        merged_metadata = dict(result.metadata or {})
+        # When a doc surfaced in both legs the FTS item is primary; carry the
+        # other leg's citation metadata (search_semantic stashes citations as
+        # _has_citations/_citations) so citations survive fusion and reach
+        # _results_to_dicts.
+        if entry.fts_item is not None and entry.vector_item is not None:
+            other = entry.vector_item if result is entry.fts_item else entry.fts_item
+            other_metadata = other.metadata or {}
+            if other_metadata.get("_has_citations"):
+                combined_citations = list(
+                    merged_metadata.get("_citations") or []
+                ) + list(other_metadata.get("_citations") or [])
+                merged_metadata["_citations"] = combined_citations
+                merged_metadata["_has_citations"] = True
+        result.metadata = {
+            **merged_metadata,
+            "hybrid_fusion": {**entry.provenance(), "alpha": alpha, "rrf_k": rrf_k},
+        }
+        fused_results.append(result)
+
+    logger.debug(
+        f"RRF fusion merged {len(fused_results)} results "
+        f"(fts_leg={len(fts_leg)}, vector_leg={len(vector_leg)}, alpha={alpha}, k={rrf_k})"
+    )
+    return fused_results
+
+
 def _execute_process_step(
-    step_config: Dict[str, Any],
-    context: PipelineContext
+    step_config: Dict[str, Any], context: PipelineContext
 ) -> List[SearchResult]:
     """Execute a processing step."""
-    func_name = step_config.get('function')
+    func_name = step_config.get("function")
     if not func_name or func_name not in PROCESSING_FUNCTIONS:
         raise ValueError(f"Unknown processing function: {func_name}")
-    
+
     func = PROCESSING_FUNCTIONS[func_name]
-    config = {**context['params'], **step_config.get('config', {})}
-    
+    config = {**context["params"], **step_config.get("config", {})}
+
     # Special handling for different processing functions
-    if func_name == 'rerank_results':
+    if func_name == "rerank_results":
         return func(
-            context['results'],
-            context['query'],
-            config.get('model', 'flashrank'),
-            config.get('top_k', 10)
+            context["results"],
+            context["query"],
+            config.get("model", "flashrank"),
+            config.get("top_k", 10),
         )
-    elif func_name == 'filter_by_score':
-        return func(
-            context['results'],
-            config.get('min_score', 0.0)
-        )
+    elif func_name == "filter_by_score":
+        return func(context["results"], config.get("min_score", 0.0))
     else:
         # Generic processing
-        return func(context['results'])
+        return func(context["results"])
 
 
-def _execute_format_step(
-    step_config: Dict[str, Any],
-    context: PipelineContext
-) -> str:
+def _execute_format_step(step_config: Dict[str, Any], context: PipelineContext) -> str:
     """Execute a formatting step."""
-    func_name = step_config.get('function', 'format_as_context')
+    func_name = step_config.get("function", "format_as_context")
     if func_name not in FORMATTING_FUNCTIONS:
         raise ValueError(f"Unknown formatting function: {func_name}")
-    
+
     func = FORMATTING_FUNCTIONS[func_name]
-    config = step_config.get('config', {})
-    
+    config = step_config.get("config", {})
+
     # Only pass parameters that format_as_context accepts
-    valid_params = ['max_length', 'include_citations', 'separator']
+    valid_params = ["max_length", "include_citations", "separator"]
     format_params = {k: v for k, v in config.items() if k in valid_params}
-    
+
     # Map max_context_length to max_length if present
-    if 'max_context_length' in context['params']:
-        format_params['max_length'] = context['params']['max_context_length']
-    
-    return func(context['results'], **format_params)
+    if "max_context_length" in context["params"]:
+        format_params["max_length"] = context["params"]["max_context_length"]
+
+    return func(context["results"], **format_params)
 
 
 def _results_to_dicts(results: List[SearchResult]) -> List[Dict[str, Any]]:
@@ -252,83 +444,90 @@ def _results_to_dicts(results: List[SearchResult]) -> List[Dict[str, Any]]:
     result_dicts = []
     for r in results:
         result_dict = r.to_dict()
-        
+
         # Check if citations are stored in metadata
-        if result_dict.get('metadata', {}).get('_has_citations'):
-            citations = result_dict['metadata'].pop('_citations', [])
-            result_dict['metadata'].pop('_has_citations', None)
-            result_dict['citations'] = citations
-        
+        if result_dict.get("metadata", {}).get("_has_citations"):
+            citations = result_dict["metadata"].pop("_citations", [])
+            result_dict["metadata"].pop("_has_citations", None)
+            result_dict["citations"] = citations
+
         result_dicts.append(result_dict)
     return result_dicts
 
 
 # Pipeline configurations for backward compatibility
 BUILTIN_PIPELINES = {
-    'plain': {
-        'name': 'Plain RAG Search',
-        'steps': [
+    "plain": {
+        "name": "Plain RAG Search",
+        "steps": [
             {
-                'type': 'parallel',
-                'functions': [
-                    {'function': 'search_media_fts5', 'config': {'top_k': 10}},
-                    {'function': 'search_conversations_fts5', 'config': {'top_k': 10}},
-                    {'function': 'search_notes_fts5', 'config': {'top_k': 10}}
-                ]
-            },
-            {'type': 'process', 'function': 'deduplicate_results'},
-            {'type': 'process', 'function': 'rerank_results'},
-            {'type': 'format', 'function': 'format_as_context'}
-        ]
-    },
-    'semantic': {
-        'name': 'Semantic RAG Search',
-        'steps': [
-            {'type': 'retrieve', 'function': 'search_semantic'},
-            {'type': 'process', 'function': 'rerank_results'},
-            {'type': 'format', 'function': 'format_as_context'}
-        ]
-    },
-    'hybrid': {
-        'name': 'Hybrid RAG Search',
-        'steps': [
-            {
-                'type': 'parallel',
-                'functions': [
-                    {'function': 'search_media_fts5', 'config': {'top_k': 20}},
-                    {'function': 'search_conversations_fts5', 'config': {'top_k': 20}},
-                    {'function': 'search_notes_fts5', 'config': {'top_k': 20}},
-                    {'function': 'search_semantic', 'config': {'top_k': 20}}
+                "type": "parallel",
+                "functions": [
+                    {"function": "search_media_fts5", "config": {"top_k": 10}},
+                    {"function": "search_conversations_fts5", "config": {"top_k": 10}},
+                    {"function": "search_notes_fts5", "config": {"top_k": 10}},
                 ],
-                'merge': 'weighted_merge',
-                'config': {'weights': [0.25, 0.25, 0.25, 0.25]}  # Equal weights
             },
-            {'type': 'process', 'function': 'deduplicate_results'},
-            {'type': 'process', 'function': 'rerank_results'},
-            {'type': 'format', 'function': 'format_as_context'}
-        ]
-    }
+            {"type": "process", "function": "deduplicate_results"},
+            {"type": "process", "function": "rerank_results"},
+            {"type": "format", "function": "format_as_context"},
+        ],
+    },
+    "semantic": {
+        "name": "Semantic RAG Search",
+        "steps": [
+            {"type": "retrieve", "function": "search_semantic"},
+            {"type": "process", "function": "rerank_results"},
+            {"type": "format", "function": "format_as_context"},
+        ],
+    },
+    "hybrid": {
+        "name": "Hybrid RAG Search",
+        "steps": [
+            {
+                "type": "parallel",
+                "functions": [
+                    {"function": "search_media_fts5", "config": {"top_k": 20}},
+                    {"function": "search_conversations_fts5", "config": {"top_k": 20}},
+                    {"function": "search_notes_fts5", "config": {"top_k": 20}},
+                    {"function": "search_semantic", "config": {"top_k": 20}},
+                ],
+                # Server-parity fusion: RRF (k=60) + alpha blend, alpha
+                # weights the vector leg (0 = FTS only, 1 = vector only).
+                # Alpha resolves from [AppRAGSearchConfig.rag.retriever]
+                # hybrid_alpha (default 0.7) unless overridden here.
+                "merge": "rrf_merge",
+                "config": {},
+            },
+            {"type": "process", "function": "deduplicate_results"},
+            {"type": "process", "function": "rerank_results"},
+            {"type": "format", "function": "format_as_context"},
+        ],
+    },
 }
 
 
 # Load pipelines from TOML
 _TOML_PIPELINES = None
 
+
 def load_pipelines_from_toml():
     """Load pipeline configurations from TOML file."""
     global _TOML_PIPELINES
     if _TOML_PIPELINES is not None:
         return _TOML_PIPELINES
-    
+
     _TOML_PIPELINES = {}
-    
+
     # Check user config directory first
     user_config_dir = Path.home() / ".config" / "tldw_cli"
     user_config_file = user_config_dir / "rag_pipelines.toml"
-    
+
     # Fall back to default location
-    default_config_file = Path(__file__).parent.parent / "Config_Files" / "rag_pipelines.toml"
-    
+    default_config_file = (
+        Path(__file__).parent.parent / "Config_Files" / "rag_pipelines.toml"
+    )
+
     config_file = None
     if user_config_file.exists():
         config_file = user_config_file
@@ -336,29 +535,36 @@ def load_pipelines_from_toml():
     elif default_config_file.exists():
         config_file = default_config_file
         logger.info(f"Loading pipeline config from default location: {config_file}")
-        
+
         # Copy default file to user directory if it doesn't exist
         try:
             user_config_dir.mkdir(parents=True, exist_ok=True)
             import shutil
+
             shutil.copy2(default_config_file, user_config_file)
-            logger.info(f"Copied default pipeline config to user directory: {user_config_file}")
+            logger.info(
+                f"Copied default pipeline config to user directory: {user_config_file}"
+            )
         except Exception as e:
-            logger.warning(f"Could not copy default pipeline config to user directory: {e}")
-    
+            logger.warning(
+                f"Could not copy default pipeline config to user directory: {e}"
+            )
+
     if not config_file:
         logger.warning("Pipeline config file not found in user or default locations")
         return _TOML_PIPELINES
-    
+
     try:
         with open(config_file, "rb") as f:
             config_data = tomllib.load(f)
-        
+
         pipelines = config_data.get("pipelines", {})
-        
+
         # Convert TOML pipeline format to our simplified format
         for pipeline_id, pipeline_config in pipelines.items():
-            if pipeline_config.get("type") == "functional" and pipeline_config.get("enabled", True):
+            if pipeline_config.get("type") == "functional" and pipeline_config.get(
+                "enabled", True
+            ):
                 # Parse the functional pipeline format
                 steps = []
                 for step in pipeline_config.get("steps", []):
@@ -367,69 +573,113 @@ def load_pipelines_from_toml():
                         functions = []
                         for func in step.get("functions", []):
                             # Map TOML function names to our function names
-                            func_name = func['function']
-                            if func_name == 'retrieve_fts5':
+                            func_name = func["function"]
+                            if func_name == "retrieve_fts5":
                                 # This needs to be split into the three FTS5 functions
-                                functions.extend([
-                                    {'function': 'search_media_fts5', 'config': func.get('config', {})},
-                                    {'function': 'search_conversations_fts5', 'config': func.get('config', {})},
-                                    {'function': 'search_notes_fts5', 'config': func.get('config', {})}
-                                ])
-                            elif func_name == 'retrieve_semantic':
-                                functions.append({
-                                    'function': 'search_semantic',
-                                    'config': func.get('config', {})
-                                })
+                                functions.extend(
+                                    [
+                                        {
+                                            "function": "search_media_fts5",
+                                            "config": func.get("config", {}),
+                                        },
+                                        {
+                                            "function": "search_conversations_fts5",
+                                            "config": func.get("config", {}),
+                                        },
+                                        {
+                                            "function": "search_notes_fts5",
+                                            "config": func.get("config", {}),
+                                        },
+                                    ]
+                                )
+                            elif func_name == "retrieve_semantic":
+                                functions.append(
+                                    {
+                                        "function": "search_semantic",
+                                        "config": func.get("config", {}),
+                                    }
+                                )
                             else:
-                                functions.append({
-                                    'function': func_name,
-                                    'config': func.get('config', {})
-                                })
-                        steps.append({
-                            'type': 'parallel',
-                            'functions': functions,
-                            'merge': step.get('merge', 'concat'),
-                            'config': step.get('config', {})
-                        })
+                                functions.append(
+                                    {
+                                        "function": func_name,
+                                        "config": func.get("config", {}),
+                                    }
+                                )
+                        steps.append(
+                            {
+                                "type": "parallel",
+                                "functions": functions,
+                                "merge": step.get("merge", "concat"),
+                                "config": step.get("config", {}),
+                            }
+                        )
+                    elif step["type"] == "merge":
+                        # Fold a standalone merge step into the preceding
+                        # parallel step: execute_pipeline has no 'merge' step
+                        # type, so these were silently skipped before.
+                        if steps and steps[-1].get("type") == "parallel":
+                            steps[-1]["merge"] = step.get("function", "concat")
+                            steps[-1]["config"] = step.get("config", {})
+                        else:
+                            logger.warning(
+                                f"Pipeline '{pipeline_id}': merge step without a "
+                                f"preceding parallel step is ignored"
+                            )
                     else:
                         # Regular step - map function names
-                        func_name = step.get('function')
-                        if func_name == 'retrieve_fts5':
+                        func_name = step.get("function")
+                        if func_name == "retrieve_fts5":
                             # For non-parallel retrieve_fts5, we need to handle this differently
                             # Convert to parallel step with all three FTS5 searches
-                            steps.append({
-                                'type': 'parallel',
-                                'functions': [
-                                    {'function': 'search_media_fts5', 'config': step.get('config', {})},
-                                    {'function': 'search_conversations_fts5', 'config': step.get('config', {})},
-                                    {'function': 'search_notes_fts5', 'config': step.get('config', {})}
-                                ]
-                            })
-                        elif func_name == 'retrieve_semantic':
-                            steps.append({
-                                'type': step['type'],
-                                'function': 'search_semantic',
-                                'config': step.get('config', {})
-                            })
+                            steps.append(
+                                {
+                                    "type": "parallel",
+                                    "functions": [
+                                        {
+                                            "function": "search_media_fts5",
+                                            "config": step.get("config", {}),
+                                        },
+                                        {
+                                            "function": "search_conversations_fts5",
+                                            "config": step.get("config", {}),
+                                        },
+                                        {
+                                            "function": "search_notes_fts5",
+                                            "config": step.get("config", {}),
+                                        },
+                                    ],
+                                }
+                            )
+                        elif func_name == "retrieve_semantic":
+                            steps.append(
+                                {
+                                    "type": step["type"],
+                                    "function": "search_semantic",
+                                    "config": step.get("config", {}),
+                                }
+                            )
                         else:
-                            steps.append({
-                                'type': step['type'],
-                                'function': func_name,
-                                'config': step.get('config', {})
-                            })
-                
+                            steps.append(
+                                {
+                                    "type": step["type"],
+                                    "function": func_name,
+                                    "config": step.get("config", {}),
+                                }
+                            )
+
                 _TOML_PIPELINES[pipeline_id] = {
-                    'name': pipeline_config['name'],
-                    'description': pipeline_config.get('description', ''),
-                    'steps': steps,
-                    'parameters': pipeline_config.get('parameters', {})
+                    "name": pipeline_config["name"],
+                    "description": pipeline_config.get("description", ""),
+                    "steps": steps,
+                    "parameters": pipeline_config.get("parameters", {}),
                 }
-        
+
         logger.info(f"Loaded {len(_TOML_PIPELINES)} pipelines from TOML")
-        
+
     except Exception as e:
         logger.error(f"Failed to load TOML pipelines: {e}")
-    
+
     return _TOML_PIPELINES
 
 
@@ -438,25 +688,32 @@ def get_pipeline(pipeline_id: str) -> Optional[Dict[str, Any]]:
     # Check built-ins first
     if pipeline_id in BUILTIN_PIPELINES:
         return BUILTIN_PIPELINES[pipeline_id]
-    
+
     # Load and check TOML pipelines
     toml_pipelines = load_pipelines_from_toml()
     if pipeline_id in toml_pipelines:
         return toml_pipelines[pipeline_id]
-    
+
     # Also check if it's a non-functional pipeline that maps to a builtin
     # (e.g., "fast_search" -> "plain", "high_accuracy" -> "semantic")
     if pipeline_id == "fast_search":
-        config = BUILTIN_PIPELINES['plain'].copy()
-        config['parameters'] = {'top_k': 3, 'max_context_length': 5000, 'enable_rerank': False}
-        return config
-    elif pipeline_id == "high_accuracy":
-        config = BUILTIN_PIPELINES['semantic'].copy()
-        config['parameters'] = {
-            'top_k': 20, 'max_context_length': 15000, 
-            'chunk_size': 512, 'chunk_overlap': 128,
-            'enable_rerank': True, 'reranker_model': 'cohere'
+        config = BUILTIN_PIPELINES["plain"].copy()
+        config["parameters"] = {
+            "top_k": 3,
+            "max_context_length": 5000,
+            "enable_rerank": False,
         }
         return config
-    
+    elif pipeline_id == "high_accuracy":
+        config = BUILTIN_PIPELINES["semantic"].copy()
+        config["parameters"] = {
+            "top_k": 20,
+            "max_context_length": 15000,
+            "chunk_size": 512,
+            "chunk_overlap": 128,
+            "enable_rerank": True,
+            "reranker_model": "cohere",
+        }
+        return config
+
     return None

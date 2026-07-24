@@ -23,6 +23,7 @@ from tldw_chatbook.Workspaces import (
 from tldw_chatbook.Workspaces.registry_service import (
     WorkspaceNotFound,
     WorkspaceRegistryServiceError,
+    next_local_workspace_identity,
 )
 
 
@@ -207,7 +208,9 @@ def test_registry_links_note_without_hiding_other_workspaces(tmp_path: Path) -> 
     service.create_workspace(workspace_id="ws-b", name="Workspace B")
 
     service.link_membership("ws-a", item_type="note", item_id="note-1", role="source")
-    service.link_membership("ws-b", item_type="note", item_id="note-1", role="reference")
+    service.link_membership(
+        "ws-b", item_type="note", item_id="note-1", role="reference"
+    )
 
     memberships = service.get_item_memberships("note", "note-1")
 
@@ -274,7 +277,9 @@ def test_registry_lists_workspace_conversations_only(tmp_path: Path) -> None:
 
 
 def test_registry_list_workspace_conversations_uses_transaction_context() -> None:
-    source = inspect.getsource(LocalWorkspaceRegistryService.list_workspace_conversations)
+    source = inspect.getsource(
+        LocalWorkspaceRegistryService.list_workspace_conversations
+    )
 
     assert "self.db.transaction()" in source
     assert "self.db.connection()" not in source
@@ -293,7 +298,9 @@ def test_registry_normalizes_workspace_ids_at_service_boundary(tmp_path: Path) -
     service.create_workspace(workspace_id="ws-b", name="Workspace B")
 
     service.set_active_workspace(" ws-a ")
-    service.link_membership(" ws-a ", item_type=" note ", item_id=" note-1 ", role=" source ")
+    service.link_membership(
+        " ws-a ", item_type=" note ", item_id=" note-1 ", role=" source "
+    )
 
     active = service.get_active_workspace()
 
@@ -389,3 +396,43 @@ def test_registry_tolerates_corrupt_runtime_binding_metadata(tmp_path: Path) -> 
 
     assert len(bindings) == 1
     assert bindings[0].metadata == {}
+
+
+def test_next_local_workspace_identity_returns_first_free_slot(tmp_path: Path) -> None:
+    """The shared helper returns the lowest available workspace-local identity."""
+    registry_service = build_test_registry(tmp_path)
+    workspace_id, workspace_name = next_local_workspace_identity(registry_service)
+    assert workspace_id == "workspace-local-1"
+    assert workspace_name == "Workspace 1"
+
+
+def test_next_local_workspace_identity_skips_existing_ids_and_names(
+    tmp_path: Path,
+) -> None:
+    """The shared helper returns the first gap in existing workspace identities."""
+    registry_service = build_test_registry(tmp_path)
+    registry_service.create_workspace(
+        workspace_id="workspace-local-1", name="Workspace 1"
+    )
+    registry_service.create_workspace(
+        workspace_id="workspace-local-3", name="Workspace 3"
+    )
+
+    workspace_id, workspace_name = next_local_workspace_identity(registry_service)
+
+    assert workspace_id == "workspace-local-2"
+    assert workspace_name == "Workspace 2"
+
+
+def test_next_local_workspace_identity_avoids_name_collision(tmp_path: Path) -> None:
+    """The shared helper avoids a workspace name even when the id is free."""
+    registry_service = build_test_registry(tmp_path)
+    registry_service.create_workspace(
+        workspace_id="workspace-local-1", name="Workspace 1"
+    )
+    registry_service.create_workspace(workspace_id="custom-id", name="Workspace 2")
+
+    workspace_id, workspace_name = next_local_workspace_identity(registry_service)
+
+    assert workspace_id == "workspace-local-3"
+    assert workspace_name == "Workspace 3"

@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 
 
 ConsoleActionStatus = Literal[
@@ -66,13 +69,28 @@ class ConsoleMessageActionService:
         ("variant-previous", "<"),
         ("variant-next", ">"),
     )
+    _KEEP_ACTION: tuple[tuple[str, str], ...] = (("keep", "keep"),)
     _FAILED_RETRY_ACTIONS: tuple[tuple[str, str], ...] = (("retry", "Try"),)
+    _IMAGE_VIEW_ACTIONS: tuple[tuple[str, str], ...] = (("toggle-image-view", "View"),)
+    _SAVE_IMAGE_ACTIONS: tuple[tuple[str, str], ...] = (("save-image", "Save Image"),)
 
-    def __init__(self, *, available_save_destinations: set[str] | None = None) -> None:
+    @staticmethod
+    def _has_image(message: ConsoleChatMessage) -> bool:
+        return message.image_data is not None or bool(message.image_mime_type)
+
+    def __init__(
+        self,
+        *,
+        available_save_destinations: set[str] | None = None,
+        unavailable_save_reasons: dict[str, str] | None = None,
+    ) -> None:
         self.available_save_destinations = set(available_save_destinations or ())
+        self.unavailable_save_reasons = dict(unavailable_save_reasons or {})
 
     @classmethod
-    def _base_actions_with(cls, inserted: tuple[tuple[str, str], ...]) -> list[tuple[str, str]]:
+    def _base_actions_with(
+        cls, inserted: tuple[tuple[str, str], ...]
+    ) -> list[tuple[str, str]]:
         """Return the base action row with extra actions inserted before regenerate."""
         actions: list[tuple[str, str]] = []
         for action_id, label in cls._COMPLETED_ACTIONS:
@@ -81,23 +99,77 @@ class ConsoleMessageActionService:
             actions.append((action_id, label))
         return actions
 
-    def available_actions(self, message: ConsoleChatMessage) -> list[ConsoleMessageAction]:
-        """Return canonical selected-message actions for a transcript message."""
+    def available_actions(
+        self,
+        message: ConsoleChatMessage,
+        *,
+        generation_variant_count: int = 0,
+        generation_browsed_index: int = 0,
+    ) -> list[ConsoleMessageAction]:
+        """Return canonical selected-message actions for a transcript message.
+
+        Args:
+            message: Transcript message to resolve actions for.
+            generation_variant_count: Number of image-generation variants
+                carried by this message (0 for a non-generation message).
+                When > 0 this gates `<`/`>`/Keep INSTEAD of the text-sibling
+                ``sibling_count``/``sibling_index`` fields on ``message`` --
+                an image-variant set and a text-sibling set are mutually
+                exclusive shapes (spec §5.1). Defaults to 0 so existing
+                callers that don't pass these kwargs see byte-identical
+                behavior.
+            generation_browsed_index: Currently browsed variant index for a
+                generation message (ignored when ``generation_variant_count``
+                is 0).
+        """
         disabled_reason = self._disabled_reason(message)
+        is_generation_message = generation_variant_count > 0
         completed_actions = list(self._COMPLETED_ACTIONS)
-        if message.variants is not None:
-            completed_actions = self._base_actions_with(self._VARIANT_NAV_ACTIONS)
-        if message.status == "failed":
+        extra_actions: list[tuple[str, str]] = []
+        if is_generation_message:
+            if generation_variant_count > 1:
+                extra_actions.extend(self._VARIANT_NAV_ACTIONS)
+            if generation_browsed_index != 0:
+                extra_actions.extend(self._KEEP_ACTION)
+        elif message.sibling_count > 1:
+            extra_actions.extend(self._VARIANT_NAV_ACTIONS)
+        if extra_actions:
+            completed_actions = self._base_actions_with(tuple(extra_actions))
+        if self._has_image(message):
+            completed_actions = (
+                completed_actions
+                + list(self._IMAGE_VIEW_ACTIONS)
+                + list(self._SAVE_IMAGE_ACTIONS)
+            )
+        if message.status == "failed" and self._is_assistant_message(message):
+            # Retry regenerates a failed ASSISTANT response. A failed USER row —
+            # e.g. the TASK-457(a) optimistic echo rejected before any provider
+            # send — has nothing to regenerate, so it must not offer retry (the
+            # user re-sends from the composer instead).
             return [
                 ConsoleMessageAction(action_id, label)
-                for action_id, label in self._base_actions_with(self._FAILED_RETRY_ACTIONS)
+                for action_id, label in self._base_actions_with(
+                    self._FAILED_RETRY_ACTIONS
+                )
             ]
         return [
             ConsoleMessageAction(
                 action_id=action_id,
                 label=label,
-                enabled=disabled_reason == "" and self._action_enabled(action_id, message),
-                disabled_reason=disabled_reason or self._action_disabled_reason(action_id, message),
+                enabled=disabled_reason == ""
+                and self._action_enabled(
+                    action_id,
+                    message,
+                    generation_variant_count=generation_variant_count,
+                    generation_browsed_index=generation_browsed_index,
+                ),
+                disabled_reason=disabled_reason
+                or self._action_disabled_reason(
+                    action_id,
+                    message,
+                    generation_variant_count=generation_variant_count,
+                    generation_browsed_index=generation_browsed_index,
+                ),
             )
             for action_id, label in completed_actions
         ]
@@ -111,7 +183,9 @@ class ConsoleMessageActionService:
         return " ".join(self.plain_action_labels(message))
 
     @classmethod
-    def expand_plain_action_labels(cls, actions: list[ConsoleMessageAction]) -> list[str]:
+    def expand_plain_action_labels(
+        cls, actions: list[ConsoleMessageAction]
+    ) -> list[str]:
         """Expand grouped UI actions into the labels shown in plain text."""
         labels: list[str] = []
         for action in actions:
@@ -121,20 +195,29 @@ class ConsoleMessageActionService:
                 labels.append(action.label)
         return labels
 
-    def save_as_destinations(self, message: ConsoleChatMessage) -> list[ConsoleSaveDestination]:
-        """Return Save as destinations, including explicit WIP/unavailable entries."""
+    def save_as_destinations(
+        self, message: ConsoleChatMessage
+    ) -> list[ConsoleSaveDestination]:
+        """Return Save as destinations, including explicit unavailable entries."""
         _ = message
         labels = ("Chatbook", "Note", "Media", "Prompt")
-        return [
-            ConsoleSaveDestination(
-                label=label,
-                available=label in self.available_save_destinations,
-                reason="" if label in self.available_save_destinations else f"WIP: save as {label} is not wired yet.",
+        destinations: list[ConsoleSaveDestination] = []
+        for label in labels:
+            available = label in self.available_save_destinations
+            reason = ""
+            if not available:
+                reason = (
+                    self.unavailable_save_reasons.get(label)
+                    or f"Save as {label} is not available in this session."
+                )
+            destinations.append(
+                ConsoleSaveDestination(label=label, available=available, reason=reason)
             )
-            for label in labels
-        ]
+        return destinations
 
-    def dispatch(self, action_id: str, message: ConsoleChatMessage) -> ConsoleActionResult:
+    def dispatch(
+        self, action_id: str, message: ConsoleChatMessage
+    ) -> ConsoleActionResult:
         """Dispatch a pure action result without touching UI or persistence."""
         if message.status in {"pending", "streaming"}:
             return ConsoleActionResult(
@@ -190,7 +273,17 @@ class ConsoleMessageActionService:
                 status="completed",
                 visible_copy="Selected response variant.",
             )
-        if action_id == "regenerate" and not ConsoleMessageActionService._is_assistant_message(message):
+        if action_id == "keep":
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy="Kept this variant as the message's canonical image.",
+                target_message_id=message.id,
+            )
+        if (
+            action_id == "regenerate"
+            and not ConsoleMessageActionService._is_assistant_message(message)
+        ):
             return ConsoleActionResult(
                 action_id=action_id,
                 status="blocked",
@@ -209,6 +302,20 @@ class ConsoleMessageActionService:
                 target_message_id=message.id,
                 target_content=target_content,
             )
+        if action_id == "toggle-image-view":
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy="Toggled image view.",
+                target_message_id=message.id,
+            )
+        if action_id == "save-image":
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy="Saving image to disk.",
+                target_message_id=message.id,
+            )
         return ConsoleActionResult(
             action_id=action_id,
             status="wip",
@@ -222,24 +329,67 @@ class ConsoleMessageActionService:
         return ""
 
     @staticmethod
-    def _variant_action_enabled(action_id: str, message: ConsoleChatMessage) -> bool:
+    def _variant_action_enabled(
+        action_id: str,
+        message: ConsoleChatMessage,
+        *,
+        generation_variant_count: int = 0,
+        generation_browsed_index: int = 0,
+    ) -> bool:
+        if generation_variant_count > 0:
+            # Generation-variant boundary check takes precedence over the
+            # text-sibling fields for these two ids (spec §7) -- a
+            # generation message never carries text siblings.
+            if action_id == "variant-previous":
+                return generation_browsed_index > 0
+            if action_id == "variant-next":
+                return generation_browsed_index < generation_variant_count - 1
+            return True
         if action_id == "variant-previous":
-            return message.variants is not None and message.variants.can_go_previous
+            return message.sibling_index > 0
         if action_id == "variant-next":
-            return message.variants is not None and message.variants.can_go_next
+            return message.sibling_index < message.sibling_count - 1
         return True
 
     @staticmethod
-    def _action_enabled(action_id: str, message: ConsoleChatMessage) -> bool:
+    def _action_enabled(
+        action_id: str,
+        message: ConsoleChatMessage,
+        *,
+        generation_variant_count: int = 0,
+        generation_browsed_index: int = 0,
+    ) -> bool:
         if action_id == "regenerate":
             return ConsoleMessageActionService._is_assistant_message(message)
-        return ConsoleMessageActionService._variant_action_enabled(action_id, message)
+        return ConsoleMessageActionService._variant_action_enabled(
+            action_id,
+            message,
+            generation_variant_count=generation_variant_count,
+            generation_browsed_index=generation_browsed_index,
+        )
 
     @staticmethod
-    def _action_disabled_reason(action_id: str, message: ConsoleChatMessage) -> str:
-        if action_id == "regenerate" and not ConsoleMessageActionService._is_assistant_message(message):
+    def _action_disabled_reason(
+        action_id: str,
+        message: ConsoleChatMessage,
+        *,
+        generation_variant_count: int = 0,
+        generation_browsed_index: int = 0,
+    ) -> str:
+        if (
+            action_id == "regenerate"
+            and not ConsoleMessageActionService._is_assistant_message(message)
+        ):
             return "Only assistant messages can be regenerated."
-        if action_id in {"variant-previous", "variant-next"} and not ConsoleMessageActionService._variant_action_enabled(action_id, message):
+        if action_id in {
+            "variant-previous",
+            "variant-next",
+        } and not ConsoleMessageActionService._variant_action_enabled(
+            action_id,
+            message,
+            generation_variant_count=generation_variant_count,
+            generation_browsed_index=generation_browsed_index,
+        ):
             return "No response variant in that direction."
         return ""
 

@@ -23,7 +23,10 @@ from tldw_chatbook.runtime_policy.server_context import (
     ServerCredentialsUnavailable,
     ServerContextUnavailable,
 )
-from tldw_chatbook.runtime_policy.types import RuntimeSourceState, SERVER_CONTEXT_FAILURE_REASON_CODES
+from tldw_chatbook.runtime_policy.types import (
+    RuntimeSourceState,
+    SERVER_CONTEXT_FAILURE_REASON_CODES,
+)
 
 
 class SavingRuntimeStore:
@@ -96,7 +99,9 @@ def _runtime_context(
     )
 
 
-def _target_store(tmp_path, targets: list[ConfiguredServerTarget] | None = None) -> ConfiguredServerTargetStore:
+def _target_store(
+    tmp_path, targets: list[ConfiguredServerTarget] | None = None
+) -> ConfiguredServerTargetStore:
     store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     if targets is not None:
         store.save_targets(targets)
@@ -121,7 +126,11 @@ def _provider(
 
 def test_resolves_matching_target_and_credential_store_secret(tmp_path):
     credentials = InMemoryServerCredentialStore()
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_BEARER_TOKEN, "bearer-secret")
+    credentials.set_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+        "bearer-secret",
+    )
     target = ConfiguredServerTarget(
         server_id="https://server.example.com/api",
         label="Primary",
@@ -143,7 +152,10 @@ def test_resolves_matching_target_and_credential_store_secret(tmp_path):
     assert context.base_url == "https://server.example.com/api"
     assert context.auth_method == "bearer"
     assert context.auth_token == "bearer-secret"
-    assert context.credential_source == f"credential_store:{SERVER_CREDENTIAL_BEARER_TOKEN}"
+    assert (
+        context.credential_source
+        == f"credential_store:{SERVER_CREDENTIAL_BEARER_TOKEN}"
+    )
     assert context.target == target
 
 
@@ -171,7 +183,9 @@ def test_server_context_failure_reason_codes_include_stable_contract_values():
 
 
 def test_context_unavailable_error_exposes_reason_code_and_safe_payload(tmp_path):
-    provider = _provider(tmp_path, runtime_context=_runtime_context(active_server_id=None))
+    provider = _provider(
+        tmp_path, runtime_context=_runtime_context(active_server_id=None)
+    )
 
     with pytest.raises(ServerContextUnavailable) as exc:
         provider.get_active_context()
@@ -197,7 +211,9 @@ def test_missing_active_server_profile_uses_profile_missing_contract(tmp_path):
     assert contract["active_server_id"] == "https://server.example.com/api"
 
 
-def test_legacy_fallback_works_when_no_target_exists_and_app_config_matches_active_server(tmp_path):
+def test_legacy_fallback_works_when_no_target_exists_and_app_config_matches_active_server(
+    tmp_path,
+):
     provider = _provider(
         tmp_path,
         app_config={
@@ -216,14 +232,21 @@ def test_legacy_fallback_works_when_no_target_exists_and_app_config_matches_acti
     assert context.base_url == "https://server.example.com/api"
     assert context.auth_method == "bearer"
     assert context.auth_token == "legacy-bearer"
-    assert context.credential_source == f"credential_store:{SERVER_CREDENTIAL_BEARER_TOKEN}"
+    assert (
+        context.credential_source
+        == f"credential_store:{SERVER_CREDENTIAL_BEARER_TOKEN}"
+    )
     assert context.target.server_id == "https://server.example.com/api"
     assert context.target.auth_reference == "legacy:tldw_api"
 
 
 def test_legacy_target_prefers_credential_store_token_over_legacy_config(tmp_path):
     credentials = InMemoryServerCredentialStore()
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "stored-access")
+    credentials.set_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+        "stored-access",
+    )
 
     provider = _provider(
         tmp_path,
@@ -250,7 +273,10 @@ def test_legacy_target_prefers_credential_store_token_over_legacy_config(tmp_pat
     context = provider.get_active_context()
 
     assert context.auth_token == "stored-access"
-    assert context.credential_source == f"credential_store:{SERVER_CREDENTIAL_ACCESS_TOKEN}"
+    assert (
+        context.credential_source
+        == f"credential_store:{SERVER_CREDENTIAL_ACCESS_TOKEN}"
+    )
 
 
 def test_legacy_config_token_imports_only_for_active_server_profile(tmp_path):
@@ -292,21 +318,31 @@ def test_legacy_config_token_imports_only_for_active_server_profile(tmp_path):
 
     assert context.active_server_id == "https://server.example.com/api"
     assert context.auth_token == "legacy-bearer"
-    assert credentials.get_secret(
-        "https://server.example.com/api",
-        SERVER_CREDENTIAL_BEARER_TOKEN,
-    ) == "legacy-bearer"
-    assert credentials.get_secret(
-        "https://backup.example.com/api",
-        SERVER_CREDENTIAL_BEARER_TOKEN,
-    ) is None
+    assert (
+        credentials.get_secret(
+            "https://server.example.com/api",
+            SERVER_CREDENTIAL_BEARER_TOKEN,
+        )
+        == "legacy-bearer"
+    )
+    assert (
+        credentials.get_secret(
+            "https://backup.example.com/api",
+            SERVER_CREDENTIAL_BEARER_TOKEN,
+        )
+        is None
+    )
 
 
-def test_legacy_config_token_does_not_apply_to_nonmatching_active_server_profile(tmp_path):
+def test_legacy_config_token_does_not_apply_to_nonmatching_active_server_profile(
+    tmp_path,
+):
     credentials = InMemoryServerCredentialStore()
     provider = _provider(
         tmp_path,
-        runtime_context=_runtime_context(active_server_id="https://backup.example.com/api"),
+        runtime_context=_runtime_context(
+            active_server_id="https://backup.example.com/api"
+        ),
         credential_store=credentials,
         targets=[
             ConfiguredServerTarget(
@@ -332,15 +368,24 @@ def test_legacy_config_token_does_not_apply_to_nonmatching_active_server_profile
     assert context.active_server_id == "https://backup.example.com/api"
     assert context.auth_token is None
     assert context.credential_source == "none"
-    assert credentials.get_secret(
-        "https://backup.example.com/api",
-        SERVER_CREDENTIAL_BEARER_TOKEN,
-    ) is None
+    assert (
+        credentials.get_secret(
+            "https://backup.example.com/api",
+            SERVER_CREDENTIAL_BEARER_TOKEN,
+        )
+        is None
+    )
 
 
-def test_legacy_fallback_without_target_prefers_credential_store_token_over_legacy_config(tmp_path):
+def test_legacy_fallback_without_target_prefers_credential_store_token_over_legacy_config(
+    tmp_path,
+):
     credentials = InMemoryServerCredentialStore()
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_BEARER_TOKEN, "stored-bearer")
+    credentials.set_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+        "stored-bearer",
+    )
 
     provider = _provider(
         tmp_path,
@@ -357,10 +402,15 @@ def test_legacy_fallback_without_target_prefers_credential_store_token_over_lega
     context = provider.get_active_context()
 
     assert context.auth_token == "stored-bearer"
-    assert context.credential_source == f"credential_store:{SERVER_CREDENTIAL_BEARER_TOKEN}"
+    assert (
+        context.credential_source
+        == f"credential_store:{SERVER_CREDENTIAL_BEARER_TOKEN}"
+    )
 
 
-def test_legacy_fallback_uses_config_token_when_credential_store_is_unavailable(tmp_path):
+def test_legacy_fallback_uses_config_token_when_credential_store_is_unavailable(
+    tmp_path,
+):
     provider = _provider(
         tmp_path,
         credential_store=RaisingCredentialStore(),
@@ -379,7 +429,9 @@ def test_legacy_fallback_uses_config_token_when_credential_store_is_unavailable(
     assert context.credential_source == "legacy:tldw_api"
 
 
-def test_explicit_keyring_reference_raises_typed_error_when_credential_store_is_unavailable(tmp_path):
+def test_explicit_keyring_reference_raises_typed_error_when_credential_store_is_unavailable(
+    tmp_path,
+):
     provider = _provider(
         tmp_path,
         credential_store=RaisingCredentialStore(),
@@ -408,7 +460,9 @@ def test_explicit_keyring_reference_raises_typed_error_when_credential_store_is_
     assert isinstance(exc.value.__cause__, RuntimeError)
 
 
-def test_explicit_keyring_reference_preserves_credential_store_unavailable_reason_code(tmp_path):
+def test_explicit_keyring_reference_preserves_credential_store_unavailable_reason_code(
+    tmp_path,
+):
     provider = _provider(
         tmp_path,
         credential_store=UnavailableServerCredentialStore("no secure store"),
@@ -481,10 +535,20 @@ def test_generic_credential_failure_contract_is_sanitized(tmp_path):
     assert "authorization" not in contract_repr
 
 
-def test_bearer_auth_prefers_bearer_token_then_access_token_before_legacy_config(tmp_path):
+def test_bearer_auth_prefers_bearer_token_then_access_token_before_legacy_config(
+    tmp_path,
+):
     credentials = InMemoryServerCredentialStore()
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "stored-access")
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_BEARER_TOKEN, "stored-bearer")
+    credentials.set_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+        "stored-access",
+    )
+    credentials.set_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+        "stored-bearer",
+    )
 
     provider = _provider(
         tmp_path,
@@ -511,12 +575,19 @@ def test_bearer_auth_prefers_bearer_token_then_access_token_before_legacy_config
     context = provider.get_active_context()
 
     assert context.auth_token == "stored-bearer"
-    assert context.credential_source == f"credential_store:{SERVER_CREDENTIAL_BEARER_TOKEN}"
+    assert (
+        context.credential_source
+        == f"credential_store:{SERVER_CREDENTIAL_BEARER_TOKEN}"
+    )
 
 
 def test_context_computes_bearer_headers_from_effective_auth_token(tmp_path):
     credentials = InMemoryServerCredentialStore()
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_BEARER_TOKEN, "stored-bearer")
+    credentials.set_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+        "stored-bearer",
+    )
     provider = _provider(
         tmp_path,
         credential_store=credentials,
@@ -538,7 +609,9 @@ def test_context_computes_bearer_headers_from_effective_auth_token(tmp_path):
 
 def test_api_key_auth_prefers_api_key_credential_before_legacy_config(tmp_path):
     credentials = InMemoryServerCredentialStore()
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "stored-api-key")
+    credentials.set_secret(
+        "https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "stored-api-key"
+    )
 
     provider = _provider(
         tmp_path,
@@ -570,7 +643,9 @@ def test_api_key_auth_prefers_api_key_credential_before_legacy_config(tmp_path):
 
 def test_context_computes_api_key_headers_from_effective_auth_token(tmp_path):
     credentials = InMemoryServerCredentialStore()
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "stored-api-key")
+    credentials.set_secret(
+        "https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "stored-api-key"
+    )
     provider = _provider(
         tmp_path,
         credential_store=credentials,
@@ -674,12 +749,16 @@ def test_context_capabilities_update_when_active_server_runtime_state_changes(tm
 
     assert first_context.target.server_id == "https://server.example.com/api"
     assert first_context.capabilities["reachability"] == "unknown"
-    assert first_context.capabilities["target_last_known_server_label"] == "Primary Target"
+    assert (
+        first_context.capabilities["target_last_known_server_label"] == "Primary Target"
+    )
     assert second_context.target.server_id == "https://backup.example.com/api"
     assert second_context.capabilities["reachability"] == "unreachable"
     assert second_context.capabilities["auth_state"] == "session_invalid"
     assert second_context.capabilities["last_known_server_label"] == "Backup Runtime"
-    assert second_context.capabilities["target_last_known_server_label"] == "Backup Target"
+    assert (
+        second_context.capabilities["target_last_known_server_label"] == "Backup Target"
+    )
 
 
 def test_profile_target_auth_resolution_does_not_re_resolve_active_target(tmp_path):
@@ -708,7 +787,9 @@ def test_profile_target_auth_resolution_does_not_re_resolve_active_target(tmp_pa
     assert target_store.get_target_calls == 1
 
 
-def test_build_client_without_required_credentials_raises_auth_required_contract(tmp_path):
+def test_build_client_without_required_credentials_raises_auth_required_contract(
+    tmp_path,
+):
     provider = _provider(
         tmp_path,
         targets=[
@@ -733,11 +814,17 @@ def test_build_client_without_required_credentials_raises_auth_required_contract
     assert "authorization" not in repr(contract).lower()
 
 
-def test_build_client_raises_server_unavailable_when_runtime_state_is_unreachable(tmp_path):
+def test_build_client_raises_server_unavailable_when_runtime_state_is_unreachable(
+    tmp_path,
+):
     credentials = InMemoryServerCredentialStore()
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "stored-api-key")
+    credentials.set_secret(
+        "https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "stored-api-key"
+    )
     runtime_context = _runtime_context()
-    runtime_context.state = replace(runtime_context.state, server_reachability="unreachable")
+    runtime_context.state = replace(
+        runtime_context.state, server_reachability="unreachable"
+    )
     provider = _provider(
         tmp_path,
         runtime_context=runtime_context,
@@ -762,9 +849,13 @@ def test_build_client_raises_server_unavailable_when_runtime_state_is_unreachabl
 
 def test_build_client_raises_auth_required_when_runtime_state_requires_auth(tmp_path):
     credentials = InMemoryServerCredentialStore()
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "stored-api-key")
+    credentials.set_secret(
+        "https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "stored-api-key"
+    )
     runtime_context = _runtime_context()
-    runtime_context.state = replace(runtime_context.state, server_auth_state="auth_required")
+    runtime_context.state = replace(
+        runtime_context.state, server_auth_state="auth_required"
+    )
     provider = _provider(
         tmp_path,
         runtime_context=runtime_context,
@@ -789,9 +880,13 @@ def test_build_client_raises_auth_required_when_runtime_state_requires_auth(tmp_
 
 def test_build_client_raises_stale_authorization_when_runtime_session_invalid(tmp_path):
     credentials = InMemoryServerCredentialStore()
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "stored-api-key")
+    credentials.set_secret(
+        "https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "stored-api-key"
+    )
     runtime_context = _runtime_context()
-    runtime_context.state = replace(runtime_context.state, server_auth_state="session_invalid")
+    runtime_context.state = replace(
+        runtime_context.state, server_auth_state="session_invalid"
+    )
     provider = _provider(
         tmp_path,
         runtime_context=runtime_context,
@@ -816,7 +911,11 @@ def test_build_client_raises_stale_authorization_when_runtime_session_invalid(tm
 
 def test_build_client_uses_active_context_base_url_and_bearer_token(tmp_path):
     credentials = InMemoryServerCredentialStore()
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "access-secret")
+    credentials.set_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+        "access-secret",
+    )
     provider = _provider(
         tmp_path,
         credential_store=credentials,
@@ -840,7 +939,11 @@ def test_build_client_uses_active_context_base_url_and_bearer_token(tmp_path):
 
 def test_build_client_reuses_cached_client_for_same_active_context_and_token(tmp_path):
     credentials = InMemoryServerCredentialStore()
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "access-secret")
+    credentials.set_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+        "access-secret",
+    )
     provider = _provider(
         tmp_path,
         credential_store=credentials,
@@ -862,9 +965,13 @@ def test_build_client_reuses_cached_client_for_same_active_context_and_token(tmp
 
 
 @pytest.mark.asyncio
-async def test_stored_token_change_replaces_cached_client_and_closes_opened_old_client(tmp_path):
+async def test_stored_token_change_replaces_cached_client_and_closes_opened_old_client(
+    tmp_path,
+):
     credentials = InMemoryServerCredentialStore()
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "access-1")
+    credentials.set_secret(
+        "https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "access-1"
+    )
     provider = _provider(
         tmp_path,
         credential_store=credentials,
@@ -894,12 +1001,22 @@ async def test_stored_token_change_replaces_cached_client_and_closes_opened_old_
 
 
 @pytest.mark.asyncio
-async def test_clear_active_server_auth_tokens_invalidates_cache_and_preserves_static_credentials(tmp_path):
+async def test_clear_active_server_auth_tokens_invalidates_cache_and_preserves_static_credentials(
+    tmp_path,
+):
     credentials = InMemoryServerCredentialStore()
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "access-1")
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_REFRESH_TOKEN, "refresh-1")
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "api-key-1")
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_BEARER_TOKEN, "bearer-1")
+    credentials.set_secret(
+        "https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "access-1"
+    )
+    credentials.set_secret(
+        "https://server.example.com/api", SERVER_CREDENTIAL_REFRESH_TOKEN, "refresh-1"
+    )
+    credentials.set_secret(
+        "https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "api-key-1"
+    )
+    credentials.set_secret(
+        "https://server.example.com/api", SERVER_CREDENTIAL_BEARER_TOKEN, "bearer-1"
+    )
     provider = _provider(
         tmp_path,
         credential_store=credentials,
@@ -924,28 +1041,46 @@ async def test_clear_active_server_auth_tokens_invalidates_cache_and_preserves_s
     assert second_client is not first_client
     assert opened_http_client.is_closed
     assert second_client.bearer_token == "bearer-1"
-    assert credentials.get_secret(
-        "https://server.example.com/api",
-        SERVER_CREDENTIAL_ACCESS_TOKEN,
-    ) is None
-    assert credentials.get_secret(
-        "https://server.example.com/api",
-        SERVER_CREDENTIAL_REFRESH_TOKEN,
-    ) is None
-    assert credentials.get_secret(
-        "https://server.example.com/api",
-        SERVER_CREDENTIAL_API_KEY,
-    ) == "api-key-1"
-    assert credentials.get_secret(
-        "https://server.example.com/api",
-        SERVER_CREDENTIAL_BEARER_TOKEN,
-    ) == "bearer-1"
+    assert (
+        credentials.get_secret(
+            "https://server.example.com/api",
+            SERVER_CREDENTIAL_ACCESS_TOKEN,
+        )
+        is None
+    )
+    assert (
+        credentials.get_secret(
+            "https://server.example.com/api",
+            SERVER_CREDENTIAL_REFRESH_TOKEN,
+        )
+        is None
+    )
+    assert (
+        credentials.get_secret(
+            "https://server.example.com/api",
+            SERVER_CREDENTIAL_API_KEY,
+        )
+        == "api-key-1"
+    )
+    assert (
+        credentials.get_secret(
+            "https://server.example.com/api",
+            SERVER_CREDENTIAL_BEARER_TOKEN,
+        )
+        == "bearer-1"
+    )
 
 
 @pytest.mark.asyncio
-async def test_clear_all_credentials_invalidates_cached_client_and_removes_imported_credentials(tmp_path):
+async def test_clear_all_credentials_invalidates_cached_client_and_removes_imported_credentials(
+    tmp_path,
+):
     credentials = InMemoryServerCredentialStore()
-    credentials.set_secret("https://backup.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "backup-access")
+    credentials.set_secret(
+        "https://backup.example.com/api",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+        "backup-access",
+    )
     provider = _provider(
         tmp_path,
         credential_store=credentials,
@@ -977,28 +1112,45 @@ async def test_clear_all_credentials_invalidates_cached_client_and_removes_impor
 
     assert provider._cached_client is None
     assert opened_http_client.is_closed
-    assert credentials.get_secret(
-        "https://server.example.com/api",
-        SERVER_CREDENTIAL_BEARER_TOKEN,
-    ) is None
-    assert credentials.get_secret(
-        "https://backup.example.com/api",
-        SERVER_CREDENTIAL_ACCESS_TOKEN,
-    ) is None
+    assert (
+        credentials.get_secret(
+            "https://server.example.com/api",
+            SERVER_CREDENTIAL_BEARER_TOKEN,
+        )
+        is None
+    )
+    assert (
+        credentials.get_secret(
+            "https://backup.example.com/api",
+            SERVER_CREDENTIAL_ACCESS_TOKEN,
+        )
+        is None
+    )
     assert provider.app_config["tldw_api"]["bearer_token"] == "legacy-bearer"
 
     with pytest.raises(ServerCredentialsUnavailable):
         provider.get_active_context()
-    assert credentials.get_secret(
-        "https://server.example.com/api",
-        SERVER_CREDENTIAL_BEARER_TOKEN,
-    ) is None
+    assert (
+        credentials.get_secret(
+            "https://server.example.com/api",
+            SERVER_CREDENTIAL_BEARER_TOKEN,
+        )
+        is None
+    )
 
 
-def test_clear_all_credentials_blocks_other_legacy_backed_profile_after_server_switch(tmp_path):
+def test_clear_all_credentials_blocks_other_legacy_backed_profile_after_server_switch(
+    tmp_path,
+):
     credentials = InMemoryServerCredentialStore()
-    credentials.set_secret("https://server-a.example.com/api", SERVER_CREDENTIAL_BEARER_TOKEN, "server-a-secret")
-    runtime_context = _runtime_context(active_server_id="https://server-a.example.com/api")
+    credentials.set_secret(
+        "https://server-a.example.com/api",
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+        "server-a-secret",
+    )
+    runtime_context = _runtime_context(
+        active_server_id="https://server-a.example.com/api"
+    )
     provider = _provider(
         tmp_path,
         runtime_context=runtime_context,
@@ -1037,13 +1189,18 @@ def test_clear_all_credentials_blocks_other_legacy_backed_profile_after_server_s
 
     with pytest.raises(ServerCredentialsUnavailable):
         provider.get_active_context()
-    assert credentials.get_secret(
-        "https://server.example.com/api",
-        SERVER_CREDENTIAL_BEARER_TOKEN,
-    ) is None
+    assert (
+        credentials.get_secret(
+            "https://server.example.com/api",
+            SERVER_CREDENTIAL_BEARER_TOKEN,
+        )
+        is None
+    )
 
 
-def test_clear_all_credentials_preserves_original_credential_store_error_for_legacy_profile(tmp_path):
+def test_clear_all_credentials_preserves_original_credential_store_error_for_legacy_profile(
+    tmp_path,
+):
     provider = _provider(
         tmp_path,
         credential_store=LookupFailingCredentialStore(),
@@ -1077,7 +1234,9 @@ def test_clear_all_credentials_preserves_original_credential_store_error_for_leg
 def test_target_store_json_and_target_metadata_do_not_contain_stored_secret(tmp_path):
     secret = "literal-provider-token-must-not-leak"
     credentials = InMemoryServerCredentialStore()
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, secret)
+    credentials.set_secret(
+        "https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, secret
+    )
     target_store = _target_store(
         tmp_path,
         [
@@ -1118,16 +1277,30 @@ def test_target_store_json_and_target_metadata_do_not_contain_stored_secret(tmp_
     assert secret not in target_metadata_json
 
 
-def test_clear_active_server_credentials_and_clear_server_credentials_clear_per_server_secrets(tmp_path):
+def test_clear_active_server_credentials_and_clear_server_credentials_clear_per_server_secrets(
+    tmp_path,
+):
     credentials = InMemoryServerCredentialStore()
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_BEARER_TOKEN, "active-secret")
+    credentials.set_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_BEARER_TOKEN,
+        "active-secret",
+    )
     credentials.set_secret("server-b", SERVER_CREDENTIAL_BEARER_TOKEN, "other-secret")
     provider = _provider(tmp_path, credential_store=credentials)
 
     provider.clear_active_server_credentials()
 
-    assert credentials.get_secret("https://server.example.com/api", SERVER_CREDENTIAL_BEARER_TOKEN) is None
-    assert credentials.get_secret("server-b", SERVER_CREDENTIAL_BEARER_TOKEN) == "other-secret"
+    assert (
+        credentials.get_secret(
+            "https://server.example.com/api", SERVER_CREDENTIAL_BEARER_TOKEN
+        )
+        is None
+    )
+    assert (
+        credentials.get_secret("server-b", SERVER_CREDENTIAL_BEARER_TOKEN)
+        == "other-secret"
+    )
 
     provider.clear_server_credentials("server-b")
 
@@ -1163,10 +1336,13 @@ def test_clear_active_server_credentials_blocks_legacy_profile_reimport(tmp_path
 
     with pytest.raises(ServerCredentialsUnavailable):
         provider.get_active_context()
-    assert credentials.get_secret(
-        "https://server.example.com/api",
-        SERVER_CREDENTIAL_BEARER_TOKEN,
-    ) is None
+    assert (
+        credentials.get_secret(
+            "https://server.example.com/api",
+            SERVER_CREDENTIAL_BEARER_TOKEN,
+        )
+        is None
+    )
 
 
 def test_cleared_legacy_profile_uses_no_longer_authorized_contract(tmp_path):
@@ -1206,9 +1382,13 @@ def test_cleared_legacy_profile_uses_no_longer_authorized_contract(tmp_path):
     assert "legacy-bearer" not in repr(contract)
 
 
-def test_clear_server_credentials_blocks_legacy_profile_reimport_after_activation(tmp_path):
+def test_clear_server_credentials_blocks_legacy_profile_reimport_after_activation(
+    tmp_path,
+):
     credentials = InMemoryServerCredentialStore()
-    runtime_context = _runtime_context(active_server_id="https://server-a.example.com/api")
+    runtime_context = _runtime_context(
+        active_server_id="https://server-a.example.com/api"
+    )
     provider = _provider(
         tmp_path,
         runtime_context=runtime_context,
@@ -1247,10 +1427,13 @@ def test_clear_server_credentials_blocks_legacy_profile_reimport_after_activatio
 
     assert context.active_server_id == "https://server.example.com/api"
     assert context.auth_token == "legacy-bearer"
-    assert credentials.get_secret(
-        "https://server.example.com/api",
-        SERVER_CREDENTIAL_BEARER_TOKEN,
-    ) == "legacy-bearer"
+    assert (
+        credentials.get_secret(
+            "https://server.example.com/api",
+            SERVER_CREDENTIAL_BEARER_TOKEN,
+        )
+        == "legacy-bearer"
+    )
 
     runtime_context.state = replace(
         runtime_context.state,
@@ -1258,10 +1441,13 @@ def test_clear_server_credentials_blocks_legacy_profile_reimport_after_activatio
     )
     provider.clear_server_credentials("https://server.example.com/api")
 
-    assert credentials.get_secret(
-        "https://server.example.com/api",
-        SERVER_CREDENTIAL_BEARER_TOKEN,
-    ) is None
+    assert (
+        credentials.get_secret(
+            "https://server.example.com/api",
+            SERVER_CREDENTIAL_BEARER_TOKEN,
+        )
+        is None
+    )
 
     runtime_context.state = replace(
         runtime_context.state,
@@ -1270,18 +1456,33 @@ def test_clear_server_credentials_blocks_legacy_profile_reimport_after_activatio
 
     with pytest.raises(ServerCredentialsUnavailable):
         provider.get_active_context()
-    assert credentials.get_secret(
-        "https://server.example.com/api",
-        SERVER_CREDENTIAL_BEARER_TOKEN,
-    ) is None
+    assert (
+        credentials.get_secret(
+            "https://server.example.com/api",
+            SERVER_CREDENTIAL_BEARER_TOKEN,
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio
-async def test_invalidate_for_server_switch_closes_cached_client_without_clearing_credentials(tmp_path):
+async def test_invalidate_for_server_switch_closes_cached_client_without_clearing_credentials(
+    tmp_path,
+):
     credentials = InMemoryServerCredentialStore()
-    credentials.set_secret("https://server-a.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "server-a-access")
-    credentials.set_secret("https://server-b.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "server-b-access")
-    runtime_context = _runtime_context(active_server_id="https://server-a.example.com/api")
+    credentials.set_secret(
+        "https://server-a.example.com/api",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+        "server-a-access",
+    )
+    credentials.set_secret(
+        "https://server-b.example.com/api",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+        "server-b-access",
+    )
+    runtime_context = _runtime_context(
+        active_server_id="https://server-a.example.com/api"
+    )
     provider = RuntimeServerContextProvider(
         runtime_context=runtime_context,
         target_store=_target_store(
@@ -1327,22 +1528,38 @@ async def test_invalidate_for_server_switch_closes_cached_client_without_clearin
 
     assert provider._cached_client is None
     assert opened_http_client.is_closed
-    assert credentials.get_secret(
-        "https://server-a.example.com/api",
-        SERVER_CREDENTIAL_ACCESS_TOKEN,
-    ) == "server-a-access"
-    assert credentials.get_secret(
-        "https://server-b.example.com/api",
-        SERVER_CREDENTIAL_ACCESS_TOKEN,
-    ) == "server-b-access"
+    assert (
+        credentials.get_secret(
+            "https://server-a.example.com/api",
+            SERVER_CREDENTIAL_ACCESS_TOKEN,
+        )
+        == "server-a-access"
+    )
+    assert (
+        credentials.get_secret(
+            "https://server-b.example.com/api",
+            SERVER_CREDENTIAL_ACCESS_TOKEN,
+        )
+        == "server-b-access"
+    )
     assert "https://server-a.example.com/api" in provider._legacy_cleared_server_ids
 
 
 @pytest.mark.asyncio
-async def test_switching_active_server_rebuilds_client_with_new_profile_and_closes_old_client(tmp_path):
+async def test_switching_active_server_rebuilds_client_with_new_profile_and_closes_old_client(
+    tmp_path,
+):
     credentials = InMemoryServerCredentialStore()
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "shared-access")
-    credentials.set_secret("https://backup.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "shared-access")
+    credentials.set_secret(
+        "https://server.example.com/api",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+        "shared-access",
+    )
+    credentials.set_secret(
+        "https://backup.example.com/api",
+        SERVER_CREDENTIAL_ACCESS_TOKEN,
+        "shared-access",
+    )
     runtime_context = _runtime_context()
     provider = RuntimeServerContextProvider(
         runtime_context=runtime_context,
@@ -1386,41 +1603,72 @@ async def test_switching_active_server_rebuilds_client_with_new_profile_and_clos
 
 def test_clear_active_server_auth_tokens_preserves_static_credentials(tmp_path):
     credentials = InMemoryServerCredentialStore()
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "access-1")
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_REFRESH_TOKEN, "refresh-1")
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "api-key-1")
-    credentials.set_secret("https://server.example.com/api", SERVER_CREDENTIAL_BEARER_TOKEN, "bearer-1")
-    credentials.set_secret("https://backup.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "other-access")
+    credentials.set_secret(
+        "https://server.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "access-1"
+    )
+    credentials.set_secret(
+        "https://server.example.com/api", SERVER_CREDENTIAL_REFRESH_TOKEN, "refresh-1"
+    )
+    credentials.set_secret(
+        "https://server.example.com/api", SERVER_CREDENTIAL_API_KEY, "api-key-1"
+    )
+    credentials.set_secret(
+        "https://server.example.com/api", SERVER_CREDENTIAL_BEARER_TOKEN, "bearer-1"
+    )
+    credentials.set_secret(
+        "https://backup.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "other-access"
+    )
     provider = _provider(tmp_path, credential_store=credentials)
 
     provider.clear_active_server_auth_tokens()
 
-    assert credentials.get_secret(
-        "https://server.example.com/api",
-        SERVER_CREDENTIAL_ACCESS_TOKEN,
-    ) is None
-    assert credentials.get_secret(
-        "https://server.example.com/api",
-        SERVER_CREDENTIAL_REFRESH_TOKEN,
-    ) is None
-    assert credentials.get_secret(
-        "https://server.example.com/api",
-        SERVER_CREDENTIAL_API_KEY,
-    ) == "api-key-1"
-    assert credentials.get_secret(
-        "https://server.example.com/api",
-        SERVER_CREDENTIAL_BEARER_TOKEN,
-    ) == "bearer-1"
-    assert credentials.get_secret(
-        "https://backup.example.com/api",
-        SERVER_CREDENTIAL_ACCESS_TOKEN,
-    ) == "other-access"
+    assert (
+        credentials.get_secret(
+            "https://server.example.com/api",
+            SERVER_CREDENTIAL_ACCESS_TOKEN,
+        )
+        is None
+    )
+    assert (
+        credentials.get_secret(
+            "https://server.example.com/api",
+            SERVER_CREDENTIAL_REFRESH_TOKEN,
+        )
+        is None
+    )
+    assert (
+        credentials.get_secret(
+            "https://server.example.com/api",
+            SERVER_CREDENTIAL_API_KEY,
+        )
+        == "api-key-1"
+    )
+    assert (
+        credentials.get_secret(
+            "https://server.example.com/api",
+            SERVER_CREDENTIAL_BEARER_TOKEN,
+        )
+        == "bearer-1"
+    )
+    assert (
+        credentials.get_secret(
+            "https://backup.example.com/api",
+            SERVER_CREDENTIAL_ACCESS_TOKEN,
+        )
+        == "other-access"
+    )
 
 
 def test_store_auth_tokens_scopes_tokens_to_active_server(tmp_path):
     credentials = InMemoryServerCredentialStore()
-    credentials.set_secret("https://backup.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "other-access")
-    credentials.set_secret("https://backup.example.com/api", SERVER_CREDENTIAL_REFRESH_TOKEN, "other-refresh")
+    credentials.set_secret(
+        "https://backup.example.com/api", SERVER_CREDENTIAL_ACCESS_TOKEN, "other-access"
+    )
+    credentials.set_secret(
+        "https://backup.example.com/api",
+        SERVER_CREDENTIAL_REFRESH_TOKEN,
+        "other-refresh",
+    )
     target_store = _target_store(
         tmp_path,
         [
@@ -1448,22 +1696,34 @@ def test_store_auth_tokens_scopes_tokens_to_active_server(tmp_path):
 
     provider.store_auth_tokens(access_token="access-1", refresh_token="refresh-1")
 
-    assert credentials.get_secret(
-        "https://server.example.com/api",
-        SERVER_CREDENTIAL_ACCESS_TOKEN,
-    ) == "access-1"
-    assert credentials.get_secret(
-        "https://server.example.com/api",
-        SERVER_CREDENTIAL_REFRESH_TOKEN,
-    ) == "refresh-1"
-    assert credentials.get_secret(
-        "https://backup.example.com/api",
-        SERVER_CREDENTIAL_ACCESS_TOKEN,
-    ) == "other-access"
-    assert credentials.get_secret(
-        "https://backup.example.com/api",
-        SERVER_CREDENTIAL_REFRESH_TOKEN,
-    ) == "other-refresh"
+    assert (
+        credentials.get_secret(
+            "https://server.example.com/api",
+            SERVER_CREDENTIAL_ACCESS_TOKEN,
+        )
+        == "access-1"
+    )
+    assert (
+        credentials.get_secret(
+            "https://server.example.com/api",
+            SERVER_CREDENTIAL_REFRESH_TOKEN,
+        )
+        == "refresh-1"
+    )
+    assert (
+        credentials.get_secret(
+            "https://backup.example.com/api",
+            SERVER_CREDENTIAL_ACCESS_TOKEN,
+        )
+        == "other-access"
+    )
+    assert (
+        credentials.get_secret(
+            "https://backup.example.com/api",
+            SERVER_CREDENTIAL_REFRESH_TOKEN,
+        )
+        == "other-refresh"
+    )
 
     payload = json.loads(target_store.path.read_text(encoding="utf-8"))
     assert "access-1" not in json.dumps(payload)
@@ -1485,7 +1745,9 @@ def test_mismatched_runtime_active_server_and_only_legacy_config_raises(tmp_path
         provider.get_active_context()
 
 
-def test_runtime_state_remains_authoritative_and_unmutated_during_context_resolution(tmp_path):
+def test_runtime_state_remains_authoritative_and_unmutated_during_context_resolution(
+    tmp_path,
+):
     runtime_context = _runtime_context()
     original_state = runtime_context.state
     provider = _provider(

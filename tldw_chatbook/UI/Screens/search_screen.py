@@ -8,6 +8,8 @@ from textual.widgets import Input, Select, TabbedContent
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..SearchRAGWindow import SearchRAGWindow
+from ..Workbench.workbench_state import WorkbenchHeaderState
+from ..Workbench.workbench_widgets import DestinationHeader
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -26,7 +28,7 @@ class SearchScreen(BaseAppScreen):
     Search/RAG screen wrapper.
     """
 
-    def __init__(self, app_instance: 'TldwCli', **kwargs):
+    def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(app_instance, "search", **kwargs)
         self.search_window = None
         # Stashed by restore_state on this (pre-mount) instance; applied to
@@ -36,10 +38,20 @@ class SearchScreen(BaseAppScreen):
         self._pending_search_restore: Optional[Dict[str, Any]] = None
 
     def compose_content(self) -> ComposeResult:
-        """Compose the search window content."""
+        """Compose the search window content with its destination header."""
+        yield DestinationHeader(
+            WorkbenchHeaderState(
+                title="Search",
+                subtitle="Search and RAG over your library.",
+                status="ready",
+            ),
+            id="search-destination-header",
+        )
         self.search_window = SearchRAGWindow(self.app_instance)
         # Add the window class after creation
         self.search_window.add_class("window")
+        # Leave room for the destination header above the window.
+        self.search_window.styles.height = "1fr"
         # Yield the window widget directly
         yield self.search_window
 
@@ -95,15 +107,23 @@ class SearchScreen(BaseAppScreen):
         try:
             state["search_query"] = window.query_one("#search-query-input", Input).value
         except Exception:
-            logger.opt(exception=True).debug("Could not read Search query input for save_state")
+            logger.opt(exception=True).debug(
+                "Could not read Search query input for save_state"
+            )
         try:
             state["search_mode"] = window.query_one("#search-mode-select", Select).value
         except Exception:
-            logger.opt(exception=True).debug("Could not read Search mode select for save_state")
+            logger.opt(exception=True).debug(
+                "Could not read Search mode select for save_state"
+            )
         try:
-            state["search_active_tab"] = window.query_one("#search-tabs", TabbedContent).active
+            state["search_active_tab"] = window.query_one(
+                "#search-tabs", TabbedContent
+            ).active
         except Exception:
-            logger.opt(exception=True).debug("Could not read Search active tab for save_state")
+            logger.opt(exception=True).debug(
+                "Could not read Search active tab for save_state"
+            )
         return state
 
     def restore_state(self, state: Dict[str, Any]) -> None:

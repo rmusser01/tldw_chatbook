@@ -2,14 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 from urllib.parse import urlsplit, urlunsplit
 
 from tldw_chatbook.config import DEFAULT_CONFIG_PATH, resolve_tldw_api_config
-from tldw_chatbook.tldw_api import TLDWAPIClient
 
 from .source_state import RuntimeSourceStateStore
 from .types import RuntimeSourceState
+
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api import TLDWAPIClient
 
 DEFAULT_RUNTIME_POLICY_PATH = DEFAULT_CONFIG_PATH.parent / "runtime_policy.json"
 _VALID_RUNTIME_SOURCES = {"local", "server"}
@@ -38,6 +40,12 @@ def build_runtime_api_client(
     auth_token: str | None = None,
     auth_method: str | None = None,
 ) -> TLDWAPIClient:
+    # Deferred import: TLDWAPIClient's home module (tldw_api/client.py) eagerly
+    # imports the full ~54-submodule schema surface (~450ms). Importing it here,
+    # at actual client-construction time, keeps `import tldw_chatbook.app` from
+    # paying that cost in local-only sessions (task-285).
+    from tldw_chatbook.tldw_api import TLDWAPIClient
+
     api_config: dict[str, Any] = resolve_tldw_api_config(app_config)
 
     resolved_endpoint = str(
@@ -50,7 +58,9 @@ def build_runtime_api_client(
     if not resolved_endpoint:
         raise ValueError("TLDW API base URL is not configured.")
 
-    resolved_auth_method = str(auth_method or api_config.get("auth_mode") or "").strip().lower()
+    resolved_auth_method = (
+        str(auth_method or api_config.get("auth_mode") or "").strip().lower()
+    )
     resolved_auth_token = auth_token
     if resolved_auth_token is None:
         resolved_auth_token = (
@@ -60,7 +70,11 @@ def build_runtime_api_client(
         )
 
     if not resolved_auth_method:
-        resolved_auth_method = "bearer" if api_config.get("bearer_token") and not api_config.get("api_key") else "api_key"
+        resolved_auth_method = (
+            "bearer"
+            if api_config.get("bearer_token") and not api_config.get("api_key")
+            else "api_key"
+        )
 
     if resolved_auth_method in {"bearer", "custom_token"}:
         client = TLDWAPIClient(base_url=resolved_endpoint)
@@ -70,7 +84,9 @@ def build_runtime_api_client(
     return TLDWAPIClient(base_url=resolved_endpoint, token=resolved_auth_token)
 
 
-def build_runtime_api_client_from_config(app_config: Mapping[str, Any] | None) -> TLDWAPIClient:
+def build_runtime_api_client_from_config(
+    app_config: Mapping[str, Any] | None,
+) -> TLDWAPIClient:
     return build_runtime_api_client(app_config=app_config)
 
 
@@ -123,7 +139,9 @@ def load_runtime_policy_for_app(
     store: RuntimeSourceStateStore | None = None,
     path: str | Path | None = None,
 ) -> RuntimePolicyContext:
-    runtime_store = store or RuntimeSourceStateStore(path or DEFAULT_RUNTIME_POLICY_PATH)
+    runtime_store = store or RuntimeSourceStateStore(
+        path or DEFAULT_RUNTIME_POLICY_PATH
+    )
     loaded_state = runtime_store.load()
     synchronized_state = synchronize_runtime_source_state_with_app_config(
         loaded_state,
@@ -152,18 +170,24 @@ def ensure_runtime_policy_for_app(
     return load_runtime_policy_for_app(app, store=store, path=path)
 
 
-def set_authoritative_runtime_source(app: Any, active_source: str) -> RuntimeSourceState:
+def set_authoritative_runtime_source(
+    app: Any, active_source: str
+) -> RuntimeSourceState:
     normalized_source = str(active_source or "").strip().lower()
     context = ensure_runtime_policy_for_app(app)
     if normalized_source not in _VALID_RUNTIME_SOURCES:
         return context.state
 
-    configured_binding = derive_configured_server_binding(getattr(app, "app_config", None))
+    configured_binding = derive_configured_server_binding(
+        getattr(app, "app_config", None)
+    )
     resolved_source = normalized_source
     if resolved_source == "server" and not configured_binding.server_configured:
         resolved_source = "local"
 
-    base_state = _clear_server_probe_state_if_binding_changed(context.state, configured_binding)
+    base_state = _clear_server_probe_state_if_binding_changed(
+        context.state, configured_binding
+    )
     updated_state = replace(
         base_state,
         active_source=resolved_source,
@@ -177,9 +201,13 @@ def set_authoritative_runtime_source(app: Any, active_source: str) -> RuntimeSou
     return updated_state
 
 
-def add_runtime_policy_snapshot(saved_screen_state: dict[str, Any], state: RuntimeSourceState) -> dict[str, Any]:
+def add_runtime_policy_snapshot(
+    saved_screen_state: dict[str, Any], state: RuntimeSourceState
+) -> dict[str, Any]:
     snapshot_state = dict(saved_screen_state)
-    snapshot_state["runtime_policy_snapshot"] = runtime_policy_snapshot_from_state(state)
+    snapshot_state["runtime_policy_snapshot"] = runtime_policy_snapshot_from_state(
+        state
+    )
     return snapshot_state
 
 
@@ -196,7 +224,10 @@ def reconcile_saved_screen_state(
         return restored_state
 
     snapshot_source = snapshot.get("active_source")
-    if snapshot_source in _VALID_RUNTIME_SOURCES and snapshot_source != authoritative_state.active_source:
+    if (
+        snapshot_source in _VALID_RUNTIME_SOURCES
+        and snapshot_source != authoritative_state.active_source
+    ):
         return None
 
     if authoritative_state.active_source != "server":
@@ -217,7 +248,9 @@ def runtime_policy_snapshot_from_state(state: RuntimeSourceState) -> dict[str, A
     }
 
 
-def derive_configured_server_binding(app_config: Mapping[str, Any] | None) -> ConfiguredServerBinding:
+def derive_configured_server_binding(
+    app_config: Mapping[str, Any] | None,
+) -> ConfiguredServerBinding:
     if not isinstance(app_config, Mapping):
         return ConfiguredServerBinding(
             active_server_id=None,
@@ -227,7 +260,12 @@ def derive_configured_server_binding(app_config: Mapping[str, Any] | None) -> Co
 
     api_config = resolve_tldw_api_config(app_config)
 
-    raw_url = str(api_config.get("base_url") or api_config.get("api_url") or api_config.get("url") or "").strip()
+    raw_url = str(
+        api_config.get("base_url")
+        or api_config.get("api_url")
+        or api_config.get("url")
+        or ""
+    ).strip()
     if not raw_url:
         return ConfiguredServerBinding(
             active_server_id=None,
@@ -300,7 +338,9 @@ def _normalize_server_identity(raw_url: str) -> tuple[str | None, str | None]:
     scheme = parsed.scheme.lower()
     hostname = parsed.hostname.lower()
     port = parsed.port
-    default_port = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+    default_port = (scheme == "http" and port == 80) or (
+        scheme == "https" and port == 443
+    )
 
     netloc = hostname
     if port and not default_port:

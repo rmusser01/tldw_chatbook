@@ -31,19 +31,45 @@ class ConsoleSettingsSummary(Vertical):
         self.styles.max_height = CONSOLE_SETTINGS_SUMMARY_MAX_HEIGHT
 
     def sync_state(self, state: ConsoleSettingsSummaryState) -> None:
-        """Refresh the summary from a new state snapshot."""
+        """Refresh the summary from a new state snapshot.
+
+        No-ops when ``state`` equals the currently-applied snapshot
+        (task-280: the Console 0.2s tick calls this unconditionally).
+
+        Args:
+            state: Latest settings-summary display state.
+
+        Returns:
+            None.
+        """
+        if state == self.state:
+            return
         self.state = state
         try:
             self.query_one("#console-settings-provider-row", Static).update(
                 self._row_text(state.provider_row)
             )
-            self.query_one("#console-settings-model-row", Static).update(state.model_row)
-            self.query_one("#console-settings-context-row", Static).update(state.context_row)
-            self.query_one("#console-settings-endpoint-row", Static).update(state.endpoint_row)
-            self.query_one("#console-settings-credential-row", Static).update(state.credential_row)
-            self.query_one("#console-settings-transport-row", Static).update(state.transport_row)
-            self.query_one("#console-settings-sampling-row", Static).update(state.sampling_row)
-            self.query_one("#console-settings-identity-row", Static).update(state.identity_row)
+            self.query_one("#console-settings-model-row", Static).update(
+                state.model_row
+            )
+            self.query_one("#console-settings-context-row", Static).update(
+                state.context_row
+            )
+            self.query_one("#console-settings-endpoint-row", Static).update(
+                state.endpoint_row
+            )
+            self.query_one("#console-settings-credential-row", Static).update(
+                state.credential_row
+            )
+            self.query_one("#console-settings-transport-row", Static).update(
+                state.transport_row
+            )
+            self.query_one("#console-settings-sampling-row", Static).update(
+                state.sampling_row
+            )
+            self.query_one("#console-settings-identity-row", Static).update(
+                state.identity_row
+            )
             button = self.query_one("#console-settings-open", Button)
         except NoMatches:
             self.refresh(recompose=True)
@@ -76,7 +102,9 @@ class ConsoleSettingsSummary(Vertical):
         return value or ""
 
     def compose(self) -> ComposeResult:
-        header = Horizontal(id="console-settings-header", classes="console-settings-header")
+        header = Horizontal(
+            id="console-settings-header", classes="console-settings-header"
+        )
         header.styles.height = CONSOLE_SETTINGS_ROW_HEIGHT
         header.styles.min_height = CONSOLE_SETTINGS_ROW_HEIGHT
         header.styles.max_height = CONSOLE_SETTINGS_ROW_HEIGHT

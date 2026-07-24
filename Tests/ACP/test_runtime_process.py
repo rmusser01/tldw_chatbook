@@ -17,7 +17,10 @@ def test_acp_runtime_process_config_rejects_missing_command():
     config = ACPRuntimeProcessConfig.from_mapping({})
 
     assert config.is_configured is False
-    assert config.disabled_reason == "Configure an ACP runtime command in ACP before launch."
+    assert (
+        config.disabled_reason
+        == "Configure an ACP runtime command in ACP before launch."
+    )
 
 
 def test_acp_runtime_process_config_parses_quoted_args_and_invalid_timeout_safely():

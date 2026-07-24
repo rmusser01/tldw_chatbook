@@ -16,7 +16,9 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_console_model_options,
     build_console_provider_options,
 )
+from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Utils.input_validation import validate_text_input
+from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
 
 CONSOLE_POPOVER_OPEN_FULL_SETTINGS = "open-full-settings"
 
@@ -59,6 +61,11 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
         padding: 1 2;
     }
 
+    .console-popover-field-label {
+        color: $text-muted;
+        margin: 1 0 0 0;
+    }
+
     #console-popover-actions {
         height: 3;
         min-height: 3;
@@ -89,13 +96,28 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
         self._settings = settings
         self._providers_models = providers_models
         self._streaming = bool(settings.streaming)
+        # TASK-364: the provider Select fires a mount-time Select.Changed for its
+        # initial value; without this tracker `_provider_changed` would rebuild
+        # the model options with current_model=None and wipe the prefilled model.
+        # Only a REAL provider change (value differs from what the model options
+        # currently reflect) should reset the model.
+        self._model_options_provider = settings.provider
+
+    def _provider_select_options(self) -> list[tuple[str, str]]:
+        """Provider options labeled with the shared catalog display names.
+
+        TASK-364: mirror ``ConsoleSettingsModal._provider_select_options`` so the
+        quick popover shows the same names as the full modal (``llama.cpp``, not
+        the raw ``llama_cpp`` key).
+        """
+        return [
+            (provider_display_name(option.value), option.value)
+            for option in build_console_provider_options(self._providers_models)
+        ]
 
     def compose(self) -> ComposeResult:
         """Build the provider, model, temperature, and streaming controls."""
-        provider_options = [
-            (option.label, option.value)
-            for option in build_console_provider_options(self._providers_models)
-        ]
+        provider_options = self._provider_select_options()
         model_options = [
             (option.label, option.value)
             for option in build_console_model_options(
@@ -115,8 +137,15 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
                 id="console-popover-model",
                 allow_blank=True,
             )
+            yield ModelSearchPicker(
+                id="console-popover-model-search",
+                provider_select_id="#console-popover-provider",
+            )
+            yield Static("Temperature", classes="console-popover-field-label")
             yield Input(
-                value="" if self._settings.temperature is None else str(self._settings.temperature),
+                value=""
+                if self._settings.temperature is None
+                else str(self._settings.temperature),
                 placeholder="Temperature",
                 id="console-popover-temperature",
             )
@@ -126,8 +155,12 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
                 compact=True,
             )
             with Horizontal(id="console-popover-actions"):
-                yield Button("Full settings…", id="console-popover-full-settings", compact=True)
-                yield Button("Apply", id="console-popover-apply", variant="primary", compact=True)
+                yield Button(
+                    "Full settings…", id="console-popover-full-settings", compact=True
+                )
+                yield Button(
+                    "Apply", id="console-popover-apply", variant="primary", compact=True
+                )
 
     @on(Select.Changed, "#console-popover-provider")
     def _provider_changed(self, event: Select.Changed) -> None:
@@ -138,6 +171,12 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
         """
         event.stop()
         provider = str(event.value)
+        # TASK-364: ignore the mount-time echo and redundant same-provider events
+        # so the prefilled model survives; only a genuine provider change resets
+        # the model options (a stale model from another provider must not linger).
+        if provider == self._model_options_provider:
+            return
+        self._model_options_provider = provider
         options = [
             (option.label, option.value)
             for option in build_console_model_options(
@@ -146,6 +185,22 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
         ]
         model_select = self.query_one("#console-popover-model", Select)
         model_select.set_options(options)
+
+    @on(ModelSearchPicker.ModelSelected)
+    def _model_search_selected(self, event: ModelSearchPicker.ModelSelected) -> None:
+        """Insert a picked model as a transient option and select it (ADR-020)."""
+        event.stop()
+        model_id = event.model_id.strip()
+        if not model_id:
+            return
+        provider = str(self.query_one("#console-popover-provider", Select).value)
+        model_select = self.query_one("#console-popover-model", Select)
+        options = [
+            (option.label, option.value)
+            for option in build_console_model_options(provider, self._providers_models, model_id)
+        ]
+        model_select.set_options(options)
+        model_select.value = model_id
 
     @on(Button.Pressed, "#console-popover-streaming")
     def _toggle_streaming(self, event: Button.Pressed) -> None:
@@ -185,7 +240,9 @@ class ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"]):
         event.stop()
         provider_value = self.query_one("#console-popover-provider", Select).value
         model_value = self.query_one("#console-popover-model", Select).value
-        temperature_text = self.query_one("#console-popover-temperature", Input).value.strip()
+        temperature_text = self.query_one(
+            "#console-popover-temperature", Input
+        ).value.strip()
         if not temperature_text:
             temperature = None
         else:

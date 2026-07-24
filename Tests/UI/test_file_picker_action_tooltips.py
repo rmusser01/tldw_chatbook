@@ -8,7 +8,6 @@ from textual.widgets import Button
 from tldw_chatbook.UI.Chatbooks_Window_Improved import EmptyStateWidget
 from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
 from tldw_chatbook.UI.Wizards.ChatbookImportWizard import FileSelectionStep
-from tldw_chatbook.UI.Wizards.EmbeddingSteps import SmartContentSelector
 from tldw_chatbook.Widgets.Evals.eval_additional_dialogs import FileUploadDialog
 from tldw_chatbook.Widgets.NewIngest.SmartFileDropZone import SmartFileDropZone
 from tldw_chatbook.Widgets.file_picker_dialog import QuickPickerWidget
@@ -111,21 +110,6 @@ async def test_chatbook_import_wizard_browse_action_explains_zip_scope():
 
 
 @pytest.mark.asyncio
-async def test_embedding_file_browse_action_explains_index_scope():
-    app = _WidgetHost(SmartContentSelector("files"))
-
-    async with app.run_test() as pilot:
-        await pilot.pause()
-
-        _assert_button_tooltips(
-            app.widget_under_test,
-            {
-                "browse-files": "Choose local files to include in this embedding collection.",
-            },
-        )
-
-
-@pytest.mark.asyncio
 async def test_ingest_drop_zone_browse_action_explains_file_selection():
     app = _WidgetHost(SmartFileDropZone())
 
@@ -138,4 +122,3 @@ async def test_ingest_drop_zone_browse_action_explains_file_selection():
                 "browse-overlay": "Choose files from disk for ingestion.",
             },
         )
-

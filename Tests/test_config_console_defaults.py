@@ -1,15 +1,71 @@
 """Console configuration defaults."""
 
+import os
+from pathlib import Path
 import tomllib
 
 from loguru import logger
 
-from tldw_chatbook import config as config_module
+CONFIG_PATH_BEFORE_CONFIG_IMPORT = os.environ.get("TLDW_CONFIG_PATH")
+from tldw_chatbook import config as config_module  # noqa: E402
+
+
+LOCAL_STREAMING_PROVIDER_SECTIONS = (
+    "llama_cpp",
+    "oobabooga",
+    "koboldcpp",
+    "ollama",
+    "vllm",
+    "aphrodite",
+    "tabbyapi",
+    "local-llm",
+    "local_llamafile",
+    "local_llamacpp",
+    "local_vllm",
+    "local_ollama",
+    "local_onnx",
+    "local_transformers",
+    "local_mlx_lm",
+)
+
+
+def test_config_template_defaults_local_provider_streaming_on():
+    """Local providers stream by default so slow generations do not appear hung.
+
+    Regression guard for the Console UAT failure where the generated template's
+    ``streaming = false`` forced llama.cpp onto the slow non-streamed path.
+    """
+    template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
+    api_settings = template["api_settings"]
+
+    for provider in LOCAL_STREAMING_PROVIDER_SECTIONS:
+        assert api_settings[provider]["streaming"] is True, provider
+
+
+def test_config_template_keeps_cloud_provider_streaming_opt_in():
+    template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
+    api_settings = template["api_settings"]
+
+    for provider in (
+        "openai",
+        "anthropic",
+        "google",
+        "mistralai",
+        "openrouter",
+        "groq",
+    ):
+        assert api_settings[provider]["streaming"] is False, provider
 
 
 def test_console_large_paste_collapse_defaults_enabled():
-    assert config_module.DEFAULT_CONFIG_FROM_TOML["console"]["collapse_large_pastes"] is True
-    assert config_module.DEFAULT_CONFIG_FROM_TOML["console"]["paste_collapse_threshold"] == 50
+    assert (
+        config_module.DEFAULT_CONFIG_FROM_TOML["console"]["collapse_large_pastes"]
+        is True
+    )
+    assert (
+        config_module.DEFAULT_CONFIG_FROM_TOML["console"]["paste_collapse_threshold"]
+        == 50
+    )
 
 
 def test_console_background_effect_defaults_disabled():
@@ -110,7 +166,7 @@ def test_save_setting_respects_tldw_config_path_override(tmp_path, monkeypatch):
     default_config = tmp_path / "default" / "config.toml"
     override_config.parent.mkdir()
     override_config.write_text(
-        '[console]\ncollapse_large_pastes = true\n',
+        "[console]\ncollapse_large_pastes = true\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(override_config))
@@ -126,6 +182,32 @@ def test_save_setting_respects_tldw_config_path_override(tmp_path, monkeypatch):
     saved_override = tomllib.loads(override_config.read_text(encoding="utf-8"))
     assert saved_override["console"]["collapse_large_pastes"] is False
     assert not default_config.exists()
+
+
+def test_config_path_is_bootstrapped_before_config_import():
+    assert CONFIG_PATH_BEFORE_CONFIG_IMPORT is not None
+    bootstrap_config = Path(CONFIG_PATH_BEFORE_CONFIG_IMPORT)
+    assert bootstrap_config != config_module.DEFAULT_CONFIG_PATH
+    assert bootstrap_config.parent.is_dir()
+
+
+def test_autouse_fixture_isolates_config_saves(tmp_path):
+    isolated_config = tmp_path / "test_data" / "config" / "config.toml"
+    default_config = config_module.DEFAULT_CONFIG_PATH
+    default_contents = default_config.read_bytes() if default_config.exists() else None
+
+    assert config_module._get_effective_config_path() == isolated_config.resolve()
+    assert config_module.save_setting_to_cli_config(
+        "console",
+        "collapse_large_pastes",
+        False,
+    )
+
+    saved = tomllib.loads(isolated_config.read_text(encoding="utf-8"))
+    assert saved["console"]["collapse_large_pastes"] is False
+    assert (
+        default_config.read_bytes() if default_config.exists() else None
+    ) == default_contents
 
 
 def test_save_setting_redacts_sensitive_value_in_attempt_log(tmp_path, monkeypatch):

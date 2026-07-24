@@ -11,7 +11,9 @@ from pydantic import BaseModel, Field, field_validator
 
 
 WorkspaceStudyMaterialsPolicy = Literal["general", "workspace"]
-NoteGraphEdgeType = Literal["manual", "wikilink", "backlink", "tag_membership", "source_membership"]
+NoteGraphEdgeType = Literal[
+    "manual", "wikilink", "backlink", "tag_membership", "source_membership"
+]
 NoteGraphFormat = Literal["default", "cytoscape"]
 
 

@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from textual.widgets import TabbedContent
 
-from Tests.textual_test_utils import widget_pilot
 from tldw_chatbook.UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt
 
 
@@ -29,7 +28,9 @@ async def test_rebuilt_ingest_window_mounts_tabbed_shell(
     mock_app_instance: MagicMock,
     widget_pilot,
 ) -> None:
-    async with await widget_pilot(MediaIngestWindowRebuilt, app_instance=mock_app_instance) as pilot:
+    async with await widget_pilot(
+        MediaIngestWindowRebuilt, app_instance=mock_app_instance
+    ) as pilot:
         window = pilot.app.test_widget
         tabs = window.query_one(TabbedContent)
 
@@ -44,7 +45,9 @@ async def test_rebuilt_ingest_window_tracks_active_tab(
     mock_app_instance: MagicMock,
     widget_pilot,
 ) -> None:
-    async with await widget_pilot(MediaIngestWindowRebuilt, app_instance=mock_app_instance) as pilot:
+    async with await widget_pilot(
+        MediaIngestWindowRebuilt, app_instance=mock_app_instance
+    ) as pilot:
         window = pilot.app.test_widget
         tabs = window.query_one(TabbedContent)
 

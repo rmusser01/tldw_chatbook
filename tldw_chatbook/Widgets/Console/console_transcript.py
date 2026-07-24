@@ -3,37 +3,67 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
-from typing import Iterable, Literal
+from time import monotonic
 
+from typing import Iterable, Literal, Mapping
+
+from loguru import logger
+from PIL import Image as PILImage
+from rich_pixels import Pixels
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content
 from textual.css.query import NoMatches
+from textual.dom import NoScreen
 from textual.events import Click, Key
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
-from tldw_chatbook.Chat.console_message_actions import ConsoleMessageAction, ConsoleMessageActionService
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
+from tldw_chatbook.Chat.console_image_view import (
+    PIXELS_MAX_COLS,
+    PIXELS_MAX_LINES,
+    ConsoleImageRowSpec,
+    fit_image_cell_size,
+)
+from tldw_chatbook.Chat.console_message_actions import (
+    ConsoleMessageAction,
+    ConsoleMessageActionService,
+)
 from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_QUIET_EMPTY_COPY,
     ConsoleSetupCardState,
 )
+from tldw_chatbook.Widgets.Console.console_generation_card import (
+    ConsoleGenerationCard,
+    ConsoleGenerationCardSpec,
+    generation_card_signature,
+)
 
 
 CONSOLE_TRANSCRIPT_RULE = "─" * 200
+CONSOLE_GENERATING_PLACEHOLDER = "Generating…"
 EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL = "Choose model"
 EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP = (
     "Choose the provider and model for this Console session."
 )
+# TASK-362 AC#2: the guide names the single-key shortcuts (j/k/c/e/r/Esc), which
+# were otherwise undiscoverable anywhere in the app, alongside the icon meanings.
 SELECTED_MESSAGE_ACTION_GUIDE = (
-    "Guide: ♻ Regenerate  ---> Continue  👍/👎 Rate  🗑 Delete"
+    "Guide: j/k select · c Copy · e Edit · r Regenerate ♻ · "
+    "---> Continue · 👍/👎 Rate · 🗑 Delete · Esc clear"
 )
 _ACTION_TOOLTIPS = {
     "copy": "Copy this message to the clipboard.",
     "edit": "Edit this message before continuing the thread.",
     "save-as": "Choose a destination for this message, such as Chatbook or Note.",
+    "toggle-image-view": "Cycle image view: pixels, graphics, hidden.",
+    "save-image": "Save image to disk.",
     "retry": "Retry the failed response.",
     "regenerate": "Generate another assistant variant for this turn.",
     "continue": "Continue and extend the selected message.",
@@ -42,6 +72,7 @@ _ACTION_TOOLTIPS = {
     "delete": "Delete this message from the Console transcript.",
     "variant-previous": "Show the previous regenerated variant.",
     "variant-next": "Show the next regenerated variant.",
+    "keep": "Keep the browsed variant as this message's canonical image.",
 }
 
 
@@ -68,9 +99,143 @@ def _message_body(message: ConsoleChatMessage) -> str:
         content = message.variants.current.content
     else:
         content = message.content
-    if message.status in {"streaming", "stopped", "failed"}:
+    if message.status == "streaming" and not content.strip():
+        # Between send-accepted and the first streamed token the assistant row
+        # has no content; show a visible generating state instead of an empty
+        # row (local models can take 30-90s to first token).
+        return CONSOLE_GENERATING_PLACEHOLDER
+    if (
+        message.role is not ConsoleMessageRole.USER
+        and message.status in {"streaming", "stopped", "failed"}
+    ):
+        # streaming/stopped/failed are assistant-response states; a USER row only
+        # carries "failed" via the TASK-457(a) send-blocked echo, where the
+        # SYSTEM block-row already explains it — so keep the user's text clean.
         return f"{content} [{message.status}]".strip()
     return content
+
+
+def _is_generating_placeholder_body(message: ConsoleChatMessage, body: str) -> bool:
+    """Return True when the rendered body is the pre-first-token placeholder."""
+    return message.status == "streaming" and body == CONSOLE_GENERATING_PLACEHOLDER
+
+
+def _human_size(size: int) -> str:
+    """Format a byte count for display, matching ``attachment_core._format_size``.
+
+    Kept as a small local helper (rather than importing ``attachment_core``)
+    to keep this widget free of that dependency.
+    """
+    if size >= 1024 * 1024:
+        return f"{size / 1024 / 1024:.1f} MB"
+    if size >= 1024:
+        return f"{size / 1024:.0f} KB"
+    return f"{size} B"
+
+
+def _message_image_chip_legacy(message: ConsoleChatMessage) -> str | None:
+    """Return the placeholder chip line for a message carrying an image.
+
+    ``attachment_label`` (e.g. "photo.png · 11 B") only exists in
+    memory/screen-state -- the DB stores just ``image_data`` +
+    ``image_mime_type``, so a message resumed from the DB has no label. When
+    the raw bytes are available, synthesize a "{mime} · {size}" label instead
+    of falling back to a bare MIME type. When only metadata was restored
+    (``image_data`` is ``None``), keep the bare-mime fallback.
+    """
+    if message.image_data is None and not message.image_mime_type:
+        return None
+    if message.attachment_label:
+        label = message.attachment_label
+    elif message.image_data is not None:
+        mime = message.image_mime_type or "image"
+        label = f"{mime} · {_human_size(len(message.image_data))}"
+    else:
+        label = message.image_mime_type or "image"
+    return f"🖼 {label}"
+
+
+def _message_attachment_chips(message: ConsoleChatMessage) -> list[str]:
+    """Return one placeholder chip line per attachment (position order).
+
+    If no attachments are present, fall back to the legacy image chip logic
+    (zero-attachment behavior unchanged).
+    """
+    attachments = getattr(message, "attachments", ()) or ()
+    if not attachments:
+        legacy = _message_image_chip_legacy(message)
+        return [legacy] if legacy else []
+    chips: list[str] = []
+    for attachment in attachments:
+        if attachment.display_name:
+            chips.append(f"🖼 {attachment.display_name}")
+        elif attachment.data is not None:
+            chips.append(
+                f"🖼 {attachment.mime_type or 'image'} · {_human_size(len(attachment.data))}"
+            )
+        else:
+            chips.append(f"🖼 {attachment.mime_type or 'image'}")
+    return chips
+
+
+#: Inline markdown handled in-transcript: **bold** and `code`. Matched as closed
+#: pairs only, so an unclosed marker mid-stream stays literal until it closes.
+_INLINE_MD_RE = re.compile(r"\*\*(.+?)\*\*|`([^`]+)`")
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
+
+
+def _inline_markdown_spans(line: str) -> list:
+    """Split one line into Content segments, styling **bold**/`code` inline.
+
+    Text is always emitted literally (styles are applied via ``(text, style)``
+    tuples, never markup parsing), so message text can never inject Rich markup.
+
+    Args:
+        line: A single raw text line.
+
+    Returns:
+        A list of ``str`` / ``(str, style)`` segments for ``Content.assemble``.
+    """
+    out: list = []
+    pos = 0
+    for match in _INLINE_MD_RE.finditer(line):
+        if match.start() > pos:
+            out.append(line[pos : match.start()])
+        if match.group(1) is not None:
+            out.append((match.group(1), "bold"))
+        else:
+            out.append((match.group(2), "italic"))
+        pos = match.end()
+    if pos < len(line):
+        out.append(line[pos:])
+    return out or [line]
+
+
+def _markdown_body_spans(body: str) -> list:
+    """Render a safe subset of markdown (headings, **bold**, `code`) to segments.
+
+    TASK-372: assistant replies arrive as markdown and were shown raw (literal
+    ``###`` / ``**`` / backticks). Headings render as bold underline with the
+    ``#`` markers stripped; inline bold/code render via
+    ``_inline_markdown_spans``. All styling goes through ``(text, style)`` tuples
+    so nothing in the message is markup-parsed.
+
+    Args:
+        body: The raw message body text.
+
+    Returns:
+        A list of ``str`` / ``(str, style)`` segments for ``Content.assemble``.
+    """
+    segments: list = []
+    for index, line in enumerate(body.split("\n")):
+        if index:
+            segments.append("\n")
+        heading = _HEADING_RE.match(line)
+        if heading:
+            segments.append((heading.group(2), "bold underline"))
+        else:
+            segments.extend(_inline_markdown_spans(line))
+    return segments
 
 
 def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Content:
@@ -90,16 +255,34 @@ def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Cont
     ``self.app``.
     """
     role_label = _message_role_label(message)
+    if message.sibling_count > 1:
+        role_label = f"{role_label} ({message.sibling_index + 1}/{message.sibling_count})"
     body = _message_body(message)
-    if not selected and "\n" not in body and len(body) <= 120:
-        return Content.assemble((role_label, "dim"), "  ", body)
-    return Content.assemble((role_label, "dim"), "\n", body)
+    chips = _message_attachment_chips(message)
+    if chips:
+        chip_lines = "\n".join(chips)
+        body = f"{body}\n{chip_lines}" if body else chip_lines
+    if _is_generating_placeholder_body(message, body):
+        body_segments: list = [(body, "dim")]
+    elif message.role is ConsoleMessageRole.ASSISTANT:
+        # TASK-372: render assistant markdown (headings/**bold**/`code`) with
+        # terminal emphasis instead of literal marker characters. Only ASSISTANT
+        # replies are markdown -- USER input, SYSTEM diagnostics, and TOOL output
+        # stay verbatim, since their #/**/backtick characters may be literal and
+        # meaningful (Qodo #823).
+        body_segments = _markdown_body_spans(body)
+    else:
+        body_segments = [body]
+    separator = "  " if not selected and "\n" not in body and len(body) <= 120 else "\n"
+    return Content.assemble((role_label, "dim"), separator, *body_segments)
 
 
 @dataclass(frozen=True)
 class _TranscriptRow:
     key: str
-    kind: Literal["rule", "message", "actions", "action-help", "empty"]
+    kind: Literal[
+        "rule", "message", "image", "generation-card", "actions", "action-help", "empty"
+    ]
     signature: tuple
     message: ConsoleChatMessage | None = None
     selected: bool = False
@@ -107,6 +290,8 @@ class _TranscriptRow:
     action_label: str = EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL
     action_tooltip: str = EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP
     card_state: ConsoleSetupCardState | None = None
+    image_spec: "ConsoleImageRowSpec | None" = None
+    generation_card_spec: "ConsoleGenerationCardSpec | None" = None
 
 
 class ConsoleTranscriptMessage(Static):
@@ -119,13 +304,20 @@ class ConsoleTranscriptMessage(Static):
         classes = "console-transcript-message"
         if selected:
             classes = f"{classes} console-transcript-message-selected"
+        role = message.role
+        if role is ConsoleMessageRole.TOOL:
+            classes = f"{classes} console-transcript-message-tool"
+        elif role is ConsoleMessageRole.SYSTEM:
+            classes = f"{classes} console-transcript-message-system"
         super().__init__(
             _message_render_text(message, selected=selected),
             id=f"console-message-{message.id}",
             classes=classes,
         )
 
-    def sync_message(self, message: ConsoleChatMessage, *, selected: bool = False) -> None:
+    def sync_message(
+        self, message: ConsoleChatMessage, *, selected: bool = False
+    ) -> None:
         """Update row content and selection styling without remounting the row."""
         self.message_id = message.id
         self.update(_message_render_text(message, selected=selected))
@@ -266,6 +458,43 @@ class ConsoleTranscriptEmptyPanel(Vertical):
         self.refresh(recompose=True)
 
 
+#: TASK-371: the "jump to latest" pill copy per run status. Absent statuses
+#: (idle, blocked) show no pill -- there is no streaming context to jump to.
+_JUMP_PILL_STREAMING = "▼ streaming below — jump to latest"
+_JUMP_PILL_STOPPED = "▼ stopped — jump to latest"
+_JUMP_PILL_READY = "▼ reply ready — jump to latest"
+_JUMP_PILL_TEXT: Mapping[str, str] = {
+    "validating": _JUMP_PILL_STREAMING,
+    "retrying": _JUMP_PILL_STREAMING,
+    "streaming": _JUMP_PILL_STREAMING,
+    "stopped": _JUMP_PILL_STOPPED,
+    "failed": _JUMP_PILL_STOPPED,
+    "completed": _JUMP_PILL_READY,
+}
+
+
+class ConsoleTranscriptJumpPill(Static):
+    """Clickable 'jump to latest' pill shown while scrolled up during a run.
+
+    TASK-371: when the reader scrolls off the bottom while a reply streams in,
+    the content grows below the fold with no signal. This pill sits docked at the
+    transcript bottom, states whether the run is streaming / stopped / ready, and
+    on click re-attaches follow and jumps to the newest content.
+    """
+
+    def on_click(self, event: Click) -> None:
+        """Jump the parent transcript to its newest content.
+
+        Args:
+            event: The click event; stopped so it doesn't bubble to the
+                transcript's message-selection handler.
+        """
+        event.stop()
+        transcript = self.parent
+        if isinstance(transcript, ConsoleTranscript):
+            transcript.jump_to_latest()
+
+
 class ConsoleTranscript(VerticalScroll):
     """Focusable native Console transcript with compact rule-separated messages."""
 
@@ -280,10 +509,28 @@ class ConsoleTranscript(VerticalScroll):
         ("r", "invoke_selected_action('regenerate')", "Regenerate"),
     ]
 
+    PROTECTED_CLICK_CLASSES: frozenset[str] = frozenset({
+        "console-transcript-action-row",
+        "console-transcript-action-guide",
+        "console-transcript-empty-panel",
+        "console-transcript-empty-body",
+        "console-transcript-empty-state",
+        "console-transcript-rule",
+        # Textual scrollbars carry the generic system-widget class; ignore them
+        # defensively if a scrollbar click ever bubbles up to the transcript.
+        "-textual-system",
+        "vertical-scrollbar",
+        "horizontal-scrollbar",
+        "scrollbar",
+    })
+    """Widget classes that must keep the current selection active when clicked."""
+
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._messages: list[ConsoleChatMessage] = []
         self.selected_message_id: str | None = None
+        self._follow_intent_time = 0.0
+        self._user_scroll_time = 0.0
         self._refresh_lock = asyncio.Lock()
         self._empty_card_state = ConsoleSetupCardState(
             mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY
@@ -293,6 +540,37 @@ class ConsoleTranscript(VerticalScroll):
         self._row_widgets: dict[str, Widget] = {}
         self._row_signatures: dict[str, tuple] = {}
         self._row_build_counts: dict[str, int] = {}
+        self._image_specs: dict[str, ConsoleImageRowSpec] = {}
+        self._generation_card_specs: dict[str, ConsoleGenerationCardSpec] = {}
+        # TASK-259: per-message render-signature cache. Maps message id ->
+        # (cheap change-token, expensive row signature). `_transcript_rows`
+        # re-derives the render payload (Content assembly) only when the
+        # token differs, making derivation O(changed messages) per tick.
+        # Lives on the widget instance so a recompose starts it fresh.
+        self._message_signature_cache: dict[str, tuple[tuple, tuple]] = {}
+        self._signature_compute_counts: dict[str, int] = {}
+        # TASK-298: every message id seen by set_messages, so a NEW
+        # user-role message ANYWHERE in the update (a send) re-engages
+        # tail-follow even after the user scrolled up. The send path
+        # appends USER + ASSISTANT placeholder together, so the tail
+        # alone can miss the send (PR #697 review).
+        self._seen_message_ids: set[str] = set()
+        #: TASK-371: last run status seen by `sync_jump_indicator`, so a scroll
+        #: that detaches the reader can refresh the pill without a status source.
+        self._last_run_status = "idle"
+        #: Last-applied (visible, text) pill state; lets the 0.2s streaming sync
+        #: tick skip the query_one + update when nothing changed (Qodo #826).
+        self._jump_pill_state: tuple[bool, str] | None = None
+
+    def on_mount(self) -> None:
+        """Engage tail-follow: stay scrolled to the newest content.
+
+        Textual's anchor keeps the view pinned to the bottom while content
+        grows, releases when the user scrolls up, and re-engages when they
+        return to the bottom (TASK-298 -- streamed replies taller than the
+        viewport used to finish below the fold with no scroll).
+        """
+        self.anchor()
 
     def compose(self) -> ComposeResult:
         self._row_widgets.clear()
@@ -303,13 +581,177 @@ class ConsoleTranscript(VerticalScroll):
             self._row_widgets[row.key] = widget
             self._row_signatures[row.key] = row.signature
             yield widget
+        # TASK-371: docked (non-scrolling) jump-to-latest pill; hidden until
+        # `sync_jump_indicator` shows it while the reader is scrolled up.
+        pill = ConsoleTranscriptJumpPill(
+            "",
+            id="console-transcript-jump-pill",
+            classes="console-transcript-jump-pill",
+        )
+        pill.display = False
+        # The fresh pill starts hidden; drop the applied-state cache so the next
+        # sync re-applies to this new widget (recompose creates a new pill).
+        self._jump_pill_state = None
+        yield pill
+
+    @property
+    def allow_vertical_scroll(self) -> bool:
+        """Accept scroll gestures whenever the transcript holds messages.
+
+        TASK-336 (live mechanism): during heavy row churn (sub-agent runs)
+        the arrangement transiently collapses — ``max_scroll_y`` reads 0
+        (scroll_y can even go negative via the compositor's anchor path) —
+        and the base gate (``is_scrollable and show_vertical_scrollbar``)
+        is False at exactly the moment the wheel event arrives. The gesture
+        is then silently dropped: no scroll, and crucially no
+        ``release_anchor``, so follow never detaches (the review's
+        byte-identical wheel evidence). A clamped scroll on a collapsed
+        layout is a harmless no-op, but accepting it registers the
+        reader's intent; the layout recovers within a tick and subsequent
+        gestures scroll normally.
+        """
+        if self._messages:
+            return True
+        return super().allow_vertical_scroll
+
+    def _is_following_tail(self) -> bool:
+        """Return True when the view is pinned to the newest content."""
+        return bool(self.is_anchored and not getattr(self, "_anchor_released", False))
+
+    def sync_jump_indicator(self, run_status: str) -> None:
+        """Show/hide the jump-to-latest pill for the current run + scroll state.
+
+        TASK-371: while the reader is detached from the bottom during (or just
+        after) a run, a docked pill reports whether the reply is streaming,
+        stopped, or ready and offers a one-click jump to the newest content. It
+        stays hidden while following the tail or when no run is in play.
+
+        Args:
+            run_status: The current Console run status value (e.g. ``streaming``).
+        """
+        self._last_run_status = run_status
+        text = _JUMP_PILL_TEXT.get(run_status, "")
+        visible = bool(text and self._messages and not self._is_following_tail())
+        target = (visible, text if visible else "")
+        # Called on every 0.2s streaming sync tick -- skip the query_one + update
+        # when the effective state is unchanged (the common steady-stream case).
+        if target == self._jump_pill_state:
+            return
+        try:
+            pill = self.query_one(
+                "#console-transcript-jump-pill", ConsoleTranscriptJumpPill
+            )
+        except NoMatches:
+            return
+        if visible:
+            pill.update(text)
+        pill.display = visible
+        self._jump_pill_state = target
+
+    def jump_to_latest(self) -> None:
+        """Re-engage tail-follow, scroll to the newest content, and hide the pill."""
+        self.anchor()
+        self.scroll_end(animate=False)
+        try:
+            self.query_one(
+                "#console-transcript-jump-pill", ConsoleTranscriptJumpPill
+            ).display = False
+        except NoMatches:
+            pass
+        self._jump_pill_state = (False, "")
+
+    def note_follow_intent(self) -> None:
+        """Record a programmatic jump-to-tail intent (send/resume/switch).
+
+        TASK-336: the send-time ``anchor()`` arrives via the coalesced sync
+        pass and can land AFTER the user has already wheel-scrolled up —
+        yanking them back to the tail mid-stream. ``set_messages`` only
+        honors a new-user-send anchor when the most recent of (follow
+        intent, user scroll) is the intent; a later user scroll wins.
+        """
+        self._follow_intent_time = monotonic()
+
+    def release_anchor(self) -> None:
+        """Release tail-follow, stamping the scroll as user intent.
+
+        Every user-driven scroll path (wheel, keyboard scroll actions)
+        funnels through ``release_anchor`` — the timestamp lets a scroll
+        that happens after a send outrank that send's late-arriving anchor
+        (see ``note_follow_intent``, TASK-336).
+        """
+        self._user_scroll_time = monotonic()
+        super().release_anchor()
+        # TASK-371: surface the jump pill the moment the reader detaches, rather
+        # than waiting for the next 0.2s sync tick.
+        self.sync_jump_indicator(self._last_run_status)
 
     def set_messages(self, messages: Iterable[ConsoleChatMessage]) -> None:
-        """Replace transcript messages and refresh mounted rows when possible."""
+        """Replace transcript messages and refresh mounted rows when possible.
+
+        Args:
+            messages: New transcript messages in display order. Signature
+                cache entries for messages no longer present are pruned here
+                (delete correctness for the TASK-259 per-message cache).
+        """
         self._messages = list(messages)
         message_ids = {message.id for message in self._messages}
+        new_user_send = any(
+            message.id not in self._seen_message_ids
+            and message.role == ConsoleMessageRole.USER
+            for message in self._messages
+        )
+        if (
+            self.is_mounted
+            and new_user_send
+            and self._follow_intent_time >= self._user_scroll_time
+        ):
+            # A send: jump to the tail even if the user had scrolled up
+            # (anchor() also re-engages follow for the reply that streams
+            # in next). Checked against ALL newly-seen ids, not just the
+            # tail -- the send path appends USER + ASSISTANT placeholder
+            # together and the first polled update can already have the
+            # placeholder at the tail. Appended assistant/tool rows alone
+            # never yank a reader. TASK-336: a user scroll AFTER the
+            # send/resume intent wins — the coalesced sync can deliver this
+            # anchor late, and it must not yank a reader who has already
+            # scrolled back.
+            self.anchor()
+        self._seen_message_ids = message_ids
         if self.selected_message_id not in message_ids:
             self.selected_message_id = None
+        for stale_id in [
+            cached_id
+            for cached_id in self._message_signature_cache
+            if cached_id not in message_ids
+        ]:
+            del self._message_signature_cache[stale_id]
+            self._signature_compute_counts.pop(stale_id, None)
+
+    def set_image_specs(self, specs: Mapping[str, ConsoleImageRowSpec]) -> None:
+        """Replace the prebuilt inline-image row payloads keyed by message ID.
+
+        Args:
+            specs: Mapping of message ID to its prepared image-row payload.
+                Messages absent from the mapping render no image row (covers
+                hidden mode, unprepared cache, and metadata-only messages).
+        """
+        self._image_specs = dict(specs)
+
+    def set_generation_card_specs(
+        self, specs: Mapping[str, ConsoleGenerationCardSpec]
+    ) -> None:
+        """Replace the prebuilt image-generation card row payloads keyed by message ID.
+
+        Args:
+            specs: Mapping of message ID to its prepared generation-card
+                payload. A message id present here renders a
+                ``"generation-card"`` row INSTEAD of any ``"image"`` row
+                for that same message (mutually exclusive per message id --
+                see ``_transcript_rows``). Messages absent from the mapping
+                render no card row (covers non-generation messages and a
+                generation message in hidden view mode).
+        """
+        self._generation_card_specs = dict(specs)
 
     def sync_empty_state(
         self,
@@ -351,6 +793,23 @@ class ConsoleTranscript(VerticalScroll):
         """Return active row signatures for focused reconciliation tests."""
         return dict(self._row_signatures)
 
+    def message_signature_compute_counts(self) -> dict[str, int]:
+        """Return per-message signature derivation counts for cache tests.
+
+        Returns:
+            Mapping of message id to how many times its expensive row
+            signature (render Content assembly) was derived since mount.
+        """
+        return dict(self._signature_compute_counts)
+
+    def message_signature_cache_ids(self) -> tuple[str, ...]:
+        """Return the message ids currently held in the signature cache.
+
+        Returns:
+            Tuple of cached message ids, for delete-pruning tests.
+        """
+        return tuple(self._message_signature_cache)
+
     def select_message(self, message_id: str) -> None:
         """Select one message and show its contextual action row."""
         if message_id not in {message.id for message in self._messages}:
@@ -369,7 +828,11 @@ class ConsoleTranscript(VerticalScroll):
     def select_next_variant(self, message_id: str) -> None:
         """Select the next rendered variant for a message when available."""
         message = self._message_by_id(message_id)
-        if message is None or message.variants is None or not message.variants.can_go_next:
+        if (
+            message is None
+            or message.variants is None
+            or not message.variants.can_go_next
+        ):
             return
         message.variants.selected_index += 1
         if self.is_mounted:
@@ -378,7 +841,11 @@ class ConsoleTranscript(VerticalScroll):
     def select_previous_variant(self, message_id: str) -> None:
         """Select the previous rendered variant for a message when available."""
         message = self._message_by_id(message_id)
-        if message is None or message.variants is None or not message.variants.can_go_previous:
+        if (
+            message is None
+            or message.variants is None
+            or not message.variants.can_go_previous
+        ):
             return
         message.variants.selected_index -= 1
         if self.is_mounted:
@@ -470,6 +937,25 @@ class ConsoleTranscript(VerticalScroll):
         button.press()
         return True
 
+    def on_click(self, event: Click) -> None:
+        """Clear selection when the user clicks negative space in the transcript.
+
+        Clicks that land on controls with classes in ``PROTECTED_CLICK_CLASSES``
+        (message action rows/buttons, rule separators, action-help text, the
+        empty-state panel, or scrollbars) keep the current selection active. All
+        other clicks that bubble up to the transcript itself clear the selection.
+        """
+        control = event.control
+        if control is not None and any(
+            control.has_class(class_name)
+            for class_name in self.PROTECTED_CLICK_CLASSES
+        ):
+            event.stop()
+            return
+        if control is self:
+            self.action_clear_selection()
+            event.stop()
+
     def on_key(self, event: Key) -> None:
         if event.key in {"down", "j"}:
             self.action_select_next()
@@ -502,11 +988,15 @@ class ConsoleTranscript(VerticalScroll):
         self.select_message(self._messages[index].id)
 
     def _message_by_id(self, message_id: str) -> ConsoleChatMessage | None:
-        return next((message for message in self._messages if message.id == message_id), None)
+        return next(
+            (message for message in self._messages if message.id == message_id), None
+        )
 
     def _notify_selection_changed(self) -> None:
         """Let the owning screen refresh inspector/control surfaces after selection changes."""
-        sync_console_control_bar = getattr(self.screen, "_sync_console_control_bar", None)
+        sync_console_control_bar = getattr(
+            self.screen, "_sync_console_control_bar", None
+        )
         if callable(sync_console_control_bar):
             sync_console_control_bar()
 
@@ -526,11 +1016,38 @@ class ConsoleTranscript(VerticalScroll):
                 _TranscriptRow(
                     key=f"message:{message.id}",
                     kind="message",
-                    signature=self._message_row_signature(message, selected=selected),
+                    signature=self._cached_message_row_signature(
+                        message, selected=selected
+                    ),
                     message=message,
                     selected=selected,
                 )
             )
+            card_spec = self._generation_card_specs.get(message.id)
+            if card_spec is not None:
+                # A generation-card message renders the card row INSTEAD of
+                # the plain image row -- mutually exclusive per message id.
+                rows.append(
+                    _TranscriptRow(
+                        key=f"generation-card:{message.id}",
+                        kind="generation-card",
+                        signature=generation_card_signature(card_spec),
+                        message=message,
+                        generation_card_spec=card_spec,
+                    )
+                )
+            else:
+                image_spec = self._image_specs.get(message.id)
+                if image_spec is not None:
+                    rows.append(
+                        _TranscriptRow(
+                            key=f"image:{message.id}",
+                            kind="image",
+                            signature=("image", message.id, image_spec.mode),
+                            message=message,
+                            image_spec=image_spec,
+                        )
+                    )
             if selected:
                 rows.append(
                     _TranscriptRow(
@@ -576,13 +1093,17 @@ class ConsoleTranscript(VerticalScroll):
         return rows
 
     def _message_widgets(self) -> list[Widget]:
-        return [self._build_row_widget(row, track=False) for row in self._transcript_rows()]
+        return [
+            self._build_row_widget(row, track=False) for row in self._transcript_rows()
+        ]
 
     async def _reconcile_rows(self, rows: list[_TranscriptRow]) -> None:
         desired_keys = [row.key for row in rows]
         desired_key_set = set(desired_keys)
 
-        for stale_key in [key for key in self._row_widgets if key not in desired_key_set]:
+        for stale_key in [
+            key for key in self._row_widgets if key not in desired_key_set
+        ]:
             stale_widget = self._row_widgets.pop(stale_key)
             self._row_signatures.pop(stale_key, None)
             self._row_build_counts.pop(stale_key, None)
@@ -590,6 +1111,14 @@ class ConsoleTranscript(VerticalScroll):
 
         previous_widget: Widget | None = None
         for index, row in enumerate(rows):
+            if self._closing or self._pruning or not self.is_attached:
+                # This instance is being removed (a parent recompose/session
+                # surface swap can prune the transcript between this loop's
+                # awaits). Widget.mount() silently no-ops while pruning, so
+                # continuing would record detached widgets in the row maps
+                # and then crash in move_child. The replacement instance
+                # composes fresh state; abandon this pass.
+                return
             widget = self._row_widgets.get(row.key)
             row_was_mounted = False
             if widget is None:
@@ -616,6 +1145,14 @@ class ConsoleTranscript(VerticalScroll):
                     self._row_widgets[row.key] = widget
                     self._row_signatures[row.key] = row.signature
 
+            if row_was_mounted and widget.parent is not self:
+                # Version-proof backstop for the pruning check above:
+                # mount() completed without attaching (it no-ops while the
+                # container is being removed). Drop the phantom map entries
+                # and abandon the pass instead of poisoning later moves.
+                self._row_widgets.pop(row.key, None)
+                self._row_signatures.pop(row.key, None)
+                return
             if not row_was_mounted:
                 if previous_widget is None:
                     self.move_child(widget, before=0)
@@ -627,9 +1164,11 @@ class ConsoleTranscript(VerticalScroll):
         if track:
             self._row_build_counts[row.key] = self._row_build_counts.get(row.key, 0) + 1
         if row.kind == "rule":
+            # Rule separators do not need stable IDs; using None avoids
+            # DuplicateIds when a recompose/race leaves the previous end-rule
+            # widget in the DOM briefly while the new one is mounted.
             return Static(
                 row.renderable,
-                id=self._row_widget_id(row),
                 classes="console-transcript-rule",
             )
         if row.kind == "empty":
@@ -647,12 +1186,68 @@ class ConsoleTranscript(VerticalScroll):
             )
         if row.kind == "message" and row.message is not None:
             return ConsoleTranscriptMessage(row.message, selected=row.selected)
+        if row.kind == "image" and row.image_spec is not None:
+            return self._image_row_widget(row.image_spec)
+        if row.kind == "generation-card" and row.generation_card_spec is not None:
+            return ConsoleGenerationCard(row.generation_card_spec)
         if row.kind == "actions" and row.message is not None:
             return self._action_row(row.message)
         raise ValueError(f"Unsupported transcript row: {row}")
 
+    def _image_row_widget(self, spec: ConsoleImageRowSpec) -> Widget:
+        """Build the mounted widget for one inline-image row."""
+        widget: Widget | None = None
+        if spec.mode == "graphics" and spec.pil is not None:
+            try:
+                from textual_image.widget import Image as _GraphicsImage
+
+                widget = _GraphicsImage(spec.pil, id=f"console-image-{spec.message_id}")
+                # Explicit fitted cell size, not just max-width/max-height:
+                # textual_image's "auto" sizing resolves its render region
+                # from the parent's settled layout, and mounting a tick before
+                # that settles can ask the renderer to scale into a transient
+                # 0-width/height region - which PIL's resize() raises on. Fixed
+                # ints resolve without waiting on layout, sidestepping the race
+                # (the personas avatar preview uses the same guard).
+                w_cells, h_cells = fit_image_cell_size(
+                    spec.pil.width, spec.pil.height, PIXELS_MAX_COLS, PIXELS_MAX_LINES
+                )
+                widget.styles.width = w_cells
+                widget.styles.height = h_cells
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "textual-image unavailable; falling back to pixels row."
+                )
+                widget = None
+        if widget is None:
+            pixels = spec.pixels
+            if pixels is None and spec.pil is not None:
+                # Graphics import failed and nothing was cached: thumbnail a
+                # copy before building, mirroring the cache's bounded build
+                # (`ConsoleImageRenderCache.get_pixels`) so this fallback
+                # never runs `Pixels.from_image` on the full ≤1024px image.
+                scaled = spec.pil.copy()
+                scaled.thumbnail(
+                    (PIXELS_MAX_COLS, PIXELS_MAX_LINES * 2), PILImage.Resampling.LANCZOS
+                )
+                pixels = Pixels.from_image(scaled)
+            widget = Static(
+                pixels if pixels is not None else "",
+                id=f"console-image-{spec.message_id}",
+            )
+            # Pixels render at their baked half-block size; a max cap is safe
+            # here (no textual_image auto-sizing race).
+            widget.styles.max_width = PIXELS_MAX_COLS
+            widget.styles.max_height = PIXELS_MAX_LINES
+        widget.add_class("console-transcript-image")
+        return widget
+
     def _update_row_widget(self, widget: Widget, row: _TranscriptRow) -> Widget:
-        if row.kind == "message" and row.message is not None and isinstance(widget, ConsoleTranscriptMessage):
+        if (
+            row.kind == "message"
+            and row.message is not None
+            and isinstance(widget, ConsoleTranscriptMessage)
+        ):
             widget.sync_message(row.message, selected=row.selected)
             return widget
         if row.kind == "empty" and isinstance(widget, ConsoleTranscriptEmptyPanel):
@@ -670,6 +1265,82 @@ class ConsoleTranscript(VerticalScroll):
         return "console-transcript-row-" + row.key.replace(":", "-")
 
     @staticmethod
+    def _message_signature_token(
+        message: ConsoleChatMessage, *, selected: bool
+    ) -> tuple:
+        """Return a cheap change-token covering every render-signature input.
+
+        Captures the exact inputs of ``_message_render_text`` plus the
+        non-render signature fields (status, selection, variant identity), so
+        token equality guarantees the cached expensive signature is current.
+        Unchanged messages keep the same ``str``/``bytes`` object references
+        across store snapshots, so tuple comparison short-circuits on
+        identity; content edits/streaming rebinds produce new objects and are
+        caught by value comparison (never by length alone -- an equal-length
+        edit still misses the cache).
+
+        Args:
+            message: Transcript message to fingerprint.
+            selected: Whether the message row renders as selected.
+
+        Returns:
+            Hashable token tuple; any render-affecting change alters it.
+        """
+        variants = message.variants
+        if variants is None:
+            variants_token = None
+            content = message.content
+        else:
+            variants_token = (
+                variants.selected_index,
+                tuple(variant.id for variant in variants.variants),
+            )
+            content = variants.current.content
+        attachments_token = tuple(
+            (
+                attachment.display_name,
+                attachment.mime_type,
+                attachment.position,
+                None if attachment.data is None else len(attachment.data),
+            )
+            for attachment in (getattr(message, "attachments", ()) or ())
+        )
+        return (
+            message.role,
+            message.status,
+            selected,
+            content,
+            variants_token,
+            attachments_token,
+            message.attachment_label,
+            message.image_mime_type,
+            None if message.image_data is None else len(message.image_data),
+        )
+
+    def _cached_message_row_signature(
+        self, message: ConsoleChatMessage, *, selected: bool
+    ) -> tuple:
+        """Return the row signature, deriving it only when the message changed.
+
+        Args:
+            message: Transcript message for the row.
+            selected: Whether the message row renders as selected.
+
+        Returns:
+            The (possibly cached) expensive row signature tuple.
+        """
+        token = self._message_signature_token(message, selected=selected)
+        cached = self._message_signature_cache.get(message.id)
+        if cached is not None and cached[0] == token:
+            return cached[1]
+        signature = self._message_row_signature(message, selected=selected)
+        self._message_signature_cache[message.id] = (token, signature)
+        self._signature_compute_counts[message.id] = (
+            self._signature_compute_counts.get(message.id, 0) + 1
+        )
+        return signature
+
+    @staticmethod
     def _message_row_signature(message: ConsoleChatMessage, *, selected: bool) -> tuple:
         variants_signature = None
         if message.variants is not None:
@@ -685,10 +1356,49 @@ class ConsoleTranscript(VerticalScroll):
             variants_signature,
         )
 
-    @staticmethod
-    def _action_row_signature(message: ConsoleChatMessage) -> tuple:
+    def _generation_browsed_index(self, message_id: str, variant_count: int) -> int:
+        """Return the screen's ephemeral browsed-variant index for ``message_id``.
+
+        Reads directly off the owning screen's ``_generation_browse`` map
+        (the same ephemeral, never-persisted state ``ChatScreen`` uses to
+        build ``ConsoleGenerationCardSpec``s) rather than the card-spec map
+        this widget also holds, since a card spec can be absent for a
+        message currently in "hidden" view mode while the action row (and
+        its `<`/`>`/Keep gating) still needs the real browsed index. Falls
+        back to 0 -- the canonical variant -- when unmounted (bare
+        unit-construction in tests) or the screen hasn't created its browse
+        map yet, both of which correctly describe "nothing browsed".
+        """
+        try:
+            browse = getattr(self.screen, "_generation_browse", None)
+        except NoScreen:
+            browse = None
+        browsed_index = (browse or {}).get(message_id, 0)
+        if not (0 <= browsed_index < variant_count):
+            return 0
+        return browsed_index
+
+    def _generation_action_kwargs(self, message: ConsoleChatMessage) -> dict[str, int]:
+        """Return the ``available_actions()`` generation kwargs for ``message``.
+
+        Empty for a non-generation message, so ``available_actions(message)``
+        sees its old, un-keyworded call shape unchanged (regression guard).
+        """
+        variant_count = len(message.generation_metadata)
+        if variant_count == 0:
+            return {}
+        return {
+            "generation_variant_count": variant_count,
+            "generation_browsed_index": self._generation_browsed_index(
+                message.id, variant_count
+            ),
+        }
+
+    def _action_row_signature(self, message: ConsoleChatMessage) -> tuple:
         actions = []
-        for action in ConsoleMessageActionService().available_actions(message):
+        for action in ConsoleMessageActionService().available_actions(
+            message, **self._generation_action_kwargs(message)
+        ):
             if action.action_id == "feedback":
                 actions.append(("feedback-up", "👍", True, ""))
                 actions.append(("feedback-down", "👎", True, ""))
@@ -705,20 +1415,36 @@ class ConsoleTranscript(VerticalScroll):
 
     def _action_row(self, message: ConsoleChatMessage) -> Horizontal:
         buttons: list[Button] = []
-        for action in ConsoleMessageActionService().available_actions(message):
+        for action in ConsoleMessageActionService().available_actions(
+            message, **self._generation_action_kwargs(message)
+        ):
             if action.action_id == "feedback":
-                buttons.append(self._action_button(message, ConsoleMessageAction("feedback-up", "👍")))
-                buttons.append(self._action_button(message, ConsoleMessageAction("feedback-down", "👎")))
+                buttons.append(
+                    self._action_button(
+                        message, ConsoleMessageAction("feedback-up", "👍")
+                    )
+                )
+                buttons.append(
+                    self._action_button(
+                        message, ConsoleMessageAction("feedback-down", "👎")
+                    )
+                )
                 continue
             buttons.append(self._action_button(message, action))
-        return Horizontal(*buttons, id=f"console-message-actions-{message.id}", classes="console-transcript-action-row")
+        return Horizontal(
+            *buttons,
+            id=f"console-message-actions-{message.id}",
+            classes="console-transcript-action-row",
+        )
 
     @staticmethod
     def _plain_action_row(message: ConsoleChatMessage) -> str:
         return ConsoleMessageActionService().plain_action_row(message)
 
     @staticmethod
-    def _action_button(message: ConsoleChatMessage, action: ConsoleMessageAction) -> Button:
+    def _action_button(
+        message: ConsoleChatMessage, action: ConsoleMessageAction
+    ) -> Button:
         button = ConsoleTranscriptActionButton(
             action.label,
             id=f"console-message-action-{action.action_id}-{message.id}",
@@ -733,6 +1459,8 @@ class ConsoleTranscript(VerticalScroll):
 
     def _focus_action_button(self, message_id: str, action_id: str) -> None:
         try:
-            self.query_one(f"#console-message-action-{action_id}-{message_id}", Button).focus()
+            self.query_one(
+                f"#console-message-action-{action_id}-{message_id}", Button
+            ).focus()
         except Exception:
             return

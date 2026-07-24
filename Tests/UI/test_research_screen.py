@@ -4,31 +4,13 @@ import pytest
 
 from tldw_chatbook.UI.Research_Modules.research_controller import ResearchController
 from tldw_chatbook.UI.Research_Window import ResearchWindow
-from tldw_chatbook.UI.Screens.research_screen import ResearchScreen
 
-
-def test_research_screen_composes_research_window():
-    app = SimpleNamespace(research_scope_service=object())
-    screen = ResearchScreen(app)
-
-    widgets = list(screen.compose_content())
-
-    assert len(widgets) == 1
-    assert isinstance(widgets[0], ResearchWindow)
-
-
-def test_research_screen_round_trips_window_state():
-    app = SimpleNamespace(research_scope_service=object())
-    screen = ResearchScreen(app)
-    window = ResearchWindow(app)
-    window.restore_state({"source": "server"})
-    screen.query_one = lambda *_args, **_kwargs: window
-
-    state = screen.save_state()
-    screen.restore_state({"source": "local"})
-
-    assert state == {"source": "server"}
-    assert window.save_state() == {"source": "local"}
+# NOTE: ``ResearchScreen`` (UI/Screens/research_screen.py) and its screen
+# registration were removed in Task 255 -- the route was an orphan with no
+# shell destination or navigation entry point, and the "research" route id
+# now aliases to Library. ``ResearchWindow``/``ResearchController`` below
+# remain in the tree (their removal is a separate decision), so their
+# behavior stays covered here.
 
 
 class FakeResearchScopeService:
@@ -74,7 +56,9 @@ class FakeResearchScopeService:
 
     async def pause_run(self, run_id, *, mode):
         self.calls.append(("pause_run", mode, run_id))
-        return SimpleNamespace(id=run_id, query="Paused", status="running", control_state="paused")
+        return SimpleNamespace(
+            id=run_id, query="Paused", status="running", control_state="paused"
+        )
 
     async def get_bundle(self, run_id, *, mode):
         self.calls.append(("get_bundle", mode, run_id))
@@ -93,10 +77,16 @@ class FakeResearchScopeService:
             artifact_version=1,
         )
 
-    async def patch_and_approve_checkpoint(self, run_id, checkpoint_id, *, mode, patch_payload=None):
-        self.calls.append(("patch_and_approve_checkpoint", mode, run_id, checkpoint_id, patch_payload))
+    async def patch_and_approve_checkpoint(
+        self, run_id, checkpoint_id, *, mode, patch_payload=None
+    ):
+        self.calls.append(
+            ("patch_and_approve_checkpoint", mode, run_id, checkpoint_id, patch_payload)
+        )
         if mode == "local":
-            raise ValueError("Local research checkpoints are not available in this slice.")
+            raise ValueError(
+                "Local research checkpoints are not available in this slice."
+            )
         return SimpleNamespace(
             id=run_id,
             query="Server query",
@@ -110,7 +100,9 @@ class FakeResearchScopeService:
     async def stream_run_events(self, run_id, *, mode, after_id=0):
         self.calls.append(("stream_run_events", mode, run_id, after_id))
         if mode == "local":
-            raise ValueError("Local research live events are not available in this slice.")
+            raise ValueError(
+                "Local research live events are not available in this slice."
+            )
         yield {
             "event": "snapshot",
             "id": "3",
@@ -257,11 +249,19 @@ async def test_research_window_approves_selected_server_checkpoint():
     server_runs = await window.switch_source("server")
     window.select_run(server_runs[0])
 
-    updated = await window.approve_selected_checkpoint(patch_payload={"resolution": "accept"})
+    updated = await window.approve_selected_checkpoint(
+        patch_payload={"resolution": "accept"}
+    )
 
     assert updated.latest_checkpoint_id == "checkpoint-1"
     assert getattr(window.selected_run, "latest_checkpoint_id", None) == "checkpoint-1"
-    assert ("patch_and_approve_checkpoint", "server", "server-run", "checkpoint-1", {"resolution": "accept"}) in service.calls
+    assert (
+        "patch_and_approve_checkpoint",
+        "server",
+        "server-run",
+        "checkpoint-1",
+        {"resolution": "accept"},
+    ) in service.calls
 
 
 @pytest.mark.asyncio

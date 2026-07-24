@@ -157,16 +157,21 @@ class _IngestRunnerHarness(LibraryIngestQueueMixin, App):
         *,
         pool_factory: Optional[Callable[[], Any]] = None,
         worker_count: Optional[int] = None,
+        heavy_lane: Optional[int] = None,
     ) -> None:
         super().__init__()
         self.library_ingest_jobs = LibraryIngestJobRegistry()
         self.media_db = media_db
         self._ingest_parse_pool = None
+        self._ingest_parse_pool_generation = 0
+        self._ingest_parse_jobs_by_generation: dict[int, set[str]] = {}
+        self._ingest_parse_pool_stop_event: Optional[threading.Event] = None
         self._ingest_parsed_payloads: dict[str, dict] = {}
         self._ingest_shutdown = False
         self._pool_factory = pool_factory or (lambda: _FakeIngestParsePool())
         self._pool_create_count = 0
         self._worker_count_override = worker_count
+        self._heavy_lane_override = heavy_lane
 
     def _create_ingest_parse_pool(self):
         self._pool_create_count += 1
@@ -176,6 +181,11 @@ class _IngestRunnerHarness(LibraryIngestQueueMixin, App):
         if self._worker_count_override is not None:
             return self._worker_count_override
         return super()._ingest_parse_worker_count()
+
+    def _ingest_heavy_lane_max_workers(self) -> int:
+        if self._heavy_lane_override is not None:
+            return self._heavy_lane_override
+        return super()._ingest_heavy_lane_max_workers()
 
 
 def _make_db(tmp_path: Path, name: str = "library_ingest.db") -> MediaDatabase:
@@ -188,6 +198,11 @@ def _write_text_file(tmp_path: Path, name: str, content: str) -> Path:
     return path
 
 
+def _exit_ingest_worker_abruptly() -> None:
+    """Picklable spawn-pool target that simulates a hard worker crash."""
+    os._exit(17)
+
+
 async def _wait_for_job_state(
     app: _IngestRunnerHarness,
     pilot,
@@ -197,7 +212,9 @@ async def _wait_for_job_state(
     attempts: int = _POLL_ATTEMPTS,
 ) -> LibraryIngestJob:
     for _ in range(attempts):
-        job = next((j for j in app.library_ingest_jobs.jobs() if j.job_id == job_id), None)
+        job = next(
+            (j for j in app.library_ingest_jobs.jobs() if j.job_id == job_id), None
+        )
         if job is not None and job.state == state:
             return job
         await pilot.pause(_POLL_INTERVAL)
@@ -205,7 +222,9 @@ async def _wait_for_job_state(
     raise AssertionError(f"job {job_id} never reached {state}. Jobs: {all_jobs}")
 
 
-async def _wait_for_runner_idle(app: _IngestRunnerHarness, pilot, *, attempts: int = _POLL_ATTEMPTS) -> None:
+async def _wait_for_runner_idle(
+    app: _IngestRunnerHarness, pilot, *, attempts: int = _POLL_ATTEMPTS
+) -> None:
     for _ in range(attempts):
         if not app.library_ingest_jobs.runner_active:
             return
@@ -216,7 +235,9 @@ async def _wait_for_runner_idle(app: _IngestRunnerHarness, pilot, *, attempts: i
 @pytest.mark.asyncio
 async def test_submit_reaches_done_with_real_media_id(tmp_path: Path) -> None:
     db = _make_db(tmp_path)
-    source = _write_text_file(tmp_path, "note-a.txt", "Tides are driven by the moon's gravity.")
+    source = _write_text_file(
+        tmp_path, "note-a.txt", "Tides are driven by the moon's gravity."
+    )
     app = _IngestRunnerHarness(db)
 
     async with app.run_test() as pilot:
@@ -235,7 +256,9 @@ async def test_submit_reaches_done_with_real_media_id(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_two_files_queued_both_reach_done_with_real_media_rows(tmp_path: Path) -> None:
+async def test_two_files_queued_both_reach_done_with_real_media_rows(
+    tmp_path: Path,
+) -> None:
     """(F3 pilot) Two files queued -> both reach DONE with real media rows,
     and the write stage (SQLite single-writer) never has two jobs WRITING
     at the same time -- even though both may PARSE concurrently (forced to
@@ -289,7 +312,9 @@ async def test_failing_job_does_not_block_next_queued_job(tmp_path: Path) -> Non
         failing_job = app.submit_library_ingest_job(source_path=str(missing))
         ok_job = app.submit_library_ingest_job(source_path=str(ok_source))
 
-        failed = await _wait_for_job_state(app, pilot, failing_job.job_id, IngestJobState.FAILED)
+        failed = await _wait_for_job_state(
+            app, pilot, failing_job.job_id, IngestJobState.FAILED
+        )
         assert failed.error != ""
         assert len(failed.error) <= 200
         assert "\n" not in failed.error
@@ -333,7 +358,9 @@ async def test_retry_of_failed_job_succeeds_once_transient_error_clears(
 
     async with app.run_test() as pilot:
         failing_job = app.submit_library_ingest_job(source_path=str(target))
-        failed = await _wait_for_job_state(app, pilot, failing_job.job_id, IngestJobState.FAILED)
+        failed = await _wait_for_job_state(
+            app, pilot, failing_job.job_id, IngestJobState.FAILED
+        )
         assert failed.permanent is False
         assert failed.error == "transient parse hiccup"
         await _wait_for_runner_idle(app, pilot)
@@ -343,7 +370,9 @@ async def test_retry_of_failed_job_succeeds_once_transient_error_clears(
         assert requeued.job_id != failed.job_id
         assert requeued.state == IngestJobState.QUEUED
 
-        done = await _wait_for_job_state(app, pilot, requeued.job_id, IngestJobState.DONE)
+        done = await _wait_for_job_state(
+            app, pilot, requeued.job_id, IngestJobState.DONE
+        )
         assert done.media_id is not None
         row = db.get_media_by_id(done.media_id)
         assert row is not None
@@ -353,7 +382,9 @@ async def test_retry_of_failed_job_succeeds_once_transient_error_clears(
 
 
 @pytest.mark.asyncio
-async def test_missing_file_failure_is_permanent_and_refuses_retry(tmp_path: Path) -> None:
+async def test_missing_file_failure_is_permanent_and_refuses_retry(
+    tmp_path: Path,
+) -> None:
     """(M4, fix batch F1b) A ``FileNotFoundError`` from the parse worker
     fails the exact same way on every attempt -- classified ``permanent``
     inside ``run_parse_job`` (F3: the real exception type is only visible
@@ -366,7 +397,9 @@ async def test_missing_file_failure_is_permanent_and_refuses_retry(tmp_path: Pat
 
     async with app.run_test() as pilot:
         failing_job = app.submit_library_ingest_job(source_path=str(missing))
-        failed = await _wait_for_job_state(app, pilot, failing_job.job_id, IngestJobState.FAILED)
+        failed = await _wait_for_job_state(
+            app, pilot, failing_job.job_id, IngestJobState.FAILED
+        )
         await _wait_for_runner_idle(app, pilot)
 
         assert failed.permanent is True
@@ -385,7 +418,9 @@ async def test_unsupported_file_type_failure_is_permanent_and_refuses_retry(
 
     async with app.run_test() as pilot:
         failing_job = app.submit_library_ingest_job(source_path=str(unsupported))
-        failed = await _wait_for_job_state(app, pilot, failing_job.job_id, IngestJobState.FAILED)
+        failed = await _wait_for_job_state(
+            app, pilot, failing_job.job_id, IngestJobState.FAILED
+        )
         await _wait_for_runner_idle(app, pilot)
 
         assert failed.permanent is True
@@ -501,7 +536,194 @@ async def test_broken_pool_fails_all_parsing_jobs_and_rebuilds_on_next_submit(
         # Retry -- the next submission must rebuild a fresh pool.
         requeued = app.retry_library_ingest_job(job1.job_id)
         assert requeued is not None
-        assert len(pools) == 2, "a fresh pool must be created lazily on the next submission"
+        assert len(pools) == 2, (
+            "a fresh pool must be created lazily on the next submission"
+        )
+
+
+@pytest.mark.asyncio
+async def test_stale_pool_generation_error_does_not_fail_replacement_job(
+    tmp_path: Path,
+) -> None:
+    db = _make_db(tmp_path)
+    source = _write_text_file(tmp_path, "stale-error.txt", "Generation isolation.")
+    pools: list[_FakeIngestParsePool] = []
+
+    def _pool_factory() -> _FakeIngestParsePool:
+        pool = _FakeIngestParsePool(auto_run=False)
+        pools.append(pool)
+        return pool
+
+    app = _IngestRunnerHarness(db, pool_factory=_pool_factory, worker_count=1)
+
+    async with app.run_test() as pilot:
+        original = app.submit_library_ingest_job(source_path=str(source))
+        await pilot.pause()
+        generation_a = pools[0]
+        generation_a.trigger_error(0, RuntimeError("generation A died"))
+        await _wait_for_job_state(app, pilot, original.job_id, IngestJobState.FAILED)
+
+        replacement = app.retry_library_ingest_job(original.job_id)
+        assert replacement is not None
+        await _wait_for_job_state(
+            app, pilot, replacement.job_id, IngestJobState.PARSING
+        )
+        assert len(pools) == 2
+
+        generation_a.trigger_error(0, RuntimeError("late generation A error"))
+        await pilot.pause(_POLL_INTERVAL)
+        current = next(
+            job
+            for job in app.library_ingest_jobs.jobs()
+            if job.job_id == replacement.job_id
+        )
+        assert current.state == IngestJobState.PARSING
+        assert app._ingest_parse_pool is pools[1]
+
+
+@pytest.mark.asyncio
+async def test_stale_pool_generation_success_does_not_store_payload(
+    tmp_path: Path,
+) -> None:
+    db = _make_db(tmp_path)
+    source = _write_text_file(tmp_path, "stale-success.txt", "Generation isolation.")
+    pools: list[_FakeIngestParsePool] = []
+
+    def _pool_factory() -> _FakeIngestParsePool:
+        pool = _FakeIngestParsePool(auto_run=False)
+        pools.append(pool)
+        return pool
+
+    app = _IngestRunnerHarness(db, pool_factory=_pool_factory, worker_count=1)
+
+    async with app.run_test() as pilot:
+        original = app.submit_library_ingest_job(source_path=str(source))
+        await pilot.pause()
+        generation_a = pools[0]
+        generation_a.trigger_error(0, RuntimeError("generation A died"))
+        await _wait_for_job_state(app, pilot, original.job_id, IngestJobState.FAILED)
+
+        replacement = app.retry_library_ingest_job(original.job_id)
+        assert replacement is not None
+        await _wait_for_job_state(
+            app, pilot, replacement.job_id, IngestJobState.PARSING
+        )
+
+        generation_a.trigger_success(
+            0,
+            {"ok": True, "payload": {"file_type": "plaintext", "content": "stale"}},
+        )
+        await pilot.pause(_POLL_INTERVAL)
+
+        assert original.job_id not in app._ingest_parsed_payloads
+        assert replacement.job_id not in app._ingest_parsed_payloads
+        assert app.library_ingest_jobs.runner_active is False
+        current = next(
+            job
+            for job in app.library_ingest_jobs.jobs()
+            if job.job_id == replacement.job_id
+        )
+        assert current.state == IngestJobState.PARSING
+
+
+@pytest.mark.asyncio
+async def test_real_pool_worker_exit_is_reported_for_owning_generation(
+    tmp_path: Path,
+) -> None:
+    db = _make_db(tmp_path)
+    source = _write_text_file(tmp_path, "hard-exit.txt", "Worker sentinel coverage.")
+    app: _IngestRunnerHarness
+    app = _IngestRunnerHarness(
+        db,
+        pool_factory=lambda: LibraryIngestQueueMixin._create_ingest_parse_pool(app),
+        worker_count=1,
+    )
+    pool = None
+    teardown_threads: list[threading.Thread] = []
+    real_terminate = app._terminate_ingest_parse_pool_off_thread
+
+    def _capture_production_teardown(target_pool: Any) -> threading.Thread:
+        thread = real_terminate(target_pool)
+        teardown_threads.append(thread)
+        return thread
+
+    app._terminate_ingest_parse_pool_off_thread = _capture_production_teardown
+
+    try:
+        async with app.run_test() as pilot:
+            job = app.library_ingest_jobs.submit(source_path=str(source))
+            claimed = app.library_ingest_jobs.mark_parsing(job.job_id)
+            assert claimed is not None
+
+            pool = app._ensure_ingest_parse_pool()
+            generation = app._ingest_parse_pool_generation
+            app._ingest_parse_jobs_by_generation[generation].add(job.job_id)
+            pool.apply_async(_exit_ingest_worker_abruptly)
+
+            failed = await _wait_for_job_state(
+                app,
+                pilot,
+                job.job_id,
+                IngestJobState.FAILED,
+                attempts=500,
+            )
+            assert failed.permanent is False
+            assert app._ingest_parse_pool is None
+            assert generation not in app._ingest_parse_jobs_by_generation
+    finally:
+        if pool is not None:
+            if teardown_threads:
+                cleanup = teardown_threads[0]
+            else:
+                pool.terminate()
+                cleanup = threading.Thread(target=pool.join, daemon=True)
+                cleanup.start()
+            cleanup.join(timeout=10.0)
+            assert not cleanup.is_alive(), "real Pool cleanup exceeded 10 seconds"
+
+
+def test_current_generation_sentinel_failure_retires_idle_pool(tmp_path: Path) -> None:
+    db = _make_db(tmp_path)
+    pool = _FakeIngestParsePool(auto_run=False)
+    app = _IngestRunnerHarness(db, pool_factory=lambda: pool, worker_count=1)
+    app._ensure_ingest_parse_pool()
+    generation = app._ingest_parse_pool_generation
+    assert app._ingest_parse_jobs_by_generation[generation] == set()
+
+    app._handle_broken_ingest_parse_pool(
+        generation,
+        None,
+        RuntimeError("idle worker exited"),
+    )
+
+    assert app._ingest_parse_pool is None
+    assert generation not in app._ingest_parse_jobs_by_generation
+    for _ in range(100):
+        if pool.terminated:
+            break
+        threading.Event().wait(0.01)
+    assert pool.terminated is True
+
+
+def test_ensure_pool_initializes_generation_state_for_existing_host(
+    tmp_path: Path,
+) -> None:
+    db = _make_db(tmp_path)
+    pool = _FakeIngestParsePool(auto_run=False)
+    app = _IngestRunnerHarness(db, pool_factory=lambda: pool, worker_count=1)
+    del app._ingest_parse_pool_generation
+    del app._ingest_parse_jobs_by_generation
+    del app._ingest_parse_pool_stop_event
+
+    assert app._ensure_ingest_parse_pool() is pool
+    assert app._ingest_parse_pool_generation == 1
+    assert app._ingest_parse_jobs_by_generation == {1: set()}
+    assert isinstance(app._ingest_parse_pool_stop_event, threading.Event)
+
+    teardown = app._shutdown_ingest_parse_pool()
+    assert teardown is not None
+    teardown.join(timeout=_FAKE_POOL_JOIN_TIMEOUT)
+    assert not teardown.is_alive()
 
 
 @pytest.mark.asyncio
@@ -563,7 +785,100 @@ async def test_submit_cap_backpressure_second_job_stays_queued_until_first_compl
 
 
 @pytest.mark.asyncio
-async def test_shutdown_flag_stops_late_parse_completion_callbacks(tmp_path: Path) -> None:
+async def test_heavy_lane_caps_transcriptions_while_documents_fill_pool(
+    tmp_path: Path,
+) -> None:
+    """(F3 pilot, heavy-lane cap) With worker_count=3 and heavy_lane=1, only
+    one audio/video parse may run at a time -- a second transcription is
+    skipped ahead of by queued documents, which fill the remaining pool
+    slots. Completing the in-flight transcription frees the heavy slot and
+    promotes the skipped one."""
+    db = _make_db(tmp_path)
+    pool = _FakeIngestParsePool(auto_run=False)
+    app = _IngestRunnerHarness(
+        db, pool_factory=lambda: pool, worker_count=3, heavy_lane=1
+    )
+
+    async with app.run_test() as pilot:
+        paths = {}
+        for name in ("a1.mp3", "a2.mp3", "d1.txt", "d2.txt", "d3.txt"):
+            p = tmp_path / name
+            p.write_text("x", encoding="utf-8")
+            paths[name] = app.submit_library_ingest_job(source_path=str(p))
+        await pilot.pause()
+
+        # pool holds exactly 3: audio1 (heavy) + doc1 + doc2. audio2 is
+        # skipped (heavy lane full); doc3 waits (pool full).
+        assert len(pool.calls) == 3
+        states = {j.job_id: j.state for j in app.library_ingest_jobs.jobs()}
+        assert states[paths["a1.mp3"].job_id] == IngestJobState.PARSING
+        assert states[paths["d1.txt"].job_id] == IngestJobState.PARSING
+        assert states[paths["d2.txt"].job_id] == IngestJobState.PARSING
+        assert states[paths["a2.mp3"].job_id] == IngestJobState.QUEUED
+        assert states[paths["d3.txt"].job_id] == IngestJobState.QUEUED
+
+        # completing audio1 frees the heavy slot -> audio2 is admitted next.
+        pool.trigger_success(0, {"ok": True, "payload": {}})
+        await _wait_for_job_state(
+            app, pilot, paths["a2.mp3"].job_id, IngestJobState.PARSING
+        )
+        assert len(pool.calls) == 4
+
+
+@pytest.mark.asyncio
+async def test_retried_transcription_still_obeys_the_heavy_lane_cap(
+    tmp_path: Path,
+) -> None:
+    """(task 160) The heavy-lane cap must hold on the retry path too. A
+    requeued audio job carries its ``detected_type`` forward, so retrying a
+    failed transcription while another transcription is already PARSING must
+    leave the retry QUEUED -- not dispatch a second concurrent transcription
+    (which the dropped-``detected_type`` bug allowed via the Home Retry
+    control)."""
+    db = _make_db(tmp_path)
+    pool = _FakeIngestParsePool(auto_run=False)
+    app = _IngestRunnerHarness(
+        db, pool_factory=lambda: pool, worker_count=3, heavy_lane=1
+    )
+
+    async with app.run_test() as pilot:
+        a1_path = tmp_path / "a1.mp3"
+        a1_path.write_text("x", encoding="utf-8")
+        a2_path = tmp_path / "a2.mp3"
+        a2_path.write_text("x", encoding="utf-8")
+        a1 = app.submit_library_ingest_job(source_path=str(a1_path))
+        a2 = app.submit_library_ingest_job(source_path=str(a2_path))
+        await pilot.pause()
+
+        # Only one transcription parses at a time: a1 PARSING, a2 blocked.
+        assert len(pool.calls) == 1
+        states = {j.job_id: j.state for j in app.library_ingest_jobs.jobs()}
+        assert states[a1.job_id] == IngestJobState.PARSING
+        assert states[a2.job_id] == IngestJobState.QUEUED
+
+        # Fail a1 (per-job structured failure, like the retry tests) -> its
+        # heavy slot frees and a2 is admitted to PARSING.
+        pool.trigger_success(0, {"ok": False, "error": "boom", "permanent": False})
+        await _wait_for_job_state(app, pilot, a2.job_id, IngestJobState.PARSING)
+        await _wait_for_job_state(app, pilot, a1.job_id, IngestJobState.FAILED)
+        assert len(pool.calls) == 2
+
+        # Retry a1 while a2 is still PARSING: the heavy lane is full, so the
+        # requeued a1 must stay QUEUED (its detected_type='audio' is skipped),
+        # NOT be dispatched as a second concurrent transcription.
+        requeued = app.retry_library_ingest_job(a1.job_id)
+        assert requeued is not None
+        await pilot.pause()
+        assert len(pool.calls) == 2
+        states_after = {j.job_id: j.state for j in app.library_ingest_jobs.jobs()}
+        assert states_after[requeued.job_id] == IngestJobState.QUEUED
+        assert states_after[a2.job_id] == IngestJobState.PARSING
+
+
+@pytest.mark.asyncio
+async def test_shutdown_flag_stops_late_parse_completion_callbacks(
+    tmp_path: Path,
+) -> None:
     """(F3 pilot) Once ``_ingest_shutdown`` is set, a parse completion (or
     pool-level error) that lands afterward -- e.g. already in flight when
     the app started closing -- must be a pure no-op: no registry mutation,
@@ -577,23 +892,35 @@ async def test_shutdown_flag_stops_late_parse_completion_callbacks(tmp_path: Pat
         job = app.submit_library_ingest_job(source_path=str(source))
         await pilot.pause()
 
-        current = next(j for j in app.library_ingest_jobs.jobs() if j.job_id == job.job_id)
+        current = next(
+            j for j in app.library_ingest_jobs.jobs() if j.job_id == job.job_id
+        )
         assert current.state == IngestJobState.PARSING
 
         app._ingest_shutdown = True
 
         # Late success completion: must be a no-op.
         app._on_ingest_parse_complete(
-            job.job_id, {"ok": True, "payload": {"file_type": "plaintext"}}
+            app._ingest_parse_pool_generation,
+            job.job_id,
+            {"ok": True, "payload": {"file_type": "plaintext"}},
         )
-        current = next(j for j in app.library_ingest_jobs.jobs() if j.job_id == job.job_id)
+        current = next(
+            j for j in app.library_ingest_jobs.jobs() if j.job_id == job.job_id
+        )
         assert current.state == IngestJobState.PARSING
         assert job.job_id not in app._ingest_parsed_payloads
         assert app.library_ingest_jobs.runner_active is False
 
         # Late pool-level error: also a no-op -- the pool is not dropped.
-        app._handle_broken_ingest_parse_pool(RuntimeError("late failure"))
-        current = next(j for j in app.library_ingest_jobs.jobs() if j.job_id == job.job_id)
+        app._handle_broken_ingest_parse_pool(
+            app._ingest_parse_pool_generation,
+            job.job_id,
+            RuntimeError("late failure"),
+        )
+        current = next(
+            j for j in app.library_ingest_jobs.jobs() if j.job_id == job.job_id
+        )
         assert current.state == IngestJobState.PARSING
         assert app._ingest_parse_pool is not None
 
@@ -635,14 +962,16 @@ def test_pool_callbacks_short_circuit_without_marshaling_when_shutdown(
     )
 
     app._ingest_shutdown = True
-    app._ingest_pool_callback("ingest-job-1", {"ok": True, "payload": {}})
-    app._ingest_pool_error_callback(RuntimeError("late pool failure"))
+    app._ingest_pool_callback(1, "ingest-job-1", {"ok": True, "payload": {}})
+    app._ingest_pool_error_callback(
+        1, "ingest-job-1", RuntimeError("late pool failure")
+    )
     assert marshaled == []
 
     # Positive control: with the flag down, both callbacks marshal.
     app._ingest_shutdown = False
-    app._ingest_pool_callback("ingest-job-1", {"ok": True, "payload": {}})
-    app._ingest_pool_error_callback(RuntimeError("pool failure"))
+    app._ingest_pool_callback(1, "ingest-job-1", {"ok": True, "payload": {}})
+    app._ingest_pool_error_callback(1, "ingest-job-1", RuntimeError("pool failure"))
     assert len(marshaled) == 2
 
 
@@ -735,12 +1064,16 @@ async def test_broken_pool_spares_payload_ready_job_and_writer_drains_it(
         # The pool dies while B is still genuinely mid-parse.
         pool.trigger_error(0, RuntimeError("simulated worker death"))
 
-        failed_b = await _wait_for_job_state(app, pilot, job_b.job_id, IngestJobState.FAILED)
+        failed_b = await _wait_for_job_state(
+            app, pilot, job_b.job_id, IngestJobState.FAILED
+        )
         assert failed_b.permanent is False
 
         # A must survive: never failed, and the handler's writer wake
         # drains its already-finished parse to DONE with a real media row.
-        done_a = await _wait_for_job_state(app, pilot, job_a.job_id, IngestJobState.DONE)
+        done_a = await _wait_for_job_state(
+            app, pilot, job_a.job_id, IngestJobState.DONE
+        )
         assert done_a.media_id is not None
         assert db.get_media_by_id(done_a.media_id) is not None
 
@@ -972,7 +1305,9 @@ async def test_pool_creation_failure_fails_job_retryable_and_app_survives(
         # Must not raise, despite pool creation exploding underneath.
         job1 = app.submit_library_ingest_job(source_path=str(source1))
 
-        failed = await _wait_for_job_state(app, pilot, job1.job_id, IngestJobState.FAILED)
+        failed = await _wait_for_job_state(
+            app, pilot, job1.job_id, IngestJobState.FAILED
+        )
         assert failed.permanent is False
         assert failed.error.startswith("Parse pool could not start:")
         assert "spawn machinery exploded" in failed.error
@@ -1055,7 +1390,9 @@ async def test_claim_next_job_returns_payload_ready_job_and_keeps_runner_active(
     untouched (``True``), so the writer keeps looping instead of exiting.
     """
     db = _make_db(tmp_path)
-    source = _write_text_file(tmp_path, "note-claim.txt", "Body for the claim contract test.")
+    source = _write_text_file(
+        tmp_path, "note-claim.txt", "Body for the claim contract test."
+    )
     app = _IngestRunnerHarness(db)
 
     async with app.run_test():
@@ -1103,6 +1440,35 @@ async def test_claim_next_job_returns_none_and_clears_runner_active_when_empty(
 
 
 @pytest.mark.asyncio
+async def test_shutdown_refuses_to_claim_ready_payload(tmp_path: Path) -> None:
+    db = _make_db(tmp_path)
+    source = _write_text_file(tmp_path, "shutdown-claim.txt", "Do not persist me.")
+    app = _IngestRunnerHarness(db)
+
+    async with app.run_test():
+        app.library_ingest_jobs.runner_active = True
+        job = app.library_ingest_jobs.submit(source_path=str(source))
+        app.library_ingest_jobs.mark_parsing(job.job_id)
+        app._ingest_parsed_payloads[job.job_id] = {
+            "file_type": "plaintext",
+            "content": "ready before shutdown",
+        }
+        app._ingest_shutdown = True
+
+        claimed = app._claim_next_ingest_job_or_release()
+
+        assert claimed is None
+        assert app.library_ingest_jobs.runner_active is False
+        assert job.job_id in app._ingest_parsed_payloads
+        current = next(
+            current
+            for current in app.library_ingest_jobs.jobs()
+            if current.job_id == job.job_id
+        )
+        assert current.state == IngestJobState.PARSING
+
+
+@pytest.mark.asyncio
 async def test_finally_restarts_writer_after_unexpected_claim_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1131,8 +1497,12 @@ async def test_finally_restarts_writer_after_unexpected_claim_failure(
     still reach ``DONE``.
     """
     db = _make_db(tmp_path)
-    source1 = _write_text_file(tmp_path, "note-crash-1.txt", "First body, present when the crash hits.")
-    source2 = _write_text_file(tmp_path, "note-crash-2.txt", "Second body, queued behind the crash.")
+    source1 = _write_text_file(
+        tmp_path, "note-crash-1.txt", "First body, present when the crash hits."
+    )
+    source2 = _write_text_file(
+        tmp_path, "note-crash-2.txt", "Second body, queued behind the crash."
+    )
     app = _IngestRunnerHarness(db, worker_count=2)
 
     real_jobs = app.library_ingest_jobs.jobs
@@ -1163,7 +1533,9 @@ async def test_finally_restarts_writer_after_unexpected_claim_failure(
         done2 = await _wait_for_done_via_real_jobs(job2.job_id)
         assert done2.media_id is not None
 
-        assert call_state["raised"] is True, "the simulated crash never fired -- test is not exercising the recovery path"
+        assert call_state["raised"] is True, (
+            "the simulated crash never fired -- test is not exercising the recovery path"
+        )
 
         await _wait_for_runner_idle(app, pilot)
 
@@ -1184,7 +1556,9 @@ async def test_five_rapid_submissions_all_complete_no_stranding(tmp_path: Path) 
 
     async with app.run_test() as pilot:
         sources = [
-            _write_text_file(tmp_path, f"note-stress-{i}.txt", f"Stress body number {i}.")
+            _write_text_file(
+                tmp_path, f"note-stress-{i}.txt", f"Stress body number {i}."
+            )
             for i in range(5)
         ]
 
@@ -1203,14 +1577,18 @@ async def test_five_rapid_submissions_all_complete_no_stranding(tmp_path: Path) 
         jobs.append(app.submit_library_ingest_job(source_path=str(sources[4])))
 
         for job in jobs:
-            done = await _wait_for_job_state(app, pilot, job.job_id, IngestJobState.DONE)
+            done = await _wait_for_job_state(
+                app, pilot, job.job_id, IngestJobState.DONE
+            )
             assert done.media_id is not None
 
         await _wait_for_runner_idle(app, pilot)
 
 
 @pytest.mark.asyncio
-async def test_reingest_of_unchanged_file_still_resolves_media_id(tmp_path: Path) -> None:
+async def test_reingest_of_unchanged_file_still_resolves_media_id(
+    tmp_path: Path,
+) -> None:
     """Re-ingesting an already-present, unchanged file keeps Open usable.
 
     ``add_media_with_keywords`` takes its update path for a URL that already
@@ -1220,17 +1598,23 @@ async def test_reingest_of_unchanged_file_still_resolves_media_id(tmp_path: Path
     (and the canvas keeps its Open action).
     """
     db = _make_db(tmp_path)
-    source = _write_text_file(tmp_path, "note-b.txt", "Spring tides align sun and moon.")
+    source = _write_text_file(
+        tmp_path, "note-b.txt", "Spring tides align sun and moon."
+    )
     app = _IngestRunnerHarness(db)
 
     async with app.run_test() as pilot:
         first = app.submit_library_ingest_job(source_path=str(source))
-        first_done = await _wait_for_job_state(app, pilot, first.job_id, IngestJobState.DONE)
+        first_done = await _wait_for_job_state(
+            app, pilot, first.job_id, IngestJobState.DONE
+        )
         assert first_done.media_id is not None
         await _wait_for_runner_idle(app, pilot)
 
         second = app.submit_library_ingest_job(source_path=str(source))
-        second_done = await _wait_for_job_state(app, pilot, second.job_id, IngestJobState.DONE)
+        second_done = await _wait_for_job_state(
+            app, pilot, second.job_id, IngestJobState.DONE
+        )
 
         assert second_done.media_id == first_done.media_id
         await _wait_for_runner_idle(app, pilot)

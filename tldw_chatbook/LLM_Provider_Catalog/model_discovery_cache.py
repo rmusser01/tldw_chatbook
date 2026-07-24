@@ -11,7 +11,9 @@ class ModelDiscoveryCache:
     """Store discovered model snapshots by provider key and endpoint fingerprint."""
 
     def __init__(self) -> None:
-        self._models_by_provider_endpoint: dict[tuple[str, str], tuple[DiscoveredModel, ...]] = {}
+        self._models_by_provider_endpoint: dict[
+            tuple[str, str], tuple[DiscoveredModel, ...]
+        ] = {}
 
     def replace(
         self,
@@ -30,11 +32,14 @@ class ModelDiscoveryCache:
     ) -> tuple[DiscoveredModel, ...]:
         """Return cached models filtered by provider key and/or endpoint fingerprint."""
         provider_filter = None if provider_list_key is None else str(provider_list_key)
-        endpoint_filter = None if endpoint_fingerprint is None else str(endpoint_fingerprint)
+        endpoint_filter = (
+            None if endpoint_fingerprint is None else str(endpoint_fingerprint)
+        )
         models: list[DiscoveredModel] = []
-        for (cached_provider, cached_endpoint), cached_models in (
-            self._models_by_provider_endpoint.items()
-        ):
+        for (
+            cached_provider,
+            cached_endpoint,
+        ), cached_models in self._models_by_provider_endpoint.items():
             if provider_filter is not None and cached_provider != provider_filter:
                 continue
             if endpoint_filter is not None and cached_endpoint != endpoint_filter:

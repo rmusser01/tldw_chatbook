@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from tldw_chatbook.runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
+from tldw_chatbook.runtime_policy.bootstrap import (
+    build_runtime_api_client_provider_from_config,
+)
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError
-from tldw_chatbook.tldw_api.prompt_chatbook_schemas import PromptCreateRequest, PromptPreviewRequest
 
 
 class ServerPromptService:
@@ -64,7 +65,9 @@ class ServerPromptService:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -73,10 +76,14 @@ class ServerPromptService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
-                    user_message=getattr(decision, "user_message", None) or "Server prompt action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
+                    user_message=getattr(decision, "user_message", None)
+                    or "Server prompt action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @staticmethod
@@ -91,11 +98,18 @@ class ServerPromptService:
     def _subresource_action_id(resource: str, action: str) -> str:
         return f"prompts.{resource}.{action}.server"
 
-    async def list_prompts(self, *, include_deleted: bool = False, **_kwargs: Any) -> Any:
+    async def list_prompts(
+        self, *, include_deleted: bool = False, **_kwargs: Any
+    ) -> Any:
         self._enforce(self._action_id("list"))
-        return await self._require_client().list_prompts(include_deleted=include_deleted)
+        return await self._require_client().list_prompts(
+            include_deleted=include_deleted
+        )
 
     async def create_prompt(self, **kwargs: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.prompt_chatbook_schemas import PromptCreateRequest
+
         self._enforce(self._action_id("create"))
         request_data = kwargs.get("request_data")
         if request_data is None:
@@ -105,6 +119,9 @@ class ServerPromptService:
         return await self._require_client().create_prompt(request_data)
 
     async def preview_prompt(self, **kwargs: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.prompt_chatbook_schemas import PromptPreviewRequest
+
         self._enforce(self._action_id("preview"))
         request_data = kwargs.get("request_data")
         if request_data is None:
@@ -113,7 +130,12 @@ class ServerPromptService:
             request_data = PromptPreviewRequest(**request_data)
         return await self._require_client().preview_prompt(request_data)
 
-    async def update_prompt(self, prompt_id: int | str, **kwargs: Any) -> dict[str, Any]:
+    async def update_prompt(
+        self, prompt_id: int | str, **kwargs: Any
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api.prompt_chatbook_schemas import PromptCreateRequest
+
         self._enforce(self._action_id("update"))
         request_data = kwargs.get("request_data")
         if request_data is None:
@@ -131,7 +153,9 @@ class ServerPromptService:
         self._enforce(self._version_action_id("list"))
         return await self._require_client().list_prompt_versions(prompt_id)
 
-    async def restore_prompt_version(self, prompt_id: int | str, version: int) -> dict[str, Any]:
+    async def restore_prompt_version(
+        self, prompt_id: int | str, version: int
+    ) -> dict[str, Any]:
         self._enforce(self._version_action_id("restore"))
         return await self._require_client().restore_prompt_version(prompt_id, version)
 
@@ -175,7 +199,9 @@ class ServerPromptService:
         self._enforce(self._subresource_action_id("templates", "process"))
         return await self._require_client().extract_prompt_template_variables(template)
 
-    async def render_prompt_template(self, template: str, variables: dict[str, Any]) -> dict[str, Any]:
+    async def render_prompt_template(
+        self, template: str, variables: dict[str, Any]
+    ) -> dict[str, Any]:
         self._enforce(self._subresource_action_id("templates", "process"))
         return await self._require_client().render_prompt_template(template, variables)
 
@@ -195,7 +221,9 @@ class ServerPromptService:
         mode: str = "add",
     ) -> dict[str, Any]:
         self._enforce(self._subresource_action_id("bulk", "update"))
-        return await self._require_client().bulk_update_prompt_keywords(prompt_ids, keywords, mode=mode)
+        return await self._require_client().bulk_update_prompt_keywords(
+            prompt_ids, keywords, mode=mode
+        )
 
     async def record_prompt_usage(self, prompt_identifier: int | str) -> dict[str, Any]:
         self._enforce(self._subresource_action_id("usage", "update"))
@@ -213,6 +241,10 @@ class ServerPromptService:
         self._enforce(self._subresource_action_id("collections", "detail"))
         return await self._require_client().get_prompt_collection(collection_id)
 
-    async def update_prompt_collection(self, collection_id: int, **kwargs: Any) -> dict[str, Any]:
+    async def update_prompt_collection(
+        self, collection_id: int, **kwargs: Any
+    ) -> dict[str, Any]:
         self._enforce(self._subresource_action_id("collections", "update"))
-        return await self._require_client().update_prompt_collection(collection_id, **kwargs)
+        return await self._require_client().update_prompt_collection(
+            collection_id, **kwargs
+        )

@@ -11,7 +11,9 @@ from tldw_chatbook.config import DEFAULT_CONFIG_PATH
 
 from .unified_control_models import UnifiedMCPContext
 
-DEFAULT_UNIFIED_MCP_CONTEXT_PATH = DEFAULT_CONFIG_PATH.parent / "unified_mcp_context.json"
+DEFAULT_UNIFIED_MCP_CONTEXT_PATH = (
+    DEFAULT_CONFIG_PATH.parent / "unified_mcp_context.json"
+)
 
 
 class UnifiedMCPContextStore:
@@ -36,7 +38,9 @@ class UnifiedMCPContextStore:
 
             temp_path.replace(self.path)
         except OSError as exc:
-            logger.warning(f"Unable to persist Unified MCP context to {self.path}: {exc}")
+            logger.warning(
+                f"Unable to persist Unified MCP context to {self.path}: {exc}"
+            )
 
     def _read_payload(self) -> Any:
         try:

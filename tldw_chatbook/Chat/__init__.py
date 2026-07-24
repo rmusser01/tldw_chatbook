@@ -1,4 +1,7 @@
-from .conversation_local_marks_service import ConversationLocalMark, ConversationLocalMarksService
+from .conversation_local_marks_service import (
+    ConversationLocalMark,
+    ConversationLocalMarksService,
+)
 from .chat_conversation_scope_service import ChatConversationScopeService
 from .chat_conversation_service import ChatConversationService
 from .chat_loop_scope_service import ServerChatLoopScopeService

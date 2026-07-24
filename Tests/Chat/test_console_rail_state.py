@@ -6,6 +6,8 @@ from tldw_chatbook.Chat.console_display_state import (
 )
 from tldw_chatbook.Chat.console_rail_state import (
     ConsoleRailPreferences,
+    _INACTIVE_STAGED_SUMMARIES,
+    _normalized_inactive_text,
     build_console_context_rail_badge,
     build_console_inspector_rail_badge,
     build_console_rail_preference_key,
@@ -144,21 +146,55 @@ def test_console_rail_preference_key_treats_whitespace_scope_ids_as_absent():
     assert global_key.fallback_value is None
 
 
-def test_console_context_rail_badge_prioritizes_available_context():
-    assert build_console_context_rail_badge(staged_source_count=3) == "3 staged"
-    assert (
-        build_console_context_rail_badge(
-            staged_source_count="bad",
-            staged_summary="Ready staged citations",
-        )
-        == "staged"
-    )
+def test_console_context_rail_badge_reflects_workspace_and_session_only():
+    """Left badge summarizes workspace/session only (task-400)."""
+    # Task-400: staged-context signals moved to the Inspector badge with the
+    # staged-sources section; the left badge is workspace/session only.
     assert (
         build_console_context_rail_badge(workspace_label="Research workspace")
         == "workspace"
     )
     assert build_console_context_rail_badge(session_label="Conversation 1") == "session"
     assert build_console_context_rail_badge() == ""
+
+
+def test_console_inspector_rail_badge_surfaces_staged_context():
+    """Inspector badge carries staged context below action-required signals."""
+    assert build_console_inspector_rail_badge(staged_source_count=3) == "3 staged"
+    assert (
+        build_console_inspector_rail_badge(
+            staged_source_count="bad",
+            staged_summary="Ready staged citations",
+        )
+        == "staged"
+    )
+    # Action-required signals keep precedence over staged context...
+    assert (
+        build_console_inspector_rail_badge(
+            staged_source_count=3,
+            approval_count=1,
+        )
+        == "1 approval"
+    )
+    assert (
+        build_console_inspector_rail_badge(staged_source_count=3, tool_count=2)
+        == "tools"
+    )
+    # ...while staged context outranks the informational readiness fallbacks.
+    assert (
+        build_console_inspector_rail_badge(
+            staged_source_count=3,
+            can_save_chatbook=True,
+        )
+        == "3 staged"
+    )
+    assert (
+        build_console_inspector_rail_badge(
+            staged_summary="Ready staged citations",
+            inspector_rows=(Row("RAG/source", value="available"),),
+        )
+        == "staged"
+    )
 
 
 def test_console_context_rail_badge_ignores_workspace_fallback_labels():
@@ -172,17 +208,24 @@ def test_console_context_rail_badge_ignores_workspace_fallback_labels():
         )
 
 
-def test_console_context_rail_badge_ignores_empty_staged_summary():
+def test_console_inspector_rail_badge_ignores_empty_staged_summary():
+    """Empty and legacy empty-state summaries never trigger the staged badge."""
+    # Task-400: the empty state carries no summary line (the tray renders its
+    # own guidance copy), so the badge treats it as inactive by emptiness.
     empty_summary = ConsoleStagedContextState.empty().summary
+    assert empty_summary == ""
 
-    assert (
-        build_console_context_rail_badge(
-            staged_summary=empty_summary,
-            session_label="Conversation 1",
-        )
-        == "session"
+    # Drift guard for legacy payloads: the retired empty-state copy must stay
+    # in the inactive set so stored summaries never re-trigger the badge bug
+    # where the empty-state summary was treated as "active" staged context.
+    assert _normalized_inactive_text("No sources attached.") in (
+        _INACTIVE_STAGED_SUMMARIES
     )
-    assert build_console_context_rail_badge(staged_summary=empty_summary) == ""
+
+    assert build_console_inspector_rail_badge(staged_summary=empty_summary) == ""
+    assert (
+        build_console_inspector_rail_badge(staged_summary="No sources attached.") == ""
+    )
 
 
 def test_console_context_rail_badge_ignores_default_workspace_display_labels():
@@ -403,9 +446,10 @@ def test_console_rail_preferences_serialize_to_public_dict_shape():
         "left_open": False,
         "right_open": True,
         "session_open": True,
-        "context_open": True,
         "model_open": True,
         "details_open": False,
+        "agent_open": False,
+        "character_open": True,
     }
 
 
@@ -425,8 +469,27 @@ def test_console_rail_badges_do_not_mutate_open_booleans():
 
     assert state.left_open is False
     assert state.right_open is False
-    assert state.left_badge == "2 staged"
+    # Task-400: staged context no longer badges the left handle; the blocked
+    # provider row still wins the right badge over the staged count.
+    assert state.left_badge == ""
     assert state.right_badge == "setup"
+
+
+def test_console_rail_state_routes_staged_context_to_inspector_badge():
+    """Rail-state build surfaces staged context on the right badge only."""
+    key = build_console_rail_preference_key(
+        workspace_id="workspace-1",
+        session_id="session-1",
+    )
+
+    state = build_console_rail_state(
+        preference_key=key,
+        stored_preferences={"left_open": False, "right_open": False},
+        staged_source_count=2,
+    )
+
+    assert state.left_badge == ""
+    assert state.right_badge == "2 staged"
 
 
 def test_console_rail_state_compact_width_collapses_right_rail_effectively():
@@ -449,12 +512,21 @@ def test_console_rail_state_compact_width_collapses_right_rail_effectively():
 
 def test_console_rail_section_defaults():
     from tldw_chatbook.Chat.console_rail_state import CONSOLE_RAIL_SECTION_IDS
+
     prefs = ConsoleRailPreferences()
-    assert CONSOLE_RAIL_SECTION_IDS == ("session", "context", "model", "details")
+    # Task-400: "context" (staged sources) is no longer a left-rail section;
+    # it renders in the Inspector rail instead. P3c added "character".
+    assert CONSOLE_RAIL_SECTION_IDS == (
+        "session",
+        "model",
+        "details",
+        "agent",
+        "character",
+    )
     assert prefs.session_open is True
-    assert prefs.context_open is True
     assert prefs.model_open is True
     assert prefs.details_open is False
+    assert prefs.character_open is True
 
 
 def test_coerce_console_rail_preferences_reads_section_fields():
@@ -467,11 +539,25 @@ def test_coerce_console_rail_preferences_reads_section_fields():
 
 
 def test_serialize_console_rail_preferences_round_trips_sections():
-    prefs = ConsoleRailPreferences(details_open=True, context_open=False)
+    prefs = ConsoleRailPreferences(details_open=True, model_open=False)
     serialized = serialize_console_rail_preferences(prefs)
     assert serialized["details_open"] is True
-    assert serialized["context_open"] is False
+    assert serialized["model_open"] is False
+    assert "context_open" not in serialized
     assert coerce_console_rail_preferences(serialized) == prefs
+
+
+def test_coerce_console_rail_preferences_ignores_legacy_context_key():
+    """Stored payloads with the retired context_open key coerce cleanly."""
+    # Task-400 migration path: payloads persisted while the rail still had a
+    # Context section keep a context_open key; it must be ignored, not fail.
+    with_legacy_key = coerce_console_rail_preferences(
+        {"left_open": False, "context_open": False, "details_open": True}
+    )
+    without_legacy_key = coerce_console_rail_preferences(
+        {"left_open": False, "details_open": True}
+    )
+    assert with_legacy_key == without_legacy_key
 
 
 def test_build_console_rail_state_carries_section_flags():
@@ -482,5 +568,4 @@ def test_build_console_rail_state_carries_section_flags():
     )
     assert state.details_open is True
     assert state.session_open is False
-    assert state.context_open is True
     assert state.model_open is True

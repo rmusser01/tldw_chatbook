@@ -22,13 +22,19 @@ LIBRARY_RAG_SOURCE_TYPES: tuple[tuple[str, str], ...] = (
     ("notes", "Notes"),
     ("media", "Media"),
     ("conversations", "Conversations"),
+    ("prompts", "Prompts"),
     ("workspaces", "Workspaces"),
     ("collections", "Collections"),
 )
 # The subset of LIBRARY_RAG_SOURCE_TYPES with a real per-source toggle in the
 # Search canvas scope region (B2): workspaces/collections have no retrieval
 # seam of their own yet, so they get no toggle row.
-LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES: tuple[str, ...] = ("notes", "media", "conversations")
+LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES: tuple[str, ...] = (
+    "notes",
+    "media",
+    "conversations",
+    "prompts",
+)
 LIBRARY_RAG_DEFAULT_TOP_K = 5
 LIBRARY_RAG_RUN_ACTION_ID = "library-rag-run-query"
 LIBRARY_RAG_USE_IN_CONSOLE_ACTION_ID = "library-rag-use-in-console"
@@ -74,12 +80,29 @@ LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS = 200
 # `blocked_is_no_scope` below can key off them directly.
 _EMPTY_QUERY_DISABLED_REASON = "Enter a question or search query."
 _NO_SCOPE_DISABLED_REASON = "Select at least one Library source."
+# The whole no-sources presentation (L3a quiet-gate principle): ONE muted
+# line plus the single "Open Import media" action -- never the old
+# Unavailable/Why/Next/Recovery/Owner dump plus checklist, whose internal
+# jargon ("Owner: Library source index") regressed the 2026-07 core-loop UAT.
+LIBRARY_RAG_NO_SOURCES_GATE_COPY = (
+    "No Library sources yet — import media or create notes, then search."
+)
+_NO_SOURCES_NEXT_ACTION = "Import media or create notes, then search."
 LIBRARY_RAG_SEARCHING_LABEL = "Searching…"
 _OPEN_SOURCE_TYPE_MAP = {
-    "note": "notes", "notes": "notes",
-    "media": "media", "media_chunk": "media",
-    "conversation": "conversations", "conversations": "conversations",
+    "note": "notes",
+    "notes": "notes",
+    "media": "media",
+    "media_chunk": "media",
+    "conversation": "conversations",
+    "conversations": "conversations",
     "chat": "conversations",
+    # Deliberately singular, unlike the other three (whose canonical/open
+    # value coincides with the plural scope-toggle key "prompts"):
+    # `_open_library_item_by_id`'s dispatch key for prompts is "prompt" (see
+    # its docstring), distinct from the "prompts" scope-toggle/source key
+    # used for search selection and the rail row.
+    "prompt": "prompt",
 }
 
 
@@ -290,6 +313,7 @@ class LibraryRagScopeState:
         notes: Any = 0,
         media: Any = 0,
         conversations: Any = 0,
+        prompts: Any = 0,
         workspaces: Any = 0,
         collections: Any = 0,
         selected: Sequence[str] | None = None,
@@ -301,6 +325,7 @@ class LibraryRagScopeState:
             notes: Available note source count.
             media: Available media source count.
             conversations: Available conversation source count.
+            prompts: Available prompt source count.
             workspaces: Available workspace source count.
             collections: Available collection source count.
             selected: Selected source type IDs. `None` selects all available sources;
@@ -315,6 +340,7 @@ class LibraryRagScopeState:
             "notes": _coerce_non_negative_int(notes),
             "media": _coerce_non_negative_int(media),
             "conversations": _coerce_non_negative_int(conversations),
+            "prompts": _coerce_non_negative_int(prompts),
             "workspaces": _coerce_non_negative_int(workspaces),
             "collections": _coerce_non_negative_int(collections),
         }
@@ -345,22 +371,9 @@ class LibraryRagScopeState:
         status = "ready"
         if total_count == 0:
             status = "blocked"
-            recovery_copy = "\n".join(
-                (
-                    _recovery_copy(
-                        status_label="No sources",
-                        unavailable_what="Library Search/RAG",
-                        why="No Library sources are available for retrieval",
-                        next_action="Add or import Library sources before querying",
-                        recovery_action="Library Import media",
-                        owner="Library source index",
-                    ),
-                    "Recovery checklist",
-                    "1. Import Library sources.",
-                    "2. Run Search/RAG.",
-                    "3. Select evidence, then Use in Console.",
-                )
-            )
+            # A single quiet gate line (plus the scope region's one
+            # "Open Import media" action) is the entire no-sources state.
+            recovery_copy = LIBRARY_RAG_NO_SOURCES_GATE_COPY
         elif not any(option.selected for option in options):
             status = "blocked"
             recovery_copy = _recovery_copy(
@@ -650,7 +663,9 @@ class LibraryRagResultRow:
         if explicit_eligible is False:
             return "blocked"
         workspace_ids = _provenance_text_tuple(self.provenance, "workspace_ids")
-        if workspace_ids and not _provenance_text(self.provenance, "active_workspace_id"):
+        if workspace_ids and not _provenance_text(
+            self.provenance, "active_workspace_id"
+        ):
             return "blocked"
         return "eligible"
 
@@ -737,7 +752,9 @@ class LibraryRagResultRow:
             return f"Eligibility: blocked for active workspace ({reason})"
 
         workspace_ids = _provenance_text_tuple(self.provenance, "workspace_ids")
-        if workspace_ids and not _provenance_text(self.provenance, "active_workspace_id"):
+        if workspace_ids and not _provenance_text(
+            self.provenance, "active_workspace_id"
+        ):
             return "Eligibility: blocked until an active workspace is available"
         return "Eligibility: available for active context"
 
@@ -749,12 +766,16 @@ class LibraryRagResultRow:
     @property
     def open_source_type(self) -> str:
         """Library canvas target this result can open, or empty string."""
-        raw = str(
-            self.provenance.get("source_type")
-            or self.provenance.get("item_type")
-            or self.provenance.get("type")
-            or ""
-        ).strip().lower()
+        raw = (
+            str(
+                self.provenance.get("source_type")
+                or self.provenance.get("item_type")
+                or self.provenance.get("type")
+                or ""
+            )
+            .strip()
+            .lower()
+        )
         return _OPEN_SOURCE_TYPE_MAP.get(raw, "")
 
     @property
@@ -830,6 +851,7 @@ class LibraryRagPanelState:
             notes=counts.get("notes", 0),
             media=counts.get("media", 0),
             conversations=counts.get("conversations", 0),
+            prompts=counts.get("prompts", 0),
             workspaces=counts.get("workspaces", 0),
             collections=counts.get("collections", 0),
             selected=selected_source_types,
@@ -911,7 +933,9 @@ class LibraryRagPanelState:
         elif result_rows:
             normalized_status = "ready"
             recovery_copy = ""
-            next_action = "Review cited evidence or send the selected result to Console."
+            next_action = (
+                "Review cited evidence or send the selected result to Console."
+            )
         else:
             normalized_status = "ready"
             recovery_copy = ""
@@ -946,7 +970,9 @@ class LibraryRagPanelState:
                 enabled=can_use_console,
                 widget_id=LIBRARY_RAG_USE_IN_CONSOLE_ACTION_ID,
                 disabled_reason=(
-                    "" if can_use_console else LIBRARY_RAG_USE_IN_CONSOLE_DISABLED_REASON
+                    ""
+                    if can_use_console
+                    else LIBRARY_RAG_USE_IN_CONSOLE_DISABLED_REASON
                 ),
             ),
             selected_result_id=normalized_selected_result_id,
@@ -1030,6 +1056,8 @@ def _result_id(source_id: str, chunk_id: str, title: str) -> str:
 
 
 def _blocked_next_action(recovery_copy: str) -> str:
+    if recovery_copy == LIBRARY_RAG_NO_SOURCES_GATE_COPY:
+        return _NO_SOURCES_NEXT_ACTION
     for line in recovery_copy.splitlines():
         if line.startswith("Next: "):
             return line.removeprefix("Next: ")

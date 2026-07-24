@@ -16,6 +16,15 @@ RETIRED_MODULES = (
     "tldw_chatbook.navigation",
     "tldw_chatbook.navigation.screen_registry",
     "tldw_chatbook.UI.Conv_Char_Window",
+    # The Personas "prompts" mode chip is retired (Task 7): prompt handling
+    # moved entirely into Library, so CCPPromptHandler is dead code.
+    "tldw_chatbook.UI.CCP_Modules.ccp_prompt_handler",
+    # task-412: ChatWindow was never instantiated in production (the app uses
+    # ChatWindowEnhanced) and its right-sidebar composers created the only
+    # widgets that ever bore id="chat-right-sidebar".
+    "tldw_chatbook.UI.Chat_Window",
+    "tldw_chatbook.Widgets.Chat_Widgets.chat_right_sidebar",
+    "tldw_chatbook.Widgets.Chat_Widgets.chat_right_sidebar_optimized",
 )
 
 RETIRED_FILES = (
@@ -25,6 +34,14 @@ RETIRED_FILES = (
     "tldw_chatbook/navigation/screen_registry.py",
     "tldw_chatbook/UI/Conv_Char_Window.py",
     "tldw_chatbook/UI/Conv_Char_Window.py.backup",
+    "tldw_chatbook/UI/CCP_Modules/ccp_prompt_handler.py",
+    # task-412
+    "tldw_chatbook/UI/Chat_Window.py",
+    "tldw_chatbook/Widgets/Chat_Widgets/chat_right_sidebar.py",
+    "tldw_chatbook/Widgets/Chat_Widgets/chat_right_sidebar_optimized.py",
+    "tldw_chatbook/Widgets/Chat_Widgets/chat_right_sidebar.py.backup",
+    "tldw_chatbook/UI/Chat_Window_Enhanced.py.backup",
+    "tldw_chatbook/Widgets/settings_sidebar.py.backup",
 )
 
 CCP_HANDLER_FILES = (
@@ -32,7 +49,6 @@ CCP_HANDLER_FILES = (
     "tldw_chatbook/UI/CCP_Modules/ccp_conversation_handler.py",
     "tldw_chatbook/UI/CCP_Modules/ccp_dictionary_handler.py",
     "tldw_chatbook/UI/CCP_Modules/ccp_message_manager.py",
-    "tldw_chatbook/UI/CCP_Modules/ccp_prompt_handler.py",
 )
 
 

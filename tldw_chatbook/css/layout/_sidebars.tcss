@@ -306,17 +306,12 @@
     margin-bottom: 1; 
 }
 
-/* Notes content header and expand button */
-.notes-content-header {
-    height: 2;
-    align: left middle;
-    margin-bottom: 0;
-}
-
-.notes-content-label {
-    width: auto;
-}
-
+/* Notes expand button */
+/* T169: the two legacy "notes content header"/"notes content label"
+ * classes previously declared here were pruned -- pre-workbench Notes tab
+ * CSS (Notes_Window.py, since removed) with zero live references anywhere
+ * in tldw_chatbook/*.py. .notes-expand-button below is still live (Chat
+ * sidebar's "Notes" expand control). */
 .notes-expand-button {
     width: auto;
     min-width: 12;
@@ -368,61 +363,6 @@
 .sidebar-listview {
     height: 10; /* Example height for listviews in sidebars */
     border: round $primary-lighten-2;
-    background: $primary-background;
-}
-
-/* World Books specific styling */
-.worldbook-association-controls {
-    height: 3;
-    align: center middle;
-    margin: 1 0;
-}
-
-.worldbook-priority-select {
-    width: 30%;
-    min-width: 15;
-    margin-left: 1;
-}
-
-#chat-worldbook-available-listview {
-    height: 5;
-    border: round $primary-lighten-2;
-    background: $primary-background;
-    margin-bottom: 1;
-}
-
-#chat-worldbook-active-listview {
-    height: 5;
-    border: round $accent;
-    background: $primary-background;
-    margin-bottom: 1;
-}
-
-#chat-worldbook-details-display {
-    height: 8;
-    border: round $secondary;
-    background: $primary-background;
-    /* font-size: 11; - not supported in TCSS */
-}
-
-/* Chat Dictionaries specific styling */
-#chat-dictionary-available-listview {
-    height: 5;
-    border: round $primary-lighten-2;
-    background: $primary-background;
-    margin-bottom: 1;
-}
-
-#chat-dictionary-active-listview {
-    height: 5;
-    border: round $accent-lighten-1;
-    background: $primary-background;
-    margin-bottom: 1;
-}
-
-#chat-dictionary-details-display {
-    height: 8;
-    border: round $secondary-lighten-1;
     background: $primary-background;
 }
 
@@ -600,11 +540,6 @@ TabbedContent Underline {
 .tab-loading {
     align: center middle;
     height: 10;
-}
-
-.loading-spinner {
-    color: $primary;
-    text-style: bold;
 }
 
 /* Reset button styling */

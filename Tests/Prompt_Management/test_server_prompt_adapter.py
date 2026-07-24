@@ -34,7 +34,10 @@ def test_server_prompt_to_local_update_preserves_structured_fields():
         "author": "Server Author",
         "prompt_format": "structured",
         "prompt_schema_version": 1,
-        "prompt_definition": {"schema_version": 1, "messages": [{"role": "user", "content": "hi"}]},
+        "prompt_definition": {
+            "schema_version": 1,
+            "messages": [{"role": "user", "content": "hi"}],
+        },
     }
 
     update = server_prompt_to_local_update(payload)

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, TYPE_CHECKING
 
-from tldw_chatbook.tldw_api import SyncV2Envelope
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api import SyncV2Envelope
 
 from ._helpers import call_if_present, decrypt_envelope_payload
 
@@ -32,5 +33,11 @@ class ChatSyncAdapter:
                     message="A chat message with this stable ID already has different content.",
                 )
         payload = decrypt_envelope_payload(envelope, dataset_key=dataset_key)
-        call_if_present(local_store, "append_chat_message", stable_key, payload, envelope.payload_hash)
+        call_if_present(
+            local_store,
+            "append_chat_message",
+            stable_key,
+            payload,
+            envelope.payload_hash,
+        )
         return {"status": "applied"}

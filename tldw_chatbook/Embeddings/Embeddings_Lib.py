@@ -1,6 +1,7 @@
 # Embeddings_Lib.py
 #
 from __future__ import annotations
+
 #
 """Adaptive embedding factory for desktop / TUI apps – asynchronous‑ready, logging‑aware.
 
@@ -26,33 +27,101 @@ Key Features & Fixes in this Version
 """
 #
 # Imports
-import asyncio
-import random
-import threading
-import time
-import os
-import sys
-import subprocess
-from collections import OrderedDict
-from typing import (Any, Annotated, Callable, Dict, List, Literal, Optional,
-                    Protocol, TypedDict, Union)
-from contextlib import contextmanager
+import asyncio  # noqa: E402
+import random  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+import os  # noqa: E402
+import sys  # noqa: E402
+from collections import OrderedDict  # noqa: E402
+from typing import (  # noqa: E402
+    Any,
+    Annotated,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Protocol,
+    TypedDict,
+    Union,
+)
+from contextlib import contextmanager  # noqa: E402
+
 #
 # Third-Party Libraries
-import requests
-from loguru import logger
-from pydantic import BaseModel, Field, field_validator, model_validator, HttpUrl, ValidationError
-
-# Optional dependencies with fallbacks
-from ..Utils.optional_deps import (
-    check_dependency, require_dependency, get_safe_import, 
-    DEPENDENCIES_AVAILABLE, create_unavailable_feature_handler
+import requests  # noqa: E402
+from loguru import logger  # noqa: E402
+from pydantic import (  # noqa: E402
+    BaseModel,
+    Field,
+    field_validator,
+    model_validator,
+    HttpUrl,
+    ValidationError,
 )
 
-# Import optional dependencies safely
-numpy = get_safe_import('numpy')
-torch = get_safe_import('torch')
-transformers = get_safe_import('transformers')
+# Optional dependencies with fallbacks
+from ..Utils.optional_deps import get_safe_import, DEPENDENCIES_AVAILABLE  # noqa: E402
+
+# torch/transformers/numpy are heavy optional dependencies (torch alone pulls
+# in roughly a thousand transitive modules, transformers a few hundred more).
+# They are NOT imported at module scope; each is imported lazily on first
+# real use via the _ensure_*() helpers below, which are called at the top of
+# every method that dereferences the corresponding name. This keeps
+# `import tldw_chatbook.app` free of torch/transformers/numpy while
+# preserving identical behavior (and identical error messages) once an
+# embedding is actually created.
+torch = None
+transformers = None
+numpy = None
+AutoModel = None
+AutoTokenizer = None
+
+
+def _ensure_torch():
+    """Import torch on first actual use.
+
+    No-ops (leaves ``torch`` as ``None``) if torch isn't installed, matching
+    the previous eager ``get_safe_import('torch')`` fallback semantics.
+    """
+    global torch
+    if torch is not None:
+        return torch
+    torch = get_safe_import("torch")
+    return torch
+
+
+def _ensure_transformers():
+    """Import transformers (and torch, which HF embedding code always needs)
+    on first actual use."""
+    global transformers, AutoModel, AutoTokenizer
+    _ensure_torch()
+    if transformers is not None:
+        return transformers
+    _transformers = get_safe_import("transformers")
+    if _transformers is not None:
+        # Bind the helper globals BEFORE the gate global (`transformers`), so a
+        # racing thread that observes `transformers is not None` is guaranteed
+        # to also see AutoModel/AutoTokenizer fully bound.
+        AutoModel = _transformers.AutoModel
+        AutoTokenizer = _transformers.AutoTokenizer
+        transformers = _transformers
+    return transformers
+
+
+def _ensure_numpy():
+    """Import numpy on first actual use."""
+    global numpy, np
+    if numpy is not None:
+        return numpy
+    _numpy = get_safe_import("numpy")
+    if _numpy is not None:
+        # Bind `np` BEFORE the gate global (`numpy`), so a racing thread that
+        # observes `numpy is not None` never finds `np` still the placeholder.
+        np = _numpy
+        numpy = _numpy
+    return numpy
 
 
 def _current_dependencies_available() -> Dict[str, bool]:
@@ -63,44 +132,44 @@ def _current_dependencies_available() -> Dict[str, bool]:
         return current_registry
     return DEPENDENCIES_AVAILABLE
 
-# Create type aliases that work with or without dependencies
-if torch is not None:
-    Tensor = torch.Tensor
-    normalize = torch.nn.functional.normalize
-    AutoModel = transformers.AutoModel
-    AutoTokenizer = transformers.AutoTokenizer
-else:
-    # Create placeholder types
-    Tensor = Any
-    normalize = create_unavailable_feature_handler('torch', 'pip install tldw_chatbook[embeddings_rag]')
-    AutoModel = create_unavailable_feature_handler('transformers', 'pip install tldw_chatbook[embeddings_rag]')
-    AutoTokenizer = create_unavailable_feature_handler('transformers', 'pip install tldw_chatbook[embeddings_rag]')
 
-if numpy is not None:
-    np = numpy
-else:
-    # Create a basic np-like object for type annotations
-    class _NumpyPlaceholder:
-        @staticmethod
-        def asarray(*args, **kwargs):
-            raise ImportError("NumPy not available. Install with: pip install tldw_chatbook[embeddings_rag]")
-        
-        @staticmethod  
-        def empty(*args, **kwargs):
-            raise ImportError("NumPy not available. Install with: pip install tldw_chatbook[embeddings_rag]")
-    
-    np = _NumpyPlaceholder()
+# `Tensor` is only used for type annotations (deferred at runtime by
+# `from __future__ import annotations`, at the top of this module) and in the
+# `PoolingFn` alias just below, so a plain `Any` placeholder is sufficient
+# without importing torch. The real torch/transformers classes are resolved
+# lazily by _ensure_torch()/_ensure_transformers() at the call sites that
+# actually need them (see `_masked_mean` and `_HuggingFaceEmbedder`).
+Tensor = Any
+
+
+class _NumpyPlaceholder:
+    """Stand-in for the `numpy` module until _ensure_numpy() resolves it.
+
+    Also serves as the permanent placeholder when numpy genuinely isn't
+    installed, matching the previous eager-import fallback behavior.
+    """
+
+    def __getattr__(self, name: str) -> Any:
+        # Any attribute access (asarray, empty, float32, ndarray, ...) raises
+        # the same clear ImportError, so a genuinely-missing numpy fails loudly
+        # and consistently rather than with an incidental AttributeError.
+        raise ImportError(
+            "NumPy not available. Install with: pip install tldw_chatbook[embeddings_rag]"
+        )
+
+
+np = _NumpyPlaceholder()
 #
 # Local Imports
 #
 ########################################################################################################################
 #
 __all__ = [
-    "EmbeddingFactory", 
+    "EmbeddingFactory",
     "EmbeddingConfigSchema",
     "get_default_embedding_config",
     "get_common_embedding_models",
-    "create_embedding_factory_with_defaults"
+    "create_embedding_factory_with_defaults",
 ]
 #
 # Configure logger with context
@@ -110,24 +179,24 @@ logger = logger.bind(module="Embeddings_Lib")
 # File Descriptor Protection for macOS subprocess issues
 ###############################################################################
 
+
 @contextmanager
 def protect_file_descriptors():
     """Context manager to protect file descriptors during subprocess operations.
-    
-    This fixes the "bad value(s) in fds_to_keep" error on macOS when the 
+
+    This fixes the "bad value(s) in fds_to_keep" error on macOS when the
     transformers library spawns subprocesses for model downloads.
     """
     # Save original file descriptors
     original_stdout = sys.stdout
     original_stderr = sys.stderr
     original_stdin = sys.stdin
-    
+
     # Save original environment
     env_backup = os.environ.copy()
-    
+
     # Save original subprocess.Popen to restore later
-    original_popen = subprocess.Popen
-    
+
     try:
         # Ensure we have real file descriptors, not wrapped objects
         # This is crucial for subprocess operations
@@ -142,49 +211,50 @@ def protect_file_descriptors():
             # stdout/stderr are wrapped/captured or invalid, create new ones
             # Use the original file descriptors 1 and 2 directly
             try:
-                sys.stdout = os.fdopen(1, 'w')
-                sys.stderr = os.fdopen(2, 'w')
+                sys.stdout = os.fdopen(1, "w")
+                sys.stderr = os.fdopen(2, "w")
             except OSError:
                 # If that fails, use devnull as a fallback
-                devnull = open(os.devnull, 'w')
+                devnull = open(os.devnull, "w")
                 sys.stdout = devnull
                 sys.stderr = devnull
-        
+
         # Set environment to prevent subprocess issues
-        os.environ['TOKENIZERS_PARALLELISM'] = 'false'
-        os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
-        
+        os.environ["TOKENIZERS_PARALLELISM"] = "false"
+        os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+
         # For macOS specifically
-        if sys.platform == 'darwin':
-            os.environ['OBJC_DISABLE_INITIALIZE_FORK_SAFETY'] = 'YES'
+        if sys.platform == "darwin":
+            os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
             # Ensure subprocess doesn't inherit bad file descriptors
-            os.environ['PYTHONNOUSERSITE'] = '1'
+            os.environ["PYTHONNOUSERSITE"] = "1"
             # Force subprocess to close all file descriptors except 0,1,2
-            os.environ['PYTHON_SUBPROCESS_CLOSE_FDS'] = '1'
-        
+            os.environ["PYTHON_SUBPROCESS_CLOSE_FDS"] = "1"
+
         yield
-        
+
     finally:
         # Restore original file descriptors
         sys.stdout = original_stdout
         sys.stderr = original_stderr
         sys.stdin = original_stdin
-        
+
         # Close any temporary files we created
-        if sys.stdout != original_stdout and hasattr(sys.stdout, 'close'):
+        if sys.stdout != original_stdout and hasattr(sys.stdout, "close"):
             try:
                 sys.stdout.close()
-            except:
+            except Exception:
                 pass
-        if sys.stderr != original_stderr and hasattr(sys.stderr, 'close'):
+        if sys.stderr != original_stderr and hasattr(sys.stderr, "close"):
             try:
                 sys.stderr.close()
-            except:
+            except Exception:
                 pass
-        
+
         # Restore original environment
         os.environ.clear()
         os.environ.update(env_backup)
+
 
 ###############################################################################
 # Configuration schema (with Discriminated Union)
@@ -192,12 +262,13 @@ def protect_file_descriptors():
 
 PoolingFn = Callable[[Tensor, Tensor], Tensor]
 
+
 class EmbeddingConfigSchema(BaseModel):
     default_model_id: Optional[str] = None
-    models: Dict[str, 'ModelCfg'] # Forward reference for ModelCfg
+    models: Dict[str, "ModelCfg"]  # Forward reference for ModelCfg
 
-    @model_validator(mode='after')
-    def check_default_model_exists(self) -> 'EmbeddingConfigSchema':
+    @model_validator(mode="after")
+    def check_default_model_exists(self) -> "EmbeddingConfigSchema":
         """Ensures the default_model_id refers to a model defined in the models dict."""
         if self.default_model_id and self.default_model_id not in self.models:
             raise ValueError(
@@ -209,13 +280,14 @@ class EmbeddingConfigSchema(BaseModel):
 
 def _masked_mean(last_hidden: Tensor, attn: Tensor) -> Tensor:
     """Default pooling: mean of vectors where attention_mask is 1."""
+    _ensure_torch()
     if torch is None:
         raise ImportError("torch is required for pooling operations")
     mask = attn.unsqueeze(-1).type_as(last_hidden)
     summed = (last_hidden * mask).sum(dim=1)
     lengths = mask.sum(dim=1).clamp(min=1e-9)
     avg = summed / lengths
-    return normalize(avg, p=2, dim=1)
+    return torch.nn.functional.normalize(avg, p=2, dim=1)
 
 
 class HFModelCfg(BaseModel):
@@ -235,35 +307,41 @@ class OpenAICfg(BaseModel):
     provider: Literal["openai"] = "openai"
     model_name_or_path: str = "text-embedding-3-small"
     api_key: Optional[str] = Field(default=None, repr=False)
-    base_url: Optional[HttpUrl] = Field(default=None) # CHANGED: Added base_url, made it HttpUrl for validation
+    base_url: Optional[HttpUrl] = Field(
+        default=None
+    )  # CHANGED: Added base_url, made it HttpUrl for validation
     dimension: Optional[int] = None
 
     @field_validator("api_key", mode="before")
-    def _default_api_key(cls, v: Optional[str], values: Any) -> Optional[str]: # Ensure values is available if needed
+    def _default_api_key(
+        cls, v: Optional[str], values: Any
+    ) -> Optional[str]:  # Ensure values is available if needed
         # If a base_url is provided (likely for a local/custom OpenAI-compatible API),
         # an API key might not be required or might be a placeholder.
         # This validator makes the API key truly optional if base_url is set.
-        if values.data.get("base_url"): # Check if base_url is present in the input data
-            return v # Return the provided value (None or actual key)
+        if values.data.get(
+            "base_url"
+        ):  # Check if base_url is present in the input data
+            return v  # Return the provided value (None or actual key)
 
         # Original logic: API key is required if no base_url pointing to a local server
         if v:
             return v
         from os import getenv
+
         env = getenv("OPENAI_API_KEY")
         if not env:
             # Only raise ValueError if it's for the actual OpenAI API (no base_url)
             # and no key is provided and no env var is set.
             if not values.data.get("base_url"):
-                 raise ValueError("OPENAI_API_KEY env-var missing and api_key not set for OpenAI provider (and no base_url specified).")
+                raise ValueError(
+                    "OPENAI_API_KEY env-var missing and api_key not set for OpenAI provider (and no base_url specified)."
+                )
         return env
 
 
 # A discriminated union lets Pydantic and type checkers infer the correct model type
-ModelCfg = Annotated[
-    Union[HFModelCfg, OpenAICfg],
-    Field(discriminator="provider")
-]
+ModelCfg = Annotated[Union[HFModelCfg, OpenAICfg], Field(discriminator="provider")]
 
 # Update the forward reference now that ModelCfg is fully defined
 EmbeddingConfigSchema.model_rebuild()
@@ -273,19 +351,22 @@ EmbeddingConfigSchema.model_rebuild()
 # Provider helpers
 ###############################################################################
 
+
 class EmbedFn(Protocol):
     """A protocol defining a callable for embedding texts.
 
     This ensures that any function used as an embedding function adheres to this
     specific signature, including the keyword-only `as_list` argument.
     """
+
     def __call__(
         self, texts: List[str], *, as_list: bool = False
-    ) -> Union[np.ndarray, List[List[float]]]:
-        ...
+    ) -> Union[np.ndarray, List[List[float]]]: ...
+
 
 class CacheRecord(TypedDict):
     """Strongly-typed structure for a cache entry."""
+
     embed: EmbedFn
     close: Optional[Callable[[], None]]
     last: float
@@ -295,36 +376,51 @@ class _HuggingFaceEmbedder:
     """Wraps HF model/tokenizer; exposes poolable, dtype/device-aware embedding."""
 
     def __init__(self, cfg: HFModelCfg):
+        # Resolve torch/transformers on first real use. `_build()` already
+        # gates construction of this class on both being available, but this
+        # keeps the class safe to construct directly too.
+        _ensure_torch()
+        _ensure_transformers()
+        if torch is None or transformers is None:
+            raise ImportError(
+                "HuggingFace embeddings require torch and transformers. "
+                "Install with: pip install tldw_chatbook[embeddings_rag]"
+            )
         try:
             # Use cache_dir if provided, otherwise HuggingFace will use default
             cache_dir = cfg.cache_dir if cfg.cache_dir else None
             if cache_dir:
                 # Expand user home directory if present
                 import os
+
                 cache_dir = os.path.expanduser(cache_dir)
                 logger.info(f"Using custom cache directory: {cache_dir}")
-            
+
             # Log if we're using a pinned revision for security
             if cfg.revision:
-                logger.info(f"Loading model {cfg.model_name_or_path} at revision {cfg.revision} for security")
-            
+                logger.info(
+                    f"Loading model {cfg.model_name_or_path} at revision {cfg.revision} for security"
+                )
+
             # Use context manager to protect file descriptors during model loading
             with protect_file_descriptors():
                 self._tok = AutoTokenizer.from_pretrained(
-                    cfg.model_name_or_path, 
+                    cfg.model_name_or_path,
                     trust_remote_code=cfg.trust_remote_code,
                     cache_dir=cache_dir,
-                    revision=cfg.revision  # Pin to specific revision if provided
+                    revision=cfg.revision,  # Pin to specific revision if provided
                 )
                 # Check if torch is available before using it
                 if torch is not None:
-                    dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+                    dtype = (
+                        torch.float16 if torch.cuda.is_available() else torch.float32
+                    )
                     # Store dtype as instance variable for use in error handlers
                     self._dtype = dtype
                 else:
                     # This shouldn't happen due to the check in _build, but just in case
                     raise ImportError("torch is required for HuggingFace embeddings")
-                
+
                 # Load model with low_cpu_mem_usage to avoid meta tensors
                 self._model = AutoModel.from_pretrained(
                     cfg.model_name_or_path,
@@ -332,7 +428,7 @@ class _HuggingFaceEmbedder:
                     trust_remote_code=cfg.trust_remote_code,
                     cache_dir=cache_dir,
                     revision=cfg.revision,  # Pin to specific revision if provided
-                    low_cpu_mem_usage=False  # Avoid meta tensors
+                    low_cpu_mem_usage=False,  # Avoid meta tensors
                 )
         # --- [FIX] Added robust error handling for model loading ---
         except (OSError, requests.exceptions.RequestException) as e:
@@ -344,13 +440,13 @@ class _HuggingFaceEmbedder:
         # Handle device selection including "auto" option
         if torch is None:
             raise ImportError("torch is required for HuggingFace embeddings")
-            
+
         if cfg.device == "auto" or cfg.device is None:
             # Auto-detect best available device
             if torch.cuda.is_available():
                 self._device = torch.device("cuda")
                 logger.info("Auto-selected CUDA device for embeddings")
-            elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
                 self._device = torch.device("mps")
                 logger.info("Auto-selected MPS device for embeddings")
             else:
@@ -362,15 +458,18 @@ class _HuggingFaceEmbedder:
         # Try to move model to device, handling meta tensor issues
         try:
             # Check if model is on meta device first
-            if hasattr(self._model, 'device') and str(self._model.device) == 'meta':
-                logger.warning("Model is on meta device, reloading with proper initialization")
+            if hasattr(self._model, "device") and str(self._model.device) == "meta":
+                logger.warning(
+                    "Model is on meta device, reloading with proper initialization"
+                )
                 # Delete the meta model and reload properly
                 del self._model
-                
+
                 # Force garbage collection to free memory
                 import gc
+
                 gc.collect()
-                
+
                 # Reload the model with explicit device placement
                 self._model = AutoModel.from_pretrained(
                     cfg.model_name_or_path,
@@ -380,7 +479,7 @@ class _HuggingFaceEmbedder:
                     revision=cfg.revision,
                     low_cpu_mem_usage=False,  # Avoid meta tensors
                     device_map=None,  # Disable device mapping
-                    _fast_init=False  # Force proper initialization
+                    _fast_init=False,  # Force proper initialization
                 )
                 # Move to target device
                 self._model = self._model.to(self._device)
@@ -389,15 +488,18 @@ class _HuggingFaceEmbedder:
                 self._model = self._model.to(self._device)
         except RuntimeError as e:
             if "Cannot copy out of meta tensor" in str(e):
-                logger.warning(f"Caught meta tensor error: {e}. Reloading model properly.")
+                logger.warning(
+                    f"Caught meta tensor error: {e}. Reloading model properly."
+                )
                 # Delete the problematic model
-                if hasattr(self, '_model'):
+                if hasattr(self, "_model"):
                     del self._model
-                
+
                 # Force garbage collection
                 import gc
+
                 gc.collect()
-                
+
                 # Reload with explicit settings to avoid meta tensors
                 self._model = AutoModel.from_pretrained(
                     cfg.model_name_or_path,
@@ -407,19 +509,20 @@ class _HuggingFaceEmbedder:
                     revision=cfg.revision,
                     low_cpu_mem_usage=False,
                     device_map=None,
-                    _fast_init=False
+                    _fast_init=False,
                 ).to(self._device)
             else:
                 raise
-        
+
         self._model.eval()
-        
+
         self._max_len = cfg.max_length
         self._batch_size = cfg.batch_size
         self._pool = cfg.pooling or _masked_mean
 
     def _forward(self, inp: Dict[str, Tensor]) -> Tensor:
         # Apply inference mode only if torch is available
+        _ensure_torch()
         if torch is not None:
             with torch.inference_mode():
                 out = self._model(**inp).last_hidden_state
@@ -429,10 +532,12 @@ class _HuggingFaceEmbedder:
             out = self._model(**inp).last_hidden_state
             return self._pool(out, inp["attention_mask"])
 
-    def embed(self, texts: List[str], *, as_list: bool = False) -> np.ndarray | List[List[float]]:
+    def embed(
+        self, texts: List[str], *, as_list: bool = False
+    ) -> np.ndarray | List[List[float]]:
         vecs: List[Tensor] = []
         for i in range(0, len(texts), self._batch_size):
-            batch = texts[i: i + self._batch_size]
+            batch = texts[i : i + self._batch_size]
             tok = self._tok(
                 batch,
                 return_tensors="pt",
@@ -445,6 +550,7 @@ class _HuggingFaceEmbedder:
             vecs.append(self._forward(tok))
 
         # --- [FIX] Performance: concatenate on GPU, then move to CPU once ---
+        _ensure_torch()
         if torch is None:
             raise ImportError("torch is required for HuggingFace embeddings")
         joined = torch.cat(vecs, dim=0).float().cpu().numpy()
@@ -452,6 +558,7 @@ class _HuggingFaceEmbedder:
 
     def close(self) -> None:
         del self._model, self._tok
+        _ensure_torch()
         if torch is not None and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
@@ -461,43 +568,79 @@ class _HuggingFaceEmbedder:
 _BACKOFF: tuple[float, ...] = (1, 2, 4, 8)
 
 
-def _openai_embedder(cfg: OpenAICfg) -> Callable[[list[str], Any, bool], Any]: # CHANGED: Takes OpenAICfg
+def _openai_embedder(
+    cfg: OpenAICfg,
+) -> Callable[[list[str], Any, bool], Any]:  # CHANGED: Takes OpenAICfg
     session = requests.Session()
 
     # CHANGED: Use cfg.api_key and handle its potential None value if base_url is set
     if cfg.api_key:
         session.headers.update(
-            {"Authorization": f"Bearer {cfg.api_key}", "User-Agent": "EmbeddingsLib/4.0"}
+            {
+                "Authorization": f"Bearer {cfg.api_key}",
+                "User-Agent": "EmbeddingsLib/4.0",
+            }
         )
     else:
         # If no API key (e.g., for local server), just set User-Agent
         session.headers.update({"User-Agent": "EmbeddingsLib/4.0"})
 
     # CHANGED: Determine the endpoint URL
-    endpoint_url_base = str(cfg.base_url) if cfg.base_url else "https://api.openai.com/v1"
+    endpoint_url_base = (
+        str(cfg.base_url) if cfg.base_url else "https://api.openai.com/v1"
+    )
     embeddings_endpoint = f"{endpoint_url_base.rstrip('/')}/embeddings"
-    logger.info(f"OpenAI embedder configured for endpoint: {embeddings_endpoint} with model {cfg.model_name_or_path}")
+    logger.info(
+        f"OpenAI embedder configured for endpoint: {embeddings_endpoint} with model {cfg.model_name_or_path}"
+    )
 
-
-    def _embed(texts: List[str], *, as_list: bool = False) -> np.ndarray | List[List[float]]:
-        payload = {"input": texts, "model": cfg.model_name_or_path} # CHANGED: Use cfg.model_name_or_path
+    def _embed(
+        texts: List[str], *, as_list: bool = False
+    ) -> np.ndarray | List[List[float]]:
+        _ensure_numpy()
+        payload = {
+            "input": texts,
+            "model": cfg.model_name_or_path,
+        }  # CHANGED: Use cfg.model_name_or_path
         for attempt, wait in enumerate(_BACKOFF, 1):
             t0 = time.perf_counter()
             try:
-                resp = session.post(embeddings_endpoint, json=payload, timeout=30) # CHANGED: Use dynamic endpoint
+                resp = session.post(
+                    embeddings_endpoint, json=payload, timeout=30
+                )  # CHANGED: Use dynamic endpoint
                 resp.raise_for_status()
                 data = resp.json()["data"]
                 arr = np.asarray([d["embedding"] for d in data], dtype=np.float32)
                 latency = time.perf_counter() - t0
-                logger.debug("openai_embed[%s] %d texts in %.3fs via %s", cfg.model_name_or_path, len(texts), latency, embeddings_endpoint)
+                logger.debug(
+                    "openai_embed[%s] %d texts in %.3fs via %s",
+                    cfg.model_name_or_path,
+                    len(texts),
+                    latency,
+                    embeddings_endpoint,
+                )
                 return arr.tolist() if as_list else arr
             except requests.RequestException as exc:
                 if attempt == len(_BACKOFF):
-                    logger.error("openai_embed failed after %d retries for %s: %s", attempt, embeddings_endpoint, exc)
+                    logger.error(
+                        "openai_embed failed after %d retries for %s: %s",
+                        attempt,
+                        embeddings_endpoint,
+                        exc,
+                    )
                     raise
-                logger.warning("openai_embed retry %d/%d after %s for %s: %s", attempt, len(_BACKOFF), wait, embeddings_endpoint, exc)
+                logger.warning(
+                    "openai_embed retry %d/%d after %s for %s: %s",
+                    attempt,
+                    len(_BACKOFF),
+                    wait,
+                    embeddings_endpoint,
+                    exc,
+                )
                 time.sleep(wait + random.random())
-        raise RuntimeError(f"Exhausted retries in OpenAI embedder for {embeddings_endpoint}")  # Should be unreachable
+        raise RuntimeError(
+            f"Exhausted retries in OpenAI embedder for {embeddings_endpoint}"
+        )  # Should be unreachable
 
     return _embed
 
@@ -506,47 +649,62 @@ def _openai_embedder(cfg: OpenAICfg) -> Callable[[list[str], Any, bool], Any]: #
 # Factory
 ###############################################################################
 
+
 class EmbeddingFactory:
     """Thread‑safe LRU/idle cache with sync & async embedding methods."""
 
     def __init__(
-            self,
-            cfg: Dict[str, Any] | EmbeddingConfigSchema,
-            *,
-            max_cached: int = 2,
-            idle_seconds: int = 900,
-            allow_dynamic_hf: bool = True,
+        self,
+        cfg: Dict[str, Any] | EmbeddingConfigSchema,
+        *,
+        max_cached: int = 2,
+        idle_seconds: int = 900,
+        allow_dynamic_hf: bool = True,
     ) -> None:
         # Check if embeddings/RAG dependencies are available
-        if not _current_dependencies_available().get('embeddings_rag', False):
+        if not _current_dependencies_available().get("embeddings_rag", False):
             raise ImportError(
                 "EmbeddingFactory requires embeddings/RAG dependencies. "
                 "Install with: pip install tldw_chatbook[embeddings_rag]"
             )
         try:
-            self._cfg = cfg if isinstance(cfg, EmbeddingConfigSchema) else EmbeddingConfigSchema(**cfg)
+            self._cfg = (
+                cfg
+                if isinstance(cfg, EmbeddingConfigSchema)
+                else EmbeddingConfigSchema(**cfg)
+            )
         except ValidationError as e_pydantic:  # Catch Pydantic validation errors
-            logger.critical(f"Invalid embedding configuration provided to EmbeddingFactory: {e_pydantic}")
-            raise ValueError(f"Embedding configuration error: {e_pydantic}") from e_pydantic
+            logger.critical(
+                f"Invalid embedding configuration provided to EmbeddingFactory: {e_pydantic}"
+            )
+            raise ValueError(
+                f"Embedding configuration error: {e_pydantic}"
+            ) from e_pydantic
 
         self._max_cached = max_cached
         self._idle = idle_seconds
         self._allow_dynamic_hf = allow_dynamic_hf
         self._cache: "OrderedDict[str, CacheRecord]" = OrderedDict()
         self._lock = threading.Lock()
-        logger.debug("factory initialised max_cached=%d idle=%ds", max_cached, idle_seconds)
+        logger.debug(
+            "factory initialised max_cached=%d idle=%ds", max_cached, idle_seconds
+        )
 
     def _get_spec(self, model_id: str) -> ModelCfg:
         try:
             return self._cfg.models[model_id]
         except KeyError:
             if self._allow_dynamic_hf:
-                logger.info("dynamic HF model %s (model_id used as model_name_or_path)", model_id)
+                logger.info(
+                    "dynamic HF model %s (model_id used as model_name_or_path)",
+                    model_id,
+                )
                 # This assumes any unknown model_id passed when allow_dynamic_hf is True
                 # should be treated as a HuggingFace model path.
                 return HFModelCfg(model_name_or_path=model_id, provider="huggingface")
-            raise ValueError(f"Model ID '{model_id}' not found in configuration and dynamic HF loading is disabled.")
-
+            raise ValueError(
+                f"Model ID '{model_id}' not found in configuration and dynamic HF loading is disabled."
+            )
 
     @property
     def config(self) -> EmbeddingConfigSchema:
@@ -569,58 +727,87 @@ class EmbeddingFactory:
         logger.debug(f"_build: Building model {model_id}")
 
         spec = self._get_spec(model_id)
-        logger.debug(f"_build: Got specification for model {model_id}, provider={spec.provider}")
+        logger.debug(
+            f"_build: Got specification for model {model_id}, provider={spec.provider}"
+        )
 
         t0 = time.perf_counter()
         if spec.provider == "huggingface":
-            # Check if torch and transformers are available
+            # Check if torch and transformers are available (imports them on
+            # first real use if they haven't been loaded yet)
+            _ensure_torch()
+            _ensure_transformers()
             if torch is None or transformers is None:
                 raise ImportError(
                     "HuggingFace embeddings require torch and transformers. "
                     "Install with: pip install tldw_chatbook[embeddings_rag]"
                 )
-            
+
             # Ensure spec is correctly typed for HFModelCfg
             if not isinstance(spec, HFModelCfg):
-                logger.error(f"_build: Type mismatch for model {model_id} - expected HFModelCfg, got {type(spec)}")
-                raise TypeError(f"Expected HFModelCfg for provider 'huggingface', got {type(spec)} for model_id '{model_id}'")
+                logger.error(
+                    f"_build: Type mismatch for model {model_id} - expected HFModelCfg, got {type(spec)}"
+                )
+                raise TypeError(
+                    f"Expected HFModelCfg for provider 'huggingface', got {type(spec)} for model_id '{model_id}'"
+                )
 
-            logger.info(f"_build: Initializing HuggingFace model {model_id} (path: {spec.model_name_or_path})")
+            logger.info(
+                f"_build: Initializing HuggingFace model {model_id} (path: {spec.model_name_or_path})"
+            )
             try:
                 hf = _HuggingFaceEmbedder(spec)
                 rec = CacheRecord(embed=hf.embed, close=hf.close, last=time.monotonic())
-                logger.debug(f"_build: Successfully created HuggingFace embedder for {model_id}")
+                logger.debug(
+                    f"_build: Successfully created HuggingFace embedder for {model_id}"
+                )
             except Exception as e:
-                logger.opt(exception=True).error(f"_build: Failed to initialize HuggingFace model {model_id}: {e}")
+                logger.opt(exception=True).error(
+                    f"_build: Failed to initialize HuggingFace model {model_id}: {e}"
+                )
                 raise
 
         elif spec.provider == "openai":
             # Ensure spec is correctly typed for OpenAICfg
             if not isinstance(spec, OpenAICfg):
-                logger.error(f"_build: Type mismatch for model {model_id} - expected OpenAICfg, got {type(spec)}")
-                raise TypeError(f"Expected OpenAICfg for provider 'openai', got {type(spec)} for model_id '{model_id}'")
+                logger.error(
+                    f"_build: Type mismatch for model {model_id} - expected OpenAICfg, got {type(spec)}"
+                )
+                raise TypeError(
+                    f"Expected OpenAICfg for provider 'openai', got {type(spec)} for model_id '{model_id}'"
+                )
 
-            logger.info(f"_build: Initializing OpenAI model {model_id} (model: {spec.model_name_or_path})")
+            logger.info(
+                f"_build: Initializing OpenAI model {model_id} (model: {spec.model_name_or_path})"
+            )
             try:
-                fn = _openai_embedder(spec) # Pass the whole spec object
+                fn = _openai_embedder(spec)  # Pass the whole spec object
                 rec = CacheRecord(embed=fn, close=None, last=time.monotonic())
-                logger.debug(f"_build: Successfully created OpenAI embedder for {model_id}")
+                logger.debug(
+                    f"_build: Successfully created OpenAI embedder for {model_id}"
+                )
             except Exception as e:
-                logger.opt(exception=True).error(f"_build: Failed to initialize OpenAI model {model_id}: {e}")
+                logger.opt(exception=True).error(
+                    f"_build: Failed to initialize OpenAI model {model_id}: {e}"
+                )
                 raise
 
         else:
             # This should ideally not be reached if Pydantic validation is working with discriminated unions
             # However, it's a good safeguard.
-            logger.error(f"_build: Unsupported provider '{spec.provider}' for model {model_id}")
-            raise ValueError(f"Unsupported provider: {spec.provider} for model_id '{model_id}'")
+            logger.error(
+                f"_build: Unsupported provider '{spec.provider}' for model {model_id}"
+            )
+            raise ValueError(
+                f"Unsupported provider: {spec.provider} for model_id '{model_id}'"
+            )
 
         build_time = time.perf_counter() - t0
         logger.info(f"_build: Loaded model {model_id} in {build_time:.2f}s")
         return rec
 
     def embed(
-            self, texts: List[str], *, model_id: Optional[str] = None, as_list: bool = False
+        self, texts: List[str], *, model_id: Optional[str] = None, as_list: bool = False
     ):
         """
         Embed a list of texts using the specified model or the default model.
@@ -633,7 +820,9 @@ class EmbeddingFactory:
         Returns:
             Embeddings as numpy array or list of lists
         """
-        logger.debug(f"embed: Called with {len(texts)} texts, model_id={model_id}, as_list={as_list}")
+        logger.debug(
+            f"embed: Called with {len(texts)} texts, model_id={model_id}, as_list={as_list}"
+        )
 
         model_id_to_use = model_id or self._cfg.default_model_id
         if not model_id_to_use:
@@ -642,6 +831,7 @@ class EmbeddingFactory:
 
         if not texts:
             logger.debug("embed: Empty texts list provided, returning empty result")
+            _ensure_numpy()
             return [] if as_list else np.empty((0, 0), dtype=np.float32)
 
         # --- The lock must be held during the embedding call to prevent use-after-free ---
@@ -651,7 +841,9 @@ class EmbeddingFactory:
             now = time.monotonic()
             for mid, rec in list(self._cache.items()):
                 if now - rec["last"] > self._idle:
-                    logger.debug(f"embed: Idle evicting model {mid} (unused for {now - rec['last']:.1f}s)")
+                    logger.debug(
+                        f"embed: Idle evicting model {mid} (unused for {now - rec['last']:.1f}s)"
+                    )
                     self._cache.pop(mid)
                     if rec["close"]:
                         rec["close"]()
@@ -659,17 +851,23 @@ class EmbeddingFactory:
             # Now, get the model, building it if it doesn't exist.
             rec = self._cache.get(model_id_to_use)
             if rec is None:
-                logger.info(f"embed: Model {model_id_to_use} not in cache, will build it")
+                logger.info(
+                    f"embed: Model {model_id_to_use} not in cache, will build it"
+                )
                 # If we need to load a model, make space for it *first*.
                 while len(self._cache) >= self._max_cached:
                     lru_mid, lru_rec = self._cache.popitem(last=False)
-                    logger.debug(f"embed: LRU evicting model {lru_mid} to make space for {model_id_to_use}")
+                    logger.debug(
+                        f"embed: LRU evicting model {lru_mid} to make space for {model_id_to_use}"
+                    )
                     if lru_rec["close"]:
                         lru_rec["close"]()
                 logger.debug(f"embed: Building model {model_id_to_use}")
                 rec = self._build(model_id_to_use)
                 self._cache[model_id_to_use] = rec
-                logger.info(f"embed: Successfully built and cached model {model_id_to_use}")
+                logger.info(
+                    f"embed: Successfully built and cached model {model_id_to_use}"
+                )
             else:
                 logger.debug(f"embed: Using cached model {model_id_to_use}")
 
@@ -681,33 +879,41 @@ class EmbeddingFactory:
             # The embedding call itself is now inside the lock. This serializes
             # all embedding calls, but guarantees that the model cannot be
             # evicted by another thread while it is in use.
-            logger.debug(f"embed: Starting embedding of {len(texts)} texts with model {model_id_to_use}")
+            logger.debug(
+                f"embed: Starting embedding of {len(texts)} texts with model {model_id_to_use}"
+            )
             t0 = time.perf_counter()
             result = embed_fn(texts, as_list=as_list)
             elapsed = time.perf_counter() - t0
-            logger.debug(f"embed: Completed embedding {len(texts)} texts with model {model_id_to_use} in {elapsed:.3f}s")
+            logger.debug(
+                f"embed: Completed embedding {len(texts)} texts with model {model_id_to_use} in {elapsed:.3f}s"
+            )
 
             # Log more details for larger batches or slower operations
             if len(texts) > 10 or elapsed > 1.0:
-                logger.info(f"embed: Embedded {len(texts)} texts with model {model_id_to_use} in {elapsed:.3f}s ({elapsed/len(texts):.3f}s per text)")
+                logger.info(
+                    f"embed: Embedded {len(texts)} texts with model {model_id_to_use} in {elapsed:.3f}s ({elapsed / len(texts):.3f}s per text)"
+                )
 
             return result
         # The lock is released only after the work is complete.
 
     async def async_embed(
-            self, texts: List[str], *, model_id: Optional[str] = None, as_list: bool = False
+        self, texts: List[str], *, model_id: Optional[str] = None, as_list: bool = False
     ):
         """Non-blocking version of `embed` for use in async contexts."""
-        return await asyncio.to_thread(self.embed, texts, model_id=model_id, as_list=as_list)
+        return await asyncio.to_thread(
+            self.embed, texts, model_id=model_id, as_list=as_list
+        )
 
     def embed_one(
-            self, text: str, *, model_id: Optional[str] = None, as_list: bool = False
+        self, text: str, *, model_id: Optional[str] = None, as_list: bool = False
     ):
         vecs = self.embed([text], model_id=model_id, as_list=as_list)
         return vecs[0] if as_list else vecs.squeeze(0)
 
     async def async_embed_one(
-            self, text: str, *, model_id: Optional[str] = None, as_list: bool = False
+        self, text: str, *, model_id: Optional[str] = None, as_list: bool = False
     ):
         vecs = await self.async_embed([text], model_id=model_id, as_list=as_list)
         return vecs[0] if as_list else vecs.squeeze(0)
@@ -737,164 +943,161 @@ class EmbeddingFactory:
     def __exit__(self, exc_type, exc, tb):
         self.close()
 
+
 ###############################################################################
 # Default configuration helpers
 ###############################################################################
 
+
 def get_default_embedding_config() -> EmbeddingConfigSchema:
     """
     Get a minimal default embedding configuration.
-    
+
     This provides a working configuration with the mxbai-embed-large-v1 model,
     which offers high-quality embeddings with flexible dimension support.
-    
+
     Returns:
         EmbeddingConfigSchema with default settings
     """
     return EmbeddingConfigSchema(
-        default_model_id='mxbai-embed-large-v1',
+        default_model_id="mxbai-embed-large-v1",
         models={
-            'mxbai-embed-large-v1': HFModelCfg(
-                provider='huggingface',
-                model_name_or_path='mixedbread-ai/mxbai-embed-large-v1',
+            "mxbai-embed-large-v1": HFModelCfg(
+                provider="huggingface",
+                model_name_or_path="mixedbread-ai/mxbai-embed-large-v1",
                 dimension=1024,  # Supports Matryoshka - can use 512 for speed/storage
                 trust_remote_code=False,
                 max_length=512,
                 device=None,  # Will auto-detect best device
-                batch_size=16  # Reduced for larger model
+                batch_size=16,  # Reduced for larger model
             )
-        }
+        },
     )
 
 
 def get_common_embedding_models() -> Dict[str, ModelCfg]:
     """
     Get a dictionary of commonly used embedding models.
-    
+
     Returns:
         Dictionary mapping model IDs to their configurations
     """
     return {
         # High-quality models with flexible dimensions
-        'mxbai-embed-large-v1': HFModelCfg(
-            provider='huggingface',
-            model_name_or_path='mixedbread-ai/mxbai-embed-large-v1',
+        "mxbai-embed-large-v1": HFModelCfg(
+            provider="huggingface",
+            model_name_or_path="mixedbread-ai/mxbai-embed-large-v1",
             dimension=1024,  # Supports 512, 256 via Matryoshka
             max_length=512,
-            batch_size=16
+            batch_size=16,
         ),
-        
         # Small, fast models (good for development/testing)
-        'e5-small-v2': HFModelCfg(
-            provider='huggingface',
-            model_name_or_path='intfloat/e5-small-v2',
+        "e5-small-v2": HFModelCfg(
+            provider="huggingface",
+            model_name_or_path="intfloat/e5-small-v2",
             dimension=384,
-            max_length=512
+            max_length=512,
         ),
-        'all-MiniLM-L6-v2': HFModelCfg(
-            provider='huggingface',
-            model_name_or_path='sentence-transformers/all-MiniLM-L6-v2',
+        "all-MiniLM-L6-v2": HFModelCfg(
+            provider="huggingface",
+            model_name_or_path="sentence-transformers/all-MiniLM-L6-v2",
             dimension=384,
-            max_length=256
+            max_length=256,
         ),
-        'bge-small-en-v1.5': HFModelCfg(
-            provider='huggingface',
-            model_name_or_path='BAAI/bge-small-en-v1.5',
+        "bge-small-en-v1.5": HFModelCfg(
+            provider="huggingface",
+            model_name_or_path="BAAI/bge-small-en-v1.5",
             dimension=384,
-            max_length=512
+            max_length=512,
         ),
-        
         # Medium models (good balance)
-        'e5-base-v2': HFModelCfg(
-            provider='huggingface',
-            model_name_or_path='intfloat/e5-base-v2',
+        "e5-base-v2": HFModelCfg(
+            provider="huggingface",
+            model_name_or_path="intfloat/e5-base-v2",
             dimension=768,
-            max_length=512
+            max_length=512,
         ),
-        'all-mpnet-base-v2': HFModelCfg(
-            provider='huggingface',
-            model_name_or_path='sentence-transformers/all-mpnet-base-v2',
+        "all-mpnet-base-v2": HFModelCfg(
+            provider="huggingface",
+            model_name_or_path="sentence-transformers/all-mpnet-base-v2",
             dimension=768,
-            max_length=384
+            max_length=384,
         ),
-        'bge-base-en-v1.5': HFModelCfg(
-            provider='huggingface',
-            model_name_or_path='BAAI/bge-base-en-v1.5',
+        "bge-base-en-v1.5": HFModelCfg(
+            provider="huggingface",
+            model_name_or_path="BAAI/bge-base-en-v1.5",
             dimension=768,
-            max_length=512
+            max_length=512,
         ),
-        
         # Large models (best quality)
-        'e5-large-v2': HFModelCfg(
-            provider='huggingface',
-            model_name_or_path='intfloat/e5-large-v2',
+        "e5-large-v2": HFModelCfg(
+            provider="huggingface",
+            model_name_or_path="intfloat/e5-large-v2",
             dimension=1024,
-            max_length=512
+            max_length=512,
         ),
-        'multilingual-e5-large-instruct': HFModelCfg(
-            provider='huggingface',
-            model_name_or_path='intfloat/multilingual-e5-large-instruct',
+        "multilingual-e5-large-instruct": HFModelCfg(
+            provider="huggingface",
+            model_name_or_path="intfloat/multilingual-e5-large-instruct",
             dimension=1024,
-            max_length=512
+            max_length=512,
         ),
-        
         # OpenAI models (require API key)
-        'openai-ada-002': OpenAICfg(
-            provider='openai',
-            model_name_or_path='text-embedding-ada-002',
-            dimension=1536
+        "openai-ada-002": OpenAICfg(
+            provider="openai",
+            model_name_or_path="text-embedding-ada-002",
+            dimension=1536,
         ),
-        'openai-3-small': OpenAICfg(
-            provider='openai',
-            model_name_or_path='text-embedding-3-small',
-            dimension=1536
+        "openai-3-small": OpenAICfg(
+            provider="openai",
+            model_name_or_path="text-embedding-3-small",
+            dimension=1536,
         ),
-        'openai-3-large': OpenAICfg(
-            provider='openai',
-            model_name_or_path='text-embedding-3-large',
-            dimension=3072
+        "openai-3-large": OpenAICfg(
+            provider="openai",
+            model_name_or_path="text-embedding-3-large",
+            dimension=3072,
         ),
-        
         # State-of-the-art models (require trust_remote_code)
-        'stella_en_1.5B_v5': HFModelCfg(
-            provider='huggingface',
-            model_name_or_path='NovaSearch/stella_en_1.5B_v5',
+        "stella_en_1.5B_v5": HFModelCfg(
+            provider="huggingface",
+            model_name_or_path="NovaSearch/stella_en_1.5B_v5",
             dimension=1024,  # Supports 512-8192 via Matryoshka
             trust_remote_code=True,
-            revision='4bbc0f1e9df5b9563d418e9b5663e98070713eb8',  # Pinned for security
+            revision="4bbc0f1e9df5b9563d418e9b5663e98070713eb8",  # Pinned for security
             max_length=512,
-            batch_size=8
+            batch_size=8,
         ),
-        'qwen3-embedding-4b': HFModelCfg(
-            provider='huggingface',
-            model_name_or_path='Qwen/Qwen3-Embedding-4B',
+        "qwen3-embedding-4b": HFModelCfg(
+            provider="huggingface",
+            model_name_or_path="Qwen/Qwen3-Embedding-4B",
             dimension=4096,  # Flexible up to 4096
             trust_remote_code=True,
             max_length=32768,  # 32k context
-            batch_size=4
-        )
+            batch_size=4,
+        ),
     }
 
 
 def create_embedding_factory_with_defaults(
-    config: Optional[Union[Dict[str, Any], EmbeddingConfigSchema]] = None,
-    **kwargs
+    config: Optional[Union[Dict[str, Any], EmbeddingConfigSchema]] = None, **kwargs
 ) -> EmbeddingFactory:
     """
     Create an EmbeddingFactory with sensible defaults if no config provided.
-    
+
     Args:
         config: Optional configuration dict or EmbeddingConfigSchema
         **kwargs: Additional arguments passed to EmbeddingFactory constructor
-        
+
     Returns:
         Configured EmbeddingFactory instance
     """
     if config is None:
         logger.info("No embedding configuration provided, using defaults")
         config = get_default_embedding_config()
-    
+
     return EmbeddingFactory(config, **kwargs)
+
 
 #
 # End of Embeddings_Lib.py

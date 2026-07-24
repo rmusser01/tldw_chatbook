@@ -129,7 +129,11 @@ class FakeClaimsClient:
 
     async def list_claim_extractors(self):
         self.calls.append(("list_claim_extractors",))
-        return {"extractors": [{"mode": "llm"}], "default_mode": "llm", "auto_mode": "auto"}
+        return {
+            "extractors": [{"mode": "llm"}],
+            "default_mode": "llm",
+            "auto_mode": "auto",
+        }
 
     async def list_claim_review_metrics(self, **kwargs):
         self.calls.append(("list_claim_review_metrics", kwargs))
@@ -145,7 +149,10 @@ class FakeClaimsClient:
 
     async def list_claims_analytics_exports(self, **kwargs):
         self.calls.append(("list_claims_analytics_exports", kwargs))
-        return {"exports": [{"export_id": "exp-1", "format": "json", "status": "ready"}], "total": 1}
+        return {
+            "exports": [{"export_id": "exp-1", "format": "json", "status": "ready"}],
+            "total": 1,
+        }
 
     async def download_claims_analytics_export(self, export_id):
         self.calls.append(("download_claims_analytics_export", export_id))
@@ -153,7 +160,9 @@ class FakeClaimsClient:
 
     async def download_claims_analytics_export_file(self, export_id):
         self.calls.append(("download_claims_analytics_export_file", export_id))
-        return ReadingExportResponse(content=b"claim_id\n1\n", content_type="text/csv", filename="claims.csv")
+        return ReadingExportResponse(
+            content=b"claim_id\n1\n", content_type="text/csv", filename="claims.csv"
+        )
 
     async def list_claim_clusters(self, **kwargs):
         self.calls.append(("list_claim_clusters", kwargs))
@@ -173,11 +182,18 @@ class FakeClaimsClient:
 
     async def create_claim_cluster_link(self, cluster_id, request_data):
         self.calls.append(("create_claim_cluster_link", cluster_id, request_data))
-        return {"parent_cluster_id": cluster_id, "child_cluster_id": request_data.child_cluster_id}
+        return {
+            "parent_cluster_id": cluster_id,
+            "child_cluster_id": request_data.child_cluster_id,
+        }
 
     async def delete_claim_cluster_link(self, cluster_id, child_cluster_id):
         self.calls.append(("delete_claim_cluster_link", cluster_id, child_cluster_id))
-        return {"parent_cluster_id": cluster_id, "child_cluster_id": child_cluster_id, "deleted": True}
+        return {
+            "parent_cluster_id": cluster_id,
+            "child_cluster_id": child_cluster_id,
+            "deleted": True,
+        }
 
     async def list_claim_cluster_members(self, cluster_id, **kwargs):
         self.calls.append(("list_claim_cluster_members", cluster_id, kwargs))
@@ -335,7 +351,9 @@ async def test_server_claims_service_re_resolves_provider_without_service_local_
 
 
 @pytest.mark.asyncio
-async def test_server_claims_service_from_config_returns_provider_backed_service(monkeypatch):
+async def test_server_claims_service_from_config_returns_provider_backed_service(
+    monkeypatch,
+):
     provider = FakeClientProvider(FakeClaimsClient())
     build_provider_calls = []
 
@@ -343,7 +361,9 @@ async def test_server_claims_service_from_config_returns_provider_backed_service
         build_provider_calls.append(app_config)
         return provider
 
-    monkeypatch.setattr(claims_module, "build_runtime_api_client_provider_from_config", build_provider)
+    monkeypatch.setattr(
+        claims_module, "build_runtime_api_client_provider_from_config", build_provider
+    )
 
     config = {"tldw_api": {"base_url": "https://example.com"}}
     service = ServerClaimsService.from_config(config)
@@ -368,43 +388,99 @@ async def test_server_claims_service_routes_representative_claims_surfaces_with_
     service = ServerClaimsService(client, policy_enforcer=policy)
 
     assert (await service.get_claims_status())["queued"] == 0
-    assert (await service.list_all_claims(review_status="pending"))[0]["record_id"] == "server:claim:1"
+    assert (await service.list_all_claims(review_status="pending"))[0][
+        "record_id"
+    ] == "server:claim:1"
     assert (await service.get_claims_settings())["claims_rebuild_enabled"] is True
-    assert (await service.update_claims_settings(ClaimsSettingsUpdate(claims_rebuild_enabled=False)))["claims_rebuild_enabled"] is False
+    assert (
+        await service.update_claims_settings(
+            ClaimsSettingsUpdate(claims_rebuild_enabled=False)
+        )
+    )["claims_rebuild_enabled"] is False
     assert (await service.get_claims_monitoring_config())["id"] == 9
-    assert (await service.update_claims_monitoring_config(ClaimsMonitoringSettingsUpdate(enabled=False)))["enabled"] is False
-    assert (await service.list_claim_notifications(kind="watchlist_cluster"))[0]["id"] == 31
-    assert (await service.get_claim_notifications_digest(include_items=True))["total"] == 1
-    assert (await service.ack_claim_notifications(ClaimNotificationsAckRequest(ids=[31])))["updated"] == 1
+    assert (
+        await service.update_claims_monitoring_config(
+            ClaimsMonitoringSettingsUpdate(enabled=False)
+        )
+    )["enabled"] is False
+    assert (await service.list_claim_notifications(kind="watchlist_cluster"))[0][
+        "id"
+    ] == 31
+    assert (await service.get_claim_notifications_digest(include_items=True))[
+        "total"
+    ] == 1
+    assert (
+        await service.ack_claim_notifications(ClaimNotificationsAckRequest(ids=[31]))
+    )["updated"] == 1
     assert (await service.evaluate_claim_watchlist_notifications())["created"] == 1
-    assert (await service.create_claim_alert(ClaimsAlertConfigCreate(name="Spike", alert_type="unsupported_ratio")))["id"] == 41
-    assert (await service.update_claim_alert(41, ClaimsAlertConfigUpdate(enabled=False)))["enabled"] is False
+    assert (
+        await service.create_claim_alert(
+            ClaimsAlertConfigCreate(name="Spike", alert_type="unsupported_ratio")
+        )
+    )["id"] == 41
+    assert (
+        await service.update_claim_alert(41, ClaimsAlertConfigUpdate(enabled=False))
+    )["enabled"] is False
     assert (await service.delete_claim_alert(41))["deleted"] is True
     assert (await service.evaluate_claim_alerts(window_sec=60))["triggered"] == 1
     assert (await service.get_claims_rebuild_health())["status"] == "ok"
-    assert (await service.review_claim(1, ClaimReviewRequest(status="approved", review_version=1)))["review_status"] == "approved"
-    assert (await service.bulk_review_claims(claim_ids=[1, 2], status="approved"))["updated"] == 2
-    assert (await service.create_claim_review_rule(ClaimReviewRuleCreate(priority=10)))["priority"] == 10
-    assert (await service.update_claim_review_rule(3, ClaimReviewRuleUpdate(active=False)))["active"] is False
+    assert (
+        await service.review_claim(
+            1, ClaimReviewRequest(status="approved", review_version=1)
+        )
+    )["review_status"] == "approved"
+    assert (await service.bulk_review_claims(claim_ids=[1, 2], status="approved"))[
+        "updated"
+    ] == 2
+    assert (await service.create_claim_review_rule(ClaimReviewRuleCreate(priority=10)))[
+        "priority"
+    ] == 10
+    assert (
+        await service.update_claim_review_rule(3, ClaimReviewRuleUpdate(active=False))
+    )["active"] is False
     assert (await service.delete_claim_review_rule(3))["deleted"] is True
     assert (await service.get_claim_review_analytics())["pending"] == 1
     assert (await service.list_claim_review_metrics(limit=25))["total"] == 0
     assert (await service.get_claims_analytics_dashboard())["total_claims"] == 1
-    assert (await service.export_claims_analytics(ClaimsAnalyticsExportRequest(format="json")))["export_id"] == "exp-1"
-    assert (await service.list_claims_analytics_exports())["exports"][0]["record_id"] == "server:claim_analytics_export:exp-1"
-    assert (await service.download_claims_analytics_export("exp-1"))["export_id"] == "exp-1"
-    assert (await service.download_claims_analytics_export_file("exp-1"))["filename"] == "claims.csv"
-    assert (await service.list_claim_clusters(keyword="moon"))[0]["record_id"] == "server:claim_cluster:5"
+    assert (
+        await service.export_claims_analytics(
+            ClaimsAnalyticsExportRequest(format="json")
+        )
+    )["export_id"] == "exp-1"
+    assert (await service.list_claims_analytics_exports())["exports"][0][
+        "record_id"
+    ] == "server:claim_analytics_export:exp-1"
+    assert (await service.download_claims_analytics_export("exp-1"))[
+        "export_id"
+    ] == "exp-1"
+    assert (await service.download_claims_analytics_export_file("exp-1"))[
+        "filename"
+    ] == "claims.csv"
+    assert (await service.list_claim_clusters(keyword="moon"))[0][
+        "record_id"
+    ] == "server:claim_cluster:5"
     assert (await service.rebuild_claim_clusters(min_size=2))["rebuilt"] == 1
     assert (await service.get_claim_cluster(5))["record_id"] == "server:claim_cluster:5"
-    assert (await service.create_claim_cluster_link(5, ClaimsClusterLinkCreate(child_cluster_id=6)))["record_id"] == "server:claim_cluster_link:5:6"
+    assert (
+        await service.create_claim_cluster_link(
+            5, ClaimsClusterLinkCreate(child_cluster_id=6)
+        )
+    )["record_id"] == "server:claim_cluster_link:5:6"
     assert (await service.delete_claim_cluster_link(5, 6))["deleted"] is True
     assert (await service.get_claim_cluster_timeline(5))["cluster_id"] == 5
-    assert (await service.search_claims("moon"))["results"][0]["record_id"] == "server:claim:1"
-    assert (await service.update_claim_item(1, ClaimUpdateRequest(deleted=True)))["deleted"] is True
+    assert (await service.search_claims("moon"))["results"][0][
+        "record_id"
+    ] == "server:claim:1"
+    assert (await service.update_claim_item(1, ClaimUpdateRequest(deleted=True)))[
+        "deleted"
+    ] is True
     assert (await service.rebuild_claims_for_media(10))["queued"] == 1
     assert (await service.rebuild_all_claims(policy="stale"))["queued"] == 5
-    assert (await service.verify_claims_fva(FVAVerifyRequest(claims=[FVAClaimInput(text="A claim")], query="claim")))["total_claims"] == 1
+    assert (
+        await service.verify_claims_fva(
+            FVAVerifyRequest(claims=[FVAClaimInput(text="A claim")], query="claim")
+        )
+    )["total_claims"] == 1
     assert (await service.get_fva_settings())["enabled"] is True
 
     assert "claims.notifications.list.server" in policy.calls
@@ -419,7 +495,9 @@ async def test_server_claims_service_routes_representative_claims_surfaces_with_
 @pytest.mark.asyncio
 async def test_server_claims_service_denies_before_dispatch():
     client = FakeClaimsClient()
-    service = ServerClaimsService(client, policy_enforcer=FakePolicyEnforcer("authority_denied"))
+    service = ServerClaimsService(
+        client, policy_enforcer=FakePolicyEnforcer("authority_denied")
+    )
 
     with pytest.raises(PolicyDeniedError):
         await service.list_claim_notifications()

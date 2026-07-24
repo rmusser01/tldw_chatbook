@@ -37,7 +37,9 @@ def notes_scope_service(tmp_path):
     """
     db_dir = tmp_path / "chachanotes"
     db_dir.mkdir()
-    global_db = CharactersRAGDB(str(db_dir / "unified.db"), client_id="library-canvas-app")
+    global_db = CharactersRAGDB(
+        str(db_dir / "unified.db"), client_id="library-canvas-app"
+    )
     interop = NotesInteropService(
         base_db_directory=db_dir,
         api_client_id="library-canvas-client",
@@ -58,7 +60,10 @@ async def test_create_then_update_round_trip_bumps_version(notes_scope_service):
     "truthy but not a dict -> bump by 1" branch depends on.
     """
     created = await notes_scope_service.save_note(
-        scope="local_note", title="Original", content="v1 body", user_id=USER_ID,
+        scope="local_note",
+        title="Original",
+        content="v1 body",
+        user_id=USER_ID,
     )
     assert isinstance(created, str) and created
 
@@ -92,7 +97,10 @@ async def test_update_with_stale_version_raises_conflict_and_does_not_mutate(
     treat it the same as a falsy result to reach its conflict UI.
     """
     created = await notes_scope_service.save_note(
-        scope="local_note", title="Original", content="body", user_id=USER_ID,
+        scope="local_note",
+        title="Original",
+        content="body",
+        user_id=USER_ID,
     )
     await notes_scope_service.save_note(
         scope="local_note",
@@ -171,7 +179,9 @@ async def test_save_with_keywords_returns_dict_with_bumped_version_and_persists(
 
 
 @pytest.mark.asyncio
-async def test_create_from_note_template_round_trips_title_and_content(notes_scope_service):
+async def test_create_from_note_template_round_trips_title_and_content(
+    notes_scope_service,
+):
     """The Library screen's in-canvas Create view (task 6) resolves a
     ``NOTE_TEMPLATES`` entry's ``{date}`` placeholders before ever calling
     this seam (see ``LibraryScreen._library_note_template_fields``), so the
@@ -215,11 +225,17 @@ async def test_delete_with_correct_version_removes_the_note(notes_scope_service)
     depends on this truthy/removed shape.
     """
     created = await notes_scope_service.save_note(
-        scope="local_note", title="To delete", content="body", user_id=USER_ID,
+        scope="local_note",
+        title="To delete",
+        content="body",
+        user_id=USER_ID,
     )
 
     deleted = await notes_scope_service.delete_note(
-        scope="local_note", note_id=created, version=1, user_id=USER_ID,
+        scope="local_note",
+        note_id=created,
+        version=1,
+        user_id=USER_ID,
     )
     assert deleted is True
 
@@ -245,7 +261,10 @@ async def test_delete_with_stale_version_raises_conflict_and_does_not_remove(
     letting it propagate.
     """
     created = await notes_scope_service.save_note(
-        scope="local_note", title="Original", content="body", user_id=USER_ID,
+        scope="local_note",
+        title="Original",
+        content="body",
+        user_id=USER_ID,
     )
     await notes_scope_service.save_note(
         scope="local_note",
@@ -284,13 +303,19 @@ async def test_count_notes_excludes_soft_deleted_notes(notes_scope_service):
     """
     note_ids = [
         await notes_scope_service.save_note(
-            scope="local_note", title=f"Note {index}", content=f"body {index}", user_id=USER_ID,
+            scope="local_note",
+            title=f"Note {index}",
+            content=f"body {index}",
+            user_id=USER_ID,
         )
         for index in range(3)
     ]
 
     deleted = await notes_scope_service.delete_note(
-        scope="local_note", note_id=note_ids[0], version=1, user_id=USER_ID,
+        scope="local_note",
+        note_id=note_ids[0],
+        version=1,
+        user_id=USER_ID,
     )
     assert deleted is True
 
@@ -322,9 +347,7 @@ async def test_create_with_keywords_returns_dict_and_persists_keywords(
     stored = notes_scope_service.local_notes_service.get_keywords_for_note(
         USER_ID, created_id
     )
-    stored_texts = {
-        str(k.get("keyword") if isinstance(k, dict) else k) for k in stored
-    }
+    stored_texts = {str(k.get("keyword") if isinstance(k, dict) else k) for k in stored}
     assert {"meeting", "notes"} <= stored_texts
 
 
@@ -341,7 +364,9 @@ async def test_get_note_detail_enriched_with_keywords_round_trips_through_editor
     confirms the enriched detail round-trips through
     ``build_library_note_editor_state`` the way the screen renders it.
     """
-    from tldw_chatbook.Library.library_notes_state import build_library_note_editor_state
+    from tldw_chatbook.Library.library_notes_state import (
+        build_library_note_editor_state,
+    )
 
     created = await notes_scope_service.save_note(
         scope="local_note",

@@ -52,6 +52,40 @@ class CharacterImageUploadRequested(Message):
     """User requested to choose an image for the active character editor."""
 
 
+class CharacterImageRemoveRequested(Message):
+    """User requested to remove the avatar image from the active character editor."""
+
+
+class CharacterExpressionUploadRequested(Message):
+    """User requested to choose an image for one expression-state slot
+    (thinking/speaking/error) in the active character editor.
+
+    Roleplay P3d-1 Task 4: distinct from ``CharacterImageUploadRequested``
+    (the card's own avatar) - these write straight to the
+    ``character_expression_images`` table, independent of the card's save.
+    """
+
+    def __init__(self, state: str) -> None:
+        self.state = state
+        super().__init__()
+
+
+class CharacterExpressionClearRequested(Message):
+    """User requested to clear one expression-state slot's image."""
+
+    def __init__(self, state: str) -> None:
+        self.state = state
+        super().__init__()
+
+
+class CharacterExpressionSetImportRequested(Message):
+    """Roleplay P3d-2: import a whole expression set from a .zip."""
+
+
+class CharacterExpressionSetExportRequested(Message):
+    """Roleplay P3d-2: export the character's expression set to a .zip."""
+
+
 class EditPersonaRequested(Message):
     """Edit was requested for the displayed persona profile."""
 
@@ -94,5 +128,17 @@ class PreviewResetRequested(Message):
     """The preview-conversation transcript was reset."""
 
 
+class PreviewGreetingSelected(Message):
+    """The user picked a greeting (index into the greetings list) to seed from."""
+
+    def __init__(self, index: int) -> None:
+        super().__init__()
+        self.index = index
+
+
 class PreviewOpenInConsoleRequested(Message):
     """Open the preview-conversation transcript in Console."""
+
+
+class PreviewConfigureProviderRequested(Message):
+    """Open Settings > Providers & Models from the preview provider readout."""

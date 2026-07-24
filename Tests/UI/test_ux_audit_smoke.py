@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -20,7 +19,6 @@ from tldw_chatbook.runtime_policy.engine import PolicyEngine
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.UI.MediaWindow_v2 import MediaWindow
-from tldw_chatbook.UI.SearchWindow import SearchWindow
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.media_runtime_state import MediaRuntimeState
 from tldw_chatbook.UI.Chatbooks_Window_Improved import ChatbooksWindowImproved
@@ -150,7 +148,10 @@ async def test_handoff_smoke_replays_chat_staging_and_first_send(monkeypatch):
         assert observed["active_handoff_title"] == "Field Notes"
         assert "[Staged context]" in observed["wrapped_prompt"]
         assert "Observed confusing empty states." in observed["wrapped_prompt"]
-        assert "[User prompt]\nSummarize the usability issue." in observed["wrapped_prompt"]
+        assert (
+            "[User prompt]\nSummarize the usability issue."
+            in observed["wrapped_prompt"]
+        )
         assert session.session_data.handoff_payload.status == "sent"
         assert app.host._current_chat_handoff_payload is None
 
@@ -214,7 +215,9 @@ async def test_tabbed_chat_send_reads_session_specific_input_and_log():
         API_IMPORTS_SUCCESSFUL=True,
     )
 
-    await handle_chat_send_button_pressed(app, SimpleNamespace(button=SimpleNamespace(id="send-stop-chat-tab-a")))
+    await handle_chat_send_button_pressed(
+        app, SimpleNamespace(button=SimpleNamespace(id="send-stop-chat-tab-a"))
+    )
 
     assert selectors_seen[:2] == ["#chat-input-tab-a", "#chat-log-tab-a"]
     assert "#chat-input" not in selectors_seen
@@ -237,7 +240,9 @@ class InvalidMediaSelectionSmokeApp(App[None]):
         yield self.panel
 
     @on(MediaViewerPanel.UseInChatRequested)
-    def handle_media_use_in_chat(self, event: MediaViewerPanel.UseInChatRequested) -> None:
+    def handle_media_use_in_chat(
+        self, event: MediaViewerPanel.UseInChatRequested
+    ) -> None:
         self.use_in_chat_requests += 1
 
 
@@ -300,7 +305,9 @@ async def test_valid_media_handoff_replays_from_mounted_window_to_app_seam():
         button.press()
         await pilot.pause(0.05)
 
-        payload = _assert_single_handoff_payload(app.app_instance.open_chat_with_handoff)
+        payload = _assert_single_handoff_payload(
+            app.app_instance.open_chat_with_handoff
+        )
         assert payload.source == "media"
         assert payload.source_id == "media-1"
         assert payload.title == "Lecture"
@@ -310,7 +317,9 @@ async def test_valid_media_handoff_replays_from_mounted_window_to_app_seam():
 @pytest.mark.asyncio
 async def test_contract_blocked_media_handoff_explains_recovery_without_staging():
     app = ValidMediaWindowHandoffSmokeApp()
-    app.app_instance.runtime_policy = SimpleNamespace(state=RuntimeSourceState(active_source="local"))
+    app.app_instance.runtime_policy = SimpleNamespace(
+        state=RuntimeSourceState(active_source="local")
+    )
     app.app_instance.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
 
     async with app.run_test(size=(160, 40)) as pilot:
@@ -357,9 +366,15 @@ class SearchRAGHandoffSmokeApp(App[None]):
 
 
 @pytest.mark.asyncio
-async def test_valid_rag_search_handoff_replays_from_mounted_window_to_app_seam(tmp_path):
+async def test_valid_rag_search_handoff_replays_from_mounted_window_to_app_seam(
+    tmp_path,
+):
     with (
-        patch.dict(search_rag_window.DEPENDENCIES_AVAILABLE, {"embeddings_rag": True}, clear=False),
+        patch.dict(
+            search_rag_window.DEPENDENCIES_AVAILABLE,
+            {"embeddings_rag": True},
+            clear=False,
+        ),
         patch(
             "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
             return_value=tmp_path,
@@ -390,7 +405,9 @@ async def test_valid_rag_search_handoff_replays_from_mounted_window_to_app_seam(
             button.press()
             await pilot.pause(0.05)
 
-            payload = _assert_single_handoff_payload(app.app_instance.open_chat_with_handoff)
+            payload = _assert_single_handoff_payload(
+                app.app_instance.open_chat_with_handoff
+            )
             assert payload.source == "search-rag"
             assert payload.item_type == "rag-result"
             assert payload.runtime_backend == "server"
@@ -399,9 +416,15 @@ async def test_valid_rag_search_handoff_replays_from_mounted_window_to_app_seam(
 
 
 @pytest.mark.asyncio
-async def test_valid_rag_search_console_launch_replays_from_mounted_window_to_app_seam(tmp_path):
+async def test_valid_rag_search_console_launch_replays_from_mounted_window_to_app_seam(
+    tmp_path,
+):
     with (
-        patch.dict(search_rag_window.DEPENDENCIES_AVAILABLE, {"embeddings_rag": True}, clear=False),
+        patch.dict(
+            search_rag_window.DEPENDENCIES_AVAILABLE,
+            {"embeddings_rag": True},
+            clear=False,
+        ),
         patch(
             "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
             return_value=tmp_path,
@@ -455,7 +478,11 @@ async def test_valid_rag_search_console_launch_replays_from_mounted_window_to_ap
 @pytest.mark.asyncio
 async def test_rag_search_console_launch_escapes_result_markup_before_staging(tmp_path):
     with (
-        patch.dict(search_rag_window.DEPENDENCIES_AVAILABLE, {"embeddings_rag": True}, clear=False),
+        patch.dict(
+            search_rag_window.DEPENDENCIES_AVAILABLE,
+            {"embeddings_rag": True},
+            clear=False,
+        ),
         patch(
             "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
             return_value=tmp_path,
@@ -488,7 +515,10 @@ async def test_rag_search_console_launch_escapes_result_markup_before_staging(tm
             app.app_instance.open_console_for_live_work.assert_called_once()
             call_kwargs = app.app_instance.open_console_for_live_work.call_args.kwargs
             assert call_kwargs["title"] == r"\[red]Retrieved\[/red] &lt;script&gt;"
-            assert call_kwargs["payload"]["target_id"] == r"search-rag:doc-\[red]-&lt;script&gt;"
+            assert (
+                call_kwargs["payload"]["target_id"]
+                == r"search-rag:doc-\[red]-&lt;script&gt;"
+            )
             assert call_kwargs["payload"]["source"] == "notes"
             assert call_kwargs["payload"]["display_summary"] == (
                 r"\[bold]Evidence\[/bold] &lt;script&gt;alert(1)&lt;/script&gt;"
@@ -496,9 +526,15 @@ async def test_rag_search_console_launch_escapes_result_markup_before_staging(tm
 
 
 @pytest.mark.asyncio
-async def test_contract_blocked_rag_search_handoff_explains_recovery_without_staging(tmp_path):
+async def test_contract_blocked_rag_search_handoff_explains_recovery_without_staging(
+    tmp_path,
+):
     with (
-        patch.dict(search_rag_window.DEPENDENCIES_AVAILABLE, {"embeddings_rag": True}, clear=False),
+        patch.dict(
+            search_rag_window.DEPENDENCIES_AVAILABLE,
+            {"embeddings_rag": True},
+            clear=False,
+        ),
         patch(
             "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
             return_value=tmp_path,
@@ -509,7 +545,9 @@ async def test_contract_blocked_rag_search_handoff_explains_recovery_without_sta
         ),
     ):
         app = SearchRAGHandoffSmokeApp()
-        app.app_instance.runtime_policy = SimpleNamespace(state=RuntimeSourceState(active_source="local"))
+        app.app_instance.runtime_policy = SimpleNamespace(
+            state=RuntimeSourceState(active_source="local")
+        )
         app.app_instance.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
 
         async with app.run_test(size=(160, 40)) as pilot:
@@ -540,9 +578,15 @@ async def test_contract_blocked_rag_search_handoff_explains_recovery_without_sta
 
 
 @pytest.mark.asyncio
-async def test_contract_blocked_rag_search_console_launch_explains_recovery_without_staging(tmp_path):
+async def test_contract_blocked_rag_search_console_launch_explains_recovery_without_staging(
+    tmp_path,
+):
     with (
-        patch.dict(search_rag_window.DEPENDENCIES_AVAILABLE, {"embeddings_rag": True}, clear=False),
+        patch.dict(
+            search_rag_window.DEPENDENCIES_AVAILABLE,
+            {"embeddings_rag": True},
+            clear=False,
+        ),
         patch(
             "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
             return_value=tmp_path,
@@ -553,7 +597,9 @@ async def test_contract_blocked_rag_search_console_launch_explains_recovery_with
         ),
     ):
         app = SearchRAGHandoffSmokeApp()
-        app.app_instance.runtime_policy = SimpleNamespace(state=RuntimeSourceState(active_source="local"))
+        app.app_instance.runtime_policy = SimpleNamespace(
+            state=RuntimeSourceState(active_source="local")
+        )
         app.app_instance.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
 
         async with app.run_test(size=(160, 40)) as pilot:
@@ -579,95 +625,6 @@ async def test_contract_blocked_rag_search_console_launch_explains_recovery_with
             app.app_instance.open_chat_with_handoff.assert_not_called()
             message = app.app_instance.notify.call_args.args[0]
             assert "rag.media_embeddings.search.server requires server mode" in message
-            assert "source authority: runtime_policy/server" in message.lower()
-            assert "ux interop: active source local" in message.lower()
-            assert "switch source to server" in message.lower()
-
-
-class WebSearchResultHandoffSmokeApp(App[None]):
-    def __init__(self) -> None:
-        super().__init__()
-        self.app_instance = SimpleNamespace(
-            notify=Mock(),
-            api_endpoint="test-endpoint",
-            search_active_sub_tab=None,
-            get_authoritative_runtime_source=Mock(return_value="local"),
-            open_chat_with_handoff=Mock(),
-        )
-        self.window = SearchWindow(self.app_instance)
-
-    def compose(self) -> ComposeResult:
-        yield self.window
-
-
-@pytest.mark.asyncio
-async def test_valid_web_search_handoff_replays_from_mounted_window_to_app_seam(monkeypatch):
-    monkeypatch.setattr("tldw_chatbook.UI.SearchWindow.WEB_SEARCH_AVAILABLE", True)
-    app = WebSearchResultHandoffSmokeApp()
-
-    async with app.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.1)
-        app.window.web_search_results = [
-            {
-                "title": "Article",
-                "content": "Snippet body",
-                "source": "web",
-                "metadata": {"url": "https://example.com", "displayUrl": "example.com"},
-            }
-        ]
-        await app.window._render_web_search_result_cards()
-        await pilot.pause(0.05)
-
-        button = app.window.query_one("#use-in-chat-0", Button)
-        button.press()
-        await pilot.pause(0.05)
-
-        payload = _assert_single_handoff_payload(app.app_instance.open_chat_with_handoff)
-        assert payload.source == "search-web"
-        assert payload.item_type == "web-result"
-        assert payload.metadata["url"] == "https://example.com"
-        assert payload.body == "Snippet body"
-
-
-@pytest.mark.asyncio
-async def test_contract_blocked_web_search_handoff_explains_recovery_without_staging(monkeypatch, tmp_path):
-    with (
-        patch.dict(search_rag_window.DEPENDENCIES_AVAILABLE, {"embeddings_rag": True}, clear=False),
-        patch(
-            "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
-            return_value=tmp_path,
-        ),
-        patch(
-            "tldw_chatbook.UI.Views.RAGSearch.saved_searches_panel.get_user_data_dir",
-            return_value=tmp_path,
-        ),
-    ):
-        monkeypatch.setattr("tldw_chatbook.UI.SearchWindow.WEB_SEARCH_AVAILABLE", True)
-        app = WebSearchResultHandoffSmokeApp()
-        app.app_instance.get_authoritative_runtime_source = Mock(return_value="server")
-        app.app_instance.runtime_policy = SimpleNamespace(state=RuntimeSourceState(active_source="local"))
-        app.app_instance.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
-
-        async with app.run_test(size=(160, 40)) as pilot:
-            await pilot.pause(0.1)
-            app.window.web_search_results = [
-                {
-                    "title": "Article",
-                    "content": "Snippet body",
-                    "source": "web",
-                    "metadata": {"url": "https://example.com", "displayUrl": "example.com"},
-                }
-            ]
-            await app.window._render_web_search_result_cards()
-            await pilot.pause(0.05)
-
-            button = app.window.query_one("#use-in-chat-0", Button)
-            button.press()
-            await pilot.pause(0.05)
-
-            app.app_instance.open_chat_with_handoff.assert_not_called()
-            message = app.app_instance.notify.call_args.args[0]
-            assert "research.search.providers.launch.server requires server mode" in message
             assert "source authority: runtime_policy/server" in message.lower()
             assert "ux interop: active source local" in message.lower()
             assert "switch source to server" in message.lower()

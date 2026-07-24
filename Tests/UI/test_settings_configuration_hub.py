@@ -5,11 +5,21 @@ import builtins
 from collections import UserDict
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
+import httpx
 import pytest
 from textual.containers import VerticalScroll
 from textual.events import Key
-from textual.widgets import Button, Input, Select, SelectionList, Static, TextArea
+from textual.widgets import (
+    Button,
+    Collapsible,
+    Input,
+    Select,
+    SelectionList,
+    Static,
+    TextArea,
+)
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -33,9 +43,16 @@ from tldw_chatbook.UI.Screens.settings_config_models import (
     SettingsDraft,
     SettingsValidationResult,
 )
+from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+    SettingsEndpointProbeOutcome,
+    probe_settings_endpoint,
+)
 from tldw_chatbook.ACP_Interop.runtime_session import ACPRuntimeSessionState
 from tldw_chatbook.Chat.console_chat_models import ConsoleWorkspaceContext
-from tldw_chatbook.Home.dashboard_state import HomeDashboardInput, summarize_home_dashboard
+from tldw_chatbook.Home.dashboard_state import (
+    HomeDashboardInput,
+    summarize_home_dashboard,
+)
 from tldw_chatbook.Sync_Interop.sync_promotion_state import SyncPromotionState
 from tldw_chatbook.Sync_Interop.manual_sync_control import (
     ManualSyncPreview,
@@ -63,7 +80,140 @@ DUMMY_REDACTION_SERVER_VALUE = "redaction-fixture-server-value"
 
 
 class StyledSettingsDestinationHarness(DestinationHarness):
-    CSS_PATH = str(Path(__file__).parents[2] / "tldw_chatbook/css/tldw_cli_modular.tcss")
+    CSS_PATH = str(
+        Path(__file__).parents[2] / "tldw_chatbook/css/tldw_cli_modular.tcss"
+    )
+
+
+async def _settle_settings_mount_storm(pilot) -> None:
+    """Deterministically wait out the Settings mount-time refresh.
+
+    Mounting Settings queues the combined ``_refresh_sync_rows`` thread
+    worker (task-290 coalesced the former two-worker storm); its completion
+    applies both row sets in one hop, triggering ONE ``recompose=True``
+    rebuild at a nondeterministic moment shortly after mount. Waiting for
+    worker completion plus a pause makes every later query/click land on
+    the settled DOM.
+    """
+    await pilot.app.workers.wait_for_complete()
+    await pilot.pause()
+
+
+async def _open_settings_category(pilot, selector: str) -> None:
+    """Click a Settings category rail button with the mount storm settled."""
+    await _settle_settings_mount_storm(pilot)
+    try:
+        button = pilot.app.screen.query_one(selector)
+        category_list = pilot.app.screen.query_one("#settings-category-list")
+        category_list.scroll_to_widget(button, animate=False)
+        await pilot.pause()
+    except Exception:
+        pass
+    await pilot.click(selector)
+    await pilot.pause()
+
+
+def test_settings_category_ids_include_theme_and_splash():
+    assert SettingsCategoryId.THEME.value == "theme"
+    assert SettingsCategoryId.SPLASH_SCREEN.value == "splash_screen"
+
+
+def test_theme_and_splash_appear_in_settings_sidebar():
+    screen = SettingsScreen(_build_test_app())
+    summaries = screen._category_summaries()
+    values = {s.category.value for s in summaries}
+    assert "theme" in values
+    assert "splash_screen" in values
+
+
+def test_self_contained_editor_categories_not_in_guided_mutation():
+    assert SettingsCategoryId.THEME not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
+    assert SettingsCategoryId.SPLASH_SCREEN not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
+    # Internal Prompts is a third self-contained editor (mirrors Theme): it owns
+    # its own persistence via the InternalPromptsPanel Save/Reset buttons and
+    # must never be added to the guided-mutation set.
+    assert SettingsCategoryId.INTERNAL_PROMPTS not in settings_screen_module.GUIDED_SETTINGS_MUTATION_CATEGORIES
+
+
+def test_internal_prompts_appears_in_settings_sidebar_expert_group():
+    screen = SettingsScreen(_build_test_app())
+    summaries = screen._category_summaries()
+    values = {s.category.value for s in summaries}
+    assert "internal-prompts" in values
+
+    groups = dict(screen._category_groups())
+    assert SettingsCategoryId.INTERNAL_PROMPTS in groups["Expert"]
+    assert SettingsCategoryId.ADVANCED_CONFIG in groups["Expert"]
+
+
+def test_settings_category_summaries_cover_every_category_id_exactly_once():
+    """Guards the total sidebar category count.
+
+    Adding Internal Prompts brought the total from 19 to 20 categories. This
+    pins the literal count so the next addition must touch this assertion
+    deliberately, and cross-checks that summaries neither miss nor duplicate
+    an enum member.
+    """
+    screen = SettingsScreen(_build_test_app())
+    summaries = screen._category_summaries()
+    assert len(summaries) == len(list(SettingsCategoryId)) == 20
+    assert {s.category for s in summaries} == set(SettingsCategoryId)
+
+
+def test_inspector_guidance_covers_every_settings_category():
+    """Every non-domain sidebar category must have an explicit guidance entry.
+
+    Regression: THEME and SPLASH_SCREEN were added to the sidebar without
+    guidance entries, so selecting them raised KeyError inside compose and
+    crashed the whole app. The runtime now returns a generic fallback so a
+    missing entry can never crash, which means asserting a truthy return would
+    always pass. This test guards the stronger property instead -- that every
+    category outside DOMAIN_SETTINGS_CATEGORY_IDS is an explicit key in
+    _INSPECTOR_GUIDANCE -- so a new category without real guidance fails CI
+    rather than silently shipping the generic fallback to users.
+    """
+    screen = SettingsScreen(_build_test_app())
+    for category in SettingsCategoryId:
+        guidance = screen._inspector_guidance(category)
+        assert guidance, f"no inspector guidance for {category!r}"
+        if category in settings_screen_module.DOMAIN_SETTINGS_CATEGORY_IDS:
+            continue
+        assert category in settings_screen_module._INSPECTOR_GUIDANCE, (
+            f"{category!r} has no explicit guidance entry and would fall back "
+            f"to generic text; add it to _INSPECTOR_GUIDANCE"
+        )
+
+
+@pytest.mark.asyncio
+async def test_theme_category_opens_without_crashing():
+    """Selecting the Theme category mounts its editor without crashing compose.
+
+    The editor widget mounting is the regression signal: the original bug
+    raised KeyError inside compose, so a crash would leave the editor unmounted
+    and time this wait out. Editor content is verified in
+    test_settings_theme_editor.py.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-theme")
+        screen = _active_destination_screen(host)
+        # Poll rather than a fixed settle: selecting a category triggers a
+        # recompose whose mount lands at a load-dependent moment.
+        await _wait_for_selector(screen, pilot, "#settings-theme-editor", timeout=8.0)
+
+
+@pytest.mark.asyncio
+async def test_splash_screen_category_opens_without_crashing():
+    """Selecting the Splash Screen category mounts its viewer without crashing compose."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-splash_screen")
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(
+            screen, pilot, "#settings-splash-screen-viewer", timeout=8.0
+        )
 
 
 class FakeSettingsModelDiscoveryScope:
@@ -125,14 +275,18 @@ def _app(
     )
 
 
-async def _wait_for_settings_text(screen, pilot, expected_text: str, *, timeout: float = 5.0) -> None:
+async def _wait_for_settings_text(
+    screen, pilot, expected_text: str, *, timeout: float = 5.0
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if expected_text in _visible_text(screen):
             await pilot.pause()
             return
         await pilot.pause(0.01)
-    raise AssertionError(f"Timed out waiting for {expected_text!r}. Visible text: {_visible_text(screen)}")
+    raise AssertionError(
+        f"Timed out waiting for {expected_text!r}. Visible text: {_visible_text(screen)}"
+    )
 
 
 async def _select_settings_category(
@@ -144,9 +298,19 @@ async def _select_settings_category(
     selector: str | None = None,
     timeout: float = 4.0,
 ) -> None:
-    category_value = category.value if isinstance(category, SettingsCategoryId) else str(category)
+    category_value = (
+        category.value if isinstance(category, SettingsCategoryId) else str(category)
+    )
     button_selector = f"#settings-category-{category_value}"
     await _wait_for_selector(screen, pilot, button_selector, timeout=timeout)
+    try:
+        category_list = screen.query_one("#settings-category-list")
+        category_list.scroll_to_widget(
+            screen.query_one(button_selector), animate=False, immediate=True
+        )
+        await pilot.pause()
+    except Exception:
+        pass
     await pilot.click(button_selector)
 
     deadline = time.monotonic() + timeout
@@ -180,7 +344,11 @@ async def _wait_for_settings_input_value(
                 await pilot.pause()
                 return
         await pilot.pause(0.01)
-    actual = screen.query_one(selector, Input).value if screen.query(selector) else "<missing>"
+    actual = (
+        screen.query_one(selector, Input).value
+        if screen.query(selector)
+        else "<missing>"
+    )
     raise AssertionError(
         f"Timed out waiting for {selector} value {expected_value!r}; actual={actual!r}"
     )
@@ -201,7 +369,9 @@ async def _click_scrolled_settings_button(screen, pilot, selector: str) -> Butto
     return button
 
 
-async def _wait_for_settings_search_focus(screen, pilot, *, timeout: float = 2.0) -> None:
+async def _wait_for_settings_search_focus(
+    screen, pilot, *, timeout: float = 2.0
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         search = screen.query_one("#settings-category-search", Input)
@@ -403,7 +573,7 @@ def test_adapter_accepts_table_headers_before_scalar_fallback():
 
 def test_adapter_validate_config_file_rejects_corrupt_toml(tmp_path):
     config_path = tmp_path / "config.toml"
-    config_path.write_text("[chat_defaults\nprovider = \"OpenAI\"\n", encoding="utf-8")
+    config_path.write_text('[chat_defaults\nprovider = "OpenAI"\n', encoding="utf-8")
 
     result = SettingsConfigAdapter().validate_config_file(config_path)
 
@@ -505,8 +675,12 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
     assert set(records_by_category) == {
         summary.category for summary in screen._category_summaries()
     }
-    assert all(record.__class__.__name__ == "SettingsOwnershipRecord" for record in records)
-    assert records_by_category[SettingsCategoryId.PROVIDERS_MODELS].owns_config_sections == (
+    assert all(
+        record.__class__.__name__ == "SettingsOwnershipRecord" for record in records
+    )
+    assert records_by_category[
+        SettingsCategoryId.PROVIDERS_MODELS
+    ].owns_config_sections == (
         "chat_defaults.provider",
         "chat_defaults.model",
         "api_settings.<provider>.endpoint",
@@ -514,7 +688,9 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
         "api_settings.<provider>.api_key_env_var",
         "api_settings.<provider>.model_defaults.<model>",
     )
-    assert records_by_category[SettingsCategoryId.CONSOLE_BEHAVIOR].owns_config_sections == (
+    assert records_by_category[
+        SettingsCategoryId.CONSOLE_BEHAVIOR
+    ].owns_config_sections == (
         "console.collapse_large_pastes",
         "console.paste_collapse_threshold",
         "console.background_effects.*",
@@ -555,21 +731,39 @@ def test_settings_overview_ownership_rows_are_sourced_from_record():
 
 
 def test_settings_server_sync_workspace_source_contracts_are_explicit():
-    contracts = dict(settings_screen_module.SETTINGS_SERVER_SYNC_WORKSPACE_SOURCE_CONTRACTS)
+    contracts = dict(
+        settings_screen_module.SETTINGS_SERVER_SYNC_WORKSPACE_SOURCE_CONTRACTS
+    )
 
     assert "runtime_policy.types.RuntimeSourceState" in contracts["Server profile"]
-    assert "runtime_policy.server_context.RuntimeServerContextProvider" in contracts["Server profile"]
-    assert "Sync_Interop.sync_scope_service.SyncScopeService" in contracts["Sync safety"]
-    assert "Chat.console_chat_store.ConsoleChatStore.workspace_context" in contracts["Workspace context"]
-    assert "Workspaces.display_state.LIBRARY_WORKSPACE_VISIBILITY_COPY" in contracts["Workspace context"]
+    assert (
+        "runtime_policy.server_context.RuntimeServerContextProvider"
+        in contracts["Server profile"]
+    )
+    assert (
+        "Sync_Interop.sync_scope_service.SyncScopeService" in contracts["Sync safety"]
+    )
+    assert (
+        "Chat.console_chat_store.ConsoleChatStore.workspace_context"
+        in contracts["Workspace context"]
+    )
+    assert (
+        "Workspaces.display_state.LIBRARY_WORKSPACE_VISIBILITY_COPY"
+        in contracts["Workspace context"]
+    )
     assert "Workspaces.models.WorkspaceTransferPolicy" in contracts["Handoff policy"]
-    assert "ACP_Interop.runtime_session.ACPRuntimeSessionState" in contracts["ACP handoff readiness"]
+    assert (
+        "ACP_Interop.runtime_session.ACPRuntimeSessionState"
+        in contracts["ACP handoff readiness"]
+    )
 
 
 def test_settings_domain_category_contracts_are_explicit_about_mutation_scope():
     app = _build_test_app()
     screen = SettingsScreen(app)
-    contracts = {contract.category: contract for contract in screen._domain_category_contracts()}
+    contracts = {
+        contract.category: contract for contract in screen._domain_category_contracts()
+    }
     expected_categories = {
         SettingsCategoryId.LIBRARY_RAG,
         SettingsCategoryId.ARTIFACTS,
@@ -638,7 +832,9 @@ def test_settings_domain_categories_are_grouped_and_have_ownership_records():
         for _group_name, category_ids in screen._category_groups()
         for category in category_ids
     }
-    records = {record.category: record for record in screen._category_ownership_records()}
+    records = {
+        record.category: record for record in screen._category_ownership_records()
+    }
 
     assert domain_categories <= grouped_categories
     assert domain_categories <= set(records)
@@ -646,7 +842,9 @@ def test_settings_domain_categories_are_grouped_and_have_ownership_records():
         record = records[category]
         if category is SettingsCategoryId.LIBRARY_RAG:
             assert record.writes_allowed
-            assert "AppRAGSearchConfig.rag.search" in " ".join(record.owns_config_sections)
+            assert "AppRAGSearchConfig.rag.search" in " ".join(
+                record.owns_config_sections
+            )
         else:
             assert not record.writes_allowed
             assert record.read_only_reason
@@ -686,7 +884,7 @@ async def test_settings_library_rag_renders_guided_defaults_and_validates(monkey
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(190, 55)) as pilot:
-        await pilot.click("#settings-category-library-rag")
+        await _open_settings_category(pilot, "#settings-category-library-rag")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -699,27 +897,41 @@ async def test_settings_library_rag_renders_guided_defaults_and_validates(monkey
         assert "Config keys" in text
         assert "10 editable defaults under AppRAGSearchConfig" in text
         assert "AppRAGSearchConfig.rag.search.default_search_mode" not in text
-        assert screen.query_one("#settings-library-rag-search-mode", Select).value == "semantic"
-        assert screen.query_one("#settings-library-rag-default-top-k", Input).value == "10"
-        assert screen.query_one("#settings-library-rag-snippet-max-chars", Input).value == "240"
+        assert (
+            screen.query_one("#settings-library-rag-search-mode", Select).value
+            == "semantic"
+        )
+        assert (
+            screen.query_one("#settings-library-rag-default-top-k", Input).value == "10"
+        )
+        assert (
+            screen.query_one("#settings-library-rag-snippet-max-chars", Input).value
+            == "240"
+        )
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert screen.query_one("#settings-revert-category", Button).disabled is True
 
         top_k = screen.query_one("#settings-library-rag-default-top-k", Input)
         top_k.value = "12"
-        screen.handle_library_rag_default_top_k_changed(Input.Changed(top_k, top_k.value))
+        screen.handle_library_rag_default_top_k_changed(
+            Input.Changed(top_k, top_k.value)
+        )
         assert screen.query_one("#settings-save-category", Button).disabled is False
         assert "Unsaved" in _visible_text(screen)
 
         snippet = screen.query_one("#settings-library-rag-snippet-max-chars", Input)
         snippet.value = "20"
-        screen.handle_library_rag_snippet_max_chars_changed(Input.Changed(snippet, snippet.value))
+        screen.handle_library_rag_snippet_max_chars_changed(
+            Input.Changed(snippet, snippet.value)
+        )
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert "Snippet characters" in _visible_text(screen)
         assert snippet.has_class("settings-invalid-input")
 
         snippet.value = "360"
-        screen.handle_library_rag_snippet_max_chars_changed(Input.Changed(snippet, snippet.value))
+        screen.handle_library_rag_snippet_max_chars_changed(
+            Input.Changed(snippet, snippet.value)
+        )
         assert not snippet.has_class("settings-invalid-input")
         await pilot.click("#settings-save-category")
         await _wait_for_settings_text(screen, pilot, "Library/RAG defaults saved.")
@@ -744,13 +956,19 @@ async def test_settings_library_rag_sync_clamps_invalid_select_values():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(190, 55)) as pilot:
-        await pilot.click("#settings-category-library-rag")
+        await _open_settings_category(pilot, "#settings-category-library-rag")
         screen = _active_destination_screen(host)
 
         screen._sync_library_rag_widgets()
 
-        assert screen.query_one("#settings-library-rag-search-mode", Select).value == "semantic"
-        assert screen.query_one("#settings-library-rag-citation-style", Select).value == "inline"
+        assert (
+            screen.query_one("#settings-library-rag-search-mode", Select).value
+            == "semantic"
+        )
+        assert (
+            screen.query_one("#settings-library-rag-citation-style", Select).value
+            == "inline"
+        )
 
 
 def test_settings_library_rag_save_uses_exclusive_thread_worker():
@@ -759,8 +977,7 @@ def test_settings_library_rag_save_uses_exclusive_thread_worker():
 
     assert getattr(worker, "__wrapped__", None) is not None
     assert (
-        "@work(exclusive=True, thread=True)\n"
-        "    def _settings_save_library_rag_worker"
+        "@work(exclusive=True, thread=True)\n    def _settings_save_library_rag_worker"
     ) in source
 
 
@@ -788,25 +1005,45 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(190, 55)) as pilot:
-        await pilot.click("#settings-category-appearance")
+        await _open_settings_category(pilot, "#settings-category-appearance")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
         assert "Appearance" in text
         assert "Global visual defaults" in text
-        assert "Customize owns full theme editing" in text
+        assert "Theme owns: full theme editing" in text
         assert "Save targets: general, web_server, and appearance" in text
-        assert "Open Customize" in text
-        assert screen.query_one("#settings-appearance-theme", Select).value == "textual-dark"
-        assert screen.query_one("#settings-appearance-palette-theme-limit", Input).value == "1"
+        assert "Open Theme" in text
+        assert (
+            screen.query_one("#settings-appearance-theme", Select).value
+            == "textual-dark"
+        )
+        assert (
+            screen.query_one("#settings-appearance-palette-theme-limit", Input).value
+            == "1"
+        )
         assert screen.query_one("#settings-appearance-font-size", Input).value == "12"
-        assert screen.query_one("#settings-appearance-density", Select).value == "normal"
-        assert str(screen.query_one("#settings-appearance-animations-enabled", Button).label) == "Enabled"
-        assert str(screen.query_one("#settings-appearance-smooth-scrolling", Button).label) == "Enabled"
+        assert (
+            screen.query_one("#settings-appearance-density", Select).value == "normal"
+        )
+        assert (
+            str(
+                screen.query_one(
+                    "#settings-appearance-animations-enabled", Button
+                ).label
+            )
+            == "Enabled"
+        )
+        assert (
+            str(screen.query_one("#settings-appearance-smooth-scrolling", Button).label)
+            == "Enabled"
+        )
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert screen.query_one("#settings-revert-category", Button).disabled is True
 
-        palette_limit = screen.query_one("#settings-appearance-palette-theme-limit", Input)
+        palette_limit = screen.query_one(
+            "#settings-appearance-palette-theme-limit", Input
+        )
         palette_limit.value = "5"
         screen.handle_appearance_palette_theme_limit_changed(
             Input.Changed(palette_limit, palette_limit.value)
@@ -817,14 +1054,18 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(monkeyp
 
         font_size = screen.query_one("#settings-appearance-font-size", Input)
         font_size.value = "99"
-        screen.handle_appearance_font_size_changed(Input.Changed(font_size, font_size.value))
+        screen.handle_appearance_font_size_changed(
+            Input.Changed(font_size, font_size.value)
+        )
 
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert "Font size" in _visible_text(screen)
         assert font_size.has_class("settings-invalid-input")
 
         font_size.value = "14"
-        screen.handle_appearance_font_size_changed(Input.Changed(font_size, font_size.value))
+        screen.handle_appearance_font_size_changed(
+            Input.Changed(font_size, font_size.value)
+        )
         assert not font_size.has_class("settings-invalid-input")
 
         await pilot.click("#settings-save-category")
@@ -845,11 +1086,13 @@ async def test_settings_appearance_revert_restores_loaded_values():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-appearance")
+        await _open_settings_category(pilot, "#settings-category-appearance")
         screen = _active_destination_screen(host)
         font_size = screen.query_one("#settings-appearance-font-size", Input)
         font_size.value = "16"
-        screen.handle_appearance_font_size_changed(Input.Changed(font_size, font_size.value))
+        screen.handle_appearance_font_size_changed(
+            Input.Changed(font_size, font_size.value)
+        )
 
         assert "Unsaved" in _visible_text(screen)
 
@@ -877,7 +1120,7 @@ async def test_settings_appearance_preview_updates_runtime_without_saving(monkey
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-appearance")
+        await _open_settings_category(pilot, "#settings-category-appearance")
         screen = _active_destination_screen(host)
         theme = screen.query_one("#settings-appearance-theme", Select)
         theme.value = "textual-light"
@@ -899,9 +1142,11 @@ async def test_settings_appearance_focused_input_keeps_typed_text_visible():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-appearance")
+        await _open_settings_category(pilot, "#settings-category-appearance")
         screen = _active_destination_screen(host)
-        palette_limit = screen.query_one("#settings-appearance-palette-theme-limit", Input)
+        palette_limit = screen.query_one(
+            "#settings-appearance-palette-theme-limit", Input
+        )
         palette_limit.focus()
 
         await pilot.press("2")
@@ -917,8 +1162,7 @@ def test_settings_appearance_save_uses_exclusive_thread_worker():
 
     assert getattr(worker, "__wrapped__", None) is not None
     assert (
-        "@work(exclusive=True, thread=True)\n"
-        "    def _settings_save_appearance_worker"
+        "@work(exclusive=True, thread=True)\n    def _settings_save_appearance_worker"
     ) in source
 
 
@@ -1028,7 +1272,9 @@ def test_settings_storage_defaults_load_validate_and_build_save_payload(tmp_path
     validation = validate_storage_defaults(directory_as_database)
 
     assert validation.valid is False
-    assert "Media DB must be a database file path, not a directory." in validation.message
+    assert (
+        "Media DB must be a database file path, not a directory." in validation.message
+    )
 
 
 @pytest.mark.asyncio
@@ -1049,15 +1295,19 @@ async def test_settings_storage_renders_guided_defaults_and_validates(tmp_path):
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(195, 55)) as pilot:
-        await pilot.click("#settings-category-storage")
+        await _open_settings_category(pilot, "#settings-category-storage")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
         assert "Storage defaults" in text
         assert "Changes apply on next launch" in text
         assert "no files are moved or reconnected" in text
-        assert screen.query_one("#settings-storage-user-db-base-dir", Input).value == str(tmp_path)
-        assert screen.query_one("#settings-storage-media-db-path", Input).value.endswith("media.db")
+        assert screen.query_one(
+            "#settings-storage-user-db-base-dir", Input
+        ).value == str(tmp_path)
+        assert screen.query_one(
+            "#settings-storage-media-db-path", Input
+        ).value.endswith("media.db")
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert screen.query_one("#settings-revert-category", Button).disabled is True
 
@@ -1066,7 +1316,9 @@ async def test_settings_storage_renders_guided_defaults_and_validates(tmp_path):
         screen.handle_storage_media_db_path_changed(Input.Changed(media, media.value))
 
         assert screen.query_one("#settings-save-category", Button).disabled is True
-        assert "Media DB cannot contain parent-directory traversal." in _visible_text(screen)
+        assert "Media DB cannot contain parent-directory traversal." in _visible_text(
+            screen
+        )
         assert media.has_class("settings-invalid-input")
 
         media.value = str(db_dir / "media-next.db")
@@ -1095,7 +1347,7 @@ async def test_settings_storage_surfaces_check_action_before_long_path_editor(tm
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-storage")
+        await _open_settings_category(pilot, "#settings-category-storage")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -1129,7 +1381,7 @@ async def test_settings_storage_save_and_revert_defaults(monkeypatch, tmp_path):
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(195, 55)) as pilot:
-        await pilot.click("#settings-category-storage")
+        await _open_settings_category(pilot, "#settings-category-storage")
         screen = _active_destination_screen(host)
         workspaces = screen.query_one("#settings-storage-workspaces-db-path", Input)
         workspaces.value = str(db_dir / "workspaces-next.db")
@@ -1141,20 +1393,28 @@ async def test_settings_storage_save_and_revert_defaults(monkeypatch, tmp_path):
         await _wait_for_settings_text(screen, pilot, "Storage defaults saved.")
 
         assert saved
-        assert saved[-1]["database"]["workspaces_db_path"].endswith("workspaces-next.db")
-        assert app.app_config["database"]["workspaces_db_path"].endswith("workspaces-next.db")
+        assert saved[-1]["database"]["workspaces_db_path"].endswith(
+            "workspaces-next.db"
+        )
+        assert app.app_config["database"]["workspaces_db_path"].endswith(
+            "workspaces-next.db"
+        )
         assert "Restart Chatbook" in _visible_text(screen)
 
         prompts = screen.query_one("#settings-storage-prompts-db-path", Input)
         prompts.value = str(db_dir / "prompts-next.db")
-        screen.handle_storage_prompts_db_path_changed(Input.Changed(prompts, prompts.value))
+        screen.handle_storage_prompts_db_path_changed(
+            Input.Changed(prompts, prompts.value)
+        )
 
         assert "Unsaved" in _visible_text(screen)
 
         screen.action_settings_revert_category()
 
         assert prompts.value.endswith("prompts.db")
-        assert "Storage defaults reverted to last loaded values." in _visible_text(screen)
+        assert "Storage defaults reverted to last loaded values." in _visible_text(
+            screen
+        )
 
 
 def test_settings_storage_save_uses_exclusive_thread_worker():
@@ -1163,8 +1423,7 @@ def test_settings_storage_save_uses_exclusive_thread_worker():
 
     assert getattr(worker, "__wrapped__", None) is not None
     assert (
-        "@work(exclusive=True, thread=True)\n"
-        "    def _settings_save_storage_worker"
+        "@work(exclusive=True, thread=True)\n    def _settings_save_storage_worker"
     ) in source
 
 
@@ -1201,7 +1460,9 @@ async def test_settings_library_rag_save_preserves_mapping_like_app_config(monke
         )
         top_k = screen.query_one("#settings-library-rag-default-top-k", Input)
         top_k.value = "12"
-        screen.handle_library_rag_default_top_k_changed(Input.Changed(top_k, top_k.value))
+        screen.handle_library_rag_default_top_k_changed(
+            Input.Changed(top_k, top_k.value)
+        )
 
         await pilot.click("#settings-save-category")
         await _wait_for_settings_text(screen, pilot, "Library/RAG defaults saved.")
@@ -1321,7 +1582,7 @@ async def test_settings_overview_detail_uses_cached_server_sync_rows(monkeypatch
 
     monkeypatch.setattr(
         SettingsScreen,
-        "_refresh_server_sync_workspace_handoff_rows",
+        "_refresh_sync_rows",
         lambda _self: None,
         raising=False,
     )
@@ -1334,7 +1595,11 @@ async def test_settings_overview_detail_uses_cached_server_sync_rows(monkeypatch
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
-    async with host.run_test(size=(180, 50)):
+    async with host.run_test(size=(180, 50)) as pilot:
+        # The combined sync-rows refresh (task-290) is patched to a no-op
+        # above; settle anyway so _visible_text cannot race any other
+        # worker's landing.
+        await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -1349,14 +1614,14 @@ async def test_settings_overview_reselect_refreshes_cached_source_rows(monkeypat
         nonlocal refresh_calls
         refresh_calls += 1
 
-    monkeypatch.setattr(SettingsScreen, "_refresh_server_sync_workspace_handoff_rows", fake_refresh)
+    monkeypatch.setattr(SettingsScreen, "_refresh_sync_rows", fake_refresh)
 
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
-        await pilot.click("#settings-category-overview")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-overview")
 
         assert refresh_calls >= 2
 
@@ -1369,7 +1634,7 @@ async def test_settings_screen_resume_refreshes_cached_source_rows(monkeypatch):
         nonlocal refresh_calls
         refresh_calls += 1
 
-    monkeypatch.setattr(SettingsScreen, "_refresh_server_sync_workspace_handoff_rows", fake_refresh)
+    monkeypatch.setattr(SettingsScreen, "_refresh_sync_rows", fake_refresh)
 
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -1439,7 +1704,10 @@ def test_settings_manual_sync_rows_use_preview_service():
         "credential-fingerprint:test:"
     )
     assert rows["Manual sync status"] == "ready"
-    assert rows["Manual sync preview"] == "Manual Sync preview: 3 pending outgoing changes."
+    assert (
+        rows["Manual sync preview"]
+        == "Manual Sync preview: 3 pending outgoing changes."
+    )
     assert rows["Pending outgoing"] == "notes: 2; chat: 1"
 
 
@@ -1528,9 +1796,15 @@ def test_settings_manual_sync_run_worker_uses_main_event_loop_async_worker():
 
 
 def test_settings_model_discovery_button_handlers_dispatch_workers():
-    assert not inspect.iscoroutinefunction(SettingsScreen.__dict__["handle_discover_provider_models"])
-    assert not inspect.iscoroutinefunction(SettingsScreen.__dict__["handle_save_discovered_provider_models"])
-    assert not inspect.iscoroutinefunction(SettingsScreen.__dict__["handle_clear_discovered_provider_models"])
+    assert not inspect.iscoroutinefunction(
+        SettingsScreen.__dict__["handle_discover_provider_models"]
+    )
+    assert not inspect.iscoroutinefunction(
+        SettingsScreen.__dict__["handle_save_discovered_provider_models"]
+    )
+    assert not inspect.iscoroutinefunction(
+        SettingsScreen.__dict__["handle_clear_discovered_provider_models"]
+    )
 
     for worker_name in (
         "_discover_provider_models_worker",
@@ -1614,7 +1888,9 @@ async def test_settings_overview_renders_server_sync_workspace_handoff_contracts
 
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_settings_text(screen, pilot, "Active server profile: Main Server")
+        await _wait_for_settings_text(
+            screen, pilot, "Active server profile: Main Server"
+        )
         text = _visible_text(screen)
 
         assert "Server, sync, workspace, and handoff" in text
@@ -1622,9 +1898,14 @@ async def test_settings_overview_renders_server_sync_workspace_handoff_contracts
         assert "Local/server authority: server; Settings is read-only" in text
         assert "Collections: Sync: dry-run only" in text
         assert "Workspaces: Sync: dry-run only" in text
-        assert "Workspace: Research (research); Authority: local-only; Sync: not-configured" in text
+        assert (
+            "Workspace: Research (research); Authority: local-only; Sync: not-configured"
+            in text
+        )
         assert LIBRARY_WORKSPACE_VISIBILITY_COPY in text
-        assert "ACP handoff readiness: ACP session ready: Ticket triage (running)" in text
+        assert (
+            "ACP handoff readiness: ACP session ready: Ticket triage (running)" in text
+        )
 
 
 def test_settings_ownership_record_falls_back_without_crashing():
@@ -1644,15 +1925,20 @@ async def test_settings_overview_renders_ownership_contract_boundaries():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
-    async with host.run_test(size=(180, 50)):
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
-        assert "Settings owns persisted defaults and validation" in text
-        assert "Console owns live chat/run state" in text
-        assert "MCP owns server and tool management" in text
-        assert "ACP owns runtime/session setup" in text
-        assert "Sync and workspace handoff defaults are read-only until source contracts exist" in text
+        assert "Settings: edits saved defaults; changes apply after you save" in text
+        assert "Console: live chat and run controls stay on the Console screen" in text
+        assert "MCP: tool servers are managed on the MCP screen" in text
+        assert "ACP: agent runtime and sessions are managed on the ACP screen" in text
+        assert "Sync & workspaces: status shown here is read-only" in text
+        # task-181: internal architecture/ownership phrasing must not leak.
+        assert "Settings owns persisted defaults and validation" not in text
+        assert "MCP boundary" not in text
+        assert "until source contracts exist" not in text
 
 
 @pytest.mark.asyncio
@@ -1661,11 +1947,14 @@ async def test_settings_provider_inspector_excludes_console_sampling_ownership()
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
-        assert "Affected config: provider, model, endpoint, and credential source defaults" in text
+        assert (
+            "Affected config: provider, model, endpoint, and credential source defaults"
+            in text
+        )
         assert "Sampling and transport defaults are routed to Console Defaults" in text
         assert "streaming, and temperature" not in text
 
@@ -1677,14 +1966,193 @@ async def test_settings_provider_category_lists_console_supported_catalog():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
         assert "Provider catalog" in text
-        for provider in ("openai", "anthropic", "custom", "custom_2", "llama_cpp", "local_vllm"):
-            assert provider in text
-        assert "Choose a catalog provider, or use Manual / custom provider for aliases." in text
+        # task-180: the catalog line shows grouped human display names, never
+        # a raw config-key dump.
+        for display_name in (
+            "OpenAI",
+            "Anthropic",
+            "Custom OpenAI-compatible",
+            "Custom OpenAI-compatible #2",
+            "llama.cpp",
+            "vLLM (legacy alias)",
+        ):
+            assert display_name in text
+        catalog_line = str(
+            screen.query_one("#settings-provider-catalog", Static).renderable
+        )
+        assert "Cloud:" in catalog_line
+        assert "Local:" in catalog_line
+        assert "Custom & legacy aliases:" in catalog_line
+        assert "local_vllm" not in catalog_line
+        assert "custom_2" not in catalog_line
+        assert (
+            "Choose a catalog provider (type in the open list to jump to one), "
+            "or use Manual / custom provider for other keys." in text
+        )
+
+
+def test_settings_provider_select_options_use_display_names_and_grouping():
+    """task-180: labels are human names, grouped Cloud -> Local -> legacy."""
+    screen = SettingsScreen(_app(defaults={"provider": "openai", "model": "gpt-4.1"}))
+
+    options = screen._provider_select_options()
+    labels = [label for label, _value in options]
+    values = [value for _label, value in options]
+
+    assert labels[-1] == settings_screen_module.PROVIDER_MANUAL_SELECT_LABEL
+    assert values[-1] == settings_screen_module.PROVIDER_MANUAL_SELECT_VALUE
+
+    for label, value in options[:-1]:
+        assert label != value, f"raw key rendered as display name: {value}"
+        assert f"({value})" not in label, f"raw-key parenthetical in label: {label}"
+
+    # Grouped ordering: Cloud first, then Local, then Custom & legacy aliases.
+    assert labels.index("OpenAI") < labels.index("llama.cpp")
+    assert labels.index("Anthropic") < labels.index("Ollama")
+    assert labels.index("llama.cpp") < labels.index("llama.cpp (legacy alias)")
+    assert labels.index("Ollama") < labels.index("Ollama (legacy alias)")
+    assert labels.index("Mistral AI") < labels.index("Mistral AI (legacy alias)")
+    assert labels.index("vLLM") < labels.index("vLLM (legacy alias)")
+    # Every catalog key stays selectable for config compatibility.
+    assert set(values[:-1]) == {
+        entry.readiness_key for entry in screen._provider_catalog_entries()
+    }
+
+
+def test_settings_provider_display_names_cover_every_catalog_key():
+    """task-180: no catalog entry falls back to a raw or title-cased key."""
+    screen = SettingsScreen(_app(defaults={"provider": "openai", "model": "gpt-4.1"}))
+
+    for entry in screen._provider_catalog_entries():
+        assert entry.readiness_key in settings_screen_module.PROVIDER_DISPLAY_NAMES, (
+            f"missing display name for provider key: {entry.readiness_key}"
+        )
+
+
+def test_settings_provider_catalog_summary_groups_display_names():
+    screen = SettingsScreen(_app(defaults={"provider": "openai", "model": "gpt-4.1"}))
+
+    summary = screen._provider_catalog_summary()
+
+    assert summary.startswith("Provider catalog")
+    assert summary.index("Cloud:") < summary.index("Local:")
+    assert summary.index("Local:") < summary.index("Custom & legacy aliases:")
+    assert "Mistral AI" in summary
+    for raw_key in ("local_llamacpp", "local_ollama", "local_vllm", "custom_2", "zai"):
+        assert raw_key not in summary
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_test_toast_states_failure_reason(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        toasts = []
+        host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+
+        screen.action_settings_test_category(allow_text_entry_focus=True)
+
+        assert toasts, "provider test produced no toast"
+        message, kwargs = toasts[-1]
+        assert message.startswith("Provider test failed:")
+        assert "Missing API key" in message
+        assert kwargs.get("severity") == "warning"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_test_toast_states_success():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "Ollama", "model": "llama3"}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        toasts = []
+        host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+
+        screen.action_settings_test_category(allow_text_entry_focus=True)
+
+        assert toasts, "provider test produced no toast"
+        message, kwargs = toasts[-1]
+        assert message == "Provider test passed: Ollama is ready; model llama3."
+        assert kwargs.get("severity") == "information"
+
+
+@pytest.mark.asyncio
+async def test_settings_inspector_has_no_write_blocked_contradiction():
+    """task-181: no panel claims writes are both allowed and blocked."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Writes allowed: Yes" in text
+        assert "Writes remain blocked" not in text
+        assert "Mutation replay" not in text
+        assert (
+            "Saves apply to your local config file. Nothing is sent to a server "
+            "unless you run Manual sync yourself." in text
+        )
+
+
+@pytest.mark.asyncio
+async def test_settings_overview_leads_with_readiness_before_manual_sync():
+    """task-181: Overview starts with user-relevant readiness, not Manual Sync."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        card = screen.query_one("#settings-overview-card")
+        statics = [str(widget.renderable) for widget in card.query(Static)]
+        card_text = " ".join(statics)
+
+        def _first_index(fragment: str) -> int:
+            for index, static_text in enumerate(statics):
+                if fragment in static_text:
+                    return index
+            raise AssertionError(f"{fragment!r} not found in overview card: {statics}")
+
+        assert "Manual Sync v2" not in card_text
+        assert _first_index("Provider readiness") < _first_index("Manual sync")
+        assert _first_index("Config path") < _first_index("Manual sync")
+        assert _first_index("Privacy") < _first_index("Manual sync")
+        assert _first_index("Manual sync") < _first_index("Where changes happen")
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_api_key_focus_style_has_no_underline():
+    """task-185 in passing: focused inputs must not underline placeholder copy."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        api_key_input = screen.query_one("#settings-provider-api-key", Input)
+        api_key_input.focus()
+        await pilot.pause()
+
+        assert api_key_input.has_focus
+        text_style = api_key_input.styles.text_style
+        assert text_style is not None
+        assert "underline" not in str(text_style)
 
 
 @pytest.mark.asyncio
@@ -1694,7 +2162,7 @@ async def test_settings_provider_model_defaults_appear_before_reference_copy():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         card = screen.query_one("#settings-providers-models-card")
         title = card.query_one("#settings-selected-model-defaults-title", Static)
@@ -1708,7 +2176,320 @@ async def test_settings_provider_model_defaults_appear_before_reference_copy():
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_text_inputs_do_not_trigger_footer_shortcuts(monkeypatch):
+async def test_settings_provider_connect_block_precedes_collapsed_generation_defaults():
+    """task-189: Connect (provider/model/endpoint/credentials/test) leads the
+    category; sampling lives in a collapsed Generation defaults disclosure."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        card = screen.query_one("#settings-providers-models-card")
+        widgets = list(card.query("*"))
+        disclosure = card.query_one("#settings-generation-defaults", Collapsible)
+        disclosure_index = widgets.index(disclosure)
+        connect_index = widgets.index(
+            card.query_one("#settings-provider-connect-title")
+        )
+
+        assert disclosure.collapsed is True
+        assert str(disclosure.title) == "Generation defaults"
+
+        for selector in (
+            "#settings-provider-value",
+            "#settings-model-value",
+            "#settings-provider-endpoint-value",
+            "#settings-provider-credential-status",
+            "#settings-provider-api-key",
+            "#settings-provider-api-key-clear",
+            "#settings-provider-credential-env-var",
+            "#settings-provider-readiness",
+            "#settings-test-provider",
+        ):
+            index = widgets.index(card.query_one(selector))
+            assert connect_index < index < disclosure_index, selector
+
+        for selector in (
+            "#settings-selected-model-defaults-title",
+            "#settings-model-profile-temperature",
+            "#settings-model-profile-reasoning-effort",
+            "#settings-model-profile-streaming",
+            "#settings-provider-generation-support",
+        ):
+            field = card.query_one(selector)
+            assert disclosure in field.ancestors, selector
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_unavailable_fields_render_single_summary_line():
+    """task-189: gated fields collapse to one summary line instead of per-row
+    'Unavailable for <provider>' placeholders."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        summary = screen.query_one("#settings-provider-generation-support", Static)
+        assert (
+            str(summary.renderable)
+            == "Reasoning/Thinking controls: unavailable for llama.cpp."
+        )
+        assert not summary.has_class("settings-gated-profile-hidden")
+        for row_id in (
+            "#settings-model-profile-reasoning-effort-row",
+            "#settings-model-profile-reasoning-summary-row",
+            "#settings-model-profile-verbosity-row",
+            "#settings-model-profile-thinking-effort-row",
+            "#settings-model-profile-thinking-budget-tokens-row",
+        ):
+            assert screen.query_one(row_id).has_class(
+                "settings-gated-profile-hidden"
+            ), row_id
+        assert "Unavailable for" not in _visible_text(screen)
+
+        # Dynamic provider sync must be idempotent and re-show supported rows.
+        screen._sync_provider_model_profile_widgets("openai", "gpt-4.1")
+        await pilot.pause()
+
+        assert str(summary.renderable) == "Thinking controls: unavailable for OpenAI."
+        assert not screen.query_one(
+            "#settings-model-profile-reasoning-effort-row"
+        ).has_class("settings-gated-profile-hidden")
+        assert screen.query_one(
+            "#settings-model-profile-thinking-effort-row"
+        ).has_class("settings-gated-profile-hidden")
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_test_toast_folds_in_reachable_endpoint_probe(
+    monkeypatch,
+):
+    """task-191: URL-based providers get a live probe folded into the toast."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "Ollama", "model": "llama3"}
+    app.app_config["api_settings"] = {"ollama": {"api_url": "http://127.0.0.1:11434"}}
+    probe_calls = []
+
+    async def fake_probe(base_url, **kwargs):
+        probe_calls.append(base_url)
+        return SettingsEndpointProbeOutcome(
+            reachable=True,
+            summary="reachable (3 models)",
+            model_count=3,
+        )
+
+    monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        toasts = []
+        host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+
+        screen.action_settings_test_category(allow_text_entry_focus=True)
+
+        deadline = time.monotonic() + 4.0
+        while time.monotonic() < deadline and not toasts:
+            await pilot.pause(0.01)
+
+        assert probe_calls == ["http://127.0.0.1:11434"]
+        message, kwargs = toasts[-1]
+        assert message == (
+            "Provider test passed: Ollama is ready; model llama3; "
+            "endpoint reachable (3 models)."
+        )
+        assert kwargs.get("severity") == "information"
+        assert "endpoint reachable (3 models)" in screen._provider_test_result
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_test_toast_reports_unreachable_endpoint(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "Ollama", "model": "llama3"}
+    app.app_config["api_settings"] = {"ollama": {"api_url": "http://127.0.0.1:11434"}}
+
+    async def fake_probe(base_url, **kwargs):
+        return SettingsEndpointProbeOutcome(
+            reachable=False,
+            summary="unreachable: connection refused",
+        )
+
+    monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        toasts = []
+        host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+
+        screen.action_settings_test_category(allow_text_entry_focus=True)
+
+        deadline = time.monotonic() + 4.0
+        while time.monotonic() < deadline and not toasts:
+            await pilot.pause(0.01)
+
+        message, kwargs = toasts[-1]
+        assert message == (
+            "Provider test passed: Ollama is ready; model llama3; "
+            "endpoint unreachable: connection refused."
+        )
+        assert kwargs.get("severity") == "warning"
+        assert (
+            "endpoint unreachable: connection refused" in screen._provider_test_result
+        )
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_test_skips_probe_for_cloud_providers(monkeypatch):
+    """task-191: key-based cloud providers keep the local-only Test toast."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    probe_calls = []
+
+    async def fake_probe(base_url, **kwargs):
+        probe_calls.append(base_url)
+        return SettingsEndpointProbeOutcome(reachable=True, summary="reachable")
+
+    monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        toasts = []
+        host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+
+        screen.action_settings_test_category(allow_text_entry_focus=True)
+        await pilot.pause()
+
+        assert probe_calls == []
+        message, kwargs = toasts[-1]
+        assert message == "Provider test passed: OpenAI is ready; model gpt-4.1."
+        assert kwargs.get("severity") == "information"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_test_failure_skips_endpoint_probe(monkeypatch):
+    """task-191: a failed readiness check keeps the failure toast, no probe."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "Ollama", "model": ""}
+    app.app_config["api_settings"] = {"ollama": {"api_url": "http://127.0.0.1:11434"}}
+    probe_calls = []
+
+    async def fake_probe(base_url, **kwargs):
+        probe_calls.append(base_url)
+        return SettingsEndpointProbeOutcome(reachable=True, summary="reachable")
+
+    monkeypatch.setattr(settings_screen_module, "probe_settings_endpoint", fake_probe)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        toasts = []
+        host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+
+        screen.action_settings_test_category(allow_text_entry_focus=True)
+        await pilot.pause()
+
+        assert probe_calls == []
+        message, kwargs = toasts[-1]
+        assert message.startswith("Provider test failed:")
+        assert kwargs.get("severity") == "warning"
+
+
+@pytest.mark.asyncio
+async def test_probe_settings_endpoint_counts_models_and_normalizes_path():
+    seen_urls = []
+
+    def handler(request):
+        seen_urls.append(str(request.url))
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "a"}, {"id": "b"}, {"id": "c"}]},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        outcome = await probe_settings_endpoint(
+            "http://127.0.0.1:9099/v1",
+            http_client=client,
+        )
+    finally:
+        await client.aclose()
+
+    assert seen_urls == ["http://127.0.0.1:9099/v1/models"]
+    assert outcome.reachable is True
+    assert outcome.summary == "reachable (3 models)"
+    assert outcome.model_count == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure", "expected_summary"),
+    (
+        (
+            httpx.ConnectError("All connection attempts failed"),
+            "unreachable: connection refused",
+        ),
+        (httpx.ConnectTimeout("timed out"), "unreachable: timeout"),
+        (httpx.ReadTimeout("timed out"), "unreachable: timeout"),
+        (httpx.RemoteProtocolError("bad response"), "unreachable: connection error"),
+    ),
+)
+async def test_probe_settings_endpoint_maps_transport_failures(
+    failure, expected_summary
+):
+    def handler(request):
+        raise failure
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        outcome = await probe_settings_endpoint(
+            "http://127.0.0.1:9099",
+            http_client=client,
+        )
+    finally:
+        await client.aclose()
+
+    assert outcome.reachable is False
+    assert outcome.summary == expected_summary
+
+
+@pytest.mark.asyncio
+async def test_probe_settings_endpoint_reports_http_status_and_invalid_url():
+    def handler(request):
+        return httpx.Response(404)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        outcome = await probe_settings_endpoint(
+            "http://127.0.0.1:9099",
+            http_client=client,
+        )
+    finally:
+        await client.aclose()
+
+    assert outcome.reachable is False
+    assert outcome.summary == "unreachable: HTTP 404"
+
+    invalid = await probe_settings_endpoint("")
+    assert invalid.reachable is False
+    assert invalid.summary == "unreachable: invalid endpoint URL"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_text_inputs_do_not_trigger_footer_shortcuts(
+    monkeypatch,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     saved = []
@@ -1722,7 +2503,7 @@ async def test_settings_provider_text_inputs_do_not_trigger_footer_shortcuts(mon
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         model_input = screen.query_one("#settings-model-value", Input)
         model_input.value = "gpt-shortcut-check"
@@ -1738,7 +2519,9 @@ async def test_settings_provider_text_inputs_do_not_trigger_footer_shortcuts(mon
 
         assert model_input.value == "srt"
         assert saved == []
-        assert screen._provider_test_result is None
+        # TASK-366: editing a provider input (the model here) marks the last
+        # Test Provider result stale rather than leaving a now-inaccurate verdict.
+        assert screen._provider_test_result == screen._PROVIDER_TEST_STALE_COPY
         assert screen._settings_drafts
 
         screen.action_settings_save_category()
@@ -1747,7 +2530,9 @@ async def test_settings_provider_text_inputs_do_not_trigger_footer_shortcuts(mon
 
         assert saved == []
         assert model_input.value == "srt"
-        assert screen._provider_test_result is None
+        # TASK-366: editing a provider input (the model here) marks the last
+        # Test Provider result stale rather than leaving a now-inaccurate verdict.
+        assert screen._provider_test_result == screen._PROVIDER_TEST_STALE_COPY
         assert screen._settings_drafts
 
 
@@ -1757,7 +2542,7 @@ async def test_settings_category_selection_updates_detail_and_inspector():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -1772,7 +2557,7 @@ async def test_settings_console_behavior_inspector_explains_visible_controls():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -1781,15 +2566,24 @@ async def test_settings_console_behavior_inspector_explains_visible_controls():
             "Streaming: Global fallback for streaming responses when no Console session "
             "or provider+model profile overrides it"
         ) in text
-        assert "Temperature: Creativity fallback, 0.0 is focused and 2.0 is exploratory" in text
-        assert "Top P: Probability cutoff fallback; lower values narrow token choices" in text
+        assert (
+            "Temperature: Creativity fallback, 0.0 is focused and 2.0 is exploratory"
+            in text
+        )
+        assert (
+            "Top P: Probability cutoff fallback; lower values narrow token choices"
+            in text
+        )
         assert "Max tokens: Optional response cap for new/default Console sends" in text
         assert (
             "Paste collapse: Only pasted chunks over the threshold become compact placeholders; "
             "typed text stays literal"
         ) in text
         assert "Threshold: Minimum pasted chunk size before collapse" in text
-        assert "Affected config: chat_defaults fallbacks plus Console composer paste behavior" not in text
+        assert (
+            "Affected config: chat_defaults fallbacks plus Console composer paste behavior"
+            not in text
+        )
         assert "Mutation replay: disabled" not in text
 
 
@@ -1798,7 +2592,8 @@ async def test_settings_category_navigation_is_grouped_for_scan():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
-    async with host.run_test(size=(180, 50)):
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -1818,7 +2613,7 @@ async def test_settings_active_category_uses_explicit_nav_marker():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-advanced-config")
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
         screen = _active_destination_screen(host)
         active = screen.query_one("#settings-category-advanced-config")
         inactive = screen.query_one("#settings-category-diagnostics")
@@ -1910,7 +2705,8 @@ async def test_settings_detail_shows_state_banner_and_structured_rows():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
-    async with host.run_test(size=(180, 50)):
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
         banner = screen.query_one("#settings-category-state-banner")
         detail_rows = list(screen.query(".settings-detail-row"))
@@ -1931,7 +2727,7 @@ async def test_settings_long_detail_and_inspector_panes_are_scrollable_container
         assert isinstance(screen.query_one("#settings-detail-pane"), VerticalScroll)
         assert isinstance(screen.query_one("#settings-impact-pane"), VerticalScroll)
 
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         detail_pane = screen.query_one("#settings-detail-pane", VerticalScroll)
         test_provider = screen.query_one("#settings-test-provider", Button)
 
@@ -1952,11 +2748,14 @@ async def test_settings_inspector_uses_category_specific_guidance():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-storage")
+        await _open_settings_category(pilot, "#settings-category-storage")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
-        assert "Affected config: config file path, local database paths, media storage roots" in text
+        assert (
+            "Affected config: config file path, local database paths, media storage roots"
+            in text
+        )
         assert (
             "Recovery: Validate paths, save the config-only change, then restart Chatbook "
             "to activate new storage defaults."
@@ -1970,7 +2769,7 @@ async def test_settings_inspector_boundary_is_structured_without_duplicate_copy(
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-advanced-config")
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -2060,7 +2859,9 @@ async def test_settings_category_search_reports_ranked_matches_and_enter_target(
         )
 
         visible_text = _visible_text(screen)
-        assert "Filter: priv | 2 matches | Enter opens Privacy & Security" in visible_text
+        assert (
+            "Filter: priv | 2 matches | Enter opens Privacy & Security" in visible_text
+        )
         assert screen.query_one("#settings-category-privacy-security").has_class(
             "settings-primary-search-match"
         )
@@ -2080,8 +2881,12 @@ async def test_settings_category_search_uses_plain_standard_input_widgets():
 
         search = screen.query_one("#settings-category-search", Input)
         assert type(search) is Input
-        assert not screen.query_one("#settings-category-search-status", Static)._render_markup
-        assert not screen.query_one("#settings-category-search-empty", Static)._render_markup
+        assert not screen.query_one(
+            "#settings-category-search-status", Static
+        )._render_markup
+        assert not screen.query_one(
+            "#settings-category-search-empty", Static
+        )._render_markup
 
 
 def test_settings_category_search_normalizes_oversized_control_input():
@@ -2092,6 +2897,70 @@ def test_settings_category_search_normalizes_oversized_control_input():
     assert len(normalized) == 80
     assert normalized == "[" + ("x" * 79)
     assert "\x00" not in normalized
+
+
+def test_settings_state_round_trip_preserves_active_work_without_aliasing():
+    original = SettingsScreen(_build_test_app())
+    original.active_category = SettingsCategoryId.CONSOLE_BEHAVIOR.value
+    original.category_search_query = "console"
+    draft = SettingsDraft(category=SettingsCategoryId.CONSOLE_BEHAVIOR)
+    draft.set_value(
+        "console_background_effects",
+        {"effects": ["none"]},
+        {"effects": ["stars"]},
+    )
+    original._settings_drafts[SettingsCategoryId.CONSOLE_BEHAVIOR] = draft
+
+    state = original.save_state()
+    restored = SettingsScreen(_build_test_app())
+    restored.restore_state(state)
+
+    assert restored.active_category == SettingsCategoryId.CONSOLE_BEHAVIOR.value
+    assert restored.category_search_query == "console"
+    restored_draft = restored._settings_drafts[SettingsCategoryId.CONSOLE_BEHAVIOR]
+    assert restored_draft == draft
+    assert restored_draft is not draft
+    assert restored_draft.values is not draft.values
+    assert state["settings_drafts"][SettingsCategoryId.CONSOLE_BEHAVIOR] is not draft
+
+    restored_draft.values["console_background_effects"]["effects"].append("rain")
+    assert draft.values["console_background_effects"] == {"effects": ["stars"]}
+    assert state["settings_drafts"][SettingsCategoryId.CONSOLE_BEHAVIOR].values[
+        "console_background_effects"
+    ] == {"effects": ["stars"]}
+
+
+@pytest.mark.parametrize(
+    "malformed_state",
+    (
+        None,
+        [],
+        {
+            "active_category": "not-a-category",
+            "category_search_query": object(),
+            "settings_drafts": {"console-behavior": object()},
+        },
+        {
+            "settings_drafts": {
+                SettingsCategoryId.CONSOLE_BEHAVIOR: SettingsDraft(
+                    category=SettingsCategoryId.CONSOLE_BEHAVIOR,
+                    originals=[],
+                    values=[],
+                )
+            }
+        },
+    ),
+)
+def test_settings_restore_state_ignores_malformed_values(malformed_state):
+    screen = SettingsScreen(_build_test_app())
+
+    screen.restore_state(malformed_state)
+    saved_state = screen.save_state()
+
+    assert screen.active_category == SettingsCategoryId.OVERVIEW.value
+    assert screen.category_search_query == ""
+    assert screen._settings_drafts == {}
+    assert isinstance(saved_state, dict)
 
 
 @pytest.mark.asyncio
@@ -2107,19 +2976,23 @@ async def test_settings_category_search_escape_clears_filter():
         await _wait_for_settings_search_focus(screen, pilot)
 
         await pilot.press(*"zzz")
-        await _wait_for_settings_text(screen, pilot, "No Settings categories match: zzz")
+        await _wait_for_settings_text(
+            screen, pilot, "No Settings categories match: zzz"
+        )
 
         assert "No Settings categories match" in _visible_text(screen)
-        assert not any(button.display for button in screen.query(".settings-category-button"))
+        assert not any(
+            button.display for button in screen.query(".settings-category-button")
+        )
 
         await pilot.press("escape")
         await pilot.pause()
 
         search = screen.query_one("#settings-category-search", Input)
         assert search.value == ""
-        assert sum(1 for button in screen.query(".settings-category-button") if button.display) == len(
-            screen._category_summaries()
-        )
+        assert sum(
+            1 for button in screen.query(".settings-category-button") if button.display
+        ) == len(screen._category_summaries())
 
 
 @pytest.mark.asyncio
@@ -2133,9 +3006,9 @@ async def test_settings_overview_paste_summary_updates_after_toggle(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         await pilot.click("#settings-console-collapse-large-pastes-toggle")
-        await pilot.click("#settings-category-overview")
+        await _open_settings_category(pilot, "#settings-category-overview")
         screen = _active_destination_screen(host)
 
         await _wait_for_settings_text(
@@ -2156,7 +3029,7 @@ async def test_settings_paste_toggle_keeps_keyboard_focus_after_refresh(monkeypa
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         toggle = screen.query_one("#settings-console-collapse-large-pastes-toggle")
         toggle.focus()
@@ -2182,7 +3055,7 @@ async def test_settings_console_behavior_clean_state_does_not_show_staged_feedba
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -2197,16 +3070,20 @@ async def test_settings_console_behavior_default_undo_does_not_show_staged_feedb
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         temperature = screen.query_one("#settings-console-default-temperature", Input)
 
         temperature.value = "0.8"
-        screen.handle_console_default_temperature_changed(Input.Changed(temperature, temperature.value))
+        screen.handle_console_default_temperature_changed(
+            Input.Changed(temperature, temperature.value)
+        )
         assert "Unsaved" in _visible_text(screen)
 
         temperature.value = "0.7"
-        screen.handle_console_default_temperature_changed(Input.Changed(temperature, temperature.value))
+        screen.handle_console_default_temperature_changed(
+            Input.Changed(temperature, temperature.value)
+        )
         text = _visible_text(screen)
 
         assert "No unsaved changes" in text
@@ -2228,7 +3105,7 @@ async def test_settings_console_behavior_clean_staged_feedback_shows_workbench_w
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         screen._console_behavior_result = "Console behavior settings staged."
         screen._set_static_text(
@@ -2238,7 +3115,10 @@ async def test_settings_console_behavior_clean_staged_feedback_shows_workbench_w
         text = _visible_text(screen)
 
         assert "No unsaved changes" in text
-        assert "Workbench scope is not available in this build; using Transcript scope." in text
+        assert (
+            "Workbench scope is not available in this build; using Transcript scope."
+            in text
+        )
         assert "Console behavior settings staged." not in text
 
 
@@ -2257,7 +3137,7 @@ async def test_settings_console_behavior_stages_save_and_revert(monkeypatch):
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         await pilot.click("#settings-console-collapse-large-pastes-toggle")
         screen = _active_destination_screen(host)
 
@@ -2289,13 +3169,17 @@ async def test_settings_console_behavior_saves_paste_threshold(monkeypatch):
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
-        threshold = screen.query_one("#settings-console-paste-collapse-threshold", Input)
+        threshold = screen.query_one(
+            "#settings-console-paste-collapse-threshold", Input
+        )
 
         assert threshold.restrict == r"^[0-9]*$"
         threshold.value = "120"
-        screen.handle_console_paste_threshold_changed(Input.Changed(threshold, threshold.value))
+        screen.handle_console_paste_threshold_changed(
+            Input.Changed(threshold, threshold.value)
+        )
         assert "Unsaved" in _visible_text(screen)
 
         await pilot.click("#settings-save-category")
@@ -2331,30 +3215,72 @@ async def test_settings_console_behavior_renders_global_default_controls():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
 
-        assert screen.query_one("#settings-console-default-streaming", Input).value == "false"
-        assert screen.query_one("#settings-console-default-temperature", Input).value == "0.33"
-        assert screen.query_one("#settings-console-default-top-p", Input).value == "0.81"
-        assert screen.query_one("#settings-console-default-min-p", Input).value == "0.04"
-        assert screen.query_one("#settings-console-default-top-k", Input).value == "42"
-        assert screen.query_one("#settings-console-default-max-tokens", Input).value == "2048"
-        assert screen.query_one("#settings-console-default-seed", Input).value == "123"
-        assert screen.query_one("#settings-console-default-presence-penalty", Input).value == "0.2"
-        assert screen.query_one("#settings-console-default-frequency-penalty", Input).value == "0.3"
-        assert screen.query_one("#settings-console-default-reasoning-effort", Input).value == "high"
-        assert screen.query_one("#settings-console-default-reasoning-summary", Input).value == "auto"
-        assert screen.query_one("#settings-console-default-verbosity", Input).value == "medium"
-        assert screen.query_one("#settings-console-default-thinking-effort", Input).value == "low"
         assert (
-            screen.query_one("#settings-console-default-thinking-budget-tokens", Input).value
+            screen.query_one("#settings-console-default-streaming", Input).value
+            == "false"
+        )
+        assert (
+            screen.query_one("#settings-console-default-temperature", Input).value
+            == "0.33"
+        )
+        assert (
+            screen.query_one("#settings-console-default-top-p", Input).value == "0.81"
+        )
+        assert (
+            screen.query_one("#settings-console-default-min-p", Input).value == "0.04"
+        )
+        assert screen.query_one("#settings-console-default-top-k", Input).value == "42"
+        assert (
+            screen.query_one("#settings-console-default-max-tokens", Input).value
+            == "2048"
+        )
+        assert screen.query_one("#settings-console-default-seed", Input).value == "123"
+        assert (
+            screen.query_one("#settings-console-default-presence-penalty", Input).value
+            == "0.2"
+        )
+        assert (
+            screen.query_one("#settings-console-default-frequency-penalty", Input).value
+            == "0.3"
+        )
+        assert (
+            screen.query_one("#settings-console-default-reasoning-effort", Input).value
+            == "high"
+        )
+        assert (
+            screen.query_one("#settings-console-default-reasoning-summary", Input).value
+            == "auto"
+        )
+        assert (
+            screen.query_one("#settings-console-default-verbosity", Input).value
+            == "medium"
+        )
+        assert (
+            screen.query_one("#settings-console-default-thinking-effort", Input).value
+            == "low"
+        )
+        assert (
+            screen.query_one(
+                "#settings-console-default-thinking-budget-tokens", Input
+            ).value
             == "4096"
         )
-        assert screen.query_one("#settings-console-paste-collapse-threshold", Input).value == "50"
+        assert (
+            screen.query_one("#settings-console-paste-collapse-threshold", Input).value
+            == "50"
+        )
         text = _visible_text(screen)
-        assert "Used when no provider+model profile or active Console session overrides them." in text
-        assert "chat_defaults.streaming is canonical; enable_streaming is read as fallback only." in text
+        assert (
+            "Used when no provider+model profile or active Console session overrides them."
+            in text
+        )
+        assert (
+            "chat_defaults.streaming is canonical; enable_streaming is read as fallback only."
+            in text
+        )
 
 
 @pytest.mark.asyncio
@@ -2372,7 +3298,7 @@ async def test_settings_console_behavior_renders_background_effect_controls():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
 
         assert screen.query_one("#settings-console-background-effect-enabled", Button)
@@ -2415,16 +3341,20 @@ async def test_settings_console_background_effects_save_nested_config(monkeypatc
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
-        enabled = screen.query_one("#settings-console-background-effect-enabled", Button)
+        enabled = screen.query_one(
+            "#settings-console-background-effect-enabled", Button
+        )
         effect = screen.query_one("#settings-console-background-effect-type", Select)
         fps = screen.query_one("#settings-console-background-effect-fps", Input)
 
         enabled.press()
         effect.value = "matrix"
         fps.value = "10"
-        screen.handle_console_background_effect_fps_changed(Input.Changed(fps, fps.value))
+        screen.handle_console_background_effect_fps_changed(
+            Input.Changed(fps, fps.value)
+        )
 
         await pilot.click("#settings-save-category")
         await _wait_for_settings_text(screen, pilot, "Console behavior settings saved.")
@@ -2479,7 +3409,9 @@ async def test_settings_console_background_fps_rejects_out_of_range_save(monkeyp
         fps = screen.query_one("#settings-console-background-effect-fps", Input)
 
         fps.value = "610"
-        screen.handle_console_background_effect_fps_changed(Input.Changed(fps, fps.value))
+        screen.handle_console_background_effect_fps_changed(
+            Input.Changed(fps, fps.value)
+        )
 
         await pilot.click("#settings-save-category")
         await _wait_for_settings_text(
@@ -2495,7 +3427,9 @@ async def test_settings_console_background_fps_rejects_out_of_range_save(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_settings_console_background_workbench_scope_falls_back_to_transcript(monkeypatch):
+async def test_settings_console_background_workbench_scope_falls_back_to_transcript(
+    monkeypatch,
+):
     app = _build_test_app()
     app.app_config["console"] = {
         "background_effects": {
@@ -2517,12 +3451,14 @@ async def test_settings_console_background_workbench_scope_falls_back_to_transcr
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         scope = screen.query_one("#settings-console-background-effect-scope", Select)
 
         scope.value = "workbench"
-        screen.handle_console_background_effect_scope_changed(Select.Changed(scope, scope.value))
+        screen.handle_console_background_effect_scope_changed(
+            Select.Changed(scope, scope.value)
+        )
 
         await _wait_for_settings_text(
             screen,
@@ -2563,12 +3499,14 @@ async def test_settings_console_background_workbench_loaded_scope_save_shows_fal
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         fps = screen.query_one("#settings-console-background-effect-fps", Input)
 
         fps.value = "10"
-        screen.handle_console_background_effect_fps_changed(Input.Changed(fps, fps.value))
+        screen.handle_console_background_effect_fps_changed(
+            Input.Changed(fps, fps.value)
+        )
 
         await pilot.click("#settings-save-category")
         await _wait_for_settings_text(
@@ -2607,12 +3545,16 @@ async def test_settings_console_background_workbench_loaded_scope_unrelated_save
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
-        threshold = screen.query_one("#settings-console-paste-collapse-threshold", Input)
+        threshold = screen.query_one(
+            "#settings-console-paste-collapse-threshold", Input
+        )
 
         threshold.value = "120"
-        screen.handle_console_paste_threshold_changed(Input.Changed(threshold, threshold.value))
+        screen.handle_console_paste_threshold_changed(
+            Input.Changed(threshold, threshold.value)
+        )
 
         await pilot.click("#settings-save-category")
         await _wait_for_settings_text(
@@ -2646,8 +3588,12 @@ def test_settings_console_background_workbench_raw_scope_unrelated_save_includes
     screen._settings_drafts[SettingsCategoryId.CONSOLE_BEHAVIOR] = draft
     saved_args = []
 
-    def fake_worker(console_values, chat_default_values, workbench_scope_fallback=False):
-        saved_args.append((console_values, chat_default_values, workbench_scope_fallback))
+    def fake_worker(
+        console_values, chat_default_values, workbench_scope_fallback=False
+    ):
+        saved_args.append(
+            (console_values, chat_default_values, workbench_scope_fallback)
+        )
 
     screen._settings_save_console_behavior_worker = fake_worker
 
@@ -2684,7 +3630,7 @@ async def test_settings_console_background_workbench_loaded_scope_mounts_as_tran
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         scope = screen.query_one("#settings-console-background-effect-scope", Select)
 
@@ -2715,7 +3661,7 @@ async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         streaming = screen.query_one("#settings-console-default-streaming", Input)
         temperature = screen.query_one("#settings-console-default-temperature", Input)
@@ -2724,18 +3670,34 @@ async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
         top_k = screen.query_one("#settings-console-default-top-k", Input)
         max_tokens = screen.query_one("#settings-console-default-max-tokens", Input)
         seed = screen.query_one("#settings-console-default-seed", Input)
-        presence_penalty = screen.query_one("#settings-console-default-presence-penalty", Input)
-        frequency_penalty = screen.query_one("#settings-console-default-frequency-penalty", Input)
-        reasoning_effort = screen.query_one("#settings-console-default-reasoning-effort", Input)
-        reasoning_summary = screen.query_one("#settings-console-default-reasoning-summary", Input)
+        presence_penalty = screen.query_one(
+            "#settings-console-default-presence-penalty", Input
+        )
+        frequency_penalty = screen.query_one(
+            "#settings-console-default-frequency-penalty", Input
+        )
+        reasoning_effort = screen.query_one(
+            "#settings-console-default-reasoning-effort", Input
+        )
+        reasoning_summary = screen.query_one(
+            "#settings-console-default-reasoning-summary", Input
+        )
         verbosity = screen.query_one("#settings-console-default-verbosity", Input)
-        thinking_effort = screen.query_one("#settings-console-default-thinking-effort", Input)
-        thinking_budget = screen.query_one("#settings-console-default-thinking-budget-tokens", Input)
+        thinking_effort = screen.query_one(
+            "#settings-console-default-thinking-effort", Input
+        )
+        thinking_budget = screen.query_one(
+            "#settings-console-default-thinking-budget-tokens", Input
+        )
 
         streaming.value = "false"
-        screen.handle_console_default_streaming_changed(Input.Changed(streaming, streaming.value))
+        screen.handle_console_default_streaming_changed(
+            Input.Changed(streaming, streaming.value)
+        )
         temperature.value = "0.33"
-        screen.handle_console_default_temperature_changed(Input.Changed(temperature, temperature.value))
+        screen.handle_console_default_temperature_changed(
+            Input.Changed(temperature, temperature.value)
+        )
         top_p.value = "0.81"
         screen.handle_console_default_top_p_changed(Input.Changed(top_p, top_p.value))
         min_p.value = "0.04"
@@ -2743,7 +3705,9 @@ async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
         top_k.value = "42"
         screen.handle_console_default_top_k_changed(Input.Changed(top_k, top_k.value))
         max_tokens.value = "2048"
-        screen.handle_console_default_max_tokens_changed(Input.Changed(max_tokens, max_tokens.value))
+        screen.handle_console_default_max_tokens_changed(
+            Input.Changed(max_tokens, max_tokens.value)
+        )
         seed.value = "123"
         screen.handle_console_default_seed_changed(Input.Changed(seed, seed.value))
         presence_penalty.value = "0.2"
@@ -2763,7 +3727,9 @@ async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
             Input.Changed(reasoning_summary, reasoning_summary.value)
         )
         verbosity.value = "medium"
-        screen.handle_console_default_verbosity_changed(Input.Changed(verbosity, verbosity.value))
+        screen.handle_console_default_verbosity_changed(
+            Input.Changed(verbosity, verbosity.value)
+        )
         thinking_effort.value = "low"
         screen.handle_console_default_thinking_effort_changed(
             Input.Changed(thinking_effort, thinking_effort.value)
@@ -2845,15 +3811,21 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
-        threshold = screen.query_one("#settings-console-paste-collapse-threshold", Input)
+        threshold = screen.query_one(
+            "#settings-console-paste-collapse-threshold", Input
+        )
         streaming = screen.query_one("#settings-console-default-streaming", Input)
 
         threshold.value = "120"
-        screen.handle_console_paste_threshold_changed(Input.Changed(threshold, threshold.value))
+        screen.handle_console_paste_threshold_changed(
+            Input.Changed(threshold, threshold.value)
+        )
         streaming.value = "false"
-        screen.handle_console_default_streaming_changed(Input.Changed(streaming, streaming.value))
+        screen.handle_console_default_streaming_changed(
+            Input.Changed(streaming, streaming.value)
+        )
 
         await pilot.click("#settings-save-category")
         await _wait_for_settings_text(screen, pilot, "Console behavior settings saved.")
@@ -2933,7 +3905,7 @@ async def test_settings_console_behavior_rejects_invalid_global_defaults(
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         field = screen.query_one(field_id, Input)
         field.value = value
@@ -2978,7 +3950,9 @@ async def test_settings_console_behavior_revert_restores_global_defaults(monkeyp
         )
         temperature = screen.query_one("#settings-console-default-temperature", Input)
         temperature.value = "0.33"
-        screen.handle_console_default_temperature_changed(Input.Changed(temperature, temperature.value))
+        screen.handle_console_default_temperature_changed(
+            Input.Changed(temperature, temperature.value)
+        )
 
         assert "Unsaved" in _visible_text(screen)
 
@@ -3003,7 +3977,9 @@ async def test_settings_console_behavior_revert_restores_global_defaults(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_settings_console_behavior_revert_button_works_with_input_focus(monkeypatch):
+async def test_settings_console_behavior_revert_button_works_with_input_focus(
+    monkeypatch,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "streaming": True,
@@ -3019,19 +3995,24 @@ async def test_settings_console_behavior_revert_button_works_with_input_focus(mo
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
         temperature = screen.query_one("#settings-console-default-temperature", Input)
         temperature.focus()
         temperature.value = "0.33"
-        screen.handle_console_default_temperature_changed(Input.Changed(temperature, temperature.value))
+        screen.handle_console_default_temperature_changed(
+            Input.Changed(temperature, temperature.value)
+        )
         monkeypatch.setattr(screen, "_settings_text_entry_has_focus", lambda: True)
 
         screen.handle_revert_category(
             Button.Pressed(screen.query_one("#settings-revert-category", Button))
         )
 
-        assert screen.query_one("#settings-console-default-temperature", Input).value == "0.7"
+        assert (
+            screen.query_one("#settings-console-default-temperature", Input).value
+            == "0.7"
+        )
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert "No unsaved changes" in _visible_text(screen)
 
@@ -3052,7 +4033,7 @@ async def test_settings_console_behavior_revert_discards_draft(monkeypatch):
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         await pilot.click("#settings-console-collapse-large-pastes-toggle")
         screen = _active_destination_screen(host)
 
@@ -3100,7 +4081,7 @@ async def test_settings_console_guided_save_revert_enable_only_when_dirty():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
 
         assert screen.query_one("#settings-save-category", Button).disabled is True
@@ -3122,7 +4103,7 @@ async def test_settings_provider_category_uses_effective_console_source():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -3141,7 +4122,7 @@ async def test_settings_provider_category_renders_catalog_select_with_visible_va
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         provider = screen.query_one("#settings-provider-value", Select)
@@ -3171,8 +4152,13 @@ async def test_settings_navigation_context_can_preselect_provider_category_targe
         await pilot.pause()
 
         assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
-        assert screen.query_one("#settings-provider-value", Select).value == "huggingface"
-        assert screen.query_one("#settings-model-value", Input).value == "meta-llama/test-model"
+        assert (
+            screen.query_one("#settings-provider-value", Select).value == "huggingface"
+        )
+        assert (
+            screen.query_one("#settings-model-value", Input).value
+            == "meta-llama/test-model"
+        )
         assert "HUGGINGFACE_API_KEY" in _visible_text(screen)
 
 
@@ -3184,6 +4170,10 @@ async def test_settings_provider_navigation_context_focuses_api_key_field():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
+        # Settle the mount-time sync-rows worker FIRST so its landing cannot
+        # race the navigation focus dance nondeterministically -- the
+        # interleaved case has its own deterministic test below (task-290).
+        await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
 
         screen.apply_navigation_context(
@@ -3194,6 +4184,44 @@ async def test_settings_provider_navigation_context_focuses_api_key_field():
                 "field": "api_key",
             }
         )
+        await pilot.pause()
+        await pilot.pause()
+
+        api_key = screen.query_one("#settings-provider-api-key", Input)
+        assert api_key.has_focus
+
+
+@pytest.mark.asyncio
+async def test_sync_rows_recompose_mid_navigation_still_focuses_target_field():
+    """task-290: a sync-rows landing used to recompose the screen between a
+    navigation focus intent and its deferred set_focus processing,
+    destroying the target and dropping focus. The pending-intent mechanism
+    re-issues the focus against the fresh children."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        screen.apply_navigation_context(
+            {
+                "category": SettingsCategoryId.PROVIDERS_MODELS.value,
+                "provider": "openai",
+                "model": "gpt-4.1",
+                "field": "api_key",
+            }
+        )
+        # Deterministic interleave: land a sync-rows apply (fresh values ->
+        # recompose) while the navigation focus is still in flight.
+        screen._apply_sync_rows(
+            (("Active server profile", "interleaved-value"),),
+            (("Manual sync status", "interleaved"),),
+        )
+        await pilot.pause()
+        await pilot.pause()
         await pilot.pause()
 
         api_key = screen.query_one("#settings-provider-api-key", Input)
@@ -3218,9 +4246,16 @@ async def test_settings_navigation_context_preselection_does_not_create_provider
         )
         await pilot.pause()
 
-        assert screen.query_one("#settings-provider-value", Select).value == "huggingface"
-        assert screen.query_one("#settings-model-value", Input).value == "meta-llama/test-model"
-        assert not screen._category_has_unsaved_changes(SettingsCategoryId.PROVIDERS_MODELS)
+        assert (
+            screen.query_one("#settings-provider-value", Select).value == "huggingface"
+        )
+        assert (
+            screen.query_one("#settings-model-value", Input).value
+            == "meta-llama/test-model"
+        )
+        assert not screen._category_has_unsaved_changes(
+            SettingsCategoryId.PROVIDERS_MODELS
+        )
 
 
 @pytest.mark.asyncio
@@ -3232,7 +4267,9 @@ async def test_settings_navigation_context_preserves_existing_provider_draft_val
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
         draft = SettingsDraft(category=SettingsCategoryId.PROVIDERS_MODELS)
-        draft.set_value("endpoint", "https://api.example/v1", "https://draft.example/v1")
+        draft.set_value(
+            "endpoint", "https://api.example/v1", "https://draft.example/v1"
+        )
         draft.set_value("credential_env_var", "OPENAI_API_KEY", "DRAFT_PROVIDER_KEY")
         draft.set_value("model_profile_temperature", "", 0.4)
         screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = draft
@@ -3253,7 +4290,9 @@ async def test_settings_navigation_context_preserves_existing_provider_draft_val
 
 
 @pytest.mark.asyncio
-async def test_settings_navigation_provider_context_tolerates_missing_provider_values(monkeypatch):
+async def test_settings_navigation_provider_context_tolerates_missing_provider_values(
+    monkeypatch,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
     host = DestinationHarness(app, "settings")
@@ -3267,7 +4306,9 @@ async def test_settings_navigation_provider_context_tolerates_missing_provider_v
         screen._apply_navigation_provider_context("huggingface")
         await pilot.pause()
 
-        assert screen.query_one("#settings-provider-value", Select).value == "huggingface"
+        assert (
+            screen.query_one("#settings-provider-value", Select).value == "huggingface"
+        )
         assert screen.query_one("#settings-model-value", Input).value == ""
 
 
@@ -3302,13 +4343,11 @@ async def test_settings_provider_keyless_local_provider_does_not_report_missing_
 async def test_settings_provider_openai_endpoint_placeholder_uses_provider_context():
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
-    app.app_config["api_settings"] = {
-        "openai": {"api_key_env_var": "OPENAI_API_KEY"}
-    }
+    app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
 
@@ -3327,12 +4366,18 @@ def test_settings_endpoint_display_breaks_browser_autolinks_without_mutating_val
 
 
 def test_settings_endpoint_display_index_maps_url_break_boundaries_to_visible_colon():
-    assert settings_screen_module._textual_web_safe_url_display_index(
-        "http://localhost:8000", len("http")
-    ) == len("http") + 1
-    assert settings_screen_module._textual_web_safe_url_display_index(
-        "https://api.example.com", len("https")
-    ) == len("https") + 1
+    assert (
+        settings_screen_module._textual_web_safe_url_display_index(
+            "http://localhost:8000", len("http")
+        )
+        == len("http") + 1
+    )
+    assert (
+        settings_screen_module._textual_web_safe_url_display_index(
+            "https://api.example.com", len("https")
+        )
+        == len("https") + 1
+    )
 
 
 @pytest.mark.asyncio
@@ -3345,7 +4390,7 @@ async def test_settings_provider_endpoint_uses_url_safe_input_for_url_values():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
 
@@ -3365,7 +4410,7 @@ async def test_settings_provider_guided_save_revert_enable_only_when_dirty():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         assert screen.query_one("#settings-save-category", Button).disabled is True
@@ -3390,7 +4435,7 @@ async def test_settings_provider_test_redacts_secrets(monkeypatch):
     host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
         await _wait_for_settings_text(screen, pilot, "Provider test")
@@ -3402,7 +4447,9 @@ async def test_settings_provider_test_redacts_secrets(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_saves_provider_defaults_without_sampling(monkeypatch):
+async def test_settings_provider_category_saves_provider_defaults_without_sampling(
+    monkeypatch,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
@@ -3420,7 +4467,7 @@ async def test_settings_provider_category_saves_provider_defaults_without_sampli
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         provider = screen.query_one("#settings-provider-value", Select)
         provider.value = "llama_cpp"
@@ -3471,7 +4518,7 @@ async def test_settings_provider_category_saves_selected_model_profile(monkeypat
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         screen.query_one("#settings-model-profile-temperature", Input).value = "0.2"
         screen.query_one("#settings-model-profile-top-p", Input).value = "0.88"
@@ -3520,7 +4567,7 @@ async def test_settings_provider_category_saves_openai_generation_profile(monkey
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 55)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         values = {
@@ -3543,9 +4590,24 @@ async def test_settings_provider_category_saves_openai_generation_profile(monkey
             screen.query_one(selector, Input).value = value
 
         text = _visible_text(screen)
-        assert "Thinking unavailable for OpenAI" in text
-        assert screen.query_one("#settings-model-profile-thinking-effort", Input).disabled is True
-        assert screen.query_one("#settings-model-profile-thinking-budget-tokens", Input).disabled is True
+        # task-189: gated groups collapse to one summary line; dead rows hide.
+        assert "Thinking controls: unavailable for OpenAI." in text
+        assert (
+            screen.query_one("#settings-model-profile-thinking-effort", Input).disabled
+            is True
+        )
+        assert (
+            screen.query_one(
+                "#settings-model-profile-thinking-budget-tokens", Input
+            ).disabled
+            is True
+        )
+        assert screen.query_one(
+            "#settings-model-profile-thinking-effort-row"
+        ).has_class("settings-gated-profile-hidden")
+        assert not screen.query_one(
+            "#settings-model-profile-reasoning-effort-row"
+        ).has_class("settings-gated-profile-hidden")
 
         await pilot.click("#settings-save-category")
 
@@ -3600,7 +4662,10 @@ def test_settings_generation_controls_allow_anthropic_max_thinking_effort():
 @pytest.mark.asyncio
 async def test_settings_provider_category_saves_anthropic_thinking_profile(monkeypatch):
     app = _build_test_app()
-    app.app_config["chat_defaults"] = {"provider": "Anthropic", "model": "claude-opus-4-7"}
+    app.app_config["chat_defaults"] = {
+        "provider": "Anthropic",
+        "model": "claude-opus-4-7",
+    }
     app.app_config["api_settings"] = {
         "anthropic": {"model_defaults": {"claude-opus-4-7": {}}},
     }
@@ -3613,7 +4678,7 @@ async def test_settings_provider_category_saves_anthropic_thinking_profile(monke
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 55)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         values = {
@@ -3629,10 +4694,28 @@ async def test_settings_provider_category_saves_anthropic_thinking_profile(monke
             screen.query_one(selector, Input).value = value
 
         text = _visible_text(screen)
-        assert "Reasoning unavailable for Anthropic" in text
-        assert screen.query_one("#settings-model-profile-reasoning-effort", Input).disabled is True
-        assert screen.query_one("#settings-model-profile-reasoning-summary", Input).disabled is True
-        assert screen.query_one("#settings-model-profile-verbosity", Input).disabled is True
+        # task-189: gated groups collapse to one summary line; dead rows hide.
+        assert "Reasoning controls: unavailable for Anthropic." in text
+        assert (
+            screen.query_one("#settings-model-profile-reasoning-effort", Input).disabled
+            is True
+        )
+        assert (
+            screen.query_one(
+                "#settings-model-profile-reasoning-summary", Input
+            ).disabled
+            is True
+        )
+        assert (
+            screen.query_one("#settings-model-profile-verbosity", Input).disabled
+            is True
+        )
+        assert screen.query_one(
+            "#settings-model-profile-reasoning-effort-row"
+        ).has_class("settings-gated-profile-hidden")
+        assert not screen.query_one(
+            "#settings-model-profile-thinking-effort-row"
+        ).has_class("settings-gated-profile-hidden")
 
         await pilot.click("#settings-save-category")
 
@@ -3656,7 +4739,11 @@ async def test_settings_provider_category_saves_anthropic_thinking_profile(monke
 @pytest.mark.parametrize(
     ("field_id", "value", "message"),
     (
-        ("#settings-model-profile-temperature", "2.1", "Temperature must be between 0.0 and 2.0."),
+        (
+            "#settings-model-profile-temperature",
+            "2.1",
+            "Temperature must be between 0.0 and 2.0.",
+        ),
         ("#settings-model-profile-top-p", "1.1", "Top P must be between 0.0 and 1.0."),
     ),
 )
@@ -3677,7 +4764,7 @@ async def test_settings_provider_category_rejects_out_of_range_model_profile(
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         screen.query_one(field_id, Input).value = value
 
@@ -3690,7 +4777,9 @@ async def test_settings_provider_category_rejects_out_of_range_model_profile(
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_rejects_invalid_streaming_profile(monkeypatch):
+async def test_settings_provider_category_rejects_invalid_streaming_profile(
+    monkeypatch,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {"openai": {"model_defaults": {}}}
@@ -3702,7 +4791,7 @@ async def test_settings_provider_category_rejects_invalid_streaming_profile(monk
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         screen.query_one("#settings-model-profile-streaming", Input).value = "tru"
 
@@ -3729,17 +4818,26 @@ async def test_settings_provider_model_switch_loads_selected_model_profile():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
-        assert screen.query_one("#settings-model-profile-temperature", Input).value == "0.2"
+        assert (
+            screen.query_one("#settings-model-profile-temperature", Input).value
+            == "0.2"
+        )
         model = screen.query_one("#settings-model-value", Input)
         model.value = "gpt-4.1-mini"
         screen.handle_model_value_changed(Input.Changed(model, "gpt-4.1-mini"))
 
-        assert screen.query_one("#settings-model-profile-temperature", Input).value == "0.45"
+        assert (
+            screen.query_one("#settings-model-profile-temperature", Input).value
+            == "0.45"
+        )
         assert screen.query_one("#settings-model-profile-top-p", Input).value == "0.9"
-        assert screen.query_one("#settings-model-profile-streaming", Input).value == "false"
+        assert (
+            screen.query_one("#settings-model-profile-streaming", Input).value
+            == "false"
+        )
 
 
 @pytest.mark.asyncio
@@ -3756,16 +4854,20 @@ async def test_settings_provider_model_profile_none_values_render_as_blank_input
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
-        assert screen.query_one("#settings-model-profile-temperature", Input).value == ""
+        assert (
+            screen.query_one("#settings-model-profile-temperature", Input).value == ""
+        )
         assert screen.query_one("#settings-model-profile-top-p", Input).value == ""
         assert screen.query_one("#settings-model-profile-streaming", Input).value == ""
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_model_switch_does_not_save_unedited_profile(monkeypatch):
+async def test_settings_provider_model_switch_does_not_save_unedited_profile(
+    monkeypatch,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {
@@ -3784,7 +4886,7 @@ async def test_settings_provider_model_switch_does_not_save_unedited_profile(mon
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         model = screen.query_one("#settings-model-value", Input)
         model.value = "gpt-4.1-mini"
@@ -3796,7 +4898,9 @@ async def test_settings_provider_model_switch_does_not_save_unedited_profile(mon
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_does_not_save_unedited_effective_defaults(monkeypatch):
+async def test_settings_provider_category_does_not_save_unedited_effective_defaults(
+    monkeypatch,
+):
     app = _build_test_app()
     app.chat_api_provider_value = "OpenAI"
     app.chat_api_model_value = "gpt-4.1"
@@ -3810,7 +4914,7 @@ async def test_settings_provider_category_does_not_save_unedited_effective_defau
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         await pilot.click("#settings-save-category")
 
     assert saved == []
@@ -3835,7 +4939,7 @@ async def test_settings_provider_category_saves_only_dirty_provider_fields(monke
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         screen.query_one("#settings-model-value", Input).value = "gpt-4.1-mini"
 
@@ -3888,7 +4992,10 @@ async def test_settings_provider_category_saves_llamacpp_endpoint(monkeypatch):
     assert saved == [
         ("api_settings.llama_cpp", "api_url", "http://127.0.0.1:9099/v1"),
     ]
-    assert app.app_config["api_settings"]["llama_cpp"]["api_url"] == "http://127.0.0.1:9099/v1"
+    assert (
+        app.app_config["api_settings"]["llama_cpp"]["api_url"]
+        == "http://127.0.0.1:9099/v1"
+    )
 
 
 @pytest.mark.asyncio
@@ -3912,7 +5019,7 @@ async def test_settings_provider_category_preserves_existing_endpoint_key(monkey
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
@@ -3924,11 +5031,16 @@ async def test_settings_provider_category_preserves_existing_endpoint_key(monkey
     assert saved == [
         ("api_settings.openai", "api_base_url", "https://proxy.example.com/v1"),
     ]
-    assert app.app_config["api_settings"]["openai"]["api_base_url"] == "https://proxy.example.com/v1"
+    assert (
+        app.app_config["api_settings"]["openai"]["api_base_url"]
+        == "https://proxy.example.com/v1"
+    )
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_save_button_works_with_endpoint_input_focus(monkeypatch):
+async def test_settings_provider_save_button_works_with_endpoint_input_focus(
+    monkeypatch,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
@@ -3948,7 +5060,7 @@ async def test_settings_provider_save_button_works_with_endpoint_input_focus(mon
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
@@ -3963,7 +5075,10 @@ async def test_settings_provider_save_button_works_with_endpoint_input_focus(mon
     assert saved == [
         ("api_settings.openai", "api_base_url", "https://proxy.example.com/v1"),
     ]
-    assert app.app_config["api_settings"]["openai"]["api_base_url"] == "https://proxy.example.com/v1"
+    assert (
+        app.app_config["api_settings"]["openai"]["api_base_url"]
+        == "https://proxy.example.com/v1"
+    )
 
 
 @pytest.mark.asyncio
@@ -3973,9 +5088,7 @@ async def test_settings_provider_category_saves_credential_env_var(monkeypatch):
         "provider": "OpenAI",
         "model": "gpt-4.1",
     }
-    app.app_config["api_settings"] = {
-        "openai": {"api_key_env_var": "OPENAI_API_KEY"}
-    }
+    app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
     saved = []
 
     monkeypatch.setattr(
@@ -3985,7 +5098,7 @@ async def test_settings_provider_category_saves_credential_env_var(monkeypatch):
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         env_var = screen.query_one("#settings-provider-credential-env-var", Input)
@@ -4019,7 +5132,7 @@ async def test_settings_provider_category_renders_local_api_key_setup_without_re
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         api_key = screen.query_one("#settings-provider-api-key", Input)
@@ -4038,9 +5151,7 @@ async def test_settings_provider_category_saves_and_clears_local_api_key(monkeyp
         "provider": "OpenAI",
         "model": "gpt-4.1",
     }
-    app.app_config["api_settings"] = {
-        "openai": {"api_key_env_var": "OPENAI_API_KEY"}
-    }
+    app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
     saved = []
 
     monkeypatch.setattr(
@@ -4050,7 +5161,7 @@ async def test_settings_provider_category_saves_and_clears_local_api_key(monkeyp
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         api_key = screen.query_one("#settings-provider-api-key", Input)
@@ -4059,7 +5170,10 @@ async def test_settings_provider_category_saves_and_clears_local_api_key(monkeyp
         await pilot.click("#settings-save-category")
 
         assert ("api_settings.openai", "api_key", "sk-test-new-local-key") in saved
-        assert app.app_config["api_settings"]["openai"]["api_key"] == "sk-test-new-local-key"
+        assert (
+            app.app_config["api_settings"]["openai"]["api_key"]
+            == "sk-test-new-local-key"
+        )
 
         await pilot.click("#settings-provider-api-key-clear")
         await pilot.click("#settings-save-category")
@@ -4077,15 +5191,15 @@ def test_settings_provider_api_key_validation_rejects_placeholder_values():
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_rejects_invalid_credential_env_var(monkeypatch):
+async def test_settings_provider_category_rejects_invalid_credential_env_var(
+    monkeypatch,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
         "model": "gpt-4.1",
     }
-    app.app_config["api_settings"] = {
-        "openai": {"api_key_env_var": "OPENAI_API_KEY"}
-    }
+    app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
     saved = []
 
     monkeypatch.setattr(
@@ -4095,7 +5209,7 @@ async def test_settings_provider_category_rejects_invalid_credential_env_var(mon
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         env_var = screen.query_one("#settings-provider-credential-env-var", Input)
@@ -4110,11 +5224,15 @@ async def test_settings_provider_category_rejects_invalid_credential_env_var(mon
         assert "Credential env var must use environment variable syntax" in text
 
     assert saved == []
-    assert app.app_config["api_settings"]["openai"]["api_key_env_var"] == "OPENAI_API_KEY"
+    assert (
+        app.app_config["api_settings"]["openai"]["api_key_env_var"] == "OPENAI_API_KEY"
+    )
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_updates_existing_non_normalized_provider_section(monkeypatch):
+async def test_settings_provider_category_updates_existing_non_normalized_provider_section(
+    monkeypatch,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
@@ -4135,7 +5253,7 @@ async def test_settings_provider_category_updates_existing_non_normalized_provid
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
@@ -4180,9 +5298,11 @@ async def test_settings_provider_endpoint_validation_blocks_bad_url(monkeypatch)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
-        screen.query_one("#settings-provider-endpoint-value", Input).value = "javascript:alert(1)"
+        screen.query_one(
+            "#settings-provider-endpoint-value", Input
+        ).value = "javascript:alert(1)"
 
         await pilot.click("#settings-save-category")
         text = _visible_text(screen)
@@ -4190,7 +5310,10 @@ async def test_settings_provider_endpoint_validation_blocks_bad_url(monkeypatch)
         assert "Endpoint must start with http:// or https://" in text
 
     assert saved == []
-    assert app.app_config["api_settings"]["llama_cpp"]["api_url"] == "http://127.0.0.1:8080/v1"
+    assert (
+        app.app_config["api_settings"]["llama_cpp"]["api_url"]
+        == "http://127.0.0.1:8080/v1"
+    )
 
 
 @pytest.mark.asyncio
@@ -4212,7 +5335,7 @@ async def test_settings_provider_endpoint_save_blocks_blank_provider(monkeypatch
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         provider = screen.query_one("#settings-provider-value", Select)
         manual_provider = screen.query_one("#settings-provider-manual-value", Input)
@@ -4237,7 +5360,9 @@ async def test_settings_provider_endpoint_save_blocks_blank_provider(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_blocks_empty_manual_provider_save(monkeypatch):
+async def test_settings_provider_category_blocks_empty_manual_provider_save(
+    monkeypatch,
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
@@ -4254,7 +5379,7 @@ async def test_settings_provider_category_blocks_empty_manual_provider_save(monk
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         provider = screen.query_one("#settings-provider-value", Select)
         manual_provider = screen.query_one("#settings-provider-manual-value", Input)
@@ -4282,7 +5407,7 @@ async def test_settings_provider_blank_select_value_is_not_treated_as_provider()
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         provider = screen.query_one("#settings-provider-value", Select)
 
@@ -4307,7 +5432,7 @@ async def test_settings_provider_revert_restores_provider_dependent_placeholders
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         provider = screen.query_one("#settings-provider-value", Select)
         endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
@@ -4318,7 +5443,7 @@ async def test_settings_provider_revert_restores_provider_dependent_placeholders
 
         provider.value = "llama_cpp"
         screen.handle_provider_value_changed(Select.Changed(provider, "llama_cpp"))
-        assert endpoint.placeholder == "http://127.0.0.1:9099/v1"
+        assert endpoint.placeholder == "http://127.0.0.1:9099"
         assert credential.placeholder == "No credential required"
 
         await pilot.click("#settings-revert-category")
@@ -4368,7 +5493,11 @@ async def test_settings_provider_switch_does_not_save_stale_endpoint(monkeypatch
         await pilot.click("#settings-save-category")
         await pilot.click("#settings-save-category")
 
-    assert ("api_settings.llama_cpp", "api_url", "https://api.openai.com/v1") not in saved
+    assert (
+        "api_settings.llama_cpp",
+        "api_url",
+        "https://api.openai.com/v1",
+    ) not in saved
     assert saved == [("chat_defaults", "provider", "llama_cpp")]
     assert app.app_config["api_settings"]["llama_cpp"] == {}
 
@@ -4384,7 +5513,7 @@ async def test_settings_provider_switch_updates_inspector_readiness():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         provider = screen.query_one("#settings-provider-value", Select)
 
@@ -4394,7 +5523,11 @@ async def test_settings_provider_switch_updates_inspector_readiness():
 
         assert screen.query_one("#settings-model-value", Input).value == ""
         assert (
-            str(screen.query_one("#settings-provider-inspector-readiness", Static).renderable)
+            str(
+                screen.query_one(
+                    "#settings-provider-inspector-readiness", Static
+                ).renderable
+            )
             == "Provider readiness: Ollama / not selected"
         )
 
@@ -4414,7 +5547,7 @@ async def test_settings_provider_switch_selects_provider_default_model():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         provider = screen.query_one("#settings-provider-value", Select)
 
@@ -4446,7 +5579,7 @@ async def test_settings_provider_switch_resets_staged_model_for_each_provider_tr
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         provider = screen.query_one("#settings-provider-value", Select)
         model_input = screen.query_one("#settings-model-value", Input)
@@ -4463,7 +5596,11 @@ async def test_settings_provider_switch_resets_staged_model_for_each_provider_tr
 
         assert model_input.value == "gpt-4o"
         assert (
-            str(screen.query_one("#settings-provider-inspector-readiness", Static).renderable)
+            str(
+                screen.query_one(
+                    "#settings-provider-inspector-readiness", Static
+                ).renderable
+            )
             == "Provider readiness: OpenAI / gpt-4o"
         )
 
@@ -4477,7 +5614,11 @@ async def test_settings_provider_switch_resets_staged_model_for_each_provider_tr
             == "Readiness: Anthropic / not selected"
         )
         assert (
-            str(screen.query_one("#settings-provider-inspector-readiness", Static).renderable)
+            str(
+                screen.query_one(
+                    "#settings-provider-inspector-readiness", Static
+                ).renderable
+            )
             == "Provider readiness: Anthropic / not selected"
         )
 
@@ -4497,7 +5638,7 @@ async def test_settings_provider_detail_shows_field_guidance_and_readable_draft_
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         provider = screen.query_one("#settings-provider-value", Select)
 
@@ -4516,7 +5657,9 @@ async def test_settings_provider_detail_shows_field_guidance_and_readable_draft_
         assert "Model source: settings_draft" not in text
         assert "Endpoint key: api_settings.ollama.api_url" in text
         assert "Endpoint: http://localhost:11434/v1/chat/completions" in text
-        assert "Endpoint: api_settings.ollama.api_url=http://localhost:11434" not in text
+        assert (
+            "Endpoint: api_settings.ollama.api_url=http://localhost:11434" not in text
+        )
         assert (
             "No discovered models yet. Use Discover models after endpoint is configured."
             in text
@@ -4548,8 +5691,13 @@ async def test_settings_provider_custom_value_uses_manual_field_for_unknown_prov
             selector="#settings-provider-value",
         )
 
-        assert screen.query_one("#settings-provider-value", Select).value == "__manual__"
-        assert screen.query_one("#settings-provider-manual-value", Input).value == "OpenAi Typo"
+        assert (
+            screen.query_one("#settings-provider-value", Select).value == "__manual__"
+        )
+        assert (
+            screen.query_one("#settings-provider-manual-value", Input).value
+            == "OpenAi Typo"
+        )
 
 
 @pytest.mark.asyncio
@@ -4560,7 +5708,7 @@ async def test_settings_provider_manual_entry_promotes_known_provider_to_catalog
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         provider = screen.query_one("#settings-provider-value", Select)
         manual_provider = screen.query_one("#settings-provider-manual-value", Input)
@@ -4583,7 +5731,7 @@ async def test_settings_provider_test_blocks_unknown_provider():
     host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
         await _wait_for_settings_text(screen, pilot, "Unknown provider")
@@ -4594,9 +5742,14 @@ async def test_settings_provider_test_blocks_unknown_provider():
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_test_uses_api_settings_env_var_without_secret_leak(monkeypatch):
+async def test_settings_provider_test_uses_api_settings_env_var_without_secret_leak(
+    monkeypatch,
+):
     app = _build_test_app()
-    app.app_config["chat_defaults"] = {"provider": "Groq", "model": "llama-3.3-70b-versatile"}
+    app.app_config["chat_defaults"] = {
+        "provider": "Groq",
+        "model": "llama-3.3-70b-versatile",
+    }
     app.app_config["api_settings"] = {
         "groq": {
             "api_key_env_var": "GROQ_API_KEY",
@@ -4606,7 +5759,7 @@ async def test_settings_provider_test_uses_api_settings_env_var_without_secret_l
     host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
         await _wait_for_settings_text(screen, pilot, "GROQ_API_KEY=<redacted>")
@@ -4640,7 +5793,7 @@ async def test_settings_provider_model_discovery_controls_render_for_eligible_pr
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
         discover = screen.query_one("#settings-discover-provider-models", Button)
@@ -4687,9 +5840,11 @@ async def test_settings_provider_model_discovery_saves_selected_runtime_models()
     host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
-        await _click_scrolled_settings_button(screen, pilot, "#settings-discover-provider-models")
+        await _click_scrolled_settings_button(
+            screen, pilot, "#settings-discover-provider-models"
+        )
         await _wait_for_settings_text(
             screen,
             pilot,
@@ -4702,7 +5857,9 @@ async def test_settings_provider_model_discovery_saves_selected_runtime_models()
         )
         discovered_models.select("gpt-4o-mini")
 
-        await _click_scrolled_settings_button(screen, pilot, "#settings-save-discovered-provider-models")
+        await _click_scrolled_settings_button(
+            screen, pilot, "#settings-save-discovered-provider-models"
+        )
         await _wait_for_settings_text(
             screen,
             pilot,
@@ -4761,9 +5918,11 @@ async def test_settings_provider_model_discovery_shows_ambiguous_provider_recove
     host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
-        await _click_scrolled_settings_button(screen, pilot, "#settings-discover-provider-models")
+        await _click_scrolled_settings_button(
+            screen, pilot, "#settings-discover-provider-models"
+        )
         await _wait_for_settings_text(
             screen,
             pilot,
@@ -4792,9 +5951,11 @@ async def test_settings_provider_test_does_not_depend_on_console_sampling_defaul
     host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
+        await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
-        screen.query_one("#settings-model-profile-temperature", Input).value = "not-a-number"
+        screen.query_one(
+            "#settings-model-profile-temperature", Input
+        ).value = "not-a-number"
 
         await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
         await _wait_for_settings_text(screen, pilot, "Provider test")
@@ -4856,7 +6017,10 @@ async def test_settings_storage_privacy_diagnostics_label_unsupported_mutations_
 
     async with host.run_test(size=(180, 50)) as pilot:
         for button_id, expected in (
-            ("#settings-category-privacy-security", "Credential mutation: unavailable/WIP"),
+            (
+                "#settings-category-privacy-security",
+                "Credential mutation: unavailable/WIP",
+            ),
             ("#settings-category-diagnostics", "Diagnostics writes: unavailable/WIP"),
         ):
             await pilot.click(button_id)
@@ -4865,7 +6029,9 @@ async def test_settings_storage_privacy_diagnostics_label_unsupported_mutations_
 
             assert expected in text
             assert screen.query_one("#settings-save-category", Button).disabled is True
-            assert screen.query_one("#settings-revert-category", Button).disabled is True
+            assert (
+                screen.query_one("#settings-revert-category", Button).disabled is True
+            )
 
 
 @pytest.mark.asyncio
@@ -4889,7 +6055,7 @@ async def test_settings_privacy_security_renders_guided_redacted_posture(monkeyp
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-privacy-security")
+        await _open_settings_category(pilot, "#settings-category-privacy-security")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -4901,7 +6067,10 @@ async def test_settings_privacy_security_renders_guided_redacted_posture(monkeyp
         assert "Provider env vars: 1 present / 1 missing / 2 configured" in text
         assert "Provider config secrets: 1 present" in text
         assert "Preferred source: environment variables" in text
-        assert "Credential mutation: unavailable/WIP - password-gated flow required" in text
+        assert (
+            "Credential mutation: unavailable/WIP - password-gated flow required"
+            in text
+        )
         assert "Open Providers & Models" in text
         assert "Open Advanced Config" in text
         assert "Environment variables are preferred for provider credentials." in text
@@ -4918,13 +6087,13 @@ async def test_settings_privacy_security_recovery_actions_navigate_to_existing_c
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-privacy-security")
+        await _open_settings_category(pilot, "#settings-category-privacy-security")
         screen = _active_destination_screen(host)
 
         await pilot.click("#settings-open-provider-credentials")
         assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
 
-        await pilot.click("#settings-category-privacy-security")
+        await _open_settings_category(pilot, "#settings-category-privacy-security")
         await pilot.click("#settings-open-advanced-config")
         assert screen.active_category == SettingsCategoryId.ADVANCED_CONFIG.value
 
@@ -4935,7 +6104,7 @@ async def test_settings_diagnostics_validate_and_reload_config_actions():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-diagnostics")
+        await _open_settings_category(pilot, "#settings-category-diagnostics")
         screen = _active_destination_screen(host)
         await pilot.click("#settings-validate-config")
         await pilot.click("#settings-reload-config")
@@ -4951,7 +6120,7 @@ async def test_settings_diagnostics_test_shortcut_runs_validate_and_reload():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-diagnostics")
+        await _open_settings_category(pilot, "#settings-category-diagnostics")
         await pilot.press("t")
         screen = _active_destination_screen(host)
         await _wait_for_settings_text(screen, pilot, "Config reload: loaded")
@@ -4976,12 +6145,14 @@ def test_settings_diagnostics_combined_helper_validates_once(monkeypatch, tmp_pa
             return {"chat_defaults": {"provider": "OpenAI"}}
 
     config_path = tmp_path / "config.toml"
-    config_path.write_text("[chat_defaults]\nprovider = \"OpenAI\"\n", encoding="utf-8")
+    config_path.write_text('[chat_defaults]\nprovider = "OpenAI"\n', encoding="utf-8")
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
 
     screen = SettingsScreen(_build_test_app())
-    validation_result, reload_result, loaded_config = screen._diagnostics_validation_and_reload_results()
+    validation_result, reload_result, loaded_config = (
+        screen._diagnostics_validation_and_reload_results()
+    )
 
     assert FakeAdapter.validate_calls == 1
     assert FakeAdapter.load_calls == 1
@@ -4992,7 +6163,9 @@ def test_settings_diagnostics_combined_helper_validates_once(monkeypatch, tmp_pa
     assert loaded_config == {"chat_defaults": {"provider": "OpenAI"}}
 
 
-def test_settings_diagnostics_combined_helper_skips_reload_when_invalid(monkeypatch, tmp_path):
+def test_settings_diagnostics_combined_helper_skips_reload_when_invalid(
+    monkeypatch, tmp_path
+):
     class FakeAdapter:
         validate_calls = 0
         load_calls = 0
@@ -5006,12 +6179,14 @@ def test_settings_diagnostics_combined_helper_skips_reload_when_invalid(monkeypa
             return {"chat_defaults": {"provider": "OpenAI"}}
 
     config_path = tmp_path / "config.toml"
-    config_path.write_text("[chat_defaults\nprovider = \"OpenAI\"\n", encoding="utf-8")
+    config_path.write_text('[chat_defaults\nprovider = "OpenAI"\n', encoding="utf-8")
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
 
     screen = SettingsScreen(_build_test_app())
-    validation_result, reload_result, loaded_config = screen._diagnostics_validation_and_reload_results()
+    validation_result, reload_result, loaded_config = (
+        screen._diagnostics_validation_and_reload_results()
+    )
 
     assert FakeAdapter.validate_calls == 1
     assert FakeAdapter.load_calls == 0
@@ -5094,7 +6269,7 @@ def test_settings_diagnostics_unexpected_config_path_errors_are_not_masked(
 
 def test_settings_diagnostics_strictly_reports_corrupt_toml(monkeypatch, tmp_path):
     config_path = tmp_path / "config.toml"
-    config_path.write_text("[chat_defaults\nprovider = \"OpenAI\"\n", encoding="utf-8")
+    config_path.write_text('[chat_defaults\nprovider = "OpenAI"\n', encoding="utf-8")
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     app = _build_test_app()
     screen = SettingsScreen(app)
@@ -5137,7 +6312,9 @@ def test_settings_storage_check_reports_invalid_config_path(monkeypatch):
     assert any(row.startswith("Config path parent: invalid") for row in result)
 
 
-def test_settings_storage_check_includes_configured_fallback_paths(monkeypatch, tmp_path):
+def test_settings_storage_check_includes_configured_fallback_paths(
+    monkeypatch, tmp_path
+):
     config_path = tmp_path / "config.toml"
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     screen = SettingsScreen(SimpleNamespace(app_config={}))
@@ -5186,7 +6363,9 @@ def test_settings_storage_check_reports_file_targets_as_invalid(monkeypatch, tmp
     assert directory_result == "User data directory: invalid - expected directory"
 
 
-def test_settings_storage_check_reports_empty_path_as_unconfigured(monkeypatch, tmp_path):
+def test_settings_storage_check_reports_empty_path_as_unconfigured(
+    monkeypatch, tmp_path
+):
     config_path = tmp_path / "config.toml"
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     screen = SettingsScreen(SimpleNamespace(app_config={}))
@@ -5199,7 +6378,9 @@ def test_settings_storage_check_reports_empty_path_as_unconfigured(monkeypatch, 
     )
 
 
-def test_settings_storage_check_reports_missing_path_with_parent_readiness(monkeypatch, tmp_path):
+def test_settings_storage_check_reports_missing_path_with_parent_readiness(
+    monkeypatch, tmp_path
+):
     config_path = tmp_path / "config.toml"
     missing_dir = tmp_path / "missing-data-dir"
     missing_db = tmp_path / "missing-db" / "chatbook.db"
@@ -5279,8 +6460,14 @@ def test_settings_privacy_check_reports_key_sources_and_data_boundaries(monkeypa
         "Provider key source: environment 1 present / 1 missing; "
         "provider config secrets 1 present"
     ) in result
-    assert "Data boundary: local data stays local unless explicit server handoff or sync is enabled" in result
-    assert "Server boundary: server tokens are reported as configured/missing only" in result
+    assert (
+        "Data boundary: local data stays local unless explicit server handoff or sync is enabled"
+        in result
+    )
+    assert (
+        "Server boundary: server tokens are reported as configured/missing only"
+        in result
+    )
     assert DUMMY_REDACTION_ENV_VALUE not in text
     assert DUMMY_REDACTION_CONFIG_VALUE not in text
     assert DUMMY_REDACTION_SERVER_VALUE not in text
@@ -5322,7 +6509,7 @@ async def test_settings_storage_test_shortcut_runs_safety_check(monkeypatch, tmp
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-storage")
+        await _open_settings_category(pilot, "#settings-category-storage")
         screen = _active_destination_screen(host)
 
         assert screen.query_one("#settings-check-storage")
@@ -5354,7 +6541,7 @@ async def test_settings_privacy_security_test_shortcut_runs_privacy_check(monkey
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-privacy-security")
+        await _open_settings_category(pilot, "#settings-category-privacy-security")
         screen = _active_destination_screen(host)
 
         assert screen.query_one("#settings-check-privacy")
@@ -5386,7 +6573,7 @@ async def test_settings_privacy_shortcut_passes_stable_config_snapshot_to_worker
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-privacy-security")
+        await _open_settings_category(pilot, "#settings-category-privacy-security")
         screen = _active_destination_screen(host)
         captured = {}
 
@@ -5401,7 +6588,10 @@ async def test_settings_privacy_shortcut_passes_stable_config_snapshot_to_worker
         assert snapshot is not app.app_config
         assert snapshot["api_settings"] is not app.app_config["api_settings"]
         app.app_config["api_settings"]["openai"]["api_key"] = "changed-after-dispatch"
-        assert snapshot["api_settings"]["openai"]["api_key"] == DUMMY_REDACTION_CONFIG_VALUE
+        assert (
+            snapshot["api_settings"]["openai"]["api_key"]
+            == DUMMY_REDACTION_CONFIG_VALUE
+        )
 
 
 def test_settings_config_path_validates_env_override(monkeypatch):
@@ -5413,7 +6603,9 @@ def test_settings_config_path_validates_env_override(monkeypatch):
         screen._config_path()
 
 
-def test_settings_overview_config_path_label_hides_local_directory(monkeypatch, tmp_path):
+def test_settings_overview_config_path_label_hides_local_directory(
+    monkeypatch, tmp_path
+):
     config_path = tmp_path / "config" / "config.toml"
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     screen = SettingsScreen(SimpleNamespace(app_config={}))
@@ -5428,7 +6620,7 @@ def test_settings_overview_config_path_label_hides_local_directory(monkeypatch, 
 def test_settings_advanced_config_save_reports_invalid_env_override(monkeypatch):
     app = SimpleNamespace(app_config={})
     screen = SettingsScreen(app)
-    text = "[chat_defaults]\nprovider = \"Ollama\"\n"
+    text = '[chat_defaults]\nprovider = "Ollama"\n'
     screen._advanced_config_validated_text = text
     monkeypatch.setenv("TLDW_CONFIG_PATH", "unsafe$(touch bad).toml")
 
@@ -5444,7 +6636,7 @@ async def test_settings_advanced_config_shows_raw_editor_and_safety_actions():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-advanced-config")
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
@@ -5463,7 +6655,7 @@ async def test_settings_advanced_config_keeps_safety_actions_before_raw_editor()
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-advanced-config")
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#settings-advanced-config-actions")
         await _wait_for_selector(screen, pilot, "#settings-advanced-config-editor")
@@ -5481,7 +6673,7 @@ async def test_settings_advanced_config_uses_editor_owned_scroll_region():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-advanced-config")
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#settings-advanced-config-editor")
         detail_pane = screen.query_one("#settings-detail-pane")
@@ -5493,7 +6685,9 @@ async def test_settings_advanced_config_uses_editor_owned_scroll_region():
 
 def test_settings_pane_widths_are_owned_by_stylesheet_not_inline_python():
     source = inspect.getsource(SettingsScreen.compose_content)
-    css = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text(encoding="utf-8")
+    css = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text(
+        encoding="utf-8"
+    )
 
     assert ".styles.width" not in source
     for selector, expected_width in (
@@ -5521,13 +6715,15 @@ async def test_settings_advanced_config_blocks_invalid_toml_and_redacts_secret()
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-advanced-config")
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
         screen = _active_destination_screen(host)
         editor = screen.query_one("#settings-advanced-config-editor", TextArea)
         editor.text = "OPENAI_API_KEY=sk-secret-token\n[broken"
 
         await pilot.click("#settings-advanced-validate-config")
-        await _wait_for_settings_text(screen, pilot, "Advanced config validation: invalid")
+        await _wait_for_settings_text(
+            screen, pilot, "Advanced config validation: invalid"
+        )
         text = _visible_text(screen)
 
         assert "Advanced config validation: invalid" in text
@@ -5540,7 +6736,7 @@ async def test_settings_advanced_config_blocks_non_mapping_toml_on_save():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-advanced-config")
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
         screen = _active_destination_screen(host)
         editor = screen.query_one("#settings-advanced-config-editor", TextArea)
         editor.text = "42"
@@ -5548,27 +6744,34 @@ async def test_settings_advanced_config_blocks_non_mapping_toml_on_save():
         save_button = screen.query_one("#settings-advanced-save-config")
 
         assert save_button.disabled
-        assert "top-level TOML value must be a table" in screen._save_advanced_config_text("42")
+        assert (
+            "top-level TOML value must be a table"
+            in screen._save_advanced_config_text("42")
+        )
 
 
 @pytest.mark.asyncio
-async def test_settings_advanced_config_saves_atomically_with_backup(monkeypatch, tmp_path):
+async def test_settings_advanced_config_saves_atomically_with_backup(
+    monkeypatch, tmp_path
+):
     config_path = tmp_path / "config.toml"
-    config_path.write_text("[chat_defaults]\nprovider = \"OpenAI\"\n", encoding="utf-8")
+    config_path.write_text('[chat_defaults]\nprovider = "OpenAI"\n', encoding="utf-8")
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-advanced-config")
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
         screen = _active_destination_screen(host)
         editor = screen.query_one("#settings-advanced-config-editor", TextArea)
-        editor.text = "[chat_defaults]\nprovider = \"Ollama\"\nmodel = \"llama3\"\n"
+        editor.text = '[chat_defaults]\nprovider = "Ollama"\nmodel = "llama3"\n'
 
         assert screen.query_one("#settings-advanced-save-config").disabled
 
         await pilot.click("#settings-advanced-validate-config")
-        await _wait_for_settings_text(screen, pilot, "Advanced config validation: valid")
+        await _wait_for_settings_text(
+            screen, pilot, "Advanced config validation: valid"
+        )
         assert not screen.query_one("#settings-advanced-save-config").disabled
         await pilot.click("#settings-advanced-save-config")
         await _wait_for_settings_text(screen, pilot, "Advanced config save: saved")
@@ -5578,7 +6781,7 @@ async def test_settings_advanced_config_saves_atomically_with_backup(monkeypatch
         assert "Last validated: current text" in text
 
     assert config_path.read_text(encoding="utf-8") == (
-        "[chat_defaults]\nprovider = \"Ollama\"\nmodel = \"llama3\"\n"
+        '[chat_defaults]\nprovider = "Ollama"\nmodel = "llama3"\n'
     )
     assert config_path.with_suffix(".toml.bak").exists()
     assert app.app_config["chat_defaults"]["provider"] == "Ollama"
@@ -5586,11 +6789,13 @@ async def test_settings_advanced_config_saves_atomically_with_backup(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_settings_advanced_config_loads_backup_preview_without_saving(monkeypatch, tmp_path):
+async def test_settings_advanced_config_loads_backup_preview_without_saving(
+    monkeypatch, tmp_path
+):
     config_path = tmp_path / "config.toml"
     backup_path = tmp_path / "config.toml.bak"
-    current_text = "[chat_defaults]\nprovider = \"OpenAI\"\n"
-    backup_text = "[chat_defaults]\nprovider = \"Ollama\"\nmodel = \"llama3\"\n"
+    current_text = '[chat_defaults]\nprovider = "OpenAI"\n'
+    backup_text = '[chat_defaults]\nprovider = "Ollama"\nmodel = "llama3"\n'
     config_path.write_text(current_text, encoding="utf-8")
     backup_path.write_text(backup_text, encoding="utf-8")
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
@@ -5598,14 +6803,16 @@ async def test_settings_advanced_config_loads_backup_preview_without_saving(monk
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-advanced-config")
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
         screen = _active_destination_screen(host)
         editor = screen.query_one("#settings-advanced-config-editor", TextArea)
 
         assert editor.text == current_text
 
         await pilot.click("#settings-advanced-load-backup")
-        await _wait_for_settings_text(screen, pilot, "Advanced config recovery: loaded backup preview")
+        await _wait_for_settings_text(
+            screen, pilot, "Advanced config recovery: loaded backup preview"
+        )
         text = _visible_text(screen)
 
         assert editor.text == backup_text
@@ -5614,11 +6821,15 @@ async def test_settings_advanced_config_loads_backup_preview_without_saving(monk
         assert "validate before save" in text
 
 
-def test_settings_advanced_config_backup_preview_handles_config_path_errors(monkeypatch):
+def test_settings_advanced_config_backup_preview_handles_config_path_errors(
+    monkeypatch,
+):
     screen = SettingsScreen(_build_test_app())
 
     def raise_config_path_error():
-        raise RuntimeError(f"OPENAI_API_KEY={DUMMY_REDACTION_CONFIG_VALUE} path failure")
+        raise RuntimeError(
+            f"OPENAI_API_KEY={DUMMY_REDACTION_CONFIG_VALUE} path failure"
+        )
 
     monkeypatch.setattr(screen, "_config_path", raise_config_path_error)
 
@@ -5636,7 +6847,7 @@ async def test_settings_advanced_config_load_backup_reports_decode_failure(
 ):
     config_path = tmp_path / "config.toml"
     backup_path = tmp_path / "config.toml.bak"
-    current_text = "[chat_defaults]\nprovider = \"OpenAI\"\n"
+    current_text = '[chat_defaults]\nprovider = "OpenAI"\n'
     config_path.write_text(current_text, encoding="utf-8")
     backup_path.write_bytes(b"\xff\xfe\xfa")
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
@@ -5644,7 +6855,7 @@ async def test_settings_advanced_config_load_backup_reports_decode_failure(
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-advanced-config")
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
         screen = _active_destination_screen(host)
         editor = screen.query_one("#settings-advanced-config-editor", TextArea)
 
@@ -5667,7 +6878,9 @@ def test_settings_advanced_config_load_backup_handler_uses_worker(monkeypatch):
         calls.append("worker")
 
     monkeypatch.setattr(screen, "_load_advanced_backup_preview", fail_direct_load)
-    monkeypatch.setattr(screen, "_advanced_load_backup_worker", fake_worker, raising=False)
+    monkeypatch.setattr(
+        screen, "_advanced_load_backup_worker", fake_worker, raising=False
+    )
 
     event = SimpleNamespace(stop=lambda: calls.append("stop"))
 
@@ -5682,7 +6895,7 @@ async def test_settings_advanced_config_guided_path_buttons_escape_raw_toml():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-advanced-config")
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
         screen = _active_destination_screen(host)
 
         assert screen.query_one("#settings-advanced-open-providers-models", Button)
@@ -5696,12 +6909,14 @@ async def test_settings_advanced_config_guided_path_buttons_escape_raw_toml():
         assert "Selected category: Providers & Models" in _visible_text(screen)
 
 
-def test_settings_advanced_config_new_file_save_reports_no_backup(monkeypatch, tmp_path):
+def test_settings_advanced_config_new_file_save_reports_no_backup(
+    monkeypatch, tmp_path
+):
     config_path = tmp_path / "config.toml"
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     app = SimpleNamespace(app_config={})
     screen = SettingsScreen(app)
-    text = "[chat_defaults]\nprovider = \"Ollama\"\n"
+    text = '[chat_defaults]\nprovider = "Ollama"\n'
     screen._advanced_config_validated_text = text
 
     result = screen._save_advanced_config_text(text)
@@ -5710,3 +6925,35 @@ def test_settings_advanced_config_new_file_save_reports_no_backup(monkeypatch, t
     assert "backup: none (new file)" in result
     assert config_path.exists()
     assert not config_path.with_suffix(".toml.bak").exists()
+
+
+@pytest.mark.asyncio
+async def test_settings_mount_triggers_at_most_one_post_mount_recompose():
+    """task-290: on_mount used to fire TWO independent thread workers whose
+    completions each set a recompose=True reactive at its own moment -- two
+    full-screen recomposes shortly after mount (the "mount storm"). The
+    combined _refresh_sync_rows worker applies both row sets in one
+    message-loop slot, so compose runs at most twice total: the initial
+    mount compose plus ONE coalesced storm recompose."""
+    compose_calls = 0
+    original_compose = SettingsScreen.compose
+
+    def counting_compose(self):
+        nonlocal compose_calls
+        compose_calls += 1
+        yield from original_compose(self)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+    with patch.object(SettingsScreen, "compose", counting_compose):
+        async with host.run_test(size=(180, 50)) as pilot:
+            await _settle_settings_mount_storm(pilot)
+            # Extra settles: give any straggler recompose a chance to fire
+            # so the assertion below is a real ceiling, not a lucky read.
+            await pilot.pause()
+            await pilot.pause()
+
+    assert compose_calls <= 2, (
+        f"Settings composed {compose_calls} times after mount -- the sync-rows "
+        "refresh storm is no longer coalesced (task-290)."
+    )

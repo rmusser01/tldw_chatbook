@@ -5,11 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
-from typing import Any, Literal, Mapping
+from typing import TYPE_CHECKING, Any, Literal, Mapping
 
 from tldw_chatbook.Sync_Interop.crypto import encrypt_sync_payload
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
-from tldw_chatbook.tldw_api import SyncV2Envelope
+
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api import SyncV2Envelope
 
 
 class SyncEnvelopeBuilder:
@@ -32,20 +34,37 @@ class SyncEnvelopeBuilder:
 
     # ------------------------------------------------------------------ M1 dotted-domain builders
 
-    def build_notes_note_upsert(self, *, note_id: str, title: str, content: str) -> SyncV2Envelope:
+    def build_notes_note_upsert(
+        self, *, note_id: str, title: str, content: str
+    ) -> SyncV2Envelope:
         payload = {"title": title, "content": content}
-        return self._notes_note_envelope(note_id=note_id, operation="upsert", payload=payload, deleted=False)
+        return self._notes_note_envelope(
+            note_id=note_id, operation="upsert", payload=payload, deleted=False
+        )
 
-    def build_notes_note_tombstone(self, *, note_id: str, deleted_at: str | None = None) -> SyncV2Envelope:
+    def build_notes_note_tombstone(
+        self, *, note_id: str, deleted_at: str | None = None
+    ) -> SyncV2Envelope:
         payload = {
             "deleted_at": deleted_at or datetime.now(timezone.utc).isoformat(),
             "reason": "user_deleted",
         }
-        return self._notes_note_envelope(note_id=note_id, operation="tombstone", payload=payload, deleted=True)
+        return self._notes_note_envelope(
+            note_id=note_id, operation="tombstone", payload=payload, deleted=True
+        )
 
-    def _notes_note_envelope(self, *, note_id: str, operation: str, payload: dict[str, Any], deleted: bool) -> SyncV2Envelope:
+    def _notes_note_envelope(
+        self, *, note_id: str, operation: str, payload: dict[str, Any], deleted: bool
+    ) -> SyncV2Envelope:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import SyncV2Envelope
+
         payload_hash = canonical_payload_hash(payload)
-        base = self.notes_mirror.get(self.dataset_id, note_id) if self.notes_mirror is not None else None
+        base = (
+            self.notes_mirror.get(self.dataset_id, note_id)
+            if self.notes_mirror is not None
+            else None
+        )
         return SyncV2Envelope(
             client_envelope_id=f"{self.device_id}:notes.note:{note_id}:{payload_hash}",
             dataset_id=self.dataset_id,
@@ -276,6 +295,9 @@ class SyncEnvelopeBuilder:
         base_version: str | int | None = None,
         entity_version: str | int | None = None,
     ) -> SyncV2Envelope:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import SyncV2Envelope
+
         encrypted = encrypt_sync_payload(payload, key=self.dataset_key)
         payload_hash = self._payload_hash(payload)
         return SyncV2Envelope(
@@ -310,6 +332,9 @@ class SyncEnvelopeBuilder:
         entity_version: str | int | None = None,
         encryption_policy: str = "client_private_v1",
     ) -> SyncV2Envelope:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from tldw_chatbook.tldw_api import SyncV2Envelope
+
         return SyncV2Envelope(
             client_envelope_id=f"{self.device_id}:{domain}:{stable_key}:{payload_hash}",
             dataset_id=self.dataset_id,
@@ -329,5 +354,7 @@ class SyncEnvelopeBuilder:
 
     @staticmethod
     def _payload_hash(payload: Mapping[str, Any]) -> str:
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
         return f"sha256:{hashlib.sha256(encoded).hexdigest()}"

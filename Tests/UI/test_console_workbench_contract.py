@@ -1,10 +1,15 @@
 import pytest
+from pathlib import Path
+from unittest.mock import Mock
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
+from textual.widgets import Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
 from tldw_chatbook.Chat.console_display_state import (
+    CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
     ConsoleControlState,
     build_console_disabled_reason,
 )
@@ -17,6 +22,7 @@ from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
     ChatScreen,
 )
+from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Console.console_setup_modal import ConsoleSetupModal
@@ -24,6 +30,9 @@ from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 from tldw_chatbook.Widgets.Console.console_workbench_state import (
     build_console_workbench_state,
 )
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_BUNDLED_STYLESHEET = _REPO_ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
 
 
 class ConsoleHarness(App):
@@ -36,6 +45,15 @@ class ConsoleHarness(App):
 
 
 class ConsoleFooterHarness(App):
+    """Composes an `AppFooterStatus` directly on the App's own default
+    screen, exactly like `TldwCli._create_main_ui_widgets` does in the real
+    app (id="app-footer-status"). Task-264: `ChatScreen` (via
+    `BaseAppScreen.compose()`) now mounts its OWN `AppFooterStatus` too, and
+    `ChatScreen._register_console_footer_shortcuts()` resolves that
+    screen-owned instance via `self.query_one(AppFooterStatus)` -- so this
+    harness's default-screen widget is only kept around to prove the
+    registration does NOT land there (see the assertions below)."""
+
     def __init__(self, app_instance):
         super().__init__()
         self.app_instance = app_instance
@@ -164,7 +182,7 @@ def _control_state() -> ConsoleControlState:
 
 
 @pytest.mark.asyncio
-async def test_console_workbench_header_seam_has_no_visible_layout_cost():
+async def test_console_workbench_header_is_the_visible_destination_identity():
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -173,12 +191,19 @@ async def test_console_workbench_header_seam_has_no_visible_layout_cost():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
 
+        # The DestinationHeader is the visible Console identity header; the
+        # mode strip and command strip remain hidden parity seams, and the
+        # legacy #console-title/#console-purpose compat statics stay hidden.
         header = console.query_one("#console-workbench-header")
-        assert not _is_displayed(header)
-        assert _style_scalar_value(header.styles.height) == 0
-        assert _style_scalar_value(header.styles.min_height) == 0
+        assert _is_displayed(header)
+        assert "Console" in _widget_text(
+            console.query_one("#workbench-header-title", Static)
+        )
+        assert _widget_text(console.query_one("#workbench-header-subtitle", Static))
+        assert _widget_text(console.query_one("#workbench-header-status", Static))
         assert not _is_displayed(console.query_one("#console-workbench-mode-strip"))
         assert not _is_displayed(console.query_one("#console-workbench-command-strip"))
+        assert not _is_displayed(console.query_one("#console-title"))
         assert _is_displayed(console.query_one("#console-control-bar"))
 
 
@@ -197,15 +222,40 @@ async def test_console_has_one_canonical_visible_state_action_strip():
         control_bar = console.query_one("#console-control-bar")
         assert _is_displayed(control_bar)
 
-        visible_text = " ".join(
+        action_text = " ".join(
             _widget_text(child)
             for child in control_bar.walk_children()
             if _is_displayed(child)
         )
-        assert visible_text.count("Provider:") == 1
-        assert visible_text.count("Model:") == 1
-        assert visible_text.count("Settings") == 1
-        assert visible_text.count("Library RAG") == 1
+        assert action_text.count("Settings") == 1
+        assert action_text.count("Library RAG") == 1
+        # Pills moved out of the control bar into their own strip.
+        assert "Provider:" not in action_text
+        chips = console.query_one("#console-status-chips")
+        chip_text = " ".join(
+            _widget_text(child)
+            for child in chips.walk_children()
+            if _is_displayed(child)
+        )
+        assert chip_text.count("Provider:") == 1
+        assert chip_text.count("Model:") == 1
+
+
+@pytest.mark.asyncio
+async def test_console_status_chips_sit_above_composer():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(150, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-status-chips")
+        chips = console.query_one("#console-status-chips")
+        grid = console.query_one("#console-workspace-grid")
+        composer = console.query_one("#console-native-composer")
+        # Below the chat/rail grid, above the composer.
+        assert chips.region.y >= grid.region.y + grid.region.height
+        assert chips.region.y + chips.region.height <= composer.region.y
+        assert _is_displayed(chips)
 
 
 @pytest.mark.asyncio
@@ -230,6 +280,8 @@ async def test_console_control_bar_renders_visible_state_chips():
             "#console-tools-chip",
             "#console-approvals-chip",
         )
+        # Chips now live in the #console-status-chips strip above the composer,
+        # not inside #console-control-bar; query them by global id.
         visible_chip_text = []
         for selector in expected_selectors:
             chip = console.query_one(selector)
@@ -238,7 +290,9 @@ async def test_console_control_bar_renders_visible_state_chips():
 
         assert any("Provider:" in text for text in visible_chip_text)
         assert any("Model:" in text for text in visible_chip_text)
-        assert any("Assistant:" in text or "Persona:" in text for text in visible_chip_text)
+        assert any(
+            "Assistant:" in text or "Persona:" in text for text in visible_chip_text
+        )
         assert any("RAG:" in text for text in visible_chip_text)
         assert any("Sources:" in text for text in visible_chip_text)
         assert any("Tools:" in text for text in visible_chip_text)
@@ -252,11 +306,140 @@ async def test_console_counter_chips_dim_when_zero():
     async with host.run_test(size=(180, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-sources-chip")
-        for chip_id in ("#console-sources-chip", "#console-tools-chip", "#console-approvals-chip"):
+        for chip_id in (
+            "#console-sources-chip",
+            "#console-tools-chip",
+            "#console-approvals-chip",
+        ):
             chip = console.query_one(chip_id)
             assert chip.has_class("console-chip-dim"), chip_id
             assert not chip.has_class("console-chip-alert"), chip_id
-        assert not console.query_one("#console-provider-chip").has_class("console-chip-dim")
+        assert not console.query_one("#console-provider-chip").has_class(
+            "console-chip-dim"
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_control_chips_are_focusable_and_reveal_full_label_on_focus():
+    long_model = "very-long-local-model-name-for-ellipsis"
+    app = _build_test_app()
+    _configure_native_ready_console(app, model=long_model)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-bar")
+
+        chip_ids = (
+            "#console-provider-chip",
+            "#console-model-chip",
+            "#console-persona-chip",
+            "#console-rag-chip",
+            "#console-sources-chip",
+            "#console-tools-chip",
+            "#console-approvals-chip",
+        )
+        for chip_id in chip_ids:
+            chip = console.query_one(chip_id)
+            assert chip.can_focus, chip_id
+            chip.focus()
+            await pilot.pause()
+            assert chip.has_focus, chip_id
+
+        # Chips ellipsize at 22 cells; focus lifts the cap so the full label
+        # is reachable by keyboard (the tooltip carries the same full text).
+        model_chip = console.query_one("#console-model-chip")
+        assert long_model in str(model_chip.tooltip)
+        assert model_chip.region.width > 22
+
+
+@pytest.mark.asyncio
+async def test_console_approvals_chip_activation_focuses_pending_approval_card():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-bar")
+
+        console.set_task_resume_state(
+            TaskResumeState(
+                pending_approval={
+                    "summary": "Allow workspace write for chip test",
+                    "details": "Approvals chip activation must reach this card",
+                }
+            )
+        )
+        await pilot.pause(0.1)
+
+        chip = console.query_one("#console-approvals-chip")
+        chip.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+
+        focused = host.focused
+        assert getattr(focused, "id", None) == "approval-allow-once"
+
+
+@pytest.mark.asyncio
+async def test_console_approvals_chip_activation_focuses_batch_submit_button():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-bar")
+
+        console.set_task_resume_state(
+            TaskResumeState(
+                pending_approval={
+                    "calls": [
+                        {
+                            "llm_name": "mcp__srv__auth",
+                            "server_label": "Srv",
+                            "tool_name": "auth",
+                            "arguments": {},
+                        }
+                    ],
+                    "timeout_seconds": 30.0,
+                }
+            )
+        )
+        await pilot.pause(0.1)
+
+        chip = console.query_one("#console-approvals-chip")
+        chip.focus()
+        await pilot.pause()
+        await pilot.press("space")
+        await pilot.pause(0.1)
+
+        focused = host.focused
+        assert getattr(focused, "id", None) == "approval-submit"
+
+
+@pytest.mark.asyncio
+async def test_console_approvals_chip_activation_without_pending_approval_notifies():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-control-bar")
+
+        host.notify = Mock()
+        chip = console.query_one("#console-approvals-chip")
+        chip.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+
+        host.notify.assert_called_once()
+        assert CONSOLE_INSPECTOR_NO_APPROVAL_REASON in host.notify.call_args.args[0]
+        assert getattr(host.focused, "id", None) != "approval-allow-once"
 
 
 @pytest.mark.asyncio
@@ -286,7 +469,8 @@ async def test_console_control_bar_exposes_compact_visible_actions():
 
 
 @pytest.mark.asyncio
-async def test_console_left_rail_orders_session_then_staged_context():
+async def test_console_left_rail_keeps_session_and_moves_staged_context_out():
+    """Task-400: staged sources render in the Inspector, not the left rail."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -301,9 +485,20 @@ async def test_console_left_rail_orders_session_then_staged_context():
             if _is_displayed(child)
         )
 
-        assert visible_text.index("Conversations") < visible_text.index("Attach")
-        assert "No sources attached." in visible_text
+        assert "Conversations" in visible_text
         assert "Chat 1" in visible_text
+        assert "Stage sources from Library" not in visible_text
+        assert not list(rail.query("#console-staged-context-tray"))
+
+        # The staged-context tray now tops the Inspector rail body, above
+        # the run inspector (Source Readiness section) and the bottom card.
+        tray = console.query_one("#console-staged-context-tray")
+        rail_body = console.query_one("#console-inspector-rail-body")
+        assert tray.parent is rail_body
+        children = list(rail_body.children)
+        assert children.index(tray) == 0
+        readiness = console.query_one("#console-live-work-source-readiness")
+        assert children.index(tray) < children.index(readiness)
 
 
 @pytest.mark.asyncio
@@ -334,7 +529,9 @@ async def test_console_inspector_prioritizes_actionable_status_before_secondary_
         assert status_index < tool_action_index < first_secondary_heading_index
         assert status_index < save_action_index < first_secondary_heading_index
         assert console.query_one("#console-inspector-review-approval").disabled is False
-        assert console.query_one("#console-inspector-review-tool-call").disabled is False
+        assert (
+            console.query_one("#console-inspector-review-tool-call").disabled is False
+        )
         assert console.query_one("#console-inspector-save-chatbook").disabled is False
 
 
@@ -463,12 +660,19 @@ async def test_console_empty_transcript_exposes_beginner_activation_actions():
         # control bar (never on the modal).
         modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
         assert _is_displayed(modal)
-        assert _widget_text(console.query_one("#console-setup-modal-title")) == "Get started"
-        assert "Pick a model" in _widget_text(console.query_one("#console-setup-step-2"))
+        assert (
+            _widget_text(console.query_one("#console-setup-modal-title"))
+            == "Get started"
+        )
+        assert "Pick a model" in _widget_text(
+            console.query_one("#console-setup-step-2")
+        )
         assert "Send your first message" in _widget_text(
             console.query_one("#console-setup-step-3")
         )
-        assert "Choose model" in _widget_text(console.query_one("#console-setup-modal-action"))
+        assert "Choose model" in _widget_text(
+            console.query_one("#console-setup-modal-action")
+        )
         # The modal carries no attach/RAG affordances; those stay on the control bar.
         assert not list(console.query("#console-empty-attach-context"))
         assert not list(console.query("#console-empty-run-library-rag"))
@@ -640,7 +844,9 @@ async def test_console_empty_transcript_provider_recovery_label_matches_setup_bl
 
         action = console.query_one("#console-setup-modal-action")
         assert _widget_text(action) == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
-        assert str(action.tooltip or "") == "Configure OpenAI API and API key in Settings"
+        assert (
+            str(action.tooltip or "") == "Configure OpenAI API and API key in Settings"
+        )
 
 
 def test_console_empty_recovery_action_keeps_provider_label_with_empty_tooltip():
@@ -982,7 +1188,9 @@ async def test_console_workbench_send_action_disables_during_active_run():
 
 
 @pytest.mark.asyncio
-async def test_console_active_stream_sync_skips_unchanged_chrome_and_inspector(monkeypatch):
+async def test_console_active_stream_sync_skips_unchanged_chrome_and_inspector(
+    monkeypatch,
+):
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -1018,7 +1226,9 @@ async def test_console_active_stream_sync_skips_unchanged_chrome_and_inspector(m
             nonlocal inspector_refreshes
             inspector_refreshes += 1
 
-        monkeypatch.setattr(console, "_sync_console_workbench_state", count_workbench_sync)
+        monkeypatch.setattr(
+            console, "_sync_console_workbench_state", count_workbench_sync
+        )
         monkeypatch.setattr(inspector, "refresh", count_inspector_refresh)
 
         for _ in range(5):
@@ -1117,16 +1327,29 @@ async def test_console_registers_footer_workbench_shortcuts():
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
-        footer = host.query_one(AppFooterStatus)
+        # task-264: the registration lands on the SCREEN's own footer, not
+        # the harness's default-screen stand-in.
+        footer = console.query_one(AppFooterStatus)
 
         assert footer.shortcut_text == (
-            "F6 next pane | Shift+F6 previous pane | F1 help | Enter send | Ctrl+P palette"
+            "F6 next pane | Shift+F6 previous pane | F1 help | Enter send | "
+            "Ctrl+K switch session | Ctrl+T new tab | Ctrl+P palette"
         )
 
         await console.remove()
         await pilot.pause()
 
-        assert footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+        # task-264: the context dies WITH the screen -- its footer is
+        # detached from the DOM along with it (Textual's `is_mounted` flag
+        # is stale after removal; `parent is None` is the reliable signal),
+        # so no stale console hints can leak to another surface. The
+        # harness's default-screen stand-in (never registered against)
+        # keeps the default shortcuts.
+        assert footer.parent is None
+        assert (
+            host.query_one(AppFooterStatus).shortcut_text
+            == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+        )
 
 
 @pytest.mark.asyncio
@@ -1190,3 +1413,126 @@ async def test_console_shell_invalid_workbench_density_falls_back_to_normal():
         shell = console.query_one("#console-shell")
         assert shell.has_class("density-normal")
         assert not shell.has_class("density-compact")
+
+
+@pytest.mark.asyncio
+async def test_console_header_carries_inline_class_and_dash_subtitle():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workbench-header")
+        header = console.query_one("#console-workbench-header")
+        assert header.has_class("console-header-inline")
+        assert _widget_text(console.query_one("#workbench-header-title")).strip() == "Console"
+        subtitle = _widget_text(console.query_one("#workbench-header-subtitle"))
+        assert subtitle.lstrip().startswith("—")
+        assert "source handoffs" in subtitle
+
+
+@pytest.mark.asyncio
+async def test_console_header_inline_css_renders_single_row():
+    from textual.app import App, ComposeResult
+    from tldw_chatbook.UI.Workbench.workbench_widgets import DestinationHeader
+    from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchHeaderState
+
+    class _HeaderApp(App[None]):
+        CSS_PATH = str(_BUNDLED_STYLESHEET)
+        def compose(self) -> ComposeResult:
+            yield DestinationHeader(
+                WorkbenchHeaderState(
+                    title="Console",
+                    subtitle="— Chat, source handoffs, live runs, and control actions.",
+                    status="ready",
+                ),
+                id="console-workbench-header",
+                classes="workbench-header console-header-inline",
+            )
+
+    app = _HeaderApp()
+    async with app.run_test(size=(120, 10)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        header = app.query_one("#console-workbench-header")
+        assert header.region.height == 1
+        subtitle = app.query_one("#workbench-header-subtitle")
+        status = app.query_one("#workbench-header-status")
+        assert status.region.y == subtitle.region.y
+        assert status.region.x >= subtitle.region.x + subtitle.region.width
+
+
+@pytest.mark.asyncio
+async def test_console_header_inline_subtitle_ellipsizes_when_narrow():
+    from textual.app import App, ComposeResult
+    from tldw_chatbook.UI.Workbench.workbench_widgets import DestinationHeader
+    from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchHeaderState
+
+    class _NarrowHeaderApp(App[None]):
+        CSS_PATH = str(_BUNDLED_STYLESHEET)
+        def compose(self) -> ComposeResult:
+            yield DestinationHeader(
+                WorkbenchHeaderState(
+                    title="Console",
+                    subtitle="— Chat, source handoffs, live runs, and control actions.",
+                    status="ready",
+                ),
+                id="console-workbench-header",
+                classes="workbench-header console-header-inline",
+            )
+
+    widths = {}
+    for label, cols in (("wide", 120), ("narrow", 60)):
+        app = _NarrowHeaderApp()
+        async with app.run_test(size=(cols, 10)) as pilot:
+            await pilot.pause(); await pilot.pause()
+            header = app.query_one("#console-workbench-header")
+            subtitle = app.query_one("#workbench-header-subtitle")
+            status = app.query_one("#workbench-header-status")
+            assert header.region.height == 1, label
+            widths[label] = subtitle.region.width
+            # Ready badge stays flush to the header's right padding edge
+            # (padding: 0 1) at every width.
+            assert status.region.x + status.region.width == cols - 1, label
+    # The subtitle genuinely shrinks as the terminal narrows.
+    assert widths["narrow"] < widths["wide"]
+
+
+@pytest.mark.asyncio
+async def test_console_header_inline_subtitle_visible_in_compact_density():
+    """The inline header stays one row at any density AND keeps the subtitle:
+    the shared `.density-compact .workbench-header-subtitle { display: none }`
+    hid it to save a row in the old stacked header, but the inline header is a
+    single row regardless, so the id+class rule restores the subtitle to use
+    the horizontal space."""
+    from textual.app import App, ComposeResult
+    from textual.containers import Vertical
+    from tldw_chatbook.UI.Workbench.workbench_widgets import DestinationHeader
+    from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchHeaderState
+
+    class _CompactHeaderApp(App[None]):
+        CSS_PATH = str(_BUNDLED_STYLESHEET)
+
+        def compose(self) -> ComposeResult:
+            # The density class is applied to an ancestor (#console-shell); mirror
+            # that so `.density-compact .workbench-header-subtitle` would match.
+            with Vertical(classes="density-compact"):
+                yield DestinationHeader(
+                    WorkbenchHeaderState(
+                        title="Console",
+                        subtitle="— Chat, source handoffs, live runs, and control actions.",
+                        status="ready",
+                    ),
+                    id="console-workbench-header",
+                    classes="workbench-header console-header-inline",
+                )
+
+    app = _CompactHeaderApp()
+    async with app.run_test(size=(120, 10)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        header = app.query_one("#console-workbench-header")
+        subtitle = app.query_one("#workbench-header-subtitle")
+        assert header.region.height == 1
+        assert subtitle.display is True
+        assert subtitle.region.width > 0

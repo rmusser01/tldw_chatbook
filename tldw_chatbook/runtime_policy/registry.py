@@ -118,7 +118,9 @@ def _capability(
     )
 
 
-def _combine_action_sets(*action_sets: tuple[CapabilityActionSeed, ...]) -> tuple[CapabilityActionSeed, ...]:
+def _combine_action_sets(
+    *action_sets: tuple[CapabilityActionSeed, ...],
+) -> tuple[CapabilityActionSeed, ...]:
     combined_actions: list[CapabilityActionSeed] = []
     seen_suffixes: set[str] = set()
     for action_set in action_sets:
@@ -270,7 +272,9 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("character.persona", actions=CRUD_ACTIONS),
             _resource(
                 "character.sessions",
-                actions=_combine_action_sets(CRUD_ACTIONS, (LAUNCH, EXPORT, OBSERVE, RESTORE)),
+                actions=_combine_action_sets(
+                    CRUD_ACTIONS, (LAUNCH, EXPORT, OBSERVE, RESTORE)
+                ),
             ),
             _resource(
                 "character.messages",
@@ -329,7 +333,16 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("personalization.lifecycle", actions=(PURGE,)),
             _resource(
                 "personalization.memories",
-                actions=(LIST, DETAIL, CREATE, UPDATE, DELETE, IMPORT, EXPORT, VALIDATE),
+                actions=(
+                    LIST,
+                    DETAIL,
+                    CREATE,
+                    UPDATE,
+                    DELETE,
+                    IMPORT,
+                    EXPORT,
+                    VALIDATE,
+                ),
             ),
             _resource("personalization.explanations", actions=(LIST,)),
         ),
@@ -345,7 +358,11 @@ AUDITED_CAPABILITY_SEEDS = (
                 actions=CRUD_ACTIONS,
                 sources=(LOCAL_SOURCE, SERVER_SOURCE, WORKSPACE_SOURCE),
             ),
-            _resource("notes.graph", actions=(LIST, DETAIL, CREATE, DELETE), sources=(SERVER_SOURCE,)),
+            _resource(
+                "notes.graph",
+                actions=(LIST, DETAIL, CREATE, DELETE),
+                sources=(SERVER_SOURCE,),
+            ),
             _resource("notes.workspace", actions=CRUD_ACTIONS),
         ),
     ),
@@ -357,16 +374,26 @@ AUDITED_CAPABILITY_SEEDS = (
         resources=(
             _resource(
                 "media.reading",
-                actions=_combine_action_sets(CRUD_ACTIONS, (BULK_UPDATE, ARCHIVE, SUMMARIZE, IMPORT, EXPORT, TTS)),
+                actions=_combine_action_sets(
+                    CRUD_ACTIONS, (BULK_UPDATE, ARCHIVE, SUMMARIZE, IMPORT, EXPORT, TTS)
+                ),
             ),
             _resource("media.add", actions=(CREATE,)),
-            _resource("media.file_artifacts", actions=(DETAIL, CREATE, DELETE, EXPORT, PURGE)),
+            _resource(
+                "media.file_artifacts", actions=(DETAIL, CREATE, DELETE, EXPORT, PURGE)
+            ),
             _resource("media.reference_images", actions=(LIST,)),
             _resource("media.reading_import_jobs", actions=(LIST, DETAIL)),
             _resource("media.reading.digest_schedules", actions=CRUD_ACTIONS),
-            _resource("media.reading.digest_scheduler", actions=(TRIGGER,), sources=(LOCAL_SOURCE,)),
+            _resource(
+                "media.reading.digest_scheduler",
+                actions=(TRIGGER,),
+                sources=(LOCAL_SOURCE,),
+            ),
             _resource("media.reading.digest_outputs", actions=(LIST,)),
-            _resource("media.web_content_ingest", actions=(LAUNCH,), sources=(SERVER_SOURCE,)),
+            _resource(
+                "media.web_content_ingest", actions=(LAUNCH,), sources=(SERVER_SOURCE,)
+            ),
             _resource("media.items", actions=(LIST, DETAIL, UPDATE, DELETE, RESTORE)),
             _resource("media.items.trash", actions=(LIST, DELETE)),
             _resource("media.items.keywords", actions=(LIST, UPDATE)),
@@ -383,18 +410,34 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("media.processing.code", actions=(PROCESS,)),
             _resource("media.processing.emails", actions=(PROCESS,)),
             _resource("media.processing.web_scraping", actions=(PROCESS,)),
-            _resource("media.web_scraping", actions=(STATUS, DETAIL, CANCEL, OBSERVE, INSPECT), sources=(SERVER_SOURCE,)),
-            _resource("media.web_scraping.cookies", actions=(DETAIL, UPDATE), sources=(SERVER_SOURCE,)),
-            _resource("media.web_scraping.service", actions=(INITIALIZE, SHUTDOWN), sources=(SERVER_SOURCE,)),
+            _resource(
+                "media.web_scraping",
+                actions=(STATUS, DETAIL, CANCEL, OBSERVE, INSPECT),
+                sources=(SERVER_SOURCE,),
+            ),
+            _resource(
+                "media.web_scraping.cookies",
+                actions=(DETAIL, UPDATE),
+                sources=(SERVER_SOURCE,),
+            ),
+            _resource(
+                "media.web_scraping.service",
+                actions=(INITIALIZE, SHUTDOWN),
+                sources=(SERVER_SOURCE,),
+            ),
             _resource("media.processing.mediawiki", actions=(PROCESS, IMPORT)),
-            _resource("media.transcription_models", actions=(LIST,), sources=(SERVER_SOURCE,)),
+            _resource(
+                "media.transcription_models", actions=(LIST,), sources=(SERVER_SOURCE,)
+            ),
             _resource("media.reading.saved_searches", actions=CRUD_ACTIONS),
             _resource("media.reading.note_links", actions=(LIST, CREATE, DELETE)),
             _resource("media.reading_progress", actions=(DETAIL, UPDATE)),
             _resource("media.navigation", actions=(DETAIL,)),
             _resource("media.ingestion_sources", actions=CRUD_ACTIONS),
             _resource("media.ingestion_source_items", actions=(REATTACH,)),
-            _resource("media.ingestion_jobs", actions=(LIST, DETAIL, LAUNCH, OBSERVE, CANCEL)),
+            _resource(
+                "media.ingestion_jobs", actions=(LIST, DETAIL, LAUNCH, OBSERVE, CANCEL)
+            ),
         ),
     ),
     _capability(
@@ -405,7 +448,14 @@ AUDITED_CAPABILITY_SEEDS = (
         resources=(
             _resource(
                 "prompts",
-                actions=(LIST, PREVIEW, CREATE, UPDATE, DELETE),
+                # DETAIL is distinct from PREVIEW: PREVIEW ("prompts.preview.*")
+                # backs the prompt-chatbook "render this prompt's variables"
+                # flow (see Prompt_Management/prompt_chatbook_scope_service.py
+                # and MCP/local_control_service.py); DETAIL ("prompts.detail.*")
+                # is PromptScopeService.get_prompt's single-record fetch, used
+                # by the Library Prompts editor (UI/Screens/library_screen.py's
+                # _refresh_library_prompt_detail) to open a prompt row.
+                actions=(LIST, DETAIL, PREVIEW, CREATE, UPDATE, DELETE),
                 domain_id="prompts",
             ),
             _resource(
@@ -413,15 +463,60 @@ AUDITED_CAPABILITY_SEEDS = (
                 actions=(LIST, RESTORE),
                 domain_id="prompts",
             ),
-            _resource("prompts.health", actions=(DETAIL,), sources=(SERVER_SOURCE,), domain_id="prompts"),
-            _resource("prompts.sync_log", actions=(LIST,), sources=(SERVER_SOURCE,), domain_id="prompts"),
-            _resource("prompts.search", actions=(LIST,), sources=(SERVER_SOURCE,), domain_id="prompts"),
-            _resource("prompts.keywords", actions=(LIST, CREATE, DELETE, EXPORT), sources=(SERVER_SOURCE,), domain_id="prompts"),
-            _resource("prompts.transfer", actions=(IMPORT, EXPORT), sources=(SERVER_SOURCE,), domain_id="prompts"),
-            _resource("prompts.templates", actions=(PROCESS,), sources=(SERVER_SOURCE,), domain_id="prompts"),
-            _resource("prompts.bulk", actions=(UPDATE, DELETE), sources=(SERVER_SOURCE,), domain_id="prompts"),
-            _resource("prompts.usage", actions=(UPDATE,), sources=(SERVER_SOURCE,), domain_id="prompts"),
-            _resource("prompts.collections", actions=(LIST, DETAIL, CREATE, UPDATE), sources=(SERVER_SOURCE,), domain_id="prompts"),
+            _resource(
+                "prompts.health",
+                actions=(DETAIL,),
+                sources=(SERVER_SOURCE,),
+                domain_id="prompts",
+            ),
+            _resource(
+                "prompts.sync_log",
+                actions=(LIST,),
+                sources=(SERVER_SOURCE,),
+                domain_id="prompts",
+            ),
+            _resource(
+                "prompts.search",
+                actions=(LIST,),
+                sources=(SERVER_SOURCE,),
+                domain_id="prompts",
+            ),
+            _resource(
+                "prompts.keywords",
+                actions=(LIST, CREATE, DELETE, EXPORT),
+                sources=(SERVER_SOURCE,),
+                domain_id="prompts",
+            ),
+            _resource(
+                "prompts.transfer",
+                actions=(IMPORT, EXPORT),
+                sources=(SERVER_SOURCE,),
+                domain_id="prompts",
+            ),
+            _resource(
+                "prompts.templates",
+                actions=(PROCESS,),
+                sources=(SERVER_SOURCE,),
+                domain_id="prompts",
+            ),
+            _resource(
+                "prompts.bulk",
+                actions=(UPDATE, DELETE),
+                sources=(SERVER_SOURCE,),
+                domain_id="prompts",
+            ),
+            _resource(
+                "prompts.usage",
+                actions=(UPDATE,),
+                sources=(SERVER_SOURCE,),
+                domain_id="prompts",
+            ),
+            _resource(
+                "prompts.collections",
+                actions=(LIST, DETAIL, CREATE, UPDATE),
+                sources=(SERVER_SOURCE,),
+                domain_id="prompts",
+            ),
             _resource(
                 "chatbooks",
                 actions=_combine_action_sets(CRUD_ACTIONS, (IMPORT, EXPORT)),
@@ -437,16 +532,36 @@ AUDITED_CAPABILITY_SEEDS = (
         resources=(
             _resource("study.deck", actions=CRUD_ACTIONS, domain_id="study"),
             _resource("study.flashcard", actions=CRUD_ACTIONS, domain_id="study"),
-            _resource("study.flashcard.tags", actions=(LIST, UPDATE), domain_id="study"),
-            _resource("study.flashcard.analytics", actions=(OBSERVE,), domain_id="study"),
-            _resource("study.flashcard.review_sessions", actions=(LIST, OBSERVE), domain_id="study"),
-            _resource("study.flashcard.assistant", actions=(DETAIL, LAUNCH), domain_id="study"),
-            _resource("study.flashcard.generation", actions=(LAUNCH,), domain_id="study"),
-            _resource("study.flashcard.assets", actions=(CREATE, DETAIL), domain_id="study"),
-            _resource("study.flashcard.bulk", actions=(CREATE, UPDATE), domain_id="study"),
-            _resource("study.flashcard.import", actions=(PREVIEW, IMPORT), domain_id="study"),
+            _resource(
+                "study.flashcard.tags", actions=(LIST, UPDATE), domain_id="study"
+            ),
+            _resource(
+                "study.flashcard.analytics", actions=(OBSERVE,), domain_id="study"
+            ),
+            _resource(
+                "study.flashcard.review_sessions",
+                actions=(LIST, OBSERVE),
+                domain_id="study",
+            ),
+            _resource(
+                "study.flashcard.assistant", actions=(DETAIL, LAUNCH), domain_id="study"
+            ),
+            _resource(
+                "study.flashcard.generation", actions=(LAUNCH,), domain_id="study"
+            ),
+            _resource(
+                "study.flashcard.assets", actions=(CREATE, DETAIL), domain_id="study"
+            ),
+            _resource(
+                "study.flashcard.bulk", actions=(CREATE, UPDATE), domain_id="study"
+            ),
+            _resource(
+                "study.flashcard.import", actions=(PREVIEW, IMPORT), domain_id="study"
+            ),
             _resource("study.flashcard.export", actions=(EXPORT,), domain_id="study"),
-            _resource("study.flashcard.templates", actions=CRUD_ACTIONS, domain_id="study"),
+            _resource(
+                "study.flashcard.templates", actions=CRUD_ACTIONS, domain_id="study"
+            ),
             _resource("quiz", actions=CRUD_ACTIONS, domain_id="quiz"),
             _resource("quiz.question", actions=(LIST, DETAIL), domain_id="quiz"),
             _resource("quiz.attempt", actions=(CREATE, OBSERVE), domain_id="quiz"),
@@ -468,7 +583,9 @@ AUDITED_CAPABILITY_SEEDS = (
         "study_suggestions",
         sources=REMOTE_ONLY_SOURCES,
         resources=(
-            _resource("study.suggestions", actions=DISCOVER_CONFIGURE_TRIGGER_OBSERVE_ACTIONS),
+            _resource(
+                "study.suggestions", actions=DISCOVER_CONFIGURE_TRIGGER_OBSERVE_ACTIONS
+            ),
         ),
     ),
     _capability(
@@ -476,9 +593,7 @@ AUDITED_CAPABILITY_SEEDS = (
         "Collections: Reading List / Read-it-later",
         "collections_reading",
         sources=SEPARATED_SOURCES,
-        resources=(
-            _resource("collections.reading_list", actions=CRUD_ACTIONS),
-        ),
+        resources=(_resource("collections.reading_list", actions=CRUD_ACTIONS),),
     ),
     _capability(
         "collections_feed_subscriptions",
@@ -487,7 +602,11 @@ AUDITED_CAPABILITY_SEEDS = (
         sources=SEPARATED_SOURCES,
         resources=(
             _resource("collections.feeds", actions=CRUD_ACTIONS),
-            _resource("collections.feeds.websub", actions=(DETAIL, LAUNCH, DELETE), sources=(SERVER_SOURCE,)),
+            _resource(
+                "collections.feeds.websub",
+                actions=(DETAIL, LAUNCH, DELETE),
+                sources=(SERVER_SOURCE,),
+            ),
         ),
     ),
     _capability(
@@ -507,9 +626,13 @@ AUDITED_CAPABILITY_SEEDS = (
         "watchlists",
         sources=SEPARATED_SOURCES,
         resources=(
-            _resource("watchlists", actions=CRUD_ACTIONS),
+            _resource(
+                "watchlists",
+                actions=_combine_action_sets(CRUD_ACTIONS, (PREVIEW, IMPORT, EXPORT)),
+            ),
+            _resource("watchlists.items", actions=(LIST, DETAIL)),
             _resource("watchlists.alert_rules", actions=CRUD_ACTIONS),
-            _resource("watchlists.runs", actions=(LIST, DETAIL, LAUNCH, OBSERVE)),
+            _resource("watchlists.runs", actions=(LIST, DETAIL, LAUNCH, OBSERVE, CANCEL)),
         ),
     ),
     _capability(
@@ -518,7 +641,10 @@ AUDITED_CAPABILITY_SEEDS = (
         "writing",
         sources=SEPARATED_SOURCES,
         resources=(
-            _resource("writing.projects", actions=_combine_action_sets(CRUD_ACTIONS, (STRUCTURE,))),
+            _resource(
+                "writing.projects",
+                actions=_combine_action_sets(CRUD_ACTIONS, (STRUCTURE,)),
+            ),
             _resource("writing.manuscripts", actions=CRUD_ACTIONS),
             _resource("writing.chapters", actions=CRUD_ACTIONS),
             _resource("writing.scenes", actions=CRUD_ACTIONS),
@@ -545,7 +671,10 @@ AUDITED_CAPABILITY_SEEDS = (
         sources=SEPARATED_SOURCES,
         resources=(
             _resource("research.sessions", actions=CRUD_ACTIONS),
-            _resource("research.runs", actions=_combine_action_sets(CRUD_ACTIONS, (LAUNCH, OBSERVE))),
+            _resource(
+                "research.runs",
+                actions=_combine_action_sets(CRUD_ACTIONS, (LAUNCH, OBSERVE)),
+            ),
         ),
     ),
     _capability(
@@ -565,18 +694,14 @@ AUDITED_CAPABILITY_SEEDS = (
         "Chat Grammars",
         "chat_grammars",
         sources=SEPARATED_SOURCES,
-        resources=(
-            _resource("chat.grammars", actions=CRUD_ACTIONS),
-        ),
+        resources=(_resource("chat.grammars", actions=CRUD_ACTIONS),),
     ),
     _capability(
         "explicit_feedback",
         "Explicit Feedback",
         "feedback",
         sources=SEPARATED_SOURCES,
-        resources=(
-            _resource("feedback", actions=CRUD_ACTIONS),
-        ),
+        resources=(_resource("feedback", actions=CRUD_ACTIONS),),
     ),
     _capability(
         "claims_notifications_alerts",
@@ -611,7 +736,9 @@ AUDITED_CAPABILITY_SEEDS = (
         sources=REMOTE_ONLY_SOURCES,
         resources=(
             _resource("meetings.health", actions=(DETAIL,)),
-            _resource("meetings.sessions", actions=(LIST, DETAIL, CREATE, UPDATE, LAUNCH)),
+            _resource(
+                "meetings.sessions", actions=(LIST, DETAIL, CREATE, UPDATE, LAUNCH)
+            ),
             _resource("meetings.templates", actions=(LIST, DETAIL, CREATE)),
             _resource("meetings.artifacts", actions=(LIST, CREATE)),
             _resource("meetings.share", actions=(LAUNCH,)),
@@ -624,13 +751,36 @@ AUDITED_CAPABILITY_SEEDS = (
         "prompt_studio",
         sources=REMOTE_ONLY_SOURCES,
         resources=(
-            _resource("prompt_studio.projects", actions=(LIST, DETAIL, CREATE, UPDATE, DELETE, ARCHIVE, RESTORE)),
+            _resource(
+                "prompt_studio.projects",
+                actions=(LIST, DETAIL, CREATE, UPDATE, DELETE, ARCHIVE, RESTORE),
+            ),
             _resource("prompt_studio.project_stats", actions=(DETAIL,)),
-            _resource("prompt_studio.prompts", actions=(LIST, DETAIL, CREATE, UPDATE, RESTORE, PREVIEW, PROCESS, LAUNCH)),
+            _resource(
+                "prompt_studio.prompts",
+                actions=(
+                    LIST,
+                    DETAIL,
+                    CREATE,
+                    UPDATE,
+                    RESTORE,
+                    PREVIEW,
+                    PROCESS,
+                    LAUNCH,
+                ),
+            ),
             _resource("prompt_studio.prompt_versions", actions=(LIST,)),
-            _resource("prompt_studio.test_cases", actions=(LIST, DETAIL, CREATE, UPDATE, DELETE, IMPORT, EXPORT, LAUNCH)),
-            _resource("prompt_studio.evaluations", actions=(LIST, DETAIL, CREATE, DELETE)),
-            _resource("prompt_studio.optimizations", actions=(LIST, DETAIL, CREATE, CANCEL, LAUNCH)),
+            _resource(
+                "prompt_studio.test_cases",
+                actions=(LIST, DETAIL, CREATE, UPDATE, DELETE, IMPORT, EXPORT, LAUNCH),
+            ),
+            _resource(
+                "prompt_studio.evaluations", actions=(LIST, DETAIL, CREATE, DELETE)
+            ),
+            _resource(
+                "prompt_studio.optimizations",
+                actions=(LIST, DETAIL, CREATE, CANCEL, LAUNCH),
+            ),
             _resource("prompt_studio.optimization_strategies", actions=(LIST, LAUNCH)),
             _resource("prompt_studio.optimization_iterations", actions=(LIST, CREATE)),
             _resource("prompt_studio.status", actions=(DETAIL,)),
@@ -643,14 +793,58 @@ AUDITED_CAPABILITY_SEEDS = (
         "kanban",
         sources=SEPARATED_SOURCES,
         resources=(
-            _resource("kanban.boards", actions=(LIST, DETAIL, CREATE, UPDATE, DELETE, ARCHIVE, RESTORE, IMPORT, EXPORT)),
-            _resource("kanban.lists", actions=(LIST, DETAIL, CREATE, UPDATE, DELETE, ARCHIVE, RESTORE, REORDER)),
-            _resource("kanban.cards", actions=(LIST, DETAIL, CREATE, UPDATE, DELETE, ARCHIVE, RESTORE, REORDER, LAUNCH)),
+            _resource(
+                "kanban.boards",
+                actions=(
+                    LIST,
+                    DETAIL,
+                    CREATE,
+                    UPDATE,
+                    DELETE,
+                    ARCHIVE,
+                    RESTORE,
+                    IMPORT,
+                    EXPORT,
+                ),
+            ),
+            _resource(
+                "kanban.lists",
+                actions=(
+                    LIST,
+                    DETAIL,
+                    CREATE,
+                    UPDATE,
+                    DELETE,
+                    ARCHIVE,
+                    RESTORE,
+                    REORDER,
+                ),
+            ),
+            _resource(
+                "kanban.cards",
+                actions=(
+                    LIST,
+                    DETAIL,
+                    CREATE,
+                    UPDATE,
+                    DELETE,
+                    ARCHIVE,
+                    RESTORE,
+                    REORDER,
+                    LAUNCH,
+                ),
+            ),
             _resource("kanban.activities", actions=(OBSERVE_LIST,)),
             _resource("kanban.labels", actions=CRUD_ACTIONS),
             _resource("kanban.card_labels", actions=(LIST, CREATE, DELETE)),
-            _resource("kanban.checklists", actions=(LIST, DETAIL, CREATE, UPDATE, DELETE, REORDER)),
-            _resource("kanban.checklist_items", actions=(LIST, DETAIL, CREATE, UPDATE, DELETE, REORDER)),
+            _resource(
+                "kanban.checklists",
+                actions=(LIST, DETAIL, CREATE, UPDATE, DELETE, REORDER),
+            ),
+            _resource(
+                "kanban.checklist_items",
+                actions=(LIST, DETAIL, CREATE, UPDATE, DELETE, REORDER),
+            ),
             _resource("kanban.comments", actions=CRUD_ACTIONS),
             _resource("kanban.search", actions=(LIST, DETAIL)),
             _resource("kanban.card_links", actions=(LIST, DETAIL, CREATE, DELETE)),
@@ -661,9 +855,7 @@ AUDITED_CAPABILITY_SEEDS = (
         "Translation Utility",
         "translation",
         sources=REMOTE_ONLY_SOURCES,
-        resources=(
-            _resource("translation.text", actions=(LAUNCH,)),
-        ),
+        resources=(_resource("translation.text", actions=(LAUNCH,)),),
     ),
     _capability(
         "client_notifications",
@@ -706,10 +898,16 @@ AUDITED_CAPABILITY_SEEDS = (
         resources=(
             _resource("audio.health", actions=(OBSERVE,)),
             _resource("audio.providers", actions=(LIST,)),
-            _resource("audio.voices", actions=(LIST, DETAIL, CREATE, DELETE, PREVIEW, LAUNCH)),
+            _resource(
+                "audio.voices", actions=(LIST, DETAIL, CREATE, DELETE, PREVIEW, LAUNCH)
+            ),
             _resource("audio.speech", actions=(LAUNCH,)),
             _resource("audio.speech_chat", actions=(LAUNCH,), sources=(SERVER_SOURCE,)),
-            _resource("audio.streaming", actions=(STATUS, DETAIL, LAUNCH), sources=(SERVER_SOURCE,)),
+            _resource(
+                "audio.streaming",
+                actions=(STATUS, DETAIL, LAUNCH),
+                sources=(SERVER_SOURCE,),
+            ),
             _resource("audio.speech_jobs", actions=(DETAIL,)),
             _resource("audio.jobs", actions=(CREATE, DETAIL, OBSERVE)),
             _resource("audio.history", actions=(LIST, DETAIL, UPDATE, DELETE)),
@@ -717,12 +915,24 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("audio.translations", actions=(LAUNCH,)),
             _resource("audio.tokenizer", actions=(LAUNCH,)),
             _resource("audiobooks.parse", actions=(LAUNCH,), domain_id="audiobooks"),
-            _resource("audiobooks.jobs", actions=(CREATE, DETAIL, OBSERVE), domain_id="audiobooks"),
-            _resource("audiobooks.projects", actions=(LIST, DETAIL), domain_id="audiobooks"),
+            _resource(
+                "audiobooks.jobs",
+                actions=(CREATE, DETAIL, OBSERVE),
+                domain_id="audiobooks",
+            ),
+            _resource(
+                "audiobooks.projects", actions=(LIST, DETAIL), domain_id="audiobooks"
+            ),
             _resource("audiobooks.chapters", actions=(LIST,), domain_id="audiobooks"),
             _resource("audiobooks.artifacts", actions=(LIST,), domain_id="audiobooks"),
-            _resource("audiobooks.voice_profiles", actions=(LIST, CREATE, DELETE), domain_id="audiobooks"),
-            _resource("audiobooks.subtitles", actions=(EXPORT,), domain_id="audiobooks"),
+            _resource(
+                "audiobooks.voice_profiles",
+                actions=(LIST, CREATE, DELETE),
+                domain_id="audiobooks",
+            ),
+            _resource(
+                "audiobooks.subtitles", actions=(EXPORT,), domain_id="audiobooks"
+            ),
         ),
     ),
     _capability(
@@ -731,7 +941,19 @@ AUDITED_CAPABILITY_SEEDS = (
         "voice_assistant",
         sources=REMOTE_ONLY_SOURCES,
         resources=(
-            _resource("voice_assistant.commands", actions=(LIST, DETAIL, CREATE, UPDATE, DELETE, LAUNCH, PREVIEW, OBSERVE)),
+            _resource(
+                "voice_assistant.commands",
+                actions=(
+                    LIST,
+                    DETAIL,
+                    CREATE,
+                    UPDATE,
+                    DELETE,
+                    LAUNCH,
+                    PREVIEW,
+                    OBSERVE,
+                ),
+            ),
             _resource("voice_assistant.sessions", actions=(LIST, DETAIL, DELETE)),
             _resource("voice_assistant.analytics", actions=(OBSERVE,)),
         ),
@@ -748,8 +970,13 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("auth.registration", actions=(CREATE,)),
             _resource("auth.security", actions=(LAUNCH, UPDATE)),
             _resource("auth.api_keys", actions=(LIST, CREATE, UPDATE, DELETE)),
-            _resource("auth.provider_keys", actions=(LIST, DETAIL, CREATE, UPDATE, DELETE, VALIDATE)),
-            _resource("auth.storage", actions=_combine_action_sets(CRUD_ACTIONS, (EXPORT,))),
+            _resource(
+                "auth.provider_keys",
+                actions=(LIST, DETAIL, CREATE, UPDATE, DELETE, VALIDATE),
+            ),
+            _resource(
+                "auth.storage", actions=_combine_action_sets(CRUD_ACTIONS, (EXPORT,))
+            ),
         ),
     ),
     _capability(
@@ -758,7 +985,10 @@ AUDITED_CAPABILITY_SEEDS = (
         "notifications_server",
         sources=REMOTE_ONLY_SOURCES,
         resources=(
-            _resource("notifications.reminders", actions=DISCOVER_CONFIGURE_TRIGGER_OBSERVE_ACTIONS),
+            _resource(
+                "notifications.reminders",
+                actions=DISCOVER_CONFIGURE_TRIGGER_OBSERVE_ACTIONS,
+            ),
             _resource("notifications.feed", actions=(LIST, UPDATE, OBSERVE)),
         ),
     ),
@@ -770,7 +1000,9 @@ AUDITED_CAPABILITY_SEEDS = (
         resources=(
             _resource("connectors.providers", actions=(LIST, LAUNCH)),
             _resource("connectors.accounts", actions=(LIST, DELETE)),
-            _resource("connectors.sources", actions=(LIST, CREATE, UPDATE, LAUNCH, OBSERVE)),
+            _resource(
+                "connectors.sources", actions=(LIST, CREATE, UPDATE, LAUNCH, OBSERVE)
+            ),
             _resource("connectors.jobs", actions=(OBSERVE,)),
         ),
     ),
@@ -785,10 +1017,20 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("skills.import", actions=(LAUNCH,)),
             _resource("skills.export", actions=(LAUNCH,)),
             _resource("skills.execute", actions=(LAUNCH,)),
+            _resource("skills.read_file", actions=(LAUNCH,)),
+            _resource("skills.install_remote", actions=(LAUNCH,)),
             _resource("skills.seed", actions=(LAUNCH,)),
             _resource(
                 "skills.trust",
-                actions=(UNLOCK, REVIEW, APPROVE, REJECT, REBOOTSTRAP, ROTATE_KEY, AUDIT),
+                actions=(
+                    UNLOCK,
+                    REVIEW,
+                    APPROVE,
+                    REJECT,
+                    REBOOTSTRAP,
+                    ROTATE_KEY,
+                    AUDIT,
+                ),
                 sources=LOCAL_ONLY_SOURCES,
             ),
         ),
@@ -842,9 +1084,7 @@ AUDITED_CAPABILITY_SEEDS = (
         "Workflows",
         "workflows",
         sources=REMOTE_ONLY_SOURCES,
-        resources=(
-            _resource("workflows", actions=DISCOVER_TRIGGER_OBSERVE_ACTIONS),
-        ),
+        resources=(_resource("workflows", actions=DISCOVER_TRIGGER_OBSERVE_ACTIONS),),
     ),
     _capability(
         "scheduler_workflows",
@@ -852,7 +1092,10 @@ AUDITED_CAPABILITY_SEEDS = (
         "scheduler",
         sources=REMOTE_ONLY_SOURCES,
         resources=(
-            _resource("scheduler.workflows", actions=DISCOVER_CONFIGURE_TRIGGER_OBSERVE_ACTIONS),
+            _resource(
+                "scheduler.workflows",
+                actions=DISCOVER_CONFIGURE_TRIGGER_OBSERVE_ACTIONS,
+            ),
         ),
     ),
     _capability(
@@ -870,9 +1113,14 @@ AUDITED_CAPABILITY_SEEDS = (
         "mcp_runtime",
         sources=LOCAL_ONLY_SOURCES,
         resources=(
-            _resource("mcp.runtime", actions=(LIST, CONFIGURE, LAUNCH, TRIGGER, OBSERVE)),
+            _resource(
+                "mcp.runtime", actions=(LIST, CONFIGURE, LAUNCH, TRIGGER, OBSERVE)
+            ),
             _resource("mcp.inventory", actions=(LIST, OBSERVE)),
-            _resource("mcp.external_profiles", actions=(LIST, CONFIGURE, LAUNCH, TRIGGER, OBSERVE)),
+            _resource(
+                "mcp.external_profiles",
+                actions=(LIST, CONFIGURE, LAUNCH, TRIGGER, OBSERVE),
+            ),
             _resource("mcp.governance", actions=(LIST, CONFIGURE, OBSERVE, APPROVE)),
         ),
     ),
@@ -891,12 +1139,27 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("mcp.effective_access", actions=(OBSERVE,)),
             _resource("mcp.advanced", actions=(LIST, CONFIGURE, TRIGGER, OBSERVE)),
             _resource("mcp.governance.tool_registry", actions=(LIST, DETAIL)),
-            _resource("mcp.governance.capability_mappings", actions=(LIST, PREVIEW, CREATE, UPDATE, DELETE)),
-            _resource("mcp.governance.external_servers", actions=(LIST, CREATE, UPDATE, DELETE)),
+            _resource(
+                "mcp.governance.capability_mappings",
+                actions=(LIST, PREVIEW, CREATE, UPDATE, DELETE),
+            ),
+            _resource(
+                "mcp.governance.external_servers",
+                actions=(LIST, CREATE, UPDATE, DELETE),
+            ),
             _resource("mcp.governance.external_servers.secrets", actions=(UPDATE,)),
-            _resource("mcp.governance.permission_profiles", actions=(LIST, CREATE, UPDATE, DELETE)),
-            _resource("mcp.governance.policy_assignments", actions=(LIST, CREATE, UPDATE, DELETE)),
-            _resource("mcp.governance.approval_policies", actions=(LIST, CREATE, UPDATE, DELETE)),
+            _resource(
+                "mcp.governance.permission_profiles",
+                actions=(LIST, CREATE, UPDATE, DELETE),
+            ),
+            _resource(
+                "mcp.governance.policy_assignments",
+                actions=(LIST, CREATE, UPDATE, DELETE),
+            ),
+            _resource(
+                "mcp.governance.approval_policies",
+                actions=(LIST, CREATE, UPDATE, DELETE),
+            ),
             _resource("mcp.governance.approval_decisions", actions=(APPROVE,)),
             _resource("mcp.governance.effective_policy", actions=(DETAIL,)),
             _resource("mcp.governance.catalogs", actions=(LIST, CREATE, DELETE)),
@@ -910,7 +1173,10 @@ AUDITED_CAPABILITY_SEEDS = (
         "sharing",
         sources=REMOTE_ONLY_SOURCES,
         resources=(
-            _resource("sharing.links", actions=(LIST, CREATE, LAUNCH, INSPECT, REVOKE, OBSERVE)),
+            _resource(
+                "sharing.links",
+                actions=(LIST, CREATE, LAUNCH, INSPECT, REVOKE, OBSERVE),
+            ),
             _resource("sharing.permissions", actions=(CONFIGURE,)),
         ),
     ),
@@ -919,9 +1185,7 @@ AUDITED_CAPABILITY_SEEDS = (
         "Web Clipper",
         "web_clipper",
         sources=REMOTE_ONLY_SOURCES,
-        resources=(
-            _resource("web_clipper", actions=(LIST, CAPTURE, OBSERVE, STATUS)),
-        ),
+        resources=(_resource("web_clipper", actions=(LIST, CAPTURE, OBSERVE, STATUS)),),
     ),
     _capability(
         "evaluations",
@@ -930,7 +1194,10 @@ AUDITED_CAPABILITY_SEEDS = (
         sources=SEPARATED_SOURCES,
         resources=(
             _resource("evaluations.dataset", actions=CRUD_ACTIONS),
-            _resource("evaluations.run", actions=_combine_action_sets(CRUD_ACTIONS, (LAUNCH, OBSERVE))),
+            _resource(
+                "evaluations.run",
+                actions=_combine_action_sets(CRUD_ACTIONS, (LAUNCH, OBSERVE)),
+            ),
             _resource(
                 "evaluations.rag_pipeline",
                 actions=_combine_action_sets(CRUD_ACTIONS, (LAUNCH,)),
@@ -989,7 +1256,9 @@ AUDITED_CAPABILITY_SEEDS = (
         "runtime_policy",
         sources=SEPARATED_SOURCES,
         resources=(
-            _resource("runtime.policy", actions=DISCOVER_CONFIGURE_TRIGGER_OBSERVE_ACTIONS),
+            _resource(
+                "runtime.policy", actions=DISCOVER_CONFIGURE_TRIGGER_OBSERVE_ACTIONS
+            ),
         ),
     ),
 )
@@ -1001,9 +1270,7 @@ def _iter_capability_entries(capability_seed: CapabilitySeed):
         resource_sources = resource.sources or capability_seed.sources
         for action in resource.actions:
             for source in resource_sources:
-                action_id = (
-                    f"{resource.action_namespace}.{action.action_id_suffix}.{source.action_id_suffix}"
-                )
+                action_id = f"{resource.action_namespace}.{action.action_id_suffix}.{source.action_id_suffix}"
                 yield _entry(
                     action_id,
                     capability_id=capability_seed.capability_id,
@@ -1041,7 +1308,9 @@ def _build_capability_registry(
     return tuple(capability_rows), capability_registry
 
 
-_CAPABILITY_ROWS, CAPABILITY_REGISTRY = _build_capability_registry(AUDITED_CAPABILITY_SEEDS)
+_CAPABILITY_ROWS, CAPABILITY_REGISTRY = _build_capability_registry(
+    AUDITED_CAPABILITY_SEEDS
+)
 
 PHASE_ONE_REQUIRED_ACTION_IDS = frozenset(
     {
@@ -1066,7 +1335,9 @@ def validate_registry_completeness() -> None:
             f"{sorted(FULL_AUDITED_CAPABILITY_IDS.difference(seeded_capability_ids))}"
         )
 
-    registry_capability_ids = {entry.capability_id for entry in CAPABILITY_REGISTRY.values()}
+    registry_capability_ids = {
+        entry.capability_id for entry in CAPABILITY_REGISTRY.values()
+    }
     if registry_capability_ids != FULL_AUDITED_CAPABILITY_IDS:
         raise ValueError(
             "runtime policy registry capability_ids do not expose the full audited set: "
@@ -1075,7 +1346,9 @@ def validate_registry_completeness() -> None:
 
     missing = PHASE_ONE_REQUIRED_ACTION_IDS.difference(CAPABILITY_REGISTRY)
     if missing:
-        raise ValueError(f"runtime policy registry is missing required rows: {sorted(missing)}")
+        raise ValueError(
+            f"runtime policy registry is missing required rows: {sorted(missing)}"
+        )
 
 
 def get_capability_entry(action_id: str) -> CapabilityEntry:

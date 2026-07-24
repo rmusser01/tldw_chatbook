@@ -95,7 +95,9 @@ def test_service_rejects_import_request_with_unsupported_content_types():
         )
 
 
-def test_build_server_chatbook_service_from_config_threads_policy_enforcer_to_provider(monkeypatch):
+def test_build_server_chatbook_service_from_config_threads_policy_enforcer_to_provider(
+    monkeypatch,
+):
     policy = FakePolicyEnforcer()
     provider = Mock()
     build_provider = Mock(return_value=provider)
@@ -124,20 +126,33 @@ def test_build_server_chatbook_service_from_config_threads_policy_enforcer_to_pr
 
 
 @pytest.mark.asyncio
-async def test_server_chatbook_service_from_config_uses_shared_provider_lazily(monkeypatch):
+async def test_server_chatbook_service_from_config_uses_shared_provider_lazily(
+    monkeypatch,
+):
     class FakeClient:
         async def list_chatbook_export_jobs(self, *, limit: int = 100, offset: int = 0):
-            return {"items": [{"job_id": "provider-export-1"}], "limit": limit, "offset": offset}
+            return {
+                "items": [{"job_id": "provider-export-1"}],
+                "limit": limit,
+                "offset": offset,
+            }
 
-    direct_builder = Mock(side_effect=AssertionError("service should not call direct legacy builder"))
+    direct_builder = Mock(
+        side_effect=AssertionError("service should not call direct legacy builder")
+    )
     provider_builder = Mock(return_value=FakeClient())
-    monkeypatch.setattr("tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client", direct_builder)
+    monkeypatch.setattr(
+        "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client",
+        direct_builder,
+    )
     monkeypatch.setattr(
         "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client_from_config",
         provider_builder,
     )
 
-    service = ServerChatbookService.from_config({"tldw_api": {"base_url": "https://example.com"}})
+    service = ServerChatbookService.from_config(
+        {"tldw_api": {"base_url": "https://example.com"}}
+    )
 
     assert isinstance(service, ServerChatbookService)
     assert service.client is None
@@ -149,12 +164,18 @@ async def test_server_chatbook_service_from_config_uses_shared_provider_lazily(m
 
     assert service.client is None
     assert result["items"][0]["job_id"] == "provider-export-1"
-    provider_builder.assert_called_once_with({"tldw_api": {"base_url": "https://example.com"}})
+    provider_builder.assert_called_once_with(
+        {"tldw_api": {"base_url": "https://example.com"}}
+    )
 
 
 @pytest.mark.asyncio
-async def test_server_chatbook_service_from_config_can_use_provider_backed_client(monkeypatch):
-    build_client = Mock(side_effect=AssertionError("legacy config builder should not run"))
+async def test_server_chatbook_service_from_config_can_use_provider_backed_client(
+    monkeypatch,
+):
+    build_client = Mock(
+        side_effect=AssertionError("legacy config builder should not run")
+    )
     monkeypatch.setattr(
         "tldw_chatbook.runtime_policy.bootstrap.build_runtime_api_client",
         build_client,
@@ -162,7 +183,11 @@ async def test_server_chatbook_service_from_config_can_use_provider_backed_clien
 
     class FakeClient:
         async def list_chatbook_export_jobs(self, *, limit: int = 100, offset: int = 0):
-            return {"items": [{"job_id": "provider-export-1"}], "limit": limit, "offset": offset}
+            return {
+                "items": [{"job_id": "provider-export-1"}],
+                "limit": limit,
+                "offset": offset,
+            }
 
     provider = FakeClientProvider(FakeClient())
     policy = FakePolicyEnforcer()
@@ -187,7 +212,11 @@ async def test_server_chatbook_service_from_config_can_use_provider_backed_clien
 async def test_server_chatbook_service_uses_provider_client_when_no_direct_client():
     class FakeClient:
         async def list_chatbook_export_jobs(self, *, limit: int = 100, offset: int = 0):
-            return {"items": [{"job_id": "provider-export-1"}], "limit": limit, "offset": offset}
+            return {
+                "items": [{"job_id": "provider-export-1"}],
+                "limit": limit,
+                "offset": offset,
+            }
 
     provider = FakeClientProvider(FakeClient())
     service = ServerChatbookService.from_server_context_provider(provider)
@@ -212,7 +241,9 @@ async def test_server_chatbook_service_prefers_direct_client_over_provider():
             return {"items": [{"job_id": self.job_id}]}
 
     provider = FakeClientProvider(FakeClient("provider-export-1"))
-    service = ServerChatbookService(client=FakeClient("direct-export-1"), client_provider=provider)
+    service = ServerChatbookService(
+        client=FakeClient("direct-export-1"), client_provider=provider
+    )
 
     result = await service.list_export_jobs()
 
@@ -262,10 +293,18 @@ async def test_service_delegates_chatbook_api_calls():
             return {"job_id": job_id, "status": "completed", "progress_percentage": 100}
 
         async def list_chatbook_export_jobs(self, *, limit: int = 100, offset: int = 0):
-            return {"items": [{"job_id": "export-job-1"}], "limit": limit, "offset": offset}
+            return {
+                "items": [{"job_id": "export-job-1"}],
+                "limit": limit,
+                "offset": offset,
+            }
 
         async def list_chatbook_import_jobs(self, *, limit: int = 100, offset: int = 0):
-            return {"items": [{"job_id": "import-job-1"}], "limit": limit, "offset": offset}
+            return {
+                "items": [{"job_id": "import-job-1"}],
+                "limit": limit,
+                "offset": offset,
+            }
 
         async def cancel_chatbook_export_job(self, job_id: str):
             return {"job_id": job_id, "cancelled": True}
@@ -304,9 +343,13 @@ async def test_service_delegates_chatbook_api_calls():
         prefix_imported=True,
         async_mode=True,
     )
-    import_result = await service.import_chatbook("/tmp/demo.chatbook.zip", import_request)
+    import_result = await service.import_chatbook(
+        "/tmp/demo.chatbook.zip", import_request
+    )
     export_job = await service.get_export_job("export-job-1")
-    downloaded = await service.download_export("export-job-1", token="signed", exp=12345)
+    downloaded = await service.download_export(
+        "export-job-1", token="signed", exp=12345
+    )
     import_job = await service.get_import_job("import-job-1")
     export_jobs = await service.list_export_jobs(limit=25, offset=5)
     import_jobs = await service.list_import_jobs(limit=10, offset=2)
@@ -438,9 +481,19 @@ async def test_server_chatbook_service_enforces_policy_actions():
     service = ServerChatbookService(client=FakeClient(), policy_enforcer=policy)
 
     await service.preview_chatbook("/tmp/demo.chatbook.zip")
-    await service.export_chatbook({"name": "Pack", "description": "Desc", "content_selections": {"conversation": ["1"]}})
-    await service.continue_chatbook_export({"export_id": "exp-1", "continuations": [{"type": "evaluation"}]})
-    await service.import_chatbook("/tmp/demo.chatbook.zip", {"content_selections": {"conversation": ["1"]}})
+    await service.export_chatbook(
+        {
+            "name": "Pack",
+            "description": "Desc",
+            "content_selections": {"conversation": ["1"]},
+        }
+    )
+    await service.continue_chatbook_export(
+        {"export_id": "exp-1", "continuations": [{"type": "evaluation"}]}
+    )
+    await service.import_chatbook(
+        "/tmp/demo.chatbook.zip", {"content_selections": {"conversation": ["1"]}}
+    )
     await service.get_export_job("export-job-1")
     await service.download_export("export-job-1")
     await service.get_import_job("import-job-1")
@@ -451,7 +504,9 @@ async def test_server_chatbook_service_enforces_policy_actions():
     await service.remove_export_job("export-job-1")
     await service.remove_import_job("import-job-1")
 
-    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+    assert [
+        call.kwargs["action_id"] for call in policy.require_allowed.call_args_list
+    ] == [
         "chatbooks.detail.server",
         "chatbooks.export.server",
         "chatbooks.export.server",
@@ -543,16 +598,24 @@ async def test_service_exposes_remote_job_admin_as_plain_dicts():
             )
 
         async def cancel_chatbook_export_job(self, job_id: str):
-            return ChatbookJobMutationResponse(success=True, message="cancelled", job_id=job_id)
+            return ChatbookJobMutationResponse(
+                success=True, message="cancelled", job_id=job_id
+            )
 
         async def cancel_chatbook_import_job(self, job_id: str):
-            return ChatbookJobMutationResponse(success=True, message="cancelled", job_id=job_id)
+            return ChatbookJobMutationResponse(
+                success=True, message="cancelled", job_id=job_id
+            )
 
         async def remove_chatbook_export_job(self, job_id: str):
-            return ChatbookJobMutationResponse(success=True, message="removed", job_id=job_id)
+            return ChatbookJobMutationResponse(
+                success=True, message="removed", job_id=job_id
+            )
 
         async def remove_chatbook_import_job(self, job_id: str):
-            return ChatbookJobMutationResponse(success=True, message="removed", job_id=job_id)
+            return ChatbookJobMutationResponse(
+                success=True, message="removed", job_id=job_id
+            )
 
     service = ServerChatbookService(client=FakeClient())
 
@@ -569,10 +632,26 @@ async def test_service_exposes_remote_job_admin_as_plain_dicts():
     assert import_jobs["jobs"][0]["job_id"] == "import-job-1"
     assert export_job.get("status") == "completed"
     assert import_job.get("status") == "completed"
-    assert cancel_export == {"success": True, "message": "cancelled", "job_id": "export-job-1"}
-    assert cancel_import == {"success": True, "message": "cancelled", "job_id": "import-job-1"}
-    assert remove_export == {"success": True, "message": "removed", "job_id": "export-job-1"}
-    assert remove_import == {"success": True, "message": "removed", "job_id": "import-job-1"}
+    assert cancel_export == {
+        "success": True,
+        "message": "cancelled",
+        "job_id": "export-job-1",
+    }
+    assert cancel_import == {
+        "success": True,
+        "message": "cancelled",
+        "job_id": "import-job-1",
+    }
+    assert remove_export == {
+        "success": True,
+        "message": "removed",
+        "job_id": "export-job-1",
+    }
+    assert remove_import == {
+        "success": True,
+        "message": "removed",
+        "job_id": "import-job-1",
+    }
 
 
 @pytest.mark.asyncio
@@ -586,7 +665,9 @@ async def test_service_exposes_chatbook_continue_and_cleanup_as_plain_dicts():
             return {"success": True, "job_id": "continued-job-1"}
 
         async def cleanup_chatbook_exports(self):
-            return ChatbookCleanupResponse(deleted_count=2, message="Cleaned expired exports")
+            return ChatbookCleanupResponse(
+                deleted_count=2, message="Cleaned expired exports"
+            )
 
     client = FakeClient()
     service = ServerChatbookService(client=client)
@@ -716,7 +797,9 @@ def test_service_builds_server_import_selections_from_manifest():
         name="Pack",
         description="Desc",
         content_items=[
-            ContentItem(id="conv-1", type=ContentType.CONVERSATION, title="Conversation"),
+            ContentItem(
+                id="conv-1", type=ContentType.CONVERSATION, title="Conversation"
+            ),
             ContentItem(id="note-1", type=ContentType.NOTE, title="Note"),
             ContentItem(id="media-1", type=ContentType.MEDIA, title="Media"),
             ContentItem(id="embed-1", type=ContentType.EMBEDDING, title="Embedding"),

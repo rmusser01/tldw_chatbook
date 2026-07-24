@@ -4,36 +4,47 @@ import asyncio
 import inspect
 import logging
 import time
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from textual.app import App
-from textual.widgets import Button, Checkbox, Select, Static, TextArea
+from textual.app import App, ComposeResult
+from textual.widgets import Button, Select, Static
 
 from Tests.UI.test_screen_navigation import _build_test_app
-from Tests.UI.test_unified_mcp_panel import FakeUnifiedMCPService
 from tldw_chatbook.ACP_Interop.runtime_session import ACPRuntimeSessionState
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
 from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
-from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget
-from tldw_chatbook.runtime_policy.types import PolicyDeniedError
-from tldw_chatbook.UI.MCP_Modules.unified_mcp_panel import UnifiedMCPPanel
+from tldw_chatbook.MCP.unified_control_models import (
+    ConfiguredServerTarget,
+    SectionCapabilityFlags,
+    ServerAccessContext,
+    UnifiedMCPContext,
+)
+from tldw_chatbook.runtime_policy.types import PolicyDeniedError, RuntimeSourceState
+from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
+from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
+from tldw_chatbook.UI.MCP_Modules.mcp_servers_mode import MCPServersMode
+from tldw_chatbook.UI.MCP_Modules.mcp_tools_mode import MCPToolsMode
+from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
+from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
 from tldw_chatbook.UI.Screens.acp_screen import ACPScreen
 from tldw_chatbook.UI.Screens.destination_recovery import DestinationRecoveryState
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
-from tldw_chatbook.UI.Screens.schedules_screen import SchedulesScreen
+from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.UI.Screens import settings_screen as settings_screen_module
 from tldw_chatbook.UI.Screens.skills_screen import SkillsScreen
-from tldw_chatbook.UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
+from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
+    WatchlistsCollectionsScreen,
+)
 from tldw_chatbook.UI.Screens.workflows_screen import WorkflowsScreen
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
-from tldw_chatbook.UI.Screens import personas_screen as personas_screen_module
 from tldw_chatbook.UI.Screens import skills_screen as skills_screen_module
 from tldw_chatbook.UI.Screens import watchlists_collections_screen as wc_screen_module
 
@@ -43,7 +54,7 @@ SCREEN_BY_ROUTE = {
     "artifacts": ArtifactsScreen,
     "personas": PersonasScreen,
     "watchlists_collections": WatchlistsCollectionsScreen,
-    "schedules": SchedulesScreen,
+    "schedules": SchedulesWorkbench,
     "workflows": WorkflowsScreen,
     "mcp": MCPScreen,
     "tools_settings": MCPScreen,
@@ -141,14 +152,23 @@ class StaticLibraryNotesScopeService:
         self.count_calls.append({"scope": scope, "user_id": user_id, **kwargs})
         return len(self.notes)
 
-    async def search_notes(self, *, scope, query, limit=None, user_id=None, offset=0, **kwargs):
+    async def search_notes(
+        self, *, scope, query, limit=None, user_id=None, offset=0, **kwargs
+    ):
         """Case-insensitive title/content substring search, matching the
         real ``NotesScopeService.search_notes`` -> local backend's
         ``search_notes`` shape: a plain list of matching note records
         (no ``items``/``pagination`` envelope, unlike ``list_notes``).
         """
         self.search_calls.append(
-            {"scope": scope, "query": query, "limit": limit, "user_id": user_id, "offset": offset, **kwargs}
+            {
+                "scope": scope,
+                "query": query,
+                "limit": limit,
+                "user_id": user_id,
+                "offset": offset,
+                **kwargs,
+            }
         )
         needle = str(query or "").strip().lower()
         matches = [
@@ -165,7 +185,9 @@ class StaticLibraryNotesScopeService:
         return matches
 
     async def get_note_detail(self, *, scope, note_id, user_id=None, **kwargs):
-        self.detail_calls.append({"scope": scope, "note_id": note_id, "user_id": user_id, **kwargs})
+        self.detail_calls.append(
+            {"scope": scope, "note_id": note_id, "user_id": user_id, **kwargs}
+        )
         target_id = str(note_id)
         for note in self.notes:
             if str(note.get("id")) == target_id:
@@ -173,7 +195,16 @@ class StaticLibraryNotesScopeService:
         return None
 
     async def save_note(
-        self, *, scope, title, content, note_id=None, version=None, user_id=None, keywords=None, **kwargs
+        self,
+        *,
+        scope,
+        title,
+        content,
+        note_id=None,
+        version=None,
+        user_id=None,
+        keywords=None,
+        **kwargs,
     ):
         """Create (append, version=1) or update (version-checked) a note.
 
@@ -236,7 +267,13 @@ class StaticLibraryNotesScopeService:
 
     async def delete_note(self, *, scope, note_id, version, user_id=None, **kwargs):
         self.delete_calls.append(
-            {"scope": scope, "note_id": note_id, "version": version, "user_id": user_id, **kwargs}
+            {
+                "scope": scope,
+                "note_id": note_id,
+                "version": version,
+                "user_id": user_id,
+                **kwargs,
+            }
         )
         notes = list(self.notes)
         target_id = str(note_id)
@@ -309,9 +346,14 @@ class StaticLibraryMediaScopeService:
         chain (``mode`` accepted and discarded).
         """
         self.list_highlights_calls.append({"item_id": item_id})
-        return [dict(highlight) for highlight in self.highlights_by_item_id.get(str(item_id), [])]
+        return [
+            dict(highlight)
+            for highlight in self.highlights_by_item_id.get(str(item_id), [])
+        ]
 
-    async def create_highlight(self, *, item_id, quote, mode=None, note=None, color=None, **kwargs):
+    async def create_highlight(
+        self, *, item_id, quote, mode=None, note=None, color=None, **kwargs
+    ):
         """Record and store a new highlight, matching the real
         ``media_reading_scope_service.create_highlight`` -> ``LocalMediaReadingService.create_highlight``
         chain (``mode`` accepted and discarded).
@@ -337,7 +379,10 @@ class StaticLibraryMediaScopeService:
 
     async def list_media_items(self, **kwargs):
         self.calls.append(kwargs)
-        return {"items": list(self.media_items), "pagination": {"total_items": len(self.media_items)}}
+        return {
+            "items": list(self.media_items),
+            "pagination": {"total_items": len(self.media_items)},
+        }
 
     async def get_media_item(self, *, media_id, **kwargs):
         self.detail_calls.append({"media_id": media_id, **kwargs})
@@ -375,12 +420,15 @@ class StaticLibraryMediaScopeService:
                 allowlist.
         """
         unsupported = sorted(
-            key for key, value in fields.items()
+            key
+            for key, value in fields.items()
             if value is not None and key not in self._SUPPORTED_METADATA_FIELDS
         )
         if unsupported:
             unsupported_text = ", ".join(unsupported)
-            raise ValueError(f"Unsupported local media metadata fields: {unsupported_text}")
+            raise ValueError(
+                f"Unsupported local media metadata fields: {unsupported_text}"
+            )
 
         self.update_calls.append({"media_id": media_id, **fields})
         target_id = str(media_id)
@@ -473,7 +521,9 @@ class StaticLibraryMediaScopeService:
         self.media_items = tuple(updated_items)
         return {"media_id": media_id, "is_read_it_later": saved, "saved_at": saved_at}
 
-    async def save_analysis_version(self, *, media_id, content, analysis_content, mode=None, prompt=None):
+    async def save_analysis_version(
+        self, *, media_id, content, analysis_content, mode=None, prompt=None
+    ):
         """Create a new document version carrying ``analysis_content``, matching
         the real ``media_reading_scope_service.save_analysis_version`` ->
         ``LocalMediaReadingService.save_analysis_version`` ->
@@ -494,13 +544,19 @@ class StaticLibraryMediaScopeService:
             media_id, content=content, analysis_content=analysis_content, prompt=prompt
         )
 
-    async def overwrite_analysis_version(self, *, media_id, content, analysis_content, mode=None, prompt=None):
+    async def overwrite_analysis_version(
+        self, *, media_id, content, analysis_content, mode=None, prompt=None
+    ):
         """Alias for ``save_analysis_version``, matching the real backend
         (``LocalMediaReadingService.overwrite_analysis_version`` simply
         delegates to ``save_analysis_version``).
         """
         return await self.save_analysis_version(
-            media_id=media_id, content=content, analysis_content=analysis_content, mode=mode, prompt=prompt
+            media_id=media_id,
+            content=content,
+            analysis_content=analysis_content,
+            mode=mode,
+            prompt=prompt,
         )
 
     def _append_document_version(self, media_id, *, content, analysis_content, prompt):
@@ -513,7 +569,11 @@ class StaticLibraryMediaScopeService:
                 merged = dict(item)
                 existing_versions = list(merged.get("versions") or [])
                 next_version_number = (
-                    max((v.get("version_number", 0) for v in existing_versions), default=0) + 1
+                    max(
+                        (v.get("version_number", 0) for v in existing_versions),
+                        default=0,
+                    )
+                    + 1
                 )
                 new_version = {
                     "id": next_version_number,
@@ -540,7 +600,10 @@ class StaticLibraryConversationScopeService:
 
     async def list_conversations(self, **kwargs):
         self.calls.append(kwargs)
-        return {"items": list(self.conversations), "pagination": {"total": len(self.conversations)}}
+        return {
+            "items": list(self.conversations),
+            "pagination": {"total": len(self.conversations)},
+        }
 
 
 def _link_library_items_to_active_workspace(app, items) -> None:
@@ -813,7 +876,9 @@ async def _wait_for_personas_snapshot(screen, pilot, *, timeout: float = 2.0) ->
         "#personas-readiness-console",
     )
     while time.monotonic() < deadline:
-        terminal_state_visible = any(screen.query(selector) for selector in terminal_selectors)
+        terminal_state_visible = any(
+            screen.query(selector) for selector in terminal_selectors
+        )
         buttons = list(screen.query("#personas-attach-to-console"))
         if buttons:
             button = buttons[0]
@@ -824,7 +889,9 @@ async def _wait_for_personas_snapshot(screen, pilot, *, timeout: float = 2.0) ->
                 await pilot.pause()
                 return
         await pilot.pause(0.01)
-    raise AssertionError(f"Timed out waiting for Personas snapshot. Visible text: {_visible_text(screen)}")
+    raise AssertionError(
+        f"Timed out waiting for Personas snapshot. Visible text: {_visible_text(screen)}"
+    )
 
 
 async def _wait_for_wc_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
@@ -839,7 +906,9 @@ async def _wait_for_wc_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
             await pilot.pause()
             return
         await pilot.pause(0.01)
-    raise AssertionError(f"Timed out waiting for Watchlists snapshot. Visible text: {_visible_text(screen)}")
+    raise AssertionError(
+        f"Timed out waiting for Watchlists snapshot. Visible text: {_visible_text(screen)}"
+    )
 
 
 async def _wait_for_library_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
@@ -860,7 +929,9 @@ async def _wait_for_library_snapshot(screen, pilot, *, timeout: float = 2.0) -> 
             await pilot.pause()
             return
         await pilot.pause(0.01)
-    raise AssertionError(f"Library shell never loaded. Visible text: {_visible_text(screen)}")
+    raise AssertionError(
+        f"Library shell never loaded. Visible text: {_visible_text(screen)}"
+    )
 
 
 async def _wait_for_skills_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
@@ -875,27 +946,37 @@ async def _wait_for_skills_snapshot(screen, pilot, *, timeout: float = 2.0) -> N
             await pilot.pause()
             return
         await pilot.pause(0.01)
-    raise AssertionError(f"Timed out waiting for Skills snapshot. Visible text: {_visible_text(screen)}")
+    raise AssertionError(
+        f"Timed out waiting for Skills snapshot. Visible text: {_visible_text(screen)}"
+    )
 
 
-async def _wait_for_selector(screen, pilot, selector: str, *, timeout: float = 2.0) -> None:
+async def _wait_for_selector(
+    screen, pilot, selector: str, *, timeout: float = 2.0
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if screen.query(selector):
             await pilot.pause()
             return
         await pilot.pause(0.01)
-    raise AssertionError(f"Timed out waiting for {selector}. Visible text: {_visible_text(screen)}")
+    raise AssertionError(
+        f"Timed out waiting for {selector}. Visible text: {_visible_text(screen)}"
+    )
 
 
-async def _wait_for_visible_text(screen, pilot, expected_text: str, *, timeout: float = 4.0) -> None:
+async def _wait_for_visible_text(
+    screen, pilot, expected_text: str, *, timeout: float = 4.0
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if expected_text in _visible_text(screen):
             await pilot.pause()
             return
         await pilot.pause(0.01)
-    raise AssertionError(f"Timed out waiting for {expected_text!r}. Visible text: {_visible_text(screen)}")
+    raise AssertionError(
+        f"Timed out waiting for {expected_text!r}. Visible text: {_visible_text(screen)}"
+    )
 
 
 async def _wait_for_mock_call(mock: Mock, pilot, *, timeout: float = 1.0) -> None:
@@ -919,16 +1000,22 @@ async def _wait_for_skills_list_calls(
         if len(service.calls) >= count:
             return
         await pilot.pause(0.01)
-    raise AssertionError(f"Timed out waiting for {count} Skills list calls; saw {len(service.calls)}")
+    raise AssertionError(
+        f"Timed out waiting for {count} Skills list calls; saw {len(service.calls)}"
+    )
 
 
-async def _wait_for_route(seen_routes: list[str], target_route: str, pilot, *, timeout: float = 1.0) -> None:
+async def _wait_for_route(
+    seen_routes: list[str], target_route: str, pilot, *, timeout: float = 1.0
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if seen_routes and seen_routes[-1] == target_route:
             return
         await pilot.pause(0.01)
-    raise AssertionError(f"Timed out waiting for route {target_route!r}; seen routes: {seen_routes!r}")
+    raise AssertionError(
+        f"Timed out waiting for route {target_route!r}; seen routes: {seen_routes!r}"
+    )
 
 
 def _assert_policy_recovery_copy(
@@ -953,7 +1040,9 @@ def _assert_policy_recovery_copy(
     assert next_action in str(button.tooltip)
 
 
-def _custom_policy_recovery_state(exc, *, unavailable_what, stable_selector, policy_message=None):
+def _custom_policy_recovery_state(
+    exc, *, unavailable_what, stable_selector, policy_message=None
+):
     return DestinationRecoveryState(
         status_label="Custom policy state",
         unavailable_what=unavailable_what,
@@ -976,7 +1065,7 @@ def _custom_policy_recovery_state(exc, *, unavailable_what, stable_selector, pol
         # of the generic "source material" phrasing artifacts/personas use.
         ("library", "#library-header-line", "content type"),
         ("artifacts", "#artifacts-title", "generated"),
-        ("personas", "#personas-title", "behavior"),
+        ("personas", "#personas-header", "who the ai plays"),
     ],
 )
 @pytest.mark.asyncio
@@ -992,7 +1081,10 @@ async def test_primary_destination_wrappers_mount(route, title_id, purpose_text)
         assert title
         if route != "library":
             assert title.has_class("ds-destination-header")
-        assert purpose_text in _static_text(screen.query_one(".destination-purpose", Static)).lower()
+        assert (
+            purpose_text
+            in _static_text(screen.query_one(".destination-purpose", Static)).lower()
+        )
         assert screen.query_one(".ds-panel")
 
 
@@ -1063,7 +1155,7 @@ async def test_watchlists_collections_empty_state_disables_console_attach():
         await _wait_for_wc_snapshot(screen, pilot)
         button = screen.query_one("#wc-attach-to-console", Button)
 
-        assert "No local Watchlists are available yet." in _visible_text(screen)
+        assert "No sources yet." in _visible_text(screen)
         assert button.disabled is True
         assert "Stage local Watchlists context" in str(button.tooltip)
 
@@ -1080,7 +1172,10 @@ async def test_watchlists_collections_service_failure_uses_recovery_copy():
         await _wait_for_wc_snapshot(screen, pilot)
         button = screen.query_one("#wc-attach-to-console", Button)
 
-        assert "Watchlists services unavailable; retry Watchlists later." in _visible_text(screen)
+        assert (
+            "Watchlists services unavailable; retry Watchlists later."
+            in _visible_text(screen)
+        )
         assert button.disabled is True
         assert "Watchlists services are unavailable" in str(button.tooltip)
 
@@ -1096,12 +1191,17 @@ async def test_watchlists_collections_loading_times_out_to_recovery_copy():
         await _wait_for_selector(screen, pilot, "#wc-service-error", timeout=3.0)
         button = screen.query_one("#wc-attach-to-console", Button)
 
-        assert "Watchlists services unavailable; retry Watchlists later." in _visible_text(screen)
+        assert (
+            "Watchlists services unavailable; retry Watchlists later."
+            in _visible_text(screen)
+        )
         assert button.disabled is True
 
 
 @pytest.mark.asyncio
-async def test_watchlists_collections_initial_load_uses_distinct_loading_copy(monkeypatch):
+async def test_watchlists_collections_initial_load_uses_distinct_loading_copy(
+    monkeypatch,
+):
     monkeypatch.setattr(wc_screen_module, "WC_SNAPSHOT_TIMEOUT_SECONDS", 30.0)
     app = _build_test_app()
     app.watchlist_scope_service = HangingWatchlistsScopeService()
@@ -1142,7 +1242,9 @@ async def test_watchlists_collections_policy_denial_uses_runtime_recovery_taxono
 
 
 @pytest.mark.asyncio
-async def test_watchlists_collections_policy_denial_uses_recovery_state_selector(monkeypatch):
+async def test_watchlists_collections_policy_denial_uses_recovery_state_selector(
+    monkeypatch,
+):
     monkeypatch.setattr(
         wc_screen_module,
         "policy_denied_recovery_state",
@@ -1318,6 +1420,9 @@ async def test_library_destination_lists_local_source_snapshot_from_services():
         "mode": "local",
         "limit": library_page_sizes.get("conversations"),
         "offset": 0,
+        # Library lists conversations across scopes so Console workspace
+        # chats appear alongside global ones (task-179).
+        "scope_type": "all",
     }
 
 
@@ -1355,7 +1460,10 @@ async def test_library_destination_labels_plain_list_notes_as_sample_snapshot():
     # plain-list service (no pagination metadata) genuinely truncates,
     # exercising the "sample capped below actual" labeling.
     app.notes_scope_service = StaticLibraryNotesListScopeService(
-        [{"title": f"Research Note {index}", "id": f"note-{index}"} for index in range(1, 106)]
+        [
+            {"title": f"Research Note {index}", "id": f"note-{index}"}
+            for index in range(1, 106)
+        ]
     )
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
@@ -1418,7 +1526,10 @@ async def test_library_destination_service_failure_uses_recovery_copy():
         screen = _active_destination_screen(host)
         button = screen.query_one("#library-use-in-console", Button)
 
-        assert "Library source services unavailable; retry Library later." in _visible_text(screen)
+        assert (
+            "Library source services unavailable; retry Library later."
+            in _visible_text(screen)
+        )
         assert button.disabled is True
         assert "Library source services are unavailable" in str(button.tooltip)
 
@@ -1557,7 +1668,9 @@ async def test_library_use_in_console_uses_source_snapshot_context():
     ],
 )
 @pytest.mark.asyncio
-async def test_destination_action_buttons_emit_compatibility_routes(route, selector, target_route):
+async def test_destination_action_buttons_emit_compatibility_routes(
+    route, selector, target_route
+):
     app = _build_test_app()
     seen_routes = []
     host = DestinationHarness(app, route, seen_routes)
@@ -1822,7 +1935,10 @@ async def test_acp_configured_runtime_without_session_disables_console_follow():
     assert "ACP version: 0.1" in visible_text
     assert "Session: none" in visible_text
     assert "Console follow disabled: no ACP session payload" in visible_text
-    assert "Start or resume an ACP session in ACP before following it in Console." in visible_text
+    assert (
+        "Start or resume an ACP session in ACP before following it in Console."
+        in visible_text
+    )
     assert "Runtime owner: ACP" in visible_text
     assert follow_button.disabled is True
 
@@ -1920,7 +2036,10 @@ async def test_acp_runtime_and_session_labels_are_markup_escaped():
         assert screen.query_one("#acp-runtime-display", Static).renderable == (
             "  Runtime: \\[bold]Runtime\\[/bold]"
         )
-        assert screen.query_one("#acp-session-status", Static).renderable == "  Session: \\[red]Session\\[/red]"
+        assert (
+            screen.query_one("#acp-session-status", Static).renderable
+            == "  Session: \\[red]Session\\[/red]"
+        )
         assert screen.query_one("#acp-runtime-status", Static).renderable == (
             "  Runtime configured: \\[bold]Runtime\\[/bold]"
         )
@@ -2064,12 +2183,14 @@ async def test_destination_action_buttons_explain_their_outcome(route):
     ("route", "expected_sections"),
     [
         ("watchlists_collections", ["Watchlists", "Monitored sources"]),
-        ("schedules", ["Next Run", "Paused", "Failed"]),
+        ("schedules", ["Schedule Queue", "Next Run"]),
         ("workflows", ["Recipes", "Dry Run", "Console launch unavailable"]),
     ],
 )
 @pytest.mark.asyncio
-async def test_automation_destination_wrappers_explain_ownership(route, expected_sections):
+async def test_automation_destination_wrappers_explain_ownership(
+    route, expected_sections
+):
     app = _build_test_app()
     host = DestinationHarness(app, route)
 
@@ -2097,22 +2218,16 @@ async def test_schedules_failed_run_exposes_consistent_retry_control_state():
 
     async with host.run_test(size=(180, 45)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#schedules-console-available")
-        visible_text = _visible_text(screen)
+        await _wait_for_selector(screen, pilot, "#schedules-follow-in-console")
         follow_button = screen.query_one("#schedules-follow-in-console", Button)
-        retry_button = screen.query_one("#schedules-retry-run", Button)
-        pause_button = screen.query_one("#schedules-pause-run", Button)
+        assert follow_button.disabled is False
+        await pilot.click("#schedules-follow-in-console")
+        await _wait_for_mock_call(app.open_active_home_item_in_console, pilot)
 
-    assert "Morning digest" in visible_text
-    assert "Status: failed" in visible_text
-    assert "State: failed" in visible_text
-    assert "Retry/backoff: retry available from Schedules" in visible_text
-    assert "Run control: retry available" in visible_text
-    assert "Next action: retry or open in Console" in visible_text
-    assert follow_button.disabled is False
-    assert retry_button.disabled is True
-    assert str(retry_button.tooltip) == "Retry this schedule run from Schedules when run-control services are available."
-    assert pause_button.disabled is True
+    app.open_active_home_item_in_console.assert_called_once_with(
+        target_id="local:schedule_run:7",
+        target_route="chat",
+    )
 
 
 @pytest.mark.asyncio
@@ -2133,16 +2248,16 @@ async def test_schedules_pending_run_uses_shared_approval_status_taxonomy():
 
     async with host.run_test(size=(180, 45)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#schedules-console-available")
-        visible_text = _visible_text(screen)
-        approval_button = screen.query_one("#schedules-review-approval", Button)
+        await _wait_for_selector(screen, pilot, "#schedules-follow-in-console")
+        follow_button = screen.query_one("#schedules-follow-in-console", Button)
+        assert follow_button.disabled is False
+        await pilot.click("#schedules-follow-in-console")
+        await _wait_for_mock_call(app.open_active_home_item_in_console, pilot)
 
-    assert "Digest needs approval" in visible_text
-    assert "Status: pending" in visible_text
-    assert "Run control: approval required" in visible_text
-    assert "Next action: review approval before Console follow" in visible_text
-    assert "Approval review controls are not wired yet" in visible_text
-    assert approval_button.disabled is True
+    app.open_active_home_item_in_console.assert_called_once_with(
+        target_id="local:schedule_run:8",
+        target_route="chat",
+    )
 
 
 @pytest.mark.asyncio
@@ -2177,7 +2292,10 @@ async def test_workflows_approval_pending_run_exposes_review_before_console_stat
     assert "Next action: review approval before Console follow" in visible_text
     assert launch_button.disabled is False
     assert approval_button.disabled is True
-    assert str(approval_button.tooltip) == "Review this workflow approval from Workflows when approval services are available."
+    assert (
+        str(approval_button.tooltip)
+        == "Review this workflow approval from Workflows when approval services are available."
+    )
     assert retry_button.disabled is True
 
 
@@ -2189,28 +2307,17 @@ async def test_schedules_empty_state_reads_as_live_queue_with_recovery_path():
 
     async with host.run_test(size=(180, 45)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#schedules-console-unavailable")
-        visible_text = _visible_text(screen)
-        list_pane = screen.query_one("#schedules-list-pane")
-        detail_pane = screen.query_one("#schedules-detail-pane")
-        inspector_pane = screen.query_one("#schedules-inspector-pane")
-        control_label = screen.query_one("#schedules-action-state-label", Static)
+        await _wait_for_selector(screen, pilot, "#schedules-follow-in-console")
+        follow_button = screen.query_one("#schedules-follow-in-console", Button)
+        list_pane = screen.query_one("#scheduling-list-pane")
+        detail_pane = screen.query_one("#scheduling-detail-pane")
+        inspector_pane = screen.query_one("#scheduling-inspector-pane")
 
-    for expected in (
-        "Next Run 0",
-        "Paused 0",
-        "Failed 0",
-        "Retry 0",
-        "History 0",
-        "No active schedule run selected",
-        "Next action: start or select a schedule run",
-        "Recovery controls require an active schedule run",
-    ):
-        assert expected in visible_text
-    assert "destination-workbench-pane" in list_pane.classes
-    assert "destination-workbench-pane" in detail_pane.classes
-    assert "destination-workbench-pane" in inspector_pane.classes
-    assert str(control_label.renderable) == "Recovery controls require an active schedule run"
+    assert follow_button.disabled is True
+    assert "Start or select a schedule run" in str(follow_button.tooltip)
+    assert list_pane is not None
+    assert detail_pane is not None
+    assert inspector_pane is not None
 
 
 @pytest.mark.asyncio
@@ -2243,7 +2350,10 @@ async def test_workflows_empty_state_reads_as_live_queue_with_recovery_path():
     assert "destination-workbench-pane" in list_pane.classes
     assert "destination-workbench-pane" in detail_pane.classes
     assert "destination-workbench-pane" in inspector_pane.classes
-    assert str(control_label.renderable) == "Recovery controls require an active workflow run"
+    assert (
+        str(control_label.renderable)
+        == "Recovery controls require an active workflow run"
+    )
 
 
 @pytest.mark.parametrize(
@@ -2256,7 +2366,9 @@ async def test_workflows_empty_state_reads_as_live_queue_with_recovery_path():
     ],
 )
 @pytest.mark.asyncio
-async def test_protocol_and_settings_wrappers_have_distinct_boundaries(route, expected_text):
+async def test_protocol_and_settings_wrappers_have_distinct_boundaries(
+    route, expected_text
+):
     app = _build_test_app()
     host = DestinationHarness(app, route)
 
@@ -2268,11 +2380,17 @@ async def test_protocol_and_settings_wrappers_have_distinct_boundaries(route, ex
 @pytest.mark.parametrize(
     ("route", "selector", "copy"),
     [
-        ("skills", "#skills-import-skill", "Skill import is not wired in this shell yet."),
+        (
+            "skills",
+            "#skills-import-skill",
+            "Skill import is not wired in this shell yet.",
+        ),
     ],
 )
 @pytest.mark.asyncio
-async def test_unwired_destination_actions_are_disabled_with_honest_copy(route, selector, copy):
+async def test_unwired_destination_actions_are_disabled_with_honest_copy(
+    route, selector, copy
+):
     app = _build_test_app()
     host = DestinationHarness(app, route)
 
@@ -2286,7 +2404,16 @@ async def test_unwired_destination_actions_are_disabled_with_honest_copy(route, 
 
 
 @pytest.mark.asyncio
-async def test_mcp_destination_embeds_unified_mcp_management_panel():
+async def test_mcp_destination_embeds_mcp_workbench():
+    """MCP screen now hosts the rail/canvas/inspector workbench, not the legacy panel.
+
+    Realigned from the retired `test_mcp_destination_embeds_unified_mcp_management_panel`
+    (Task 8 replaced the embedded `UnifiedMCPPanel` with `MCPWorkbench`; Task 5 of MCP
+    Hub Phase 6 deleted `UnifiedMCPPanel` itself, so there is no longer a class to query
+    for absence -- the module simply doesn't exist). Same product intent — the MCP
+    destination embeds its management surface directly, with no "open elsewhere" escape
+    hatch and no "not embedded" placeholder copy.
+    """
     app = _build_test_app()
     host = DestinationHarness(app, "mcp")
 
@@ -2294,52 +2421,228 @@ async def test_mcp_destination_embeds_unified_mcp_management_panel():
         await pilot.pause(0.1)
         screen = _active_destination_screen(host)
 
-        assert screen.query_one(UnifiedMCPPanel)
-        assert screen.query_one("#unified-mcp-source", Select)
-        assert screen.query_one("#unified-mcp-server-target", Select)
-        assert screen.query_one("#unified-mcp-scope", Select)
-        assert screen.query_one("#unified-mcp-section", Select)
-        assert screen.query_one("#unified-mcp-action", Select)
-        assert screen.query_one("#unified-mcp-action-payload", TextArea)
-        assert screen.query_one("#unified-mcp-action-run", Button)
+        workbench = screen.query_one(MCPWorkbench)
+        assert workbench is screen.workbench
+        assert screen.query_one("#mcp-hub-rail", MCPRail)
+        assert screen.query_one("#mcp-hub-canvas")
+        assert screen.query_one("#mcp-hub-inspector", MCPInspector)
         assert not screen.query("#mcp-open-management")
-        assert "Unified MCP management is not embedded in this shell yet." not in _visible_text(screen)
+        assert (
+            "Unified MCP management is not embedded in this shell yet."
+            not in _visible_text(screen)
+        )
 
 
 @pytest.mark.asyncio
 async def test_mcp_destination_labels_server_first_workbench_columns():
+    """The rail/canvas/inspector triad is mounted with its documented pane roles.
+
+    Realigned from the retired `UnifiedMCPPanel` 3-column labels test (that
+    embed shape no longer exists). Same product intent — a server-first
+    workbench with clearly delineated panes — verified against the new
+    `#mcp-hub-rail` / `#mcp-hub-canvas` / `#mcp-hub-inspector` landmarks: the
+    rail lists servers, the canvas hosts the mode content, the inspector is
+    present and explains readiness.
+    """
     app = _build_test_app()
     host = DestinationHarness(app, "mcp")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await _wait_for_selector(_active_destination_screen(host), pilot, "#unified-mcp-action-readiness")
+        await _wait_for_selector(
+            _active_destination_screen(host), pilot, "#mcp-hub-rail"
+        )
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
-        assert "Servers + Scope" in text
-        assert "Server Detail" in text
-        assert "Readiness + Actions" in text
-        assert "Manage MCP servers, scoped tools, permissions, and audit readiness." in text
-        assert "Section" in text
-        assert "try Inventory" not in text
-        assert "Column 1:" not in text
-        assert "Column 2:" not in text
-        assert "Column 3:" not in text
-        assert screen.query_one("#mcp-column-divider-left").has_class("mcp-column-resize-handle")
-        assert screen.query_one("#mcp-column-divider-right").has_class("mcp-column-resize-handle")
-        assert screen.query_one("#mcp-column-divider-left").tooltip == "Resize columns"
-        assert screen.query_one("#mcp-column-divider-right").tooltip == "Resize columns"
-        assert "Blocked" in text
-        assert "Select Section: Inventory" in text
-        assert "Run Action disabled" in text
-        assert "Payload (JSON)" not in text
+        rail = screen.query_one("#mcp-hub-rail", MCPRail)
+        canvas = screen.query_one("#mcp-hub-canvas")
+        inspector = screen.query_one("#mcp-hub-inspector", MCPInspector)
+
+        assert "destination-workbench-pane" in rail.classes
+        assert "destination-workbench-pane" in canvas.classes
+        assert "destination-workbench-pane" in inspector.classes
+
+        # Rail lists servers: the "All servers" row plus at least the
+        # built-in server (always present for the default local source).
+        rail_rows = list(rail.query("Button.mcp-rail-row"))
+        assert len(rail_rows) >= 2
+        assert any("All servers" in str(row.label) for row in rail_rows)
+
+        # Inspector is present and explains readiness (not a bare shell).
+        assert "Inspector" in text
+        assert "Select an item to inspect." in text
+
+        assert (
+            "Manage MCP servers, scoped tools, permissions, and audit readiness."
+            in text
+        )
+
+
+class FakeUnifiedMCPService:
+    """Ported from the retired `test_unified_mcp_panel.py` (deleted along with
+    `UnifiedMCPPanel`/`unified_mcp_sections.py` in MCP Hub Phase 6 Task 5) --
+    this is the only test in the suite that still needs it, to drive
+    `MCPWorkbench`'s `unified_mcp_service`-backed source/scope/section
+    tracking for `test_mcp_destination_restores_unified_mcp_view_state_after_
+    mount` below. Kept local to this one test rather than resurrecting a
+    shared fixture module for a single caller.
+    """
+
+    def __init__(self, target_store: ConfiguredServerTargetStore) -> None:
+        self.target_store = target_store
+        self.context = UnifiedMCPContext(selected_source="local", selected_section="overview")
+        self.action_calls: list[tuple[str, dict]] = []
+        self.runtime_state_override_calls = 0
+
+    async def load_context(self) -> UnifiedMCPContext:
+        return self.context
+
+    async def select_source(self, source: str) -> UnifiedMCPContext:
+        normalized_source = "server" if source == "server" else "local"
+        self.context = replace(self.context, selected_source=normalized_source)
+        if normalized_source == "server" and self.context.selected_active_server_id is None:
+            default_target = self.target_store.resolve_active_target()
+            if default_target is not None:
+                return await self.select_server_target(default_target.server_id)
+        return self.context
+
+    async def select_server_target(self, server_id: str) -> UnifiedMCPContext:
+        target = self.target_store.resolve_active_target(server_id)
+        if target is None:
+            raise KeyError(server_id)
+        context = ServerAccessContext(
+            server_id=target.server_id,
+            selected_scope="personal",
+            selected_scope_ref=None,
+            selected_section=self.context.selected_section or "overview",
+            can_use_personal_scope=True,
+            manageable_team_ids=(21,),
+            manageable_org_ids=(11,),
+            can_use_system_admin_scope=True,
+            section_capabilities=SectionCapabilityFlags(
+                overview=True,
+                inventory=True,
+                catalogs=True,
+                external_servers=True,
+                governance=True,
+                advanced=True,
+            ),
+        )
+        per_server_state = dict(self.context.per_server_state)
+        per_server_state[target.server_id] = context
+        self.context = replace(
+            self.context,
+            selected_source="server",
+            selected_active_server_id=target.server_id,
+            selected_scope=context.selected_scope,
+            selected_scope_ref=context.selected_scope_ref,
+            selected_section=context.selected_section,
+            per_server_state=per_server_state,
+        )
+        return self.context
+
+    async def select_scope(self, scope: str | None, scope_ref: str | None = None) -> UnifiedMCPContext:
+        server_id = self.context.selected_active_server_id
+        if server_id is None:
+            return self.context
+        if scope == "team" and scope_ref is None:
+            scope_ref = "21"
+        elif scope == "org" and scope_ref is None:
+            scope_ref = "11"
+        else:
+            scope_ref = None if scope in {None, "personal", "system_admin"} else scope_ref
+        context = replace(
+            self.context.per_server_state[server_id],
+            selected_scope=scope or "personal",
+            selected_scope_ref=scope_ref,
+        )
+        per_server_state = dict(self.context.per_server_state)
+        per_server_state[server_id] = context
+        self.context = replace(
+            self.context,
+            selected_scope=context.selected_scope,
+            selected_scope_ref=context.selected_scope_ref,
+            per_server_state=per_server_state,
+        )
+        return self.context
+
+    async def select_section(self, section: str | None) -> UnifiedMCPContext:
+        server_id = self.context.selected_active_server_id
+        if server_id is None:
+            self.context = replace(self.context, selected_section=section or "overview")
+            return self.context
+        context = replace(
+            self.context.per_server_state[server_id],
+            selected_section=section or "overview",
+        )
+        per_server_state = dict(self.context.per_server_state)
+        per_server_state[server_id] = context
+        self.context = replace(
+            self.context,
+            selected_section=context.selected_section,
+            per_server_state=per_server_state,
+        )
+        return self.context
+
+    async def load_section(self, section: str | None = None) -> dict:
+        effective_section = section or self.context.selected_section or "overview"
+        return {
+            "source": self.context.selected_source,
+            "section": effective_section,
+            "server_id": self.context.selected_active_server_id,
+            "scope": self.context.selected_scope,
+            "scope_ref": self.context.selected_scope_ref,
+        }
+
+    def available_actions(self) -> list[dict]:
+        return []
+
+    def runtime_state_override(self) -> RuntimeSourceState:
+        self.runtime_state_override_calls += 1
+        if self.context.selected_source == "server":
+            return RuntimeSourceState(
+                active_source="server",
+                active_server_id=self.context.selected_active_server_id,
+                server_configured=True,
+                server_reachability="reachable",
+                server_auth_state="authenticated",
+                last_known_server_label=self.context.selected_active_server_id,
+            )
+        return RuntimeSourceState(active_source="local")
+
+    async def run_action(self, action_name: str, payload: dict) -> dict:
+        self.action_calls.append((action_name, dict(payload)))
+        return {"ok": True, "action": action_name, **dict(payload)}
 
 
 @pytest.mark.asyncio
 async def test_mcp_destination_restores_unified_mcp_view_state_after_mount(tmp_path):
+    """Restoring a legacy `unified_mcp_view_state` blob must not crash and must carry over.
+
+    Realigned from the retired `UnifiedMCPPanel.context` assertions (that
+    object no longer exists). Same product intent — a saved legacy view
+    survives the Task 8 rewire — verified against the new surface:
+
+    - Mounting with a restored `scope="team"` must not crash, even though
+      Phase 1's rail only offers a Personal scope option to select from
+      (fix A clamps the rail's DISPLAY, not the tracked state).
+    - `selected_source` carries over into the workbench's live state.
+    - The workbench keeps tracking the true restored scope
+      (`get_view_state()["scope"] == "team"`) despite the rail's clamped
+      display.
+    - `save_state()` emits the NEW `mcp_hub_view_state` key, reflecting the
+      restored values.
+    """
     target_store = ConfiguredServerTargetStore(tmp_path / "targets.json")
     target_store.save_targets(
-        [ConfiguredServerTarget(server_id="server-a", label="Server A", base_url="https://a.example/api", is_default=True)]
+        [
+            ConfiguredServerTarget(
+                server_id="server-a",
+                label="Server A",
+                base_url="https://a.example/api",
+                is_default=True,
+            )
+        ]
     )
     app = _build_test_app()
     app.unified_mcp_service = FakeUnifiedMCPService(target_store)
@@ -2358,31 +2661,159 @@ async def test_mcp_destination_restores_unified_mcp_view_state_after_mount(tmp_p
     )
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.2)
-        panel = _active_destination_screen(host).query_one(UnifiedMCPPanel)
+        screen = _active_destination_screen(host)
+        workbench = screen.query_one(MCPWorkbench)
 
-        assert panel.context.selected_source == "server"
-        assert panel.context.selected_active_server_id == "server-a"
-        assert panel.context.selected_scope == "team"
-        assert panel.context.selected_scope_ref == "21"
-        assert panel.context.selected_section == "inventory"
+        # Restore applies asynchronously (source switch + scope assignment
+        # span an await boundary inside `_switch_source()`); wait for both
+        # to land rather than racing a fixed sleep.
+        deadline = time.monotonic() + 2.0
+        view_state = workbench.get_view_state()
+        while time.monotonic() < deadline and not (
+            view_state["source"] == "server" and view_state["scope"] == "team"
+        ):
+            await pilot.pause(0.01)
+            view_state = workbench.get_view_state()
+        assert view_state["source"] == "server"  # selected_source carried over
+        assert view_state["scope"] == "team"  # true restored scope still tracked
+
+        # Mounting did not crash; the rail rendered despite the restored
+        # scope value ("team") not being among Phase 1's Personal-only
+        # scope options. The rail recomposes when state settles, and the
+        # mounted Select applies its initial value on its own deferred
+        # `_on_mount` — wait for that to land instead of reading mid-flight.
+        rail = screen.query_one("#mcp-hub-rail", MCPRail)
+        deadline = time.monotonic() + 2.0
+        scope_select = None
+        while time.monotonic() < deadline:
+            try:
+                scope_select = rail.query_one("#mcp-rail-scope-select", Select)
+            except Exception:
+                scope_select = None
+            if scope_select is not None and scope_select.value is not Select.NULL:
+                break
+            await pilot.pause(0.01)
+        assert rail.is_mounted
+        assert scope_select is not None
+        assert scope_select.value == "personal"  # clamped display (fix A)
+
+        saved = screen.save_state()
+        assert saved["mcp_hub_view_state"]["source"] == "server"
+        assert saved["mcp_hub_view_state"]["scope"] == "team"
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_permissions_and_tools_tooltips_are_current():
+    """UX batch item 1: the Permissions/Tools mode chip tooltips used to say
+    "(arrives in a later phase)" even after both modes shipped real canvases
+    (`MCPPermissionsMode`/`MCPToolsMode`) -- stale copy that actively misled
+    the user about what pressing the chip would do. T7 (MCP Hub Phase 5):
+    "audit" carried the same stale-copy defect until it shipped its own
+    real canvas (`MCPAuditMode`) -- same regression class, same fix."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "mcp")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        tools_chip = screen.query_one("#mcp-mode-tools", Button)
+        permissions_chip = screen.query_one("#mcp-mode-permissions", Button)
+        audit_chip = screen.query_one("#mcp-mode-audit", Button)
+        assert tools_chip.tooltip == "Tools mode: browse and test scoped MCP tools."
+        assert permissions_chip.tooltip == (
+            "Permissions mode: set Allow / Ask / Off per tool. "
+            "Space cycles the selected row."
+        )
+        assert "arrives in a later phase" not in str(audit_chip.tooltip).lower()
+        assert audit_chip.tooltip == (
+            "Audit mode: review MCP tool execution history and drill into a call's detail."
+        )
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_mode_chip_syncs_to_restored_mode():
+    """I2 regression: chips are composed with Servers active and are only
+    otherwise kept in sync by `MCPScreen._activate_mode()` (a click or
+    keybinding). A restore that changes the active mode (e.g. a saved
+    `mode: "tools"`) must also sync the chip highlight -- otherwise the
+    Tools canvas renders under a highlighted Servers chip.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(
+        app,
+        "mcp",
+        restored_state={"mcp_hub_view_state": {"mode": "tools"}},
+    )
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        workbench = screen.query_one(MCPWorkbench)
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and workbench.active_mode != "tools":
+            await pilot.pause(0.01)
+
+        assert workbench.active_mode == "tools"
+        tools_chip = screen.query_one("#mcp-mode-tools", Button)
+        servers_chip = screen.query_one("#mcp-mode-servers", Button)
+        assert tools_chip.has_class("is-active")
+        assert not servers_chip.has_class("is-active")
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_mode_chip_syncs_on_inspector_hub_action():
+    """I2 follow-up: inspector hub actions also change the mode without going
+    through `MCPScreen._activate_mode()` -- "Open tool catalog"/"Open audit"
+    call `MCPWorkbench.set_mode()` directly from
+    `on_mcp_inspector_hub_action_requested`. The chip highlight must follow
+    that path too, not just click/keybinding/restore, so `set_mode` itself is
+    the single emission point for the mode-change notification.
+    """
+    from tldw_chatbook.MCP.readiness import HubAction
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "mcp")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        workbench = screen.query_one(MCPWorkbench)
+        inspector = screen.query_one(MCPInspector)
+        assert workbench.active_mode == "servers"
+
+        inspector.post_message(
+            MCPInspector.HubActionRequested(HubAction.OPEN_TOOL_CATALOG, None)
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert workbench.active_mode == "tools"
+        tools_chip = screen.query_one("#mcp-mode-tools", Button)
+        servers_chip = screen.query_one("#mcp-mode-servers", Button)
+        assert tools_chip.has_class("is-active")
+        assert not servers_chip.has_class("is-active")
 
 
 @pytest.mark.asyncio
 async def test_mcp_destination_runtime_refresh_uses_exclusive_worker(monkeypatch):
+    """Runtime backend changes refresh the workbench via a named, exclusive worker.
+
+    Realigned from the retired `FakePanel`/`screen.mcp_panel` seam (Task 8
+    replaced the embedded panel with `screen.workbench`, whose refresh entry
+    point is `reload()` rather than `load_context()`). Same product intent —
+    a single, named, exclusive worker refreshes the MCP surface on runtime
+    backend change — verified against the new seam.
+    """
     app = _build_test_app()
     screen = MCPScreen(app)
     scheduled = {}
 
-    class FakePanel:
-        async def load_context(self):
+    class FakeWorkbench:
+        async def reload(self) -> None:
             return None
 
     def capture_worker(coro, **kwargs):
         scheduled["kwargs"] = kwargs
         coro.close()
 
-    screen.mcp_panel = FakePanel()
+    screen.workbench = FakeWorkbench()
     monkeypatch.setattr(screen, "run_worker", capture_worker)
 
     await screen.handle_runtime_backend_changed("server")
@@ -2392,10 +2823,281 @@ async def test_mcp_destination_runtime_refresh_uses_exclusive_worker(monkeypatch
     assert scheduled["kwargs"]["exclusive"] is True
 
 
+def test_mcp_screen_bindings_include_add_refresh_and_test_tool_shortcuts():
+    """T13/T8: `a`/`r`/`t` map to the documented actions, all hidden from the
+    Footer widget's own binding list (`show=False`) -- the Phase 2 footer
+    shortcut hint (`MCP_SHORTCUTS`) documents them instead."""
+    bindings = {b.key: b for b in MCPScreen.BINDINGS}
+    assert bindings["a"].action == "mcp_add_server"
+    assert bindings["a"].show is False
+    assert bindings["r"].action == "mcp_refresh"
+    assert bindings["r"].show is False
+    assert bindings["t"].action == "mcp_test_tool"
+    assert bindings["t"].show is False
+
+
+def test_mcp_destination_manual_refresh_uses_exclusive_worker(monkeypatch):
+    """T13: the `r` keybinding reloads the workbench through the SAME
+    exclusive worker group `handle_runtime_backend_changed()` uses, so a
+    manual refresh and a runtime-triggered one cannot run concurrently.
+    """
+    app = _build_test_app()
+    screen = MCPScreen(app)
+    scheduled = {}
+
+    class FakeWorkbench:
+        async def reload(self) -> None:
+            return None
+
+    def capture_worker(coro, **kwargs):
+        scheduled["kwargs"] = kwargs
+        coro.close()
+
+    screen.workbench = FakeWorkbench()
+    monkeypatch.setattr(screen, "run_worker", capture_worker)
+
+    screen.action_mcp_refresh()
+
+    assert scheduled["kwargs"]["name"] == "mcp-screen-manual-refresh"
+    assert scheduled["kwargs"]["group"] == "mcp-screen-runtime-refresh"
+    assert scheduled["kwargs"]["exclusive"] is True
+
+
+def test_mcp_destination_add_server_binding_switches_mode_and_schedules_worker(
+    monkeypatch,
+):
+    """T13: the `a` keybinding switches to Servers mode and dispatches
+    `MCPWorkbench.open_add_server_form()` via a named, exclusive worker.
+    The form's own T9 gate/notify behavior when server-source mutations are
+    unavailable is unit-tested directly against
+    `MCPWorkbench.open_add_server_form()` in test_mcp_workbench.py.
+    """
+    app = _build_test_app()
+    screen = MCPScreen(app)
+    scheduled = {}
+
+    class FakeWorkbench:
+        def __init__(self) -> None:
+            self.active_mode = "tools"
+            self.mode_calls: list[str] = []
+
+        def set_mode(self, mode: str) -> None:
+            self.mode_calls.append(mode)
+            self.active_mode = mode
+
+        async def open_add_server_form(self) -> None:
+            return None
+
+    def capture_worker(coro, **kwargs):
+        scheduled["kwargs"] = kwargs
+        coro.close()
+
+    screen.workbench = FakeWorkbench()
+    monkeypatch.setattr(screen, "run_worker", capture_worker)
+
+    screen.action_mcp_add_server()
+
+    assert screen.workbench.mode_calls == ["servers"]
+    assert scheduled["kwargs"]["name"] == "mcp-screen-add-server"
+    assert scheduled["kwargs"]["group"] == "mcp-screen-add-server"
+    assert scheduled["kwargs"]["exclusive"] is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_add_server_binding_opens_real_form_end_to_end():
+    """T13: end-to-end (real `MCPScreen` + `MCPWorkbench`, no fakes) --
+    pressing the `a` keybinding's action switches to Servers mode and opens
+    the local-source Add-server form, mounting `#mcp-servers-form` visibly.
+    """
+    app = _build_test_app()
+    host = DestinationHarness(app, "mcp")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#mcp-hub-rail")
+        # Start on a non-servers mode so the binding's own mode switch is observable.
+        screen.action_mcp_mode("tools")
+        await pilot.pause()
+        assert screen.workbench.active_mode == "tools"
+
+        screen.action_mcp_add_server()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert screen.workbench.active_mode == "servers"
+        canvas = screen.query_one(MCPServersMode)
+        assert canvas.query_one("#mcp-servers-form").display is True
+
+
+def test_mcp_destination_test_tool_binding_schedules_worker(monkeypatch):
+    """T8: the `t` keybinding dispatches `MCPWorkbench.open_test_for_
+    selected_tool()` via a named, exclusive worker -- mirrors
+    `action_mcp_add_server`'s dispatch pattern
+    (`test_mcp_destination_add_server_binding_switches_mode_and_schedules_
+    worker`). Unlike that action, the Tools-mode switch happens INSIDE
+    `open_test_for_selected_tool()` itself (see its own docstring) rather
+    than synchronously in the screen action, so there's no `mode_calls`
+    side effect to assert here before the (never-run, closed) coroutine --
+    the real mode switch + panel-open path is covered end-to-end below.
+    """
+    app = _build_test_app()
+    screen = MCPScreen(app)
+    scheduled = {}
+
+    class FakeWorkbench:
+        async def open_test_for_selected_tool(self) -> None:
+            return None
+
+    def capture_worker(coro, **kwargs):
+        scheduled["kwargs"] = kwargs
+        coro.close()
+
+    screen.workbench = FakeWorkbench()
+    monkeypatch.setattr(screen, "run_worker", capture_worker)
+
+    screen.action_mcp_test_tool()
+
+    assert scheduled["kwargs"]["name"] == "mcp-screen-test-tool"
+    assert scheduled["kwargs"]["group"] == "mcp-screen-test-tool"
+    assert scheduled["kwargs"]["exclusive"] is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_test_tool_binding_opens_panel_for_selected_tool_end_to_end():
+    """T8: end-to-end (real `MCPScreen` + `MCPWorkbench` + `MCPInspector`,
+    no fakes) -- with a tool already selected in the inspector, pressing the
+    `t` keybinding's action opens the SAME Test Tool panel the button's own
+    press handler mounts (`MCPInspector._mount_test_tool_panel()`, reused
+    via `open_test_panel()`). No selection -> notify is unit-tested
+    directly against `MCPWorkbench.open_test_for_selected_tool()` in
+    test_mcp_workbench.py, mirroring how T13's gated add-server notify path
+    is tested at the workbench layer rather than re-tested here.
+    """
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "mcp")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#mcp-hub-rail")
+        screen.action_mcp_mode("tools")
+        await pilot.pause()
+
+        tool = HubTool(
+            name="search",
+            server_key="local:docs",
+            server_label="docs",
+            source="local",
+            description="Search docs",
+            tags=(),
+            input_schema=None,
+            executable=True,
+            stale=False,
+        )
+        screen.workbench._last_hub_tools = [tool]
+        await screen.workbench.on_mcp_tools_mode_tool_selected(
+            MCPToolsMode.ToolSelected(tool.tool_id)
+        )
+        await pilot.pause()
+
+        screen.action_mcp_test_tool()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert screen.workbench.active_mode == "tools"
+        panel = screen.query_one("#mcp-inspector-test-panel")
+        assert panel.display is not False
+        assert screen.query_one("#mcp-inspector-test-tool", Button).disabled is True
+
+
+class MCPFooterHarness(App):
+    """Mirrors `test_console_workbench_contract.py`'s `ConsoleFooterHarness`
+    for the MCP destination: composes an `AppFooterStatus` directly on the
+    App's own default screen, exactly like `TldwCli._create_main_ui_widgets`
+    does in the real app (id="app-footer-status"). Task-264: `MCPScreen`
+    (via `BaseAppScreen.compose()`) now mounts its OWN `AppFooterStatus`
+    too, and `MCPScreen._register_footer_shortcuts()` resolves that
+    screen-owned instance via `self.query_one(AppFooterStatus)` -- so this
+    harness's default-screen widget is only kept around to prove the
+    registration does NOT land there (see the assertions below)."""
+
+    def __init__(self, app_instance):
+        super().__init__()
+        self.app_instance = app_instance
+
+    def compose(self) -> ComposeResult:
+        yield AppFooterStatus(id="app-footer-status")
+
+    async def on_mount(self) -> None:
+        await self.push_screen(MCPScreen(self.app_instance))
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_registers_footer_workbench_shortcuts():
+    """T13: mounting the MCP destination registers its Phase 2 footer
+    shortcut hint (source="mcp") -- same contract Console established
+    (`test_console_registers_footer_workbench_shortcuts`).
+    """
+    app = _build_test_app()
+    host = MCPFooterHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        screen = host.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#mcp-shell")
+        # task-264: the registration lands on the SCREEN's own footer, not
+        # the harness's default-screen stand-in.
+        footer = screen.query_one(AppFooterStatus)
+
+        assert (
+            footer.shortcut_text
+            == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
+        )
+
+
+@pytest.mark.asyncio
+async def test_mcp_destination_footer_shortcuts_clear_and_restore_across_suspend_resume():
+    """T13: shortcuts clear when another screen suspends the MCP destination
+    (e.g. the mcpServers-import file picker pushed on top) and re-register
+    once that overlay pops back to the MCP screen.
+    """
+    from textual.screen import Screen as TextualScreen
+
+    app = _build_test_app()
+    host = MCPFooterHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        screen = host.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#mcp-shell")
+        # task-264: the registration lands on the SCREEN's own footer, not
+        # the harness's default-screen stand-in.
+        footer = screen.query_one(AppFooterStatus)
+        assert (
+            footer.shortcut_text
+            == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
+        )
+
+        overlay = TextualScreen()
+        await host.push_screen(overlay)
+        await pilot.pause()
+        assert footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+
+        await host.pop_screen()
+        await pilot.pause()
+        assert (
+            footer.shortcut_text
+            == "1-4 mode | a add server | r refresh | t test tool | space cycle permission"
+        )
+
+
 def test_skills_screen_public_initializer_is_typed():
     signature = inspect.signature(SkillsScreen.__init__)
 
-    assert signature.parameters["app_instance"].annotation is not inspect.Parameter.empty
+    assert (
+        signature.parameters["app_instance"].annotation is not inspect.Parameter.empty
+    )
     assert signature.parameters["kwargs"].annotation is not inspect.Parameter.empty
     assert signature.return_annotation in {None, "None"}
 
@@ -2579,7 +3281,9 @@ async def test_skills_destination_bootstrap_action_calls_trust_service():
         initial_list_calls = len(app.skills_scope_service.calls)
         screen._request_skill_trust_passphrase = AsyncMock(return_value="passphrase")
         await pilot.click("#skills-bootstrap-trust")
-        await _wait_for_skills_list_calls(app.skills_scope_service, initial_list_calls + 1, pilot)
+        await _wait_for_skills_list_calls(
+            app.skills_scope_service, initial_list_calls + 1, pilot
+        )
 
         assert app.local_skill_trust_service.bootstrap_calls == 1
         assert app.local_skill_trust_service.bootstrap_passphrases == ["passphrase"]
@@ -2615,7 +3319,9 @@ async def test_skills_destination_unlock_action_calls_trust_service():
         assert unlock_button.disabled is False
 
         await pilot.click("#skills-unlock-trust")
-        await _wait_for_skills_list_calls(app.skills_scope_service, initial_list_calls + 1, pilot)
+        await _wait_for_skills_list_calls(
+            app.skills_scope_service, initial_list_calls + 1, pilot
+        )
 
         assert app.local_skill_trust_service.unlock_calls == 1
         assert app.local_skill_trust_service.unlock_passphrases == ["passphrase"]
@@ -2647,7 +3353,9 @@ async def test_skills_destination_review_action_enables_trust_reviewed_version()
         await _wait_for_skills_snapshot(screen, pilot)
         initial_list_calls = len(app.skills_scope_service.calls)
         await pilot.click("#skills-review-diff")
-        await _wait_for_skills_list_calls(app.skills_scope_service, initial_list_calls + 1, pilot)
+        await _wait_for_skills_list_calls(
+            app.skills_scope_service, initial_list_calls + 1, pilot
+        )
         text = _visible_text(screen)
 
         assert app.local_skill_trust_service.reviewed_skill == "summarize-notes"
@@ -2655,11 +3363,15 @@ async def test_skills_destination_review_action_enables_trust_reviewed_version()
         assert "Confirm these current files should become the trusted baseline." in text
         assert "Reviewed skill: summarize-notes" in text
         assert "/SKILL.md" not in text
-        assert screen.query_one("#skills-trust-reviewed-version", Button).disabled is False
+        assert (
+            screen.query_one("#skills-trust-reviewed-version", Button).disabled is False
+        )
 
         list_calls_after_review = len(app.skills_scope_service.calls)
         await pilot.click("#skills-trust-reviewed-version")
-        await _wait_for_skills_list_calls(app.skills_scope_service, list_calls_after_review + 1, pilot)
+        await _wait_for_skills_list_calls(
+            app.skills_scope_service, list_calls_after_review + 1, pilot
+        )
         assert app.local_skill_trust_service.trusted_review_id == "review-1"
 
 
@@ -2694,7 +3406,9 @@ async def test_skills_destination_clears_stale_review_after_refresh():
     )
     app.local_skill_trust_service = RecordingSkillTrustService(
         review_id="review-1",
-        on_capture_review=lambda _skill_name: app.skills_scope_service.set_skills([trusted_skill]),
+        on_capture_review=lambda _skill_name: app.skills_scope_service.set_skills(
+            [trusted_skill]
+        ),
     )
     host = DestinationHarness(app, "skills")
 
@@ -2704,7 +3418,9 @@ async def test_skills_destination_clears_stale_review_after_refresh():
         initial_list_calls = len(app.skills_scope_service.calls)
 
         await pilot.click("#skills-review-diff")
-        await _wait_for_skills_list_calls(app.skills_scope_service, initial_list_calls + 1, pilot)
+        await _wait_for_skills_list_calls(
+            app.skills_scope_service, initial_list_calls + 1, pilot
+        )
         await _wait_for_visible_text(screen, pilot, "Trust: trusted baseline")
 
         approve_button = screen.query_one("#skills-trust-reviewed-version", Button)
@@ -2753,18 +3469,24 @@ async def test_skills_destination_hides_review_summary_when_selecting_another_sk
         await _wait_for_skills_snapshot(screen, pilot)
         initial_list_calls = len(app.skills_scope_service.calls)
         await pilot.click("#skills-review-diff")
-        await _wait_for_skills_list_calls(app.skills_scope_service, initial_list_calls + 1, pilot)
+        await _wait_for_skills_list_calls(
+            app.skills_scope_service, initial_list_calls + 1, pilot
+        )
 
         assert "Reviewed skill: summarize-notes" in _visible_text(screen)
         assert "Review captured: SKILL.md." in _visible_text(screen)
-        assert screen.query_one("#skills-trust-reviewed-version", Button).disabled is False
+        assert (
+            screen.query_one("#skills-trust-reviewed-version", Button).disabled is False
+        )
 
         await pilot.click("#skills-select-local-1")
         await pilot.pause()
         text = _visible_text(screen)
 
         assert "Selected: code-review" in text
-        assert screen.query_one("#skills-trust-reviewed-version", Button).disabled is True
+        assert (
+            screen.query_one("#skills-trust-reviewed-version", Button).disabled is True
+        )
         assert "Reviewed skill: summarize-notes" not in text
         assert "Review captured: SKILL.md." not in text
 
@@ -2821,8 +3543,14 @@ async def test_skills_destination_uses_three_column_workbench_contract():
         await _wait_for_skills_snapshot(screen, pilot)
         text = _visible_text(screen)
 
-        assert "Skills | Agent Skills packs, validation, Console attachments | Local" in text
-        assert "Mode: Installed / Validate / Attach | Source: local SKILL.md directories" in text
+        assert (
+            "Skills | Agent Skills packs, validation, Console attachments | Local"
+            in text
+        )
+        assert (
+            "Mode: Installed / Validate / Attach | Source: local SKILL.md directories"
+            in text
+        )
         assert "Skill Library" in text
         assert "Skill Detail" in text
         assert "Skill Inspector" in text
@@ -2845,7 +3573,9 @@ async def test_skills_destination_service_failure_uses_recovery_copy():
         await _wait_for_skills_snapshot(screen, pilot)
         button = screen.query_one("#skills-attach-to-console", Button)
 
-        assert "Skills service unavailable; retry Skills later." in _visible_text(screen)
+        assert "Skills service unavailable; retry Skills later." in _visible_text(
+            screen
+        )
         assert button.disabled is True
         assert "Skills service is unavailable" in str(button.tooltip)
 
@@ -2887,7 +3617,9 @@ async def test_skills_destination_policy_denied_surfaces_policy_message():
             recovery_action="Workspace policy",
             authority_owner="local",
         )
-        assert "Skills service unavailable; retry Skills later." not in _visible_text(screen)
+        assert "Skills service unavailable; retry Skills later." not in _visible_text(
+            screen
+        )
 
 
 @pytest.mark.asyncio
@@ -3041,7 +3773,10 @@ async def test_settings_destination_uses_three_column_workbench_contract():
         )
         text = _visible_text(screen)
 
-        assert "Settings | Global preferences, appearance, accounts, storage | Local" in text
+        assert (
+            "Settings | Global preferences, appearance, accounts, storage | Local"
+            in text
+        )
         assert "Mode: Overview | Runtime controls stay in MCP and ACP" in text
         assert "Settings Sections" in text
         assert "Preference Detail" in text
@@ -3051,8 +3786,14 @@ async def test_settings_destination_uses_three_column_workbench_contract():
         assert "Storage" in text
         assert "Privacy" in text
         assert "Console paste collapse" in text
-        assert "Mutation replay: disabled" in text
-        assert "runtime MCP, ACP, and tool control stay in their own destinations" in text
+        assert (
+            "Saves apply to your local config file. Nothing is sent to a server "
+            "unless you run Manual sync yourself." in text
+        )
+        assert "Mutation replay: disabled" not in text
+        assert (
+            "runtime MCP, ACP, and tool control stay in their own destinations" in text
+        )
         assert "Column 1:" not in text
         assert "Column 2:" not in text
         assert "Column 3:" not in text
@@ -3087,7 +3828,7 @@ def test_settings_sync_safety_state_failure_logs_context(caplog):
 
 
 @pytest.mark.asyncio
-async def test_settings_appearance_action_routes_to_customize_surface():
+async def test_settings_appearance_action_routes_to_settings_theme_category():
     app = _build_test_app()
     seen_routes = []
     host = DestinationHarness(app, "settings", seen_routes)
@@ -3098,7 +3839,7 @@ async def test_settings_appearance_action_routes_to_customize_surface():
         await pilot.click("#settings-open-appearance")
         await pilot.pause(0.1)
 
-    assert seen_routes[-1] == "customize"
+    assert seen_routes[-1] == "settings"
 
 
 @pytest.mark.parametrize(
@@ -3131,7 +3872,9 @@ async def test_settings_console_paste_collapse_toggle_reflects_and_persists_conf
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#settings-category-console-behavior")
         await pilot.click("#settings-category-console-behavior")
-        await _wait_for_selector(screen, pilot, "#settings-console-collapse-large-pastes-toggle")
+        await _wait_for_selector(
+            screen, pilot, "#settings-console-collapse-large-pastes-toggle"
+        )
         toggle = screen.query_one(
             "#settings-console-collapse-large-pastes-toggle",
             Button,
@@ -3149,13 +3892,17 @@ async def test_settings_console_paste_collapse_toggle_reflects_and_persists_conf
         await _wait_for_visible_text(screen, pilot, "Console behavior settings saved.")
 
     assert app.app_config["console"]["collapse_large_pastes"] is expected_saved_value
-    assert saved_sections == [{"console": {"collapse_large_pastes": expected_saved_value}}]
+    assert saved_sections == [
+        {"console": {"collapse_large_pastes": expected_saved_value}}
+    ]
 
 
 @pytest.mark.asyncio
 async def test_legacy_tools_settings_route_opens_mcp_not_global_settings():
     app = _build_test_app()
-    screen_name, current_tab, screen_class = app._resolve_screen_navigation_target("tools_settings")
+    screen_name, current_tab, screen_class = app._resolve_screen_navigation_target(
+        "tools_settings"
+    )
 
     assert screen_name == "tools_settings"
     assert current_tab == "mcp"

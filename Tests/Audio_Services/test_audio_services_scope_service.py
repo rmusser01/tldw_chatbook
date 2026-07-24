@@ -1,7 +1,11 @@
 import pytest
 
-from tldw_chatbook.Audio_Services_Interop.audio_services_scope_service import AudioServicesScopeService
-from tldw_chatbook.Audio_Services_Interop.local_audio_services_service import LocalAudioServicesService
+from tldw_chatbook.Audio_Services_Interop.audio_services_scope_service import (
+    AudioServicesScopeService,
+)
+from tldw_chatbook.Audio_Services_Interop.local_audio_services_service import (
+    LocalAudioServicesService,
+)
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 
@@ -16,7 +20,10 @@ class FakeAudioService:
 
     async def list_tts_providers(self):
         self.calls.append(("list_tts_providers",))
-        return {"providers": {"kokoro": {"available": True}}, "voices": {"kokoro": [{"id": "af_heart"}]}}
+        return {
+            "providers": {"kokoro": {"available": True}},
+            "voices": {"kokoro": [{"id": "af_heart"}]},
+        }
 
     async def list_tts_voices(self, **kwargs):
         self.calls.append(("list_tts_voices", kwargs))
@@ -24,11 +31,23 @@ class FakeAudioService:
 
     async def get_audio_streaming_status(self):
         self.calls.append(("get_audio_streaming_status",))
-        return {"status": "available", "available_models": ["parakeet-mlx"], "websocket_endpoint": "/api/v1/audio/stream/transcribe", "supported_features": {}}
+        return {
+            "status": "available",
+            "available_models": ["parakeet-mlx"],
+            "websocket_endpoint": "/api/v1/audio/stream/transcribe",
+            "supported_features": {},
+        }
 
     async def get_audio_streaming_limits(self):
         self.calls.append(("get_audio_streaming_limits",))
-        return {"user_id": "user-1", "tier": "free", "limits": {}, "used_today_minutes": 0.0, "active_streams": 0, "can_start_stream": True}
+        return {
+            "user_id": "user-1",
+            "tier": "free",
+            "limits": {},
+            "used_today_minutes": 0.0,
+            "active_streams": 0,
+            "can_start_stream": True,
+        }
 
     async def test_audio_streaming(self):
         self.calls.append(("test_audio_streaming",))
@@ -44,11 +63,18 @@ class FakeAudioService:
 
     async def create_audio_speech(self, request_data):
         self.calls.append(("create_audio_speech", request_data))
-        return {"content": b"mp3", "content_type": "audio/mpeg", "filename": "speech.mp3"}
+        return {
+            "content": b"mp3",
+            "content_type": "audio/mpeg",
+            "filename": "speech.mp3",
+        }
 
     async def list_audio_speech_job_artifacts(self, job_id):
         self.calls.append(("list_audio_speech_job_artifacts", job_id))
-        return {"job_id": job_id, "artifacts": [{"output_id": 9, "download_url": "/download/9"}]}
+        return {
+            "job_id": job_id,
+            "artifacts": [{"output_id": 9, "download_url": "/download/9"}],
+        }
 
     async def submit_audio_job(self, request_data):
         self.calls.append(("submit_audio_job", request_data))
@@ -64,11 +90,21 @@ class FakeAudioService:
 
     async def list_tts_history(self, **kwargs):
         self.calls.append(("list_tts_history", kwargs))
-        return {"items": [{"id": 3, "created_at": "2026-04-25T12:00:00Z", "has_text": True}], "limit": 50, "offset": 0}
+        return {
+            "items": [
+                {"id": 3, "created_at": "2026-04-25T12:00:00Z", "has_text": True}
+            ],
+            "limit": 50,
+            "offset": 0,
+        }
 
     async def get_tts_history_entry(self, history_id):
         self.calls.append(("get_tts_history_entry", history_id))
-        return {"id": history_id, "created_at": "2026-04-25T12:00:00Z", "has_text": True}
+        return {
+            "id": history_id,
+            "created_at": "2026-04-25T12:00:00Z",
+            "has_text": True,
+        }
 
     async def update_tts_history_favorite(self, history_id, request_data):
         self.calls.append(("update_tts_history_favorite", history_id, request_data))
@@ -132,15 +168,22 @@ class FakeAudioService:
 
     async def list_audiobook_job_artifacts(self, job_id):
         self.calls.append(("list_audiobook_job_artifacts", job_id))
-        return {"project_id": "abk_1", "artifacts": [{"output_id": 11, "download_url": "/download/11"}]}
+        return {
+            "project_id": "abk_1",
+            "artifacts": [{"output_id": 11, "download_url": "/download/11"}],
+        }
 
     async def list_audiobook_projects(self, **kwargs):
         self.calls.append(("list_audiobook_projects", kwargs))
-        return {"projects": [{"project_db_id": 12, "project_id": "abk_1", "title": "Book"}]}
+        return {
+            "projects": [{"project_db_id": 12, "project_id": "abk_1", "title": "Book"}]
+        }
 
     async def get_audiobook_project(self, project_ref):
         self.calls.append(("get_audiobook_project", project_ref))
-        return {"project": {"project_db_id": 12, "project_id": project_ref, "title": "Book"}}
+        return {
+            "project": {"project_db_id": 12, "project_id": project_ref, "title": "Book"}
+        }
 
     async def list_audiobook_project_chapters(self, project_ref, **kwargs):
         self.calls.append(("list_audiobook_project_chapters", project_ref, kwargs))
@@ -148,7 +191,10 @@ class FakeAudioService:
 
     async def list_audiobook_project_artifacts(self, project_ref, **kwargs):
         self.calls.append(("list_audiobook_project_artifacts", project_ref, kwargs))
-        return {"project_id": project_ref, "artifacts": [{"output_id": 12, "download_url": "/download/12"}]}
+        return {
+            "project_id": project_ref,
+            "artifacts": [{"output_id": 12, "download_url": "/download/12"}],
+        }
 
     async def create_audiobook_voice_profile(self, request_data):
         self.calls.append(("create_audiobook_voice_profile", request_data))
@@ -197,7 +243,9 @@ async def test_audio_services_scope_service_routes_and_normalizes_source_records
     local = FakeAudioService("local")
     server = FakeAudioService("server")
     policy = FakePolicyEnforcer()
-    scope = AudioServicesScopeService(local_service=local, server_service=server, policy_enforcer=policy)
+    scope = AudioServicesScopeService(
+        local_service=local, server_service=server, policy_enforcer=policy
+    )
 
     local_health = await scope.get_tts_health(mode="local")
     providers = await scope.list_tts_providers(mode="server")
@@ -207,9 +255,15 @@ async def test_audio_services_scope_service_routes_and_normalizes_source_records
     streaming_test = await scope.test_audio_streaming(mode="server")
     speech_chat = await scope.create_speech_chat(
         mode="server",
-        request_data={"input_audio": "UklGRg==", "input_audio_format": "wav", "llm_config": {"model": "gpt-test"}},
+        request_data={
+            "input_audio": "UklGRg==",
+            "input_audio_format": "wav",
+            "llm_config": {"model": "gpt-test"},
+        },
     )
-    speech_job = await scope.create_audio_speech_job(mode="server", request_data={"model": "kokoro", "input": "Hello"})
+    speech_job = await scope.create_audio_speech_job(
+        mode="server", request_data={"model": "kokoro", "input": "Hello"}
+    )
     job = await scope.get_audio_job(mode="server", job_id=42)
     history = await scope.list_tts_history(mode="server", provider="kokoro")
     custom_voices = await scope.list_custom_voices(mode="server")
@@ -234,7 +288,14 @@ async def test_audio_services_scope_service_routes_and_normalizes_source_records
         ("get_audio_streaming_status",),
         ("get_audio_streaming_limits",),
         ("test_audio_streaming",),
-        ("create_speech_chat", {"input_audio": "UklGRg==", "input_audio_format": "wav", "llm_config": {"model": "gpt-test"}}),
+        (
+            "create_speech_chat",
+            {
+                "input_audio": "UklGRg==",
+                "input_audio_format": "wav",
+                "llm_config": {"model": "gpt-test"},
+            },
+        ),
         ("create_audio_speech_job", {"model": "kokoro", "input": "Hello"}),
         ("get_audio_job", 42),
         ("list_tts_history", {"provider": "kokoro"}),
@@ -283,15 +344,23 @@ async def test_audio_services_scope_service_blocks_local_advanced_audio_before_d
     )
 
     with pytest.raises(NotImplementedError, match="Local advanced audio"):
-        await scope.create_audio_speech_job(mode="local", request_data={"input": "hello"})
+        await scope.create_audio_speech_job(
+            mode="local", request_data={"input": "hello"}
+        )
     with pytest.raises(NotImplementedError, match="Local advanced audio"):
-        await scope.submit_audio_job(mode="local", request_data={"url": "https://example.com/a.mp3"})
+        await scope.submit_audio_job(
+            mode="local", request_data={"url": "https://example.com/a.mp3"}
+        )
     with pytest.raises(NotImplementedError, match="Local advanced audio"):
         await scope.create_audio_transcription(mode="local", file_path="sample.wav")
     with pytest.raises(NotImplementedError, match="Local advanced audio"):
-        await scope.upload_custom_voice(mode="local", file_path="voice.wav", name="Narrator")
+        await scope.upload_custom_voice(
+            mode="local", file_path="voice.wav", name="Narrator"
+        )
     with pytest.raises(NotImplementedError, match="Local advanced audio"):
-        await scope.parse_audiobook_source(mode="local", request_data={"source": {"raw_text": "Hello"}})
+        await scope.parse_audiobook_source(
+            mode="local", request_data={"source": {"raw_text": "Hello"}}
+        )
 
     assert local.calls == []
     assert policy.calls == [
@@ -400,11 +469,17 @@ async def test_audio_services_scope_service_routes_local_speech_and_history(tmp_
         history_store_path=tmp_path / "audio-history.json",
     )
     policy = FakePolicyEnforcer()
-    scope = AudioServicesScopeService(local_service=local, server_service=None, policy_enforcer=policy)
+    scope = AudioServicesScopeService(
+        local_service=local, server_service=None, policy_enforcer=policy
+    )
 
     speech = await scope.create_audio_speech(
         mode="local",
-        request_data={"model": "kokoro", "input": "Local speech", "response_format": "wav"},
+        request_data={
+            "model": "kokoro",
+            "input": "Local speech",
+            "response_format": "wav",
+        },
     )
     history = await scope.list_tts_history(mode="local")
     detail = await scope.get_tts_history_entry(mode="local", history_id=1)
@@ -435,35 +510,78 @@ async def test_audio_services_scope_service_routes_local_speech_and_history(tmp_
 async def test_audio_services_scope_service_exposes_audio_and_audiobook_operations():
     server = FakeAudioService("server")
     policy = FakePolicyEnforcer()
-    scope = AudioServicesScopeService(local_service=None, server_service=server, policy_enforcer=policy)
+    scope = AudioServicesScopeService(
+        local_service=None, server_service=server, policy_enforcer=policy
+    )
 
-    speech = await scope.create_audio_speech(mode="server", request_data={"model": "kokoro", "input": "Hello"})
+    speech = await scope.create_audio_speech(
+        mode="server", request_data={"model": "kokoro", "input": "Hello"}
+    )
     artifacts = await scope.list_audio_speech_job_artifacts(mode="server", job_id=42)
-    submitted = await scope.submit_audio_job(mode="server", request_data={"url": "https://example.com/a.mp3"})
-    progress = [event async for event in scope.stream_audio_job_progress(mode="server", job_id=7, after_id=1)]
+    submitted = await scope.submit_audio_job(
+        mode="server", request_data={"url": "https://example.com/a.mp3"}
+    )
+    progress = [
+        event
+        async for event in scope.stream_audio_job_progress(
+            mode="server", job_id=7, after_id=1
+        )
+    ]
     history_detail = await scope.get_tts_history_entry(mode="server", history_id=3)
-    history_update = await scope.update_tts_history_favorite(mode="server", history_id=3, request_data={"favorite": True})
+    history_update = await scope.update_tts_history_favorite(
+        mode="server", history_id=3, request_data={"favorite": True}
+    )
     history_delete = await scope.delete_tts_history_entry(mode="server", history_id=3)
-    transcription = await scope.create_audio_transcription(mode="server", file_path="sample.wav", request_data={"model": "whisper-1"})
-    translation = await scope.create_audio_translation(mode="server", file_path="sample.wav", request_data={"model": "whisper-1"})
-    encoded = await scope.encode_audio_tokenizer(mode="server", request_data={"audio_base64": "UklGRg=="})
-    decoded = await scope.decode_audio_tokenizer(mode="server", request_data={"tokens": [1]})
-    uploaded = await scope.upload_custom_voice(mode="server", file_path="voice.wav", name="Narrator")
-    voice_encoded = await scope.encode_custom_voice_reference(mode="server", request_data={"voice_id": "voice-1"})
+    transcription = await scope.create_audio_transcription(
+        mode="server", file_path="sample.wav", request_data={"model": "whisper-1"}
+    )
+    translation = await scope.create_audio_translation(
+        mode="server", file_path="sample.wav", request_data={"model": "whisper-1"}
+    )
+    encoded = await scope.encode_audio_tokenizer(
+        mode="server", request_data={"audio_base64": "UklGRg=="}
+    )
+    decoded = await scope.decode_audio_tokenizer(
+        mode="server", request_data={"tokens": [1]}
+    )
+    uploaded = await scope.upload_custom_voice(
+        mode="server", file_path="voice.wav", name="Narrator"
+    )
+    voice_encoded = await scope.encode_custom_voice_reference(
+        mode="server", request_data={"voice_id": "voice-1"}
+    )
     voice_detail = await scope.get_custom_voice(mode="server", voice_id="voice-1")
-    voice_preview = await scope.preview_custom_voice(mode="server", voice_id="voice-1", text="Preview")
+    voice_preview = await scope.preview_custom_voice(
+        mode="server", voice_id="voice-1", text="Preview"
+    )
     voice_delete = await scope.delete_custom_voice(mode="server", voice_id="voice-1")
-    parsed = await scope.parse_audiobook_source(mode="server", request_data={"source": {"raw_text": "Hello"}})
-    audiobook_job = await scope.create_audiobook_job(mode="server", request_data={"project_title": "Book"})
+    parsed = await scope.parse_audiobook_source(
+        mode="server", request_data={"source": {"raw_text": "Hello"}}
+    )
+    audiobook_job = await scope.create_audiobook_job(
+        mode="server", request_data={"project_title": "Book"}
+    )
     audiobook_status = await scope.get_audiobook_job_status(mode="server", job_id=77)
-    audiobook_artifacts = await scope.list_audiobook_job_artifacts(mode="server", job_id=77)
+    audiobook_artifacts = await scope.list_audiobook_job_artifacts(
+        mode="server", job_id=77
+    )
     project = await scope.get_audiobook_project(mode="server", project_ref="abk_1")
-    chapters = await scope.list_audiobook_project_chapters(mode="server", project_ref="abk_1", limit=25, offset=0)
-    project_artifacts = await scope.list_audiobook_project_artifacts(mode="server", project_ref="abk_1", limit=25, offset=0)
-    profile = await scope.create_audiobook_voice_profile(mode="server", request_data={"name": "Narrator"})
+    chapters = await scope.list_audiobook_project_chapters(
+        mode="server", project_ref="abk_1", limit=25, offset=0
+    )
+    project_artifacts = await scope.list_audiobook_project_artifacts(
+        mode="server", project_ref="abk_1", limit=25, offset=0
+    )
+    profile = await scope.create_audiobook_voice_profile(
+        mode="server", request_data={"name": "Narrator"}
+    )
     profiles = await scope.list_audiobook_voice_profiles(mode="server")
-    profile_delete = await scope.delete_audiobook_voice_profile(mode="server", profile_id="vp_1")
-    subtitles = await scope.export_audiobook_subtitles(mode="server", request_data={"format": "srt"})
+    profile_delete = await scope.delete_audiobook_voice_profile(
+        mode="server", profile_id="vp_1"
+    )
+    subtitles = await scope.export_audiobook_subtitles(
+        mode="server", request_data={"format": "srt"}
+    )
 
     assert speech["record_id"] == "server:audio:speech"
     assert artifacts["artifacts"][0]["record_id"] == "server:audio_speech_artifact:9"
@@ -484,10 +602,15 @@ async def test_audio_services_scope_service_exposes_audio_and_audiobook_operatio
     assert parsed["record_id"] == "server:audiobook_parse:abk_1"
     assert audiobook_job["record_id"] == "server:audiobook_job:77"
     assert audiobook_status["record_id"] == "server:audiobook_job:77"
-    assert audiobook_artifacts["artifacts"][0]["record_id"] == "server:audiobook_artifact:11"
+    assert (
+        audiobook_artifacts["artifacts"][0]["record_id"]
+        == "server:audiobook_artifact:11"
+    )
     assert project["project"]["record_id"] == "server:audiobook_project:abk_1"
     assert chapters["chapters"][0]["record_id"] == "server:audiobook_chapter:1"
-    assert project_artifacts["artifacts"][0]["record_id"] == "server:audiobook_artifact:12"
+    assert (
+        project_artifacts["artifacts"][0]["record_id"] == "server:audiobook_artifact:12"
+    )
     assert profile["record_id"] == "server:audiobook_voice_profile:vp_1"
     assert profiles["profiles"][0]["record_id"] == "server:audiobook_voice_profile:vp_1"
     assert profile_delete["record_id"] == "server:audiobook_voice_profile:vp_1"

@@ -8,13 +8,19 @@ here touches a database.
 
 from __future__ import annotations
 
+import re
+
+from rich.markup import escape
+from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Select, Static
 
 from ...Utils.input_validation import validate_text_input
 from .personas_pane_messages import (
+    PreviewConfigureProviderRequested,
+    PreviewGreetingSelected,
     PreviewOpenInConsoleRequested,
     PreviewReplyRequested,
     PreviewResetRequested,
@@ -23,6 +29,11 @@ from .personas_pane_messages import (
 #: Boundary cap for one preview test message; generous for a test exchange
 #: while keeping pathological pastes out of the provider request.
 PREVIEW_MESSAGE_MAX_CHARS = 4000
+
+#: Neutral speaker labels used until a character is seeded (task-437). "you"
+#: stays the user label until TASK-442 introduces the active persona/user name.
+_DEFAULT_CHARACTER_LABEL = "character"
+_DEFAULT_USER_LABEL = "you"
 
 
 class PersonasPreviewPane(Vertical):
@@ -50,6 +61,12 @@ class PersonasPreviewPane(Vertical):
     PersonasPreviewPane #personas-preview-status {
         height: 1;
         min-height: 1;
+    }
+
+    PersonasPreviewPane #personas-preview-provider {
+        height: auto;
+        min-height: 1;
+        color: $text-muted;
     }
 
     PersonasPreviewPane #personas-preview-transcript {
@@ -85,6 +102,8 @@ class PersonasPreviewPane(Vertical):
         self._partial_widget: Static | None = None
         self._partial_index: int | None = None
         self._partial_text: str = ""
+        self._character_label = _DEFAULT_CHARACTER_LABEL
+        self._user_label = _DEFAULT_USER_LABEL
 
     def compose(self) -> ComposeResult:
         yield Button(
@@ -94,11 +113,28 @@ class PersonasPreviewPane(Vertical):
             classes="console-action-subdued",
         )
         with Vertical(id="personas-preview-body"):
+            # Provider/model readout: which provider will answer a test reply.
+            # Kept at the top of the body so it is the first thing seen when
+            # the preview expands.
+            yield Static("", id="personas-preview-provider")
             yield VerticalScroll(id="personas-preview-transcript")
             # The status line is a status region adjacent to the input, kept
             # BELOW the transcript so provider/error messages never render
             # above the chronological greeting -> you -> character history.
             yield Static("", id="personas-preview-status")
+            with Horizontal(id="personas-preview-greeting-row", classes="ds-toolbar"):
+                yield Static("Greeting:", classes="personas-preview-greeting-label")
+                yield Select(
+                    # A single placeholder option: this Textual version's
+                    # Select requires allow_blank=False constructions to have
+                    # at least one option. The row stays hidden (on_mount)
+                    # until set_greetings() replaces this with the real list.
+                    [("Greeting", 0)],
+                    id="personas-preview-greeting-select",
+                    classes="form-select",
+                    allow_blank=False,
+                    prompt="Greeting",
+                )
             yield Input(placeholder="Test message...", id="personas-preview-input")
             with Horizontal(classes="ds-toolbar"):
                 yield Button(
@@ -116,9 +152,17 @@ class PersonasPreviewPane(Vertical):
                     id="personas-preview-open-console",
                     classes="console-action-subdued",
                 )
+                yield Button(
+                    "Configure",
+                    id="personas-preview-configure",
+                    classes="console-action-subdued",
+                    tooltip="Open Settings > Providers & Models to change which "
+                    "provider answers character chats.",
+                )
 
     def on_mount(self) -> None:
         self.query_one("#personas-preview-body").display = False
+        self.query_one("#personas-preview-greeting-row").display = False
 
     # ===== Public API =====
 
@@ -145,13 +189,110 @@ class PersonasPreviewPane(Vertical):
         """
         self._greeting = str(text or "")
 
+    @property
+    def greeting_text(self) -> str:
+        """The greeting a Reset restores (transcript line 0), for state capture."""
+        return self._greeting
+
+    def set_speakers(self, *, character: str | None = None, user: str | None = None) -> None:
+        """Set transcript speaker labels; empty/None keeps the current label.
+
+        When the character label changes, already-rendered character lines are
+        relabelled too (e.g. a rename mid-conversation), so the transcript never
+        shows stale or mixed speaker prefixes.
+
+        Args:
+            character: Display name for character/greeting lines (e.g. the card name).
+            user: Display name for the user's lines (unused until TASK-442).
+        """
+        old_character = self._character_label
+        if character:
+            self._character_label = character
+        if user:
+            self._user_label = user
+        if character and character != old_character:
+            self._relabel_character_lines(old_character, character)
+
+    def reset_speakers(self) -> None:
+        """Reset speaker labels to their neutral defaults (no character context).
+
+        Called when the preview leaves a character context (mode switch, deleting
+        the selected character) so a later reply never renders under a stale
+        previous character's name.
+        """
+        self._character_label = _DEFAULT_CHARACTER_LABEL
+        self._user_label = _DEFAULT_USER_LABEL
+
+    def set_greetings(self, greetings: list[str], selected_index: int = 0) -> None:
+        """Populate the greeting selector; show it only when alternates exist.
+
+        Args:
+            greetings: Processed greetings, ``greetings[0]`` the primary
+                ``first_message`` and the rest alternates.
+            selected_index: Index to point the Select at (bounds-checked); used
+                to keep a chosen alternate on a same-character reload.
+        """
+        row = self.query_one("#personas-preview-greeting-row")
+        if len(greetings) > 1:
+            select = self.query_one("#personas-preview-greeting-select", Select)
+            target = selected_index if 0 <= selected_index < len(greetings) else 0
+            # Populate/repoint the Select WITHOUT firing Select.Changed. set_options
+            # snaps value back to 0 and the explicit assignment would each post a
+            # (spurious) Changed that _handle_greeting_selected would misread as a
+            # user pick and re-seed — wiping an in-progress transcript on a
+            # same-character reload (task-438 review). prevent() suppresses both.
+            with self.prevent(Select.Changed):
+                select.set_options(
+                    [(self._greeting_option_label(i, g), i) for i, g in enumerate(greetings)]
+                )
+                select.value = target
+            row.display = True
+        else:
+            row.display = False
+
+    def _greeting_option_label(self, index: int, text: str) -> str:
+        """Dropdown label: 'Greeting N (default): <~40-char preview>'."""
+        preview = " ".join(str(text).split())
+        if len(preview) > 40:
+            preview = preview[:39] + "…"
+        tag = " (default)" if index == 0 else ""
+        base = f"Greeting {index + 1}{tag}"
+        return f"{base}: {preview}" if preview else base
+
+    def _relabel_character_lines(self, old_label: str, new_label: str) -> None:
+        """Rewrite already-rendered character-role lines to a new speaker label.
+
+        ``_lines`` is parallel (append order) to the mounted
+        ``.personas-preview-line`` widgets; character lines are identified by
+        their role class so a ``you:``-line that happens to start with the name
+        is never touched.
+        """
+        full_old, bare_old = f"{old_label}: ", f"{old_label}:"
+        widgets = list(self.query(".personas-preview-line"))
+        for index, widget in enumerate(widgets):
+            if index >= len(self._lines) or not widget.has_class(
+                "personas-preview-line-character"
+            ):
+                continue
+            line = self._lines[index]
+            if line.startswith(full_old):
+                new_line = f"{new_label}: {line[len(full_old):]}"
+            elif line == bare_old:
+                new_line = f"{new_label}:"
+            else:
+                continue
+            self._lines[index] = new_line
+            widget.update(self._styled_line(new_line))
+
     def append_user(self, text: str) -> None:
         """Append a "you: ..." transcript line."""
-        self._append_line(f"you: {text}", "personas-preview-line-you")
+        self._append_line(f"{self._user_label}: {text}", "personas-preview-line-you")
 
     def append_reply(self, text: str) -> None:
         """Append a complete "character: ..." transcript line in one go."""
-        self._append_line(f"character: {text}", "personas-preview-line-character")
+        self._append_line(
+            f"{self._character_label}: {text}", "personas-preview-line-character"
+        )
 
     def begin_reply(self) -> None:
         """Start a streamed "character: ..." line, grown by append_reply_chunk.
@@ -161,12 +302,12 @@ class PersonasPreviewPane(Vertical):
         expected to finalize or discard first).
         """
         self._partial_text = ""
-        line = "character:"
+        line = f"{self._character_label}:"
         widget = Static(
-            line,
+            self._styled_line(line),
             classes="personas-preview-line personas-preview-line-character",
-            # markup=False: streamed text must render literally, never as Rich
-            # markup (unmatched tags raise MarkupError at render).
+            # markup=False: content is a pre-styled Text; Static must not
+            # re-parse it as Rich markup.
             markup=False,
         )
         self._partial_widget = widget
@@ -179,10 +320,10 @@ class PersonasPreviewPane(Vertical):
         if self._partial_widget is None:
             self.begin_reply()
         self._partial_text += str(text)
-        line = f"character: {self._partial_text}"
+        line = f"{self._character_label}: {self._partial_text}"
         if self._partial_index is not None and self._partial_index < len(self._lines):
             self._lines[self._partial_index] = line
-        self._partial_widget.update(line)
+        self._partial_widget.update(self._styled_line(line))
 
     def finalize_reply(self) -> None:
         """Commit the streamed line: it is now a permanent transcript entry."""
@@ -213,11 +354,33 @@ class PersonasPreviewPane(Vertical):
         """Update the readable status line."""
         self.query_one("#personas-preview-status", Static).update(str(text or ""))
 
+    def set_provider_readout(self, text: str) -> None:
+        """Update the provider/model readout line above the transcript.
+
+        Args:
+            text: Provider/model status text to display.
+        """
+        self.query_one("#personas-preview-provider", Static).update(str(text or ""))
+
     def transcript_text(self) -> str:
         """The visible transcript as plain text, one line per message."""
         return "\n".join(self._lines)
 
     # ===== Internals =====
+
+    _ACTION_SPAN = re.compile(r"\*([^*\n]+)\*")
+
+    def _styled_line(self, line: str) -> Text:
+        """Render a transcript line: escape Rich markup, italicize *action* spans.
+
+        Args:
+            line: Plain transcript line (``"label: text"``).
+
+        Returns:
+            A Rich ``Text`` whose plain string equals the line with matched
+            ``*...*`` asterisks removed, and with italic spans over those runs.
+        """
+        return Text.from_markup(self._ACTION_SPAN.sub(r"[i]\1[/i]", escape(line)))
 
     async def _render_seed_lines(self) -> None:
         """Replace the transcript with the greeting line (or nothing)."""
@@ -230,13 +393,13 @@ class PersonasPreviewPane(Vertical):
         await container.remove_children()
         widgets: list[Static] = []
         if self._greeting:
-            line = f"character: {self._greeting}"
+            line = f"{self._character_label}: {self._greeting}"
             self._lines.append(line)
             widgets.append(
-                # markup=False: greeting text must render literally, never as
-                # Rich markup (unmatched tags raise MarkupError at render).
+                # markup=False: content is a pre-styled Text; Static must not
+                # re-parse it as Rich markup.
                 Static(
-                    line,
+                    self._styled_line(line),
                     classes="personas-preview-line personas-preview-line-character",
                     markup=False,
                 )
@@ -246,10 +409,14 @@ class PersonasPreviewPane(Vertical):
 
     def _append_line(self, line: str, role_class: str) -> None:
         self._lines.append(line)
-        # markup=False: user/character text must render literally, never as
-        # Rich markup (unmatched tags raise MarkupError at render).
+        # markup=False: content is a pre-styled Text; Static must not re-parse
+        # it as Rich markup.
         self.query_one("#personas-preview-transcript", VerticalScroll).mount(
-            Static(line, classes=f"personas-preview-line {role_class}", markup=False)
+            Static(
+                self._styled_line(line),
+                classes=f"personas-preview-line {role_class}",
+                markup=False,
+            )
         )
 
     # ===== Events =====
@@ -306,6 +473,17 @@ class PersonasPreviewPane(Vertical):
     def _handle_open_console(self, event: Button.Pressed) -> None:
         event.stop()
         self.post_message(PreviewOpenInConsoleRequested())
+
+    @on(Button.Pressed, "#personas-preview-configure")
+    def _handle_configure(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(PreviewConfigureProviderRequested())
+
+    @on(Select.Changed, "#personas-preview-greeting-select")
+    def _handle_greeting_selected(self, event: Select.Changed) -> None:
+        event.stop()
+        if isinstance(event.value, int):
+            self.post_message(PreviewGreetingSelected(event.value))
 
 
 __all__ = ["PersonasPreviewPane"]

@@ -11,8 +11,8 @@ from .local_models_widget import LocalModelsWidget
 
 __all__ = [
     "HuggingFaceModelBrowser",
-    "ModelSearchWidget", 
+    "ModelSearchWidget",
     "ModelCardViewer",
     "DownloadManager",
-    "LocalModelsWidget"
+    "LocalModelsWidget",
 ]

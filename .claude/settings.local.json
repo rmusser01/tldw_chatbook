@@ -1,34 +1,4 @@
 {
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); \"$PROJECT_ROOT/Helper_Scripts/Agent-Tools/Audit-Agent/audit_agent.sh\"",
-            "description": "Analyze file modifications after operation",
-            "timeout": 5000,
-            "continueOnError": true
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "mkdir -p \"$HOME/.claude/audit_logs\" && echo '[Audit] File modification starting: {{file_path}}' >> \"$HOME/.claude/audit_logs/activity.log\"",
-            "description": "Capture state before file modification",
-            "timeout": 200,
-            "continueOnError": true
-          }
-        ]
-      }
-    ]
-  },
   "permissions": {
     "allow": [
       "Bash(grep:*)",
@@ -117,8 +87,37 @@
       "WebFetch(domain:api.github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:modelcontextprotocol.io)",
-      "Bash(python -m pytest Tests/UI/test_evals_window_v2.py::test_run_button_validation -xvs --tb=line)"
+      "Bash(python -m pytest Tests/UI/test_evals_window_v2.py::test_run_button_validation -xvs --tb=line)",
+      "Bash(git fetch *)",
+      "Bash(gh pr *)",
+      "Bash(gh api *)"
     ],
     "deny": []
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); \"$PROJECT_ROOT/Helper_Scripts/Agent-Tools/Audit-Agent/audit_agent.sh\"",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mkdir -p \"$HOME/.claude/audit_logs\" && echo '[Audit] File modification starting: {{file_path}}' >> \"$HOME/.claude/audit_logs/activity.log\"",
+            "timeout": 200
+          }
+        ]
+      }
+    ]
   }
 }

@@ -46,9 +46,40 @@ def test_console_control_state_preserves_falsy_labels_and_general_assistant_fall
 
 def test_console_control_state_counter_activity_flags():
     idle = ConsoleControlState.from_values()
-    assert (idle.sources_active, idle.tools_active, idle.approvals_active) == (False, False, False)
-    busy = ConsoleControlState.from_values(staged_source_count=2, tool_count=1, approval_count=3)
-    assert (busy.sources_active, busy.tools_active, busy.approvals_active) == (True, True, True)
+    assert (idle.sources_active, idle.tools_active, idle.approvals_active) == (
+        False,
+        False,
+        False,
+    )
+    busy = ConsoleControlState.from_values(
+        staged_source_count=2, tool_count=1, approval_count=3
+    )
+    assert (busy.sources_active, busy.tools_active, busy.approvals_active) == (
+        True,
+        True,
+        True,
+    )
+
+
+def test_console_control_state_tools_chip_includes_mcp_tools():
+    """TASK-350: the header Tools chip must count the tools that can actually run
+    — built-in AND MCP — not just built-in. It read 'Tools: 0 ready' while the
+    inspector showed 'MCP: 10 tools ready'."""
+    state = ConsoleControlState.from_values(tool_count=0, mcp_tool_count=10)
+    assert state.tools_label == "Tools: 10 ready"
+    assert state.tools_active is True
+
+
+def test_console_control_state_tools_chip_sums_builtin_and_mcp():
+    state = ConsoleControlState.from_values(tool_count=2, mcp_tool_count=10)
+    assert state.tools_label == "Tools: 12 ready"
+
+
+def test_console_control_state_tools_chip_without_mcp_seam_counts_builtin_only():
+    # No MCP seam wired (mcp_tool_count default None) — chip is unchanged.
+    state = ConsoleControlState.from_values(tool_count=3)
+    assert state.tools_label == "Tools: 3 ready"
+    assert state.tools_active is True
 
 
 def test_console_staged_context_state_preserves_live_work_payload_provenance():
@@ -72,7 +103,10 @@ def test_console_staged_context_state_preserves_live_work_payload_provenance():
 def test_console_staged_context_empty_state_uses_semantic_flag():
     state = ConsoleStagedContextState.empty()
 
-    assert state.summary == "No sources attached."
+    # Task-400: no summary line for the empty state -- the tray widget owns
+    # the "No sources attached. Stage sources from Library." guidance copy,
+    # and a summary here rendered the same copy twice.
+    assert state.summary == ""
     assert state.is_empty is True
 
 
@@ -98,6 +132,65 @@ def test_console_inspector_state_combines_readiness_artifact_and_recovery_rows()
     assert rows_by_label["Sources"].status == "blocked"
     assert "RAG/source" not in rows_by_label
     assert rows_by_label["Approvals"].status == "ready"
+
+
+def test_console_inspector_state_omits_mcp_row_by_default():
+    """`mcp_tool_count=None` (the default) means "no MCP service / kill
+    switch on" -- the inspector must not show an "MCP" row at all."""
+    state = ConsoleInspectorState.from_values()
+    assert "MCP" not in {row.label for row in state.rows}
+
+
+def test_console_inspector_state_shows_mcp_tools_ready_row():
+    state = ConsoleInspectorState.from_values(mcp_tool_count=3)
+    rows_by_label = {row.label: row for row in state.rows}
+    assert rows_by_label["MCP"].value == "3 tools ready"
+    assert rows_by_label["MCP"].status == "ready"
+
+
+def test_console_inspector_state_shows_mcp_tools_ready_row_singular():
+    """Pluralization fix (Finding I2): exactly one tool reads "1 tool
+    ready", not "1 tools ready"."""
+    state = ConsoleInspectorState.from_values(mcp_tool_count=1)
+    rows_by_label = {row.label: row for row in state.rows}
+    assert rows_by_label["MCP"].value == "1 tool ready"
+
+
+def test_console_inspector_state_shows_mcp_not_connected_row_even_with_tools_ready():
+    """Finding I2: the blocked "not connected" affordance must win
+    whenever `mcp_not_connected_count > 0`, REGARDLESS of `mcp_tool_count`
+    -- a stale (disconnected-with-snapshot) server still contributes its
+    own tools to the eligible catalog (see
+    `MCPToolProvider.compose_catalog`'s eligibility filter), so in the
+    real mixed case `mcp_tool_count` is essentially never 0. The previous
+    "tool_count == 0 and not_connected > 0" gate made this branch
+    unreachable in production; pinning it at (5, 1) -- a REAL reachable
+    state -- instead of the old (0, 2) case."""
+    state = ConsoleInspectorState.from_values(
+        mcp_tool_count=5,
+        mcp_not_connected_count=1,
+    )
+    rows_by_label = {row.label: row for row in state.rows}
+    assert rows_by_label["MCP"].value == "1 server enabled, not connected"
+    assert rows_by_label["MCP"].status == "blocked"
+
+
+def test_console_inspector_state_shows_mcp_not_connected_row_plural():
+    state = ConsoleInspectorState.from_values(
+        mcp_tool_count=5,
+        mcp_not_connected_count=2,
+    )
+    rows_by_label = {row.label: row for row in state.rows}
+    assert rows_by_label["MCP"].value == "2 servers enabled, not connected"
+    assert rows_by_label["MCP"].status == "blocked"
+
+
+def test_console_inspector_state_omits_mcp_row_when_zero_tools_and_zero_not_connected():
+    state = ConsoleInspectorState.from_values(
+        mcp_tool_count=0,
+        mcp_not_connected_count=0,
+    )
+    assert "MCP" not in {row.label for row in state.rows}
 
 
 def test_console_inspector_state_uses_explicit_chatbook_save_capability():

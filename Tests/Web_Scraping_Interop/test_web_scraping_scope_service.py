@@ -64,7 +64,9 @@ async def test_web_scraping_scope_service_routes_server_owned_operations():
     cancelled = await scope.cancel_job(mode="server", job_id="job-1")
     progress = await scope.get_progress(mode="server", task_id="task-1")
     cookies = await scope.get_cookies(mode="server", domain="example.com")
-    set_cookies = await scope.set_cookies(mode="server", domain="example.com", cookies=[{"name": "session"}])
+    set_cookies = await scope.set_cookies(
+        mode="server", domain="example.com", cookies=[{"name": "session"}]
+    )
     duplicate = await scope.check_duplicate(mode="server", url="https://example.com")
 
     assert status["record_id"] == "server:web_scraping:status"

@@ -15,7 +15,9 @@ from Tests.UI.test_destination_shells import (
     _visible_text,
     _wait_for_selector,
 )
-from Tests.UI.test_study_dashboard import _build_app_instance as _build_study_app_instance
+from Tests.UI.test_study_dashboard import (
+    _build_app_instance as _build_study_app_instance,
+)
 from Tests.UI.test_study_dashboard import StudyDashboardTestApp
 
 
@@ -25,7 +27,9 @@ PHASE_3_README = Path("Docs/superpowers/qa/product-maturity/phase-3/README.md")
 PHASE_3_1_EVIDENCE = Path(
     "Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-phase-3-1-library-study-entry.md"
 )
-TASK_10 = Path("backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md")
+TASK_10 = Path(
+    "backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md"
+)
 TASK_10_1 = Path(
     "backlog/tasks/task-10.1 - Product-Maturity-Phase-3.1-Library-Study-Entry.md"
 )
@@ -162,4 +166,3 @@ def test_pending_study_initial_section_overrides_restored_section() -> None:
     screen._apply_pending_initial_section()
 
     assert screen.current_section == "quizzes"
-

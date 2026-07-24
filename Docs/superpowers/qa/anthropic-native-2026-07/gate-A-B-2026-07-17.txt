@@ -1,0 +1,37 @@
+evidence db dir: /private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/0c177be4-8a91-43dd-9244-5945679ee3ae/scratchpad/anthropic-gate-evidence
+
+===== A-anthropic-single (1.5s) =====
+status: done
+final answer: "18018"
+provider calls:
+  turn 0: tools=['spawn_subagent', 'calculator', 'get_current_datetime'] fence_in_system=False
+  turn 1: tools=['spawn_subagent', 'calculator', 'get_current_datetime'] fence_in_system=False
+run steps:
+  [model]  :: 
+  [tool_call] calculator :: 
+  [tool_result] calculator :: {"expression": "234*77", "result": 18018, "result_type": "int"}
+  [model]  :: 18018
+A native + no fence: True | round-trip done: True | tool_result turn accepted: True
+
+===== B-anthropic-multi (2.0s) =====
+status: done
+final answer: "Perfect! Here are the results from both tools:\n\n**Current Date and Time (UTC):**\n- Date: **2026-07-17** (Friday)\n- Time: **02:50:00** UTC\n- Unix Timestamp: 1784256600\n\n**Calculation Result:**\n- 91 \u00d7 7 = **637**"
+provider calls:
+  turn 0: tools=['spawn_subagent', 'calculator', 'get_current_datetime'] fence_in_system=False
+  turn 1: tools=['spawn_subagent', 'calculator', 'get_current_datetime'] fence_in_system=False
+run steps:
+  [model]  :: 
+  [tool_call] get_current_datetime :: 
+  [tool_result] get_current_datetime :: {"datetime": "2026-07-17T02:50:00.360549+00:00", "timezone": "UTC", "date": "2026-07-17", "time": "02:50:00.360549", "we
+  [tool_call] calculator :: 
+  [tool_result] calculator :: {"expression": "91*7", "result": 637, "result_type": "int"}
+  [model]  :: Perfect! Here are the results from both tools:
+
+**Current Date and Time (UTC):**
+- Date: **2026-07-17** (Friday)
+- Time:
+B tool calls: 2 | model turns: 2 | status: done
+
+===== VERDICTS =====
+results: {'A': True, 'B': True}
+GATE: PASS

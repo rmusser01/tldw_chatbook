@@ -37,7 +37,9 @@ PHASE_3_README = Path("Docs/superpowers/qa/product-maturity/phase-3/README.md")
 PHASE_3_2_EVIDENCE = Path(
     "Docs/superpowers/qa/product-maturity/phase-3/2026-05-06-phase-3-2-library-source-study-context.md"
 )
-TASK_10 = Path("backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md")
+TASK_10 = Path(
+    "backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md"
+)
 TASK_10_2 = Path(
     "backlog/tasks/task-10.2 - Product-Maturity-Phase-3.2-Library-Source-Study-Context.md"
 )
@@ -98,7 +100,9 @@ class TotalOnlyLibraryNotesScopeService:
 
 
 @pytest.mark.asyncio
-async def test_library_flashcards_entry_passes_source_snapshot_context_to_study() -> None:
+async def test_library_flashcards_entry_passes_source_snapshot_context_to_study() -> (
+    None
+):
     """The Library->Study handoff (``open_flashcards``) still builds the
     correct scope context. The rail's Flashcards row (``#library-row-create-
     flashcards``) only opens the handoff *canvas* (Statics describing the
@@ -225,12 +229,16 @@ async def test_library_study_related_modes_explain_handoff_context_and_wip(
         assert "Generation and review run in Study." in visible
         assert "Source snapshot is ready." in visible
 
-        open_button = screen.query_one(f"#{row_id.replace('create-', 'library-open-')}", Button)
+        open_button = screen.query_one(
+            f"#{row_id.replace('create-', 'library-open-')}", Button
+        )
         assert open_button.has_class("console-action-primary")
 
 
 @pytest.mark.asyncio
-async def test_library_quizzes_mode_empty_state_explains_global_recovery_without_source_context() -> None:
+async def test_library_quizzes_mode_empty_state_explains_global_recovery_without_source_context() -> (
+    None
+):
     """Verify Quizzes describes global fallback when Library has no sources."""
 
     app = _build_test_app()
@@ -289,7 +297,9 @@ async def test_library_study_handoff_uses_counts_when_titles_are_unavailable() -
         await _wait_for_selector(screen, pilot, "#library-study-handoff-context")
         visible = _visible_text(screen)
 
-        assert "Carries forward: Library source snapshot (titles unavailable)" in visible
+        assert (
+            "Carries forward: Library source snapshot (titles unavailable)" in visible
+        )
         assert "No Library source snapshot will be carried forward." not in visible
 
         # The in-canvas handoff button drives the Study handoff.
@@ -307,7 +317,9 @@ async def test_library_study_handoff_uses_counts_when_titles_are_unavailable() -
 
 
 @pytest.mark.asyncio
-async def test_library_flashcards_handoff_supports_keyboard_activation_with_source_context() -> None:
+async def test_library_flashcards_handoff_supports_keyboard_activation_with_source_context() -> (
+    None
+):
     """Verify keyboard activation of the rail row reaches the Flashcards
     handoff canvas, and pressing the in-canvas handoff button carries the
     correct source context into Study.
@@ -344,7 +356,9 @@ async def test_library_flashcards_handoff_supports_keyboard_activation_with_sour
 
 
 @pytest.mark.asyncio
-async def test_study_displays_library_material_context_without_changing_service_scope() -> None:
+async def test_study_displays_library_material_context_without_changing_service_scope() -> (
+    None
+):
     app_instance = _build_app_instance()
     app_instance.pending_study_scope_context = StudyScopeContext(
         scope_type=StudyScopeType.GLOBAL,
@@ -366,9 +380,30 @@ async def test_study_displays_library_material_context_without_changing_service_
         assert "Transcript A" in _static_text(scope_summary)
         assert app.screen.study_materials == ["Research Note", "Transcript A"]
 
-    assert ("get_due_flashcards", "local", "global", None, 25) in app_instance.study_scope_service.calls
-    assert ("list_decks", "local", "global", None, 3, 0) in app_instance.study_scope_service.calls
-    assert ("list_quizzes", "local", "global", None, None, 3, 0) in app_instance.study_quiz_scope_service.calls
+    assert (
+        "get_due_flashcards",
+        "local",
+        "global",
+        None,
+        25,
+    ) in app_instance.study_scope_service.calls
+    assert (
+        "list_decks",
+        "local",
+        "global",
+        None,
+        3,
+        0,
+    ) in app_instance.study_scope_service.calls
+    assert (
+        "list_quizzes",
+        "local",
+        "global",
+        None,
+        None,
+        3,
+        0,
+    ) in app_instance.study_quiz_scope_service.calls
 
 
 def test_study_restored_material_context_is_sanitized_and_escaped_for_markup() -> None:
@@ -406,7 +441,9 @@ def test_study_restored_material_context_is_sanitized_and_escaped_for_markup() -
 
 def test_study_material_context_key_uses_bounded_fingerprint_and_caps_titles() -> None:
     screen = StudyScreen(app_instance=_build_app_instance())
-    long_titles = tuple(f"Sensitive material title {index} {'x' * 80}" for index in range(25))
+    long_titles = tuple(
+        f"Sensitive material title {index} {'x' * 80}" for index in range(25)
+    )
     long_summary = f"Sensitive summary {'y' * 4000}"
 
     state = screen._derive_scope_state(

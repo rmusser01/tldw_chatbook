@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    SourceCreateRequest,
-    SourceUpdateRequest,
-    TLDWAPIClient,
-    WatchlistAlertRuleCreateRequest,
-    WatchlistAlertRuleUpdateRequest,
-)
+
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient
 from .watchlist_normalizers import (
     normalize_server_delete_response,
     normalize_server_watchlist_source,
@@ -75,7 +71,9 @@ class ServerWatchlistsService:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -84,11 +82,14 @@ class ServerWatchlistsService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
                     user_message=getattr(decision, "user_message", None)
                     or "Server watchlist action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @staticmethod
@@ -122,8 +123,15 @@ class ServerWatchlistsService:
             limit=limit,
             offset=offset,
         )
-        payload = response.model_dump(mode="json") if hasattr(response, "model_dump") else response
-        return [normalize_server_watchlist_source(item) for item in list(payload.get("items", []))]
+        payload = (
+            response.model_dump(mode="json")
+            if hasattr(response, "model_dump")
+            else response
+        )
+        return [
+            normalize_server_watchlist_source(item)
+            for item in list(payload.get("items", []))
+        ]
 
     async def get_source(self, source_id: Any) -> dict[str, Any]:
         self._enforce(self._action_id("detail"))
@@ -141,9 +149,14 @@ class ServerWatchlistsService:
         settings: Mapping[str, Any] | None = None,
         group_ids: Any = _UNSET,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SourceCreateRequest
+
         self._enforce(self._action_id("create"))
         if group_ids is not _UNSET:
-            raise ValueError("Server watchlist group editing is deferred in this slice.")
+            raise ValueError(
+                "Server watchlist group editing is deferred in this slice."
+            )
         request = SourceCreateRequest(
             name=name,
             url=url,
@@ -168,9 +181,14 @@ class ServerWatchlistsService:
         existing_settings: Mapping[str, Any] | None = None,
         group_ids: Any = _UNSET,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import SourceUpdateRequest
+
         self._enforce(self._action_id("update"))
         if group_ids is not _UNSET:
-            raise ValueError("Server watchlist group editing is deferred in this slice.")
+            raise ValueError(
+                "Server watchlist group editing is deferred in this slice."
+            )
         payload: dict[str, Any] = {}
         if name is not _UNSET:
             payload["name"] = name
@@ -188,7 +206,9 @@ class ServerWatchlistsService:
             payload["settings"] = dict(existing_settings)
 
         request = SourceUpdateRequest(**payload)
-        response = await self._require_client().update_watchlist_source(int(source_id), request)
+        response = await self._require_client().update_watchlist_source(
+            int(source_id), request
+        )
         return normalize_server_watchlist_source(response)
 
     async def delete_source(self, source_id: Any) -> dict[str, Any]:
@@ -218,8 +238,15 @@ class ServerWatchlistsService:
             size=size,
             q=q,
         )
-        payload = response.model_dump(mode="json") if hasattr(response, "model_dump") else response
-        return [normalize_watchlist_run("server", item) for item in list(payload.get("items", []))]
+        payload = (
+            response.model_dump(mode="json")
+            if hasattr(response, "model_dump")
+            else response
+        )
+        return [
+            normalize_watchlist_run("server", item)
+            for item in list(payload.get("items", []))
+        ]
 
     async def get_run(self, run_id: Any) -> dict[str, Any]:
         self._enforce(self._run_action_id("detail"))
@@ -245,12 +272,21 @@ class ServerWatchlistsService:
         self._enforce(self._alert_rule_action_id("list"))
         return await self._list_alert_rules_unchecked(job_id=job_id)
 
-    async def _list_alert_rules_unchecked(self, *, job_id: Any = None) -> list[dict[str, Any]]:
+    async def _list_alert_rules_unchecked(
+        self, *, job_id: Any = None
+    ) -> list[dict[str, Any]]:
         response = await self._require_client().list_watchlist_alert_rules(
             job_id=int(job_id) if job_id is not None else None
         )
-        payload = response.model_dump(mode="json") if hasattr(response, "model_dump") else response
-        return [normalize_watchlist_alert_rule("server", item) for item in list(payload.get("items", []))]
+        payload = (
+            response.model_dump(mode="json")
+            if hasattr(response, "model_dump")
+            else response
+        )
+        return [
+            normalize_watchlist_alert_rule("server", item)
+            for item in list(payload.get("items", []))
+        ]
 
     async def get_alert_rule(self, rule_id: Any) -> dict[str, Any]:
         self._enforce(self._alert_rule_action_id("detail"))
@@ -268,6 +304,9 @@ class ServerWatchlistsService:
         job_id: Any = None,
         severity: str = "warning",
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WatchlistAlertRuleCreateRequest
+
         self._enforce(self._alert_rule_action_id("create"))
         request = WatchlistAlertRuleCreateRequest(
             name=name,
@@ -280,9 +319,19 @@ class ServerWatchlistsService:
         return normalize_watchlist_alert_rule("server", response)
 
     async def update_alert_rule(self, rule_id: Any, **fields: Any) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import WatchlistAlertRuleUpdateRequest
+
         self._enforce(self._alert_rule_action_id("update"))
         payload: dict[str, Any] = {}
-        for key in ("name", "enabled", "condition_type", "condition_value", "job_id", "severity"):
+        for key in (
+            "name",
+            "enabled",
+            "condition_type",
+            "condition_value",
+            "job_id",
+            "severity",
+        ):
             if key in fields:
                 payload[key] = fields[key]
         if payload.get("condition_value") is not None:
@@ -290,13 +339,21 @@ class ServerWatchlistsService:
         if payload.get("job_id") is not None:
             payload["job_id"] = int(payload["job_id"])
         request = WatchlistAlertRuleUpdateRequest(**payload)
-        response = await self._require_client().update_watchlist_alert_rule(int(rule_id), request)
+        response = await self._require_client().update_watchlist_alert_rule(
+            int(rule_id), request
+        )
         return normalize_watchlist_alert_rule("server", response)
 
     async def delete_alert_rule(self, rule_id: Any) -> dict[str, Any]:
         self._enforce(self._alert_rule_action_id("delete"))
-        response = await self._require_client().delete_watchlist_alert_rule(int(rule_id))
-        payload = response.model_dump(mode="json") if hasattr(response, "model_dump") else dict(response or {})
+        response = await self._require_client().delete_watchlist_alert_rule(
+            int(rule_id)
+        )
+        payload = (
+            response.model_dump(mode="json")
+            if hasattr(response, "model_dump")
+            else dict(response or {})
+        )
         return {
             "deleted": bool(payload.get("deleted", True)),
             "id": f"server:watchlist_alert_rule:{payload.get('rule_id', rule_id)}",
@@ -309,5 +366,7 @@ class ServerWatchlistsService:
     def _validate_source_type(source_type: Any) -> str:
         normalized = str(source_type or "").strip()
         if normalized not in {"rss", "site", "forum"}:
-            raise ValueError("Only rss, site, and forum watchlist sources are supported in this slice.")
+            raise ValueError(
+                "Only rss, site, and forum watchlist sources are supported in this slice."
+            )
         return normalized

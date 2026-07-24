@@ -30,7 +30,9 @@ def _deserialize_prompt_definition(prompt_definition: Any) -> Optional[Any]:
 
 
 def local_prompt_to_server_payload(local_prompt: Dict[str, Any]) -> Dict[str, Any]:
-    prompt_definition = _deserialize_prompt_definition(local_prompt.get("prompt_definition"))
+    prompt_definition = _deserialize_prompt_definition(
+        local_prompt.get("prompt_definition")
+    )
     payload: Dict[str, Any] = {
         "name": local_prompt.get("name"),
         "author": local_prompt.get("author"),
@@ -44,7 +46,10 @@ def local_prompt_to_server_payload(local_prompt: Dict[str, Any]) -> Dict[str, An
     }
 
     for passthrough_key in ("uuid", "version", "deleted"):
-        if passthrough_key in local_prompt and local_prompt.get(passthrough_key) is not None:
+        if (
+            passthrough_key in local_prompt
+            and local_prompt.get(passthrough_key) is not None
+        ):
             payload[passthrough_key] = local_prompt.get(passthrough_key)
 
     return payload
@@ -62,7 +67,14 @@ def local_prompt_to_preview_payload(local_prompt: Dict[str, Any]) -> Dict[str, A
 def server_prompt_to_local_update(payload: Dict[str, Any]) -> Dict[str, Any]:
     update: Dict[str, Any] = {}
 
-    for field in ("name", "author", "details", "system_prompt", "user_prompt", "prompt_schema_version"):
+    for field in (
+        "name",
+        "author",
+        "details",
+        "system_prompt",
+        "user_prompt",
+        "prompt_schema_version",
+    ):
         if field in payload:
             update[field] = payload.get(field)
 
@@ -73,9 +85,15 @@ def server_prompt_to_local_update(payload: Dict[str, Any]) -> Dict[str, Any]:
         update["prompt_format"] = payload.get("prompt_format") or "legacy"
 
     if "prompt_definition" in payload:
-        update["prompt_definition"] = _deserialize_prompt_definition(payload.get("prompt_definition"))
+        update["prompt_definition"] = _deserialize_prompt_definition(
+            payload.get("prompt_definition")
+        )
 
-    if "prompt_format" not in update and "prompt_definition" in update and update["prompt_definition"] is not None:
+    if (
+        "prompt_format" not in update
+        and "prompt_definition" in update
+        and update["prompt_definition"] is not None
+    ):
         update["prompt_format"] = "structured"
 
     return update

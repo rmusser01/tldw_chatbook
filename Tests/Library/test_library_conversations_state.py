@@ -79,6 +79,14 @@ def test_query_with_no_matches_returns_empty_copy_and_zero_status_copy():
     assert state.preview_lines == ()
 
 
+def test_empty_copy_matches_console_vocabulary():
+    """Console chats appear in Library without an explicit save step, and the
+    copy must not promise otherwise (task-179 vocabulary alignment)."""
+    assert LIBRARY_CONVERSATIONS_EMPTY_COPY == (
+        "No conversations yet. Chat in Console and it appears here."
+    )
+
+
 def test_no_records_yields_default_empty_copy_and_no_status_copy():
     state = build_library_conversations_state([], now=NOW)
 
@@ -92,11 +100,21 @@ def test_no_records_yields_default_empty_copy_and_no_status_copy():
 
 def test_selected_id_not_present_falls_back_to_first_row():
     records = [
-        {"id": "conv-a", "title": "Alpha Chat", "updated_at": "2026-07-05T11:00:00+00:00"},
-        {"id": "conv-b", "title": "Beta Chat", "updated_at": "2026-07-05T09:00:00+00:00"},
+        {
+            "id": "conv-a",
+            "title": "Alpha Chat",
+            "updated_at": "2026-07-05T11:00:00+00:00",
+        },
+        {
+            "id": "conv-b",
+            "title": "Beta Chat",
+            "updated_at": "2026-07-05T09:00:00+00:00",
+        },
     ]
 
-    state = build_library_conversations_state(records, selected_id="does-not-exist", now=NOW)
+    state = build_library_conversations_state(
+        records, selected_id="does-not-exist", now=NOW
+    )
 
     assert state.selected_id == "conv-a"
     assert state.rows[0].selected is True
@@ -118,14 +136,18 @@ def test_preview_lines_for_selected_row():
         },
     ]
 
-    selected_a = build_library_conversations_state(records, selected_id="conv-a", now=NOW)
+    selected_a = build_library_conversations_state(
+        records, selected_id="conv-a", now=NOW
+    )
     assert selected_a.preview_lines == (
         "Alpha Chat",
         "Messages: 5",
         "Updated: 3m",
     )
 
-    selected_b = build_library_conversations_state(records, selected_id="conv-b", now=NOW)
+    selected_b = build_library_conversations_state(
+        records, selected_id="conv-b", now=NOW
+    )
     assert selected_b.preview_lines == (
         "Beta Chat",
         "Messages: unknown",
@@ -181,9 +203,7 @@ def test_match_count_reflects_filtered_set_before_limit_truncation():
 
     # Query matches all 5, but limit=2 displays only 2 rows.
     # Status should reflect 5 matches (before limit), not 2 (after limit).
-    state = build_library_conversations_state(
-        records, query="alpha", limit=2, now=NOW
-    )
+    state = build_library_conversations_state(records, query="alpha", limit=2, now=NOW)
 
     assert len(state.rows) == 2
     assert state.status_copy == "5 matches for 'alpha'"

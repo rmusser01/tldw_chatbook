@@ -31,7 +31,9 @@ class ExplicitFeedbackRequest(BaseModel):
         if feedback_type == "helpful" and values.get("helpful") is None:
             raise ValueError("helpful is required when feedback_type is 'helpful'")
         if feedback_type == "relevance" and values.get("relevance_score") is None:
-            raise ValueError("relevance_score is required when feedback_type is 'relevance'")
+            raise ValueError(
+                "relevance_score is required when feedback_type is 'relevance'"
+            )
         return values
 
 

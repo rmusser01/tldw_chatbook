@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from textual.app import ComposeResult
 from textual import on
+from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.widgets import Button, Static
@@ -16,7 +16,7 @@ from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequeste
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
 
-CONSOLE_CONTROL_BAR_HEIGHT = 2
+CONSOLE_CONTROL_BAR_HEIGHT = 1
 TOP_ACTION_IDS = {
     "new-tab",
     "settings",
@@ -135,7 +135,11 @@ class ConsoleControlBar(Vertical):
         """
         if actions is None and state == self.state:
             return
-        if actions is not None and state == self.state and tuple(actions) == self.actions:
+        if (
+            actions is not None
+            and state == self.state
+            and tuple(actions) == self.actions
+        ):
             return
         self.state = state
         if actions is not None:
@@ -149,40 +153,13 @@ class ConsoleControlBar(Vertical):
             "#console-sources-label": state.sources_label,
             "#console-tools-label": state.tools_label,
             "#console-approvals-label": state.approvals_label,
-            "#console-provider-chip": state.provider_label,
-            "#console-model-chip": state.model_label,
-            "#console-persona-chip": state.persona_label,
-            "#console-rag-chip": state.rag_label,
-            "#console-sources-chip": state.sources_label,
-            "#console-tools-chip": state.tools_label,
-            "#console-approvals-chip": state.approvals_label,
         }
         for selector, label in label_values.items():
             try:
-                self.query_one(selector, Static).update(label)
+                widget = self.query_one(selector, Static)
             except NoMatches:
                 continue
-        chip_emphasis = {
-            "#console-sources-chip": state.sources_active,
-            "#console-tools-chip": state.tools_active,
-            "#console-approvals-chip": state.approvals_active,
-        }
-        for selector, active in chip_emphasis.items():
-            try:
-                chip = self.query_one(selector, Static)
-            except NoMatches:
-                continue
-            chip.set_class(not active, "console-chip-dim")
-            chip.set_class(active, "console-chip-alert")
-
-    @staticmethod
-    def _chip(label: str, *, id: str, emphasis: bool | None = None) -> Static:
-        classes = "console-control-chip"
-        if emphasis is False:
-            classes += " console-chip-dim"
-        elif emphasis is True:
-            classes += " console-chip-alert"
-        return Static(label, id=id, classes=classes)
+            widget.update(label)
 
     @staticmethod
     def _action_widget_id(action: WorkbenchAction) -> str:
@@ -254,75 +231,75 @@ class ConsoleControlBar(Vertical):
                 self._sync_action_button(child, action)
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="console-control-chip-row", classes="console-control-chip-row"):
-            yield self._chip(self.state.provider_label, id="console-provider-chip")
-            yield self._chip(self.state.model_label, id="console-model-chip")
-            yield self._chip(self.state.persona_label, id="console-persona-chip")
-            yield self._chip(self.state.rag_label, id="console-rag-chip")
-            yield self._chip(
-                self.state.sources_label,
-                id="console-sources-chip",
-                emphasis=self.state.sources_active,
-            )
-            yield self._chip(
-                self.state.tools_label,
-                id="console-tools-chip",
-                emphasis=self.state.tools_active,
-            )
-            yield self._chip(
-                self.state.approvals_label,
-                id="console-approvals-chip",
-                emphasis=self.state.approvals_active,
-            )
-        with Horizontal(id="console-control-action-row", classes="console-control-action-row"):
+        with Horizontal(
+            id="console-control-action-row", classes="console-control-action-row"
+        ):
             for action in self._visible_actions():
                 yield self._action(action)
-        yield self._compatibility_layout_widget(Static(
-            _summary_line(self.state),
-            id="console-control-status-line",
-            classes="console-control-summary-line",
-        ))
-        yield self._compatibility_layout_widget(Static(
-            self.state.provider_label,
-            id="console-provider-label",
-            classes="console-control-label console-hidden-control",
-        ))
-        yield self._compatibility_layout_widget(Static(
-            self.state.model_label,
-            id="console-model-label",
-            classes="console-control-label console-hidden-control",
-        ))
-        yield self._compatibility_layout_widget(Static(
-            self.state.persona_label,
-            id="console-persona-label",
-            classes="console-control-label console-hidden-control",
-        ))
-        yield self._compatibility_layout_widget(Static(
-            self.state.rag_label,
-            id="console-rag-label",
-            classes="console-control-label console-hidden-control",
-        ))
-        yield self._compatibility_layout_widget(Static(
-            self.state.sources_label,
-            id="console-sources-label",
-            classes="console-control-label console-hidden-control",
-        ))
-        yield self._compatibility_layout_widget(Static(
-            self.state.tools_label,
-            id="console-tools-label",
-            classes="console-control-label console-hidden-control",
-        ))
-        yield self._compatibility_layout_widget(Static(
-            self.state.approvals_label,
-            id="console-approvals-label",
-            classes="console-control-label console-hidden-control",
-        ))
-        yield self._compatibility_layout_widget(CompactModelBar(
-            self.app_instance,
-            on_sidebar_toggle_requested=self.on_sidebar_toggle_requested,
-            id="console-compact-model-bar",
-            classes="console-compact-model-bar console-hidden-control",
-        ))
+        yield self._compatibility_layout_widget(
+            Static(
+                _summary_line(self.state),
+                id="console-control-status-line",
+                classes="console-control-summary-line",
+            )
+        )
+        yield self._compatibility_layout_widget(
+            Static(
+                self.state.provider_label,
+                id="console-provider-label",
+                classes="console-control-label console-hidden-control",
+            )
+        )
+        yield self._compatibility_layout_widget(
+            Static(
+                self.state.model_label,
+                id="console-model-label",
+                classes="console-control-label console-hidden-control",
+            )
+        )
+        yield self._compatibility_layout_widget(
+            Static(
+                self.state.persona_label,
+                id="console-persona-label",
+                classes="console-control-label console-hidden-control",
+            )
+        )
+        yield self._compatibility_layout_widget(
+            Static(
+                self.state.rag_label,
+                id="console-rag-label",
+                classes="console-control-label console-hidden-control",
+            )
+        )
+        yield self._compatibility_layout_widget(
+            Static(
+                self.state.sources_label,
+                id="console-sources-label",
+                classes="console-control-label console-hidden-control",
+            )
+        )
+        yield self._compatibility_layout_widget(
+            Static(
+                self.state.tools_label,
+                id="console-tools-label",
+                classes="console-control-label console-hidden-control",
+            )
+        )
+        yield self._compatibility_layout_widget(
+            Static(
+                self.state.approvals_label,
+                id="console-approvals-label",
+                classes="console-control-label console-hidden-control",
+            )
+        )
+        yield self._compatibility_layout_widget(
+            CompactModelBar(
+                self.app_instance,
+                on_sidebar_toggle_requested=self.on_sidebar_toggle_requested,
+                id="console-compact-model-bar",
+                classes="console-compact-model-bar console-hidden-control",
+            )
+        )
 
     @on(Button.Pressed, ".console-control-action")
     def on_console_control_action_pressed(self, event: Button.Pressed) -> None:

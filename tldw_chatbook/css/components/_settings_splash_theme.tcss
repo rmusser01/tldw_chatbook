@@ -1,0 +1,101 @@
+/* Settings splash-screen viewer + theme editor styles.
+ *
+ * TASK-394: this module previously also carried the OLD (pre-Settings) splash
+ * viewer's generic component styles -- bare `VerticalScroll` plus app-wide class
+ * names (.setting-label, .section-header, .help-text, .action-buttons,
+ * .settings-section, .card-list, .preview-*). Those either leaked app-wide or
+ * were dead. The genuinely shared ones moved verbatim to
+ * `components/_shared_components.tcss` (same bundle position -> unchanged
+ * cascade); the app-wide scrollbar default moved to `core/_base.tcss`; the
+ * zero-importer orphans were removed. What remains below is the LIVE, feature-
+ * scoped styling for the in-Settings theme editor and splash-screen viewer
+ * (`settings_theme_editor.py`, `settings_splash_screen_viewer.py`). */
+
+/* ===== Settings theme editor ===== */
+#settings-theme-tree {
+    width: 100%;
+    height: 12;
+    min-height: 8;
+    border: solid $ds-grid-line;
+    margin: 1 0 0 0;
+}
+
+.settings-preview-grid {
+    width: 100%;
+    height: auto;
+    min-height: 8;
+    margin: 1 0;
+}
+
+.preview-column {
+    width: 1fr;
+    height: auto;
+    padding: 0 1;
+}
+
+.color-swatch {
+    width: 7;
+    min-width: 7;
+    height: 1;
+    min-height: 1;
+    border: solid $ds-grid-line;
+    content-align: center middle;
+    text-style: bold;
+}
+
+.color-preset-swatch {
+    width: 2;
+    min-width: 2;
+    height: 1;
+    min-height: 1;
+    margin: 0 1 0 0;
+    border: solid $ds-grid-line;
+}
+
+.preview-button {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    margin: 0 0 1 0;
+}
+
+.preview-surface-demo,
+.preview-panel-demo,
+.preview-boost-demo {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    margin: 0 0 1 0;
+    border: solid $ds-grid-line;
+    content-align: center middle;
+}
+
+/* ===== Settings splash screen viewer ===== */
+.settings-splash-gallery {
+    height: 24;
+    min-height: 16;
+    width: 100%;
+}
+
+#settings-splash-card-list {
+    width: 45%;
+    height: 100%;
+    border: solid $primary-lighten-2;
+}
+
+#settings-splash-preview-scroll {
+    width: 1fr;
+    height: 100%;
+    border: solid $primary-lighten-2;
+    background: $surface;
+}
+
+.settings-splash-preview {
+    width: 100%;
+    height: 100%;
+}
+
+.settings-splash-preview #splash-display {
+    width: 100%;
+    height: 100%;
+}

@@ -27,7 +27,9 @@ async def test_evals_window_navigates_to_quick_test_and_resets_home() -> None:
     app_instance = SimpleNamespace(notify=MagicMock())
     app = EvalsWindowHost(app_instance)
 
-    with patch("tldw_chatbook.UI.Evals.screens.quick_test.EvaluationOrchestrator") as mock_cls:
+    with patch(
+        "tldw_chatbook.UI.Evals.screens.quick_test.EvaluationOrchestrator"
+    ) as mock_cls:
         orchestrator = MagicMock()
         orchestrator.db.list_tasks.return_value = []
         orchestrator.db.list_models.return_value = []

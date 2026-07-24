@@ -1,3 +1,4 @@
+# ruff: noqa: F811
 import pytest
 
 from tldw_chatbook.RAG_Admin.rag_admin_scope_service import RAGAdminScopeService
@@ -28,7 +29,12 @@ class FakeLocalService:
 
     def reprocess_media(self, media_id, **options):
         self.calls.append(("reprocess_media", media_id, options))
-        return {"backend": "local", "media_id": media_id, "status": "queued", "options": options}
+        return {
+            "backend": "local",
+            "media_id": media_id,
+            "status": "queued",
+            "options": options,
+        }
 
     def export_collection(self, collection_name, **options):
         self.calls.append(("export_collection", collection_name, options))
@@ -66,7 +72,12 @@ class FakeServerService:
 
     async def reprocess_media(self, media_id, **options):
         self.calls.append(("reprocess_media", media_id, options))
-        return {"backend": "server", "media_id": media_id, "status": "queued", "options": options}
+        return {
+            "backend": "server",
+            "media_id": media_id,
+            "status": "queued",
+            "options": options,
+        }
 
     async def get_media_embeddings_status(self, media_id):
         self.calls.append(("get_media_embeddings_status", media_id))
@@ -82,7 +93,10 @@ class FakeServerService:
 
     async def search_media_embeddings(self, **options):
         self.calls.append(("search_media_embeddings", options))
-        return {"results": [{"id": "chunk-1", "metadata": {"media_id": "7"}}], "count": 1}
+        return {
+            "results": [{"id": "chunk-1", "metadata": {"media_id": "7"}}],
+            "count": 1,
+        }
 
     async def delete_media_embeddings(self, media_id):
         self.calls.append(("delete_media_embeddings", media_id))
@@ -94,7 +108,10 @@ class FakeServerService:
 
     async def list_media_embedding_jobs(self, **options):
         self.calls.append(("list_media_embedding_jobs", options))
-        return {"data": [{"uuid": "job-7", "status": "completed"}], "pagination": {"count": 1}}
+        return {
+            "data": [{"uuid": "job-7", "status": "completed"}],
+            "pagination": {"count": 1},
+        }
 
 
 class FakePolicyEnforcer:
@@ -187,7 +204,9 @@ async def test_scope_service_uses_stats_endpoint_for_server_collection_detail():
             }
         }
     )
-    scope = RAGAdminScopeService(local_service=FakeLocalService(), server_service=server)
+    scope = RAGAdminScopeService(
+        local_service=FakeLocalService(), server_service=server
+    )
 
     detail = await scope.get_collection_detail(mode="server", collection_name="demo")
 
@@ -257,7 +276,9 @@ async def test_scope_service_routes_reprocess_media_as_rag_admin_launch():
     assert local_result["backend"] == "local"
     assert server_result["backend"] == "server"
     assert local.calls == [("reprocess_media", 7, {"generate_embeddings": True})]
-    assert server.calls == [("reprocess_media", 8, {"chunking_template_name": "server-demo"})]
+    assert server.calls == [
+        ("reprocess_media", 8, {"chunking_template_name": "server-demo"})
+    ]
     assert policy_enforcer.calls == [
         "rag.admin.launch.local",
         "rag.admin.launch.server",
@@ -282,7 +303,9 @@ async def test_scope_service_routes_server_media_embedding_admin_and_blocks_loca
         chunk_size=512,
     )
     batch = await scope.generate_media_embeddings_batch(mode="server", media_ids=[7])
-    search = await scope.search_media_embeddings(mode="server", query="alpha", filters={"media_id": "7"})
+    search = await scope.search_media_embeddings(
+        mode="server", query="alpha", filters={"media_id": "7"}
+    )
     deleted = await scope.delete_media_embeddings(mode="server", media_id=7)
     job = await scope.get_media_embedding_job(mode="server", job_id="job-7")
     jobs = await scope.list_media_embedding_jobs(mode="server", status="completed")
@@ -296,7 +319,11 @@ async def test_scope_service_routes_server_media_embedding_admin_and_blocks_loca
     assert jobs["backend"] == "server"
     assert server.calls == [
         ("get_media_embeddings_status", 7),
-        ("generate_media_embeddings", 7, {"embedding_model": "text-embedding-3-small", "chunk_size": 512}),
+        (
+            "generate_media_embeddings",
+            7,
+            {"embedding_model": "text-embedding-3-small", "chunk_size": 512},
+        ),
         ("generate_media_embeddings_batch", {"media_ids": [7]}),
         ("search_media_embeddings", {"query": "alpha", "filters": {"media_id": "7"}}),
         ("delete_media_embeddings", 7),
@@ -362,7 +389,9 @@ async def test_scope_service_routes_server_collection_export_when_adapter_provid
     )
 
     assert exported == {"backend": "server", "name": "demo"}
-    assert server.calls == [("export_collection", "demo", {"include_embeddings": False, "limit": 50})]
+    assert server.calls == [
+        ("export_collection", "demo", {"include_embeddings": False, "limit": 50})
+    ]
     assert policy_enforcer.calls == ["rag.admin.observe.server"]
 
 

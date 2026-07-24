@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from typing import Any, Mapping
 
@@ -104,7 +105,9 @@ class ChatConversationScopeService:
             raise ValueError("Sync scope service is unavailable.")
         return self.sync_scope_service
 
-    def list_unsupported_capabilities(self, *, mode: str | None = None) -> list[dict[str, Any]]:
+    def list_unsupported_capabilities(
+        self, *, mode: str | None = None
+    ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
         if normalized_mode == "local":
             return [dict(item) for item in _LOCAL_UNSUPPORTED_CAPABILITIES]
@@ -141,18 +144,55 @@ class ChatConversationScopeService:
             return await value
         return value
 
-    async def list_conversations(self, *, mode: str = "local", **kwargs: Any) -> dict[str, Any]:
+    @staticmethod
+    def _is_memory_backed(service: Any) -> bool:
+        """True when a local service's backing DB is a per-connection ``:memory:`` store.
+
+        Thread-local (file-backed) sqlite connections are safe to run via
+        ``asyncio.to_thread``; a ``:memory:`` ChaChaNotes DB is only visible
+        to the thread that created/migrated it, so threading it would hand
+        the worker an empty, unmigrated database (same hazard documented at
+        ``HomeScreen._home_content_seam_call``). Degrades to False (i.e.
+        thread it) when the service shape doesn't expose ``.db`` -- the
+        server service, for one, has no local sqlite connection at all.
+        """
+        db = getattr(service, "db", None)
+        return bool(getattr(db, "is_memory_db", False))
+
+    async def list_conversations(
+        self, *, mode: str = "local", **kwargs: Any
+    ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("list", normalized_mode))
-        return await self._maybe_await(self._service_for_mode(normalized_mode).list_conversations(**kwargs))
+        service = self._service_for_mode(normalized_mode)
+        list_conversations_fn = getattr(service, "list_conversations")
+        # B4 (task-283): local list_conversations is a plain sync sqlite/FTS
+        # call -- run_worker(coroutine) is not a thread, so without this the
+        # debounce-fired Console browser search worker (chat_screen.py)
+        # blocks the event loop on every fire. Server mode's list_conversations
+        # is already a real coroutine (network I/O); threading it would just
+        # hand back an unawaited coroutine object, so only local is eligible.
+        if (
+            normalized_mode == "local"
+            and not inspect.iscoroutinefunction(list_conversations_fn)
+            and not self._is_memory_backed(service)
+        ):
+            return await asyncio.to_thread(list_conversations_fn, **kwargs)
+        return await self._maybe_await(list_conversations_fn(**kwargs))
 
-    async def get_conversation(self, conversation_id: str, *, mode: str = "local", **kwargs: Any) -> dict[str, Any] | None:
+    async def get_conversation(
+        self, conversation_id: str, *, mode: str = "local", **kwargs: Any
+    ) -> dict[str, Any] | None:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("detail", normalized_mode))
         service = self._service_for_mode(normalized_mode)
         if normalized_mode == "server":
-            return await self._maybe_await(service.get_conversation(conversation_id, **kwargs))
-        return await self._maybe_await(service.get_conversation_metadata(conversation_id))
+            return await self._maybe_await(
+                service.get_conversation(conversation_id, **kwargs)
+            )
+        return await self._maybe_await(
+            service.get_conversation_metadata(conversation_id)
+        )
 
     async def update_conversation(
         self,
@@ -168,25 +208,39 @@ class ChatConversationScopeService:
         service = self._service_for_mode(normalized_mode)
         payload = dict(update_data)
         if normalized_mode == "server":
-            return await self._maybe_await(service.update_conversation(conversation_id, payload, **kwargs))
+            return await self._maybe_await(
+                service.update_conversation(conversation_id, payload, **kwargs)
+            )
 
-        version = expected_version if expected_version is not None else payload.pop("version", None)
+        version = (
+            expected_version
+            if expected_version is not None
+            else payload.pop("version", None)
+        )
         if version is None:
-            raise ValueError("expected_version or update_data['version'] is required for local conversation updates.")
+            raise ValueError(
+                "expected_version or update_data['version'] is required for local conversation updates."
+            )
 
         keywords = payload.pop("keywords", None)
         metadata_updated = True
         if payload:
             metadata_updated = bool(
                 await self._maybe_await(
-                    service.update_conversation_metadata(conversation_id, payload, int(version))
+                    service.update_conversation_metadata(
+                        conversation_id, payload, int(version)
+                    )
                 )
             )
         if keywords is not None and metadata_updated:
-            await self._maybe_await(service.replace_conversation_keywords(conversation_id, list(keywords)))
+            await self._maybe_await(
+                service.replace_conversation_keywords(conversation_id, list(keywords))
+            )
         return metadata_updated
 
-    async def get_conversation_tree(self, conversation_id: str, *, mode: str = "local", **kwargs: Any) -> dict[str, Any]:
+    async def get_conversation_tree(
+        self, conversation_id: str, *, mode: str = "local", **kwargs: Any
+    ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("detail", normalized_mode))
         service_kwargs = dict(kwargs)
@@ -198,7 +252,9 @@ class ChatConversationScopeService:
             if "max_depth" in service_kwargs and "depth_cap" not in service_kwargs:
                 service_kwargs["depth_cap"] = service_kwargs.pop("max_depth")
         return await self._maybe_await(
-            self._service_for_mode(normalized_mode).get_conversation_tree(conversation_id, **service_kwargs)
+            self._service_for_mode(normalized_mode).get_conversation_tree(
+                conversation_id, **service_kwargs
+            )
         )
 
     async def get_messages_with_context(
@@ -211,27 +267,41 @@ class ChatConversationScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("detail", normalized_mode))
         return await self._maybe_await(
-            self._service_for_mode(normalized_mode).get_messages_with_context(conversation_id, **kwargs)
+            self._service_for_mode(normalized_mode).get_messages_with_context(
+                conversation_id, **kwargs
+            )
         )
 
-    async def get_citations(self, conversation_id: str, *, mode: str = "server") -> dict[str, Any]:
+    async def get_citations(
+        self, conversation_id: str, *, mode: str = "server"
+    ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("detail", normalized_mode))
-        return await self._maybe_await(self._service_for_mode(normalized_mode).get_citations(conversation_id))
+        return await self._maybe_await(
+            self._service_for_mode(normalized_mode).get_citations(conversation_id)
+        )
 
     async def list_commands(self, *, mode: str = "server") -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._commands_action_id("list", normalized_mode))
         if normalized_mode == "local":
-            raise NotImplementedError("Server chat commands are unavailable in local mode.")
-        return await self._maybe_await(self._service_for_mode(normalized_mode).list_commands())
+            raise NotImplementedError(
+                "Server chat commands are unavailable in local mode."
+            )
+        return await self._maybe_await(
+            self._service_for_mode(normalized_mode).list_commands()
+        )
 
     async def save_knowledge(self, *, mode: str = "server", **kwargs: Any) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._knowledge_action_id("create", normalized_mode))
         if normalized_mode == "local":
-            raise NotImplementedError("Server chat knowledge-save is unavailable in local mode.")
-        return await self._maybe_await(self._service_for_mode(normalized_mode).save_knowledge(**kwargs))
+            raise NotImplementedError(
+                "Server chat knowledge-save is unavailable in local mode."
+            )
+        return await self._maybe_await(
+            self._service_for_mode(normalized_mode).save_knowledge(**kwargs)
+        )
 
     async def create_share_link(
         self,
@@ -244,17 +314,29 @@ class ChatConversationScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._share_links_action_id("create", normalized_mode))
         if normalized_mode == "local":
-            raise NotImplementedError("Server chat share links are unavailable in local mode.")
+            raise NotImplementedError(
+                "Server chat share links are unavailable in local mode."
+            )
         return await self._maybe_await(
-            self._service_for_mode(normalized_mode).create_share_link(conversation_id, request_data, **kwargs)
+            self._service_for_mode(normalized_mode).create_share_link(
+                conversation_id, request_data, **kwargs
+            )
         )
 
-    async def list_share_links(self, conversation_id: str, *, mode: str = "server", **kwargs: Any) -> Any:
+    async def list_share_links(
+        self, conversation_id: str, *, mode: str = "server", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._share_links_action_id("list", normalized_mode))
         if normalized_mode == "local":
-            raise NotImplementedError("Server chat share links are unavailable in local mode.")
-        return await self._maybe_await(self._service_for_mode(normalized_mode).list_share_links(conversation_id, **kwargs))
+            raise NotImplementedError(
+                "Server chat share links are unavailable in local mode."
+            )
+        return await self._maybe_await(
+            self._service_for_mode(normalized_mode).list_share_links(
+                conversation_id, **kwargs
+            )
+        )
 
     async def revoke_share_link(
         self,
@@ -267,32 +349,54 @@ class ChatConversationScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._share_links_action_id("revoke", normalized_mode))
         if normalized_mode == "local":
-            raise NotImplementedError("Server chat share links are unavailable in local mode.")
+            raise NotImplementedError(
+                "Server chat share links are unavailable in local mode."
+            )
         return await self._maybe_await(
-            self._service_for_mode(normalized_mode).revoke_share_link(conversation_id, share_id, **kwargs)
+            self._service_for_mode(normalized_mode).revoke_share_link(
+                conversation_id, share_id, **kwargs
+            )
         )
 
-    async def resolve_share_token(self, share_token: str, *, mode: str = "server", **kwargs: Any) -> Any:
+    async def resolve_share_token(
+        self, share_token: str, *, mode: str = "server", **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._share_links_action_id("detail", normalized_mode))
         if normalized_mode == "local":
-            raise NotImplementedError("Server chat share links are unavailable in local mode.")
-        return await self._maybe_await(self._service_for_mode(normalized_mode).resolve_share_token(share_token, **kwargs))
+            raise NotImplementedError(
+                "Server chat share links are unavailable in local mode."
+            )
+        return await self._maybe_await(
+            self._service_for_mode(normalized_mode).resolve_share_token(
+                share_token, **kwargs
+            )
+        )
 
     async def get_analytics(self, *, mode: str = "server", **kwargs: Any) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._analytics_action_id("observe", normalized_mode))
         if normalized_mode == "local":
-            raise NotImplementedError("Server chat analytics are unavailable in local mode.")
-        return await self._maybe_await(self._service_for_mode(normalized_mode).get_analytics(**kwargs))
+            raise NotImplementedError(
+                "Server chat analytics are unavailable in local mode."
+            )
+        return await self._maybe_await(
+            self._service_for_mode(normalized_mode).get_analytics(**kwargs)
+        )
 
-    async def start_loop(self, *, mode: str = "server", messages: list[dict[str, Any]], **kwargs: Any) -> Any:
+    async def start_loop(
+        self, *, mode: str = "server", messages: list[dict[str, Any]], **kwargs: Any
+    ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._loop_action_id("launch", normalized_mode))
         if normalized_mode == "local":
-            raise NotImplementedError("Local chat loop runs are not implemented in Chatbook yet.")
+            raise NotImplementedError(
+                "Local chat loop runs are not implemented in Chatbook yet."
+            )
         return await self._maybe_await(
-            self._service_for_mode(normalized_mode).start_loop(messages=messages, **kwargs)
+            self._service_for_mode(normalized_mode).start_loop(
+                messages=messages, **kwargs
+            )
         )
 
     async def list_loop_events(
@@ -305,9 +409,13 @@ class ChatConversationScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._loop_action_id("observe", normalized_mode))
         if normalized_mode == "local":
-            raise NotImplementedError("Local chat loop runs are not implemented in Chatbook yet.")
+            raise NotImplementedError(
+                "Local chat loop runs are not implemented in Chatbook yet."
+            )
         return await self._maybe_await(
-            self._service_for_mode(normalized_mode).list_loop_events(run_id, after_seq=after_seq)
+            self._service_for_mode(normalized_mode).list_loop_events(
+                run_id, after_seq=after_seq
+            )
         )
 
     async def approve_loop_call(
@@ -320,9 +428,13 @@ class ChatConversationScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._loop_action_id("approve", normalized_mode))
         if normalized_mode == "local":
-            raise NotImplementedError("Local chat loop runs are not implemented in Chatbook yet.")
+            raise NotImplementedError(
+                "Local chat loop runs are not implemented in Chatbook yet."
+            )
         return await self._maybe_await(
-            self._service_for_mode(normalized_mode).approve_loop_call(run_id, approval_id=approval_id)
+            self._service_for_mode(normalized_mode).approve_loop_call(
+                run_id, approval_id=approval_id
+            )
         )
 
     async def reject_loop_call(
@@ -335,22 +447,32 @@ class ChatConversationScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._loop_action_id("approve", normalized_mode))
         if normalized_mode == "local":
-            raise NotImplementedError("Local chat loop runs are not implemented in Chatbook yet.")
+            raise NotImplementedError(
+                "Local chat loop runs are not implemented in Chatbook yet."
+            )
         return await self._maybe_await(
-            self._service_for_mode(normalized_mode).reject_loop_call(run_id, approval_id=approval_id)
+            self._service_for_mode(normalized_mode).reject_loop_call(
+                run_id, approval_id=approval_id
+            )
         )
 
     async def cancel_loop(self, run_id: str, *, mode: str = "server") -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._loop_action_id("cancel", normalized_mode))
         if normalized_mode == "local":
-            raise NotImplementedError("Local chat loop runs are not implemented in Chatbook yet.")
-        return await self._maybe_await(self._service_for_mode(normalized_mode).cancel_loop(run_id))
+            raise NotImplementedError(
+                "Local chat loop runs are not implemented in Chatbook yet."
+            )
+        return await self._maybe_await(
+            self._service_for_mode(normalized_mode).cancel_loop(run_id)
+        )
 
     async def create_conversation(self, *, mode: str = "local", **kwargs: Any) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._action_id("create", normalized_mode))
-        return await self._maybe_await(self._service_for_mode(normalized_mode).create_conversation(**kwargs))
+        return await self._maybe_await(
+            self._service_for_mode(normalized_mode).create_conversation(**kwargs)
+        )
 
     async def delete_conversation(
         self,

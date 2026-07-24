@@ -11,7 +11,6 @@ from textual.widgets import Input, Static
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
-from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.workbench_focus import (
     WorkbenchPaneTarget,
     focus_relative_workbench_pane,
@@ -31,9 +30,6 @@ class _PersonasHarness(App[None]):
     def __init__(self, app_instance) -> None:
         super().__init__()
         self.app_instance = app_instance
-
-    def compose(self):
-        yield AppFooterStatus(id="app-footer-status")
 
     async def on_mount(self) -> None:
         await self.push_screen(PersonasScreen(self.app_instance))
@@ -69,7 +65,7 @@ async def _wait_for_focused_id(app: App[None], pilot, widget_id: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_f6_cycles_between_workbench_panes_and_wraps_backward():
+async def test_console_f6_cycles_wraps_backward_and_targets_expand_when_collapsed():
     app_instance = _build_test_app()
     _mark_console_onboarding_complete(app_instance)
     host = _ConsoleHarness(app_instance)
@@ -100,6 +96,15 @@ async def test_console_f6_cycles_between_workbench_panes_and_wraps_backward():
         await pilot.press("shift+f6")
         await _wait_for_focused_id(host, pilot, "console-inspector-rail-collapse")
 
+        console._set_console_composer_collapsed(True)
+        await pilot.pause()
+        console.query_one("#console-inspector-rail-collapse").focus()
+        await pilot.press("f6")
+        await _wait_for_focused_id(host, pilot, "console-composer-expand")
+        assert console.query_one("#console-native-composer").can_focus is False
+        console._ensure_console_workbench_targets_focusable()
+        assert console.query_one("#console-native-composer").can_focus is False
+
 
 @pytest.mark.asyncio
 async def test_personas_f6_cycles_between_workbench_panes_from_text_input():
@@ -128,7 +133,10 @@ def test_workbench_screens_expose_f6_bindings_without_ctrl_arrow_conflicts():
     screen_classes = (ChatScreen, PersonasScreen)
     for screen_class in screen_classes:
         bindings = getattr(screen_class, "BINDINGS", ())
-        keys = {binding[0] if isinstance(binding, tuple) else binding.key for binding in bindings}
+        keys = {
+            binding[0] if isinstance(binding, tuple) else binding.key
+            for binding in bindings
+        }
         assert "f6" in keys
         assert "shift+f6" in keys
         assert "ctrl+left" not in keys

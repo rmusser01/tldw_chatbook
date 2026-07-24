@@ -34,7 +34,7 @@ class SettingsLibraryRagDefaults:
     default_top_k: int = 10
     fts_top_k: int = 10
     vector_top_k: int = 10
-    hybrid_alpha: float = 0.5
+    hybrid_alpha: float = 0.7
     score_threshold: float = 0.0
     include_citations: bool = True
     citation_style: str = DEFAULT_CITATION_STYLE
@@ -57,8 +57,6 @@ def _coerce_bool(value: Any, default: bool) -> bool:
 
 def _coerce_int(value: Any, default: int) -> int:
     """Coerce a Settings field to int, falling back on parse failures."""
-def _coerce_int(value: Any, default: int) -> int:
-    """Coerce a Settings field to int, falling back on parse failures."""
     try:
         return int(value)
     except (TypeError, ValueError):
@@ -66,9 +64,6 @@ def _coerce_int(value: Any, default: int) -> int:
             return int(float(str(value).strip()))
         except (TypeError, ValueError):
             return default
-    if not parsed.is_integer():
-        return default
-    return int(parsed)
 
 
 def _coerce_float(value: Any, default: float) -> float:
@@ -90,9 +85,6 @@ def _strict_int(value: Any) -> int | None:
     except (TypeError, ValueError):
         pass
     return None
-    if not parsed.is_integer():
-        return None
-    return int(parsed)
 
 
 def _strict_float(value: Any) -> float | None:
@@ -146,7 +138,9 @@ def normalise_library_rag_citation_style(value: Any) -> str:
     return text if text in CITATION_STYLES else DEFAULT_CITATION_STYLE
 
 
-def load_library_rag_defaults(app_config: Mapping[str, Any]) -> SettingsLibraryRagDefaults:
+def load_library_rag_defaults(
+    app_config: Mapping[str, Any],
+) -> SettingsLibraryRagDefaults:
     """Load Settings-owned Library/RAG defaults from app configuration.
 
     Args:
@@ -255,7 +249,10 @@ def validate_library_rag_defaults(
             f"Hybrid balance must be between {MIN_RAG_BALANCE:.1f} and {MAX_RAG_BALANCE:.1f}.",
         )
     score_threshold = _strict_float(values.score_threshold)
-    if score_threshold is None or not MIN_RAG_BALANCE <= score_threshold <= MAX_RAG_BALANCE:
+    if (
+        score_threshold is None
+        or not MIN_RAG_BALANCE <= score_threshold <= MAX_RAG_BALANCE
+    ):
         return SettingsValidationResult(
             False,
             f"Score threshold must be between {MIN_RAG_BALANCE:.1f} and {MAX_RAG_BALANCE:.1f}.",

@@ -1,0 +1,40 @@
+/* ========================================
+ * FEATURES: Watchlists
+ * ========================================
+ * Styles for the WatchlistsCollectionsScreen dashboard and panes.
+ * ======================================== */
+
+/* Overview dashboard grid and cards */
+#watchlists-overview-grid {
+    layout: grid;
+    grid-size: 3;
+    grid-gutter: 1;
+    margin: 1 0;
+}
+
+.overview-card {
+    height: 4;
+    padding: 1;
+    background: $surface;
+    border: round $surface-lighten-1;
+    text-align: center;
+    text-style: bold;
+}
+
+/* Failed runs table in overview */
+#overview-failed-runs {
+    height: 1fr;
+    border: round $surface-lighten-1;
+}
+
+/* Empty state actions */
+#wc-empty-actions {
+    height: auto;
+    margin: 1 0;
+}
+
+/* Section detail title */
+#watchlists-detail-title {
+    text-style: bold;
+    color: $text;
+}

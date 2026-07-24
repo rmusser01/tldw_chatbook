@@ -7,13 +7,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..tldw_api import ChatGrammarCreate, ChatGrammarUpdate
-
 
 class LocalChatGrammarsService:
     """Persist saved grammars for local/offline structured chat output."""
 
-    def __init__(self, *, store_path: str | Path, policy_enforcer: Any | None = None) -> None:
+    def __init__(
+        self, *, store_path: str | Path, policy_enforcer: Any | None = None
+    ) -> None:
         self.store_path = Path(store_path).expanduser()
         self.policy_enforcer = policy_enforcer
         self._records: list[dict[str, Any]] = []
@@ -40,7 +40,9 @@ class LocalChatGrammarsService:
             self._records = []
             self._next_id = 1
             return
-        records = payload.get("items", payload) if isinstance(payload, dict) else payload
+        records = (
+            payload.get("items", payload) if isinstance(payload, dict) else payload
+        )
         if not isinstance(records, list):
             return
         self._records = [dict(item) for item in records if isinstance(item, dict)]
@@ -79,7 +81,9 @@ class LocalChatGrammarsService:
             "version": int(record.get("version", 1) or 1),
         }
 
-    def _find(self, grammar_id: str, *, include_archived: bool = False) -> dict[str, Any]:
+    def _find(
+        self, grammar_id: str, *, include_archived: bool = False
+    ) -> dict[str, Any]:
         for record in self._records:
             if record.get("id") != grammar_id:
                 continue
@@ -95,8 +99,13 @@ class LocalChatGrammarsService:
         grammar_text: str,
         description: str | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChatGrammarCreate
+
         self._enforce("chat.grammars.create.local")
-        request = ChatGrammarCreate(name=name, description=description, grammar_text=grammar_text)
+        request = ChatGrammarCreate(
+            name=name, description=description, grammar_text=grammar_text
+        )
         grammar_id = f"local-grammar-{self._next_id}"
         self._next_id += 1
         now = self._now()
@@ -134,7 +143,9 @@ class LocalChatGrammarsService:
         page = records[offset : offset + limit]
         return {"items": page, "total": len(records), "limit": limit, "offset": offset}
 
-    async def get_grammar(self, grammar_id: str, *, include_archived: bool = False) -> dict[str, Any]:
+    async def get_grammar(
+        self, grammar_id: str, *, include_archived: bool = False
+    ) -> dict[str, Any]:
         self._enforce("chat.grammars.detail.local")
         return self._view(self._find(grammar_id, include_archived=include_archived))
 
@@ -151,6 +162,9 @@ class LocalChatGrammarsService:
         last_validated_at: Any = None,
         is_archived: bool | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChatGrammarUpdate
+
         self._enforce("chat.grammars.update.local")
         record = self._find(grammar_id, include_archived=True)
         current_version = int(record.get("version", 1) or 1)
@@ -174,11 +188,15 @@ class LocalChatGrammarsService:
         self._persist()
         return self._view(record)
 
-    async def delete_grammar(self, grammar_id: str, *, hard_delete: bool = False) -> bool:
+    async def delete_grammar(
+        self, grammar_id: str, *, hard_delete: bool = False
+    ) -> bool:
         self._enforce("chat.grammars.delete.local")
         record = self._find(grammar_id, include_archived=True)
         if hard_delete:
-            self._records = [item for item in self._records if item.get("id") != grammar_id]
+            self._records = [
+                item for item in self._records if item.get("id") != grammar_id
+            ]
         else:
             record["is_archived"] = True
             record["updated_at"] = self._now()

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from typing import Any
 
+from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -50,16 +51,23 @@ def library_dim_label_text(label: str, value: str) -> Text:
 def _visible_row_title(title: str) -> str:
     """Return a rail-safe visible title that does not clip in narrow panes.
 
+    The result is markup-escaped (after truncating) because every caller
+    interpolates it into a ``Button`` label, which Textual parses as Rich
+    markup: an unescaped user title like ``[draft] Q3 plan [wip]`` would
+    render with its bracketed segments consumed as (or crashing on) markup
+    tags -- the same bug class as the search-history Button-label lesson.
+
     Args:
-        title: Full row title.
+        title: Full row title (may contain user-supplied text).
 
     Returns:
-        The title, truncated with an ellipsis when longer than the rail budget.
+        The escaped title, truncated with an ellipsis when longer than the
+        rail budget.
     """
     readable = str(title).strip()
-    if len(readable) <= _MAX_LIBRARY_ROW_TITLE:
-        return readable
-    return f"{readable[: _MAX_LIBRARY_ROW_TITLE - 3].rstrip()}..."
+    if len(readable) > _MAX_LIBRARY_ROW_TITLE:
+        readable = f"{readable[: _MAX_LIBRARY_ROW_TITLE - 3].rstrip()}..."
+    return escape_markup(readable)
 
 
 class LibraryRail(Vertical):
@@ -83,6 +91,7 @@ class LibraryRail(Vertical):
         query: str = "",
         search_placeholder: str = "Search conversations…",
         workspaces_body_factory: Callable[[], Iterable[Widget]] | None = None,
+        top_action_factory: Callable[[], Iterable[Widget]] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -91,6 +100,7 @@ class LibraryRail(Vertical):
         self.query = query
         self.search_placeholder = search_placeholder
         self.workspaces_body_factory = workspaces_body_factory
+        self.top_action_factory = top_action_factory
         self.styles.width = "3fr"
         self.styles.min_width = 24
 
@@ -140,6 +150,8 @@ class LibraryRail(Vertical):
             ComposeResult with the search box, one header + body per section,
             and the Details header + body.
         """
+        if self.top_action_factory is not None:
+            yield from self.top_action_factory()
         yield Input(
             value=self.query,
             placeholder=self.search_placeholder,
@@ -205,18 +217,25 @@ class LibraryRail(Vertical):
                 count_suffix = row.count_display or self._count_suffix(
                     row.count, row.count_known
                 )
-                section_hint = "opens screen" if row.target_kind == "screen" else "in Library"
+                section_hint = (
+                    "opens screen" if row.target_kind == "screen" else "in Library"
+                )
                 button = Button(
                     f"{marker} {_visible_row_title(row.title)}{count_suffix}"
                     f"\n    {section_hint}",
                     id=f"{LIBRARY_RAIL_ROW_PREFIX}{row.row_id}",
                     classes="library-rail-row",
                     compact=True,
+                    disabled=row.disabled,
                 )
                 button.row_id = row.row_id
                 button.target_kind = row.target_kind
                 button.target_id = row.target_id
-                button.tooltip = row.title
+                button.tooltip = (
+                    row.disabled_tooltip
+                    if row.disabled and row.disabled_tooltip
+                    else row.title
+                )
                 button.set_class(selected, "library-rail-row-selected")
                 if row.count_emphasis:
                     button.add_class(f"library-rail-row-due-{row.count_emphasis}")

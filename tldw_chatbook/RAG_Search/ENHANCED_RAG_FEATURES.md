@@ -250,14 +250,22 @@ await service.index_document_with_parents(...)
 
 ## Testing
 
-Run the test script to verify functionality:
+Run the RAG test suite to verify functionality:
 ```bash
-python test_enhanced_rag.py
+pytest Tests/RAG/
 ```
 
-This will test:
+This covers:
 - Enhanced chunking with structure preservation
 - Parent document retrieval
 - Table serialization
 - PDF artifact cleaning
 - Context expansion during search
+
+## Removed Features
+
+Late chunking (`late_chunking_service.py` / `late_chunking_integration.py`),
+standalone context assembly (`context_assembler.py`), and LLM query expansion
+(`query_expansion.py`) were removed as dead code (task-252); they were never
+wired into the live RAG pipeline. Context expansion here refers to the parent
+document retrieval in `simplified/enhanced_rag_service.py`, which is live.

@@ -6,20 +6,25 @@
 # the internal logic of the chat functions.
 
 import pytest
-from unittest.mock import patch, Mock, MagicMock
-from typing import Dict, Any, List, Generator
+from unittest.mock import patch, Mock
 import json
 
-from tldw_chatbook.Chat.Chat_Functions import chat_api_call, chat, PROVIDER_PARAM_MAP, API_CALL_HANDLERS
+from tldw_chatbook.Chat.Chat_Functions import (
+    chat_api_call,
+    PROVIDER_PARAM_MAP,
+    API_CALL_HANDLERS,
+)
 from tldw_chatbook.Chat.Chat_Deps import (
-    ChatAuthenticationError, ChatRateLimitError, ChatBadRequestError,
-    ChatProviderError, ChatAPIError, ChatConfigurationError
+    ChatAuthenticationError,
+    ChatRateLimitError,
+    ChatProviderError,
+    ChatConfigurationError,
 )
 
 
 class TestMockedChatAPIs:
     """Unit tests for chat API functions with mocked external services"""
-    
+
     @pytest.fixture
     def mock_openai_response(self):
         """Mock OpenAI API response"""
@@ -28,21 +33,19 @@ class TestMockedChatAPIs:
             "object": "chat.completion",
             "created": 1677652288,
             "model": "gpt-3.5-turbo",
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": "Hello! I'm a helpful assistant."
-                },
-                "finish_reason": "stop"
-            }],
-            "usage": {
-                "prompt_tokens": 9,
-                "completion_tokens": 12,
-                "total_tokens": 21
-            }
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "Hello! I'm a helpful assistant.",
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 9, "completion_tokens": 12, "total_tokens": 21},
         }
-    
+
     @pytest.fixture
     def mock_anthropic_response(self):
         """Mock Anthropic API response"""
@@ -50,27 +53,17 @@ class TestMockedChatAPIs:
             "id": "msg_123",
             "type": "message",
             "role": "assistant",
-            "content": [{
-                "type": "text",
-                "text": "Hello! I'm Claude."
-            }],
+            "content": [{"type": "text", "text": "Hello! I'm Claude."}],
             "model": "claude-3-opus",
             "stop_reason": "stop",
-            "usage": {
-                "input_tokens": 10,
-                "output_tokens": 15
-            }
+            "usage": {"input_tokens": 10, "output_tokens": 15},
         }
-    
+
     @pytest.fixture
     def mock_kobold_response(self):
         """Mock KoboldCPP API response"""
-        return {
-            "results": [{
-                "text": "Hello from Kobold!"
-            }]
-        }
-    
+        return {"results": [{"text": "Hello from Kobold!"}]}
+
     @pytest.fixture
     def mock_ollama_response(self):
         """Mock Ollama API response"""
@@ -78,16 +71,18 @@ class TestMockedChatAPIs:
             "model": "llama3",
             "created_at": "2024-01-01T00:00:00Z",
             "response": "Hello from Ollama!",
-            "done": True
+            "done": True,
         }
-    
-    @patch.dict('tldw_chatbook.Chat.Chat_Functions.API_CALL_HANDLERS')
+
+    @patch.dict("tldw_chatbook.Chat.Chat_Functions.API_CALL_HANDLERS")
     def test_openai_chat_mocked(self, mock_openai_response):
         """Test OpenAI chat with mocked response"""
         mock_chat_openai = Mock(return_value=json.dumps(mock_openai_response))
-        mock_chat_openai.__name__ = 'chat_with_openai'  # Add __name__ attribute for logging
-        API_CALL_HANDLERS['openai'] = mock_chat_openai
-        
+        mock_chat_openai.__name__ = (
+            "chat_with_openai"  # Add __name__ attribute for logging
+        )
+        API_CALL_HANDLERS["openai"] = mock_chat_openai
+
         messages = [{"role": "user", "content": "Hello!"}]
         response = chat_api_call(
             api_endpoint="OpenAI",
@@ -96,28 +91,31 @@ class TestMockedChatAPIs:
             model="gpt-3.5-turbo",
             temp=0.7,
             max_tokens=50,
-            streaming=False
+            streaming=False,
         )
-        
+
         # Verify the response
         response_dict = json.loads(response)
-        assert response_dict["choices"][0]["message"]["content"] == "Hello! I'm a helpful assistant."
+        assert (
+            response_dict["choices"][0]["message"]["content"]
+            == "Hello! I'm a helpful assistant."
+        )
         assert response_dict["model"] == "gpt-3.5-turbo"
-        
+
         # Verify the function was called with correct parameters
         mock_chat_openai.assert_called_once()
         call_args = mock_chat_openai.call_args[1]
         assert call_args["model"] == "gpt-3.5-turbo"
         assert call_args["temp"] == 0.7  # Parameter is 'temp' not 'temperature'
         assert call_args["max_tokens"] == 50
-    
-    @patch.dict('tldw_chatbook.Chat.Chat_Functions.API_CALL_HANDLERS')
+
+    @patch.dict("tldw_chatbook.Chat.Chat_Functions.API_CALL_HANDLERS")
     def test_anthropic_chat_mocked(self, mock_anthropic_response):
         """Test Anthropic chat with mocked response"""
         mock_chat_anthropic = Mock(return_value=json.dumps(mock_anthropic_response))
-        mock_chat_anthropic.__name__ = 'chat_with_anthropic'
-        API_CALL_HANDLERS['anthropic'] = mock_chat_anthropic
-        
+        mock_chat_anthropic.__name__ = "chat_with_anthropic"
+        API_CALL_HANDLERS["anthropic"] = mock_chat_anthropic
+
         messages = [{"role": "user", "content": "Hello!"}]
         response = chat_api_call(
             api_endpoint="Anthropic",
@@ -126,31 +124,37 @@ class TestMockedChatAPIs:
             model="claude-3-opus",
             temp=0.7,
             max_tokens=50,
-            streaming=False
+            streaming=False,
         )
-        
+
         # Verify the response
         response_dict = json.loads(response)
         assert response_dict["content"][0]["text"] == "Hello! I'm Claude."
         assert response_dict["model"] == "claude-3-opus"
-        
+
         # Verify the function was called
         mock_chat_anthropic.assert_called_once()
-    
-    @patch.dict('tldw_chatbook.Chat.Chat_Functions.API_CALL_HANDLERS')
+
+    @patch.dict("tldw_chatbook.Chat.Chat_Functions.API_CALL_HANDLERS")
     def test_kobold_chat_mocked(self, mock_kobold_response):
         """Test KoboldCPP chat with mocked response"""
         # KoboldCPP returns a different format
-        mock_chat_kobold = Mock(return_value=json.dumps({
-            "choices": [{
-                "message": {
-                    "content": mock_kobold_response["results"][0]["text"]
+        mock_chat_kobold = Mock(
+            return_value=json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": mock_kobold_response["results"][0]["text"]
+                            }
+                        }
+                    ]
                 }
-            }]
-        }))
-        mock_chat_kobold.__name__ = 'chat_with_kobold'
-        API_CALL_HANDLERS['koboldcpp'] = mock_chat_kobold
-        
+            )
+        )
+        mock_chat_kobold.__name__ = "chat_with_kobold"
+        API_CALL_HANDLERS["koboldcpp"] = mock_chat_kobold
+
         messages = [{"role": "user", "content": "Hello!"}]
         response = chat_api_call(
             api_endpoint="koboldcpp",
@@ -159,32 +163,38 @@ class TestMockedChatAPIs:
             model=None,
             temp=0.7,
             max_tokens=50,
-            streaming=False
+            streaming=False,
         )
-        
+
         # Verify the response
         response_dict = json.loads(response)
         assert response_dict["choices"][0]["message"]["content"] == "Hello from Kobold!"
-        
+
         # Verify the function was called
         mock_chat_kobold.assert_called_once()
-    
-    @patch.dict('tldw_chatbook.Chat.Chat_Functions.API_CALL_HANDLERS')
+
+    @patch.dict("tldw_chatbook.Chat.Chat_Functions.API_CALL_HANDLERS")
     def test_ollama_chat_mocked(self, mock_ollama_response):
         """Test Ollama chat with mocked response"""
         # Convert Ollama format to OpenAI format
-        mock_chat_ollama = Mock(return_value=json.dumps({
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": mock_ollama_response["response"]
+        mock_chat_ollama = Mock(
+            return_value=json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": mock_ollama_response["response"],
+                            }
+                        }
+                    ],
+                    "model": mock_ollama_response["model"],
                 }
-            }],
-            "model": mock_ollama_response["model"]
-        }))
-        mock_chat_ollama.__name__ = 'chat_with_ollama'
-        API_CALL_HANDLERS['ollama'] = mock_chat_ollama
-        
+            )
+        )
+        mock_chat_ollama.__name__ = "chat_with_ollama"
+        API_CALL_HANDLERS["ollama"] = mock_chat_ollama
+
         messages = [{"role": "user", "content": "Hello!"}]
         response = chat_api_call(
             api_endpoint="Ollama",
@@ -193,34 +203,35 @@ class TestMockedChatAPIs:
             model="llama3",
             temp=0.7,
             max_tokens=50,
-            streaming=False
+            streaming=False,
         )
-        
+
         # Verify the response
         response_dict = json.loads(response)
         assert response_dict["choices"][0]["message"]["content"] == "Hello from Ollama!"
         assert response_dict["model"] == "llama3"
-        
+
         # Verify the function was called
         mock_chat_ollama.assert_called_once()
-    
-    @patch.dict('tldw_chatbook.Chat.Chat_Functions.API_CALL_HANDLERS')
+
+    @patch.dict("tldw_chatbook.Chat.Chat_Functions.API_CALL_HANDLERS")
     def test_streaming_response_mocked(self):
         """Test streaming response with mocked generator"""
+
         def mock_stream_generator():
             chunks = [
                 'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n',
                 'data: {"choices":[{"delta":{"content":" from"}}]}\n\n',
                 'data: {"choices":[{"delta":{"content":" OpenAI!"}}]}\n\n',
-                'data: [DONE]\n\n'
+                "data: [DONE]\n\n",
             ]
             for chunk in chunks:
                 yield chunk
-        
+
         mock_chat_openai = Mock(return_value=mock_stream_generator())
-        mock_chat_openai.__name__ = 'chat_with_openai'
-        API_CALL_HANDLERS['openai'] = mock_chat_openai
-        
+        mock_chat_openai.__name__ = "chat_with_openai"
+        API_CALL_HANDLERS["openai"] = mock_chat_openai
+
         messages = [{"role": "user", "content": "Hello!"}]
         response_gen = chat_api_call(
             api_endpoint="OpenAI",
@@ -229,23 +240,25 @@ class TestMockedChatAPIs:
             model="gpt-3.5-turbo",
             temp=0.7,
             max_tokens=50,
-            streaming=True
+            streaming=True,
         )
-        
+
         # Collect streaming response
         chunks = list(response_gen)
         assert len(chunks) == 4
-        assert 'Hello' in chunks[0]
-        assert '[DONE]' in chunks[3]
-    
-    @patch.dict('tldw_chatbook.Chat.Chat_Functions.API_CALL_HANDLERS')
+        assert "Hello" in chunks[0]
+        assert "[DONE]" in chunks[3]
+
+    @patch.dict("tldw_chatbook.Chat.Chat_Functions.API_CALL_HANDLERS")
     def test_error_handling_mocked(self):
         """Test error handling with mocked errors"""
         # Test authentication error
-        mock_chat_openai = Mock(side_effect=ChatAuthenticationError("Invalid API key", provider="openai"))
-        mock_chat_openai.__name__ = 'chat_with_openai'
-        API_CALL_HANDLERS['openai'] = mock_chat_openai
-        
+        mock_chat_openai = Mock(
+            side_effect=ChatAuthenticationError("Invalid API key", provider="openai")
+        )
+        mock_chat_openai.__name__ = "chat_with_openai"
+        API_CALL_HANDLERS["openai"] = mock_chat_openai
+
         with pytest.raises(ChatAuthenticationError) as exc_info:
             chat_api_call(
                 api_endpoint="OpenAI",
@@ -254,13 +267,15 @@ class TestMockedChatAPIs:
                 model="gpt-3.5-turbo",
                 temp=0.7,
                 max_tokens=50,
-                streaming=False
+                streaming=False,
             )
         assert exc_info.value.status_code == 401  # status_code is set by the class
-        
+
         # Test rate limit error
-        mock_chat_openai.side_effect = ChatRateLimitError("Rate limit exceeded", provider="openai")
-        
+        mock_chat_openai.side_effect = ChatRateLimitError(
+            "Rate limit exceeded", provider="openai"
+        )
+
         with pytest.raises(ChatRateLimitError) as exc_info:
             chat_api_call(
                 api_endpoint="OpenAI",
@@ -269,35 +284,42 @@ class TestMockedChatAPIs:
                 model="gpt-3.5-turbo",
                 temp=0.7,
                 max_tokens=50,
-                streaming=False
+                streaming=False,
             )
         assert exc_info.value.status_code == 429  # status_code is set by the class
-    
+
     def test_all_providers_have_handlers(self):
         """Test that all providers in PROVIDER_PARAM_MAP have handlers"""
         for provider in PROVIDER_PARAM_MAP:
             assert provider in API_CALL_HANDLERS, f"Provider {provider} missing handler"
-    
+
     def test_provider_param_mapping(self):
         """Test that provider parameter mappings exist and are not empty"""
         # Just verify that each provider has a mapping and it's a dictionary
         for provider in API_CALL_HANDLERS:
-            assert provider in PROVIDER_PARAM_MAP, f"Provider {provider} missing from PROVIDER_PARAM_MAP"
+            assert provider in PROVIDER_PARAM_MAP, (
+                f"Provider {provider} missing from PROVIDER_PARAM_MAP"
+            )
             param_map = PROVIDER_PARAM_MAP[provider]
-            assert isinstance(param_map, dict), f"Provider {provider} param map is not a dictionary"
+            assert isinstance(param_map, dict), (
+                f"Provider {provider} param map is not a dictionary"
+            )
             assert len(param_map) > 0, f"Provider {provider} param map is empty"
 
 
 class TestMockedChatUnit:
     """Unit tests with mocked external services to verify error handling"""
-    
-    @patch('requests.post')
+
+    @patch("requests.post")
     def test_local_service_connection_handling(self, mock_post):
         """Test handling of local service connection errors"""
         # Mock connection refused error
         import requests
-        mock_post.side_effect = requests.exceptions.ConnectionError("Connection refused")
-        
+
+        mock_post.side_effect = requests.exceptions.ConnectionError(
+            "Connection refused"
+        )
+
         # This should raise a configuration error or provider error
         with pytest.raises((ChatConfigurationError, ChatProviderError)):
             chat_api_call(
@@ -307,17 +329,21 @@ class TestMockedChatUnit:
                 model=None,
                 temp=0.7,
                 max_tokens=50,
-                streaming=False
+                streaming=False,
             )
-    
-    @patch.dict('tldw_chatbook.Chat.Chat_Functions.API_CALL_HANDLERS')
+
+    @patch.dict("tldw_chatbook.Chat.Chat_Functions.API_CALL_HANDLERS")
     def test_retry_logic_mocked(self):
         """Test that provider errors are properly raised"""
         # Test that server errors are properly raised
-        mock_chat_openai = Mock(side_effect=ChatProviderError("Server error", status_code=500, provider="openai"))
-        mock_chat_openai.__name__ = 'chat_with_openai'
-        API_CALL_HANDLERS['openai'] = mock_chat_openai
-        
+        mock_chat_openai = Mock(
+            side_effect=ChatProviderError(
+                "Server error", status_code=500, provider="openai"
+            )
+        )
+        mock_chat_openai.__name__ = "chat_with_openai"
+        API_CALL_HANDLERS["openai"] = mock_chat_openai
+
         # This should raise the provider error
         with pytest.raises(ChatProviderError) as exc_info:
             chat_api_call(
@@ -327,9 +353,9 @@ class TestMockedChatUnit:
                 model="gpt-3.5-turbo",
                 temp=0.7,
                 max_tokens=50,
-                streaming=False
+                streaming=False,
             )
-        
+
         assert exc_info.value.status_code == 500
         assert "Server error" in str(exc_info.value)
 
@@ -366,3 +392,119 @@ To run only these unit tests:
 To run alongside integration tests:
     pytest Tests/Chat/ -k "test_chat"
 """
+
+
+class TestTemperatureForwarding:
+    """Review-minors sweep: the PROVIDER_PARAM_MAP entries for groq,
+    deepseek, mistral(+mistralai), and google keyed temperature under the
+    nonexistent generic name 'temperature' (the dispatcher's generic name
+    is 'temp'), so temperature was silently dropped for those providers.
+    Pin that temp now reaches each handler as its 'temp' parameter."""
+
+    @pytest.mark.parametrize(
+        "endpoint",
+        [
+            "groq",
+            "deepseek",
+            "mistral",
+            "google",
+            # task-286 audit: the six remaining dead-'temperature' entries,
+            # each handler signature-verified to take 'temp'.
+            "cohere",
+            "openrouter",
+            "huggingface",
+            "koboldcpp",
+            "local_llamacpp",
+            "local_llamafile",
+            # review Minor 1: these two had lost their temperature keys entirely
+            # in the first pass (comment-bearing dict-open lines confused the
+            # rewrite script); both handlers take temp.
+            "llama_cpp",
+            "oobabooga",
+        ],
+    )
+    def test_temp_reaches_handler(self, endpoint):
+        handler = Mock(return_value={"choices": [{"message": {"content": "ok"}}]})
+        handler.__name__ = f"chat_with_{endpoint}"
+        original = API_CALL_HANDLERS.get(endpoint)
+        API_CALL_HANDLERS[endpoint] = handler
+        try:
+            chat_api_call(
+                api_endpoint=endpoint,
+                messages_payload=[{"role": "user", "content": "hi"}],
+                api_key="test_key",
+                model="m",
+                temp=0.42,
+                streaming=False,
+            )
+        finally:
+            API_CALL_HANDLERS[endpoint] = original
+        assert handler.call_args.kwargs.get("temp") == 0.42
+
+
+def test_provider_param_map_has_no_dead_generic_keys() -> None:
+    """Pin the generic side of PROVIDER_PARAM_MAP to the dispatcher's truth.
+
+    task-286 invariant: every generic-side key must be a real dispatcher
+    parameter — a key the dispatcher can never match is silently dropped
+    config (the 'temperature'/'prompt' bug class this audit retired). The
+    dispatcher's ``available_generic_params`` is itself DERIVED from the
+    signature (PR #668 review), so signature == dispatcher key set and this
+    assertion is exact, not an approximation.
+    """
+    import inspect
+    from tldw_chatbook.Chat.Chat_Functions import (
+        _CHAT_API_GENERIC_PARAMS,
+        PROVIDER_PARAM_MAP,
+        chat_api_call,
+    )
+
+    generic_params = set(inspect.signature(chat_api_call).parameters) - {"api_endpoint"}
+    # The derivation constant and the signature must agree exactly — this is
+    # what makes the invariant below equivalent to the dispatcher's own gate.
+    assert generic_params == set(_CHAT_API_GENERIC_PARAMS)
+    dead = {
+        (provider, key)
+        for provider, mapping in PROVIDER_PARAM_MAP.items()
+        for key in mapping
+        if key not in generic_params
+    }
+    assert not dead, (
+        f"dead PROVIDER_PARAM_MAP keys (never matched by the dispatcher): {sorted(dead)}"
+    )
+
+
+def test_provider_param_map_targets_exist_on_handlers() -> None:
+    """Pin the provider side of PROVIDER_PARAM_MAP to handler signatures.
+
+    task-286 invariant #2: every mapped TARGET must be a keyword-passable
+    parameter of that provider's handler (or the handler must accept
+    ``**kwargs``) — a wrong or keyword-incompatible target name TypeErrors
+    the call the moment the generic param is supplied (the tabbyapi /
+    local-llm 'temperature' and five ``user_identifier``->'user' bugs this
+    audit retired; keyword-compatibility per PR #668 review, since the
+    dispatcher calls handlers with ``**call_kwargs``).
+    """
+    import inspect
+    from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS, PROVIDER_PARAM_MAP
+
+    problems = []
+    for provider, mapping in PROVIDER_PARAM_MAP.items():
+        handler = API_CALL_HANDLERS.get(provider)
+        if handler is None:
+            problems.append((provider, "<no handler>", ""))
+            continue
+        sig = inspect.signature(handler)
+        if any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        ):
+            continue
+        for generic, target in mapping.items():
+            if target not in sig.parameters:
+                problems.append((provider, generic, target))
+            elif sig.parameters[target].kind in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.VAR_POSITIONAL,
+            ):
+                problems.append((provider, generic, f"{target} (not keyword-passable)"))
+    assert not problems, f"map targets missing on handlers: {sorted(problems)}"

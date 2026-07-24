@@ -12,13 +12,21 @@ from textual.widgets import Button, Static
 
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
+from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EVIDENCE = Path("Docs/superpowers/qa/product-maturity/phase-1/2026-05-05-phase-1-2-first-run-walkthrough.md")
+EVIDENCE = Path(
+    "Docs/superpowers/qa/product-maturity/phase-1/2026-05-05-phase-1-2-first-run-walkthrough.md"
+)
 TRACKER = Path("Docs/superpowers/trackers/product-maturity-roadmap.md")
 PHASE_1_README = Path("Docs/superpowers/qa/product-maturity/phase-1/README.md")
-TASK = Path("backlog/tasks/task-8.2 - Product-Maturity-Phase-1.2-Clean-First-Run-Launch-And-Configuration-Walkthrough.md")
+TASK = Path(
+    "backlog/tasks/task-8.2 - Product-Maturity-Phase-1.2-Clean-First-Run-Launch-And-Configuration-Walkthrough.md"
+)
+TOP_LEVEL_DESTINATION_IDS = tuple(
+    destination.destination_id for destination in SHELL_DESTINATION_ORDER
+)
 LOCAL_PATH_PREFIXES = (
     "/Users/",
     "/home/",
@@ -35,7 +43,9 @@ def _text(path: Path) -> str:
 
 def _assert_no_local_path_prefixes(text: str) -> None:
     leaked_prefixes = [prefix for prefix in LOCAL_PATH_PREFIXES if prefix in text]
-    assert not leaked_prefixes, f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
+    assert not leaked_prefixes, (
+        f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
+    )
 
 
 def _screen_text(app) -> str:
@@ -53,7 +63,9 @@ def _test_cli_setting(section: str, key: str, default=None):
     return default
 
 
-def _prepare_clean_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, str]:
+def _prepare_clean_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> dict[str, str]:
     paths = {
         "HOME": tmp_path / "home",
         "XDG_CONFIG_HOME": tmp_path / "xdg-config",
@@ -102,10 +114,20 @@ async def test_clean_first_run_launches_home_and_exposes_setup_orientation(
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                # Nav strip + docked hint mount a tick after the screen swap;
+                # wait for the full chrome before asserting/clicking.
+                lambda: (
+                    app.current_tab == "home"
+                    and app.screen.__class__.__name__ == "HomeScreen"
+                    and len(app.screen.query(".nav-button"))
+                    == len(TOP_LEVEL_DESTINATION_IDS)
+                    and len(app.screen.query("#nav-overflow-hint")) == 1
+                ),
             )
 
-            nav_buttons = list(app.screen.query(MainNavigationBar).first().query(Button))
+            nav_buttons = list(
+                app.screen.query(MainNavigationBar).first().query(Button)
+            )
             nav_ids = [button.id for button in nav_buttons]
             assert "nav-home" in nav_ids
             assert "nav-console" in nav_ids
@@ -125,13 +147,13 @@ async def test_clean_first_run_launches_home_and_exposes_setup_orientation(
                     "nav-console",
                     "chat",
                     "ChatScreen",
-                    ("Console", "Live work sources"),
+                    ("Console", "Transcript / Event Stream"),
                 ),
                 (
                     "nav-library",
                     "library",
                     "LibraryScreen",
-                    ("Library", "Import/Export Sources", "Search/RAG"),
+                    ("Library", "Import / Export", "Search / RAG"),
                 ),
                 (
                     "nav-settings",
@@ -144,7 +166,8 @@ async def test_clean_first_run_launches_home_and_exposes_setup_orientation(
                 await _wait_until(
                     pilot,
                     lambda current_tab=current_tab, screen_name=screen_name: (
-                        app.current_tab == current_tab and app.screen.__class__.__name__ == screen_name
+                        app.current_tab == current_tab
+                        and app.screen.__class__.__name__ == screen_name
                     ),
                 )
                 # Some destinations (Settings categories) populate a beat
@@ -173,7 +196,15 @@ async def test_clean_first_run_home_survives_supported_terminal_sizes(
         async with app.run_test(size=size) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                # Nav strip + docked hint mount a tick after the screen swap;
+                # wait for the full chrome before asserting.
+                lambda: (
+                    app.current_tab == "home"
+                    and app.screen.__class__.__name__ == "HomeScreen"
+                    and len(app.screen.query(".nav-button"))
+                    == len(TOP_LEVEL_DESTINATION_IDS)
+                    and len(app.screen.query("#nav-overflow-hint")) == 1
+                ),
             )
 
             primary_action = app.screen.query_one("#home-primary-action", Button)
@@ -192,4 +223,3 @@ def test_local_path_guard_rejects_common_home_and_temp_prefixes(prefix: str) -> 
 
 def test_local_path_guard_allows_sanitized_temp_placeholders() -> None:
     _assert_no_local_path_prefixes("Fresh HOME: <tmp>/home")
-

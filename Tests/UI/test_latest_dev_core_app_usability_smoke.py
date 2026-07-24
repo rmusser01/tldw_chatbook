@@ -41,9 +41,14 @@ BROKEN_TEXT_PATTERNS = (
 )
 CORE_FIRST_USE_ROUTES = (
     (TAB_HOME, TAB_HOME, "HomeScreen", ("Home", "Set up Console model")),
-    (TAB_CHAT, TAB_CHAT, "ChatScreen", ("Console", "Live work sources")),
-    (TAB_LIBRARY, TAB_LIBRARY, "LibraryScreen", ("Library", "Search/RAG")),
-    (TAB_SKILLS, TAB_SKILLS, "SkillsScreen", ("Skills", "Agent Skills")),
+    (TAB_CHAT, TAB_CHAT, "ChatScreen", ("Console", "Transcript / Event Stream")),
+    (TAB_LIBRARY, TAB_LIBRARY, "LibraryScreen", ("Library", "Search / RAG")),
+    # The standalone Skills tab is retired (Skills sub-project Task 5): the
+    # legacy "skills" route now re-points into Library with the Skills rail
+    # row selected, so this smoke entry lands on LibraryScreen (canonical
+    # tab "library") and checks the skills canvas's own empty-state copy
+    # rather than the retired SkillsScreen's.
+    (TAB_SKILLS, TAB_LIBRARY, "LibraryScreen", ("No skills yet", "New skill")),
     (TAB_MCP, TAB_MCP, "MCPScreen", ("MCP", "Unified MCP")),
     (TAB_SETTINGS, TAB_SETTINGS, "SettingsScreen", ("Settings", "Providers & Models")),
 )
@@ -64,7 +69,9 @@ async def _wait_until(
         await pilot.pause(interval_seconds)
     if condition():
         return
-    raise AssertionError(f"condition was not met within {timeout_seconds:.1f}s for {context}")
+    raise AssertionError(
+        f"condition was not met within {timeout_seconds:.1f}s for {context}"
+    )
 
 
 def _content_text(app) -> str:
@@ -89,7 +96,9 @@ def _assert_core_render_is_healthy(app, *, route: str) -> None:
     try:
         _assert_no_local_path_prefixes(text)
     except AssertionError as exc:
-        raise AssertionError(f"{route} leaked a local path in rendered content:\n{text}") from exc
+        raise AssertionError(
+            f"{route} leaked a local path in rendered content:\n{text}"
+        ) from exc
 
     svg = app.export_screenshot(title=f"Latest dev core smoke {route}", simplify=True)
     assert "<svg" in svg
@@ -101,7 +110,9 @@ def _assert_core_render_is_healthy(app, *, route: str) -> None:
     try:
         _assert_no_local_path_prefixes(svg)
     except AssertionError as exc:
-        raise AssertionError(f"{route} leaked a local path in exported screenshot") from exc
+        raise AssertionError(
+            f"{route} leaked a local path in exported screenshot"
+        ) from exc
 
 
 @pytest.mark.asyncio
@@ -116,11 +127,19 @@ async def test_latest_dev_core_first_use_routes_exclude_sync_and_persona(
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == TAB_HOME and app.screen.__class__.__name__ == "HomeScreen",
+                lambda: (
+                    app.current_tab == TAB_HOME
+                    and app.screen.__class__.__name__ == "HomeScreen"
+                ),
                 context="initial Home route",
             )
 
-            for route, expected_tab, expected_screen_name, required_copy in CORE_FIRST_USE_ROUTES:
+            for (
+                route,
+                expected_tab,
+                expected_screen_name,
+                required_copy,
+            ) in CORE_FIRST_USE_ROUTES:
                 if route != TAB_HOME:
                     await app.handle_screen_navigation(NavigateToScreen(route))
                     await _wait_until(
@@ -157,7 +176,10 @@ async def test_home_console_model_setup_routes_to_settings_provider_defaults(
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == TAB_HOME and app.screen.__class__.__name__ == "HomeScreen",
+                lambda: (
+                    app.current_tab == TAB_HOME
+                    and app.screen.__class__.__name__ == "HomeScreen"
+                ),
                 context="initial Home route",
             )
 
@@ -181,7 +203,9 @@ async def test_home_console_model_setup_routes_to_settings_provider_defaults(
             )
             await _wait_until(
                 pilot,
-                lambda: bool(app.screen.query("#settings-provider-value SelectOverlay")),
+                lambda: bool(
+                    app.screen.query("#settings-provider-value SelectOverlay")
+                ),
                 context="Settings provider Select overlay mounted",
             )
 
@@ -206,7 +230,10 @@ async def test_latest_dev_library_to_console_staged_context_smoke() -> None:
             app.open_chat_with_handoff(payload)
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == TAB_CHAT and app.screen.__class__.__name__ == "ChatScreen",
+                lambda: (
+                    app.current_tab == TAB_CHAT
+                    and app.screen.__class__.__name__ == "ChatScreen"
+                ),
                 context="Console route after Library/RAG handoff",
             )
             await _wait_until(
@@ -220,6 +247,8 @@ async def test_latest_dev_library_to_console_staged_context_smoke() -> None:
             assert "Live work: Transcript chunk: Agentic terminal design" in text
             assert "Evidence: 1/1 available" in text
 
-            composer = app.screen.query_one("#console-native-composer", ConsoleComposerBar)
+            composer = app.screen.query_one(
+                "#console-native-composer", ConsoleComposerBar
+            )
             assert payload.suggested_prompt in composer.draft_text()
             _assert_core_render_is_healthy(app, route="library to console")

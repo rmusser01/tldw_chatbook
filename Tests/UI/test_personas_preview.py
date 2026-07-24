@@ -2,9 +2,10 @@
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Select, Static
 
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+    PreviewGreetingSelected,
     PreviewOpenInConsoleRequested,
     PreviewReplyRequested,
     PreviewResetRequested,
@@ -105,9 +106,10 @@ async def test_seed_append_reset_roundtrip():
         await pane.reset()
         await pilot.pause()
         assert _line_texts(pilot.app) == ["character: Greetings, detective."]
-        assert str(
-            pilot.app.query_one("#personas-preview-status", Static).renderable
-        ) == ""
+        assert (
+            str(pilot.app.query_one("#personas-preview-status", Static).renderable)
+            == ""
+        )
 
 
 async def test_seed_empty_greeting_clears_transcript():
@@ -178,8 +180,8 @@ async def test_transcript_lines_carry_role_classes():
         await pilot.pause()
         you_lines = pilot.app.query(".personas-preview-line-you")
         character_lines = pilot.app.query(".personas-preview-line-character")
-        assert [str(l.renderable) for l in you_lines] == ["you: Hi"]
-        assert [str(l.renderable) for l in character_lines] == ["character: Hello."]
+        assert [str(line.renderable) for line in you_lines] == ["you: Hi"]
+        assert [str(line.renderable) for line in character_lines] == ["character: Hello."]
 
 
 async def test_test_reply_posts_message_and_clears_input():
@@ -229,9 +231,7 @@ async def test_oversized_message_is_rejected_with_readable_status():
         assert pilot.app.replies == []
         assert _line_texts(pilot.app) == []
         assert field.value == oversized  # the draft stays editable
-        status = str(
-            pilot.app.query_one("#personas-preview-status", Static).renderable
-        )
+        status = str(pilot.app.query_one("#personas-preview-status", Static).renderable)
         assert "Message too long (max 4000 characters)." == status
 
 
@@ -248,9 +248,7 @@ async def test_scripty_message_is_rejected_with_readable_status():
         await pilot.pause()
         assert pilot.app.replies == []
         assert _line_texts(pilot.app) == []
-        status = str(
-            pilot.app.query_one("#personas-preview-status", Static).renderable
-        )
+        status = str(pilot.app.query_one("#personas-preview-status", Static).renderable)
         assert status.strip()
         assert "Traceback" not in status
 
@@ -365,9 +363,10 @@ async def test_reset_button_restores_greeting_and_posts_reset():
         await pilot.pause()
         assert pilot.app.resets == 1
         assert _line_texts(pilot.app) == ["character: Hello."]
-        assert str(
-            pilot.app.query_one("#personas-preview-status", Static).renderable
-        ) == ""
+        assert (
+            str(pilot.app.query_one("#personas-preview-status", Static).renderable)
+            == ""
+        )
 
 
 async def test_open_in_console_posts_message():
@@ -407,3 +406,157 @@ async def test_status_is_readable():
         status = str(pilot.app.query_one("#personas-preview-status", Static).renderable)
         assert status == "Running"
         assert "Traceback" not in status
+
+
+async def test_greeting_text_property_returns_seeded_greeting():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasPreviewPane)
+        await pane.seed_greeting("Hello, traveller.")
+        assert pane.greeting_text == "Hello, traveller."
+        pane.refresh_greeting_seed("Updated greeting.")
+        assert pane.greeting_text == "Updated greeting."
+
+
+async def test_speaker_labels_use_character_name():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.set_speakers(character="Sherlock Holmes")
+        await pane.seed_greeting("Greetings.")
+        await pilot.pause()
+        pane.append_user("Hi")
+        pane.append_reply("Elementary.")
+        await pilot.pause()
+        assert _line_texts(app) == [
+            "Sherlock Holmes: Greetings.",
+            "you: Hi",
+            "Sherlock Holmes: Elementary.",
+        ]
+        assert pane.transcript_text() == (
+            "Sherlock Holmes: Greetings.\nyou: Hi\nSherlock Holmes: Elementary."
+        )
+
+
+async def test_speaker_labels_default_without_name():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.append_user("Hi")
+        pane.append_reply("Hello.")
+        await pilot.pause()
+        assert _line_texts(app) == ["you: Hi", "character: Hello."]
+
+
+async def test_set_speakers_ignores_empty_name():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.set_speakers(character="")
+        pane.append_reply("Hi.")
+        await pilot.pause()
+        assert _line_texts(app) == ["character: Hi."]
+
+
+async def test_styled_line_italicizes_action_and_escapes_markup():
+    app = PreviewApp()
+    async with app.run_test():
+        pane = app.query_one(PersonasPreviewPane)
+        waves = pane._styled_line("*waves*")
+        assert str(waves) == "waves"
+        assert any("italic" in str(span.style) for span in waves.spans)
+        assert str(pane._styled_line("[/oops]")) == "[/oops]"
+        assert str(pane._styled_line("you: 5 * 3")) == "you: 5 * 3"
+
+
+async def test_action_span_renders_italic_not_literal_asterisks():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.append_reply("*smiles warmly*")
+        await pilot.pause()
+        line = app.query(".personas-preview-line").last()
+        assert "*" not in str(line.renderable)
+        assert "smiles warmly" in str(line.renderable)
+        assert any("italic" in str(s.style) for s in line.renderable.spans)
+
+
+async def test_set_speakers_relabels_existing_character_lines():
+    # task-437 review: a rename mid-conversation relabels already-rendered
+    # character lines (no stale/mixed prefixes); user lines are untouched.
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.set_speakers(character="Alice")
+        await pane.seed_greeting("Hi.")
+        pane.append_user("hello")
+        pane.append_reply("hey")
+        await pilot.pause()
+        pane.set_speakers(character="Bob")
+        await pilot.pause()
+        assert pane.transcript_text() == "Bob: Hi.\nyou: hello\nBob: hey"
+        assert "Alice" not in pane.transcript_text()
+        assert _line_texts(app) == ["Bob: Hi.", "you: hello", "Bob: hey"]
+
+
+async def test_reset_speakers_restores_defaults():
+    # task-437: leaving a character context must drop the stale name so a later
+    # reply renders under the neutral default, not the previous character's name.
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.set_speakers(character="Alice")
+        pane.reset_speakers()
+        pane.append_user("Hi")
+        pane.append_reply("Hello.")
+        await pilot.pause()
+        assert _line_texts(app) == ["you: Hi", "character: Hello."]
+
+
+# ===== TASK-438: alternate-greeting selector =====
+
+
+async def test_greeting_selector_hidden_without_alternates():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.set_greetings(["Only greeting."])
+        await pilot.pause()
+        assert app.query_one("#personas-preview-greeting-row").display is False
+
+
+async def test_greeting_selector_shown_with_alternates():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.set_greetings(["Primary.", "Alt one.", "Alt two."])
+        await pilot.pause()
+        assert app.query_one("#personas-preview-greeting-row").display is True
+        select = app.query_one("#personas-preview-greeting-select", Select)
+        assert len(list(select._options)) == 3  # 3 greetings
+
+
+async def test_choosing_greeting_posts_message():
+    posted: list[int] = []
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+
+        original_post_message = pane.post_message
+
+        def _capture(message):
+            if isinstance(message, PreviewGreetingSelected):
+                posted.append(message.index)
+            return original_post_message(message)
+
+        pane.post_message = _capture
+
+        pane.set_greetings(["Primary.", "Alt one."])
+        await pilot.pause()
+        select = app.query_one("#personas-preview-greeting-select", Select)
+        select.value = 1
+        await pilot.pause()
+        # set_greetings populates the Select under prevent(Select.Changed), so the
+        # only PreviewGreetingSelected is this genuine user pick (index 1) - no
+        # spurious programmatic index-0 post (task-438 review).
+        assert posted == [1]

@@ -17,7 +17,6 @@ from .models import (
     DEFAULT_WORKSPACE_ID,
     RuntimeBindingStatus,
     WorkspaceAuthority,
-    WorkspaceEligibility,
     WorkspaceMembership,
     WorkspaceOperation,
     WorkspaceRecord,
@@ -54,6 +53,13 @@ class ConsoleWorkspaceConversationRow:
 CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT = 50
 CONSOLE_WORKSPACE_CONVERSATION_MIN_VISIBLE_ROWS = 4
 CONSOLE_WORKSPACE_CONVERSATION_MAX_VISIBLE_ROWS = 12
+# Nominal (minimum) rail conversation-row height: one name line + the
+# metadata line + the row's bottom margin. Rows whose names wrap to two
+# lines render one line taller. This constant intentionally stays at the
+# minimum: it only feeds the visible-row-count heuristic below, where a
+# slight overestimate merely loads a row or two more than fits (the list
+# scrolls); it must NOT be used for layout math (the tray derives real
+# heights from the wrap result -- see console_workspace_context.py).
 CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT = 3
 CONSOLE_WORKSPACE_CONVERSATION_HEIGHT_RATIO = 0.45
 
@@ -205,6 +211,19 @@ class ConsoleWorkspaceContextState:
     new_conversation_enabled: bool
     new_conversation_recovery: str
     recovery_copy: str
+    workspace_name: str = ""
+    scope_label: str = ""
+    #: TASK-373: raw conversation identifier kept out of the primary Scope row,
+    #: surfaced only as a hover detail.
+    scope_detail: str = ""
+    new_workspace_enabled: bool = False
+    #: Whether the workspace-level RAG retrieval-scope affordance (task-13)
+    #: should be enabled. ``True`` only when the active workspace is a real
+    #: registry row (``registry_service.get_active_workspace()`` returned a
+    #: concrete ``WorkspaceRecord``, including the real built-in Default
+    #: workspace) -- never for the "Local Default"/error/no-registry
+    #: sentinel states below, which have no real ``workspace_id`` to scope.
+    rag_scope_enabled: bool = False
     server_readiness_label: str = "Server: local fallback"
     server_readiness_detail: str = (
         "Local registry is authoritative. No background sync is running."
@@ -277,11 +296,20 @@ def build_console_workspace_state(
         Renderable Console workspace context state.
     """
 
+    # TASK-373/387: the rail Scope row showed the raw conversation UUID (no user
+    # meaning, wrapped mid-token across two lines). Show a human-readable label
+    # and keep the identifier as a hover detail (below), not in the primary row.
+    scope_label = "This conversation" if current_conversation else ""
+    scope_detail = str(current_conversation or "")
     if registry_service is None:
         acp_state = _acp_handoff_state(acp_handoff_state)
         return ConsoleWorkspaceContextState(
             heading="Convos & Workspaces",
             workspace_label="No workspace selected",
+            workspace_name="",
+            scope_label=scope_label,
+            scope_detail=scope_detail,
+            new_workspace_enabled=False,
             authority_label="Authority: unavailable",
             sync_label="Sync: unavailable",
             runtime_label="Runtime: unavailable",
@@ -314,6 +342,10 @@ def build_console_workspace_state(
         return ConsoleWorkspaceContextState(
             heading="Convos & Workspaces",
             workspace_label="No workspace selected",
+            workspace_name="",
+            scope_label=scope_label,
+            scope_detail=scope_detail,
+            new_workspace_enabled=False,
             authority_label="Authority: unavailable",
             sync_label="Sync: unavailable",
             runtime_label="Runtime: unavailable",
@@ -343,6 +375,10 @@ def build_console_workspace_state(
         return ConsoleWorkspaceContextState(
             heading="Convos & Workspaces",
             workspace_label="Workspace: Local Default",
+            workspace_name="Local Default",
+            scope_label=scope_label,
+            scope_detail=scope_detail,
+            new_workspace_enabled=True,
             authority_label="Authority: local registry ready",
             sync_label="Sync: not configured",
             runtime_label="Runtime: none",
@@ -351,13 +387,13 @@ def build_console_workspace_state(
             conversation_section=None,
             change_workspace_enabled=can_switch,
             change_workspace_recovery=(
-                "" if can_switch else "Create a workspace in Library > Workspaces before switching."
+                ""
+                if can_switch
+                else "Create a workspace in Library > Workspaces before switching."
             ),
             new_conversation_enabled=True,
             new_conversation_recovery="",
-            recovery_copy=(
-                "" if can_switch else "Workspace switching: locked"
-            ),
+            recovery_copy=("" if can_switch else "Workspace switching: locked"),
             server_readiness_label="Server: local fallback",
             server_readiness_detail=(
                 "Local registry fallback is active. No background sync is running."
@@ -385,6 +421,11 @@ def build_console_workspace_state(
     return ConsoleWorkspaceContextState(
         heading="Convos & Workspaces",
         workspace_label=f"Workspace: {active_workspace.name}",
+        workspace_name=active_workspace.name,
+        scope_label=scope_label,
+            scope_detail=scope_detail,
+        new_workspace_enabled=True,
+        rag_scope_enabled=True,
         authority_label=f"Authority: {active_workspace.authority.value}",
         sync_label=_workspace_sync_label(active_workspace),
         runtime_label=(
@@ -574,7 +615,9 @@ def _safe_runtime_bindings(
     active_workspace: WorkspaceRecord,
 ) -> tuple[WorkspaceRuntimeBinding, ...]:
     try:
-        runtime_bindings = registry_service.list_runtime_bindings(active_workspace.workspace_id)
+        runtime_bindings = registry_service.list_runtime_bindings(
+            active_workspace.workspace_id
+        )
         if not runtime_bindings:
             return ()
         return tuple(runtime_bindings)
@@ -591,7 +634,9 @@ def _safe_workspaces(registry_service: Any) -> tuple[WorkspaceRecord, ...]:
     try:
         workspaces = registry_service.list_workspaces()
     except Exception:
-        logger.opt(exception=True).warning("Failed to list workspaces for display state")
+        logger.opt(exception=True).warning(
+            "Failed to list workspaces for display state"
+        )
         return ()
     return tuple(workspaces or ())
 
@@ -601,7 +646,9 @@ def _conversation_rows_from_memberships(
     active_workspace: WorkspaceRecord,
 ) -> tuple[ConsoleWorkspaceConversationRow, ...]:
     try:
-        memberships = registry_service.list_workspace_memberships(active_workspace.workspace_id)
+        memberships = registry_service.list_workspace_memberships(
+            active_workspace.workspace_id
+        )
     except Exception:
         logger.opt(exception=True).warning(
             "Failed to read workspace memberships for Console context rail",
@@ -610,7 +657,9 @@ def _conversation_rows_from_memberships(
     if not memberships:
         return ()
     conversation_memberships = tuple(
-        membership for membership in memberships if membership.item_type == "conversation"
+        membership
+        for membership in memberships
+        if membership.item_type == "conversation"
     )
     duplicate_titles = _duplicate_membership_titles(conversation_memberships)
     rows: list[ConsoleWorkspaceConversationRow] = []
@@ -630,7 +679,9 @@ def _handoff_rows_from_memberships(
     active_workspace: WorkspaceRecord,
 ) -> tuple[ConsoleWorkspaceHandoffRow, ...]:
     try:
-        memberships = registry_service.list_workspace_memberships(active_workspace.workspace_id)
+        memberships = registry_service.list_workspace_memberships(
+            active_workspace.workspace_id
+        )
     except Exception:
         logger.opt(exception=True).warning(
             "Failed to read workspace memberships for Console handoff readiness",
@@ -869,15 +920,20 @@ def _select_conversation(
         conversation_id=row.conversation_id,
         title=row.title,
         status=row.status,
-        selected=bool(current_conversation) and row.conversation_id == current_conversation,
+        selected=bool(current_conversation)
+        and row.conversation_id == current_conversation,
     )
 
 
 def _runtime_label(bindings: tuple[WorkspaceRuntimeBinding, ...]) -> str:
     if not bindings:
         return "Runtime: none"
-    ready_count = sum(binding.status == RuntimeBindingStatus.READY for binding in bindings)
-    missing_count = sum(binding.status == RuntimeBindingStatus.MISSING for binding in bindings)
+    ready_count = sum(
+        binding.status == RuntimeBindingStatus.READY for binding in bindings
+    )
+    missing_count = sum(
+        binding.status == RuntimeBindingStatus.MISSING for binding in bindings
+    )
     label = (
         f"Runtime: {len(bindings)} {_plural('binding', len(bindings))}, "
         f"{ready_count} ready"
@@ -892,9 +948,14 @@ def _server_readiness(
     server_adapter_state: ConsoleWorkspaceServerAdapterState | None,
 ) -> tuple[str, str]:
     no_sync = "No background sync is running."
-    adapter_boundary = "Server-backed hydration remains behind the workspace adapter boundary."
+    adapter_boundary = (
+        "Server-backed hydration remains behind the workspace adapter boundary."
+    )
     if server_adapter_state is not None and not server_adapter_state.available:
-        detail = server_adapter_state.detail.strip() or "No server workspace adapter is available."
+        detail = (
+            server_adapter_state.detail.strip()
+            or "No server workspace adapter is available."
+        )
         return "Server: unavailable", f"{detail} {adapter_boundary} {no_sync}"
 
     authority = active_workspace.authority
@@ -913,7 +974,10 @@ def _server_readiness(
             "Server: runtime missing",
             f"Workspace metadata exists but the runtime binding cannot be restored. {no_sync}",
         )
-    if authority in {WorkspaceAuthority.SERVER_BACKED, WorkspaceAuthority.SYNCING_FROM_SERVER}:
+    if authority in {
+        WorkspaceAuthority.SERVER_BACKED,
+        WorkspaceAuthority.SYNCING_FROM_SERVER,
+    }:
         return (
             "Server: adapter ready",
             f"Server identity exists, but hydration still requires an explicit adapter action. {no_sync}",

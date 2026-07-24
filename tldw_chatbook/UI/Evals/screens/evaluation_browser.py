@@ -121,7 +121,9 @@ class EvaluationBrowserScreen(Screen):
     }
     """
 
-    def __init__(self, app_instance: "TldwCli", *, view_mode: str = "manage", **kwargs: Any):
+    def __init__(
+        self, app_instance: "TldwCli", *, view_mode: str = "manage", **kwargs: Any
+    ):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self.view_mode = view_mode
@@ -184,7 +186,11 @@ class EvaluationBrowserScreen(Screen):
                                     id="run-config-input",
                                     classes="launcher-input",
                                 )
-                                yield Button("Create Run", id="create-run-button", variant="primary")
+                                yield Button(
+                                    "Create Run",
+                                    id="create-run-button",
+                                    variant="primary",
+                                )
                     runs_table = DataTable(id="runs-table", classes="browser-table")
                     runs_table.cursor_type = "row"
                     runs_table.zebra_stripes = True
@@ -251,7 +257,12 @@ class EvaluationBrowserScreen(Screen):
         target_select = self.query_one("#target-select", Select)
         options = [
             (
-                str(target.get("display_name") or target.get("name") or target.get("target_model") or "Unnamed target"),
+                str(
+                    target.get("display_name")
+                    or target.get("name")
+                    or target.get("target_model")
+                    or "Unnamed target"
+                ),
                 str(target.get("backing_id") or target.get("record_id") or ""),
             )
             for target in self.targets
@@ -286,7 +297,9 @@ class EvaluationBrowserScreen(Screen):
         self._selected_evaluation_id = str(record.get("backing_id") or "")
         self._render_evaluation_detail(record)
         if self._selected_evaluation_id:
-            self.run_worker(self._refresh_runs(self._selected_evaluation_id), exclusive=True)
+            self.run_worker(
+                self._refresh_runs(self._selected_evaluation_id), exclusive=True
+            )
 
     @on(DataTable.RowSelected, "#runs-table")
     def handle_run_selected(self, event: DataTable.RowSelected) -> None:
@@ -313,7 +326,9 @@ class EvaluationBrowserScreen(Screen):
             self.nav_bar.set_status(EvalStatus.RUNNING)
 
         if scope is None:
-            context.update("Evaluation browser is unavailable because the app-owned evaluation scope service is unavailable.")
+            context.update(
+                "Evaluation browser is unavailable because the app-owned evaluation scope service is unavailable."
+            )
             self._set_empty_tables()
             if self.nav_bar:
                 self.nav_bar.set_status(EvalStatus.ERROR)
@@ -372,7 +387,9 @@ class EvaluationBrowserScreen(Screen):
         try:
             runs = await scope.list_runs(mode=mode, eval_id=evaluation_id, limit=200)
         except Exception as exc:
-            logger.opt(exception=True).error("Failed to load evaluation runs for {}", evaluation_id)
+            logger.opt(exception=True).error(
+                "Failed to load evaluation runs for {}", evaluation_id
+            )
             self._clear_runs_table(error_message=str(exc))
             self._notify(f"Failed to load evaluation runs: {exc}", severity="error")
             return
@@ -390,7 +407,9 @@ class EvaluationBrowserScreen(Screen):
             self._notify("Evaluation backend is unavailable.", severity="error")
             return
         if not self._selected_evaluation_id:
-            self._notify("Select an evaluation before creating a run.", severity="warning")
+            self._notify(
+                "Select an evaluation before creating a run.", severity="warning"
+            )
             return
 
         run_name = self.query_one("#run-name-input", Input).value.strip() or None
@@ -401,13 +420,20 @@ class EvaluationBrowserScreen(Screen):
         if mode == "local":
             target_select = self.query_one("#target-select", Select)
             if target_select.value == Select.BLANK:
-                self._notify("Select a local target before creating a run.", severity="warning")
+                self._notify(
+                    "Select a local target before creating a run.", severity="warning"
+                )
                 return
             target_id = str(target_select.value)
         else:
-            target_model = self.query_one("#target-model-input", Input).value.strip() or None
+            target_model = (
+                self.query_one("#target-model-input", Input).value.strip() or None
+            )
             if not target_model:
-                self._notify("Enter a target model before creating a server run.", severity="warning")
+                self._notify(
+                    "Enter a target model before creating a server run.",
+                    severity="warning",
+                )
                 return
 
         config: dict[str, Any] = {}
@@ -436,14 +462,22 @@ class EvaluationBrowserScreen(Screen):
             self._notify(f"Failed to create run: {exc}", severity="error")
             return
 
-        self._notify(f"Created run {run.get('backing_id') or run.get('name')}.", severity="information")
+        self._notify(
+            f"Created run {run.get('backing_id') or run.get('name')}.",
+            severity="information",
+        )
         await self._refresh_runs(self._selected_evaluation_id)
-        self._render_run_detail(self._evaluation_row_map.get(f"{mode}:evaluation:{self._selected_evaluation_id}"), {
-            "run": run,
-            "metrics": run.get("results") or {},
-            "results": None,
-            "detail_available": mode == "local",
-        })
+        self._render_run_detail(
+            self._evaluation_row_map.get(
+                f"{mode}:evaluation:{self._selected_evaluation_id}"
+            ),
+            {
+                "run": run,
+                "metrics": run.get("results") or {},
+                "results": None,
+                "detail_available": mode == "local",
+            },
+        )
 
     def _set_empty_tables(self) -> None:
         self.evaluations = []
@@ -454,7 +488,9 @@ class EvaluationBrowserScreen(Screen):
         self._clear_runs_table()
         if self.view_mode == "manage":
             self._set_target_options([])
-        self.query_one("#evaluation-detail", TextArea).text = "No evaluation data available."
+        self.query_one(
+            "#evaluation-detail", TextArea
+        ).text = "No evaluation data available."
 
     def _populate_evaluations_table(self) -> None:
         table = self.query_one("#evaluations-table", DataTable)
@@ -479,7 +515,14 @@ class EvaluationBrowserScreen(Screen):
         self.runs = []
         self._run_row_map.clear()
         if error_message:
-            table.add_row("Unable to load runs", "error", "-", "-", error_message[:32], key="runs-error")
+            table.add_row(
+                "Unable to load runs",
+                "error",
+                "-",
+                "-",
+                error_message[:32],
+                key="runs-error",
+            )
 
     def _populate_runs_table(self) -> None:
         table = self.query_one("#runs-table", DataTable)
@@ -538,7 +581,9 @@ class EvaluationBrowserScreen(Screen):
                 "sample_count": dataset.get("sample_count") if dataset else None,
                 "source_path": dataset.get("source_path") if dataset else None,
                 "format": dataset.get("format") if dataset else None,
-            } if record.get("dataset_id") else None,
+            }
+            if record.get("dataset_id")
+            else None,
             "metadata": record.get("metadata") or {},
             "eval_spec": record.get("eval_spec") or {},
         }
@@ -553,16 +598,22 @@ class EvaluationBrowserScreen(Screen):
         try:
             artifacts = await scope.get_run_artifacts(mode=mode, run_id=run_id)
         except Exception as exc:
-            logger.opt(exception=True).error("Failed to load run artifacts for {}", run_id)
+            logger.opt(exception=True).error(
+                "Failed to load run artifacts for {}", run_id
+            )
             self._notify(f"Failed to load run detail: {exc}", severity="error")
             return
 
         evaluation_record = None
         if self._selected_evaluation_id:
-            evaluation_record = self._evaluation_row_map.get(f"{mode}:evaluation:{self._selected_evaluation_id}")
+            evaluation_record = self._evaluation_row_map.get(
+                f"{mode}:evaluation:{self._selected_evaluation_id}"
+            )
         self._render_run_detail(evaluation_record, artifacts)
 
-    def _render_run_detail(self, evaluation_record: Optional[Dict[str, Any]], artifacts: Dict[str, Any]) -> None:
+    def _render_run_detail(
+        self, evaluation_record: Optional[Dict[str, Any]], artifacts: Dict[str, Any]
+    ) -> None:
         run = dict(artifacts.get("run") or {})
         dataset = None
         if evaluation_record and evaluation_record.get("dataset_id"):
@@ -570,12 +621,18 @@ class EvaluationBrowserScreen(Screen):
 
         detail_payload = {
             "evaluation": {
-                "id": evaluation_record.get("backing_id") if evaluation_record else run.get("evaluation_id"),
+                "id": evaluation_record.get("backing_id")
+                if evaluation_record
+                else run.get("evaluation_id"),
                 "name": evaluation_record.get("name") if evaluation_record else None,
                 "dataset": {
-                    "id": evaluation_record.get("dataset_id") if evaluation_record else None,
+                    "id": evaluation_record.get("dataset_id")
+                    if evaluation_record
+                    else None,
                     "name": dataset.get("name") if dataset else None,
-                } if evaluation_record else None,
+                }
+                if evaluation_record
+                else None,
             },
             "run": {
                 "id": run.get("backing_id"),
@@ -588,9 +645,13 @@ class EvaluationBrowserScreen(Screen):
                 "error_message": run.get("error_message"),
             },
             "metrics": artifacts.get("metrics") or {},
-            "results": artifacts.get("results") if artifacts.get("detail_available") else None,
+            "results": artifacts.get("results")
+            if artifacts.get("detail_available")
+            else None,
             "detail_available": bool(artifacts.get("detail_available")),
-            "detail_note": None if artifacts.get("detail_available") else "Server-backed runs currently expose summary-level results only.",
+            "detail_note": None
+            if artifacts.get("detail_available")
+            else "Server-backed runs currently expose summary-level results only.",
         }
         self.query_one("#evaluation-detail", TextArea).text = json.dumps(
             detail_payload,

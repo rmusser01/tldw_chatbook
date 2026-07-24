@@ -30,6 +30,7 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.Local_Ingestion import Document_Processing_Lib as document_processing
 from tldw_chatbook.Local_Ingestion.ingest_parse_worker import (
     classify_parse_failure,
     run_parse_job,
@@ -42,6 +43,87 @@ from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_process_document_auto_falls_back_when_docling_import_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def broken_docling(*args, **kwargs):
+        calls.append("docling")
+        raise ImportError("broken transitive Docling dependency")
+
+    def native_docx(*args, **kwargs):
+        calls.append("native")
+        return {
+            "content": "Native content",
+            "title": "sample.docx",
+            "author": "tester",
+            "metadata": {"processing_method": "python-docx"},
+            "extraction_successful": True,
+        }
+
+    monkeypatch.setattr(document_processing, "DOCLING_AVAILABLE", True)
+    monkeypatch.setattr(document_processing, "PYTHON_DOCX_AVAILABLE", True)
+    monkeypatch.setattr(document_processing, "process_with_docling", broken_docling)
+    monkeypatch.setattr(document_processing, "process_docx", native_docx)
+
+    result = document_processing.process_document(
+        "sample.docx", processing_method="auto"
+    )
+
+    assert result["extraction_successful"] is True
+    assert result["content"] == "Native content"
+    assert calls == ["docling", "native"]
+
+
+def test_process_document_explicit_docling_preserves_import_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    native_calls: list[str] = []
+
+    def broken_docling(*args, **kwargs):
+        raise ImportError("broken transitive Docling dependency")
+
+    def native_docx(*args, **kwargs):
+        native_calls.append("native")
+        return {"extraction_successful": True}
+
+    monkeypatch.setattr(document_processing, "DOCLING_AVAILABLE", True)
+    monkeypatch.setattr(document_processing, "PYTHON_DOCX_AVAILABLE", True)
+    monkeypatch.setattr(document_processing, "process_with_docling", broken_docling)
+    monkeypatch.setattr(document_processing, "process_docx", native_docx)
+
+    result = document_processing.process_document(
+        "sample.docx", processing_method="docling"
+    )
+
+    assert result["extraction_successful"] is False
+    assert result["metadata"]["error"] == "broken transitive Docling dependency"
+    assert native_calls == []
+
+
+def test_process_document_auto_does_not_retry_broken_docling_without_native_parser(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    docling_calls: list[str] = []
+
+    def broken_docling(*args, **kwargs):
+        docling_calls.append("docling")
+        raise ImportError("broken transitive Docling dependency")
+
+    monkeypatch.setattr(document_processing, "DOCLING_AVAILABLE", True)
+    monkeypatch.setattr(document_processing, "PYTHON_DOCX_AVAILABLE", False)
+    monkeypatch.setattr(document_processing, "process_with_docling", broken_docling)
+
+    result = document_processing.process_document(
+        "sample.docx", processing_method="auto"
+    )
+
+    assert result["extraction_successful"] is False
+    assert result["metadata"]["error"] == "No parser available for .docx"
+    assert docling_calls == ["docling"]
 
 
 # --- parse_local_file_for_ingest -------------------------------------------
@@ -73,6 +155,43 @@ def test_parse_returns_payload_without_touching_a_database(tmp_path: Path) -> No
     import pickle
 
     pickle.dumps(payload)
+
+
+def test_parse_pdf_success_with_present_but_none_error_key_does_not_raise(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """task-168(c): ``process_pdf``'s result dict always has an ``'error'``
+    key (initialized to ``None`` and only ever overwritten on a real
+    failure -- see ``PDF_Processing_Lib.process_pdf``'s initial ``result``
+    dict). ``'error' in result`` is therefore ALWAYS ``True``, even on a
+    clean success, so every real PDF parse incorrectly raised
+    ``FileIngestionError``. The check must key off truthiness
+    (``result.get('error')``) instead of key presence."""
+    source = tmp_path / "doc.pdf"
+    source.write_bytes(
+        b"%PDF-1.4 stub bytes, never actually parsed (process_pdf is mocked)."
+    )
+
+    stub_result = {
+        "status": "Success",
+        "content": "Extracted PDF text.",
+        "title": "Doc title",
+        "author": "Some Author",
+        "keywords": [],
+        "chunks": [],
+        "analysis": "",
+        "metadata": {},
+        "error": None,  # present, falsy -- the real process_pdf shape on success
+    }
+    monkeypatch.setattr(
+        "tldw_chatbook.Local_Ingestion.local_file_ingestion.process_pdf",
+        lambda **kwargs: stub_result,
+    )
+
+    payload = parse_local_file_for_ingest(str(source), {"perform_analysis": False})
+
+    assert payload["content"] == "Extracted PDF text."
+    assert payload["title"] == "Doc title"
 
 
 def test_parse_missing_file_raises_filenotfounderror(tmp_path: Path) -> None:
@@ -107,6 +226,36 @@ def test_persist_writes_payload_and_returns_media_id(tmp_path: Path) -> None:
     assert row["title"] == "Persist me"
     assert row["content"] == "Persisted content."
     assert row["type"] == "plaintext"
+
+
+def test_persist_url_payload_writes_article_row_no_filesystem() -> None:
+    """A URL-source payload (media_type=article, canonical url, URL string as
+    file_path) persists to a media row without any filesystem access -- the
+    payload's file_path is a URL that is not a real file, and persist never
+    stats/opens it (it only forwards url/content/etc. to the DB)."""
+    payload = {
+        "file_type": "article",
+        "media_type": "article",
+        "title": "Kept article",
+        "content": "Extracted article body.",
+        "keywords": [],
+        "url": "https://example.com/post",
+        "analysis_content": "",
+        "author": "Unknown",
+        "chunks": None,
+        "chunk_options": None,
+        "file_path": "https://example.com/post",  # a URL, NOT a real file -> never accessed
+    }
+
+    db = MediaDatabase(":memory:", client_id="test-url-persist")
+    media_id, media_uuid, message = persist_parsed_media(payload, db)
+
+    assert isinstance(media_id, int)
+    assert isinstance(media_uuid, str) and media_uuid
+    row = db.get_media_by_id(media_id)
+    assert row is not None
+    assert row["url"] == "https://example.com/post"
+    assert row["type"] == "article"
 
 
 def test_persist_db_failure_is_wrapped_as_file_ingestion_error(tmp_path: Path) -> None:
@@ -297,12 +446,18 @@ def test_classify_parse_failure_missing_file_is_permanent() -> None:
 
 
 def test_classify_parse_failure_unsupported_type_is_permanent() -> None:
-    assert classify_parse_failure(FileIngestionError("Unsupported file type: .xyz")) is True
+    assert (
+        classify_parse_failure(FileIngestionError("Unsupported file type: .xyz"))
+        is True
+    )
 
 
 def test_classify_parse_failure_generic_error_is_retryable() -> None:
     assert classify_parse_failure(RuntimeError("transient DB hiccup")) is False
-    assert classify_parse_failure(FileIngestionError("Failed to ingest pdf file: boom")) is False
+    assert (
+        classify_parse_failure(FileIngestionError("Failed to ingest pdf file: boom"))
+        is False
+    )
 
 
 # --- run_parse_job (pool entry point) ----------------------------------------
@@ -403,7 +558,9 @@ def _run_isolated_python(tmp_path: Path, code: str) -> subprocess.CompletedProce
     )
 
 
-def test_ingest_parse_worker_import_excludes_local_file_ingestion(tmp_path: Path) -> None:
+def test_ingest_parse_worker_import_excludes_local_file_ingestion(
+    tmp_path: Path,
+) -> None:
     """Resolving ingest_parse_worker by its real dotted path (exactly how a
     spawned pool worker unpickles ``run_parse_job``) must not drag
     ``local_file_ingestion`` (or its heavy transitive parse-chain deps)
@@ -449,9 +606,13 @@ def test_run_parse_job_through_real_spawn_pool(tmp_path: Path) -> None:
 
     ctx = multiprocessing.get_context("spawn")
     with ctx.Pool(1) as pool:
-        async_result = pool.apply_async(run_parse_job, (str(source), {"title": "Pool note"}))
+        async_result = pool.apply_async(
+            run_parse_job, (str(source), {"title": "Pool note"})
+        )
         result = async_result.get(timeout=120)
 
     assert result["ok"] is True
     assert result["payload"]["title"] == "Pool note"
-    assert result["payload"]["content"] == "Parsed inside a real spawned worker process."
+    assert (
+        result["payload"]["content"] == "Parsed inside a real spawned worker process."
+    )

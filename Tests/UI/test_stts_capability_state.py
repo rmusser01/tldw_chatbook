@@ -50,8 +50,12 @@ async def test_stts_window_refreshes_local_speech_dependency_flags(monkeypatch):
         DEPENDENCIES_AVAILABLE["stt_processing"] = True
         return True
 
-    monkeypatch.setattr("tldw_chatbook.UI.STTS_Window.check_tts_deps", mark_tts_available)
-    monkeypatch.setattr("tldw_chatbook.UI.STTS_Window.check_stt_deps", mark_stt_available)
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.STTS_Window.check_tts_deps", mark_tts_available
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.STTS_Window.check_stt_deps", mark_stt_available
+    )
 
     class STTSCapabilityApp(App):
         def compose(self) -> ComposeResult:

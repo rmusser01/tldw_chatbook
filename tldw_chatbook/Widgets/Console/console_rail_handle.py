@@ -46,9 +46,7 @@ class ConsoleRailHandle(Vertical):
         button.styles.min_height = button_height
         button.styles.max_height = button_height
         button.tooltip = (
-            "Open Context rail"
-            if self.side == "left"
-            else "Open Inspector rail"
+            "Open Context rail" if self.side == "left" else "Open Inspector rail"
         )
         yield button
         if self.badge:

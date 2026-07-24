@@ -22,23 +22,25 @@ PHASE_6_README = Path("Docs/superpowers/qa/unified-shell/phase-6/README.md")
 PHASE_6_FIRST_TIME_EVIDENCE = Path(
     "Docs/superpowers/qa/unified-shell/phase-6/2026-05-05-phase-6-1-first-time-user-replay.md"
 )
-PHASE_6_PARENT_TASK = Path("backlog/tasks/task-7 - Phase-6-Audit-Replay-And-Closeout.md")
+PHASE_6_PARENT_TASK = Path(
+    "backlog/tasks/task-7 - Phase-6-Audit-Replay-And-Closeout.md"
+)
 PHASE_6_FIRST_TIME_TASK = Path(
     "backlog/tasks/task-7.1 - Phase-6.1-Replay-first-time-user-walkthrough.md"
 )
 
 EXPECTED_NAV = [
-    ("nav-home", "Home"),
-    ("nav-console", "Console"),
-    ("nav-library", "Library"),
-    ("nav-artifacts", "Artifacts"),
-    ("nav-personas", "Personas"),
-    ("nav-watchlists_collections", "Watchlists"),
-    ("nav-schedules", "Schedules"),
-    ("nav-workflows", "Workflows"),
-    ("nav-mcp", "MCP"),
-    ("nav-acp", "ACP"),
-    ("nav-skills", "Skills"),
+    ("nav-home", "1 Home"),
+    ("nav-console", "2 Console"),
+    ("nav-library", "3 Library"),
+    ("nav-artifacts", "4 Artifacts"),
+    ("nav-personas", "5 RP&CD"),
+    ("nav-watchlists_collections", "6 Watchlists"),
+    ("nav-schedules", "7 Schedules"),
+    ("nav-workflows", "8 Workflows"),
+    ("nav-mcp", "9 MCP"),
+    ("nav-acp", "0 ACP"),
+    ("nav-lab", "Lab"),
     ("nav-settings", "Settings"),
 ]
 
@@ -117,7 +119,9 @@ def _test_cli_setting(section: str, key: str, default=None):
 
 
 @pytest.mark.asyncio
-async def test_first_time_shell_replay_exposes_home_console_and_orientation_paths() -> None:
+async def test_first_time_shell_replay_exposes_home_console_and_orientation_paths() -> (
+    None
+):
     """Verify first-time launch exposes the shell's primary orientation paths."""
     app = _build_test_app()
     app.app_config["_first_run"] = True
@@ -127,11 +131,22 @@ async def test_first_time_shell_replay_exposes_home_console_and_orientation_path
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                # Nav strip + docked hint mount a tick after the screen swap;
+                # wait for the full chrome before asserting/clicking.
+                lambda: (
+                    app.current_tab == "home"
+                    and app.screen.__class__.__name__ == "HomeScreen"
+                    and len(app.screen.query(".nav-button")) == len(EXPECTED_NAV)
+                    and len(app.screen.query("#nav-overflow-hint")) == 1
+                ),
             )
 
-            nav_buttons = list(app.screen.query(MainNavigationBar).first().query(Button))
-            assert [(button.id, str(button.label).strip()) for button in nav_buttons] == EXPECTED_NAV
+            nav_buttons = list(
+                app.screen.query(MainNavigationBar).first().query(Button)
+            )
+            assert [
+                (button.id, str(button.label).strip()) for button in nav_buttons
+            ] == EXPECTED_NAV
 
             home_text = _screen_text(app)
             assert "Console needs a working model before live AI tasks." in home_text
@@ -150,31 +165,26 @@ async def test_first_time_shell_replay_exposes_home_console_and_orientation_path
                     "nav-library",
                     "library",
                     "LibraryScreen",
-                    ("Library", "Import/Export Sources", "Search/RAG"),
+                    ("Library", "Import / Export", "Search / RAG"),
                 ),
                 (
                     "nav-personas",
                     "personas",
                     "PersonasScreen",
                     (
-                        "Personas",
-                        "Behavior profiles for chat and agents",
-                        "characters, personas, prompts, dictionaries, and lore",
-                        "Attach to Console",
+                        "Roleplay",
+                        "Author the pieces that shape a chat",
+                        "Characters",
+                        "Lore",
                     ),
-                ),
-                (
-                    "nav-skills",
-                    "skills",
-                    "SkillsScreen",
-                    ("Skills", "Agent Skills", "SKILL.md"),
                 ),
             ):
                 app.screen.query_one(f"#{button_id}", Button).press()
                 await _wait_until(
                     pilot,
                     lambda current_tab=current_tab, screen_name=screen_name: (
-                        app.current_tab == current_tab and app.screen.__class__.__name__ == screen_name
+                        app.current_tab == current_tab
+                        and app.screen.__class__.__name__ == screen_name
                     ),
                 )
                 screen_text = _screen_text(app)

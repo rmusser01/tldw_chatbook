@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, AsyncGenerator, Mapping, Optional
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    NotificationPreferencesUpdateRequest,
-    NotificationSnoozeRequest,
-    ReminderTaskCreateRequest,
-    ReminderTaskUpdateRequest,
-    TLDWAPIClient,
-)
+
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient
 
 
 class ServerNotificationsService:
@@ -60,13 +56,17 @@ class ServerNotificationsService:
             return self.client
         if self.client_provider is not None:
             return self.client_provider.build_client()
-        raise ValueError("TLDW API client is required for server notification operations.")
+        raise ValueError(
+            "TLDW API client is required for server notification operations."
+        )
 
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -75,11 +75,14 @@ class ServerNotificationsService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
                     user_message=getattr(decision, "user_message", None)
                     or "Server notifications action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @staticmethod
@@ -115,16 +118,27 @@ class ServerNotificationsService:
 
     async def dismiss(self, notification_id: int) -> dict[str, Any]:
         self._enforce("notifications.feed.update.server")
-        return self._dump(await self._require_client().dismiss_notification(notification_id))
+        return self._dump(
+            await self._require_client().dismiss_notification(notification_id)
+        )
 
-    async def snooze(self, notification_id: int, *, minutes: int = 30) -> dict[str, Any]:
+    async def snooze(
+        self, notification_id: int, *, minutes: int = 30
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import NotificationSnoozeRequest
+
         self._enforce("notifications.reminders.launch.server")
         request = NotificationSnoozeRequest(minutes=minutes)
-        return self._dump(await self._require_client().snooze_notification(notification_id, request))
+        return self._dump(
+            await self._require_client().snooze_notification(notification_id, request)
+        )
 
     async def cancel_snooze(self, notification_id: int) -> dict[str, Any]:
         self._enforce("notifications.reminders.configure.server")
-        return self._dump(await self._require_client().cancel_notification_snooze(notification_id))
+        return self._dump(
+            await self._require_client().cancel_notification_snooze(notification_id)
+        )
 
     async def get_preferences(self) -> dict[str, Any]:
         self._enforce("notifications.reminders.list.server")
@@ -137,13 +151,18 @@ class ServerNotificationsService:
         job_completed_enabled: bool | None = None,
         job_failed_enabled: bool | None = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import NotificationPreferencesUpdateRequest
+
         self._enforce("notifications.reminders.configure.server")
         request = NotificationPreferencesUpdateRequest(
             reminder_enabled=reminder_enabled,
             job_completed_enabled=job_completed_enabled,
             job_failed_enabled=job_failed_enabled,
         )
-        return self._dump(await self._require_client().update_notification_preferences(request))
+        return self._dump(
+            await self._require_client().update_notification_preferences(request)
+        )
 
     async def observe_feed(
         self,
@@ -172,6 +191,9 @@ class ServerNotificationsService:
         link_url: str | None = None,
         enabled: bool = True,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ReminderTaskCreateRequest
+
         self._enforce("notifications.reminders.configure.server")
         request = ReminderTaskCreateRequest(
             title=title,
@@ -210,6 +232,9 @@ class ServerNotificationsService:
         link_url: Any = None,
         enabled: Any = None,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ReminderTaskUpdateRequest
+
         self._enforce("notifications.reminders.configure.server")
         payload = {
             "title": title,
@@ -223,8 +248,12 @@ class ServerNotificationsService:
             "link_url": link_url,
             "enabled": enabled,
         }
-        request = ReminderTaskUpdateRequest(**{key: value for key, value in payload.items() if value is not None})
-        return self._dump(await self._require_client().update_reminder_task(task_id, request))
+        request = ReminderTaskUpdateRequest(
+            **{key: value for key, value in payload.items() if value is not None}
+        )
+        return self._dump(
+            await self._require_client().update_reminder_task(task_id, request)
+        )
 
     async def delete_reminder(self, task_id: str) -> dict[str, Any]:
         self._enforce("notifications.reminders.configure.server")

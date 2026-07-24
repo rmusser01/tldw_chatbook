@@ -9,15 +9,60 @@ LIBRARY_CANVAS_LANDING_COPY = "Search, pick a content type, or ingest something 
 LIBRARY_ROW_BROWSE_CONVERSATIONS = "browse-conversations"
 LIBRARY_ROW_BROWSE_MEDIA = "browse-media"
 LIBRARY_ROW_BROWSE_NOTES = "browse-notes"
+# Value follows the sibling "browse-*" convention: the rail widget renders
+# the row's DOM id as LIBRARY_RAIL_ROW_PREFIX ("library-row-") + row_id,
+# i.e. "#library-row-browse-prompts" -- the id the task brief names.
+LIBRARY_ROW_BROWSE_PROMPTS = "browse-prompts"
+# Skills sub-project Task 1: same "browse-*" convention, rendered right after
+# Prompts in the Browse section -- "#library-row-browse-skills". Until the
+# Skills canvas lands (Task 3), the row is inert-but-selectable: pressing it
+# just selects the row and falls through to the shell's generic empty-canvas
+# landing path (no ``elif shell.canvas_kind == "skills"`` branch exists yet
+# in library_screen.py's compose).
+LIBRARY_ROW_BROWSE_SKILLS = "browse-skills"
 LIBRARY_ROW_BROWSE_SEARCH = "browse-search"
 LIBRARY_ROW_BROWSE_COLLECTIONS = "browse-collections"
 LIBRARY_ROW_CREATE_NOTE = "create-note"
+# Task 8b D1: "New prompt" -- unlike LIBRARY_ROW_CREATE_NOTE (its own
+# "notes-create" canvas kind, a landing chooser of Blank/template rows),
+# this row's target_id is "prompts" itself: it reuses the SAME canvas kind
+# Browse > Prompts targets. The screen distinguishes "opened via Browse" vs
+# "opened via New prompt" by view/selection state
+# (`_library_prompts_view == "editor"` plus a `prompt_id=None` sentinel),
+# not by a separate canvas kind -- see library_screen.py's
+# `_enter_library_prompt_create_editor`.
+LIBRARY_ROW_CREATE_PROMPT = "create-prompt"
+# Skills sub-project (skills-200 spec, "Create > New skill"): same shape as
+# LIBRARY_ROW_CREATE_PROMPT above -- its target_id is "skills" itself (the
+# SAME canvas kind Browse > Skills targets), not a dedicated "skills-create"
+# canvas kind. The screen distinguishes "opened via Browse" vs "opened via
+# New skill" by ``_selected_skill_name`` being empty (the same sentinel
+# ``_save_library_skill``'s ``is_create`` already reads) -- see
+# library_screen.py's ``_enter_library_skill_create_editor``.
+LIBRARY_ROW_CREATE_SKILL = "create-skill"
 LIBRARY_ROW_INGEST_MEDIA = "ingest-import-media"
+LIBRARY_ROW_INGEST_EXPORT = "ingest-export"
+
+# Export packages local DB content directly (the chatbook creator reads
+# local DBs, never a server) -- when a server source is active, the row
+# renders disabled with this tooltip rather than offering a control that
+# would silently export nothing (or the wrong content). Mirrors the
+# scope-service gating pattern (F4 design spec, "Entry points").
+LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP = "Export packages local content only."
 
 
 @dataclass(frozen=True)
 class LibraryRailRow:
-    """One selectable row in the Library shell rail."""
+    """One selectable row in the Library shell rail.
+
+    Attributes:
+        disabled: Whether this row's rail button should render disabled
+            (unclickable). Only the Export row uses this today (server-
+            mode gating) -- every other row is always enabled.
+        disabled_tooltip: The tooltip shown while ``disabled`` is
+            ``True``, overriding the row's normal title-as-tooltip.
+            Ignored when ``disabled`` is ``False``.
+    """
 
     row_id: str
     section_id: str
@@ -28,6 +73,8 @@ class LibraryRailRow:
     count_known: bool = True
     count_display: str = ""
     count_emphasis: str = ""
+    disabled: bool = False
+    disabled_tooltip: str = ""
 
 
 @dataclass(frozen=True)
@@ -49,6 +96,10 @@ class LibraryShellInput:
     conversations_known: bool = True
     notes_count: int | None = None
     notes_known: bool = True
+    prompts_count: int | None = None
+    prompts_known: bool = True
+    skills_count: int | None = None
+    skills_known: bool = True
     collections_count: int | None = None
     collections_known: bool = True
     runtime_source: str = "local"
@@ -116,6 +167,33 @@ def build_library_shell_state(
             count_known=state.notes_known,
         ),
         LibraryRailRow(
+            # Row click resolves target_id "prompts" as its canvas_kind
+            # below; the screen's compose_content (Task 3) renders
+            # LibraryPromptsListCanvas for that kind -- no registry change
+            # needed here, the row -> canvas_kind mapping already existed
+            # from Task 1.
+            row_id=LIBRARY_ROW_BROWSE_PROMPTS,
+            section_id="browse",
+            title="Prompts",
+            target_kind="canvas",
+            target_id="prompts",
+            count=state.prompts_count,
+            count_known=state.prompts_known,
+        ),
+        LibraryRailRow(
+            # Task 1: row exists and is selectable now; its canvas (Task 3)
+            # does not exist yet, so selecting it falls through to the
+            # shell's generic empty-canvas landing path -- see
+            # ``LIBRARY_ROW_BROWSE_SKILLS``'s comment above.
+            row_id=LIBRARY_ROW_BROWSE_SKILLS,
+            section_id="browse",
+            title="Skills",
+            target_kind="canvas",
+            target_id="skills",
+            count=state.skills_count,
+            count_known=state.skills_known,
+        ),
+        LibraryRailRow(
             row_id=LIBRARY_ROW_BROWSE_COLLECTIONS,
             section_id="browse",
             title="Collections",
@@ -146,6 +224,24 @@ def build_library_shell_state(
             count_known=True,
         ),
         LibraryRailRow(
+            row_id=LIBRARY_ROW_CREATE_PROMPT,
+            section_id="create",
+            title="New prompt",
+            target_kind="canvas",
+            target_id="prompts",
+            count=None,
+            count_known=True,
+        ),
+        LibraryRailRow(
+            row_id=LIBRARY_ROW_CREATE_SKILL,
+            section_id="create",
+            title="New skill",
+            target_kind="canvas",
+            target_id="skills",
+            count=None,
+            count_known=True,
+        ),
+        LibraryRailRow(
             row_id="create-study",
             section_id="create",
             title="Study decks",
@@ -168,11 +264,7 @@ def build_library_shell_state(
                 else ""
             ),
             count_emphasis=(
-                (
-                    "bright"
-                    if state.flashcards_due_count > 0
-                    else "dim"
-                )
+                ("bright" if state.flashcards_due_count > 0 else "dim")
                 if state.flashcards_due_count is not None
                 else ""
             ),
@@ -188,6 +280,11 @@ def build_library_shell_state(
         ),
     )
 
+    # Computed up front (not just in the header-line block below) since
+    # the Export row's server-mode gating also depends on it.
+    runtime_source = str(state.runtime_source or "local").strip().lower()
+    export_row_disabled = runtime_source == "server"
+
     ingest_rows = (
         LibraryRailRow(
             row_id=LIBRARY_ROW_INGEST_MEDIA,
@@ -198,16 +295,30 @@ def build_library_shell_state(
             count=None,
             count_known=True,
         ),
+        LibraryRailRow(
+            row_id=LIBRARY_ROW_INGEST_EXPORT,
+            section_id="ingest",
+            title="Export",
+            target_kind="canvas",
+            target_id="export",
+            count=None,
+            count_known=True,
+            disabled=export_row_disabled,
+            disabled_tooltip=(
+                LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP if export_row_disabled else ""
+            ),
+        ),
     )
 
     sections = (
         LibraryRailSectionState(section_id="browse", title="Browse", rows=browse_rows),
         LibraryRailSectionState(section_id="create", title="Create", rows=create_rows),
-        LibraryRailSectionState(section_id="ingest", title="Ingest", rows=ingest_rows),
+        LibraryRailSectionState(
+            section_id="ingest", title="Import / Export", rows=ingest_rows
+        ),
     )
 
     # Build header line
-    runtime_source = str(state.runtime_source or "local").strip().lower()
     if runtime_source == "server":
         server_label = str(state.server_label or "unknown").strip()
         header_line = f"Library | Server: {server_label}"

@@ -2,26 +2,28 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api import (
-    ClaimNotificationsAckRequest,
-    ClaimReviewBulkRequest,
-    ClaimReviewRequest,
-    ClaimReviewRuleCreate,
-    ClaimReviewRuleUpdate,
-    ClaimUpdateRequest,
-    ClaimsAlertConfigCreate,
-    ClaimsAlertConfigUpdate,
-    ClaimsAnalyticsExportRequest,
-    ClaimsClusterLinkCreate,
-    ClaimsMonitoringSettingsUpdate,
-    ClaimsSettingsUpdate,
-    FVAVerifyRequest,
-    TLDWAPIClient,
-)
+
+if TYPE_CHECKING:
+    from ..tldw_api import (
+        ClaimNotificationsAckRequest,
+        ClaimReviewBulkRequest,
+        ClaimReviewRequest,
+        ClaimReviewRuleCreate,
+        ClaimReviewRuleUpdate,
+        ClaimUpdateRequest,
+        ClaimsAlertConfigCreate,
+        ClaimsAlertConfigUpdate,
+        ClaimsAnalyticsExportRequest,
+        ClaimsClusterLinkCreate,
+        ClaimsMonitoringSettingsUpdate,
+        ClaimsSettingsUpdate,
+        FVAVerifyRequest,
+        TLDWAPIClient,
+    )
 
 
 class ServerClaimsService:
@@ -75,7 +77,9 @@ class ServerClaimsService:
         if self.policy_enforcer is None:
             return
         require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
-        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        require_ui_action_allowed = getattr(
+            self.policy_enforcer, "require_ui_action_allowed", None
+        )
         if callable(require_allowed):
             require_allowed(action_id=action_id)
             return
@@ -84,10 +88,14 @@ class ServerClaimsService:
             if decision is not None and getattr(decision, "allowed", True) is False:
                 raise PolicyDeniedError(
                     action_id=action_id,
-                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
-                    user_message=getattr(decision, "user_message", None) or "Server claims action is not allowed.",
-                    effective_source=getattr(decision, "effective_source", None) or "server",
-                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                    reason_code=getattr(decision, "reason_code", None)
+                    or "authority_denied",
+                    user_message=getattr(decision, "user_message", None)
+                    or "Server claims action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None)
+                    or "server",
+                    authority_owner=getattr(decision, "authority_owner", None)
+                    or "server",
                 )
 
     @classmethod
@@ -101,7 +109,9 @@ class ServerClaimsService:
         return response
 
     @staticmethod
-    def _with_record_id(kind: str, payload: dict[str, Any], identifier: Any | None = None) -> dict[str, Any]:
+    def _with_record_id(
+        kind: str, payload: dict[str, Any], identifier: Any | None = None
+    ) -> dict[str, Any]:
         record = dict(payload or {})
         record.setdefault("backend", "server")
         if identifier is None:
@@ -118,11 +128,15 @@ class ServerClaimsService:
 
     @classmethod
     def _normalize_claim(cls, item: dict[str, Any]) -> dict[str, Any]:
-        return cls._with_record_id("claim", item, item.get("id") or item.get("claim_id"))
+        return cls._with_record_id(
+            "claim", item, item.get("id") or item.get("claim_id")
+        )
 
     @classmethod
     def _normalize_cluster(cls, item: dict[str, Any]) -> dict[str, Any]:
-        record = cls._with_record_id("claim_cluster", item, item.get("cluster_id") or item.get("id"))
+        record = cls._with_record_id(
+            "claim_cluster", item, item.get("cluster_id") or item.get("id")
+        )
         if isinstance(record.get("top_claim"), dict):
             record["top_claim"] = cls._normalize_claim(record["top_claim"])
         return record
@@ -145,10 +159,14 @@ class ServerClaimsService:
         if kind == "claim_review_rule":
             return cls._with_record_id("claim_review_rule", payload)
         if kind == "claim_analytics_export":
-            record = cls._with_record_id("claim_analytics_export", payload, payload.get("export_id"))
+            record = cls._with_record_id(
+                "claim_analytics_export", payload, payload.get("export_id")
+            )
             if isinstance(record.get("exports"), list):
                 record["exports"] = [
-                    cls._with_record_id("claim_analytics_export", item, item.get("export_id"))
+                    cls._with_record_id(
+                        "claim_analytics_export", item, item.get("export_id")
+                    )
                     if isinstance(item, dict)
                     else item
                     for item in record["exports"]
@@ -157,7 +175,11 @@ class ServerClaimsService:
         if kind == "claim_cluster_link":
             parent = payload.get("parent_cluster_id")
             child = payload.get("child_cluster_id")
-            identifier = f"{parent}:{child}" if parent is not None and child is not None else None
+            identifier = (
+                f"{parent}:{child}"
+                if parent is not None and child is not None
+                else None
+            )
             return cls._with_record_id("claim_cluster_link", payload, identifier)
         if kind == "claims_fva":
             return cls._with_record_id("claims_fva", payload, "verification")
@@ -181,12 +203,17 @@ class ServerClaimsService:
             ]
         if isinstance(record.get("notifications"), list):
             record["notifications"] = [
-                cls._with_record_id("claim_notification", item) if isinstance(item, dict) else item
+                cls._with_record_id("claim_notification", item)
+                if isinstance(item, dict)
+                else item
                 for item in record["notifications"]
             ]
         if isinstance(record.get("items"), list):
             record["items"] = [
-                cls._normalize_claim(item) if isinstance(item, dict) and ("claim_text" in item or "claim_id" in item) else item
+                cls._normalize_claim(item)
+                if isinstance(item, dict)
+                and ("claim_text" in item or "claim_id" in item)
+                else item
                 for item in record["items"]
             ]
         return record
@@ -199,223 +226,438 @@ class ServerClaimsService:
 
     async def get_claims_status(self) -> dict[str, Any]:
         self._enforce("claims.status.detail.server")
-        return self._normalize_response(await self._require_client().get_claims_status())
+        return self._normalize_response(
+            await self._require_client().get_claims_status()
+        )
 
     async def list_all_claims(self, **kwargs: Any) -> list[dict[str, Any]]:
         self._enforce("claims.items.list.server")
-        return self._normalize_response(await self._require_client().list_all_claims(**kwargs), kind="claim")
+        return self._normalize_response(
+            await self._require_client().list_all_claims(**kwargs), kind="claim"
+        )
 
     async def get_claims_settings(self) -> dict[str, Any]:
         self._enforce("claims.settings.list.server")
-        return self._normalize_response(await self._require_client().get_claims_settings())
+        return self._normalize_response(
+            await self._require_client().get_claims_settings()
+        )
 
-    async def update_claims_settings(self, request_data: ClaimsSettingsUpdate | dict[str, Any]) -> dict[str, Any]:
+    async def update_claims_settings(
+        self, request_data: ClaimsSettingsUpdate | dict[str, Any]
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClaimsSettingsUpdate
+
         self._enforce("claims.settings.update.server")
         request = self._model(request_data, ClaimsSettingsUpdate)
-        return self._normalize_response(await self._require_client().update_claims_settings(request))
+        return self._normalize_response(
+            await self._require_client().update_claims_settings(request)
+        )
 
     async def get_claims_monitoring_config(self) -> dict[str, Any]:
         self._enforce("claims.monitoring.list.server")
-        return self._normalize_response(await self._require_client().get_claims_monitoring_config())
+        return self._normalize_response(
+            await self._require_client().get_claims_monitoring_config()
+        )
 
     async def update_claims_monitoring_config(
         self,
         request_data: ClaimsMonitoringSettingsUpdate | dict[str, Any],
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClaimsMonitoringSettingsUpdate
+
         self._enforce("claims.monitoring.update.server")
         request = self._model(request_data, ClaimsMonitoringSettingsUpdate)
-        return self._normalize_response(await self._require_client().update_claims_monitoring_config(request))
+        return self._normalize_response(
+            await self._require_client().update_claims_monitoring_config(request)
+        )
 
     async def list_claim_notifications(self, **kwargs: Any) -> list[dict[str, Any]]:
         self._enforce("claims.notifications.list.server")
-        return self._normalize_response(await self._require_client().list_claim_notifications(**kwargs), kind="claim_notification")
+        return self._normalize_response(
+            await self._require_client().list_claim_notifications(**kwargs),
+            kind="claim_notification",
+        )
 
     async def get_claim_notifications_digest(self, **kwargs: Any) -> dict[str, Any]:
         self._enforce("claims.notifications.list.server")
-        return self._normalize_response(await self._require_client().get_claim_notifications_digest(**kwargs))
+        return self._normalize_response(
+            await self._require_client().get_claim_notifications_digest(**kwargs)
+        )
 
-    async def ack_claim_notifications(self, request_data: ClaimNotificationsAckRequest | dict[str, Any]) -> dict[str, Any]:
+    async def ack_claim_notifications(
+        self, request_data: ClaimNotificationsAckRequest | dict[str, Any]
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClaimNotificationsAckRequest
+
         self._enforce("claims.notifications.update.server")
         request = self._model(request_data, ClaimNotificationsAckRequest)
-        return self._normalize_response(await self._require_client().ack_claim_notifications(request))
+        return self._normalize_response(
+            await self._require_client().ack_claim_notifications(request)
+        )
 
-    async def evaluate_claim_watchlist_notifications(self, **kwargs: Any) -> dict[str, Any]:
+    async def evaluate_claim_watchlist_notifications(
+        self, **kwargs: Any
+    ) -> dict[str, Any]:
         self._enforce("claims.notifications.launch.server")
-        return self._normalize_response(await self._require_client().evaluate_claim_watchlist_notifications(**kwargs))
+        return self._normalize_response(
+            await self._require_client().evaluate_claim_watchlist_notifications(
+                **kwargs
+            )
+        )
 
     async def list_claim_alerts(self, **kwargs: Any) -> list[dict[str, Any]]:
         self._enforce("claims.alerts.list.server")
-        return self._normalize_response(await self._require_client().list_claim_alerts(**kwargs), kind="claim_alert")
+        return self._normalize_response(
+            await self._require_client().list_claim_alerts(**kwargs), kind="claim_alert"
+        )
 
-    async def create_claim_alert(self, request_data: ClaimsAlertConfigCreate | dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+    async def create_claim_alert(
+        self, request_data: ClaimsAlertConfigCreate | dict[str, Any], **kwargs: Any
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClaimsAlertConfigCreate
+
         self._enforce("claims.alerts.create.server")
         request = self._model(request_data, ClaimsAlertConfigCreate)
-        return self._normalize_response(await self._require_client().create_claim_alert(request, **kwargs), kind="claim_alert")
+        return self._normalize_response(
+            await self._require_client().create_claim_alert(request, **kwargs),
+            kind="claim_alert",
+        )
 
-    async def update_claim_alert(self, config_id: int, request_data: ClaimsAlertConfigUpdate | dict[str, Any]) -> dict[str, Any]:
+    async def update_claim_alert(
+        self, config_id: int, request_data: ClaimsAlertConfigUpdate | dict[str, Any]
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClaimsAlertConfigUpdate
+
         self._enforce("claims.alerts.update.server")
         request = self._model(request_data, ClaimsAlertConfigUpdate)
-        return self._normalize_response(await self._require_client().update_claim_alert(config_id, request), kind="claim_alert")
+        return self._normalize_response(
+            await self._require_client().update_claim_alert(config_id, request),
+            kind="claim_alert",
+        )
 
     async def delete_claim_alert(self, config_id: int) -> dict[str, Any]:
         self._enforce("claims.alerts.delete.server")
-        return self._normalize_response(await self._require_client().delete_claim_alert(config_id))
+        return self._normalize_response(
+            await self._require_client().delete_claim_alert(config_id)
+        )
 
     async def evaluate_claim_alerts(self, **kwargs: Any) -> dict[str, Any]:
         self._enforce("claims.alerts.launch.server")
-        return self._normalize_response(await self._require_client().evaluate_claim_alerts(**kwargs))
+        return self._normalize_response(
+            await self._require_client().evaluate_claim_alerts(**kwargs)
+        )
 
     async def get_claims_rebuild_health(self) -> dict[str, Any]:
         self._enforce("claims.rebuild.detail.server")
-        return self._normalize_response(await self._require_client().get_claims_rebuild_health())
+        return self._normalize_response(
+            await self._require_client().get_claims_rebuild_health()
+        )
 
     async def get_claim_review_queue(self, **kwargs: Any) -> list[dict[str, Any]]:
         self._enforce("claims.review.list.server")
-        return self._normalize_response(await self._require_client().get_claim_review_queue(**kwargs), kind="claim")
+        return self._normalize_response(
+            await self._require_client().get_claim_review_queue(**kwargs), kind="claim"
+        )
 
-    async def review_claim(self, claim_id: int, request_data: ClaimReviewRequest | dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+    async def review_claim(
+        self,
+        claim_id: int,
+        request_data: ClaimReviewRequest | dict[str, Any],
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClaimReviewRequest
+
         self._enforce("claims.review.update.server")
         request = self._model(request_data, ClaimReviewRequest)
-        return self._normalize_response(await self._require_client().review_claim(claim_id, request, **kwargs), kind="claim")
+        return self._normalize_response(
+            await self._require_client().review_claim(claim_id, request, **kwargs),
+            kind="claim",
+        )
 
-    async def get_claim_review_history(self, claim_id: int, **kwargs: Any) -> list[dict[str, Any]]:
+    async def get_claim_review_history(
+        self, claim_id: int, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         self._enforce("claims.review.list.server")
-        return self._normalize_response(await self._require_client().get_claim_review_history(claim_id, **kwargs))
+        return self._normalize_response(
+            await self._require_client().get_claim_review_history(claim_id, **kwargs)
+        )
 
     async def bulk_review_claims(
         self,
         request_data: ClaimReviewBulkRequest | dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClaimReviewBulkRequest
+
         self._enforce("claims.review.launch.server")
         payload = dict(request_data or {})
-        request_kwargs = {key: value for key, value in kwargs.items() if key != "user_id"}
+        request_kwargs = {
+            key: value for key, value in kwargs.items() if key != "user_id"
+        }
         payload.update(request_kwargs)
         request = self._model(payload, ClaimReviewBulkRequest)
         client_kwargs = {"user_id": kwargs["user_id"]} if "user_id" in kwargs else {}
-        return self._normalize_response(await self._require_client().bulk_review_claims(request, **client_kwargs))
+        return self._normalize_response(
+            await self._require_client().bulk_review_claims(request, **client_kwargs)
+        )
 
     async def list_claim_review_rules(self, **kwargs: Any) -> list[dict[str, Any]]:
         self._enforce("claims.review_rules.list.server")
-        return self._normalize_response(await self._require_client().list_claim_review_rules(**kwargs), kind="claim_review_rule")
+        return self._normalize_response(
+            await self._require_client().list_claim_review_rules(**kwargs),
+            kind="claim_review_rule",
+        )
 
-    async def create_claim_review_rule(self, request_data: ClaimReviewRuleCreate | dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+    async def create_claim_review_rule(
+        self, request_data: ClaimReviewRuleCreate | dict[str, Any], **kwargs: Any
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClaimReviewRuleCreate
+
         self._enforce("claims.review_rules.create.server")
         request = self._model(request_data, ClaimReviewRuleCreate)
-        return self._normalize_response(await self._require_client().create_claim_review_rule(request, **kwargs), kind="claim_review_rule")
+        return self._normalize_response(
+            await self._require_client().create_claim_review_rule(request, **kwargs),
+            kind="claim_review_rule",
+        )
 
-    async def update_claim_review_rule(self, rule_id: int, request_data: ClaimReviewRuleUpdate | dict[str, Any]) -> dict[str, Any]:
+    async def update_claim_review_rule(
+        self, rule_id: int, request_data: ClaimReviewRuleUpdate | dict[str, Any]
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClaimReviewRuleUpdate
+
         self._enforce("claims.review_rules.update.server")
         request = self._model(request_data, ClaimReviewRuleUpdate)
-        return self._normalize_response(await self._require_client().update_claim_review_rule(rule_id, request), kind="claim_review_rule")
+        return self._normalize_response(
+            await self._require_client().update_claim_review_rule(rule_id, request),
+            kind="claim_review_rule",
+        )
 
     async def delete_claim_review_rule(self, rule_id: int) -> dict[str, Any]:
         self._enforce("claims.review_rules.delete.server")
-        return self._normalize_response(await self._require_client().delete_claim_review_rule(rule_id))
+        return self._normalize_response(
+            await self._require_client().delete_claim_review_rule(rule_id)
+        )
 
     async def get_claim_review_analytics(self) -> dict[str, Any]:
         self._enforce("claims.analytics.detail.server")
-        return self._normalize_response(await self._require_client().get_claim_review_analytics())
+        return self._normalize_response(
+            await self._require_client().get_claim_review_analytics()
+        )
 
     async def list_claim_extractors(self) -> dict[str, Any]:
         self._enforce("claims.extractors.list.server")
-        return self._normalize_response(await self._require_client().list_claim_extractors())
+        return self._normalize_response(
+            await self._require_client().list_claim_extractors()
+        )
 
     async def list_claim_review_metrics(self, **kwargs: Any) -> dict[str, Any]:
         self._enforce("claims.analytics.list.server")
-        return self._normalize_response(await self._require_client().list_claim_review_metrics(**kwargs))
+        return self._normalize_response(
+            await self._require_client().list_claim_review_metrics(**kwargs)
+        )
 
     async def get_claims_analytics_dashboard(self, **kwargs: Any) -> dict[str, Any]:
         self._enforce("claims.analytics.detail.server")
-        return self._normalize_response(await self._require_client().get_claims_analytics_dashboard(**kwargs))
+        return self._normalize_response(
+            await self._require_client().get_claims_analytics_dashboard(**kwargs)
+        )
 
-    async def export_claims_analytics(self, request_data: ClaimsAnalyticsExportRequest | dict[str, Any]) -> dict[str, Any]:
+    async def export_claims_analytics(
+        self, request_data: ClaimsAnalyticsExportRequest | dict[str, Any]
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClaimsAnalyticsExportRequest
+
         self._enforce("claims.analytics.export.server")
         request = self._model(request_data, ClaimsAnalyticsExportRequest)
-        return self._normalize_response(await self._require_client().export_claims_analytics(request), kind="claim_analytics_export")
+        return self._normalize_response(
+            await self._require_client().export_claims_analytics(request),
+            kind="claim_analytics_export",
+        )
 
     async def list_claims_analytics_exports(self, **kwargs: Any) -> dict[str, Any]:
         self._enforce("claims.analytics.list.server")
-        return self._normalize_response(await self._require_client().list_claims_analytics_exports(**kwargs), kind="claim_analytics_export")
+        return self._normalize_response(
+            await self._require_client().list_claims_analytics_exports(**kwargs),
+            kind="claim_analytics_export",
+        )
 
     async def download_claims_analytics_export(self, export_id: str) -> dict[str, Any]:
         self._enforce("claims.analytics.detail.server")
-        return self._normalize_response(await self._require_client().download_claims_analytics_export(export_id))
+        return self._normalize_response(
+            await self._require_client().download_claims_analytics_export(export_id)
+        )
 
-    async def download_claims_analytics_export_file(self, export_id: str) -> dict[str, Any]:
+    async def download_claims_analytics_export_file(
+        self, export_id: str
+    ) -> dict[str, Any]:
         self._enforce("claims.analytics.export.server")
-        return self._normalize_response(await self._require_client().download_claims_analytics_export_file(export_id))
+        return self._normalize_response(
+            await self._require_client().download_claims_analytics_export_file(
+                export_id
+            )
+        )
 
     async def list_claim_clusters(self, **kwargs: Any) -> list[dict[str, Any]]:
         self._enforce("claims.clusters.list.server")
-        return self._normalize_response(await self._require_client().list_claim_clusters(**kwargs), kind="claim_cluster")
+        return self._normalize_response(
+            await self._require_client().list_claim_clusters(**kwargs),
+            kind="claim_cluster",
+        )
 
     async def rebuild_claim_clusters(self, **kwargs: Any) -> dict[str, Any]:
         self._enforce("claims.clusters.launch.server")
-        return self._normalize_response(await self._require_client().rebuild_claim_clusters(**kwargs))
+        return self._normalize_response(
+            await self._require_client().rebuild_claim_clusters(**kwargs)
+        )
 
     async def get_claim_cluster(self, cluster_id: int) -> dict[str, Any]:
         self._enforce("claims.clusters.detail.server")
-        return self._normalize_response(await self._require_client().get_claim_cluster(cluster_id), kind="claim_cluster")
+        return self._normalize_response(
+            await self._require_client().get_claim_cluster(cluster_id),
+            kind="claim_cluster",
+        )
 
-    async def list_claim_cluster_links(self, cluster_id: int, **kwargs: Any) -> list[dict[str, Any]]:
+    async def list_claim_cluster_links(
+        self, cluster_id: int, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         self._enforce("claims.cluster_links.list.server")
-        return self._normalize_response(await self._require_client().list_claim_cluster_links(cluster_id, **kwargs), kind="claim_cluster_link")
+        return self._normalize_response(
+            await self._require_client().list_claim_cluster_links(cluster_id, **kwargs),
+            kind="claim_cluster_link",
+        )
 
-    async def create_claim_cluster_link(self, cluster_id: int, request_data: ClaimsClusterLinkCreate | dict[str, Any]) -> dict[str, Any]:
+    async def create_claim_cluster_link(
+        self, cluster_id: int, request_data: ClaimsClusterLinkCreate | dict[str, Any]
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClaimsClusterLinkCreate
+
         self._enforce("claims.cluster_links.create.server")
         request = self._model(request_data, ClaimsClusterLinkCreate)
-        return self._normalize_response(await self._require_client().create_claim_cluster_link(cluster_id, request), kind="claim_cluster_link")
+        return self._normalize_response(
+            await self._require_client().create_claim_cluster_link(cluster_id, request),
+            kind="claim_cluster_link",
+        )
 
-    async def delete_claim_cluster_link(self, cluster_id: int, child_cluster_id: int) -> dict[str, Any]:
+    async def delete_claim_cluster_link(
+        self, cluster_id: int, child_cluster_id: int
+    ) -> dict[str, Any]:
         self._enforce("claims.cluster_links.delete.server")
-        return self._normalize_response(await self._require_client().delete_claim_cluster_link(cluster_id, child_cluster_id))
+        return self._normalize_response(
+            await self._require_client().delete_claim_cluster_link(
+                cluster_id, child_cluster_id
+            )
+        )
 
-    async def list_claim_cluster_members(self, cluster_id: int, **kwargs: Any) -> list[dict[str, Any]]:
+    async def list_claim_cluster_members(
+        self, cluster_id: int, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         self._enforce("claims.cluster_members.list.server")
-        return self._normalize_response(await self._require_client().list_claim_cluster_members(cluster_id, **kwargs), kind="claim")
+        return self._normalize_response(
+            await self._require_client().list_claim_cluster_members(
+                cluster_id, **kwargs
+            ),
+            kind="claim",
+        )
 
-    async def get_claim_cluster_timeline(self, cluster_id: int, **kwargs: Any) -> dict[str, Any]:
+    async def get_claim_cluster_timeline(
+        self, cluster_id: int, **kwargs: Any
+    ) -> dict[str, Any]:
         self._enforce("claims.cluster_timeline.list.server")
-        return self._normalize_response(await self._require_client().get_claim_cluster_timeline(cluster_id, **kwargs))
+        return self._normalize_response(
+            await self._require_client().get_claim_cluster_timeline(
+                cluster_id, **kwargs
+            )
+        )
 
-    async def get_claim_cluster_evidence(self, cluster_id: int, **kwargs: Any) -> dict[str, Any]:
+    async def get_claim_cluster_evidence(
+        self, cluster_id: int, **kwargs: Any
+    ) -> dict[str, Any]:
         self._enforce("claims.cluster_evidence.list.server")
-        return self._normalize_response(await self._require_client().get_claim_cluster_evidence(cluster_id, **kwargs))
+        return self._normalize_response(
+            await self._require_client().get_claim_cluster_evidence(
+                cluster_id, **kwargs
+            )
+        )
 
     async def search_claims(self, q: str, **kwargs: Any) -> dict[str, Any]:
         self._enforce("claims.search.list.server")
-        return self._normalize_response(await self._require_client().search_claims(q, **kwargs))
+        return self._normalize_response(
+            await self._require_client().search_claims(q, **kwargs)
+        )
 
     async def list_claims_for_media(self, media_id: int, **kwargs: Any) -> Any:
         self._enforce("claims.items.list.server")
-        return self._normalize_response(await self._require_client().list_claims_for_media(media_id, **kwargs), kind="claim")
+        return self._normalize_response(
+            await self._require_client().list_claims_for_media(media_id, **kwargs),
+            kind="claim",
+        )
 
     async def get_claim_item(self, claim_id: int, **kwargs: Any) -> dict[str, Any]:
         self._enforce("claims.items.detail.server")
-        return self._normalize_response(await self._require_client().get_claim_item(claim_id, **kwargs), kind="claim")
+        return self._normalize_response(
+            await self._require_client().get_claim_item(claim_id, **kwargs),
+            kind="claim",
+        )
 
-    async def update_claim_item(self, claim_id: int, request_data: ClaimUpdateRequest | dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+    async def update_claim_item(
+        self,
+        claim_id: int,
+        request_data: ClaimUpdateRequest | dict[str, Any],
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ClaimUpdateRequest
+
         self._enforce("claims.items.update.server")
         request = self._model(request_data, ClaimUpdateRequest)
-        return self._normalize_response(await self._require_client().update_claim_item(claim_id, request, **kwargs), kind="claim")
+        return self._normalize_response(
+            await self._require_client().update_claim_item(claim_id, request, **kwargs),
+            kind="claim",
+        )
 
-    async def rebuild_claims_for_media(self, media_id: int, **kwargs: Any) -> dict[str, Any]:
+    async def rebuild_claims_for_media(
+        self, media_id: int, **kwargs: Any
+    ) -> dict[str, Any]:
         self._enforce("claims.items.launch.server")
-        return self._normalize_response(await self._require_client().rebuild_claims_for_media(media_id, **kwargs))
+        return self._normalize_response(
+            await self._require_client().rebuild_claims_for_media(media_id, **kwargs)
+        )
 
     async def rebuild_all_claims(self, **kwargs: Any) -> dict[str, Any]:
         self._enforce("claims.rebuild.launch.server")
-        return self._normalize_response(await self._require_client().rebuild_all_claims(**kwargs))
+        return self._normalize_response(
+            await self._require_client().rebuild_all_claims(**kwargs)
+        )
 
     async def rebuild_claims_fts(self, **kwargs: Any) -> dict[str, Any]:
         self._enforce("claims.rebuild.launch.server")
-        return self._normalize_response(await self._require_client().rebuild_claims_fts(**kwargs))
+        return self._normalize_response(
+            await self._require_client().rebuild_claims_fts(**kwargs)
+        )
 
-    async def verify_claims_fva(self, request_data: FVAVerifyRequest | dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+    async def verify_claims_fva(
+        self, request_data: FVAVerifyRequest | dict[str, Any], **kwargs: Any
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import FVAVerifyRequest
+
         self._enforce("claims.fva.launch.server")
         request = self._model(request_data, FVAVerifyRequest)
-        return self._normalize_response(await self._require_client().verify_claims_fva(request, **kwargs), kind="claims_fva")
+        return self._normalize_response(
+            await self._require_client().verify_claims_fva(request, **kwargs),
+            kind="claims_fva",
+        )
 
     async def get_fva_settings(self) -> dict[str, Any]:
         self._enforce("claims.fva.list.server")

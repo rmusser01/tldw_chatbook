@@ -184,14 +184,6 @@ ChatWindowEnhanced {
     border: solid $primary;
 }
 
-/* Attachment preview styles */
-.attachment-preview {
-    padding: 1;
-    margin: 1;
-    background: $surface-lighten-1;
-    border: solid $primary;
-}
-
 /* Notes area expansion states */
 .notes-textarea-normal {
     height: 10;
@@ -358,50 +350,11 @@ ChatWindowEnhanced {
     border: round $primary;
 }
 
-/* Quick settings section */
-.quick-settings-section {
-    padding: 1;
-    border: round $surface;
-    margin-bottom: 1;
-}
 
-.rag-settings-panel-advanced {
-    padding: 1;
-    border: round $accent;
-    background: $boost;
-    margin-bottom: 1;
-}
-
-/* RAG panel header with icon */
-.rag-panel-header {
-    text-style: bold;
-    color: $accent;
-    margin-bottom: 1;
-    text-align: center;
-}
-
-/* RAG toggle row */
-.rag-toggle-row {
-    layout: horizontal;
-    height: 3;
-    align: left middle;
-    margin-bottom: 1;
-}
-
-/* RAG main toggle */
-.rag-main-toggle {
-    margin-right: 2;
-}
 
 /* RAG preset select */
 .rag-preset-select {
     width: 50%;
-}
-
-/* RAG scope container */
-.rag-scope-container {
-    padding-left: 2;
-    margin-bottom: 1;
 }
 
 /* Section headers */
@@ -539,14 +492,6 @@ ChatWindowEnhanced {
     background: $panel !important;
 }
 
-/* RAG panel header with icon */
-.rag-panel-header {
-    text-style: bold;
-    color: $accent;
-    margin-bottom: 1;
-    text-align: center;
-}
-
 /* RAG enable toggle */
 .rag-enable-toggle {
     margin-bottom: 1;
@@ -610,16 +555,6 @@ ChatWindowEnhanced {
     background: $primary-lighten-1;
 }
 
-/* Secondary action buttons (Clone, Cancel) */
-.btn-secondary {
-    background: $surface;
-    color: $text;
-    border: solid $surface-lighten-1;
-}
-
-.btn-secondary:hover {
-    background: $surface-lighten-1;
-}
 
 /* Ghost buttons (text-only, minimal) */
 .btn-ghost {

@@ -55,7 +55,9 @@ GATE16_EVIDENCE = Path(
 )
 ROADMAP = Path("Docs/superpowers/trackers/product-maturity-roadmap.md")
 PHASE_3_README = Path("Docs/superpowers/qa/product-maturity/phase-3/README.md")
-TASK_10 = Path("backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md")
+TASK_10 = Path(
+    "backlog/tasks/task-10 - Product-Maturity-Phase-3-Knowledge-And-Study-Workflows.md"
+)
 TASK_10_8 = Path(
     "backlog/tasks/task-10.8 - "
     "Product-Maturity-Phase-3.8-Gate-1.6-Library-Native-Search-RAG.md"
@@ -112,7 +114,9 @@ class DelayedLibraryRagSearchService(StaticLibraryRagSearchService):
         return self.result
 
 
-async def _wait_for_query_ready(screen, pilot, query: str, *, timeout: float = 2.0) -> None:
+async def _wait_for_query_ready(
+    screen, pilot, query: str, *, timeout: float = 2.0
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         inputs = list(screen.query("#library-rag-query-input"))
@@ -124,7 +128,9 @@ async def _wait_for_query_ready(screen, pilot, query: str, *, timeout: float = 2
                 await pilot.pause()
                 return
         await pilot.pause(0.01)
-    raise AssertionError(f"Timed out waiting for Library Search/RAG query readiness: {query!r}")
+    raise AssertionError(
+        f"Timed out waiting for Library Search/RAG query readiness: {query!r}"
+    )
 
 
 async def _wait_for_evidence_selected(
@@ -147,11 +153,16 @@ async def _wait_for_evidence_selected(
         selected_rows = list(screen.query(".library-rag-result-row.is-selected"))
         console_buttons = list(screen.query("#library-rag-use-selected-in-console"))
         if selected_rows and console_buttons:
-            if title in str(selected_rows[0].renderable) and console_buttons[0].disabled is False:
+            if (
+                title in str(selected_rows[0].renderable)
+                and console_buttons[0].disabled is False
+            ):
                 await pilot.pause()
                 return
         await pilot.pause(0.01)
-    raise AssertionError(f"Timed out waiting for Library Search/RAG selection: {title!r}")
+    raise AssertionError(
+        f"Timed out waiting for Library Search/RAG selection: {title!r}"
+    )
 
 
 def test_library_search_rag_provenance_labels_escape_rich_markup() -> None:
@@ -186,7 +197,9 @@ def test_library_search_rag_provenance_labels_escape_rich_markup() -> None:
 
 
 @pytest.mark.asyncio
-async def test_library_search_rag_mode_mounts_native_panel_without_leaving_library() -> None:
+async def test_library_search_rag_mode_mounts_native_panel_without_leaving_library() -> (
+    None
+):
     """Selecting the Search rail row mounts ``LibrarySearchRagPanel`` inside
     the Library canvas without navigating away. The retired 3-pane workbench
     panes (``#library-source-browser/-detail/-inspector``) and the inspector
@@ -226,7 +239,9 @@ async def test_library_search_rag_mode_mounts_native_panel_without_leaving_libra
 
 
 @pytest.mark.asyncio
-async def test_library_search_rag_panel_exposes_blocked_recovery_for_empty_query() -> None:
+async def test_library_search_rag_panel_exposes_blocked_recovery_for_empty_query() -> (
+    None
+):
     app = _build_test_app()
     _seed_library_sources(app)
     host = DestinationHarness(app, "library")
@@ -255,7 +270,9 @@ async def test_library_search_rag_panel_exposes_blocked_recovery_for_empty_query
         assert not screen.query("#library-rag-query-recovery")
         assert not screen.query("#library-rag-run-disabled-reason")
         assert "Blocked: enter a question or search query." not in visible_text
-        assert "Blocked | Enter a question before running retrieval." not in visible_text
+        assert (
+            "Blocked | Enter a question before running retrieval." not in visible_text
+        )
         assert "Scope: all local sources" in visible_text
         # A4: the retired-workbench shortcuts line is gone; Enter-to-run
         # keeps working (covered by the keyboard-enter pilot below).
@@ -264,7 +281,9 @@ async def test_library_search_rag_panel_exposes_blocked_recovery_for_empty_query
 
 
 @pytest.mark.asyncio
-async def test_library_search_rag_task_loop_orders_query_before_scope_and_results() -> None:
+async def test_library_search_rag_task_loop_orders_query_before_scope_and_results() -> (
+    None
+):
     app = _build_test_app()
     _seed_library_sources(app)
     host = DestinationHarness(app, "library")
@@ -303,12 +322,35 @@ async def test_library_search_rag_empty_sources_has_mode_local_blocked_status() 
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
 
         visible_text = _visible_text(screen)
-        assert "No sources." in visible_text
-        assert "Recovery checklist" in visible_text
-        assert "1. Import Library sources." in visible_text
-        assert "2. Run Search/RAG." in visible_text
-        assert "3. Select evidence, then Use in Console." in visible_text
+        # (task-185) The no-sources state is ONE quiet gate line plus the
+        # single Open Import media action -- the old 8-line recovery dump,
+        # its checklist, the "Select at least one source." query line, and
+        # the Evidence empty-state hints must not stack on top of it.
+        gate_line = screen.query_one("#library-rag-scope-recovery", Static)
+        assert (
+            str(gate_line.renderable)
+            == "No Library sources yet — import media or create notes, then search."
+        )
+        assert "No Library sources yet" in visible_text
+        assert "Recovery checklist" not in visible_text
+        assert "Owner: Library source index." not in visible_text
+        assert "Unavailable: Library Search/RAG." not in visible_text
+        assert "1. Import Library sources." not in visible_text
+        assert "Select at least one source." not in visible_text
         assert "Why: Enter a question or search query." not in visible_text
+        assert (
+            "No evidence yet. Run Search/RAG to populate results." not in visible_text
+        )
+        assert (
+            "Add or import sources, run a query, then select evidence for Console."
+            not in visible_text
+        )
+        assert not screen.query("#library-rag-results-empty")
+        assert not screen.query("#library-rag-evidence-empty-guidance")
+        # The quiet-line slot stays mounted (empty) so the Run button's
+        # position is stable, but it carries no second guidance layer.
+        quiet_line = screen.query_one("#library-rag-query-quiet-line", Static)
+        assert str(quiet_line.renderable) == ""
         recovery_button = screen.query_one("#library-rag-open-import-export", Button)
         assert str(recovery_button.label) == "Open Import media"
         assert recovery_button.tooltip == "Open Library Import media to add sources."
@@ -339,6 +381,11 @@ async def test_library_search_rag_query_updates_action_and_survives_recompose() 
         assert run_button.disabled is False
         assert str(run_button.tooltip) == ""
         assert len(screen.query("#library-rag-query-recovery")) == 0
+        # (task-185) The gate helper's one-row slot stays mounted (empty)
+        # once the query is valid, so the Run button never shifts when the
+        # "Enter a question or search query." line clears.
+        quiet_line = screen.query_one("#library-rag-query-quiet-line", Static)
+        assert str(quiet_line.renderable) == ""
 
         screen.refresh(recompose=True)
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
@@ -349,7 +396,9 @@ async def test_library_search_rag_query_updates_action_and_survives_recompose() 
 
 
 @pytest.mark.asyncio
-async def test_library_search_rag_run_query_renders_service_results_and_calls_scope() -> None:
+async def test_library_search_rag_run_query_renders_service_results_and_calls_scope() -> (
+    None
+):
     app = _build_test_app()
     _seed_library_sources(app)
     service = StaticLibraryRagSearchService(
@@ -453,8 +502,13 @@ async def test_library_search_rag_selected_result_launches_console_live_work() -
         screen.query_one("#library-rag-select-result-0", Button).press()
         await _wait_for_evidence_selected(screen, pilot, "Incident Review")
 
-        assert screen.query_one("#library-rag-use-selected-in-console", Button).disabled is False
-        assert "Incident Review" in str(screen.query_one("#library-rag-result-0").renderable)
+        assert (
+            screen.query_one("#library-rag-use-selected-in-console", Button).disabled
+            is False
+        )
+        assert "Incident Review" in str(
+            screen.query_one("#library-rag-result-0").renderable
+        )
 
         screen.query_one("#library-rag-use-selected-in-console", Button).press()
         await pilot.pause(0.1)
@@ -538,13 +592,18 @@ async def test_library_search_rag_selected_result_evidence_metadata() -> None:
         # nothing (only a "blocked" -> "excluded from context" badge is
         # shown), joined with " · " instead of "|".
         assert "note · workspace-a · 1 citation" in visible_text
-        assert screen.query_one("#library-rag-use-selected-in-console", Button).disabled is False
+        assert (
+            screen.query_one("#library-rag-use-selected-in-console", Button).disabled
+            is False
+        )
         assert "Expired credential caused the incident." in visible_text
         assert "Citations: Incident Review p.2" in visible_text
 
 
 @pytest.mark.asyncio
-async def test_library_search_rag_keyboard_enter_runs_query_and_handoff_button() -> None:
+async def test_library_search_rag_keyboard_enter_runs_query_and_handoff_button() -> (
+    None
+):
     app = _build_test_app()
     _seed_library_sources(app)
     app.library_rag_search_service = StaticLibraryRagSearchService(
@@ -583,7 +642,9 @@ async def test_library_search_rag_keyboard_enter_runs_query_and_handoff_button()
         await pilot.press("enter")
         await _wait_for_evidence_selected(screen, pilot, "Keyboard Evidence")
 
-        console_button = screen.query_one("#library-rag-use-selected-in-console", Button)
+        console_button = screen.query_one(
+            "#library-rag-use-selected-in-console", Button
+        )
         console_button.focus()
         await pilot.press("enter")
         await pilot.pause(0.1)
@@ -647,7 +708,9 @@ async def test_library_search_rag_keyboard_u_shortcut_uses_selected_evidence() -
 
 
 @pytest.mark.asyncio
-async def test_library_search_rag_server_result_launches_server_console_live_work() -> None:
+async def test_library_search_rag_server_result_launches_server_console_live_work() -> (
+    None
+):
     app = _build_test_app()
     _seed_library_sources(app)
     app.library_rag_search_service = StaticLibraryRagSearchService(
@@ -702,7 +765,10 @@ async def test_library_search_rag_server_result_launches_server_console_live_wor
     assert payload["title"] == "Server Incident Review"
     assert payload["source_id"] == "server-note-42"
     assert payload["chunk_id"] == "chunk-9"
-    assert payload["snippet"] == "Server retrieval found the authoritative incident record."
+    assert (
+        payload["snippet"]
+        == "Server retrieval found the authoritative incident record."
+    )
     assert payload["citations"] == ["Server Incident Review p.4"]
     assert payload["score"] == 0.88
     assert payload["runtime_backend"] == "server-rag"
@@ -718,17 +784,29 @@ async def test_library_search_rag_server_result_launches_server_console_live_wor
 
 
 @pytest.mark.asyncio
-async def test_library_search_rag_run_query_renders_persistent_recovery_without_service() -> None:
-    """RAG mode with no ``_rag_service`` on the app is blocked at the
-    query-readiness gate itself (``provider_ready``), never reaching the
-    retrieval service -- the provider gate added in L3a front-runs the
-    previous service-level "RAG unavailable" recovery for this scenario
-    (the retrieval service still double-guards internally for non-UI
-    callers, but the Run button is disabled before that code can run). The
-    default canvas mode is "search" (keyword, always available given
-    seeded local seams), so reaching this state requires explicitly
-    cycling to RAG mode first.
+async def test_library_search_rag_run_query_renders_persistent_recovery_without_service(
+    monkeypatch,
+) -> None:
+    """RAG mode without embeddings support runs the query and renders the
+    retrieval service's persistent "RAG unavailable" recovery state (task-249).
+
+    The L3a provider gate that pre-disabled Run when ``app._rag_service`` was
+    unset is retired: the runtime now initializes lazily at query time, so
+    the Run button stays enabled and the real production service
+    (``LibraryLocalRagSearchService``, wired by ``_build_test_app``'s real
+    ``TldwCli``) owns the recovery copy routing the user to setup. The deps
+    probe is pinned False so the lazy path never constructs a real embedding
+    runtime inside a UI test. The default canvas mode is "search" (keyword,
+    always available given seeded local seams), so reaching this state
+    requires explicitly cycling to RAG mode first.
     """
+    from tldw_chatbook.Library import library_local_rag_search_service
+
+    monkeypatch.setattr(
+        library_local_rag_search_service,
+        "embeddings_rag_deps_installed",
+        lambda: False,
+    )
     app = _build_test_app()
     _seed_library_sources(app)
     host = DestinationHarness(app, "library")
@@ -753,26 +831,25 @@ async def test_library_search_rag_run_query_renders_persistent_recovery_without_
             raise AssertionError("Mode toggle never switched to RAG Answer.")
 
         screen.query_one("#library-rag-query-input", Input).value = query
-        # `.value` lands on the widget synchronously, but the screen's own
-        # query state (and therefore the disabled reason) only catches up
-        # once the Input.Changed handler runs -- poll for the settled
-        # blocked reason rather than the transient "no query yet" one.
-        for _ in range(150):
-            if "provider/model before asking for a RAG answer" in _visible_text(screen):
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError(
-                f"RAG mode never blocked Run without a provider. "
-                f"Visible text: {_visible_text(screen)}"
-            )
+        await _wait_for_query_ready(screen, pilot, query)
 
-        assert screen.query_one("#library-rag-run-query", Button).disabled is True
-        assert not screen.query("#library-rag-service-error")
+        run_button = screen.query_one("#library-rag-run-query", Button)
+        assert run_button.disabled is False
+
+        run_button.press()
+        await _wait_for_selector(screen, pilot, "#library-rag-service-error")
+
+        visible_text = _visible_text(screen)
+        assert "RAG unavailable" in visible_text
+        assert "Install embeddings support or switch mode to Search" in visible_text
+        # The display sanitizer HTML-escapes the recovery route's ">".
+        assert "Recovery: Settings &gt; RAG." in visible_text
 
 
 @pytest.mark.asyncio
-async def test_library_search_rag_run_query_preserves_panel_instances_during_updates() -> None:
+async def test_library_search_rag_run_query_preserves_panel_instances_during_updates() -> (
+    None
+):
     app = _build_test_app()
     _seed_library_sources(app)
     app.library_rag_search_service = DelayedLibraryRagSearchService(
@@ -811,7 +888,9 @@ async def test_library_search_rag_run_query_preserves_panel_instances_during_upd
 
 
 @pytest.mark.asyncio
-async def test_library_search_rag_worker_completion_ignores_unmounted_screen(monkeypatch) -> None:
+async def test_library_search_rag_worker_completion_ignores_unmounted_screen(
+    monkeypatch,
+) -> None:
     app = _build_test_app()
     screen = LibraryScreen(app)
     # Put the screen in the state where every guard in

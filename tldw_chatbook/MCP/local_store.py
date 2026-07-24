@@ -12,8 +12,12 @@ from tldw_chatbook.config import DEFAULT_CONFIG_PATH
 
 DEFAULT_LOCAL_MCP_STORE_PATH = DEFAULT_CONFIG_PATH.parent / "local_mcp_store.json"
 
-_ENV_PLACEHOLDER_PATTERN = re.compile(r"^\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)$")
-_SECRET_KEY_PATTERN = re.compile(r"(secret|token|password|passwd|api[_-]?key|access[_-]?key)", re.IGNORECASE)
+_ENV_PLACEHOLDER_PATTERN = re.compile(
+    r"^\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)$"
+)
+_SECRET_KEY_PATTERN = re.compile(
+    r"(secret|token|password|passwd|api[_-]?key|access[_-]?key)", re.IGNORECASE
+)
 _SECRET_VALUE_PATTERNS = (
     re.compile(r"^sk-[A-Za-z0-9._-]{12,}$"),
     re.compile(r"^gh[pousr]_[A-Za-z0-9]{12,}$"),
@@ -41,8 +45,21 @@ _SAFE_LITERAL_VALUES = {
 }
 _SAFE_INTEGER_PATTERN = re.compile(r"^[0-9]{1,5}$")
 _SAFE_DECIMAL_PATTERN = re.compile(r"^[0-9]{1,4}\.[0-9]{1,2}$")
-_SAFE_URL_LITERAL_PATTERN = re.compile(r"^https?://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[^\s]*)?$", re.IGNORECASE)
-_LEGACY_SAFE_URL_LITERAL_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://[^\s]{1,255}$")
+_SAFE_URL_LITERAL_PATTERN = re.compile(
+    r"^https?://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[^\s]*)?$", re.IGNORECASE
+)
+# A non-secret filesystem path (workspace root, config/db path) is a safe
+# operational literal — the most common stdio-MCP-server env value. Mirrors
+# _LEGACY_SAFE_PATH_PATTERN so the strict and legacy env paths agree; the
+# secret guards (_is_secret_bearing_env_key / _looks_like_raw_secret_value)
+# still run first, so a token that happens to be path-shaped is rejected.
+_SAFE_PATH_LITERAL_PATTERN = re.compile(r"^(?:~|/)[A-Za-z0-9._/@:+-]{1,255}$")
+# Token separators in paths / URLs / query strings — used to extract candidate
+# secret segments from an otherwise-safe-looking literal.
+_SECRET_SEGMENT_SPLIT = re.compile(r"[/?&=:@~]+")
+_LEGACY_SAFE_URL_LITERAL_PATTERN = re.compile(
+    r"^[A-Za-z][A-Za-z0-9+.-]*://[^\s]{1,255}$"
+)
 _LEGACY_SAFE_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _LEGACY_SAFE_PATH_PATTERN = re.compile(r"^(?:~|/)[A-Za-z0-9._/@:+-]{1,255}$")
 
@@ -58,6 +75,34 @@ def _require_non_empty_field(value: str, field_name: str, record_type: str) -> s
     normalized = _text(value)
     if not normalized:
         raise ValueError(f"{record_type} requires non-empty {field_name}")
+    return normalized
+
+
+_PROFILE_ID_INVALID_CHARS_RE = re.compile(r"[:\s]")
+
+
+def _validate_profile_id(value: str) -> str:
+    """Validate a local MCP profile id at the single save-time choke point.
+
+    I3 (Phase 3 review, minimum scope -- the full tuple-identity refactor
+    for HubTool routing is deferred to Phase 4): `HubTool.tool_id` packs
+    `server_key` and tool name into one `"::"`-delimited string
+    (`f"local:{profile_id}::{tool_name}"`), and callers partition it back
+    apart on the first `"::"` (see `MCPWorkbench._run_tool_test()`). A
+    profile id containing its own `":"` corrupts that partition -- e.g.
+    profile_id `"a::b"` makes `tool_id` `"local:a::b::search"` split into
+    server_key `"local:a"` / tool `"b::search"` instead of the intended
+    profile `"a::b"` / tool `"search"`, silently executing against the
+    wrong server. Colons (and, for the same "no legitimate use, only
+    ambiguity" reason, embedded whitespace) have no legitimate use in a
+    profile id here, so both are rejected outright rather than merely
+    discouraged.
+    """
+    normalized = _require_non_empty_field(value, "profile_id", "Local MCP profile")
+    if _PROFILE_ID_INVALID_CHARS_RE.search(normalized):
+        raise ValueError(
+            "Local MCP profile profile_id must not contain ':' or whitespace"
+        )
     return normalized
 
 
@@ -116,7 +161,17 @@ def _is_secret_bearing_env_key(key: str) -> bool:
 
 
 def _looks_like_raw_secret_value(value: str) -> bool:
-    return any(pattern.fullmatch(value) for pattern in _SECRET_VALUE_PATTERNS)
+    # Full-match the whole value AND every token segment, so a secret can't be
+    # smuggled past the anchored patterns inside a path, URL, or query string
+    # (e.g. "~/sk-live-…", "/foo/ghp_…", "https://h/p?key=sk-live-…") now that
+    # paths and URLs are accepted literals. Split on the delimiters that
+    # separate tokens in those forms.
+    candidates = [value, *(seg for seg in _SECRET_SEGMENT_SPLIT.split(value) if seg)]
+    return any(
+        pattern.fullmatch(candidate)
+        for candidate in candidates
+        for pattern in _SECRET_VALUE_PATTERNS
+    )
 
 
 def _is_safe_literal_value(value: str) -> bool:
@@ -129,10 +184,14 @@ def _is_safe_literal_value(value: str) -> bool:
         return True
     if _SAFE_URL_LITERAL_PATTERN.fullmatch(value.strip()):
         return True
+    if _SAFE_PATH_LITERAL_PATTERN.fullmatch(value.strip()):
+        return True
     return False
 
 
-def _coerce_legacy_env(legacy_env: Mapping[str, Any] | None) -> tuple[dict[str, str], dict[str, str]]:
+def _coerce_legacy_env(
+    legacy_env: Mapping[str, Any] | None,
+) -> tuple[dict[str, str], dict[str, str]]:
     placeholders: dict[str, str] = {}
     literals: dict[str, str] = {}
     for raw_key, raw_value in (legacy_env or {}).items():
@@ -189,7 +248,9 @@ def _sanitize_env_placeholders(env: Mapping[str, Any] | None) -> dict[str, str]:
         if not key or not value:
             continue
         if not _ENV_PLACEHOLDER_PATTERN.fullmatch(value):
-            raise ValueError(f"Env placeholder '{key}' must use $NAME or ${'{'}NAME{'}'} syntax")
+            raise ValueError(
+                f"Env placeholder '{key}' must use $NAME or ${'{'}NAME{'}'} syntax"
+            )
         sanitized[key] = value
     return sanitized
 
@@ -202,12 +263,19 @@ def _sanitize_env_literals(env: Mapping[str, Any] | None) -> dict[str, str]:
         if not key or not value:
             continue
         if _is_secret_bearing_env_key(key):
-            raise ValueError(f"Secret-bearing env key '{key}' cannot be stored as a literal")
+            raise ValueError(
+                f"Secret-bearing env key '{key}' cannot be stored as a literal"
+            )
         if _looks_like_raw_secret_value(value):
-            raise ValueError(f"Literal env key '{key}' looks like a raw secret and cannot be persisted")
+            raise ValueError(
+                f"Literal env key '{key}' looks like a raw secret and cannot be persisted"
+            )
         if not _is_safe_literal_value(value):
             raise ValueError(
-                f"Literal env key '{key}' must use an explicit safe operational literal or an env placeholder"
+                f"Literal env key '{key}' must be a safe non-secret value "
+                f"(a filesystem path, boolean, number, log level, or URL). "
+                f"For anything else, set it as a $NAME env placeholder and "
+                f"export {key} in the environment that launches the app."
             )
         sanitized[key] = value
     return sanitized
@@ -227,13 +295,21 @@ class LocalExternalMCPProfile:
     def __post_init__(self) -> None:
         object.__setattr__(self, "profile_id", _text(self.profile_id))
         object.__setattr__(self, "command", _text(self.command))
-        object.__setattr__(self, "args", tuple(_text(item) for item in self.args if _text(item)))
+        object.__setattr__(
+            self, "args", tuple(_text(item) for item in self.args if _text(item))
+        )
         env_placeholders = _sanitize_env_placeholders(self.env_placeholders)
         env_literals = _sanitize_env_literals(self.env_literals)
         legacy_env_literals = _sanitize_legacy_env_literals(self.legacy_env_literals)
-        duplicate_keys = (set(env_placeholders) & set(env_literals)) | (set(env_placeholders) & set(legacy_env_literals)) | (set(env_literals) & set(legacy_env_literals))
+        duplicate_keys = (
+            (set(env_placeholders) & set(env_literals))
+            | (set(env_placeholders) & set(legacy_env_literals))
+            | (set(env_literals) & set(legacy_env_literals))
+        )
         if duplicate_keys:
-            raise ValueError(f"Duplicate env keys across placeholders and literals: {sorted(duplicate_keys)}")
+            raise ValueError(
+                f"Duplicate env keys across placeholders and literals: {sorted(duplicate_keys)}"
+            )
         object.__setattr__(self, "env_placeholders", env_placeholders)
         object.__setattr__(self, "env_literals", env_literals)
         object.__setattr__(self, "legacy_env_literals", legacy_env_literals)
@@ -286,7 +362,11 @@ class LocalExternalMCPProfile:
         if not isinstance(data, Mapping):
             return cls(profile_id="", command="")
         raw_args = data.get("args")
-        args = tuple(str(item).strip() for item in raw_args) if isinstance(raw_args, list) else ()
+        args = (
+            tuple(str(item).strip() for item in raw_args)
+            if isinstance(raw_args, list)
+            else ()
+        )
         return cls(
             profile_id=_text(data.get("profile_id")),
             command=_text(data.get("command")),
@@ -302,7 +382,11 @@ class LocalExternalMCPProfile:
         if not isinstance(data, Mapping):
             return cls(profile_id="", command="")
         raw_args = data.get("args")
-        args = tuple(str(item).strip() for item in raw_args) if isinstance(raw_args, list) else ()
+        args = (
+            tuple(str(item).strip() for item in raw_args)
+            if isinstance(raw_args, list)
+            else ()
+        )
         raw_env_placeholders = _coerce_mapping(data.get("env_placeholders"))
         raw_env_literals = _coerce_mapping(data.get("env_literals"))
         raw_legacy_env_literals = _coerce_mapping(data.get("legacy_env_literals"))
@@ -384,7 +468,9 @@ class LocalApprovalRequest:
         object.__setattr__(self, "request_id", _text(self.request_id))
         object.__setattr__(self, "action_name", _text(self.action_name))
         object.__setattr__(self, "resolved_action_id", _text(self.resolved_action_id))
-        object.__setattr__(self, "registry_capability_id", _text(self.registry_capability_id) or None)
+        object.__setattr__(
+            self, "registry_capability_id", _text(self.registry_capability_id) or None
+        )
         object.__setattr__(self, "payload", _coerce_mapping(self.payload))
         object.__setattr__(self, "payload_fingerprint", _text(self.payload_fingerprint))
         object.__setattr__(self, "status", _text(self.status))
@@ -449,10 +535,14 @@ class LocalRuntimeActivity:
         object.__setattr__(self, "ok", bool(self.ok))
         object.__setattr__(self, "blocked", bool(self.blocked))
         object.__setattr__(self, "error", _text(self.error) or None)
-        object.__setattr__(self, "resolved_action_id", _text(self.resolved_action_id) or None)
+        object.__setattr__(
+            self, "resolved_action_id", _text(self.resolved_action_id) or None
+        )
         object.__setattr__(self, "decision", _text(self.decision) or None)
         object.__setattr__(self, "matched_rule_id", _text(self.matched_rule_id) or None)
-        object.__setattr__(self, "approval_request_id", _text(self.approval_request_id) or None)
+        object.__setattr__(
+            self, "approval_request_id", _text(self.approval_request_id) or None
+        )
         object.__setattr__(self, "approval_status", _text(self.approval_status) or None)
 
     def to_dict(self) -> dict[str, Any]:
@@ -498,6 +588,7 @@ class LocalMCPStoreState:
     governance_rules: tuple[LocalGovernanceRule, ...] = ()
     approval_requests: tuple[LocalApprovalRequest, ...] = ()
     runtime_activity: tuple[LocalRuntimeActivity, ...] = ()
+    profile_runtime_state: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -507,8 +598,13 @@ class LocalMCPStoreState:
                 for server_id, snapshot in self.discovery_snapshots.items()
             },
             "governance_rules": [rule.to_dict() for rule in self.governance_rules],
-            "approval_requests": [request.to_dict() for request in self.approval_requests],
-            "runtime_activity": [activity.to_dict() for activity in self.runtime_activity],
+            "approval_requests": [
+                request.to_dict() for request in self.approval_requests
+            ],
+            "runtime_activity": [
+                activity.to_dict() for activity in self.runtime_activity
+            ],
+            "profile_runtime_state": dict(self.profile_runtime_state),
         }
 
     @classmethod
@@ -542,7 +638,10 @@ class LocalMCPStoreState:
                 LocalApprovalRequest.from_dict(item)
                 for item in (approvals_raw if isinstance(approvals_raw, list) else [])
             )
-            if request.request_id and request.action_name and request.resolved_action_id and request.status
+            if request.request_id
+            and request.action_name
+            and request.resolved_action_id
+            and request.status
         )
         runtime_activity = tuple(
             activity
@@ -561,12 +660,23 @@ class LocalMCPStoreState:
             if isinstance(snapshots_raw, Mapping)
             else {}
         )
+        runtime_state_raw = data.get("profile_runtime_state")
+        profile_runtime_state = (
+            {
+                str(profile_id): dict(record)
+                for profile_id, record in runtime_state_raw.items()
+                if str(profile_id).strip() and isinstance(record, Mapping)
+            }
+            if isinstance(runtime_state_raw, Mapping)
+            else {}
+        )
         return cls(
             profiles=profiles,
             discovery_snapshots=discovery_snapshots,
             governance_rules=governance_rules,
             approval_requests=approval_requests,
             runtime_activity=runtime_activity,
+            profile_runtime_state=profile_runtime_state,
         )
 
 
@@ -594,6 +704,27 @@ class LocalMCPStore:
     def list_profiles(self) -> list[LocalExternalMCPProfile]:
         return list(self.load().profiles)
 
+    def get_external_catalog(
+        self,
+    ) -> list[tuple[LocalExternalMCPProfile, dict[str, Any] | None]]:
+        """Return every profile paired with its discovery snapshot, one load.
+
+        task-236: ``get_external_servers`` used to call ``list_profiles``
+        plus one ``get_discovery_snapshot`` PER profile — N+1 full state
+        loads (each accessor re-reads and re-parses the store file). This
+        joins both from a single ``load()`` with the exact per-profile key
+        normalization ``get_discovery_snapshot`` uses.
+
+        Returns:
+            (profile, snapshot-or-None) pairs in ``list_profiles`` order.
+        """
+        state = self.load()
+        snapshots = state.discovery_snapshots
+        return [
+            (profile, snapshots.get(_text(profile.profile_id)))
+            for profile in state.profiles
+        ]
+
     def get_profile(self, profile_id: str) -> LocalExternalMCPProfile | None:
         normalized_profile_id = _text(profile_id)
         for profile in self.list_profiles():
@@ -604,9 +735,13 @@ class LocalMCPStore:
     def save_profile(self, profile: LocalExternalMCPProfile) -> LocalExternalMCPProfile:
         current = self.load()
         now = datetime.now(timezone.utc)
-        canonical_profile = LocalExternalMCPProfile.from_input_dict(profile.to_input_dict())
-        profile_id = _require_non_empty_field(canonical_profile.profile_id, "profile_id", "Local MCP profile")
-        command = _require_non_empty_field(canonical_profile.command, "command", "Local MCP profile")
+        canonical_profile = LocalExternalMCPProfile.from_input_dict(
+            profile.to_input_dict()
+        )
+        profile_id = _validate_profile_id(canonical_profile.profile_id)
+        command = _require_non_empty_field(
+            canonical_profile.command, "command", "Local MCP profile"
+        )
         existing_profile = next(
             (item for item in current.profiles if item.profile_id == profile_id),
             None,
@@ -618,14 +753,23 @@ class LocalMCPStore:
             env_placeholders=canonical_profile.env_placeholders,
             env_literals=canonical_profile.env_literals,
             legacy_env_literals={},
-            created_at=canonical_profile.created_at or (existing_profile.created_at if existing_profile else now),
+            created_at=canonical_profile.created_at
+            or (existing_profile.created_at if existing_profile else now),
             updated_at=now,
         )
-        profiles = [item for item in current.profiles if item.profile_id != saved_profile.profile_id]
+        profiles = [
+            item
+            for item in current.profiles
+            if item.profile_id != saved_profile.profile_id
+        ]
         profiles.append(saved_profile)
         discovery_snapshots = dict(current.discovery_snapshots)
-        if existing_profile and self._launch_config_changed(existing_profile, saved_profile):
+        profile_runtime_state = dict(current.profile_runtime_state)
+        if existing_profile and self._launch_config_changed(
+            existing_profile, saved_profile
+        ):
             discovery_snapshots.pop(saved_profile.profile_id, None)
+            profile_runtime_state.pop(saved_profile.profile_id, None)
         self.save(
             LocalMCPStoreState(
                 profiles=tuple(profiles),
@@ -633,6 +777,7 @@ class LocalMCPStore:
                 governance_rules=current.governance_rules,
                 approval_requests=current.approval_requests,
                 runtime_activity=current.runtime_activity,
+                profile_runtime_state=profile_runtime_state,
             )
         )
         return saved_profile
@@ -640,11 +785,17 @@ class LocalMCPStore:
     def delete_profile(self, profile_id: str) -> bool:
         normalized_profile_id = _text(profile_id)
         current = self.load()
-        profiles = [profile for profile in current.profiles if profile.profile_id != normalized_profile_id]
+        profiles = [
+            profile
+            for profile in current.profiles
+            if profile.profile_id != normalized_profile_id
+        ]
         if len(profiles) == len(current.profiles):
             return False
         discovery_snapshots = dict(current.discovery_snapshots)
         discovery_snapshots.pop(normalized_profile_id, None)
+        profile_runtime_state = dict(current.profile_runtime_state)
+        profile_runtime_state.pop(normalized_profile_id, None)
         self.save(
             LocalMCPStoreState(
                 profiles=tuple(profiles),
@@ -652,11 +803,14 @@ class LocalMCPStore:
                 governance_rules=current.governance_rules,
                 approval_requests=current.approval_requests,
                 runtime_activity=current.runtime_activity,
+                profile_runtime_state=profile_runtime_state,
             )
         )
         return True
 
-    def save_discovery_snapshot(self, profile_id: str, snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    def save_discovery_snapshot(
+        self, profile_id: str, snapshot: Mapping[str, Any]
+    ) -> dict[str, Any]:
         normalized_profile_id = _require_non_empty_field(
             profile_id,
             "profile_id",
@@ -672,6 +826,7 @@ class LocalMCPStore:
                 governance_rules=current.governance_rules,
                 approval_requests=current.approval_requests,
                 runtime_activity=current.runtime_activity,
+                profile_runtime_state=current.profile_runtime_state,
             )
         )
         return discovery_snapshots[normalized_profile_id]
@@ -679,19 +834,91 @@ class LocalMCPStore:
     def get_discovery_snapshot(self, profile_id: str) -> dict[str, Any] | None:
         return self.load().discovery_snapshots.get(_text(profile_id))
 
+    def get_profile_runtime_state(self, profile_id: str) -> dict[str, Any] | None:
+        """Return the persisted lifecycle-attempt record for a profile.
+
+        Args:
+            profile_id: Stable local profile identifier.
+
+        Returns:
+            The stored record dict, or None if no attempt has been recorded.
+        """
+        state = self.load()
+        record = state.profile_runtime_state.get(_text(profile_id))
+        return dict(record) if record is not None else None
+
+    def save_profile_runtime_state(
+        self, profile_id: str, record: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Persist the lifecycle-attempt record for a profile (last-write-wins).
+
+        Args:
+            profile_id: Stable local profile identifier.
+            record: Attempt record (see module convention: last_attempt_at,
+                last_action, ok, last_ok_at, last_error).
+
+        Returns:
+            The stored record dict.
+        """
+        normalized_profile_id = _require_non_empty_field(
+            profile_id,
+            "profile_id",
+            "Local MCP profile runtime state",
+        )
+        current = self.load()
+        profile_runtime_state = dict(current.profile_runtime_state)
+        profile_runtime_state[normalized_profile_id] = dict(record)
+        self.save(
+            LocalMCPStoreState(
+                profiles=current.profiles,
+                discovery_snapshots=current.discovery_snapshots,
+                governance_rules=current.governance_rules,
+                approval_requests=current.approval_requests,
+                runtime_activity=current.runtime_activity,
+                profile_runtime_state=profile_runtime_state,
+            )
+        )
+        return profile_runtime_state[normalized_profile_id]
+
+    def get_catalog_bundle(self) -> dict[str, Any]:
+        """Return the catalog-relevant state in one read.
+
+        Batches the profile list, discovery snapshots, and lifecycle-attempt
+        (runtime state) records that a full external-server catalog view
+        needs. Callers that would otherwise issue one `load()` per profile
+        for each of `get_discovery_snapshot()` and `get_profile_runtime_state()`
+        (2N+1 total loads across N profiles) can use this single-`load()`
+        accessor instead.
+
+        Returns:
+            Mapping with `profiles` (list of profile dicts via `to_dict()`),
+            `discovery_snapshots` (profile_id -> snapshot dict), and
+            `profile_runtime_state` (profile_id -> lifecycle record dict).
+        """
+        state = self.load()
+        return {
+            "profiles": [profile.to_dict() for profile in state.profiles],
+            "discovery_snapshots": dict(state.discovery_snapshots),
+            "profile_runtime_state": dict(state.profile_runtime_state),
+        }
+
     def list_governance_rules(self) -> list[LocalGovernanceRule]:
         return list(self.load().governance_rules)
 
     def save_governance_rule(self, rule: LocalGovernanceRule) -> LocalGovernanceRule:
         current = self.load()
         now = datetime.now(timezone.utc)
-        rule_id = _require_non_empty_field(rule.rule_id, "rule_id", "Local MCP governance rule")
+        rule_id = _require_non_empty_field(
+            rule.rule_id, "rule_id", "Local MCP governance rule"
+        )
         capability_id = _require_non_empty_field(
             rule.capability_id,
             "capability_id",
             "Local MCP governance rule",
         )
-        decision = _require_non_empty_field(rule.decision, "decision", "Local MCP governance rule")
+        decision = _require_non_empty_field(
+            rule.decision, "decision", "Local MCP governance rule"
+        )
         saved_rule = LocalGovernanceRule(
             rule_id=rule_id,
             capability_id=capability_id,
@@ -699,7 +926,11 @@ class LocalMCPStore:
             notes=rule.notes,
             updated_at=now,
         )
-        rules = [item for item in current.governance_rules if item.rule_id != saved_rule.rule_id]
+        rules = [
+            item
+            for item in current.governance_rules
+            if item.rule_id != saved_rule.rule_id
+        ]
         rules.append(saved_rule)
         self.save(
             LocalMCPStoreState(
@@ -708,6 +939,7 @@ class LocalMCPStore:
                 governance_rules=tuple(rules),
                 approval_requests=current.approval_requests,
                 runtime_activity=current.runtime_activity,
+                profile_runtime_state=current.profile_runtime_state,
             )
         )
         return saved_rule
@@ -717,7 +949,11 @@ class LocalMCPStore:
         normalized_rule_id = _text(rule_id)
         if not normalized_rule_id:
             return False
-        rules = [item for item in current.governance_rules if item.rule_id != normalized_rule_id]
+        rules = [
+            item
+            for item in current.governance_rules
+            if item.rule_id != normalized_rule_id
+        ]
         if len(rules) == len(current.governance_rules):
             return False
         self.save(
@@ -727,6 +963,7 @@ class LocalMCPStore:
                 governance_rules=tuple(rules),
                 approval_requests=current.approval_requests,
                 runtime_activity=current.runtime_activity,
+                profile_runtime_state=current.profile_runtime_state,
             )
         )
         return True
@@ -734,11 +971,17 @@ class LocalMCPStore:
     def list_approval_requests(self) -> list[LocalApprovalRequest]:
         return list(self.load().approval_requests)
 
-    def save_approval_request(self, request: LocalApprovalRequest) -> LocalApprovalRequest:
+    def save_approval_request(
+        self, request: LocalApprovalRequest
+    ) -> LocalApprovalRequest:
         current = self.load()
         now = datetime.now(timezone.utc)
-        request_id = _require_non_empty_field(request.request_id, "request_id", "Local MCP approval request")
-        action_name = _require_non_empty_field(request.action_name, "action_name", "Local MCP approval request")
+        request_id = _require_non_empty_field(
+            request.request_id, "request_id", "Local MCP approval request"
+        )
+        action_name = _require_non_empty_field(
+            request.action_name, "action_name", "Local MCP approval request"
+        )
         resolved_action_id = _require_non_empty_field(
             request.resolved_action_id,
             "resolved_action_id",
@@ -749,9 +992,15 @@ class LocalMCPStore:
             "payload_fingerprint",
             "Local MCP approval request",
         )
-        status = _require_non_empty_field(request.status, "status", "Local MCP approval request")
+        status = _require_non_empty_field(
+            request.status, "status", "Local MCP approval request"
+        )
         existing_request = next(
-            (item for item in current.approval_requests if item.request_id == request_id),
+            (
+                item
+                for item in current.approval_requests
+                if item.request_id == request_id
+            ),
             None,
         )
         saved_request = LocalApprovalRequest(
@@ -764,11 +1013,17 @@ class LocalMCPStore:
             status=status,
             matched_rule_id=request.matched_rule_id,
             notes=request.notes,
-            created_at=request.created_at or (existing_request.created_at if existing_request else now),
+            created_at=request.created_at
+            or (existing_request.created_at if existing_request else now),
             updated_at=now,
-            resolved_at=request.resolved_at or (existing_request.resolved_at if existing_request else None),
+            resolved_at=request.resolved_at
+            or (existing_request.resolved_at if existing_request else None),
         )
-        approval_requests = [item for item in current.approval_requests if item.request_id != saved_request.request_id]
+        approval_requests = [
+            item
+            for item in current.approval_requests
+            if item.request_id != saved_request.request_id
+        ]
         approval_requests.append(saved_request)
         self.save(
             LocalMCPStoreState(
@@ -777,18 +1032,25 @@ class LocalMCPStore:
                 governance_rules=current.governance_rules,
                 approval_requests=tuple(approval_requests),
                 runtime_activity=current.runtime_activity,
+                profile_runtime_state=current.profile_runtime_state,
             )
         )
         return saved_request
 
-    def resolve_approval_request(self, request_id: str, status: str) -> LocalApprovalRequest | None:
+    def resolve_approval_request(
+        self, request_id: str, status: str
+    ) -> LocalApprovalRequest | None:
         normalized_request_id = _text(request_id)
         normalized_status = _text(status)
         if not normalized_request_id or not normalized_status:
             return None
         current = self.load()
         existing_request = next(
-            (item for item in current.approval_requests if item.request_id == normalized_request_id),
+            (
+                item
+                for item in current.approval_requests
+                if item.request_id == normalized_request_id
+            ),
             None,
         )
         if existing_request is None:
@@ -819,6 +1081,7 @@ class LocalMCPStore:
                 governance_rules=current.governance_rules,
                 approval_requests=tuple(approval_requests),
                 runtime_activity=current.runtime_activity,
+                profile_runtime_state=current.profile_runtime_state,
             )
         )
         return resolved_request
@@ -842,6 +1105,7 @@ class LocalMCPStore:
                 governance_rules=current.governance_rules,
                 approval_requests=tuple(approval_requests),
                 runtime_activity=current.runtime_activity,
+                profile_runtime_state=current.profile_runtime_state,
             )
         )
         return True
@@ -891,6 +1155,7 @@ class LocalMCPStore:
                 governance_rules=current.governance_rules,
                 approval_requests=current.approval_requests,
                 runtime_activity=tuple(runtime_activity),
+                profile_runtime_state=current.profile_runtime_state,
             )
         )
         return saved_entry.to_dict()
@@ -909,7 +1174,9 @@ class LocalMCPStore:
         existing_profile: LocalExternalMCPProfile,
         updated_profile: LocalExternalMCPProfile,
     ) -> bool:
-        return self._launch_config_signature(existing_profile) != self._launch_config_signature(updated_profile)
+        return self._launch_config_signature(
+            existing_profile
+        ) != self._launch_config_signature(updated_profile)
 
     def _launch_config_signature(
         self,

@@ -44,7 +44,8 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "chat",
         "Live agent conversations, approvals, tools, RAG, and runs.",
         "Open the live agent Console.",
-        ("chat",),
+        # "coding" is retired as a standalone screen; old links land on Console.
+        ("chat", "coding"),
         navigation_priority=20,
     ),
     ShellDestination(
@@ -53,7 +54,18 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "library",
         "Workspaces, source material, imports, notes, media, conversations, Study, flashcards, quizzes, and Search/RAG.",
         "Browse Workspaces, imports, notes, media, Study, flashcards, quizzes, search, and source material.",
-        ("notes", "media", "ingest", "search", "conversation", "study"),
+        (
+            "notes",
+            "media",
+            "ingest",
+            "search",
+            "conversation",
+            "study",
+            "prompts",
+            "skills",
+            "writing",
+            "research",
+        ),
         navigation_priority=30,
     ),
     ShellDestination(
@@ -66,11 +78,12 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
     ),
     ShellDestination(
         "personas",
-        "Personas",
+        "RP&CD",
         "personas",
-        "Characters, personas, prompts, dictionaries, and behavior profiles.",
+        "Characters, personas, dictionaries, and behavior profiles.",
         "Manage behavior profiles and persona context.",
-        ("ccp", "conversations_characters_prompts", "characters", "prompts"),
+        ("ccp", "conversations_characters_prompts", "characters", "roleplay"),
+        full_label="Roleplay & Chat Dictionaries",
     ),
     ShellDestination(
         "watchlists_collections",
@@ -112,11 +125,20 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "Manage ACP agents and sessions.",
     ),
     ShellDestination(
-        "skills",
-        "Skills",
-        "skills",
-        "Agent Skills packs, discovery, validation, and attachments.",
-        "Browse, import, validate, and attach skills.",
+        "lab",
+        "Lab",
+        "llm",
+        "Models, speech, and evaluation runs.",
+        "Manage models, speech, and evaluation runs.",
+        ("llm_management", "stts", "evals"),
+        navigation_priority=45,
+    ),
+    ShellDestination(
+        "logs",
+        "Logs",
+        "logs",
+        "Application logs and diagnostics.",
+        "View application logs and diagnostics.",
     ),
     ShellDestination(
         "settings",
@@ -124,7 +146,7 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
         "settings",
         "Global app preferences, appearance, accounts, and storage.",
         "Configure application preferences.",
-        ("customize",),
+        ("stats",),
     ),
 )
 
@@ -140,14 +162,26 @@ _ROUTABLE_LEGACY_ROUTES = {
     "search",
     "conversation",
     "study",
+    "writing",
+    "research",
     "chatbooks",
     "subscriptions",
     "tools_settings",
-    "customize",
+    "stts",
+    "evals",
+    "stats",
+    # Personas "prompts" mode chip retirement (Task 7): keep the legacy
+    # route id as its own canonical route under Library, mirroring "notes".
+    "prompts",
+    # Standalone Skills tab retirement (Skills sub-project Task 5): keep
+    # the legacy route id as its own canonical route under Library,
+    # mirroring "notes"/"prompts" above.
+    "skills",
 }
 
 _CANONICAL_ROUTE_OVERRIDES = {
     "subscription": "subscriptions",
+    "llm_management": "llm",
 }
 
 _ROUTE_MAP: dict[str, ResolvedShellRoute] = {}
@@ -166,7 +200,9 @@ for destination in SHELL_DESTINATION_ORDER:
     for legacy_route in destination.legacy_routes:
         canonical_route = _CANONICAL_ROUTE_OVERRIDES.get(
             legacy_route,
-            legacy_route if legacy_route in _ROUTABLE_LEGACY_ROUTES else destination.primary_route,
+            legacy_route
+            if legacy_route in _ROUTABLE_LEGACY_ROUTES
+            else destination.primary_route,
         )
         _ROUTE_MAP[legacy_route] = ResolvedShellRoute(
             destination.destination_id,

@@ -138,7 +138,9 @@ def _dashboard_payload(**overrides) -> dict:
         },
         "review_status_trends": {
             "window_days": 7,
-            "daily": [{"date": "2026-04-25", "total": 4, "status_counts": {"pending": 2}}],
+            "daily": [
+                {"date": "2026-04-25", "total": 4, "status_counts": {"pending": 2}}
+            ],
         },
         "review_extractor_metrics": [],
         "clusters": {
@@ -149,8 +151,17 @@ def _dashboard_payload(**overrides) -> dict:
             "p95_member_count": 4,
             "max_member_count": 4,
             "orphan_claims": 0,
-            "top_clusters": [{"cluster_id": 3, "member_count": 4, "watchlist_count": 1}],
-            "hotspots": [{"cluster_id": 3, "member_count": 4, "issue_count": 1, "watchlist_count": 1}],
+            "top_clusters": [
+                {"cluster_id": 3, "member_count": 4, "watchlist_count": 1}
+            ],
+            "hotspots": [
+                {
+                    "cluster_id": 3,
+                    "member_count": 4,
+                    "issue_count": 1,
+                    "watchlist_count": 1,
+                }
+            ],
         },
         "unsupported_ratios": {"window_sec": 3600, "baseline_sec": 86400},
         "provider_usage": [],
@@ -231,8 +242,12 @@ async def test_claims_client_routes_notifications_and_alerts(monkeypatch):
     )
     monkeypatch.setattr(client, "_request", mocked)
 
-    notifications = await client.list_claim_notifications(kind="watchlist_cluster", delivered=False, limit=25, offset=5)
-    digest = await client.get_claim_notifications_digest(include_items=True, ack=True, limit=25)
+    notifications = await client.list_claim_notifications(
+        kind="watchlist_cluster", delivered=False, limit=25, offset=5
+    )
+    digest = await client.get_claim_notifications_digest(
+        include_items=True, ack=True, limit=25
+    )
     acked = await client.ack_claim_notifications(ClaimNotificationsAckRequest(ids=[31]))
     watchlist_eval = await client.evaluate_claim_watchlist_notifications()
     alerts = await client.list_claim_alerts()
@@ -245,7 +260,9 @@ async def test_claims_client_routes_notifications_and_alerts(monkeypatch):
             channels={"notification": True, "email": False},
         )
     )
-    updated = await client.update_claim_alert(41, ClaimsAlertConfigUpdate(enabled=False))
+    updated = await client.update_claim_alert(
+        41, ClaimsAlertConfigUpdate(enabled=False)
+    )
     deleted = await client.delete_claim_alert(41)
     evaluated = await client.evaluate_claim_alerts(window_sec=1800, baseline_sec=7200)
 
@@ -256,16 +273,25 @@ async def test_claims_client_routes_notifications_and_alerts(monkeypatch):
         "limit": 25,
         "offset": 5,
     }
-    assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/claims/notifications/digest")
+    assert mocked.await_args_list[1].args[:2] == (
+        "GET",
+        "/api/v1/claims/notifications/digest",
+    )
     assert mocked.await_args_list[1].kwargs["params"] == {
         "include_items": True,
         "ack": True,
         "limit": 25,
         "offset": 0,
     }
-    assert mocked.await_args_list[2].args[:2] == ("POST", "/api/v1/claims/notifications/ack")
+    assert mocked.await_args_list[2].args[:2] == (
+        "POST",
+        "/api/v1/claims/notifications/ack",
+    )
     assert mocked.await_args_list[2].kwargs["json_data"] == {"ids": [31]}
-    assert mocked.await_args_list[3].args[:2] == ("POST", "/api/v1/claims/notifications/watchlists/evaluate")
+    assert mocked.await_args_list[3].args[:2] == (
+        "POST",
+        "/api/v1/claims/notifications/watchlists/evaluate",
+    )
     assert mocked.await_args_list[4].args[:2] == ("GET", "/api/v1/claims/alerts")
     assert mocked.await_args_list[5].args[:2] == ("POST", "/api/v1/claims/alerts")
     assert mocked.await_args_list[5].kwargs["json_data"] == {
@@ -278,8 +304,14 @@ async def test_claims_client_routes_notifications_and_alerts(monkeypatch):
     assert mocked.await_args_list[6].args[:2] == ("PATCH", "/api/v1/claims/alerts/41")
     assert mocked.await_args_list[6].kwargs["json_data"] == {"enabled": False}
     assert mocked.await_args_list[7].args[:2] == ("DELETE", "/api/v1/claims/alerts/41")
-    assert mocked.await_args_list[8].args[:2] == ("POST", "/api/v1/claims/alerts/evaluate")
-    assert mocked.await_args_list[8].kwargs["params"] == {"window_sec": 1800, "baseline_sec": 7200}
+    assert mocked.await_args_list[8].args[:2] == (
+        "POST",
+        "/api/v1/claims/alerts/evaluate",
+    )
+    assert mocked.await_args_list[8].kwargs["params"] == {
+        "window_sec": 1800,
+        "baseline_sec": 7200,
+    }
 
     assert isinstance(notifications[0], ClaimNotificationResponse)
     assert isinstance(digest, ClaimNotificationsDigestResponse)
@@ -293,7 +325,9 @@ async def test_claims_client_routes_notifications_and_alerts(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_claims_client_routes_control_review_analytics_clusters_and_fva(monkeypatch):
+async def test_claims_client_routes_control_review_analytics_clusters_and_fva(
+    monkeypatch,
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
@@ -327,10 +361,20 @@ async def test_claims_client_routes_control_review_analytics_clusters_and_fva(mo
             },
             {"items": [], "total": 0},
             _dashboard_payload(),
-            {"export_id": "exp-1", "format": "json", "status": "ready", "download_url": "/exports/exp-1"},
+            {
+                "export_id": "exp-1",
+                "format": "json",
+                "status": "ready",
+                "download_url": "/exports/exp-1",
+            },
             {
                 "exports": [
-                    {"export_id": "exp-1", "format": "json", "status": "ready", "download_url": "/exports/exp-1"}
+                    {
+                        "export_id": "exp-1",
+                        "format": "json",
+                        "status": "ready",
+                        "download_url": "/exports/exp-1",
+                    }
                 ],
                 "total": 1,
                 "limit": 25,
@@ -340,8 +384,18 @@ async def test_claims_client_routes_control_review_analytics_clusters_and_fva(mo
             [{"cluster_id": 3, "member_count": 4}],
             {"rebuilt": 1},
             {"cluster_id": 3, "member_count": 4},
-            [{"parent_cluster_id": 3, "child_cluster_id": 4, "relation_type": "supports"}],
-            {"parent_cluster_id": 3, "child_cluster_id": 4, "relation_type": "supports"},
+            [
+                {
+                    "parent_cluster_id": 3,
+                    "child_cluster_id": 4,
+                    "relation_type": "supports",
+                }
+            ],
+            {
+                "parent_cluster_id": 3,
+                "child_cluster_id": 4,
+                "relation_type": "supports",
+            },
             {"success": True},
             [{"id": 1, "claim_text": "A claim"}],
             {"timeline": []},
@@ -409,13 +463,19 @@ async def test_claims_client_routes_control_review_analytics_clusters_and_fva(mo
         ClaimReviewBulkRequest(claim_ids=[1, 2], status="approved", notes="Bulk review")
     )
     rules = await client.list_claim_review_rules(active_only=True)
-    created_rule = await client.create_claim_review_rule(ClaimReviewRuleCreate(priority=10, reviewer_id=77))
-    updated_rule = await client.update_claim_review_rule(3, ClaimReviewRuleUpdate(active=False))
+    created_rule = await client.create_claim_review_rule(
+        ClaimReviewRuleCreate(priority=10, reviewer_id=77)
+    )
+    updated_rule = await client.update_claim_review_rule(
+        3, ClaimReviewRuleUpdate(active=False)
+    )
     deleted_rule = await client.delete_claim_review_rule(3)
     review_analytics = await client.get_claim_review_analytics()
     extractors = await client.list_claim_extractors()
     metrics = await client.list_claim_review_metrics(extractor="llm", limit=25)
-    dashboard = await client.get_claims_analytics_dashboard(window_days=14, window_sec=7200)
+    dashboard = await client.get_claims_analytics_dashboard(
+        window_days=14, window_sec=7200
+    )
     export = await client.export_claims_analytics(
         ClaimsAnalyticsExportRequest(
             format="json",
@@ -426,7 +486,9 @@ async def test_claims_client_routes_control_review_analytics_clusters_and_fva(mo
     exports = await client.list_claims_analytics_exports(limit=25, format_filter="json")
     downloaded = await client.download_claims_analytics_export("exp-1")
     clusters = await client.list_claim_clusters(keyword="moon", watchlisted=True)
-    cluster_rebuild = await client.rebuild_claim_clusters(min_size=2, method="embeddings")
+    cluster_rebuild = await client.rebuild_claim_clusters(
+        min_size=2, method="embeddings"
+    )
     cluster = await client.get_claim_cluster(3)
     links = await client.list_claim_cluster_links(3, direction="outbound")
     link = await client.create_claim_cluster_link(
@@ -459,9 +521,18 @@ async def test_claims_client_routes_control_review_analytics_clusters_and_fva(mo
     assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/claims")
     assert mocked.await_args_list[1].kwargs["params"]["review_status"] == "pending"
     assert mocked.await_args_list[3].args[:2] == ("PUT", "/api/v1/claims/settings")
-    assert mocked.await_args_list[3].kwargs["json_data"] == {"enable_ingestion_claims": False, "persist": True}
-    assert mocked.await_args_list[5].args[:2] == ("PATCH", "/api/v1/claims/monitoring/config")
-    assert mocked.await_args_list[5].kwargs["json_data"] == {"enabled": False, "persist": True}
+    assert mocked.await_args_list[3].kwargs["json_data"] == {
+        "enable_ingestion_claims": False,
+        "persist": True,
+    }
+    assert mocked.await_args_list[5].args[:2] == (
+        "PATCH",
+        "/api/v1/claims/monitoring/config",
+    )
+    assert mocked.await_args_list[5].kwargs["json_data"] == {
+        "enabled": False,
+        "persist": True,
+    }
     assert mocked.await_args_list[8].args[:2] == ("PATCH", "/api/v1/claims/1/review")
     assert mocked.await_args_list[8].kwargs["json_data"] == {
         "status": "approved",
@@ -469,31 +540,55 @@ async def test_claims_client_routes_control_review_analytics_clusters_and_fva(mo
         "notes": "Looks valid",
     }
     assert mocked.await_args_list[10].args[:2] == ("POST", "/api/v1/claims/review/bulk")
-    assert mocked.await_args_list[12].args[:2] == ("POST", "/api/v1/claims/review/rules")
-    assert mocked.await_args_list[17].args[:2] == ("GET", "/api/v1/claims/review/metrics")
+    assert mocked.await_args_list[12].args[:2] == (
+        "POST",
+        "/api/v1/claims/review/rules",
+    )
+    assert mocked.await_args_list[17].args[:2] == (
+        "GET",
+        "/api/v1/claims/review/metrics",
+    )
     assert mocked.await_args_list[17].kwargs["params"] == {
         "extractor": "llm",
         "limit": 25,
         "offset": 0,
     }
-    assert mocked.await_args_list[18].args[:2] == ("GET", "/api/v1/claims/analytics/dashboard")
+    assert mocked.await_args_list[18].args[:2] == (
+        "GET",
+        "/api/v1/claims/analytics/dashboard",
+    )
     assert mocked.await_args_list[18].kwargs["params"] == {
         "window_days": 14,
         "window_sec": 7200,
         "baseline_sec": 86400,
     }
-    assert mocked.await_args_list[19].args[:2] == ("POST", "/api/v1/claims/analytics/export")
-    assert mocked.await_args_list[20].args[:2] == ("GET", "/api/v1/claims/analytics/exports")
+    assert mocked.await_args_list[19].args[:2] == (
+        "POST",
+        "/api/v1/claims/analytics/export",
+    )
+    assert mocked.await_args_list[20].args[:2] == (
+        "GET",
+        "/api/v1/claims/analytics/exports",
+    )
     assert mocked.await_args_list[20].kwargs["params"] == {
         "limit": 25,
         "offset": 0,
         "format": "json",
     }
-    assert mocked.await_args_list[21].args[:2] == ("GET", "/api/v1/claims/analytics/export/exp-1")
+    assert mocked.await_args_list[21].args[:2] == (
+        "GET",
+        "/api/v1/claims/analytics/export/exp-1",
+    )
     assert mocked.await_args_list[22].args[:2] == ("GET", "/api/v1/claims/clusters")
     assert mocked.await_args_list[22].kwargs["params"]["keyword"] == "moon"
-    assert mocked.await_args_list[25].args[:2] == ("GET", "/api/v1/claims/clusters/3/links")
-    assert mocked.await_args_list[26].args[:2] == ("POST", "/api/v1/claims/clusters/3/links")
+    assert mocked.await_args_list[25].args[:2] == (
+        "GET",
+        "/api/v1/claims/clusters/3/links",
+    )
+    assert mocked.await_args_list[26].args[:2] == (
+        "POST",
+        "/api/v1/claims/clusters/3/links",
+    )
     assert mocked.await_args_list[31].args[:2] == ("GET", "/api/v1/claims/search")
     assert mocked.await_args_list[31].kwargs["params"]["q"] == "moon"
     assert mocked.await_args_list[32].args[:2] == ("GET", "/api/v1/claims/10")
@@ -501,7 +596,10 @@ async def test_claims_client_routes_control_review_analytics_clusters_and_fva(mo
     assert mocked.await_args_list[34].args[:2] == ("PATCH", "/api/v1/claims/items/1")
     assert mocked.await_args_list[37].args[:2] == ("POST", "/api/v1/claims/rebuild_fts")
     assert mocked.await_args_list[38].args[:2] == ("POST", "/api/v1/claims/verify/fva")
-    assert mocked.await_args_list[39].args[:2] == ("GET", "/api/v1/claims/verify/fva/settings")
+    assert mocked.await_args_list[39].args[:2] == (
+        "GET",
+        "/api/v1/claims/verify/fva/settings",
+    )
 
     assert status["queued"] == 0
     assert all_claims[0]["claim_text"] == "A claim"
@@ -560,6 +658,9 @@ async def test_claims_client_downloads_analytics_export_files(monkeypatch):
 
     response = await client.download_claims_analytics_export_file("exp-csv")
 
-    assert mocked.await_args.args[:2] == ("GET", "/api/v1/claims/analytics/export/exp-csv")
+    assert mocked.await_args.args[:2] == (
+        "GET",
+        "/api/v1/claims/analytics/export/exp-csv",
+    )
     assert response.content == b"claim_id,status\n1,approved\n"
     assert response.filename == "claims.csv"

@@ -3,13 +3,19 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
 from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget
-from tldw_chatbook.tldw_api import TLDWAPIClient
 
-from .bootstrap import RuntimePolicyContext, build_runtime_api_client, derive_configured_server_binding
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api import TLDWAPIClient
+
+from .bootstrap import (
+    RuntimePolicyContext,
+    build_runtime_api_client,
+    derive_configured_server_binding,
+)
 from .server_credentials import (
     CredentialStoreUnavailable,
     SERVER_CREDENTIAL_ACCESS_TOKEN,
@@ -182,13 +188,21 @@ class RuntimeServerContextProvider:
             return
 
         self._invalidate_cached_client()
-        self._invalidate_event_handles_for_server_switch(previous_normalized, next_normalized)
-        self._invalidate_sync_handles_for_server_switch(previous_normalized, next_normalized)
+        self._invalidate_event_handles_for_server_switch(
+            previous_normalized, next_normalized
+        )
+        self._invalidate_sync_handles_for_server_switch(
+            previous_normalized, next_normalized
+        )
 
     def clear_active_server_auth_tokens(self) -> None:
         active_server_id = self._require_active_server_id()
-        self.credential_store.delete_secret(active_server_id, SERVER_CREDENTIAL_ACCESS_TOKEN)
-        self.credential_store.delete_secret(active_server_id, SERVER_CREDENTIAL_REFRESH_TOKEN)
+        self.credential_store.delete_secret(
+            active_server_id, SERVER_CREDENTIAL_ACCESS_TOKEN
+        )
+        self.credential_store.delete_secret(
+            active_server_id, SERVER_CREDENTIAL_REFRESH_TOKEN
+        )
         self._invalidate_cached_client()
 
     def store_auth_tokens(
@@ -221,23 +235,35 @@ class RuntimeServerContextProvider:
             return target
 
         resolved_target = self.target_store.resolve_active_target()
-        if resolved_target is not None and resolved_target.server_id == active_server_id:
+        if (
+            resolved_target is not None
+            and resolved_target.server_id == active_server_id
+        ):
             return resolved_target
         return None
 
     def _require_active_server_id(self) -> str:
         state = self.runtime_context.state
         active_server_id = str(state.active_server_id or "").strip()
-        if state.active_source != "server" or not state.server_configured or not active_server_id:
+        if (
+            state.active_source != "server"
+            or not state.server_configured
+            or not active_server_id
+        ):
             raise ServerContextUnavailable(
                 "Runtime policy does not have an active configured server.",
                 reason_code="server_not_configured",
             )
         return active_server_id
 
-    def _legacy_target_for_active_server(self, active_server_id: str) -> ConfiguredServerTarget | None:
+    def _legacy_target_for_active_server(
+        self, active_server_id: str
+    ) -> ConfiguredServerTarget | None:
         legacy_binding = derive_configured_server_binding(self.app_config)
-        if not legacy_binding.server_configured or legacy_binding.active_server_id != active_server_id:
+        if (
+            not legacy_binding.server_configured
+            or legacy_binding.active_server_id != active_server_id
+        ):
             return None
         return ConfiguredServerTarget.from_legacy_tldw_api_config(self.app_config)
 
@@ -276,7 +302,9 @@ class RuntimeServerContextProvider:
                 )
             legacy_token = self._legacy_config_token()
             if legacy_token is not None:
-                imported_purpose = self._import_legacy_token(server_id, target.auth_mode, legacy_token)
+                imported_purpose = self._import_legacy_token(
+                    server_id, target.auth_mode, legacy_token
+                )
                 if imported_purpose is not None:
                     return legacy_token, f"credential_store:{imported_purpose}"
                 return legacy_token, "legacy:tldw_api"
@@ -304,7 +332,9 @@ class RuntimeServerContextProvider:
                 reason_code="auth_required",
                 active_server_id=context.active_server_id,
             )
-        if context.auth_token is None and self._purposes_for_auth_mode(context.auth_method):
+        if context.auth_token is None and self._purposes_for_auth_mode(
+            context.auth_method
+        ):
             raise ServerCredentialsUnavailable(
                 "Active server authentication is required.",
                 reason_code="auth_required",
@@ -329,7 +359,11 @@ class RuntimeServerContextProvider:
 
     def _legacy_config_token(self) -> str | None:
         api_config = self._legacy_api_config()
-        token = api_config.get("auth_token") or api_config.get("api_key") or api_config.get("bearer_token")
+        token = (
+            api_config.get("auth_token")
+            or api_config.get("api_key")
+            or api_config.get("bearer_token")
+        )
         if token is None:
             return None
         normalized = str(token).strip()
@@ -347,11 +381,17 @@ class RuntimeServerContextProvider:
         *,
         using_legacy_fallback_target: bool,
     ) -> bool:
-        if not using_legacy_fallback_target and target.auth_reference != "legacy:tldw_api":
+        if (
+            not using_legacy_fallback_target
+            and target.auth_reference != "legacy:tldw_api"
+        ):
             return False
 
         legacy_binding = derive_configured_server_binding(self.app_config)
-        return legacy_binding.server_configured and legacy_binding.active_server_id == active_server_id
+        return (
+            legacy_binding.server_configured
+            and legacy_binding.active_server_id == active_server_id
+        )
 
     def _mark_legacy_server_id_cleared(self, server_id: str) -> None:
         normalized_server_id = str(server_id or "").strip()
@@ -371,7 +411,9 @@ class RuntimeServerContextProvider:
             server_ids.add(legacy_binding.active_server_id)
         return server_ids
 
-    def _import_legacy_token(self, server_id: str, auth_mode: str, token: str) -> str | None:
+    def _import_legacy_token(
+        self, server_id: str, auth_mode: str, token: str
+    ) -> str | None:
         purposes = self._purposes_for_auth_mode(auth_mode)
         if not purposes:
             return None
@@ -452,7 +494,9 @@ class RuntimeServerContextProvider:
         }
 
     @staticmethod
-    def _build_server_headers(auth_method: str, auth_token: str | None) -> dict[str, str]:
+    def _build_server_headers(
+        auth_method: str, auth_token: str | None
+    ) -> dict[str, str]:
         if not auth_token:
             return {}
         if auth_method in {"bearer", "custom_token"}:

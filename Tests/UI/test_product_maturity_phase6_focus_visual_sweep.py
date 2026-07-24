@@ -15,7 +15,10 @@ from textual.css.query import NoMatches, QueryError, TooManyMatches
 from textual.widgets import Button, Static
 
 from Tests.UI.test_screen_navigation import _build_test_app
-from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar, NavigateToScreen
+from tldw_chatbook.UI.Navigation.main_navigation import (
+    MainNavigationBar,
+    NavigateToScreen,
+)
 from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
 from tldw_chatbook.app import TldwCli
 
@@ -36,7 +39,9 @@ TASK_13_4 = Path(
     "backlog/tasks/task-13.4 - Phase-6.4-Keyboard-focus-accessibility-and-visual-sweep.md"
 )
 
-TOP_LEVEL_DESTINATION_IDS = tuple(destination.destination_id for destination in SHELL_DESTINATION_ORDER)
+TOP_LEVEL_DESTINATION_IDS = tuple(
+    destination.destination_id for destination in SHELL_DESTINATION_ORDER
+)
 TERMINAL_SIZE_MATRIX = (
     ("compact", (100, 32)),
     ("default", (140, 42)),
@@ -51,9 +56,9 @@ DESTINATION_BODY_SELECTORS: dict[str, tuple[str, ...]] = {
     "watchlists_collections": ("#watchlists-collections-shell",),
     "schedules": ("#schedules-shell",),
     "workflows": ("#workflows-shell",),
-    "mcp": ("#mcp-shell", "#unified-mcp-panel"),
+    "mcp": ("#mcp-shell", "#mcp-hub-workbench"),
     "acp": ("#acp-shell",),
-    "skills": ("#skills-shell",),
+    "lab": ("#llm-destination-header",),
     "settings": ("#settings-shell",),
 }
 BROKEN_TEXT_PATTERNS = (
@@ -80,7 +85,9 @@ def _text(path: Path) -> str:
 
 def _assert_no_local_path_prefixes(text: str) -> None:
     leaked_prefixes = [prefix for prefix in LOCAL_PATH_PREFIXES if prefix in text]
-    assert not leaked_prefixes, f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
+    assert not leaked_prefixes, (
+        f"evidence contains local filesystem prefix(es): {leaked_prefixes}"
+    )
 
 
 def _test_cli_setting(section: str, key: str, default=None):
@@ -125,10 +132,14 @@ async def _wait_until(
     raise AssertionError(f"condition was not met within {timeout_seconds:.1f}s{suffix}")
 
 
-def _assert_destination_body_mounted(app: TldwCli, destination_id: str, size_label: str) -> None:
+def _assert_destination_body_mounted(
+    app: TldwCli, destination_id: str, size_label: str
+) -> None:
     selectors = DESTINATION_BODY_SELECTORS[destination_id]
     content = app.screen.query_one("#screen-content")
-    missing_selectors = [selector for selector in selectors if not list(content.query(selector))]
+    missing_selectors = [
+        selector for selector in selectors if not list(content.query(selector))
+    ]
     assert not missing_selectors, (
         f"{destination_id} missing primary body selector(s) at {size_label}: "
         f"{', '.join(missing_selectors)}"
@@ -138,28 +149,45 @@ def _assert_destination_body_mounted(app: TldwCli, destination_id: str, size_lab
 def _visual_chrome_ready(app: TldwCli, destination_id: str) -> bool:
     try:
         nav_bar = app.screen.query_one(MainNavigationBar)
-        nav_ids = tuple(button.id.removeprefix("nav-") for button in nav_bar.query(Button))
+        nav_ids = tuple(
+            button.id.removeprefix("nav-") for button in nav_bar.query(Button)
+        )
         if nav_ids != TOP_LEVEL_DESTINATION_IDS:
             return False
-        if not nav_bar.query_one(f"#nav-{destination_id}", Button).has_class("is-active"):
+        # The docked overflow hint mounts a tick after the nav strip; treat
+        # the chrome as incomplete until it is present too.
+        if len(app.screen.query("#nav-overflow-hint")) != 1:
+            return False
+        if not nav_bar.query_one(f"#nav-{destination_id}", Button).has_class(
+            "is-active"
+        ):
             return False
         content = app.screen.query_one("#screen-content")
-        return any(list(content.query(selector)) for selector in DESTINATION_BODY_SELECTORS[destination_id])
+        return any(
+            list(content.query(selector))
+            for selector in DESTINATION_BODY_SELECTORS[destination_id]
+        )
     except (NoMatches, QueryError, TooManyMatches):
         # During async recomposition, expected query misses mean the chrome is not ready yet.
         return False
 
 
-def _assert_visual_snapshot_is_healthy(app: TldwCli, destination_id: str, size_label: str) -> None:
+def _assert_visual_snapshot_is_healthy(
+    app: TldwCli, destination_id: str, size_label: str
+) -> None:
     nav_bar = app.screen.query_one(MainNavigationBar)
     nav_ids = tuple(button.id.removeprefix("nav-") for button in nav_bar.query(Button))
     assert nav_ids == TOP_LEVEL_DESTINATION_IDS
     assert nav_bar.query_one(f"#nav-{destination_id}", Button).has_class("is-active")
-    assert "Ctrl+P" in str(app.screen.query_one("#nav-overflow-hint", Static).renderable)
+    assert "Ctrl+P" in str(
+        app.screen.query_one("#nav-overflow-hint", Static).renderable
+    )
     _assert_destination_body_mounted(app, destination_id, size_label)
 
     text = _screen_text(app)
-    svg = app.export_screenshot(title=f"Phase 6.4 {size_label} {destination_id}", simplify=True)
+    svg = app.export_screenshot(
+        title=f"Phase 6.4 {size_label} {destination_id}", simplify=True
+    )
 
     assert text.strip(), f"{destination_id} rendered empty content at {size_label}"
     assert "<svg" in svg
@@ -206,18 +234,23 @@ async def test_phase6_visual_chrome_survives_release_terminal_size_matrix(
         async with app.run_test(size=size) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                lambda: (
+                    app.current_tab == "home"
+                    and app.screen.__class__.__name__ == "HomeScreen"
+                ),
                 context=f"{size_label}:home",
             )
 
             for destination in SHELL_DESTINATION_ORDER:
-                _screen_name, expected_tab, expected_screen_class = app._resolve_screen_navigation_target(
-                    destination.primary_route
+                _screen_name, expected_tab, expected_screen_class = (
+                    app._resolve_screen_navigation_target(destination.primary_route)
                 )
                 assert expected_screen_class is not None, destination.primary_route
 
                 if app.current_tab != expected_tab:
-                    await app.handle_screen_navigation(NavigateToScreen(destination.primary_route))
+                    await app.handle_screen_navigation(
+                        NavigateToScreen(destination.primary_route)
+                    )
                     await _wait_until(
                         pilot,
                         lambda expected_tab=expected_tab, expected_screen_class=expected_screen_class: (
@@ -228,35 +261,50 @@ async def test_phase6_visual_chrome_survives_release_terminal_size_matrix(
                     )
                 await _wait_until(
                     pilot,
-                    lambda destination_id=destination.destination_id: _visual_chrome_ready(app, destination_id),
+                    lambda destination_id=destination.destination_id: (
+                        _visual_chrome_ready(app, destination_id)
+                    ),
                     context=f"{size_label}:{destination.destination_id}:visual-chrome",
                 )
 
-                _assert_visual_snapshot_is_healthy(app, destination.destination_id, size_label)
+                _assert_visual_snapshot_is_healthy(
+                    app, destination.destination_id, size_label
+                )
 
 
 @pytest.mark.asyncio
-async def test_phase6_home_keyboard_focus_reaches_navigation_and_primary_action() -> None:
+async def test_phase6_home_keyboard_focus_reaches_navigation_and_primary_action() -> (
+    None
+):
     app = _build_release_sweep_app()
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 42)) as pilot:
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+                lambda: (
+                    app.current_tab == "home"
+                    and app.screen.__class__.__name__ == "HomeScreen"
+                ),
             )
 
             if not isinstance(app.focused, Button):
                 await pilot.press("tab")
 
             expected_focus_ids = [
-                *(f"nav-{destination_id}" for destination_id in TOP_LEVEL_DESTINATION_IDS),
+                *(
+                    f"nav-{destination_id}"
+                    for destination_id in TOP_LEVEL_DESTINATION_IDS
+                ),
             ]
             observed_focus_ids: list[str] = []
             for expected_focus_id in expected_focus_ids:
                 await _wait_until(
                     pilot,
-                    lambda: isinstance(app.focused, Button) and app.focused.id == expected_focus_id,
+                    lambda: (
+                        isinstance(app.focused, Button)
+                        and app.focused.id == expected_focus_id
+                    ),
                     context=f"focus:{expected_focus_id}",
                 )
                 focused = app.focused
@@ -266,12 +314,18 @@ async def test_phase6_home_keyboard_focus_reaches_navigation_and_primary_action(
                 await pilot.press("tab")
 
             for _ in range(24):
-                if isinstance(app.focused, Button) and app.focused.id == "home-primary-action":
+                if (
+                    isinstance(app.focused, Button)
+                    and app.focused.id == "home-primary-action"
+                ):
                     break
                 await pilot.press("tab")
             await _wait_until(
                 pilot,
-                lambda: isinstance(app.focused, Button) and app.focused.id == "home-primary-action",
+                lambda: (
+                    isinstance(app.focused, Button)
+                    and app.focused.id == "home-primary-action"
+                ),
                 context="focus:home-primary-action",
             )
             focused = app.focused

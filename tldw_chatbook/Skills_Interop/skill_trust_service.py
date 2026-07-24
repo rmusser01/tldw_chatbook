@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..tldw_api.skills_schemas import _normalize_skill_name as _normalize_api_skill_name
 from .skill_trust_crypto import (
     SkillTrustKeys,
     canonical_json,
@@ -67,7 +66,9 @@ class SkillTrustService:
         self._salt: bytes | None = None
         self._reviews: dict[str, dict[str, Any]] = {}
 
-    def unlock_with_passphrase(self, passphrase: str, *, salt: bytes | None = None) -> None:
+    def unlock_with_passphrase(
+        self, passphrase: str, *, salt: bytes | None = None
+    ) -> None:
         """Derive in-memory trust keys from a passphrase and manifest salt."""
 
         if salt is None:
@@ -79,7 +80,9 @@ class SkillTrustService:
         """Persist derived trust keys in secure keyring storage, never a passphrase."""
 
         if self.key_cache is None:
-            raise SkillTrustMarkerUnavailable("No secure OS-backed key cache is available.")
+            raise SkillTrustMarkerUnavailable(
+                "No secure OS-backed key cache is available."
+            )
         keys = self._require_keys()
         salt = self._require_salt()
         self.key_cache.save_keys(keys, salt=salt)
@@ -126,11 +129,88 @@ class SkillTrustService:
                 return status.trust_status
         return TRUST_STATUS_TRUSTED
 
-    def bootstrap_trust(self, passphrase: str | None = None, *, salt: bytes | None = None) -> None:
+    def reset_trust(self) -> None:
+        """Clear all local trust state, returning the profile to first-run.
+
+        Destructive: drops the trusted baseline (every skill returns to
+        "needs review"). Skills themselves are untouched. Best-effort and
+        non-raising so a partially-available keyring never blocks recovery.
+        """
+        try:
+            self.trust_store.delete_manifest()
+        except Exception:
+            pass
+        for target in (self.trust_store.marker_store, self.key_cache):
+            clear = getattr(target, "clear", None)
+            if callable(clear):
+                try:
+                    clear()
+                except Exception:
+                    pass
+        self._keys = None
+        self._salt = None
+        self.keyring_convenience_enabled = False
+
+    def _safe_load_marker(self) -> tuple[dict[str, Any] | None, bool]:
+        """Return (marker, available). available=False iff the marker store raised."""
+        try:
+            return self.trust_store.marker_store.load_marker(), True
+        except SkillTrustMarkerUnavailable:
+            return None, False
+        except Exception:
+            return None, False
+
+    def trust_posture(self) -> str:
+        """Structured global trust posture for the Skills list header.
+
+        See the plan's Task 3 interface contract for the exact mapping.
+
+        Returns:
+            One of six posture strings:
+
+            - ``"unavailable"`` -- the marker store *raised* (e.g. a locked
+              OS keyring), so trust cannot be read or written right now and
+              neither setup nor unlock could succeed. Checked FIRST so a
+              transiently-broken keyring is never mistaken for a fresh
+              install or an orphaned manifest; recoverable by Retry, never
+              destructively.
+            - ``"needs_setup"`` -- no manifest and no marker: a genuine
+              first run.
+            - ``"needs_resetup"`` -- either no manifest but a marker is
+              present (a foreign/inherited marker), or a manifest exists
+              with its marker cleanly absent (the orphaned-manifest upgrade
+              case). Recover via reset-then-setup.
+            - ``"locked"`` -- manifest and marker both present but this
+              session has not unlocked the trust keys.
+            - ``"error"`` -- keys are loaded but the manifest fails to
+              validate.
+            - ``"ready"`` -- trust is set up, unlocked, and valid.
+        """
+        has_manifest = self.trust_store.has_manifest()
+        marker, available = self._safe_load_marker()
+        if not available:
+            return "unavailable"
+        if not has_manifest:
+            return "needs_resetup" if marker else "needs_setup"
+        if marker is None:
+            return "needs_resetup"  # orphaned manifest (upgrade case)
+        if self._keys is None:
+            return "locked"
+        try:
+            self._load_valid_manifest()
+        except (SkillTrustMarkerUnavailable, ValueError):
+            return "error"
+        return "ready"
+
+    def bootstrap_trust(
+        self, passphrase: str | None = None, *, salt: bytes | None = None
+    ) -> None:
         """Trust the current local skill directories as the initial baseline."""
 
         if passphrase is not None:
-            self.unlock_with_passphrase(passphrase, salt=salt or secrets.token_bytes(32))
+            self.unlock_with_passphrase(
+                passphrase, salt=salt or secrets.token_bytes(32)
+            )
         keys = self._require_keys()
         manifest_salt = self._require_salt()
         generation = 1
@@ -138,8 +218,6 @@ class SkillTrustService:
 
         for normalized_name, skill_dir in self._iter_skill_dirs():
             snapshot = scan_skill_directory(normalized_name, skill_dir)
-            if snapshot.unsupported_paths:
-                raise ValueError(TRUST_REASON_UNSUPPORTED_PATH)
             snapshot_id = self._snapshot_id(normalized_name, generation)
             self.trust_store.save_snapshot(
                 snapshot_id,
@@ -211,7 +289,9 @@ class SkillTrustService:
                 trust_status=TRUST_STATUS_QUARANTINED_ADDED,
                 trust_reason_code=TRUST_REASON_SKILL_ADDED,
                 trust_blocked=True,
-                changed_files=tuple(item.relative_path for item in current.fingerprints),
+                changed_files=tuple(
+                    item.relative_path for item in current.fingerprints
+                ),
                 manifest_generation=generation,
                 last_verified_at=_now_iso(),
             )
@@ -224,7 +304,8 @@ class SkillTrustService:
                 self._manifest_error_reason(exc),
             )
         current_files = {
-            item.relative_path: item.as_manifest_entry() for item in current.fingerprints
+            item.relative_path: item.as_manifest_entry()
+            for item in current.fingerprints
         }
         missing = set(trusted_files) - set(current_files)
         added = set(current_files) - set(trusted_files)
@@ -317,11 +398,22 @@ class SkillTrustService:
             skill_content=skill_content,
             supporting_files=supporting_files,
         )
-        missing = set(trusted_files) - set(current_files)
+        # The in-memory reconstruction is text-only and mode-blind. Binary and
+        # executable files cannot be represented here, so scope the in-memory
+        # comparison to reconstructable (text, non-executable) trusted files;
+        # ensure_skill_trusted() above already verified the full on-disk bundle
+        # (binaries + exec bits) against the manifest via a recursive scan.
+        reconstructable = {
+            path
+            for path, entry in trusted_files.items()
+            if entry.get("file_type") != "supporting_binary"
+            and not entry.get("executable")
+        }
+        missing = reconstructable - set(current_files)
         added = set(current_files) - set(trusted_files)
         modified = {
             path
-            for path in trusted_files.keys() & current_files.keys()
+            for path in reconstructable & current_files.keys()
             if trusted_files[path] != current_files[path]
         }
         changed = tuple(sorted(missing | added | modified))
@@ -356,7 +448,9 @@ class SkillTrustService:
             "manifest_generation": status.manifest_generation,
             "current_digest": self._fingerprints_digest(current),
             "current_files": dict(current.text_files),
-            "current_fingerprints": [item.as_manifest_entry() for item in current.fingerprints],
+            "current_fingerprints": [
+                item.as_manifest_entry() for item in current.fingerprints
+            ],
             "changed_files": list(status.changed_files),
             "captured_at": _now_iso(),
         }
@@ -401,7 +495,9 @@ class SkillTrustService:
             self._reviews.pop(review_id, None)
             raise ValueError("snapshot_mismatch")
         self._reviews.pop(review_id, None)
-        self.trust_current_skill(skill_name, audit_event="trust_approved", snapshot=current)
+        self.trust_current_skill(
+            skill_name, audit_event="trust_approved", snapshot=current
+        )
 
     def trust_current_skill(
         self,
@@ -417,8 +513,6 @@ class SkillTrustService:
         manifest = self._load_valid_manifest()
         generation = int(manifest["generation"]) + 1
         current = snapshot or self._scan_skill(normalized_name)
-        if current.unsupported_paths:
-            raise ValueError(TRUST_REASON_UNSUPPORTED_PATH)
         if not current.fingerprints:
             raise ValueError(TRUST_REASON_SKILL_DELETED)
 
@@ -538,6 +632,11 @@ class SkillTrustService:
         return scan_skill_directory(normalized_name, skill_dir)
 
     def _normalize_skill_name(self, skill_name: str) -> str:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api.skills_schemas import (
+            _normalize_skill_name as _normalize_api_skill_name,
+        )
+
         try:
             return _normalize_api_skill_name(skill_name)
         except (AttributeError, ValueError) as exc:
@@ -572,9 +671,13 @@ class SkillTrustService:
                 TRUST_REASON_ROLLBACK_MARKER_UNAVAILABLE,
             )
         except Exception:
-            return self._manifest_error_status(skill_name, TRUST_REASON_MANIFEST_INVALID)
+            return self._manifest_error_status(
+                skill_name, TRUST_REASON_MANIFEST_INVALID
+            )
         if marker:
-            return self._manifest_error_status(skill_name, TRUST_REASON_MANIFEST_INVALID)
+            return self._manifest_error_status(
+                skill_name, TRUST_REASON_MANIFEST_INVALID
+            )
         return SkillTrustStatus(
             skill_name=skill_name,
             trust_status=TRUST_STATUS_UNINITIALIZED,
@@ -596,7 +699,9 @@ class SkillTrustService:
             last_verified_at=_now_iso(),
         )
 
-    def _manifest_error_status(self, skill_name: str, reason_code: str) -> SkillTrustStatus:
+    def _manifest_error_status(
+        self, skill_name: str, reason_code: str
+    ) -> SkillTrustStatus:
         return SkillTrustStatus(
             skill_name=skill_name,
             trust_status=TRUST_STATUS_QUARANTINED_MANIFEST_ERROR,
@@ -637,7 +742,9 @@ class SkillTrustService:
             raise ValueError("manifest schema invalid")
         result: dict[str, dict[str, Any]] = {}
         for item in files:
-            if not isinstance(item, dict) or not isinstance(item.get("relative_path"), str):
+            if not isinstance(item, dict) or not isinstance(
+                item.get("relative_path"), str
+            ):
                 raise ValueError("manifest schema invalid")
             result[str(item["relative_path"])] = dict(item)
         return result
@@ -661,11 +768,15 @@ class SkillTrustService:
             )
         return files
 
-    def _content_manifest_entry(self, *, relative_path: str, content: str) -> dict[str, Any]:
+    def _content_manifest_entry(
+        self, *, relative_path: str, content: str
+    ) -> dict[str, Any]:
         raw = content.encode("utf-8")
         return {
             "relative_path": relative_path,
-            "file_type": "skill" if relative_path == _SKILL_FILENAME else "supporting_text",
+            "file_type": "skill"
+            if relative_path == _SKILL_FILENAME
+            else "supporting_text",
             "byte_length": len(raw),
             "sha256": sha256_hex(raw),
         }

@@ -3,56 +3,58 @@
 import re
 
 # Pattern to find test methods that use dict samples
-dict_sample_pattern = re.compile(r'sample\s*=\s*\{[^}]+\}')
-dict_samples_pattern = re.compile(r'samples\s*=\s*\[[^\]]+\]')
+dict_sample_pattern = re.compile(r"sample\s*=\s*\{[^}]+\}")
+dict_samples_pattern = re.compile(r"samples\s*=\s*\[[^\]]+\]")
 
 # Pattern to find tests that need LLMInterface mocking
-needs_llm_mock_pattern = re.compile(r'runner\s*=\s*create_test_runner\(mock_llm_interface\)')
+needs_llm_mock_pattern = re.compile(
+    r"runner\s*=\s*create_test_runner\(mock_llm_interface\)"
+)
 
 fixes_needed = {
-    'dict_to_evalsample': [
-        'test_run_multiple_samples',
-        'test_run_with_progress_callback',
-        'test_question_answer_task',
-        'test_multiple_choice_task',
-        'test_text_generation_task',
-        'test_code_generation_task',
-        'test_exact_match_metric',
-        'test_contains_answer_metric',
-        'test_bleu_score_metric',
-        'test_f1_score_metric',
-        'test_code_execution_metric',
-        'test_safety_metrics',
-        'test_api_timeout_handling',
-        'test_retry_mechanism',
-        'test_partial_failure_handling',
-        'test_concurrent_execution',
-        'test_memory_efficient_streaming',
-        'test_cancellation_support',
-        'test_few_shot_prompting',
-        'test_custom_prompt_templates',
-        'test_response_filtering',
-        'test_multilingual_evaluation',
-        'test_math_evaluation',
-        'test_safety_evaluation'
+    "dict_to_evalsample": [
+        "test_run_multiple_samples",
+        "test_run_with_progress_callback",
+        "test_question_answer_task",
+        "test_multiple_choice_task",
+        "test_text_generation_task",
+        "test_code_generation_task",
+        "test_exact_match_metric",
+        "test_contains_answer_metric",
+        "test_bleu_score_metric",
+        "test_f1_score_metric",
+        "test_code_execution_metric",
+        "test_safety_metrics",
+        "test_api_timeout_handling",
+        "test_retry_mechanism",
+        "test_partial_failure_handling",
+        "test_concurrent_execution",
+        "test_memory_efficient_streaming",
+        "test_cancellation_support",
+        "test_few_shot_prompting",
+        "test_custom_prompt_templates",
+        "test_response_filtering",
+        "test_multilingual_evaluation",
+        "test_math_evaluation",
+        "test_safety_evaluation",
     ],
-    'add_llm_mock': [
-        'All test methods in TestBasicEvaluation',
-        'All test methods in TestDifferentTaskTypes',
-        'All test methods in TestMetricsCalculation',
-        'All test methods in TestErrorHandling',
-        'All test methods in TestConcurrencyAndPerformance',
-        'All test methods in TestAdvancedFeatures',
-        'All test methods in TestSpecializedEvaluations'
-    ]
+    "add_llm_mock": [
+        "All test methods in TestBasicEvaluation",
+        "All test methods in TestDifferentTaskTypes",
+        "All test methods in TestMetricsCalculation",
+        "All test methods in TestErrorHandling",
+        "All test methods in TestConcurrencyAndPerformance",
+        "All test methods in TestAdvancedFeatures",
+        "All test methods in TestSpecializedEvaluations",
+    ],
 }
 
 print("Tests that need dict-to-EvalSample conversion:")
-for test in fixes_needed['dict_to_evalsample']:
+for test in fixes_needed["dict_to_evalsample"]:
     print(f"  - {test}")
 
 print("\nTests that need LLMInterface mocking:")
-for test_class in fixes_needed['add_llm_mock']:
+for test_class in fixes_needed["add_llm_mock"]:
     print(f"  - {test_class}")
 
 print("\nRecommended fix pattern:")

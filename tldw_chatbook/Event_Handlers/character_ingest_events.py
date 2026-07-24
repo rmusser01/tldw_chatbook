@@ -8,7 +8,15 @@ from typing import TYPE_CHECKING, Optional, List, Any, Dict
 
 # 3rd-party Libraries
 from loguru import logger
-from textual.widgets import Button, Label, ListItem, ListView, Static, Markdown, TextArea
+from textual.widgets import (
+    Button,
+    Label,
+    ListItem,
+    ListView,
+    Static,
+    Markdown,
+    TextArea,
+)
 from textual.css.query import QueryError
 from textual.containers import VerticalScroll
 
@@ -16,17 +24,14 @@ from textual.containers import VerticalScroll
 from ..Character_Chat import Character_Chat_Lib as ccl
 from ..DB.ChaChaNotes_DB import ConflictError as ChaChaConflictError
 from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen
-from .ingest_utils import (
-    CHARACTER_FILE_FILTERS, 
-    MAX_CHARACTER_PREVIEWS,
-    _truncate_text
-)
+from .ingest_utils import CHARACTER_FILE_FILTERS, MAX_CHARACTER_PREVIEWS, _truncate_text
 
 if TYPE_CHECKING:
     from ..app import TldwCli
 
+
 # --- Character Preview Functions ---
-async def _update_character_preview_display(app: 'TldwCli') -> None:
+async def _update_character_preview_display(app: "TldwCli") -> None:
     """Updates the character preview area in the UI."""
     try:
         preview_area = app.query_one("#ingest-characters-preview-area", VerticalScroll)
@@ -34,8 +39,11 @@ async def _update_character_preview_display(app: 'TldwCli') -> None:
 
         if not app.parsed_characters_for_preview:
             await preview_area.mount(
-                Static("Select files to see a preview, or no characters found.",
-                       id="ingest-characters-preview-placeholder"))
+                Static(
+                    "Select files to see a preview, or no characters found.",
+                    id="ingest-characters-preview-placeholder",
+                )
+            )
             return
 
         num_to_display = len(app.parsed_characters_for_preview)
@@ -66,21 +74,31 @@ async def _update_character_preview_display(app: 'TldwCli') -> None:
  ---
  """
             await preview_area.mount(
-                Markdown(md_content, classes="prompt-preview-item"))  # Reusing class, can make specific
+                Markdown(md_content, classes="prompt-preview-item")
+            )  # Reusing class, can make specific
 
         if num_to_display > MAX_CHARACTER_PREVIEWS:
             await preview_area.mount(
-                Static(f"...and {num_to_display - MAX_CHARACTER_PREVIEWS} more characters loaded (not shown)."))
+                Static(
+                    f"...and {num_to_display - MAX_CHARACTER_PREVIEWS} more characters loaded (not shown)."
+                )
+            )
 
     except QueryError as e:
         logger.error(f"UI component not found for character preview update: {e}")
         app.notify("Error updating character preview UI.", severity="error")
     except Exception as e:
-        logger.opt(exception=True).error(f"Unexpected error updating character preview: {e}")
-        app.notify("Unexpected error during character preview update.", severity="error")
+        logger.opt(exception=True).error(
+            f"Unexpected error updating character preview: {e}"
+        )
+        app.notify(
+            "Unexpected error during character preview update.", severity="error"
+        )
 
 
-def _parse_single_character_file_for_preview(file_path: Path, app_ref: 'TldwCli') -> List[Dict[str, Any]]:
+def _parse_single_character_file_for_preview(
+    file_path: Path, app_ref: "TldwCli"
+) -> List[Dict[str, Any]]:
     """
     Parses a single character file for preview.
     Returns a list containing one dict (or an error dict).
@@ -111,14 +129,20 @@ def _parse_single_character_file_for_preview(file_path: Path, app_ref: 'TldwCli'
             # Let's assume it's primarily about loading the structure.
             # This function is in Character_Chat_Lib.py
             # `load_character_card_from_file(file_path: Union[str, Path]) -> Optional[Dict[str, Any]]:`
-            char_dict = ccl.load_character_card_from_file(str(file_path))  # No DB passed
+            char_dict = ccl.load_character_card_from_file(
+                str(file_path)
+            )  # No DB passed
             if char_dict:
                 preview_data.update(char_dict)
                 # Ensure 'name' is present for valid preview item
                 if not preview_data.get("name"):
-                    preview_data["name"] = file_path.stem  # Fallback to filename without ext
+                    preview_data["name"] = (
+                        file_path.stem
+                    )  # Fallback to filename without ext
             else:
-                preview_data["error"] = f"Could not parse character data from {file_path.name}."
+                preview_data["error"] = (
+                    f"Could not parse character data from {file_path.name}."
+                )
                 preview_data["name"] = f"Error: {file_path.name}"
 
         elif file_suffix in (".png", ".webp"):
@@ -130,32 +154,51 @@ def _parse_single_character_file_for_preview(file_path: Path, app_ref: 'TldwCli'
                     preview_data["name"] = file_path.stem
             else:
                 preview_data["name"] = file_path.name  # Just show filename
-                preview_data["description"] = "Image file (binary data not shown in preview)"
+                preview_data["description"] = (
+                    "Image file (binary data not shown in preview)"
+                )
         else:
-            preview_data["error"] = f"Unsupported file type for character preview: {file_path.name}"
+            preview_data["error"] = (
+                f"Unsupported file type for character preview: {file_path.name}"
+            )
             preview_data["name"] = f"Error: {file_path.name}"
 
         return [preview_data]
 
     except Exception as e:
-        logger.opt(exception=True).error(f"Error parsing character file {file_path} for preview: {e}")
+        logger.opt(exception=True).error(
+            f"Error parsing character file {file_path} for preview: {e}"
+        )
         app_ref.notify(f"Error previewing {file_path.name}.", severity="error")
-        return [{"filename": file_path.name, "name": f"Error: {file_path.name}", "error": str(e)}]
+        return [
+            {
+                "filename": file_path.name,
+                "name": f"Error: {file_path.name}",
+                "error": str(e),
+            }
+        ]
 
 
-async def _handle_character_file_selected_callback(app: 'TldwCli', selected_path: Optional[Path]) -> None:
+async def _handle_character_file_selected_callback(
+    app: "TldwCli", selected_path: Optional[Path]
+) -> None:
     """Callback for character file selection."""
     if selected_path:
         logger.info(f"Character file selected via dialog: {selected_path}")
         if selected_path in app.selected_character_files_for_import:
-            app.notify(f"File '{selected_path.name}' is already in the character selection.", severity="warning")
+            app.notify(
+                f"File '{selected_path.name}' is already in the character selection.",
+                severity="warning",
+            )
             return
 
         app.selected_character_files_for_import.append(selected_path)
         app.last_character_import_dir = selected_path.parent
 
         try:
-            list_view = app.query_one("#ingest-characters-selected-files-list", ListView)
+            list_view = app.query_one(
+                "#ingest-characters-selected-files-list", ListView
+            )
 
             # Check if the list view contains only the "No files selected." placeholder
             # This is safer than assuming it's always the first child.
@@ -166,22 +209,33 @@ async def _handle_character_file_selected_callback(app: 'TldwCli', selected_path
                     first_label_of_first_item = first_child.children[0]
                     if isinstance(first_label_of_first_item, Label):
                         # Convert Label's renderable (Rich Text) to plain string for comparison
-                        if str(first_label_of_first_item.renderable).strip() == "No files selected.":
+                        if (
+                            str(first_label_of_first_item.renderable).strip()
+                            == "No files selected."
+                        ):
                             placeholder_exists = True
 
             if placeholder_exists:
                 await list_view.clear()
-                logger.debug("Cleared 'No files selected.' placeholder from character list.")
+                logger.debug(
+                    "Cleared 'No files selected.' placeholder from character list."
+                )
 
             await list_view.append(ListItem(Label(str(selected_path))))
             logger.debug(f"Appended '{selected_path}' to character list view.")
 
         except QueryError:
-            logger.error("Could not find #ingest-characters-selected-files-list ListView to update.")
+            logger.error(
+                "Could not find #ingest-characters-selected-files-list ListView to update."
+            )
         except Exception as e_lv:
-            logger.opt(exception=True).error(f"Error updating character list view: {e_lv}")
+            logger.opt(exception=True).error(
+                f"Error updating character list view: {e_lv}"
+            )
 
-        parsed_chars_from_file = _parse_single_character_file_for_preview(selected_path, app)
+        parsed_chars_from_file = _parse_single_character_file_for_preview(
+            selected_path, app
+        )
         app.parsed_characters_for_preview.extend(parsed_chars_from_file)
 
         await _update_character_preview_display(app)
@@ -191,35 +245,49 @@ async def _handle_character_file_selected_callback(app: 'TldwCli', selected_path
 
 
 # --- Character Ingest Handlers ---
-async def handle_ingest_characters_select_file_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+async def handle_ingest_characters_select_file_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     """Handles the 'Select Character File(s)' button press."""
     logger.debug("Select Character File(s) button pressed. Opening file dialog.")
     current_dir = app.last_character_import_dir or Path(".")  # Use new state var
 
     await app.push_screen(
-        FileOpen(location=str(current_dir, context="character_ingest"),
+        FileOpen(
+            location=str(current_dir, context="character_ingest"),
             title="Select Character File (.json, .yaml, .png, .webp, .md)",
-            filters=CHARACTER_FILE_FILTERS
+            filters=CHARACTER_FILE_FILTERS,
         ),
-        lambda path: app.call_after_refresh(lambda: _handle_character_file_selected_callback(app, path))
+        lambda path: app.call_after_refresh(
+            lambda: _handle_character_file_selected_callback(app, path)
+        ),
         # path type here is Optional[Path]
     )
 
 
-async def handle_ingest_characters_clear_files_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+async def handle_ingest_characters_clear_files_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     """Handles 'Clear Selection' for character import."""
     logger.info("Clearing selected character files and preview.")
     app.selected_character_files_for_import.clear()
     app.parsed_characters_for_preview.clear()
 
     try:
-        selected_list_view = app.query_one("#ingest-characters-selected-files-list", ListView)
+        selected_list_view = app.query_one(
+            "#ingest-characters-selected-files-list", ListView
+        )
         await selected_list_view.clear()
         await selected_list_view.append(ListItem(Label("No files selected.")))
 
         preview_area = app.query_one("#ingest-characters-preview-area", VerticalScroll)
         await preview_area.remove_children()
-        await preview_area.mount(Static("Select files to see a preview.", id="ingest-characters-preview-placeholder"))
+        await preview_area.mount(
+            Static(
+                "Select files to see a preview.",
+                id="ingest-characters-preview-placeholder",
+            )
+        )
 
         status_area = app.query_one("#ingest-character-import-status-area", TextArea)
         status_area.clear()
@@ -229,7 +297,9 @@ async def handle_ingest_characters_clear_files_button_pressed(app: 'TldwCli', ev
         app.notify("Error clearing character UI.", severity="error")
 
 
-async def handle_ingest_characters_import_now_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
+async def handle_ingest_characters_import_now_button_pressed(
+    app: "TldwCli", event: Button.Pressed
+) -> None:
     """Handles 'Import Selected Characters Now' button press."""
     logger.info("Import Selected Character Files Now button pressed.")
 
@@ -237,7 +307,9 @@ async def handle_ingest_characters_import_now_button_pressed(app: 'TldwCli', eve
         app.notify("No character files selected to import.", severity="warning")
         return
 
-    if not app.notes_service:  # Character cards are stored via NotesService (ChaChaNotesDB)
+    if (
+        not app.notes_service
+    ):  # Character cards are stored via NotesService (ChaChaNotesDB)
         msg = "Notes/Character database service is not initialized. Cannot import characters."
         app.notify(msg, severity="error", timeout=7)
         logger.error(msg + " Aborting character import.")
@@ -246,7 +318,9 @@ async def handle_ingest_characters_import_now_button_pressed(app: 'TldwCli', eve
     try:
         status_area = app.query_one("#ingest-character-import-status-area", TextArea)
         status_area.clear()  # Clear previous status
-        status_area.load_text("Starting character import process...\n")  # Use load_text to set initial content
+        status_area.load_text(
+            "Starting character import process...\n"
+        )  # Use load_text to set initial content
     except QueryError:
         logger.error("Could not find #ingest-character-import-status-area TextArea.")
         app.notify("Status display area not found.", severity="error")
@@ -258,7 +332,9 @@ async def handle_ingest_characters_import_now_button_pressed(app: 'TldwCli', eve
 
     # Import these for worker-related functionality
     import tldw_chatbook.Event_Handlers.conv_char_events as ccp_handlers
-    from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import populate_chat_conversation_character_filter_select
+    from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
+        populate_chat_conversation_character_filter_select,
+    )
 
     async def import_worker_char():
         results = []
@@ -275,46 +351,60 @@ async def handle_ingest_characters_import_now_button_pressed(app: 'TldwCli', eve
                     except Exception:
                         pass
 
-                    results.append({
-                        "file_path": str(file_path),
-                        "character_name": char_name,
-                        "status": "success",
-                        "message": f"Character imported successfully. ID: {char_id}",
-                        "char_id": char_id
-                    })
+                    results.append(
+                        {
+                            "file_path": str(file_path),
+                            "character_name": char_name,
+                            "status": "success",
+                            "message": f"Character imported successfully. ID: {char_id}",
+                            "char_id": char_id,
+                        }
+                    )
                 else:
-                    results.append({
+                    results.append(
+                        {
+                            "file_path": str(file_path),
+                            "character_name": file_path.stem,
+                            "status": "failure",
+                            "message": "Failed to import (see logs for details).",
+                        }
+                    )
+            except ChaChaConflictError as ce:
+                results.append(
+                    {
+                        "file_path": str(file_path),
+                        "character_name": file_path.stem,
+                        "status": "conflict",
+                        "message": str(ce),
+                    }
+                )
+            except ImportError as ie:
+                results.append(
+                    {
                         "file_path": str(file_path),
                         "character_name": file_path.stem,
                         "status": "failure",
-                        "message": "Failed to import (see logs for details)."
-                    })
-            except ChaChaConflictError as ce:
-                results.append({
-                    "file_path": str(file_path),
-                    "character_name": file_path.stem,
-                    "status": "conflict",
-                    "message": str(ce)
-                })
-            except ImportError as ie:
-                results.append({
-                    "file_path": str(file_path),
-                    "character_name": file_path.stem,
-                    "status": "failure",
-                    "message": f"Import error: {ie}. A required library might be missing."
-                })
+                        "message": f"Import error: {ie}. A required library might be missing.",
+                    }
+                )
             except Exception as e:
-                logger.opt(exception=True).error(f"Error importing character from {file_path}: {e}")
-                results.append({
-                    "file_path": str(file_path),
-                    "character_name": file_path.stem,
-                    "status": "failure",
-                    "message": f"Unexpected error: {type(e).__name__}"
-                })
+                logger.opt(exception=True).error(
+                    f"Error importing character from {file_path}: {e}"
+                )
+                results.append(
+                    {
+                        "file_path": str(file_path),
+                        "character_name": file_path.stem,
+                        "status": "failure",
+                        "message": f"Unexpected error: {type(e).__name__}",
+                    }
+                )
         return results
 
     def on_import_success_char(results: List[Dict[str, Any]]):
-        log_text_parts = ["Character import process finished.\n\nResults:\n"]  # Renamed to avoid conflict
+        log_text_parts = [
+            "Character import process finished.\n\nResults:\n"
+        ]  # Renamed to avoid conflict
         successful_imports = 0
         failed_imports = 0
         for res in results:
@@ -339,12 +429,21 @@ async def handle_ingest_characters_import_now_button_pressed(app: 'TldwCli', eve
         log_text_parts.append(summary)
 
         try:
-            status_area_widget = app.query_one("#ingest-character-import-status-area", TextArea)
-            status_area_widget.load_text("".join(log_text_parts))  # Use load_text for the final result
+            status_area_widget = app.query_one(
+                "#ingest-character-import-status-area", TextArea
+            )
+            status_area_widget.load_text(
+                "".join(log_text_parts)
+            )  # Use load_text for the final result
         except QueryError:
-            logger.error("Could not find #ingest-character-import-status-area to update with results.")
+            logger.error(
+                "Could not find #ingest-character-import-status-area to update with results."
+            )
 
-        app.notify(f"Character import finished. Success: {successful_imports}, Failed: {failed_imports}", timeout=8)
+        app.notify(
+            f"Character import finished. Success: {successful_imports}, Failed: {failed_imports}",
+            timeout=8,
+        )
         logger.info(summary)
 
         # Set the flag to True since we're populating the filter after character import
@@ -353,21 +452,45 @@ async def handle_ingest_characters_import_now_button_pressed(app: 'TldwCli', eve
         app.call_later(ccp_handlers.populate_ccp_character_select, app)
 
     def on_import_failure_char(error: Exception):
-        logger.opt(exception=True).error(f"Character import worker failed critically: {error}")
+        logger.opt(exception=True).error(
+            f"Character import worker failed critically: {error}"
+        )
         try:
-            status_area_widget = app.query_one("#ingest-character-import-status-area", TextArea)
+            status_area_widget = app.query_one(
+                "#ingest-character-import-status-area", TextArea
+            )
             # Append error to existing text or load new text
             current_text = status_area_widget.text
             status_area_widget.load_text(
-                current_text + f"\nCharacter import process failed critically: {error}\nCheck logs.\n")
+                current_text
+                + f"\nCharacter import process failed critically: {error}\nCheck logs.\n"
+            )
         except QueryError:
-            logger.error("Could not find #ingest-character-import-status-area to report critical failure.")
+            logger.error(
+                "Could not find #ingest-character-import-status-area to report critical failure."
+            )
 
-        app.notify(f"Character import CRITICALLY failed: {error}", severity="error", timeout=10)
+        app.notify(
+            f"Character import CRITICALLY failed: {error}", severity="error", timeout=10
+        )
+
+    async def _run_char_import_worker_and_dispatch():
+        # Task 172: the file_operations worker group has no worker-state
+        # handler, so on_import_success_char/on_import_failure_char were never
+        # invoked. This worker is a plain coroutine (no thread=True), so it
+        # runs on the main event loop -- dispatching the callbacks directly
+        # here (as T167 did for notes) is safe.
+        try:
+            results = await import_worker_char()
+        except Exception as e:
+            on_import_failure_char(e)
+            raise
+        on_import_success_char(results)
+        return results
 
     app.run_worker(
-        import_worker_char,
+        _run_char_import_worker_and_dispatch,
         name="character_import_worker",
         group="file_operations",
-        description="Importing selected character files."
+        description="Importing selected character files.",
     )

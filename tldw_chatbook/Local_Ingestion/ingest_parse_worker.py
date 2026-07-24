@@ -89,15 +89,25 @@ def classify_parse_failure(exc: Exception) -> bool:
         exc: The exception raised by the per-job ingest attempt.
 
     Returns:
-        ``True`` for a missing-file failure (``FileNotFoundError``, raised
-        by ``parse_local_file_for_ingest``/``ingest_local_file`` when the
-        source path doesn't exist) or an unsupported-file-type failure
+        ``True`` for a ``PermanentIngestError`` (the explicit permanent
+        marker raised by the URL/web extractor for a bad URL, a 4xx, a
+        non-HTML page, empty extraction, or a missing extractor dependency),
+        a missing-file failure (``FileNotFoundError``, raised by
+        ``parse_local_file_for_ingest``/``ingest_local_file`` when the
+        source path doesn't exist), or an unsupported-file-type failure
         (``detect_file_type`` raises ``FileIngestionError`` with a message
         starting "Unsupported file type" -- matched by message prefix
         rather than exception type, so a differently-raised validation
         error carrying the same copy still classifies consistently).
         ``False`` for everything else.
     """
+    try:
+        from .local_file_ingestion import PermanentIngestError
+
+        if isinstance(exc, PermanentIngestError):
+            return True
+    except Exception:
+        pass
     if isinstance(exc, FileNotFoundError):
         return True
     return str(exc).strip().startswith("Unsupported file type")
@@ -137,9 +147,22 @@ def run_parse_job(file_path: str, options: Dict[str, Any]) -> Dict[str, Any]:
         payload = parse_local_file_for_ingest(file_path, options)
     except Exception as exc:  # noqa: BLE001 - must never raise across the process boundary
         message = str(exc).strip() or exc.__class__.__name__
+        permanent = classify_parse_failure(exc)
+        category = (
+            "unsupported_file_type"
+            if str(exc).strip().startswith("Unsupported file type")
+            else "missing_source"
+            if isinstance(exc, FileNotFoundError)
+            else "parse_error"
+        )
         return {
             "ok": False,
             "error": message,
-            "permanent": classify_parse_failure(exc),
+            "permanent": permanent,
+            "error_detail": {
+                "category": category,
+                "message": message,
+                "exception_type": exc.__class__.__name__,
+            },
         }
     return {"ok": True, "payload": payload}

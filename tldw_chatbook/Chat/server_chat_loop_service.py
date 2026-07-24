@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
-from ..tldw_api import ChatLoopStartRequest, TLDWAPIClient
+
+if TYPE_CHECKING:
+    from ..tldw_api import TLDWAPIClient
 
 
 class ServerChatLoopService:
@@ -22,7 +24,9 @@ class ServerChatLoopService:
 
     @classmethod
     def from_config(cls, app_config: Mapping[str, Any]) -> "ServerChatLoopService":
-        return cls(client_provider=build_runtime_api_client_provider_from_config(app_config))
+        return cls(
+            client_provider=build_runtime_api_client_provider_from_config(app_config)
+        )
 
     @classmethod
     def from_server_context_provider(cls, provider: Any) -> "ServerChatLoopService":
@@ -45,21 +49,32 @@ class ServerChatLoopService:
             return value.model_dump(exclude_none=True, mode="json")
         return dict(value)
 
-    async def start_run(self, *, messages: list[dict[str, Any]], **payload: Any) -> dict[str, Any]:
+    async def start_run(
+        self, *, messages: list[dict[str, Any]], **payload: Any
+    ) -> dict[str, Any]:
+        # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
+        from ..tldw_api import ChatLoopStartRequest
+
         request_data = ChatLoopStartRequest(messages=messages, **payload)
         response = await self._require_client().start_chat_loop_run(request_data)
         return self._as_dict(response)
 
     async def list_events(self, run_id: str, *, after_seq: int = 0) -> dict[str, Any]:
-        response = await self._require_client().list_chat_loop_events(str(run_id), after_seq=after_seq)
+        response = await self._require_client().list_chat_loop_events(
+            str(run_id), after_seq=after_seq
+        )
         return self._as_dict(response)
 
     async def approve(self, run_id: str, approval_id: str) -> dict[str, Any]:
-        response = await self._require_client().approve_chat_loop_call(str(run_id), str(approval_id))
+        response = await self._require_client().approve_chat_loop_call(
+            str(run_id), str(approval_id)
+        )
         return self._as_dict(response)
 
     async def reject(self, run_id: str, approval_id: str) -> dict[str, Any]:
-        response = await self._require_client().reject_chat_loop_call(str(run_id), str(approval_id))
+        response = await self._require_client().reject_chat_loop_call(
+            str(run_id), str(approval_id)
+        )
         return self._as_dict(response)
 
     async def cancel(self, run_id: str) -> dict[str, Any]:

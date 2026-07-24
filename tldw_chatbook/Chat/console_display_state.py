@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from html import escape as html_escape
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional
 
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.Chat.rag_scope import EffectiveScope, RagScope
 
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID = "console-inspector-review-approval"
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_LABEL = "Review approval"
@@ -50,6 +51,42 @@ def coerce_non_negative_int(value: Any) -> int:
 def _is_blocked_rag_status(value: Any) -> bool:
     text = _clean(value, "").lower()
     return text.startswith("missing") or text in {"blocked", "unavailable"}
+
+
+def _mcp_inspector_row(
+    tool_count: Any, not_connected_count: Any
+) -> "ConsoleDisplayRow | None":
+    """Build the "MCP" inspector row, or ``None`` when there is nothing to show.
+
+    ``tool_count`` is ``None`` (the P5-T6 default) whenever the caller has
+    no MCP composition to report at all -- no ``unified_mcp_service`` on
+    the app, or the kill switch is on -- and the row is omitted entirely.
+    Otherwise: a non-zero not-connected-server count ALWAYS wins with the
+    blocked warning ("M servers enabled, not connected"), regardless of
+    ``tool_count`` -- a stale (disconnected-with-snapshot) server still
+    contributes its own tools to the catalog (see
+    ``MCPToolProvider.compose_catalog``'s eligibility filter), so
+    ``tool_count`` is essentially never 0 in the real mixed case; checking
+    it first would make this affordance unreachable (Finding I2). Only
+    when every enabled server is connected does a non-zero tool count
+    render the ready row ("N tools ready"). Both zero omits the row just
+    like the ``None`` case -- nothing worth telling the user about.
+    """
+    if tool_count is None:
+        return None
+    normalized_tool_count = coerce_non_negative_int(tool_count)
+    normalized_not_connected_count = coerce_non_negative_int(not_connected_count)
+    if normalized_not_connected_count > 0:
+        server_word = "server" if normalized_not_connected_count == 1 else "servers"
+        return ConsoleDisplayRow(
+            "MCP",
+            f"{normalized_not_connected_count} {server_word} enabled, not connected",
+            status="blocked",
+        )
+    if normalized_tool_count > 0:
+        tool_word = "tool" if normalized_tool_count == 1 else "tools"
+        return ConsoleDisplayRow("MCP", f"{normalized_tool_count} {tool_word} ready")
+    return None
 
 
 def build_console_disabled_reason(
@@ -122,7 +159,9 @@ class ConsoleEvidenceDisplayState:
     reference_rows: tuple[ConsoleDisplayRow, ...] = ()
 
 
-def evidence_bundle_from_launch(launch: ConsoleLiveWorkLaunch | None) -> EvidenceBundle | None:
+def evidence_bundle_from_launch(
+    launch: ConsoleLiveWorkLaunch | None,
+) -> EvidenceBundle | None:
     """Parse a staged live-work evidence bundle without exposing raw payload text."""
     if launch is None:
         return None
@@ -269,22 +308,46 @@ class ConsoleControlState:
         rag_enabled: bool = False,
         staged_source_count: int = 0,
         tool_count: int = 0,
+        mcp_tool_count: int | None = None,
         approval_count: int = 0,
     ) -> "ConsoleControlState":
+        """Build the Console control-bar chip state from raw run values.
+
+        Args:
+            provider: Active provider name, or falsy for "not selected".
+            model: Active model name, or falsy for "not selected".
+            persona: Persona/assistant label; falsy falls back to "General".
+            rag_enabled: Whether RAG is on for this send.
+            staged_source_count: Number of staged context sources.
+            tool_count: Built-in tools that can run.
+            mcp_tool_count: MCP catalog size that can run, or ``None`` when no MCP
+                seam is wired (chip then reflects built-in tools only).
+            approval_count: Pending MCP approvals.
+
+        Returns:
+            A ``ConsoleControlState`` whose ``tools_label`` counts the tools that
+            can actually run (built-in + MCP) and whose ``*_active`` flags drive
+            chip emphasis.
+        """
         persona_text = _clean(persona, "")
         persona_label = (
             f"Persona: {persona_text}" if persona_text else "Assistant: General"
         )
+        # TASK-350: the chip must reflect the tools that can ACTUALLY run — built-in
+        # AND MCP. Counting only built-in read "Tools: 0 ready" while the inspector
+        # showed "MCP: 10 tools ready". `mcp_tool_count is None` means no MCP seam
+        # wired, so the chip falls back to built-in only.
+        effective_tool_count = tool_count + (mcp_tool_count or 0)
         return cls(
             provider_label=f"Provider: {_clean(provider, 'not selected')}",
             model_label=f"Model: {_clean(model, 'not selected')}",
             persona_label=persona_label,
             rag_label=f"RAG: {'on' if rag_enabled else 'off'}",
             sources_label=f"Sources: {staged_source_count} staged",
-            tools_label=f"Tools: {tool_count} ready",
+            tools_label=f"Tools: {effective_tool_count} ready",
             approvals_label=f"Approvals: {approval_count} pending",
             sources_active=staged_source_count > 0,
-            tools_active=tool_count > 0,
+            tools_active=effective_tool_count > 0,
             approvals_active=approval_count > 0,
         )
 
@@ -336,10 +399,133 @@ class ConsoleStagedContextState:
 
     @classmethod
     def empty(cls) -> "ConsoleStagedContextState":
+        """Return the no-sources-staged display state.
+
+        Task-400: the empty state carries no summary line. The staged-context
+        tray renders its own "No sources attached. Stage sources from
+        Library." guidance Static when there are no rows, so a summary of
+        "No sources attached." here rendered the same copy twice.
+
+        Returns:
+            Empty staged-context state with the semantic ``is_empty`` flag
+            set and a blank summary.
+        """
         return cls(
             heading="Staged Context",
-            summary="No sources attached.",
+            summary="",
             is_empty=True,
+        )
+
+
+@dataclass(frozen=True)
+class ConsoleRetrievalScopeState:
+    """Display state for the Inspector's "Retrieval scope" row (task-9) and
+    the header's "Scope" chip (task-10) -- both render from this SAME
+    snapshot, never a second state source.
+
+    Pure snapshot -- built from session-held state only (a persisted
+    conversation's cached last-read scope, or an unpersisted session's
+    ``SessionScopeHolder``), never a DB read at render/recompose time. A
+    scope with zero items is never represented here as "scoped": both
+    storage-layer entry points (``read_conversation_scope``,
+    ``SessionScopeHolder.set``) already normalize a zero-item scope to
+    ``None`` (unscoped) before this state is ever built from it.
+
+    ``is_empty``/``cause`` mirror ``EffectiveScope``'s ``"empty"`` state
+    (rag_scope.py) -- the configured scope(s) leave nothing to retrieve
+    from (either every item in an active scope has since been deleted, or
+    a conversation/workspace intersection with no overlap).
+
+    ``conv_item_count``/``ws_item_count`` (task-13, Phase 3) carry the
+    individual conversation-level and workspace-level scope counts
+    alongside ``item_count`` (which is always the EFFECTIVE,
+    post-intersection count) -- used only for the header chip's
+    intersection-breakdown tooltip ("conversation A ∩ workspace B → N").
+    ``None`` means that level has no active scope. Built via
+    ``from_effective`` whenever a workspace scope might be in play;
+    ``from_scope`` (the conversation-only shortcut still used before the
+    off-loop effective resolution lands in the cache) sets
+    ``conv_item_count`` to the same value as ``item_count`` and leaves
+    ``ws_item_count`` unset.
+    """
+
+    is_scoped: bool
+    item_count: int = 0
+    is_empty: bool = False
+    cause: Optional[str] = None
+    conv_item_count: Optional[int] = None
+    ws_item_count: Optional[int] = None
+
+    @classmethod
+    def unscoped(cls) -> "ConsoleRetrievalScopeState":
+        """Return the "everything" (no active scope) display state."""
+        return cls(is_scoped=False, item_count=0)
+
+    @classmethod
+    def from_scope(cls, scope: "RagScope | None") -> "ConsoleRetrievalScopeState":
+        """Build the row's display state from a resolved scope, or ``None``."""
+        if scope is None or not scope.items:
+            return cls.unscoped()
+        return cls(
+            is_scoped=True,
+            item_count=len(scope.items),
+            conv_item_count=len(scope.items),
+        )
+
+    @classmethod
+    def empty(cls, cause: Optional[str] = None) -> "ConsoleRetrievalScopeState":
+        """Return the EMPTY (action-required) display state.
+
+        Args:
+            cause: Short machine-readable reason (e.g. ``"deleted-items"``
+                or ``"no-workspace-overlap"``, mirroring
+                ``EffectiveScope.cause``); surfaced in the chip's tooltip.
+        """
+        return cls(is_scoped=False, item_count=0, is_empty=True, cause=cause)
+
+    @classmethod
+    def from_effective(
+        cls,
+        effective: "EffectiveScope",
+        *,
+        conv_item_count: Optional[int] = None,
+        ws_item_count: Optional[int] = None,
+    ) -> "ConsoleRetrievalScopeState":
+        """Build the row/chip display state from a resolved ``EffectiveScope``.
+
+        Task-13: the Inspector row and header chip render the EFFECTIVE
+        (post-intersection) state once a workspace scope is in play, not
+        just the conversation's own scope -- this is the seam that carries
+        that resolution into the display layer, mirroring
+        ``rag_scope.resolve_effective_scope``'s three states exactly.
+
+        Args:
+            effective: The resolved effective scope (conversation
+                intersected with the linked workspace's scope, if any).
+            conv_item_count: The conversation-level scope's own item count,
+                or ``None`` when the conversation has no scope. Carried
+                through only for the chip's breakdown tooltip.
+            ws_item_count: The linked workspace's scope item count, or
+                ``None`` when unset/unlinked. Carried through only for the
+                chip's breakdown tooltip.
+        """
+        if effective.state == "unscoped":
+            return cls.unscoped()
+        if effective.state == "empty":
+            return cls(
+                is_scoped=False,
+                item_count=0,
+                is_empty=True,
+                cause=effective.cause,
+                conv_item_count=conv_item_count,
+                ws_item_count=ws_item_count,
+            )
+        total = sum(len(ids) for ids in effective.allowlist.values())
+        return cls(
+            is_scoped=True,
+            item_count=total,
+            conv_item_count=conv_item_count,
+            ws_item_count=ws_item_count,
         )
 
 
@@ -351,6 +537,14 @@ class ConsoleInspectorState:
     actions: tuple[ConsoleInspectorAction, ...] = ()
     has_pending_approval: bool = False
     can_save_chatbook: bool = False
+    dictionary_rows: tuple[ConsoleDisplayRow, ...] = ()
+    dictionary_actions: tuple[ConsoleInspectorAction, ...] = ()
+    world_book_rows: tuple[ConsoleDisplayRow, ...] = ()
+    world_book_actions: tuple[ConsoleInspectorAction, ...] = ()
+    #: TASK-347: whether a generation is actively running (thinking or
+    #: streaming) — the status-summary/Live-work surfaces read this so they
+    #: stop claiming "Ready" mid-run.
+    run_active: bool = False
 
     @classmethod
     def from_values(
@@ -369,7 +563,11 @@ class ConsoleInspectorState:
         artifact_status: Any = None,
         tool_count: int = 0,
         approval_count: int = 0,
+        mcp_tool_count: int | None = None,
+        mcp_not_connected_count: int = 0,
         can_save_chatbook: bool = False,
+        scope_item_count: int | None = None,
+        run_active: bool = False,
     ) -> "ConsoleInspectorState":
         provider_status = "ready" if provider_ready else "blocked"
         normalized_tool_count = coerce_non_negative_int(tool_count)
@@ -382,9 +580,22 @@ class ConsoleInspectorState:
             f"{provider_value} / {model_value} / sources {source_summary} / "
             f"tools {normalized_tool_count} / approvals {normalized_approval_count}"
         )
+        # task-9: an active conversation RAG retrieval scope surfaces on the
+        # run recipe line ("... / scope N items"). ``None`` (unscoped, the
+        # overwhelming common case) leaves the line unchanged; a scope with
+        # zero items never reaches here (see ``ConsoleRetrievalScopeState``).
+        if scope_item_count is not None and scope_item_count > 0:
+            run_recipe = f"{run_recipe} / scope {scope_item_count} items"
         rows = [
             ConsoleDisplayRow("Run recipe", run_recipe),
-            ConsoleDisplayRow("Live work", _clean(live_work_title, "No active work")),
+            ConsoleDisplayRow(
+                "Live work",
+                # TASK-347: a running generation shows "Generating…"; else
+                # the pending Library-RAG launch title, else no active work.
+                "Generating…"
+                if run_active
+                else _clean(live_work_title, "No active work"),
+            ),
             ConsoleDisplayRow(
                 "Provider",
                 provider_status,
@@ -403,6 +614,9 @@ class ConsoleInspectorState:
                 status="blocked" if normalized_approval_count > 0 else "ready",
             ),
         ]
+        mcp_row = _mcp_inspector_row(mcp_tool_count, mcp_not_connected_count)
+        if mcp_row is not None:
+            rows.append(mcp_row)
         if _clean(evidence_summary, ""):
             rows.append(
                 ConsoleDisplayRow(
@@ -420,7 +634,9 @@ class ConsoleInspectorState:
                     status=_clean(evidence_status, "ready"),
                 )
             )
-        rows.append(ConsoleDisplayRow("Artifacts", _clean(artifact_status, "unavailable")))
+        rows.append(
+            ConsoleDisplayRow("Artifacts", _clean(artifact_status, "unavailable"))
+        )
         actions = [
             ConsoleInspectorAction(
                 widget_id=CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
@@ -446,6 +662,7 @@ class ConsoleInspectorState:
             actions=tuple(actions),
             has_pending_approval=normalized_approval_count > 0,
             can_save_chatbook=can_save_chatbook,
+            run_active=run_active,
         )
 
     def to_plain_text(self) -> str:
