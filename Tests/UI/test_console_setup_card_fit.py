@@ -37,7 +37,9 @@ def test_setup_card_is_wide_enough_for_the_step_three_line():
     line = ConsoleSetupModal._step_text(3, step_three)
 
     card = _rule_body(AGENTIC.read_text(encoding="utf-8"), ".console-setup-modal-card")
-    width = int(re.search(r"\bwidth\s*:\s*(\d+)", card).group(1))
+    # Match the `width:` property specifically -- not `max-width:` (the `-`
+    # before "width" is excluded so the lookbehind can't be fooled by ordering).
+    width = int(re.search(r"(?<![-\w])width\s*:\s*(\d+)", card).group(1))
     # padding: 1 2 -> 2 left + 2 right; border: solid -> 1 each side.
     content_width = width - 4 - 2
 

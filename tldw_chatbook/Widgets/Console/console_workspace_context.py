@@ -278,7 +278,10 @@ class ConsoleWorkspaceStatusPair(Horizontal):
         value_widget.styles.text_wrap = "nowrap"
         value_widget.styles.text_overflow = "ellipsis"
         if self.value:
-            value_widget.tooltip = self.value
+            # Tooltips render Rich markup (unlike the markup=False value above),
+            # so escape the raw value or bracket tokens in a workspace name would
+            # be interpreted/styled instead of shown literally (Qodo #821).
+            value_widget.tooltip = _escape_markup(self.value)
         yield value_widget
 
 
