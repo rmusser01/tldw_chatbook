@@ -632,7 +632,7 @@ class ChatbookImporter:
         if not rag_context and not citation_items:
             return
 
-        conversation_service.record_message_rag_context(
+        conversation_service.record_imported_legacy_citation_context(
             conversation_id,
             message_id,
             rag_context=rag_context,

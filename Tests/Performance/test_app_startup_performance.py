@@ -183,6 +183,45 @@ def test_citation_artifact_reconciliation_is_deferred_and_policy_gated(
         assert scheduled[0][1] == "deferred_citation_artifact_reconciliation"
 
 
+@pytest.mark.parametrize(("enabled", "expected_tasks"), [(False, 0), (True, 1)])
+def test_legacy_citation_migration_is_deferred_and_policy_gated(
+    enabled: bool,
+    expected_tasks: int,
+) -> None:
+    """One bounded migration idle unit starts only after the write switch."""
+
+    from tldw_chatbook.app import TldwCli
+
+    scheduled: list[tuple[object, str]] = []
+
+    def capture(coroutine, *, name: str):
+        scheduled.append((coroutine, name))
+        coroutine.close()
+
+    async def migrate() -> None:
+        return None
+
+    fake_app = SimpleNamespace(
+        set_timer=Mock(),
+        _schedule_footer_status_updates=Mock(),
+        _start_deferred_audio_service_initialization=Mock(),
+        schedule_media_cleanup=Mock(),
+        citation_artifact_ownership_coordinator=None,
+        citation_legacy_migration_service=SimpleNamespace(
+            writes_enabled=enabled,
+            ready=enabled,
+        ),
+        _migrate_legacy_citations_idle_unit=migrate,
+        _create_deferred_startup_task=capture,
+    )
+
+    TldwCli._schedule_deferred_startup_work(fake_app)
+
+    assert len(scheduled) == expected_tasks
+    if scheduled:
+        assert scheduled[0][1] == "deferred_legacy_citation_migration"
+
+
 @pytest.mark.asyncio
 async def test_ui_ready_before_nonessential_startup_services_finish(
     monkeypatch,

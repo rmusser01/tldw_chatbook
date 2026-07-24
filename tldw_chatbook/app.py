@@ -153,6 +153,9 @@ from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.citation_artifact_ownership import (
     CitationArtifactOwnershipCoordinator,
 )
+from tldw_chatbook.Chat.citation_legacy_migration import (
+    CitationLegacyMigrationService,
+)
 from tldw_chatbook.Chat.citation_provenance_runtime import (
     CitationProvenanceRuntimePolicy,
 )
@@ -3994,6 +3997,7 @@ class TldwCli(
             if not hasattr(self, "citation_artifact_ownership_coordinator"):
                 self.citation_trace_repository = None
                 self.citation_artifact_ownership_coordinator = None
+                self.citation_legacy_migration_service = None
             return
         current = getattr(
             self,
@@ -4021,6 +4025,28 @@ class TldwCli(
         artifact_store.set_citation_ownership_coordinator(coordinator)
         self.citation_trace_repository = repository
         self.citation_artifact_ownership_coordinator = coordinator
+        conversation_service = getattr(
+            self,
+            "local_chat_conversation_service",
+            None,
+        )
+        sidecar_path = (
+            getattr(conversation_service, "rag_context_store_path", None)
+            if conversation_service is not None
+            else None
+        )
+        migration = (
+            CitationLegacyMigrationService(
+                db=trace_db,
+                repository=repository,
+                sidecar_path=sidecar_path,
+            )
+            if sidecar_path is not None
+            else None
+        )
+        if conversation_service is not None:
+            conversation_service.set_citation_legacy_migration(migration)
+        self.citation_legacy_migration_service = migration
 
     def _wire_evaluation_services(self) -> None:
         self.local_evaluation_service = None
@@ -7569,6 +7595,16 @@ class TldwCli(
                 self._reconcile_citation_artifact_ownership(),
                 name="deferred_citation_artifact_reconciliation",
             )
+        migration = getattr(
+            self,
+            "citation_legacy_migration_service",
+            None,
+        )
+        if migration is not None and migration.ready:
+            self._create_deferred_startup_task(
+                self._migrate_legacy_citations_idle_unit(),
+                name="deferred_legacy_citation_migration",
+            )
 
     async def _reconcile_citation_artifact_ownership(self) -> None:
         """Run one bounded recovery batch without blocking the UI loop."""
@@ -7593,6 +7629,29 @@ class TldwCli(
                 "Citation artifact reconciliation retained pending operations: "
                 f"operation_ids={result.operation_ids!r} "
                 f"reason_codes={result.reason_codes!r}"
+            )
+
+    async def _migrate_legacy_citations_idle_unit(self) -> None:
+        """Run one bounded legacy batch without delaying application readiness."""
+
+        migration = getattr(
+            self,
+            "citation_legacy_migration_service",
+            None,
+        )
+        if migration is None or not migration.ready:
+            return
+        try:
+            result = await asyncio.to_thread(migration.migrate_idle_unit)
+        except Exception:
+            self.loguru_logger.error(
+                "Legacy citation migration failed: legacy_migration_failed"
+            )
+            return
+        if result.reason_code is not None:
+            self.loguru_logger.warning(
+                "Legacy citation migration retained retry state: "
+                f"reason_code={result.reason_code!r}"
             )
 
     def _schedule_footer_status_updates(self) -> None:

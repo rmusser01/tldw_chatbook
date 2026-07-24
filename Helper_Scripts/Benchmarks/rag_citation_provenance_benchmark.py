@@ -1361,106 +1361,160 @@ def _init_migration_schema(
     sidecar_path: Path,
     legacy_records: Sequence[dict[str, Any]],
 ) -> None:
+    del db_path
     sidecar_path.write_text(
         json.dumps(
             {
                 "schema_version": 1,
-                "conversation_id": "legacy-benchmark",
-                "messages": 100,
-                "records": legacy_records,
+                "fixture_scan_control": legacy_records,
             },
             sort_keys=True,
         )
         + "\n",
         encoding="utf-8",
     )
-    with sqlite3.connect(db_path) as connection:
-        connection.executescript(
-            """
-            PRAGMA journal_mode=WAL;
-            CREATE TABLE legacy_messages (
-                legacy_message_id TEXT PRIMARY KEY,
-                payload_json TEXT NOT NULL
-            );
-            CREATE TABLE canonical_proxy_rows (
-                legacy_message_id TEXT PRIMARY KEY,
-                payload_json TEXT NOT NULL
-            );
-            """
-        )
 
 
 def _measure_migration_once(
-    db_path: Path, legacy_records: Sequence[dict[str, Any]]
-) -> tuple[float, int]:
-    payloads = [json.dumps(record, sort_keys=True) for record in legacy_records]
-    with sqlite3.connect(db_path) as connection:
-        connection.execute("DELETE FROM canonical_proxy_rows")
-        connection.execute("DELETE FROM legacy_messages")
-        connection.executemany(
-            "INSERT INTO legacy_messages(legacy_message_id, payload_json) VALUES (?, ?)",
-            (
-                (f"legacy-message-{index:03d}", payloads[index % len(payloads)])
-                for index in range(100)
-            ),
-        )
-        connection.commit()
+    workspace: SampleWorkspace,
+    legacy_records: Sequence[dict[str, Any]],
+    *,
+    sample_index: int,
+) -> tuple[float, float, int, int, int]:
+    from tldw_chatbook.Chat.citation_legacy_migration import (
+        CitationLegacyMigrationService,
+        LegacyMigrationState,
+    )
+    from tldw_chatbook.Chat.citation_provenance_runtime import (
+        CitationProvenanceRuntimePolicy,
+    )
+    from tldw_chatbook.Chat.citation_trace_identity import CitationFingerprintCodec
+    from tldw_chatbook.Chat.citation_trace_repository import (
+        CitationTraceRepository,
+        load_local_citation_identity_context,
+    )
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
-    started_ns = time.perf_counter_ns()
-    with sqlite3.connect(db_path) as interrupted:
-        rows = interrupted.execute(
-            """
-            SELECT legacy_message_id, payload_json
-            FROM legacy_messages
-            ORDER BY legacy_message_id
-            LIMIT 50
-            """
-        ).fetchall()
-        interrupted.executemany(
-            """
-            INSERT OR IGNORE INTO canonical_proxy_rows(legacy_message_id, payload_json)
-            VALUES (?, ?)
-            """,
-            rows,
+    db_path = workspace.root / f"migration-candidate-{sample_index}.sqlite"
+    sidecar_path = workspace.root / f"migration-candidate-{sample_index}.json"
+    db = CharactersRAGDB(db_path, client_id="ragcp-migration-benchmark")
+    try:
+        identity = load_local_citation_identity_context(db)
+        if identity is None:
+            raise AssertionError("migration benchmark identity is unavailable")
+        codec = CitationFingerprintCodec(REPOSITORY_BENCHMARK_FINGERPRINT_SECRET)
+        repository = CitationTraceRepository(
+            db,
+            policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=True),
+            identity_context=identity,
+            fingerprint_codec=codec,
         )
-        interrupted.commit()
+        conversation_id = db.add_conversation(
+            {"title": "Legacy migration benchmark", "character_id": None}
+        )
+        records: dict[str, dict[str, Any]] = {}
+        for index in range(100):
+            message_id = f"legacy-message-{index:03d}"
+            body = "Legacy benchmark answer [1]."
+            db.add_message(
+                {
+                    "id": message_id,
+                    "conversation_id": conversation_id,
+                    "sender": "assistant",
+                    "content": body,
+                }
+            )
+            fixture = legacy_records[index % len(legacy_records)]
+            records[message_id] = {
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "answer_body": body,
+                "rag_context": {
+                    "citation_validation": {"valid": True},
+                    "legacy_fixture": fixture,
+                },
+                "citations": [],
+            }
+        raw_sidecar = json.dumps(
+            {
+                "version": 1,
+                "conversations": {conversation_id: records},
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ).encode("utf-8")
+        sidecar_path.write_bytes(raw_sidecar)
 
-    with sqlite3.connect(db_path) as restarted:
-        rows = restarted.execute(
-            """
-            SELECT legacy_message_id, payload_json
-            FROM legacy_messages
-            ORDER BY legacy_message_id
-            LIMIT 100
-            """
-        ).fetchall()
-        restarted.executemany(
-            """
-            INSERT OR IGNORE INTO canonical_proxy_rows(legacy_message_id, payload_json)
-            VALUES (?, ?)
-            """,
-            rows,
+        control_started_ns = time.perf_counter_ns()
+        parsed = json.loads(sidecar_path.read_bytes().decode("utf-8"))
+        scanned = parsed["conversations"][conversation_id]
+        for message_id in sorted(scanned):
+            json.dumps(
+                scanned[message_id],
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        control_seconds = (time.perf_counter_ns() - control_started_ns) / 1_000_000_000
+
+        interrupted = CitationLegacyMigrationService(
+            db=db,
+            repository=repository,
+            sidecar_path=sidecar_path,
+            fingerprint_codec=codec,
+            batch_size=50,
         )
-        restarted.commit()
+        started_ns = time.perf_counter_ns()
+        first = interrupted.migrate_next_batch(conversation_id)
+        if first.state is not LegacyMigrationState.RUNNING:
+            raise AssertionError("migration benchmark interruption did not stage")
+        restarted = CitationLegacyMigrationService(
+            db=db,
+            repository=repository,
+            sidecar_path=sidecar_path,
+            fingerprint_codec=codec,
+        )
+        second = restarted.migrate_next_batch(conversation_id)
+        if second.state is not LegacyMigrationState.COMPLETE:
+            raise AssertionError("migration benchmark restart did not complete")
+        elapsed_seconds = (time.perf_counter_ns() - started_ns) / 1_000_000_000
+        connection = db.get_connection()
+        trace_rows = int(
+            connection.execute("SELECT count(*) FROM rag_citation_traces").fetchone()[0]
+        )
+        owner_rows = int(
+            connection.execute(
+                "SELECT count(*) FROM rag_message_trace_owners"
+            ).fetchone()[0]
+        )
         duplicate_count = int(
-            restarted.execute(
+            connection.execute(
                 """
-                SELECT COUNT(*) - COUNT(DISTINCT legacy_message_id)
-                FROM canonical_proxy_rows
+                SELECT
+                  (COUNT(*) - COUNT(DISTINCT trace_id))
+                  + (
+                    SELECT COUNT(*) - COUNT(DISTINCT message_id)
+                    FROM rag_message_trace_owners
+                  )
+                FROM rag_citation_traces
                 """
             ).fetchone()[0]
         )
-        canonical_count = int(
-            restarted.execute("SELECT COUNT(*) FROM canonical_proxy_rows").fetchone()[0]
+        if trace_rows != 100 or owner_rows != 100:
+            raise AssertionError("restart migration did not produce 100 canonical rows")
+        return (
+            100 / elapsed_seconds,
+            100 / max(control_seconds, 1e-9),
+            duplicate_count,
+            trace_rows,
+            owner_rows,
         )
-    elapsed_seconds = (time.perf_counter_ns() - started_ns) / 1_000_000_000
-    if canonical_count != 100:
-        raise AssertionError("restart migration did not produce 100 canonical rows")
-    return 100 / elapsed_seconds, duplicate_count
+    finally:
+        db.close_connection()
 
 
 def _measure_migration(
-    db_path: Path,
+    workspace: SampleWorkspace,
     *,
     samples: int,
     warmups: int,
@@ -1474,18 +1528,37 @@ def _measure_migration(
         },
     )
     throughputs: list[float] = []
+    control_throughputs: list[float] = []
     duplicate_counts: list[float] = []
+    persisted_trace_rows = 0
+    persisted_owner_rows = 0
     for index in range(warmups + samples):
-        throughput, duplicates = _measure_migration_once(db_path, legacy_records)
+        (
+            throughput,
+            control_throughput,
+            duplicates,
+            persisted_trace_rows,
+            persisted_owner_rows,
+        ) = _measure_migration_once(
+            workspace,
+            legacy_records,
+            sample_index=index,
+        )
         if index >= warmups:
             throughputs.append(throughput)
+            control_throughputs.append(control_throughput)
             duplicate_counts.append(float(duplicates))
     return {
         "messages_per_second": summarize(throughputs),
+        "fixture_scan_control_messages_per_second": summarize(control_throughputs),
         "duplicate_proxy_rows_after_restart": summarize(duplicate_counts),
         "batch_messages": 100,
         "interrupted_after_messages": 50,
         "corpus_input_sha256": corpus_input_sha256,
+        "persisted_trace_rows": persisted_trace_rows,
+        "persisted_owner_rows": persisted_owner_rows,
+        "control_path": "bounded legacy fixture scan",
+        "candidate_path": ("CitationLegacyMigrationService.migrate_next_batch"),
     }
 
 
@@ -1805,7 +1878,7 @@ async def run_benchmark(
                 workload["legacy_records"],
             )
             migration = _measure_migration(
-                workspace.db_path,
+                workspace,
                 samples=samples,
                 warmups=warmups,
                 legacy_records=workload["legacy_records"],

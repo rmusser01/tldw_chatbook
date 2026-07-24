@@ -536,6 +536,383 @@ class CitationTraceRepository:
         )
         return bool(row[0])
 
+    @property
+    def canonical_writes_enabled(self) -> bool:
+        """Return the shared recovery-switch state without exposing key material."""
+
+        return self.policy.canonical_writes_enabled
+
+    @property
+    def legacy_migration_ready(self) -> bool:
+        """Return whether migration can safely bind identities and bodies."""
+
+        return (
+            self.policy.canonical_writes_enabled
+            and self.identity_context is not None
+            and self._fingerprint_codec is not None
+        )
+
+    def legacy_source_fingerprint(self, *parts: str | bytes) -> str:
+        """Fingerprint bounded legacy source material with the repository key."""
+
+        return self.legacy_migration_fingerprint(
+            CitationFingerprintDomain.LEGACY_SOURCE,
+            *parts,
+        )
+
+    def legacy_migration_fingerprint(
+        self,
+        domain: CitationFingerprintDomain,
+        *parts: str | bytes,
+    ) -> str:
+        """Fingerprint only source and body values needed by legacy migration."""
+
+        if domain not in {
+            CitationFingerprintDomain.LEGACY_SOURCE,
+            CitationFingerprintDomain.MESSAGE_BODY,
+        }:
+            raise CitationPersistenceUnavailable(
+                "legacy_fingerprint_domain_unsupported"
+            )
+        if not self.policy.canonical_writes_enabled:
+            raise CitationPersistenceUnavailable("canonical_citation_writes_disabled")
+        codec = self._fingerprint_codec
+        if codec is None:
+            raise CitationPersistenceUnavailable("fingerprint_key_unavailable")
+        return codec.fingerprint(domain, *parts)
+
+    def write_legacy_migrating(
+        self,
+        cursor: sqlite3.Cursor,
+        sealed_write: SealedCitationWrite,
+        *,
+        conversation_id: str,
+        message_id: str,
+        message_revision: int,
+        message_body: str,
+    ) -> None:
+        """Persist one deterministic legacy trace as hidden migration staging.
+
+        This path is deliberately separate from :meth:`prepare_write`: ordinary
+        product writes remain local-origin and immediately active, while legacy
+        conversion must retain ``legacy_inferred`` identity and remain
+        unreadable until its conversation-level cutover.
+        """
+
+        identity = self._require_active_write_cursor(cursor)
+        codec = self._fingerprint_codec
+        if codec is None:
+            raise CitationPersistenceUnavailable("fingerprint_key_unavailable")
+        try:
+            validated = SealedCitationWrite.model_validate(
+                sealed_write.model_dump(mode="python", round_trip=True),
+                strict=True,
+            )
+        except Exception:
+            raise CitationPersistenceUnavailable(
+                "invalid_legacy_citation_write"
+            ) from None
+        trace = validated.trace
+        if trace.origin is not TraceOrigin.LEGACY_INFERRED:
+            raise CitationPersistenceUnavailable("unsupported_legacy_trace_origin")
+        if trace.completeness_at_seal not in {
+            CitationCompleteness.PARTIAL,
+            CitationCompleteness.UNAVAILABLE,
+        }:
+            raise CitationPersistenceUnavailable("legacy_trace_completeness_invalid")
+        selected_attempt = next(
+            attempt
+            for attempt in trace.answer_attempts
+            if attempt.attempt_id == trace.selected_attempt_id
+        )
+        selected_payload = next(
+            (
+                payload
+                for payload in validated.answer_attempt_payloads
+                if payload.payload_id == selected_attempt.answer_payload_ref
+                and payload.attempt_id == selected_attempt.attempt_id
+            ),
+            None,
+        )
+        expected_body_fingerprint = codec.fingerprint(
+            CitationFingerprintDomain.MESSAGE_BODY,
+            message_body,
+        )
+        if (
+            selected_payload is None
+            or selected_payload.answer_body != message_body
+            or selected_payload.body_integrity_hmac is None
+            or not hmac.compare_digest(
+                selected_payload.body_integrity_hmac,
+                expected_body_fingerprint,
+            )
+        ):
+            raise CitationPersistenceUnavailable("legacy_message_body_mismatch")
+        message = cursor.execute(
+            """
+            SELECT id, conversation_id, version, content
+            FROM messages
+            WHERE id = ? AND deleted = 0
+            """,
+            (message_id,),
+        ).fetchone()
+        if (
+            message is None
+            or str(message["conversation_id"]) != conversation_id
+            or message["version"] != message_revision
+            or message["content"] != message_body
+        ):
+            raise CitationPersistenceUnavailable("message_row_identity_conflict")
+
+        profile_id = identity.profile_id
+        sealed_at = trace.sealed_at.isoformat()
+        aggregate_json = _canonical_json(trace.model_dump(mode="json"))
+        trace_row = (
+            profile_id,
+            trace.trace_id,
+            trace.schema_version,
+            trace.request_id,
+            trace.generation_id,
+            profile_id,
+            trace.origin.value,
+            trace.lifecycle.value,
+            trace.completeness_at_seal.value,
+            trace.selected_attempt_id,
+            trace.policy_version,
+            aggregate_json,
+            "migrating",
+            trace.created_at.isoformat(),
+            sealed_at,
+            conversation_id,
+            message_id,
+        )
+        self._insert_or_verify(
+            cursor,
+            """
+            INSERT OR IGNORE INTO rag_citation_traces(
+                profile_id, trace_id, schema_version, request_id, generation_id,
+                origin_scope_id, origin, lifecycle, completeness_at_seal,
+                selected_attempt_id, policy_version, aggregate_json,
+                visibility_state, created_at, sealed_at,
+                legacy_conversation_id, legacy_message_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            trace_row,
+            """
+            SELECT
+                profile_id, trace_id, schema_version, request_id, generation_id,
+                origin_scope_id, origin, lifecycle, completeness_at_seal,
+                selected_attempt_id, policy_version, aggregate_json,
+                visibility_state, created_at, sealed_at,
+                legacy_conversation_id, legacy_message_id
+            FROM rag_citation_traces
+            WHERE profile_id = ? AND trace_id = ?
+            """,
+            (profile_id, trace.trace_id),
+            trace_row,
+            "legacy_trace_identity_conflict",
+        )
+
+        run_payloads = {
+            payload.payload_id: payload for payload in validated.evidence_run_payloads
+        }
+        for run in trace.evidence_runs:
+            payload = run_payloads[run.payload_ref]
+            row = (
+                profile_id,
+                trace.trace_id,
+                run.run_id,
+                run.run_ordinal,
+                run.stage,
+                "available",
+                _canonical_json(payload.model_dump(mode="json")),
+                run.started_at.isoformat(),
+                run.ended_at.isoformat() if run.ended_at else None,
+                None,
+            )
+            self._insert_or_verify(
+                cursor,
+                """
+                INSERT OR IGNORE INTO rag_evidence_runs(
+                    profile_id, trace_id, run_id, run_ordinal, stage,
+                    redaction_state, run_payload_json, started_at, ended_at, purged_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                row,
+                """
+                SELECT profile_id, trace_id, run_id, run_ordinal, stage,
+                       redaction_state, run_payload_json, started_at, ended_at,
+                       purged_at
+                FROM rag_evidence_runs
+                WHERE profile_id = ? AND trace_id = ? AND run_id = ?
+                """,
+                row[:3],
+                row,
+                "legacy_run_identity_conflict",
+            )
+
+        for payload in validated.evidence_snapshot_payloads:
+            self.assert_payload_origin_writable(
+                cursor,
+                profile_id=profile_id,
+                origin_namespace="legacy_inferred_v1",
+                origin_payload_id=payload.payload_id,
+                seam="legacy_migration",
+            )
+            redaction_state = (
+                "redacted"
+                if payload.storage_mode is EvidenceStorageMode.REDACTED
+                else "available"
+            )
+            row = (
+                profile_id,
+                payload.payload_id,
+                profile_id,
+                identity.local_authority_id,
+                trace.policy_version,
+                payload.payload_id,
+                "legacy_inferred_v1",
+                payload.payload_id,
+                payload.storage_mode.value,
+                redaction_state,
+                "default",
+                payload.snapshot_text,
+                payload.title,
+                _canonical_json(payload.source_identity),
+                _canonical_json(payload.locator),
+                _canonical_json(payload.lineage),
+                _canonical_json(payload.transformations),
+                payload.content_hash,
+                payload.comparison_hash,
+                sealed_at,
+                None,
+                None,
+            )
+            self._insert_or_verify(
+                cursor,
+                """
+                INSERT OR IGNORE INTO rag_evidence_snapshots(
+                    profile_id, payload_id, governance_scope_id, authority_id,
+                    confidentiality_policy_id, revocation_scope_id,
+                    origin_namespace, origin_payload_id, storage_mode,
+                    redaction_state, retention_class, snapshot_text, title,
+                    source_identity_json, locator_json, lineage_json,
+                    transformations_json, content_hash, comparison_fingerprint,
+                    created_at, retain_until, purged_at
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?
+                )
+                """,
+                row,
+                """
+                SELECT profile_id, payload_id, governance_scope_id, authority_id,
+                       confidentiality_policy_id, revocation_scope_id,
+                       origin_namespace, origin_payload_id, storage_mode,
+                       redaction_state, retention_class, snapshot_text, title,
+                       source_identity_json, locator_json, lineage_json,
+                       transformations_json, content_hash, comparison_fingerprint,
+                       created_at, retain_until, purged_at
+                FROM rag_evidence_snapshots
+                WHERE profile_id = ? AND payload_id = ?
+                """,
+                row[:2],
+                row,
+                "legacy_snapshot_identity_conflict",
+            )
+
+        for payload in validated.answer_attempt_payloads:
+            available = (
+                payload.answer_body is not None
+                and payload.body_integrity_hmac is not None
+            )
+            row = (
+                profile_id,
+                payload.payload_id,
+                trace.trace_id,
+                payload.attempt_id,
+                "available" if available else "purged",
+                "default",
+                payload.answer_body,
+                payload.body_integrity_hmac,
+                sealed_at,
+                None,
+                None if available else sealed_at,
+            )
+            self._insert_or_verify(
+                cursor,
+                """
+                INSERT OR IGNORE INTO rag_answer_attempt_payloads(
+                    profile_id, payload_id, trace_id, attempt_id,
+                    redaction_state, retention_class, answer_body,
+                    body_integrity_hmac, created_at, retain_until, purged_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                row,
+                """
+                SELECT profile_id, payload_id, trace_id, attempt_id,
+                       redaction_state, retention_class, answer_body,
+                       body_integrity_hmac, created_at, retain_until, purged_at
+                FROM rag_answer_attempt_payloads
+                WHERE profile_id = ? AND payload_id = ?
+                """,
+                row[:2],
+                row,
+                "legacy_answer_identity_conflict",
+            )
+
+        for prompt_set in trace.prompt_evidence_sets:
+            for entry in prompt_set.entries:
+                row = (
+                    profile_id,
+                    trace.trace_id,
+                    prompt_set.prompt_set_id,
+                    entry.evidence_ordinal,
+                    entry.run_id,
+                    entry.snapshot_payload_ref,
+                    entry.marker_ordinal,
+                    entry.storage_mode.value,
+                )
+                self._insert_or_verify(
+                    cursor,
+                    """
+                    INSERT OR IGNORE INTO rag_trace_evidence_refs(
+                        profile_id, trace_id, prompt_set_id, evidence_ordinal,
+                        run_id, snapshot_payload_id, marker_ordinal, storage_mode
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    row,
+                    """
+                    SELECT profile_id, trace_id, prompt_set_id, evidence_ordinal,
+                           run_id, snapshot_payload_id, marker_ordinal, storage_mode
+                    FROM rag_trace_evidence_refs
+                    WHERE profile_id = ? AND trace_id = ?
+                      AND prompt_set_id = ? AND evidence_ordinal = ?
+                    """,
+                    row[:4],
+                    row,
+                    "legacy_reference_identity_conflict",
+                )
+
+        owner_key = codec.fingerprint(
+            CitationFingerprintDomain.MESSAGE_OWNER,
+            profile_id,
+            conversation_id,
+            message_id,
+            str(message_revision),
+            trace.trace_id,
+        )
+        self._insert_owner(
+            cursor,
+            profile_id=profile_id,
+            message_id=message_id,
+            message_revision=message_revision,
+            trace_id=trace.trace_id,
+            body_fingerprint=expected_body_fingerprint,
+            idempotency_key=owner_key,
+            timestamp=sealed_at,
+        )
+
     def prepare_write(self, sealed_write: SealedCitationWrite) -> PreparedCitationWrite:
         """Fail closed and revalidate all nested bounds before any transaction."""
 

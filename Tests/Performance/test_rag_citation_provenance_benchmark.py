@@ -489,6 +489,33 @@ def test_repository_storage_candidate_uses_real_sealed_write_and_summary_read(
     assert result["candidate_path"].endswith("citation_write=sealed)")
 
 
+def test_migration_candidate_uses_real_service_and_restart_is_duplicate_free(
+    tmp_path: Path,
+) -> None:
+    benchmark = _load_benchmark()
+    workspace = benchmark.SampleWorkspace(
+        tmp_path,
+        tmp_path / "migration.sqlite",
+        tmp_path / "chat_rag_context.json",
+    )
+
+    result = benchmark._measure_migration(
+        workspace,
+        samples=1,
+        warmups=0,
+        legacy_records=_load_json(CORPUS_PATH)["legacy_records"],
+    )
+
+    assert result["candidate_path"].endswith(
+        "CitationLegacyMigrationService.migrate_next_batch"
+    )
+    assert result["control_path"] == "bounded legacy fixture scan"
+    assert result["persisted_trace_rows"] == 100
+    assert result["persisted_owner_rows"] == 100
+    assert result["duplicate_proxy_rows_after_restart"]["p95"] == 0
+    assert result["messages_per_second"]["median"] >= 100
+
+
 @pytest.mark.asyncio
 async def test_repository_storage_candidate_runs_only_in_qualification_mode(
     monkeypatch: pytest.MonkeyPatch,
