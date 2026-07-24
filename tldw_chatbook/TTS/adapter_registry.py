@@ -153,7 +153,6 @@ class TTSAdapterRegistry:
     ) -> TTSProviderCatalog:
         lease = await self.acquire(provider_id)
         try:
-            await lease.adapter.ensure_ready()
             return await lease.adapter.get_catalog(refresh=refresh)
         finally:
             await lease.release()
@@ -166,7 +165,6 @@ class TTSAdapterRegistry:
     ) -> tuple[str, ...]:
         lease = await self.acquire(provider_id)
         try:
-            await lease.adapter.ensure_ready()
             return await lease.adapter.get_voices(model_id, refresh=refresh)
         finally:
             await lease.release()

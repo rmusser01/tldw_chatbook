@@ -5,11 +5,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from collections import OrderedDict
 from collections.abc import Mapping
 from contextvars import ContextVar
+from dataclasses import dataclass
 
 import httpx
 
+from tldw_chatbook.TTS._async_lifecycle import join_retained_task
 from tldw_chatbook.TTS.adapter_types import (
     ProgressSink,
     ProviderHealth,
@@ -30,6 +33,9 @@ _PROVIDER_ID = "audio_cpp"
 _TRANSIENT_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504})
 _MAX_GET_ATTEMPTS = 2
 _MAX_CONTENT_LENGTH_DIGITS = len(str(sys.maxsize))
+_MAX_VOICE_CACHE_ENTRIES = 32
+_MAX_VOICE_CACHE_BYTES = 8 * 1024 * 1024
+_VOICE_CACHE_ENTRY_OVERHEAD_BYTES = 256
 _HTTP_LOGGER_NAMES = (
     "httpx",
     "httpcore",
@@ -43,6 +49,7 @@ _HTTP_LOG_SUPPRESSION_ACTIVE: ContextVar[bool] = ContextVar(
     "audio_cpp_http_log_suppression_active",
     default=False,
 )
+_VoiceCacheKey = tuple[int, str]
 
 _INITIAL_HEALTH = ProviderHealth(
     state="unavailable",
@@ -78,6 +85,28 @@ class _TransientHttpFailure(Exception):
 
 class _HttpContractFailure(Exception):
     """Internal value-free marker for a non-retryable HTTP contract failure."""
+
+
+@dataclass(frozen=True, slots=True)
+class _VoiceCacheEntry:
+    voices: tuple[str, ...]
+    estimated_bytes: int
+
+
+def _estimate_voice_cache_entry_bytes(
+    key: _VoiceCacheKey,
+    voices: tuple[str, ...],
+) -> int:
+    """Conservatively estimate retained Python memory for one cache entry."""
+    revision, model_id = key
+    return (
+        _VOICE_CACHE_ENTRY_OVERHEAD_BYTES
+        + sys.getsizeof(key)
+        + sys.getsizeof(revision)
+        + sys.getsizeof(model_id)
+        + sys.getsizeof(voices)
+        + sum(sys.getsizeof(voice) for voice in voices)
+    )
 
 
 class _HttpxPrivacyFilter(logging.Filter):
@@ -128,10 +157,17 @@ class AudioCppAdapter:
         )
         self._refresh_lock = asyncio.Lock()
         self._refresh_generation = 0
-        self._voice_cache: dict[tuple[int, str], tuple[str, ...]] = {}
-        self._voice_generation: dict[tuple[int, str], int] = {}
-        self._voice_locks: dict[tuple[int, str], asyncio.Lock] = {}
+        self._voice_cache: OrderedDict[_VoiceCacheKey, _VoiceCacheEntry] = OrderedDict()
+        self._voice_cache_bytes = 0
+        self._voice_generation: dict[_VoiceCacheKey, int] = {}
+        self._voice_locks: dict[_VoiceCacheKey, asyncio.Lock] = {}
+        self._voice_lock_users: dict[_VoiceCacheKey, int] = {}
+        self._voice_shared_results: dict[
+            _VoiceCacheKey,
+            tuple[int, tuple[str, ...]],
+        ] = {}
         self._close_lock = asyncio.Lock()
+        self._close_task: asyncio.Task[None] | None = None
         self._closed = False
         self._httpx_privacy_filter = _HttpxPrivacyFilter()
         for logger_name in _HTTP_LOGGER_NAMES:
@@ -163,30 +199,47 @@ class AudioCppAdapter:
             key = (catalog.revision, model_id)
             started_generation = self._voice_generation.get(key, 0)
             lock = self._voice_locks.setdefault(key, asyncio.Lock())
-            async with lock:
-                current = self._catalog
-                if current.revision != catalog.revision or not self._catalog_contains(
-                    current, model_id
-                ):
-                    continue
-                if self._closed:
-                    return ()
+            self._voice_lock_users[key] = self._voice_lock_users.get(key, 0) + 1
+            try:
+                async with lock:
+                    current = self._catalog
+                    if (
+                        current.revision != catalog.revision
+                        or not self._catalog_contains(current, model_id)
+                    ):
+                        continue
+                    if self._closed:
+                        return ()
 
-                current_generation = self._voice_generation.get(key, 0)
-                if force and current_generation != started_generation:
-                    return self._voice_cache.get(key, ())
-                if not force and key in self._voice_cache:
-                    return self._voice_cache[key]
+                    current_generation = self._voice_generation.get(key, 0)
+                    if current_generation != started_generation:
+                        shared = self._voice_shared_results.get(key)
+                        if shared is not None and shared[0] == current_generation:
+                            return shared[1]
+                        cached = self._cached_voice_result(key)
+                        if cached is not None:
+                            return cached
+                    if not force:
+                        cached = self._cached_voice_result(key)
+                        if cached is not None:
+                            return cached
 
-                voices = await self._fetch_voices(model_id)
-                if self._closed:
-                    return ()
-                if self._catalog.revision != catalog.revision:
-                    continue
+                    voices = await self._fetch_voices(model_id)
+                    if self._closed:
+                        return ()
+                    if self._catalog.revision != catalog.revision:
+                        continue
 
-                self._voice_cache[key] = voices
-                self._voice_generation[key] = current_generation + 1
-                return voices
+                    next_generation = current_generation + 1
+                    self._voice_generation[key] = next_generation
+                    self._voice_shared_results[key] = (
+                        next_generation,
+                        voices,
+                    )
+                    self._cache_voice_result(key, voices)
+                    return voices
+            finally:
+                self._release_voice_lock_user(key, lock)
 
     async def synthesize(
         self,
@@ -200,11 +253,16 @@ class AudioCppAdapter:
         )
 
     async def close(self) -> None:
-        """Close the owned client once and expose a closed health snapshot."""
+        """Seal admission and join the one retained cleanup task."""
         async with self._close_lock:
-            if self._closed:
-                return
-            self._closed = True
+            if self._close_task is None:
+                self._closed = True
+                self._close_task = asyncio.create_task(self._complete_close())
+            close_task = self._close_task
+        await join_retained_task(close_task)
+
+    async def _complete_close(self) -> None:
+        try:
             async with self._refresh_lock:
                 current = self._catalog
                 self._catalog = TTSProviderCatalog(
@@ -213,6 +271,8 @@ class AudioCppAdapter:
                     health=_CLOSED_HEALTH,
                     models=current.models,
                 )
+                self._clear_voice_state()
+        finally:
             try:
                 await self._client.aclose()
             finally:
@@ -295,9 +355,7 @@ class AudioCppAdapter:
                 models=models,
             )
             self._refresh_generation += 1
-            self._voice_cache.clear()
-            self._voice_generation.clear()
-            self._voice_locks.clear()
+            self._clear_voice_state()
 
     async def _fetch_voices(self, model_id: str) -> tuple[str, ...]:
         try:
@@ -399,6 +457,82 @@ class AudioCppAdapter:
         if declared_length is not None and len(body) != declared_length:
             raise _HttpContractFailure
         return bytes(body)
+
+    def _cached_voice_result(
+        self,
+        key: _VoiceCacheKey,
+    ) -> tuple[str, ...] | None:
+        entry = self._voice_cache.get(key)
+        if entry is None:
+            return None
+        self._voice_cache.move_to_end(key)
+        return entry.voices
+
+    def _cache_voice_result(
+        self,
+        key: _VoiceCacheKey,
+        voices: tuple[str, ...],
+    ) -> None:
+        existing = self._voice_cache.pop(key, None)
+        if existing is not None:
+            self._voice_cache_bytes -= existing.estimated_bytes
+
+        estimated_bytes = _estimate_voice_cache_entry_bytes(key, voices)
+        if (
+            _MAX_VOICE_CACHE_ENTRIES <= 0
+            or _MAX_VOICE_CACHE_BYTES <= 0
+            or estimated_bytes > _MAX_VOICE_CACHE_BYTES
+        ):
+            self._discard_voice_key_state_if_idle(key)
+            return
+
+        self._voice_cache[key] = _VoiceCacheEntry(
+            voices=voices,
+            estimated_bytes=estimated_bytes,
+        )
+        self._voice_cache_bytes += estimated_bytes
+        while self._voice_cache and (
+            len(self._voice_cache) > _MAX_VOICE_CACHE_ENTRIES
+            or self._voice_cache_bytes > _MAX_VOICE_CACHE_BYTES
+        ):
+            evicted_key, evicted = self._voice_cache.popitem(last=False)
+            self._voice_cache_bytes -= evicted.estimated_bytes
+            self._discard_voice_key_state_if_idle(evicted_key)
+
+    def _release_voice_lock_user(
+        self,
+        key: _VoiceCacheKey,
+        lock: asyncio.Lock,
+    ) -> None:
+        users = self._voice_lock_users.get(key)
+        if users is None:
+            return
+        if users > 1:
+            self._voice_lock_users[key] = users - 1
+            return
+
+        self._voice_lock_users.pop(key, None)
+        self._voice_shared_results.pop(key, None)
+        if key not in self._voice_cache:
+            self._voice_generation.pop(key, None)
+            if self._voice_locks.get(key) is lock:
+                self._voice_locks.pop(key, None)
+
+    def _discard_voice_key_state_if_idle(self, key: _VoiceCacheKey) -> None:
+        if self._voice_lock_users.get(key, 0) > 0:
+            return
+        self._voice_generation.pop(key, None)
+        self._voice_locks.pop(key, None)
+        self._voice_lock_users.pop(key, None)
+        self._voice_shared_results.pop(key, None)
+
+    def _clear_voice_state(self) -> None:
+        self._voice_cache.clear()
+        self._voice_cache_bytes = 0
+        self._voice_generation.clear()
+        self._voice_locks.clear()
+        self._voice_lock_users.clear()
+        self._voice_shared_results.clear()
 
     @staticmethod
     def _failed_catalog(

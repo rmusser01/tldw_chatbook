@@ -14,8 +14,11 @@ import pytest
 from tldw_chatbook.TTS.adapter_types import (
     ProviderHealth,
     TTSModelInfo,
+    TTSProviderDescriptor,
+    TTSProviderSpec,
     TTSRequest,
 )
+from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
 from tldw_chatbook.TTS.adapters import audio_cpp as audio_cpp_module
 from tldw_chatbook.TTS.adapters.audio_cpp import AudioCppAdapter
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
@@ -106,6 +109,36 @@ async def _adapter(
         yield adapter
     finally:
         await adapter.close()
+
+
+@asynccontextmanager
+async def _registered_adapter(
+    handler: Callable[[httpx.Request], Any],
+    **config_updates: Any,
+) -> AsyncIterator[tuple[TTSAdapterRegistry, AudioCppAdapter]]:
+    adapter = AudioCppAdapter(
+        _config(**config_updates),
+        transport=httpx.MockTransport(handler),
+    )
+    registry = TTSAdapterRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor(
+                    provider_id="audio_cpp",
+                    display_name="audio.cpp",
+                    native=True,
+                ),
+                factory=lambda _config: adapter,
+                initial_config={},
+            ),
+        ),
+        aliases={},
+    )
+    try:
+        yield registry, adapter
+    finally:
+        await registry.close()
+        await registry.wait_closed()
 
 
 class TrackingStream(httpx.AsyncByteStream):
@@ -240,6 +273,47 @@ async def test_catalog_maps_only_tts_models_and_caches_until_forced_refresh() ->
         assert refreshed.revision == 2
         assert refreshed.models == first.models
         assert len(requests) == 4
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refresh", [False, True])
+async def test_registry_first_catalog_uses_one_authoritative_refresh(
+    refresh: bool,
+) -> None:
+    requests: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        return _streaming_response(_models_body(_model()))
+
+    async with _registered_adapter(respond) as (registry, _adapter_instance):
+        catalog = await registry.get_catalog("audio_cpp", refresh=refresh)
+
+    assert catalog.revision == 1
+    assert requests == ["/health", "/v1/models"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["catalog", "voices"])
+async def test_registry_first_failed_discovery_uses_one_refresh_operation(
+    operation: str,
+) -> None:
+    requests: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        raise httpx.ConnectError("REMOTE CONNECT", request=request)
+
+    async with _registered_adapter(respond) as (registry, _adapter_instance):
+        if operation == "catalog":
+            catalog = await registry.get_catalog("audio_cpp")
+            assert catalog.health == TRANSIENT_HEALTH
+        else:
+            assert await registry.get_voices("audio_cpp", "model") == ()
+
+    assert requests == ["/health", "/health"]
 
 
 @pytest.mark.asyncio
@@ -743,6 +817,10 @@ async def test_catalog_revision_invalidates_even_unchanged_voice_cache() -> None
         first_catalog = await adapter.get_catalog()
         first_voices = await adapter.get_voices("model")
         second_catalog = await adapter.get_catalog(refresh=True)
+        assert adapter._voice_cache == {}
+        assert adapter._voice_cache_bytes == 0
+        assert adapter._voice_generation == {}
+        assert adapter._voice_locks == {}
         second_voices = await adapter.get_voices("model")
 
     assert first_catalog.revision == 1
@@ -750,6 +828,156 @@ async def test_catalog_revision_invalidates_even_unchanged_voice_cache() -> None
     assert first_catalog.models == second_catalog.models
     assert first_voices == ("revision-voice-1",)
     assert second_voices == ("revision-voice-2",)
+
+
+@pytest.mark.asyncio
+async def test_voice_cache_evicts_least_recent_model_at_entry_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(audio_cpp_module, "_MAX_VOICE_CACHE_ENTRIES", 2)
+    monkeypatch.setattr(audio_cpp_module, "_MAX_VOICE_CACHE_BYTES", 8 * 1024 * 1024)
+    requests: dict[str, int] = {}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return _streaming_response(_health_body(3))
+        if request.url.path == "/v1/models":
+            return _streaming_response(
+                _models_body(_model("a"), _model("b"), _model("c"))
+            )
+        model_id = request.url.params["model"]
+        requests[model_id] = requests.get(model_id, 0) + 1
+        return _streaming_response(_voices_body(f"voice-{model_id}"))
+
+    async with _adapter(respond) as adapter:
+        assert await adapter.get_voices("a") == ("voice-a",)
+        assert await adapter.get_voices("b") == ("voice-b",)
+        assert await adapter.get_voices("c") == ("voice-c",)
+        assert await adapter.get_voices("a") == ("voice-a",)
+
+    assert requests == {"a": 2, "b": 1, "c": 1}
+
+
+@pytest.mark.asyncio
+async def test_voice_cache_reads_touch_lru_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(audio_cpp_module, "_MAX_VOICE_CACHE_ENTRIES", 2)
+    monkeypatch.setattr(audio_cpp_module, "_MAX_VOICE_CACHE_BYTES", 8 * 1024 * 1024)
+    requests: dict[str, int] = {}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return _streaming_response(_health_body(3))
+        if request.url.path == "/v1/models":
+            return _streaming_response(
+                _models_body(_model("a"), _model("b"), _model("c"))
+            )
+        model_id = request.url.params["model"]
+        requests[model_id] = requests.get(model_id, 0) + 1
+        return _streaming_response(_voices_body(f"voice-{model_id}"))
+
+    async with _adapter(respond) as adapter:
+        await adapter.get_voices("a")
+        await adapter.get_voices("b")
+        await adapter.get_voices("a")
+        await adapter.get_voices("c")
+        await adapter.get_voices("a")
+        await adapter.get_voices("b")
+
+    assert requests == {"a": 1, "b": 2, "c": 1}
+
+
+@pytest.mark.asyncio
+async def test_voice_cache_evicts_by_aggregate_byte_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    one_entry_bytes = audio_cpp_module._estimate_voice_cache_entry_bytes(
+        (1, "a"),
+        ("voice-a",),
+    )
+    monkeypatch.setattr(audio_cpp_module, "_MAX_VOICE_CACHE_ENTRIES", 32)
+    monkeypatch.setattr(audio_cpp_module, "_MAX_VOICE_CACHE_BYTES", one_entry_bytes)
+    requests: dict[str, int] = {}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return _streaming_response(_health_body(2))
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model("a"), _model("b")))
+        model_id = request.url.params["model"]
+        requests[model_id] = requests.get(model_id, 0) + 1
+        return _streaming_response(_voices_body(f"voice-{model_id}"))
+
+    async with _adapter(respond) as adapter:
+        await adapter.get_voices("a")
+        await adapter.get_voices("b")
+        await adapter.get_voices("a")
+
+    assert requests == {"a": 2, "b": 1}
+
+
+@pytest.mark.asyncio
+async def test_oversized_single_voice_result_is_returned_but_not_retained(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(audio_cpp_module, "_MAX_VOICE_CACHE_ENTRIES", 32)
+    monkeypatch.setattr(audio_cpp_module, "_MAX_VOICE_CACHE_BYTES", 1)
+    voice_requests = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal voice_requests
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        voice_requests += 1
+        return _streaming_response(_voices_body("large-result"))
+
+    async with _adapter(respond) as adapter:
+        assert await adapter.get_voices("model") == ("large-result",)
+        assert await adapter.get_voices("model") == ("large-result",)
+
+    assert voice_requests == 2
+
+
+@pytest.mark.asyncio
+async def test_voice_cache_eviction_preserves_an_in_use_coalescing_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(audio_cpp_module, "_MAX_VOICE_CACHE_ENTRIES", 1)
+    monkeypatch.setattr(audio_cpp_module, "_MAX_VOICE_CACHE_BYTES", 8 * 1024 * 1024)
+    refresh_started = asyncio.Event()
+    release_refresh = asyncio.Event()
+    a_requests = 0
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal a_requests
+        if request.url.path == "/health":
+            return _streaming_response(_health_body(2))
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model("a"), _model("b")))
+        model_id = request.url.params["model"]
+        if model_id == "a":
+            a_requests += 1
+            if a_requests == 2:
+                refresh_started.set()
+                await release_refresh.wait()
+                return _streaming_response(_voices_body("refreshed-a"))
+        return _streaming_response(_voices_body(f"voice-{model_id}"))
+
+    async with _adapter(respond) as adapter:
+        assert await adapter.get_voices("a") == ("voice-a",)
+        first_refresh = asyncio.create_task(adapter.get_voices("a", refresh=True))
+        await refresh_started.wait()
+        assert await adapter.get_voices("b") == ("voice-b",)
+        second_refresh = asyncio.create_task(adapter.get_voices("a", refresh=True))
+        await asyncio.sleep(0)
+        release_refresh.set()
+        results = await asyncio.gather(first_refresh, second_refresh)
+
+    assert results == [("refreshed-a",), ("refreshed-a",)]
+    assert a_requests == 2
 
 
 @pytest.mark.asyncio
@@ -891,6 +1119,77 @@ class CountingTransport(httpx.AsyncBaseTransport):
 
     async def aclose(self) -> None:
         self.close_count += 1
+
+
+class CountingMockTransport(httpx.MockTransport):
+    def __init__(self, handler: Callable[[httpx.Request], Any]) -> None:
+        super().__init__(handler)
+        self.close_count = 0
+
+    async def aclose(self) -> None:
+        self.close_count += 1
+        await super().aclose()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_close_during_refresh_retains_cleanup_to_completion() -> None:
+    phase = "ready"
+    refresh_stream = BlockingStream(_health_body())
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            if phase == "refresh":
+                return httpx.Response(200, stream=refresh_stream)
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        return _streaming_response(_voices_body("cached"))
+
+    transport = CountingMockTransport(respond)
+    adapter = AudioCppAdapter(_config(), transport=transport)
+    privacy_filter = adapter._httpx_privacy_filter
+    try:
+        await adapter.ensure_ready()
+        assert await adapter.get_voices("model") == ("cached",)
+        phase = "refresh"
+        refresh = asyncio.create_task(adapter.get_catalog(refresh=True))
+        await refresh_stream.started.wait()
+
+        close = asyncio.create_task(adapter.close())
+        await asyncio.sleep(0)
+        close.cancel("caller cancelled")
+        await asyncio.sleep(0)
+        close_returned_before_cleanup = close.done()
+
+        refresh_stream.release.set()
+        await refresh
+        with pytest.raises(asyncio.CancelledError, match="caller cancelled"):
+            await close
+
+        await adapter.close()
+        catalog = await adapter.get_catalog()
+
+        assert close_returned_before_cleanup is False
+        assert transport.close_count == 1
+        assert adapter._client.is_closed is True
+        assert catalog.health == CLOSED_HEALTH
+        assert adapter._voice_cache == {}
+        assert adapter._voice_cache_bytes == 0
+        assert adapter._voice_generation == {}
+        assert adapter._voice_locks == {}
+        assert adapter._voice_lock_users == {}
+        assert adapter._voice_shared_results == {}
+        assert all(
+            privacy_filter not in logging.getLogger(logger_name).filters
+            for logger_name in audio_cpp_module._HTTP_LOGGER_NAMES
+        )
+    finally:
+        if not adapter._client.is_closed:
+            await adapter._client.aclose()
+        for logger_name in audio_cpp_module._HTTP_LOGGER_NAMES:
+            logger = logging.getLogger(logger_name)
+            if privacy_filter in logger.filters:
+                logger.removeFilter(privacy_filter)
 
 
 @pytest.mark.asyncio

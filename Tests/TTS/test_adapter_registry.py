@@ -181,7 +181,7 @@ async def test_get_catalog_materializes_lazily_and_releases_its_lease() -> None:
     adapter = factory.instances[0]
 
     assert catalog.provider_id == "openai"
-    assert adapter.ensure_ready_calls == 1
+    assert adapter.ensure_ready_calls == 0
     assert factory.calls == 1
     assert (
         await registry.reconfigure_provider("openai", {"key": "second"})
@@ -237,7 +237,7 @@ async def test_get_voices_materializes_lazily_and_releases_its_lease() -> None:
     result = await registry.reconfigure_provider("openai", {"key": "second"})
 
     assert result is ReconfigureResult.CHANGED
-    assert adapter.ensure_ready_calls == 1
+    assert adapter.ensure_ready_calls == 0
     assert adapter.get_voices_requests == [("model", True)]
     assert adapter.close_calls == 0
 

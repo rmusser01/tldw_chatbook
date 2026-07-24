@@ -780,7 +780,7 @@ async def test_catalog_voice_and_reconfigure_delegate_to_registry() -> None:
 
     assert catalog.provider_id == "openai"
     assert voices == ("default",)
-    assert adapter.ensure_ready_calls == 2
+    assert adapter.ensure_ready_calls == 0
     assert adapter.get_voices_requests == [("model", True)]
     assert result is ReconfigureResult.CHANGED
     assert adapter.close_calls == 1
