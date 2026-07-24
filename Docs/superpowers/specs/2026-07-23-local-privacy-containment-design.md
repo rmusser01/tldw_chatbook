@@ -322,12 +322,15 @@ duration, approved argument names, cache status, and result type/size.
 
 MCP execution JSONL records become metadata-only too; existing secret-key
 redaction is not treated as permission to retain non-secret private argument
-or result values.
+or result values. Eligible legacy active and rotated generations are
+atomically rewritten to the metadata-only schema on their next read or append;
+torn and non-object rows are dropped during that migration.
 
-Third-party libraries remain at warning-or-higher logging floors. If a
-sentinel proves that a library warning or exception persists private content,
-that logger is filtered or disabled for the file handler. The design does not
-claim a global content-redaction filter exists.
+The application file handler is an admission boundary, not a content-redaction
+filter: Chatbook records persist only when emitted through the strict metadata
+helper, and third-party records remain available to UI/terminal handlers but
+are not admitted to disk. The unused legacy Metrics Loguru setup no longer
+creates independent file sinks that bypass this boundary.
 
 ### Descriptor-anchored legacy Notes containment
 

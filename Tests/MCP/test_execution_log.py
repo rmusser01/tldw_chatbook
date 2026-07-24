@@ -27,7 +27,9 @@ def _record(tool: str = "search_docs", **kw) -> ExecutionRecord:
         initiator="test",
         ok=True,
         duration_ms=12,
-        arguments={"query": "x"},
+        arguments={"query": "private input"},
+        registered_argument_names={"query"},
+        result={"private": "result"},
     )
     defaults.update(kw)
     return build_record(**defaults)
@@ -39,10 +41,21 @@ def _mode(path: Path) -> int:
 
 def test_append_and_read_recent_roundtrip(log, tmp_path):
     log.append(_record("a"))
-    log.append(_record("b", ok=False, error="boom"))
+    log.append(
+        _record(
+            "b",
+            ok=False,
+            status="error",
+            error_category="execution_failed",
+            exception_type="RuntimeError",
+            result=None,
+        )
+    )
     rows = log.read_recent()
     assert [r["tool_name"] for r in rows] == ["b", "a"]  # newest first
-    assert rows[0]["error"] == "boom" and rows[0]["ok"] is False
+    assert rows[0]["error_category"] == "execution_failed"
+    assert rows[0]["exception_type"] == "RuntimeError"
+    assert rows[0]["ok"] is False
     raw = (tmp_path / "mcp_execution_log.jsonl").read_text().strip().splitlines()
     assert all(json.loads(line) for line in raw)  # valid JSONL
 
@@ -59,27 +72,79 @@ def test_rotation_keeps_two_generations(log, tmp_path):
     assert "t0" not in names  # oldest generation dropped
 
 
-def test_arguments_redacted_and_capture_off_drops_them():
-    kept = build_record(
+def test_payload_values_are_replaced_by_registered_argument_and_result_metadata():
+    private = "MCP-PRIVATE-SENTINEL-sk-not-a-real-key"
+    record = build_record(
         server_key="local:docs",
         tool_name="t",
         initiator="test",
         ok=True,
         duration_ms=1,
-        arguments={"api_key": "sk-123", "query": "ok"},
+        arguments={
+            "query": private,
+            "limit": 10,
+            private: "unknown argument value",
+        },
+        registered_argument_names={"query", "limit"},
+        result={"secret": private, "data": [1, 2]},
     )
-    assert kept.arguments["api_key"] == "***"
-    assert kept.arguments["query"] == "ok"
-    dropped = build_record(
+
+    assert record.argument_names == ("limit", "query")
+    assert record.unknown_argument_count == 1
+    assert record.result_type == "dict"
+    assert record.result_size == 2
+    assert private not in repr(record)
+    assert not hasattr(record, "arguments")
+    assert not hasattr(record, "result_excerpt")
+    assert not hasattr(record, "error")
+
+
+def test_error_record_accepts_categories_not_raw_exception_text():
+    private = "MCP-ERROR-SENTINEL-sk-not-a-real-key"
+    record = build_record(
         server_key="local:docs",
         tool_name="t",
         initiator="test",
-        ok=True,
+        ok=False,
         duration_ms=1,
-        arguments={"api_key": "sk-123"},
-        capture_args=False,
+        status="http_error",
+        error_category="http_error",
+        exception_type="HTTPStatusError",
+        status_code=503,
     )
-    assert dropped.arguments is None
+
+    assert record.error_category == "http_error"
+    assert record.exception_type == "HTTPStatusError"
+    assert record.status_code == 503
+    assert private not in repr(record)
+
+
+def test_append_defensively_sanitizes_identity_fields(tmp_path):
+    private = "MCP-IDENTITY-SENTINEL-sk-not-a-real-key"
+    record = ExecutionRecord(
+        ts="invalid",
+        server_key=private,
+        tool_name=private,
+        initiator=private,
+        decision=private,
+        ok=False,
+        status="error",
+        duration_ms=1,
+        error_category=private,
+        exception_type=private,
+        status_code=None,
+        argument_names=(private,),
+        unknown_argument_count=1,
+        result_type=private,
+        result_size=0,
+    )
+    execution_log = MCPExecutionLog(tmp_path / "mcp_execution_log.jsonl")
+
+    execution_log.append(record)
+
+    raw = (tmp_path / "mcp_execution_log.jsonl").read_text(encoding="utf-8")
+    assert private not in raw
+    assert raw.count("invalid") >= 5
 
 
 def test_read_recent_survives_corrupt_line(log, tmp_path):
@@ -89,6 +154,75 @@ def test_read_recent_survives_corrupt_line(log, tmp_path):
     log.append(_record("after"))
     names = [r["tool_name"] for r in log.read_recent()]
     assert "good" in names and "after" in names  # corrupt line skipped, no crash
+
+
+@pytest.mark.parametrize("generation", ["active", "rotated"])
+def test_legacy_payload_records_are_migrated_off_disk_on_read(
+    tmp_path: Path,
+    generation: str,
+) -> None:
+    private = "MCP-LEGACY-SENTINEL-sk-not-a-real-key"
+    active = tmp_path / "mcp_execution_log.jsonl"
+    selected = active if generation == "active" else active.with_name(active.name + ".1")
+    selected.write_text(
+        json.dumps(
+            {
+                "ts": "2026-07-24T00:00:00+00:00",
+                "server_key": "local:docs",
+                "tool_name": "search",
+                "initiator": "test",
+                "decision": "allowed",
+                "ok": False,
+                "duration_ms": 12,
+                "error": private,
+                "arguments": {"query": private},
+                "result_excerpt": private,
+            }
+        )
+        + "\n"
+        + "{torn "
+        + private,
+        encoding="utf-8",
+    )
+    execution_log = MCPExecutionLog(active)
+
+    rows = execution_log.read_recent()
+
+    raw = selected.read_text(encoding="utf-8")
+    assert private not in raw
+    assert "arguments" not in raw
+    assert "result_excerpt" not in raw
+    assert "error" not in json.loads(raw)
+    assert len(rows) == 1
+    assert rows[0]["error_category"] == "legacy_error"
+    assert rows[0]["unknown_argument_count"] == 1
+    assert rows[0]["argument_names"] == []
+
+
+def test_legacy_payload_records_are_migrated_before_append(tmp_path: Path) -> None:
+    private = "MCP-APPEND-LEGACY-SENTINEL-sk-not-a-real-key"
+    active = tmp_path / "mcp_execution_log.jsonl"
+    active.write_text(
+        json.dumps(
+            {
+                "tool_name": "old",
+                "arguments": {"query": private},
+                "result_excerpt": private,
+                "error": private,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    execution_log = MCPExecutionLog(active)
+
+    execution_log.append(_record("new"))
+
+    raw = active.read_text(encoding="utf-8")
+    assert private not in raw
+    assert "arguments" not in raw
+    assert "result_excerpt" not in raw
+    assert all("error" not in json.loads(line) for line in raw.splitlines())
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX mode contract")

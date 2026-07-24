@@ -626,7 +626,9 @@ def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution
     assert records[0]["tool_name"] == "search"
     assert records[0]["decision"] == "denied"
     assert records[0]["ok"] is False
-    assert "run stopped while approval pending" in (records[0].get("error") or "")
+    assert records[0]["status"] == "blocked"
+    assert records[0]["error_category"] == "approval_cancelled"
+    assert "run stopped while approval pending" not in repr(records[0])
 
 
 def test_switch_session_denies_a_pending_approval_round():

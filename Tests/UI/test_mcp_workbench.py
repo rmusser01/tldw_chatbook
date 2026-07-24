@@ -2209,9 +2209,7 @@ async def test_file_requested_pushes_picker_and_loads_selected_file_into_panel(
     treat `tmp_path` as home for this test, mirroring the picked file
     legitimately living under the user's home tree in production.
     """
-    monkeypatch.setattr(
-        mcp_workbench_module.os.path, "expanduser", lambda _: str(tmp_path)
-    )
+    monkeypatch.setattr(mcp_workbench_module, "_mcp_import_home", lambda: str(tmp_path))
     app = ImportApp()
     config_path = tmp_path / "mcp.json"
     config_path.write_text(json.dumps({"mcpServers": {"docs": {"command": "npx"}}}))
@@ -2260,9 +2258,7 @@ async def test_non_utf8_import_file_does_not_crash_app(tmp_path, monkeypatch):
     this test is specifically about the UnicodeDecodeError path, not F1's
     own rejection path (covered separately).
     """
-    monkeypatch.setattr(
-        mcp_workbench_module.os.path, "expanduser", lambda _: str(tmp_path)
-    )
+    monkeypatch.setattr(mcp_workbench_module, "_mcp_import_home", lambda: str(tmp_path))
     bad = tmp_path / "bad.json"
     bad.write_bytes(b'\xff\xfe{"mcpServers": {}}')
     app = WorkbenchApp()
@@ -2298,7 +2294,7 @@ async def test_load_import_file_rejects_path_outside_home_directory(
     """
     home = tmp_path / "home"
     home.mkdir()
-    monkeypatch.setattr(mcp_workbench_module.os.path, "expanduser", lambda _: str(home))
+    monkeypatch.setattr(mcp_workbench_module, "_mcp_import_home", lambda: str(home))
     outside = tmp_path / "outside" / "mcp.json"
     outside.parent.mkdir()
     outside.write_text(json.dumps({"mcpServers": {}}))
@@ -2330,9 +2326,7 @@ async def test_load_import_file_rejects_oversized_file(tmp_path, monkeypatch):
     test_process_attachment_path_rejects_oversized_files`), lowering the cap
     via monkeypatch so the test file itself stays small.
     """
-    monkeypatch.setattr(
-        mcp_workbench_module.os.path, "expanduser", lambda _: str(tmp_path)
-    )
+    monkeypatch.setattr(mcp_workbench_module, "_mcp_import_home", lambda: str(tmp_path))
     monkeypatch.setattr(mcp_workbench_module, "MAX_MCP_IMPORT_FILE_BYTES", 16)
     big = tmp_path / "big.json"
     big.write_text("x" * 64)
@@ -5136,10 +5130,15 @@ def _audit_record(
     initiator: str = "test",
     decision: str = "allowed",
     ok: bool = True,
+    status: str = "success",
     duration_ms: int = 42,
-    error: str | None = None,
-    arguments: dict | None = None,
-    result_excerpt: str | None = None,
+    error_category: str | None = None,
+    exception_type: str | None = None,
+    status_code: int | None = None,
+    argument_names: list[str] | None = None,
+    unknown_argument_count: int = 0,
+    result_type: str = "dict",
+    result_size: int = 0,
 ) -> dict:
     return {
         "ts": ts,
@@ -5148,10 +5147,15 @@ def _audit_record(
         "initiator": initiator,
         "decision": decision,
         "ok": ok,
+        "status": status,
         "duration_ms": duration_ms,
-        "error": error,
-        "arguments": arguments,
-        "result_excerpt": result_excerpt,
+        "error_category": error_category,
+        "exception_type": exception_type,
+        "status_code": status_code,
+        "argument_names": argument_names or [],
+        "unknown_argument_count": unknown_argument_count,
+        "result_type": result_type,
+        "result_size": result_size,
     }
 
 
@@ -5269,8 +5273,10 @@ async def test_audit_entry_selection_shows_pretty_printed_detail_in_inspector():
                 decision="allowed",
                 ok=True,
                 duration_ms=1500,
-                arguments={"query": "hello"},
-                result_excerpt="3 results",
+                argument_names=["query"],
+                unknown_argument_count=1,
+                result_type="list",
+                result_size=3,
             )
         ]
     )
@@ -5292,8 +5298,11 @@ async def test_audit_entry_selection_shows_pretty_printed_detail_in_inspector():
         assert '"initiator": "test"' in detail_text
         assert '"decision": "allowed"' in detail_text
         assert '"duration": "1.5s"' in detail_text
-        assert '"query": "hello"' in detail_text
-        assert '"3 results"' in detail_text
+        assert '"argument_names": [' in detail_text
+        assert '"query"' in detail_text
+        assert '"unknown_argument_count": 1' in detail_text
+        assert '"result_type": "list"' in detail_text
+        assert '"result_size": 3' in detail_text
 
         open_tool_button = app.query_one("#mcp-audit-open-tool", Button)
         adjust_permission_button = app.query_one("#mcp-audit-adjust-permission", Button)
@@ -5302,10 +5311,10 @@ async def test_audit_entry_selection_shows_pretty_printed_detail_in_inspector():
 
 
 @pytest.mark.asyncio
-async def test_audit_entry_detail_redacts_arguments():
-    app = AuditApp(
-        [_audit_record(arguments={"api_key": "sk-super-secret", "query": "hello"})]
-    )
+async def test_audit_entry_detail_ignores_legacy_argument_payload_fields():
+    record = _audit_record(argument_names=["query"])
+    record["arguments"] = {"api_key": "sk-super-secret", "query": "hello"}
+    app = AuditApp([record])
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
@@ -5317,26 +5326,17 @@ async def test_audit_entry_detail_redacts_arguments():
             app.query_one("#mcp-inspector-audit-detail", Static).renderable
         )
         assert "sk-super-secret" not in detail_text
-        assert '"query": "hello"' in detail_text
+        assert '"query"' in detail_text
+        assert '"hello"' not in detail_text
 
 
 @pytest.mark.asyncio
-async def test_audit_entry_detail_redacts_json_object_result_excerpt():
-    """Important fix: `result_excerpt` is a caller-truncated STRING (see
-    `MCP/execution_log.py`'s `build_record()`) -- when a tool's result is
-    itself JSON-object-shaped text, `show_audit_entry()` must parse it and
-    redact secret-looking keys the same way it already does for
-    `arguments`, not just pass the raw string through.
-    """
-    app = AuditApp(
-        [
-            _audit_record(
-                result_excerpt=json.dumps(
-                    {"api_key": "sk-super-secret", "status": "ok"}
-                ),
-            )
-        ]
+async def test_audit_entry_detail_ignores_legacy_result_excerpt_fields():
+    record = _audit_record(result_type="dict", result_size=2)
+    record["result_excerpt"] = json.dumps(
+        {"api_key": "sk-super-secret", "status": "ok"}
     )
+    app = AuditApp([record])
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
@@ -5348,7 +5348,8 @@ async def test_audit_entry_detail_redacts_json_object_result_excerpt():
             app.query_one("#mcp-inspector-audit-detail", Static).renderable
         )
         assert "sk-super-secret" not in detail_text
-        assert '"status": "ok"' in detail_text
+        assert '"result_type": "dict"' in detail_text
+        assert '"result_size": 2' in detail_text
 
 
 @pytest.mark.asyncio

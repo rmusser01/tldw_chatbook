@@ -185,7 +185,9 @@ async def test_execute_hub_tool_uses_tool_call_timeout_by_default(
 
     records = _log_records(store)
     assert records and records[0]["ok"] is False
-    assert "Timed out" in (records[0]["error"] or "")
+    assert records[0]["status"] == "timeout"
+    assert records[0]["error_category"] == "timeout"
+    assert records[0]["exception_type"] == "TimeoutError"
 
 
 @pytest.mark.asyncio
@@ -371,7 +373,9 @@ def test_record_tool_decision_writes_denied_record(tmp_path):
     assert record["decision"] == "denied"
     assert record["ok"] is False
     assert record["duration_ms"] == 0
-    assert "user denied the call" in (record["error"] or "")
+    assert record["status"] == "blocked"
+    assert record["error_category"] == "approval_cancelled"
+    assert "user denied the call" not in repr(record)
 
 
 def test_record_tool_decision_defaults_initiator_to_agent(tmp_path):

@@ -84,10 +84,9 @@ def _entry(
     initiator: str = "test",
     decision: str = "allowed",
     ok: bool = True,
+    status: str = "success",
     duration_ms: int = 42,
-    error: str | None = None,
-    arguments: dict[str, Any] | None = None,
-    result_excerpt: str | None = None,
+    error_category: str | None = None,
 ) -> dict[str, Any]:
     return {
         "ts": ts,
@@ -96,10 +95,9 @@ def _entry(
         "initiator": initiator,
         "decision": decision,
         "ok": ok,
+        "status": status,
         "duration_ms": duration_ms,
-        "error": error,
-        "arguments": arguments,
-        "result_excerpt": result_excerpt,
+        "error_category": error_category,
     }
 
 
@@ -209,7 +207,11 @@ async def test_outcome_column_variants():
             [
                 _entry(tool_name="ok_call", decision="allowed", ok=True),
                 _entry(
-                    tool_name="failed_call", decision="approved", ok=False, error="boom"
+                    tool_name="failed_call",
+                    decision="approved",
+                    ok=False,
+                    status="error",
+                    error_category="execution_failed",
                 ),
                 _entry(
                     tool_name="blocked_call", decision="denied", ok=False, duration_ms=0

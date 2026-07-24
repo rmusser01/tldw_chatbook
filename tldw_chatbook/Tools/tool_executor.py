@@ -6,12 +6,13 @@ Tool execution framework for handling function/tool calls from LLMs.
 import asyncio
 import hashlib
 import json
+import logging
 import math
 import time
 from abc import ABC, abstractmethod
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -23,12 +24,35 @@ from tldw_chatbook.Utils.private_paths import (
     open_private_binary,
     secure_private_directory,
 )
+from tldw_chatbook.Utils.persistent_diagnostics import (
+    log_persistent_metadata,
+    safe_metadata_token,
+)
 
 TOOL_CACHE_FORMAT_VERSION = 1
 TOOL_CACHE_MAX_BYTES = 1024 * 1024
 _TOOL_CACHE_MAX_DEPTH = 20
 _TOOL_CACHE_MAX_NODES = 10_000
 _TOOL_CACHE_MAX_STRING_BYTES = 64 * 1024
+_TOOL_HISTORY_LIMIT = 100
+_persistent_logger = logging.getLogger(__name__)
+
+
+def _metadata_identity(value: Any) -> str:
+    """Return a bounded diagnostic identity without arbitrary payload text."""
+
+    return safe_metadata_token(value)
+
+
+def _result_metadata(result: Any) -> tuple[str, int]:
+    """Return result type and a non-content size approximation."""
+
+    result_type = _metadata_identity(type(result).__name__)
+    try:
+        result_size = len(result)
+    except (TypeError, AttributeError):
+        result_size = 0
+    return result_type, max(0, int(result_size))
 
 
 class Tool(ABC):
@@ -441,7 +465,9 @@ class ToolExecutor:
         self.tools: Dict[str, Tool] = {}
         self.timeout_seconds = timeout_seconds
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
-        self._execution_history: List[Dict[str, Any]] = []
+        self._execution_history: deque[Dict[str, Any]] = deque(
+            maxlen=_TOOL_HISTORY_LIMIT
+        )
         self.enable_cache = enable_cache
         self.cache = (
             ToolResultCache(
@@ -492,22 +518,72 @@ class ToolExecutor:
         function_data = tool_call.get("function", {})
         tool_name = function_data.get("name")
 
-        # Record execution start
-        execution_record = {
-            "tool_call_id": tool_call_id,
-            "tool_name": tool_name,
-            "start_time": datetime.now().isoformat(),
-            "status": "started",
-        }
-        self._execution_history.append(execution_record)
+        started = time.monotonic()
+        started_at = datetime.now(timezone.utc).isoformat()
+
+        def record(
+            status: str,
+            *,
+            argument_names: list[str] | None = None,
+            unknown_argument_count: int = 0,
+            cache_hit: bool = False,
+            result: Any = None,
+            exception_type: str | None = None,
+            error_category: str | None = None,
+        ) -> None:
+            duration_ms = max(0, int((time.monotonic() - started) * 1000))
+            result_type, result_size = (
+                _result_metadata(result) if result is not None else ("none", 0)
+            )
+            execution_record: dict[str, Any] = {
+                "tool_name": _metadata_identity(tool_name),
+                "status": status,
+                "started_at": started_at,
+                "duration_ms": duration_ms,
+                "argument_names": sorted(argument_names or []),
+                "unknown_argument_count": max(0, unknown_argument_count),
+                "cache_hit": cache_hit,
+                "result_type": result_type,
+                "result_size": result_size,
+            }
+            if exception_type is not None:
+                execution_record["exception_type"] = _metadata_identity(
+                    exception_type
+                )
+            if error_category is not None:
+                execution_record["error_category"] = _metadata_identity(
+                    error_category
+                )
+            self._execution_history.append(execution_record)
+            log_persistent_metadata(
+                _persistent_logger,
+                logging.INFO if status in {"success", "cached"} else logging.WARNING,
+                "tool_execution",
+                tool_name=execution_record["tool_name"],
+                status=status,
+                duration_ms=duration_ms,
+                argument_names=execution_record["argument_names"],
+                unknown_argument_count=unknown_argument_count,
+                cache_hit=cache_hit,
+                result_type=result_type,
+                result_size=result_size,
+                **(
+                    {"exception_type": execution_record["exception_type"]}
+                    if exception_type is not None
+                    else {}
+                ),
+                **(
+                    {"error_category": execution_record["error_category"]}
+                    if error_category is not None
+                    else {}
+                ),
+            )
 
         # Validate tool exists
         if not tool_name or tool_name not in self.tools:
             error_msg = f"Unknown tool: {tool_name}"
-            logger.error(error_msg)
-            execution_record["status"] = "error"
-            execution_record["error"] = error_msg
-            execution_record["end_time"] = datetime.now().isoformat()
+            logger.error("Tool execution rejected: unknown tool")
+            record("error", error_category="unknown_tool")
             return {"tool_call_id": tool_call_id, "error": error_msg}
 
         # Parse arguments
@@ -516,20 +592,38 @@ class ToolExecutor:
             args = json.loads(args_str) if isinstance(args_str, str) else args_str
         except json.JSONDecodeError as e:
             error_msg = f"Invalid JSON arguments: {e}"
-            logger.error(f"Tool {tool_name} - {error_msg}")
-            execution_record["status"] = "error"
-            execution_record["error"] = error_msg
-            execution_record["end_time"] = datetime.now().isoformat()
+            logger.error("Tool arguments could not be parsed")
+            record(
+                "parse_error",
+                exception_type=type(e).__name__,
+                error_category="invalid_json",
+            )
             return {"tool_call_id": tool_call_id, "error": error_msg}
+
+        tool = self.tools[tool_name]
+        schema = tool.parameters if isinstance(tool.parameters, dict) else {}
+        properties = schema.get("properties", {})
+        registered_names = set(properties) if isinstance(properties, dict) else set()
+        supplied_names = set(args) if isinstance(args, dict) else set()
+        argument_names = sorted(
+            _metadata_identity(name)
+            for name in supplied_names & registered_names
+            if _metadata_identity(name) != "invalid"
+        )
+        unknown_argument_count = len(supplied_names - registered_names)
 
         # Check cache if enabled
         if self.enable_cache and self.cache:
             cached_result = await self.cache.get(tool_name, args)
             if cached_result is not None:
-                execution_record["status"] = "cached"
-                execution_record["end_time"] = datetime.now().isoformat()
-                execution_record["result"] = cached_result
-                logger.info(f"Tool {tool_name} result retrieved from cache")
+                record(
+                    "cached",
+                    argument_names=argument_names,
+                    unknown_argument_count=unknown_argument_count,
+                    cache_hit=True,
+                    result=cached_result,
+                )
+                logger.info("Tool result retrieved from cache")
                 return {
                     "tool_call_id": tool_call_id,
                     "result": cached_result,
@@ -537,18 +631,13 @@ class ToolExecutor:
                 }
 
         # Execute with timeout
-        tool = self.tools[tool_name]
         try:
-            logger.info(f"Executing tool {tool_name} with args: {args}")
+            logger.info("Executing registered tool")
 
             # Run the async tool in the executor with timeout
             result = await asyncio.wait_for(
                 tool.execute(**args), timeout=self.timeout_seconds
             )
-
-            execution_record["status"] = "success"
-            execution_record["end_time"] = datetime.now().isoformat()
-            execution_record["result"] = result
 
             # Cache the result if caching is enabled
             if self.enable_cache and self.cache:
@@ -562,23 +651,37 @@ class ToolExecutor:
 
                 await self.cache.set(tool_name, args, result, ttl)
 
-            logger.info(f"Tool {tool_name} completed successfully")
+            record(
+                "success",
+                argument_names=argument_names,
+                unknown_argument_count=unknown_argument_count,
+                result=result,
+            )
+            logger.info("Tool completed successfully")
             return {"tool_call_id": tool_call_id, "result": result}
 
         except asyncio.TimeoutError:
             error_msg = f"Tool execution timed out after {self.timeout_seconds} seconds"
-            logger.error(f"Tool {tool_name} - {error_msg}")
-            execution_record["status"] = "timeout"
-            execution_record["error"] = error_msg
-            execution_record["end_time"] = datetime.now().isoformat()
+            logger.error("Tool execution timed out")
+            record(
+                "timeout",
+                argument_names=argument_names,
+                unknown_argument_count=unknown_argument_count,
+                exception_type="TimeoutError",
+                error_category="timeout",
+            )
             return {"tool_call_id": tool_call_id, "error": error_msg}
 
         except Exception as e:
             error_msg = f"Tool execution failed: {str(e)}"
-            logger.opt(exception=True).error(f"Tool {tool_name} - {error_msg}")
-            execution_record["status"] = "error"
-            execution_record["error"] = error_msg
-            execution_record["end_time"] = datetime.now().isoformat()
+            logger.error("Tool execution failed (exception_type={})", type(e).__name__)
+            record(
+                "error",
+                argument_names=argument_names,
+                unknown_argument_count=unknown_argument_count,
+                exception_type=type(e).__name__,
+                error_category="execution_failed",
+            )
             return {"tool_call_id": tool_call_id, "error": error_msg}
 
     async def execute_tool_calls(self, tool_calls: List[dict]) -> List[dict]:
@@ -616,7 +719,9 @@ class ToolExecutor:
 
     def get_execution_history(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Get recent tool execution history."""
-        return self._execution_history[-limit:]
+        if limit <= 0:
+            return []
+        return [record.copy() for record in list(self._execution_history)[-limit:]]
 
     def clear_history(self):
         """Clear execution history."""

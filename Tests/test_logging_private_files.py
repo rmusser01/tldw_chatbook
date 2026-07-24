@@ -13,6 +13,7 @@ from tldw_chatbook.Logging_Config import (
     _configure_private_file_logging,
 )
 from tldw_chatbook.Utils.private_paths import PrivatePathError
+from tldw_chatbook.Utils.persistent_diagnostics import PersistentDiagnosticFilter
 
 
 def _mode(path: Path) -> int:
@@ -180,3 +181,40 @@ def test_unsafe_file_sink_is_omitted_without_removing_other_handlers(
     assert collecting.messages
     assert all("outside-SENTINEL" not in message for message in collecting.messages)
     assert max(map(len, collecting.messages)) < 200
+
+
+def test_existing_private_handler_is_reconciled_with_metadata_filter(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    active = tmp_path / "application.log"
+    monkeypatch.setattr(
+        "tldw_chatbook.Logging_Config.get_cli_log_file_path",
+        lambda: active,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Logging_Config.get_cli_setting",
+        lambda section, key, default=None: default,
+    )
+    root_logger = logging.Logger("existing-private-handler")
+    handler = PrivateRotatingFileHandler(
+        active,
+        maxBytes=100,
+        backupCount=1,
+        encoding="utf-8",
+    )
+    root_logger.addHandler(handler)
+    try:
+        assert not any(
+            isinstance(item, PersistentDiagnosticFilter)
+            for item in handler.filters
+        )
+
+        assert _configure_private_file_logging(root_logger) is True
+
+        assert any(
+            isinstance(item, PersistentDiagnosticFilter)
+            for item in handler.filters
+        )
+    finally:
+        handler.close()

@@ -27,6 +27,7 @@ from tldw_chatbook.Utils.private_paths import (
     open_private_text_append_stream,
     secure_private_directory,
 )
+from tldw_chatbook.Utils.persistent_diagnostics import PersistentDiagnosticFilter
 #
 ########################################################################################################################
 #
@@ -263,12 +264,21 @@ def _configure_private_file_logging(root_logger: logging.Logger) -> bool:
 
     try:
         log_file_path = get_cli_log_file_path()
-        has_file_handler = any(
-            isinstance(handler, PrivateRotatingFileHandler)
-            and handler.baseFilename == str(log_file_path)
-            for handler in root_logger.handlers
+        existing_handler = next(
+            (
+                handler
+                for handler in root_logger.handlers
+                if isinstance(handler, PrivateRotatingFileHandler)
+                and handler.baseFilename == str(log_file_path)
+            ),
+            None,
         )
-        if has_file_handler:
+        if existing_handler is not None:
+            if not any(
+                isinstance(item, PersistentDiagnosticFilter)
+                for item in existing_handler.filters
+            ):
+                existing_handler.addFilter(PersistentDiagnosticFilter())
             root_logger.info("Private rotating file logging is already installed.")
             return True
 
@@ -291,6 +301,7 @@ def _configure_private_file_logging(root_logger: logging.Logger) -> bool:
                 datefmt="%Y-%m-%d %H:%M:%S",
             )
         )
+        file_handler.addFilter(PersistentDiagnosticFilter())
         root_logger.addHandler(file_handler)
         root_logger.info(
             "Private rotating file logging installed at level %s.",
@@ -310,6 +321,38 @@ def _configure_private_file_logging(root_logger: logging.Logger) -> bool:
     return False
 
 
+def _forward_loguru_to_standard(message) -> None:
+    """Forward a Loguru record while preserving its original ownership.
+
+    The source path is attached for the persistent handler's admission filter.
+    Non-persistent handlers continue to receive the original message and
+    exception details.
+    """
+
+    record = message.record
+    level_mapping = {
+        "TRACE": logging.DEBUG,
+        "DEBUG": logging.DEBUG,
+        "INFO": logging.INFO,
+        "SUCCESS": logging.INFO,
+        "WARNING": logging.WARNING,
+        "ERROR": logging.ERROR,
+        "CRITICAL": logging.CRITICAL,
+    }
+    std_level = level_mapping.get(record["level"].name, logging.INFO)
+    std_logger = logging.getLogger(record["name"])
+    extra = {"_tldw_source_path": str(record["file"].path)}
+    if record["exception"]:
+        std_logger.log(
+            std_level,
+            record["message"],
+            exc_info=record["exception"],
+            extra=extra,
+        )
+    else:
+        std_logger.log(std_level, record["message"], extra=extra)
+
+
 def configure_application_logging(app_instance):
     """Sets up all logging handlers, including Loguru integration."""
     # FIXME - LOGGING MAY BRING BACK BLINKING
@@ -327,29 +370,8 @@ def configure_application_logging(app_instance):
         loguru_logger.remove()  # Good: removes Loguru's default stderr sink
         logging.info("Loguru: All pre-existing sinks removed.")
 
-        def sink_to_standard_logging(message):
-            # ... (your existing sink_to_standard_logging function)
-            record = message.record
-            level_mapping = {
-                "TRACE": logging.DEBUG,
-                "DEBUG": logging.DEBUG,
-                "INFO": logging.INFO,
-                "SUCCESS": logging.INFO,
-                "WARNING": logging.WARNING,
-                "ERROR": logging.ERROR,
-                "CRITICAL": logging.CRITICAL,
-            }
-            std_level = level_mapping.get(record["level"].name, logging.INFO)
-            std_logger = logging.getLogger(record["name"])
-            if record["exception"]:
-                std_logger.log(
-                    std_level, record["message"], exc_info=record["exception"]
-                )
-            else:
-                std_logger.log(std_level, record["message"])
-
         loguru_logger.add(
-            sink_to_standard_logging,
+            _forward_loguru_to_standard,
             format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}",
             level="TRACE",
         )
