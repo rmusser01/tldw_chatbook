@@ -308,7 +308,7 @@
     },
     {
       "call_count": 7,
-      "diagnostic_digest": "8902b80498b30cddf2d1",
+      "diagnostic_digest": "1ae2ffca415f3b89f7b7",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Evals/ab_testing.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -357,14 +357,14 @@
     },
     {
       "call_count": 22,
-      "diagnostic_digest": "d8fca3ecd86d6b4f0761",
+      "diagnostic_digest": "5e0fb364a6251064f82a",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Evals/eval_orchestrator.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
       "call_count": 41,
-      "diagnostic_digest": "857f276c468ebde44c9d",
+      "diagnostic_digest": "a0e316b5baf60a3247d4",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Evals/eval_runner.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -567,7 +567,7 @@
     },
     {
       "call_count": 52,
-      "diagnostic_digest": "1eed21df464885acbb7b",
+      "diagnostic_digest": "c8a3a0553cdf1f219249",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Event_Handlers/eval_events.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1673,7 +1673,7 @@
     },
     {
       "call_count": 53,
-      "diagnostic_digest": "0105f3911a3afb7aab5c",
+      "diagnostic_digest": "496c03297cebbafadaa5",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Tools/tool_executor.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -2947,7 +2947,7 @@
     },
     {
       "call_count": 403,
-      "diagnostic_digest": "decc507f5caec7826282",
+      "diagnostic_digest": "eeca594f7a86ade792a0",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3057,7 +3057,7 @@
         {
           "digest": "2711af8d7aefb239",
           "kind": "atomic_private_write_bytes",
-          "line": 321,
+          "line": 320,
           "method": "atomic_private_write_bytes"
         }
       ]
