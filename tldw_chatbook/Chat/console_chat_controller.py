@@ -1110,7 +1110,21 @@ class ConsoleChatController:
         re-checking this run's cancel signals and a deadline. Cancel/stop,
         timeout, context-change, or no wired UI all resolve to DENY
         (fail-closed). Returns True only on an explicit Allow.
+
+        Args:
+            url: The skill source URL the model wants to install, surfaced
+                verbatim on the confirm card for the user to inspect.
+
+        Returns:
+            True only on an explicit Allow; every other path (deny, cancel,
+            stop, timeout, context change, or no wired UI) returns False.
         """
+        # No UI bridge wired means the marshal below is a no-op and nothing
+        # can ever set the Event -- fail closed immediately instead of
+        # blocking for the full timeout with no way to be resolved.
+        if self.app is None or self.set_pending_skill_install is None:
+            return False
+
         event = threading.Event()
         decision: dict[str, bool] = {}
         self._pending_skill_install_event = event
@@ -1145,11 +1159,24 @@ class ConsoleChatController:
                 )
 
     def _marshal_pending_skill_install(self, payload: dict[str, Any] | None) -> None:
+        """WORKER THREAD: hand a skill-install confirm payload to the UI thread.
+
+        No-op when no UI bridge is wired (``self.app`` or
+        ``set_pending_skill_install`` is None).
+
+        Args:
+            payload: The pending confirm's ``{"url", "timeout_seconds"}``
+                dict to show, or None to clear/hide the card.
+        """
         if self.app is not None and self.set_pending_skill_install is not None:
             self.app.call_from_thread(self.set_pending_skill_install, payload)
 
     def resolve_pending_skill_install(self, allow: bool) -> None:
-        """UI THREAD: apply the user's Allow/Deny, releasing the worker thread."""
+        """UI THREAD: apply the user's Allow/Deny, releasing the worker thread.
+
+        Args:
+            allow: True to allow the pending install, False to deny it.
+        """
         decision = self._pending_skill_install_decision
         event = self._pending_skill_install_event
         if decision is None or event is None:

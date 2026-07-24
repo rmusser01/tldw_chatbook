@@ -71,6 +71,23 @@ def test_confirm_timeout_denies():
     assert time.monotonic() - started < 2.5
 
 
+def test_confirm_no_app_denies_immediately():
+    """No UI bridge wired (``controller.app`` is None) -> fail closed with no stall.
+
+    Without an app, the marshal in ``_marshal_pending_skill_install`` is a
+    no-op and nothing could ever set the Event, so the 120s poll loop would
+    never resolve. The early guard must return False well before the
+    timeout, without any resolver thread ever being set up.
+    """
+    controller, _ = _controller()
+    assert controller.app is None  # no UI bridge wired at all
+    started = time.monotonic()
+    allowed = controller.request_skill_install_confirm("https://x/y")
+    elapsed = time.monotonic() - started
+    assert allowed is False
+    assert elapsed < 0.5
+
+
 def test_context_change_denies_pending_confirm():
     controller, _ = _controller()
     controller.app = _FakeApp()

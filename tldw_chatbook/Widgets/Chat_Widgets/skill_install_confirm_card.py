@@ -46,7 +46,12 @@ class SkillInstallConfirmCard(Container):
         self.display = False
 
     def set_install(self, payload: dict[str, Any] | None) -> None:
-        """Show the card for ``payload`` (``{"url": ...}``), or hide it if None."""
+        """Show the card for ``payload`` (``{"url": ...}``), or hide it if None.
+
+        Args:
+            payload: The pending confirm's ``{"url", "timeout_seconds"}``
+                dict to render, or None to hide the card.
+        """
         if not payload:
             self.display = False
             return

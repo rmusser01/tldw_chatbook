@@ -2129,3 +2129,35 @@ def test_install_skill_collision_error_survives_turn(tmp_path, monkeypatch):
     tool_msgs = [m.content for m in store.messages_for_session(session.id)
                  if m.role == ConsoleMessageRole.TOOL]
     assert any("local_skill_exists" in c for c in tool_msgs)
+
+
+def test_install_skill_absent_without_confirm_callback(tmp_path):
+    """No request_skill_install_confirm wired -> the tool is ABSENT, not auto-denied.
+
+    A skills service alone is not enough to advertise install_skill: without a
+    confirm callback, run_reply must never pin/dispatch the tool at all, so a
+    model call to it falls through the same "Tool not permitted" path as any
+    other undisclosed tool -- never the misleading "declined" message.
+    """
+    scripts = [
+        [_fence("install_skill", {"url": "https://github.com/o/r"})],
+        ["It seems that tool is unavailable."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        skills_service=_install_skills_service(),
+    )
+    outcome = _run(
+        bridge, store, session, assistant.id, conversation_id="conv-no-confirm",
+        # request_skill_install_confirm intentionally omitted.
+    )
+    assert outcome.status == "done"
+    tool_msgs = [m.content for m in store.messages_for_session(session.id)
+                 if m.role == ConsoleMessageRole.TOOL]
+    assert any("Tool not permitted: install_skill" in c for c in tool_msgs)
+    assert not any("declined" in c.lower() for c in tool_msgs)

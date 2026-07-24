@@ -984,16 +984,18 @@ class ConsoleAgentBridge:
         # gated substitution ran) has nothing to seed.
         if skill_file_bindings is not None:
             skill_file_bindings.authorized.update(turn_skill_bindings)
-        # Agent-callable skill install (5th runtime tool). Built only when a
-        # skills service exists; wired to AgentService, which pins/dispatches
-        # it for the top-level agent only. Order (load-bearing): enforce
-        # policy (no prompt on denial) -> classify URL (no prompt on a bad
-        # URL) -> in-chat confirm (plain blocking call, OUTSIDE asyncio.run)
+        # Agent-callable skill install (5th runtime tool). Built only when
+        # BOTH a skills service AND a confirm callback exist -- without a
+        # callback the tool is simply absent (never advertised) rather than
+        # auto-denying every call; wired to AgentService, which pins/
+        # dispatches it for the top-level agent only. Order (load-bearing):
+        # enforce policy (no prompt on denial) -> classify URL (no prompt on
+        # a bad URL) -> in-chat confirm (plain blocking call, OUTSIDE asyncio.run)
         # -> asyncio.run(install) -> broad-catch wrap. import_skill_file
         # raises a bare ValueError("local_skill_exists:...") on collision, so
         # the install catch is broad.
         install_skill_tool = None
-        if self._skills_service is not None:
+        if self._skills_service is not None and request_skill_install_confirm is not None:
             scope = self._skills_service
 
             def install_skill_tool(url: str) -> ToolResult:

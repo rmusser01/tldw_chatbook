@@ -19,7 +19,12 @@ class ChatTaskCards(Container):
         self.display = False
 
     def sync_state(self, task_state) -> None:
-        """Sync the approval, skill-install, and resume cards from task state."""
+        """Sync the approval, skill-install, and resume cards from task state.
+
+        Args:
+            task_state: The ``TaskResumeState`` snapshot (pending_approval,
+                pending_skill_install, and resume fields) to render.
+        """
         approval_card = self.query_one(ChatApprovalCard)
         install_card = self.query_one(SkillInstallConfirmCard)
         resume_panel = self.query_one(ChatResumePanel)

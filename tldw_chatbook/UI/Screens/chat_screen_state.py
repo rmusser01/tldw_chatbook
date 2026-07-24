@@ -228,7 +228,11 @@ class TaskResumeState:
         return bool(self.pending_approval)
 
     def has_pending_skill_install(self) -> bool:
-        """Return True when a skill-install confirm should be shown."""
+        """Return True when a skill-install confirm should be shown.
+
+        Returns:
+            True when a skill-install confirm should be shown.
+        """
         return bool(self.pending_skill_install)
 
     def to_dict(self) -> Dict[str, Any]:
