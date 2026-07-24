@@ -839,6 +839,8 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         skills.import.launch.server
         skills.list.local
         skills.list.server
+        skills.read_file.launch.local
+        skills.read_file.launch.server
         skills.seed.launch.local
         skills.seed.launch.server
         skills.trust.approve.local
@@ -1574,8 +1576,18 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         watchlists.delete.server
         watchlists.detail.local
         watchlists.detail.server
+        watchlists.export.local
+        watchlists.export.server
+        watchlists.import.local
+        watchlists.import.server
         watchlists.list.local
         watchlists.list.server
+        watchlists.preview.local
+        watchlists.preview.server
+        watchlists.items.detail.local
+        watchlists.items.detail.server
+        watchlists.items.list.local
+        watchlists.items.list.server
         watchlists.alert_rules.create.local
         watchlists.alert_rules.create.server
         watchlists.alert_rules.delete.local
@@ -1586,6 +1598,8 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         watchlists.alert_rules.list.server
         watchlists.alert_rules.update.local
         watchlists.alert_rules.update.server
+        watchlists.runs.cancel.local
+        watchlists.runs.cancel.server
         watchlists.runs.detail.local
         watchlists.runs.detail.server
         watchlists.runs.launch.local
