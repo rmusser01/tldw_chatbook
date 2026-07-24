@@ -37,11 +37,19 @@ Recognizes and normalizes, rejecting everything else BEFORE any network I/O:
 
 | Input | Result |
 |---|---|
-| `github.com/{owner}/{repo}` | GitHub ref: codeload zipball `…/zip/HEAD` (no API call needed for the default branch), no subdir |
-| `github.com/{owner}/{repo}/tree/{tail…}` | GitHub ref + subdir (tail split per §2) |
+| `github.com/{owner}/{repo}` | GitHub ref: `https://api.github.com/repos/{owner}/{repo}/zipball/HEAD`, no subdir |
+| `github.com/{owner}/{repo}/tree/{tail…}` | GitHub ref + subdir (tail split per §2) → `…/zipball/{ref}` |
 | `github.com/{owner}/{repo}/releases/download/{tag}/{asset}` | Direct zip with GitHub auth eligibility |
 | any other `https://…zip` | Direct zip, no auth |
 | anything else (http:, non-zip non-GitHub, git@, etc.) | Rejected with a clear message |
+
+**Normalization targets the documented API zipball endpoint**
+(`api.github.com/repos/{o}/{r}/zipball/{ref}`, `HEAD` for the default
+branch), NOT codeload directly: the API endpoint honors the `Authorization`
+header for public AND private repos and 302s to codeload — an in-family hop
+the manual-redirect policy (§3) already handles. One uniform URL shape,
+correct private-repo auth (codeload-direct with a header is a known 403
+trap).
 
 Skill-name suggestion: subdir basename → else repo name → else asset/zip
 basename (all through the existing `_derive_name_from_filename`
@@ -55,9 +63,16 @@ slashes (`feature/foo`). Rules:
 - Tail has MULTIPLE segments → list branches via the **existing**
   `Utils/github_api_client.GitHubAPIClient.get_branches` and take the
   **longest branch name that prefix-matches** the tail; the remainder is the
-  subdir. API unavailable (offline/rate-limited) → fall back to the
-  first-segment heuristic, and the eventual 404's error copy says a
-  slash-containing branch may need the plain repo URL + subdir-less form.
+  subdir. Verified constraint: `get_branches` currently issues ONE unpaged
+  request (GitHub defaults to 30/page — silent truncation) and caches for
+  5 minutes, so this layer makes a **one-line edit** to it: request
+  `per_page=100` (additive, backward-compatible for existing callers).
+  Repos with >100 branches can still truncate: therefore "no branch in the
+  (possibly-capped) list prefix-matches the tail" is treated EXACTLY like
+  "API unavailable" → fall back to the first-segment heuristic, and the
+  eventual 404's error copy says a slash-containing branch may need the
+  plain repo URL + subdir-less form. A truncated list can only cause a
+  clear failure, never a wrong silent match.
 
 `GitHubAPIClient` is also the ONLY token source (its param→env→config
 resolution with placeholder guards is reused, never reimplemented). Its API
@@ -71,8 +86,10 @@ Owns ALL byte downloads. Per request:
    whitespace/backslash/credential/malformed-host rejection — verified it does
    NOT do IP-range checks, hence:)
 2. **Resolve-and-reject before connect:** resolve the host (or take the
-   IP-literal directly) and reject private, loopback, link-local, reserved,
-   multicast, and unspecified ranges (covers 169.254.169.254 metadata).
+   IP-literal directly) and check **EVERY resolved address** (A and AAAA —
+   a malicious resolver can pair a public v4 with a private v6); reject if
+   ANY address is private, loopback, link-local, reserved, multicast, or
+   unspecified (covers 169.254.169.254 metadata).
 3. **Manual redirects:** `follow_redirects=False`; loop ≤3 hops; every hop
    re-runs steps 1–2; scheme must remain https.
 4. **Auth scoping:** the token header attaches only while the CURRENT hop's
@@ -120,16 +137,27 @@ be bounded** — the 30 MB cap bounds only the compressed download:
 
 ### 5. Seam, policy, UI
 
-- `install_skill_from_url(url, *, overwrite=False)` in
-  `skill_remote_fetch.py` (network stays OUT of `LocalSkillsService`;
-  the function calls INTO the existing import seam via the scope service).
+- `install_skill_from_url(url, *, scope_service, overwrite=False)` in
+  `skill_remote_fetch.py` (network stays OUT of `LocalSkillsService`; the
+  function calls INTO the existing import seam via the scope service, which
+  the UI already holds).
 - **Required registry entry** (fail-closed lesson):
   `_resource("skills.install_remote", actions=(LAUNCH,))` in the
   `server_skills` capability block → `skills.install_remote.launch.local`,
-  enforced at the seam before any network I/O.
-- UI: the Library import row's existing path input detects `http(s)://` and
-  routes to a fetch worker; identical success/outcome/Review-button flow;
-  placeholder copy gains "or GitHub/zip URL". No new widgets.
+  enforced BEFORE any network I/O via a **new small PUBLIC passthrough on
+  `SkillsScopeService`** (e.g. `enforce_install_remote()` wrapping its
+  private `_enforce_policy`) — verified: `_enforce_policy` is private and
+  never called across the class boundary; the module must not reach past
+  the underscore. The existing import path's own
+  `skills.import.launch.local` gate still fires inside `import_skill_file`
+  — intentional defense-in-depth (double-gated), not a bug.
+- UI: the URL branch goes at the TOP of `_run_library_skills_import`,
+  BEFORE the `validate_path_simple(..., require_exists=True)` call
+  (verified: a URL otherwise dies there as "Could not find that file or
+  folder"); the three existing outcome helpers
+  (`_apply_library_skills_import_status` / `_success` /
+  `_outcome_from_exception`) are reused unchanged; placeholder copy gains
+  "or GitHub/zip URL". No new widgets.
 - Always lands trust-pending. Never `trust_approved`.
 
 ## Components & boundaries
@@ -140,7 +168,8 @@ be bounded** — the 30 MB cap bounds only the compressed download:
 | Hardened fetcher | same module | §3: https-only, resolve-and-reject, manual hops, auth scoping, streamed cap |
 | Extraction bridge | same module | §4: bounded re-rooting → in-memory skill zip |
 | Install seam | same module | policy gate → fetch → bridge → `import_skill_file` |
-| Token/branches reuse | `Utils/github_api_client.py` | token resolution; `get_branches` for slash-ref disambiguation (unchanged file) |
+| Token/branches reuse | `Utils/github_api_client.py` | token resolution; `get_branches` for slash-ref disambiguation (ONE additive edit: `per_page=100` on the branches request) |
+| Public policy passthrough | `Skills_Interop/skills_scope_service.py` | `enforce_install_remote()` — public wrapper so the module never calls the private `_enforce_policy` |
 | Policy entry | `runtime_policy/registry.py` | `skills.install_remote` (REQUIRED — engine fails closed) |
 | UI routing | `UI/Screens/library_screen.py` | URL detection in `_run_library_skills_import`; worker + outcome copy |
 
@@ -150,9 +179,14 @@ be bounded** — the 30 MB cap bounds only the compressed download:
   git@, non-zip; name suggestions; single- vs multi-segment tails (branch
   list injected as a fake callable — longest-prefix win; fallback heuristic).
 - **Fetcher (httpx.MockTransport):** private/loopback/metadata IP rejection
-  (direct AND on a redirect hop); >3 hops rejected; https→http hop rejected;
-  auth present on codeload + objects.githubusercontent hops, STRIPPED on a
-  cross-host hop; mid-stream cap abort; timeout mapping to a clean error.
+  (direct AND on a redirect hop; a host resolving to a MIXED public+private
+  address set is rejected); >3 hops rejected; https→http hop rejected;
+  auth present on api.github.com/codeload/objects.githubusercontent hops,
+  STRIPPED on a cross-host hop; mid-stream cap abort; timeout mapping to a
+  clean error.
+- **Branches edit:** `get_branches` requests `per_page=100` (pinned); a
+  multi-segment tail with NO prefix match in the returned list falls back
+  to the heuristic (never a wrong silent match).
 - **Bridge:** zipball-wrapper descent; unwrapped asset; subdir re-root;
   one/many(≤20 listed)/zero candidates; **lying-header bomb inside the
   fetched zip aborts during synthesis** (bounded reader reused); caps
