@@ -38,6 +38,11 @@ from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_QUIET_EMPTY_COPY,
     ConsoleSetupCardState,
 )
+from tldw_chatbook.Widgets.Console.console_generation_card import (
+    ConsoleGenerationCard,
+    ConsoleGenerationCardSpec,
+    generation_card_signature,
+)
 
 
 CONSOLE_TRANSCRIPT_RULE = "─" * 200
@@ -273,7 +278,9 @@ def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Cont
 @dataclass(frozen=True)
 class _TranscriptRow:
     key: str
-    kind: Literal["rule", "message", "image", "actions", "action-help", "empty"]
+    kind: Literal[
+        "rule", "message", "image", "generation-card", "actions", "action-help", "empty"
+    ]
     signature: tuple
     message: ConsoleChatMessage | None = None
     selected: bool = False
@@ -282,6 +289,7 @@ class _TranscriptRow:
     action_tooltip: str = EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP
     card_state: ConsoleSetupCardState | None = None
     image_spec: "ConsoleImageRowSpec | None" = None
+    generation_card_spec: "ConsoleGenerationCardSpec | None" = None
 
 
 class ConsoleTranscriptMessage(Static):
@@ -531,6 +539,7 @@ class ConsoleTranscript(VerticalScroll):
         self._row_signatures: dict[str, tuple] = {}
         self._row_build_counts: dict[str, int] = {}
         self._image_specs: dict[str, ConsoleImageRowSpec] = {}
+        self._generation_card_specs: dict[str, ConsoleGenerationCardSpec] = {}
         # TASK-259: per-message render-signature cache. Maps message id ->
         # (cheap change-token, expensive row signature). `_transcript_rows`
         # re-derives the render payload (Content assembly) only when the
@@ -725,6 +734,22 @@ class ConsoleTranscript(VerticalScroll):
                 hidden mode, unprepared cache, and metadata-only messages).
         """
         self._image_specs = dict(specs)
+
+    def set_generation_card_specs(
+        self, specs: Mapping[str, ConsoleGenerationCardSpec]
+    ) -> None:
+        """Replace the prebuilt image-generation card row payloads keyed by message ID.
+
+        Args:
+            specs: Mapping of message ID to its prepared generation-card
+                payload. A message id present here renders a
+                ``"generation-card"`` row INSTEAD of any ``"image"`` row
+                for that same message (mutually exclusive per message id --
+                see ``_transcript_rows``). Messages absent from the mapping
+                render no card row (covers non-generation messages and a
+                generation message in hidden view mode).
+        """
+        self._generation_card_specs = dict(specs)
 
     def sync_empty_state(
         self,
@@ -996,17 +1021,31 @@ class ConsoleTranscript(VerticalScroll):
                     selected=selected,
                 )
             )
-            image_spec = self._image_specs.get(message.id)
-            if image_spec is not None:
+            card_spec = self._generation_card_specs.get(message.id)
+            if card_spec is not None:
+                # A generation-card message renders the card row INSTEAD of
+                # the plain image row -- mutually exclusive per message id.
                 rows.append(
                     _TranscriptRow(
-                        key=f"image:{message.id}",
-                        kind="image",
-                        signature=("image", message.id, image_spec.mode),
+                        key=f"generation-card:{message.id}",
+                        kind="generation-card",
+                        signature=generation_card_signature(card_spec),
                         message=message,
-                        image_spec=image_spec,
+                        generation_card_spec=card_spec,
                     )
                 )
+            else:
+                image_spec = self._image_specs.get(message.id)
+                if image_spec is not None:
+                    rows.append(
+                        _TranscriptRow(
+                            key=f"image:{message.id}",
+                            kind="image",
+                            signature=("image", message.id, image_spec.mode),
+                            message=message,
+                            image_spec=image_spec,
+                        )
+                    )
             if selected:
                 rows.append(
                     _TranscriptRow(
@@ -1147,6 +1186,8 @@ class ConsoleTranscript(VerticalScroll):
             return ConsoleTranscriptMessage(row.message, selected=row.selected)
         if row.kind == "image" and row.image_spec is not None:
             return self._image_row_widget(row.image_spec)
+        if row.kind == "generation-card" and row.generation_card_spec is not None:
+            return ConsoleGenerationCard(row.generation_card_spec)
         if row.kind == "actions" and row.message is not None:
             return self._action_row(row.message)
         raise ValueError(f"Unsupported transcript row: {row}")

@@ -283,6 +283,10 @@ from ...Widgets.Console import (
     ConsoleWorkspaceSwitcherModal,
 )
 from ...Widgets.Console.console_context_modal import ConsoleContextModal
+from ...Widgets.Console.console_generation_card import (
+    ConsoleGenerationCardSpec,
+    generation_card_signature,
+)
 from ...Widgets.Console.console_status_chips import (
     ConsoleScopeChip,
     ConsoleStatusChips,
@@ -3092,6 +3096,12 @@ class ChatScreen(BaseAppScreen):
 
         Mirrors the provider payload's most-recent-N image policy
         (``_provider_message_payloads``'s ``image_ids[-image_budget:]``).
+
+        Excludes image-generation messages (non-empty ``generation_metadata``)
+        -- those render as a ``"generation-card"`` row instead of the plain
+        ``"image"`` row (see ``_build_generation_card_specs``), so including
+        them here would double-render and burn a plain-image LRU slot under
+        their bare message id for no row that ever reads it (TASK P2a-7).
         """
         # Bound the working set to the cache capacity so prep can never evict
         # what the transcript still shows (churn guard).
@@ -3099,6 +3109,7 @@ class ChatScreen(BaseAppScreen):
             message
             for message in messages
             if getattr(message, "image_data", None) is not None
+            and not getattr(message, "generation_metadata", ())
         ]
         return image_messages[-IMAGE_CACHE_MAX_ENTRIES:]
 
@@ -3121,6 +3132,97 @@ class ChatScreen(BaseAppScreen):
                 pil=pil if mode == "graphics" else None,
             )
         return specs
+
+    def _console_generation_browse(self) -> dict[str, int]:
+        """Return the lazily-created browsed-variant-index map for generation cards.
+
+        Ephemeral (never persisted) and not initialized in ``__init__`` --
+        mirrors the getattr/setdefault pattern
+        ``_console_imagegen_inflight_sessions`` uses for other screen-owned,
+        purely in-memory bookkeeping. Absent entries default a generation
+        message to its canonical variant (index 0) until a later task's
+        browse controls change it.
+        """
+        browse = getattr(self, "_generation_browse", None)
+        if browse is None:
+            browse = {}
+            self._generation_browse = browse
+        return browse
+
+    def _build_generation_card_specs(
+        self, messages
+    ) -> dict[str, ConsoleGenerationCardSpec]:
+        """Build image-generation card row payloads for generation messages.
+
+        Mirrors ``_build_console_image_specs``'s mode/cache resolution, but
+        keys the render cache under the browsed variant's composite key
+        (``f"{message_id}:{browsed_index}"``) instead of the plain message
+        id -- one generation message can browse between several decoded
+        variants sharing the same bounded render cache.
+
+        Unlike a plain image row, an undecoded/byte-less browsed variant
+        does NOT drop the row here: the card still carries real value from
+        its details block alone, so ``ConsoleGenerationCard`` renders a
+        placeholder line for the missing image instead.
+        """
+        state, cache = self._ensure_console_image_view()
+        default_mode = self._console_image_default_mode
+        browse = self._console_generation_browse()
+        specs: dict[str, ConsoleGenerationCardSpec] = {}
+        for message in messages:
+            generation_metadata = getattr(message, "generation_metadata", ())
+            if not generation_metadata:
+                continue
+            mode = state.mode_for(message.id, default=default_mode)
+            if mode == "hidden":
+                continue
+            variant_count = len(generation_metadata)
+            browsed_index = browse.get(message.id, 0)
+            if not (0 <= browsed_index < variant_count):
+                browsed_index = 0
+            cache_key = f"{message.id}:{browsed_index}"
+            specs[message.id] = ConsoleGenerationCardSpec(
+                message_id=message.id,
+                browsed_index=browsed_index,
+                variant_count=variant_count,
+                meta=generation_metadata[browsed_index],
+                mode=mode,
+                pixels=cache.get_pixels(cache_key) if mode == "pixels" else None,
+                pil=cache.get_pil(cache_key) if mode == "graphics" else None,
+            )
+        return specs
+
+    def _pending_console_generation_card_images(
+        self,
+        messages,
+        card_specs: Mapping[str, ConsoleGenerationCardSpec],
+    ) -> list[tuple[str, bytes]]:
+        """Return (cache-key, bytes) pairs for un-decoded browsed generation variants.
+
+        Feeds the same generic ``_prep_console_images`` off-thread decode
+        path as plain image rows -- its ``pending`` list is already opaque
+        ``(cache_key, bytes)`` pairs, so no separate prep routine is needed.
+        Bytes come from ``message.attachments[browsed_index].data``; a
+        rehydrated-without-bytes attachment (``data is None``) is skipped
+        (never queued), leaving the card's placeholder-image fallback in
+        place rather than queuing dead work.
+        """
+        _state, cache = self._ensure_console_image_view()
+        by_id = {message.id: message for message in messages}
+        pending: list[tuple[str, bytes]] = []
+        for message_id, spec in card_specs.items():
+            message = by_id.get(message_id)
+            attachments = getattr(message, "attachments", ()) or () if message else ()
+            if not (0 <= spec.browsed_index < len(attachments)):
+                continue
+            data = attachments[spec.browsed_index].data
+            if data is None:
+                continue
+            cache_key = f"{message_id}:{spec.browsed_index}"
+            if cache.get_pil(cache_key) is not None or cache.is_failed(cache_key):
+                continue
+            pending.append((cache_key, data))
+        return pending
 
     async def _prep_console_images(self, pending: list[tuple[str, bytes]]) -> None:
         """Prepare pending transcript images off-loop, then resync once."""
@@ -10585,6 +10687,8 @@ class ChatScreen(BaseAppScreen):
             transcript.sync_jump_indicator(self._current_console_run_status_value())
             image_specs = self._build_console_image_specs(messages)
             transcript.set_image_specs(image_specs)
+            card_specs = self._build_generation_card_specs(messages)
+            transcript.set_generation_card_specs(card_specs)
             _state, cache = self._ensure_console_image_view()
             # Same bounded subset as `_build_console_image_specs` — computing
             # pending work over the full transcript would prep messages the
@@ -10600,6 +10704,16 @@ class ChatScreen(BaseAppScreen):
                 )
                 if mid not in self._console_image_preparing
             ]
+            # Browsed generation-card variants share the same off-thread
+            # prep worker (its pending list is already opaque
+            # (cache-key, bytes) pairs) and the same in-flight guard set.
+            pending_images.extend(
+                (cache_key, data)
+                for cache_key, data in self._pending_console_generation_card_images(
+                    messages, card_specs
+                )
+                if cache_key not in self._console_image_preparing
+            )
             if pending_images:
                 self._console_image_preparing.update(mid for mid, _ in pending_images)
                 self.run_worker(
@@ -10611,15 +10725,23 @@ class ChatScreen(BaseAppScreen):
             # message-signature fingerprint below has already stabilized, so
             # fold the built specs (id + mode) into the gate too - otherwise
             # a sync that only differs by "the image finished decoding" (or
-            # a view-mode toggle) would be skipped as a no-op refresh.
+            # a view-mode toggle) would be skipped as a no-op refresh. The
+            # generation-card signature covers the same case for cards
+            # (browse/keep changes, mode toggles, and variant decode
+            # completion all alter it -- see `generation_card_signature`).
             image_signature = tuple(
                 (message_id, image_specs[message_id].mode)
                 for message_id in sorted(image_specs)
+            )
+            card_signature = tuple(
+                generation_card_signature(card_specs[message_id])
+                for message_id in sorted(card_specs)
             )
             refresh_key = (
                 id(transcript),
                 self._native_console_transcript_fingerprint(messages),
                 image_signature,
+                card_signature,
             )
             if refresh_key != self._last_native_transcript_refresh_key:
                 await transcript.refresh_messages()
