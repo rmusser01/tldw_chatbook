@@ -108,6 +108,20 @@ jobs:
         pytest Tests/Model_Artifacts/test_operation_leases.py \
           Tests/Model_Artifacts/test_operation_leases_process.py -v
 
+  artifact-lease-gate:
+    name: Artifact Lease Gate
+    runs-on: ubuntu-latest
+    needs: [artifact-lease-spike]
+    if: always()
+
+    steps:
+    - name: Require successful native lease matrix
+      run: |
+        if [ "${{ needs.artifact-lease-spike.result }}" != "success" ]; then
+          echo "Artifact lease matrix result: ${{ needs.artifact-lease-spike.result }}"
+          exit 1
+        fi
+
   integration-tests:
     name: Integration Tests - Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
@@ -302,7 +316,7 @@ jobs:
   test-summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [unit-tests, integration-tests, ui-tests, textual-minimum]
+    needs: [unit-tests, integration-tests, ui-tests, textual-minimum, artifact-lease-gate]
     if: always()
     
     steps:
