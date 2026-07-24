@@ -1,11 +1,11 @@
 ---
 id: TASK-402
 title: Establish TTS adapter registry authority and legacy bridge
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-24 00:42'
-updated_date: '2026-07-24 14:10'
+updated_date: '2026-07-24 17:45'
 labels:
   - tts
   - architecture
@@ -28,45 +28,45 @@ Replace direct access to the wildcard TTS backend manager with one application-o
 <!-- AC:BEGIN -->
 - [x] #1 Application code owns one TTSService and one sealed TTSAdapterRegistry; the compatibility accessor returns only the bound service and can be explicitly reset.
 - [x] #2 The registry uses exact canonical provider IDs with an empty initial alias map, lazily materializes at most one adapter per provider under concurrency, and rejects duplicate or post-seal registration.
-- [ ] #3 Operation leases keep adapter resources alive through complete or partial response consumption; identical configuration is a no-op, changed configuration retires only the selected provider, and shutdown is ordered, bounded, and idempotent.
+- [x] #3 Operation leases keep adapter resources alive through complete or partial response consumption; identical configuration is a no-op, changed configuration retires only the selected provider, and shutdown is ordered, bounded, and idempotent.
 - [x] #4 OpenAI, ElevenLabs, Kokoro, Chatterbox, Higgs, and AllTalk remain available through isolated provider-scoped legacy hosts without exposing TTSBackendManager or concrete backends outside the bridge.
 - [x] #5 The enumerated legacy resolver covers every internal-model form used by current callers, and the existing generate_audio_stream signature routes through the registry and closes its response on success, failure, cancellation, and partial consumption.
 - [x] #6 Per-internal-backend legacy locks serialize construction, initialization, progress callback installation, stream consumption, and callback clearing; progress-sink failures do not fail synthesis while different providers may operate concurrently.
-- [ ] #7 Focused registry, bridge, application-binding, lifecycle, concurrency, and compatibility tests pass without changing visible STTS behavior.
+- [x] #7 Focused registry, bridge, application-binding, lifecycle, concurrency, and compatibility tests pass without changing visible STTS behavior.
 - [x] #8 New registry and bridge diagnostics log neither configuration values nor synthesis text, and regression coverage removes the existing OpenAI API-key-prefix disclosure.
-- [ ] #9 Saving provider-affecting STTS settings reloads the effective configuration and reconfigures only the affected materialized provider adapters without restarting the application.
-- [ ] #10 TTSService shutdown wakes and rejects blocked synthesis admissions, closes abandoned service-wrapped responses after the bounded drain, and leaves no synthesis waiter blocked after wait_closed completes.
+- [x] #9 Saving provider-affecting STTS settings reloads the effective configuration and reconfigures only the affected materialized provider adapters without restarting the application.
+- [x] #10 TTSService shutdown wakes and rejects blocked synthesis admissions, closes abandoned service-wrapped responses after the bounded drain, and leaves no synthesis waiter blocked after wait_closed completes.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Add failing regression coverage for the actionable PR review findings: missing legacy backend symbols and cleanup-failure detail preserved under cancellation.
-2. Add failing STTS settings-save coverage proving recognized provider keys reload effective config once, reconfigure only candidate providers, leave defaults alone, and do not materialize unrelated adapters.
-3. Add failing TTSService shutdown coverage proving admission seals, semaphore waiters fail closed, abandoned responses close after the registry drain deadline, and wait_closed leaves no blocked waiter.
-4. Implement the minimal Google-style docstrings, narrow AttributeError handling, and cleanup callback contract needed for the review findings.
-5. Implement targeted provider reconfiguration using the existing legacy config snapshot and bound TTSService.
-6. Implement service-level close signaling and tracked response cleanup around the existing registry shutdown deadline.
-7. Preserve the retained async STTS event-task design; document and resolve the worker-dispatch review finding as a false positive because the hook already dispatches same-loop async work with explicit cleanup ownership.
-8. Run focused and broad tests, static checks, formatting, boundary checks, and diff hygiene; update implementation notes and acceptance criteria only from fresh evidence.
-9. Reply to and resolve every current review thread, address stale summary findings without unrelated code changes, push the branch, wait for required GitHub checks, and merge PR #833.
+1. Add failing regression coverage for actionable PR review findings: missing legacy backend symbols and cleanup-failure detail under cancellation.
+2. Add failing STTS settings-save coverage for atomic persistence, exact UI keys, provider-scoped effective configuration, raw/normalized/environment precedence, and targeted adapter retirement.
+3. Add failing TTSService and legacy-host shutdown coverage for admission sealing, abandoned responses, one absolute deadline, uncooperative finalizers, post-seal cleanup observation, and cancellation precedence.
+4. Implement Google-style docstrings, narrow AttributeError handling, and sanitized cleanup callback behavior.
+5. Implement atomic settings persistence and targeted provider reconfiguration through the bound TTSService.
+6. Implement service-level close signaling, tracked response cleanup, forceable lease/semaphore release, and a single propagated shutdown deadline.
+7. Preserve the retained async STTS event-task design and resolve the worker-dispatch finding as a false positive because the hook already dispatches same-loop async work with explicit cleanup ownership.
+8. Run focused and broad local tests, static checks, formatting, boundary checks, ADR/scope audit, and diff hygiene; update task evidence only from fresh results.
+9. Reply to and resolve every PR review thread, push the corrected source branch, ignore GitHub CI status per the user's explicit instruction, and merge PR #833.
 
 ADR required: yes
 ADR path: backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md
-Reason: ADR-023 already governs the service lifecycle, provider reconfiguration, compatibility bridge, and shutdown behavior; no new ADR is required.
+Reason: ADR-023 governs the service lifecycle, provider-scoped reconfiguration, compatibility bridge, and single-deadline shutdown behavior; its update clarifies an existing decision, so no new ADR is required.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented the app-owned sealed TTSAdapterRegistry and TTSService binding with exact canonical provider IDs, cancellation-safe operation leases, targeted retirement, and bounded definitive shutdown. Added six provider-scoped legacy adapters with enumerated routing, isolated managers, per-backend locking, operation-scoped progress, and stream-lifetime shutdown handles that drain, cancel, join, close abandoned partial responses, and preserve real cleanup errors without stale timeouts. STTS now uses the owned service, owns temporary/task cleanup, and logs settings and initialization outcomes without credential values or raw exception text. Published the provider-neutral API boundary and updated the TTS guide. Final verification: 129 focused tests passed; 241 broad regressions passed with 14 optional skips; compileall, scoped mypy, boundary grep, ADR/scope audit, diff hygiene, and Ruff check/format on 19 changed Python files passed. Independent correctness, quality, and whole-branch reviews found no remaining Critical or Important issues. ADR-023 remains governing; native audio.cpp transport and supervision remain deferred to later ordered tasks.
+Implemented the app-owned sealed TTSAdapterRegistry and TTSService binding with exact canonical provider IDs, cancellation-safe leases, targeted retirement, and a single absolute shutdown deadline. Added six provider-scoped legacy adapters, enumerated compatibility routing, isolated managers, per-backend locking, operation-scoped progress, service-owned response/resource convergence, late-cleanup observation, and caller-cancellation precedence with sanitized diagnostics. STTS settings now persist atomically, use the real producer keys, normalize provider-scoped effective configuration with raw and environment precedence, reconfigure every affected provider without materializing unrelated adapters, and keep failures value-free. Addressed review requests for public docstrings, missing backend symbols, and cleanup-failure evidence; retained async STTS task ownership because it already dispatches generation without a nested worker. Final isolated verification: 283 broad regressions passed with 14 optional skips; a post-format registry run passed 20 tests; compileall, scoped mypy, boundary isolation, ADR/scope audit, git diff hygiene, and Ruff check/format on 21 TTS-scope Python files passed. Independent spec, quality, and final whole-branch reviews found no remaining Critical or Important production issues. ADR-023 remains governing; native audio.cpp transport and supervision remain deferred. GitHub CI was intentionally not inspected or awaited per the user's instruction.
 <!-- SECTION:NOTES:END -->
 
 ## Definition of Done
 <!-- DOD:BEGIN -->
-- [ ] #1 Automated unit and compatibility tests cover all new registry, bridge, lifecycle, concurrency, cancellation, and privacy behavior.
+- [x] #1 Automated unit and compatibility tests cover all new registry, bridge, lifecycle, concurrency, cancellation, and privacy behavior.
 - [x] #2 Focused static analysis, compilation, and diff hygiene checks pass.
 - [x] #3 The TTS module guide, accepted design, implementation plan, and ADR-023 are linked and consistent.
 - [x] #4 A self-review confirms no concrete backend or manager access remains outside the legacy bridge.
-- [ ] #5 All acceptance criteria are checked and implementation notes summarize the completed change before status moves to Done.
+- [x] #5 All acceptance criteria are checked and implementation notes summarize the completed change before status moves to Done.
 <!-- DOD:END -->
