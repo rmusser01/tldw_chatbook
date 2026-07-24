@@ -1,7 +1,30 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+
+
+_shutdown_deadline: ContextVar[float | None] = ContextVar(
+    "tts_shutdown_deadline",
+    default=None,
+)
+
+
+def current_shutdown_deadline() -> float | None:
+    """Return the absolute deadline inherited by adapter cleanup."""
+    return _shutdown_deadline.get()
+
+
+@contextmanager
+def shutdown_deadline_scope(deadline: float | None) -> Iterator[None]:
+    """Make an absolute shutdown deadline available to child tasks."""
+    token = _shutdown_deadline.set(deadline)
+    try:
+        yield
+    finally:
+        _shutdown_deadline.reset(token)
 
 
 async def join_retained_task(

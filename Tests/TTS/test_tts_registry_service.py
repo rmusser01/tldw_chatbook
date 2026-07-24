@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
 from collections.abc import AsyncGenerator, Mapping
 from typing import Any, cast
@@ -1202,6 +1203,117 @@ async def test_in_flight_synthesis_cannot_escape_after_service_seals() -> None:
 
 
 @pytest.mark.asyncio
+async def test_post_seal_synthesis_observes_all_fire_and_forget_cleanup_failures(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    synthesis_started = asyncio.Event()
+    allow_synthesis = asyncio.Event()
+    response_cleanup_finished = asyncio.Event()
+    resource_release_finished = asyncio.Event()
+    response_secret = "SENSITIVE_POST_SEAL_RESPONSE_f79e"
+    resource_secret = "SENSITIVE_POST_SEAL_RESOURCE_36a1"
+    observed_errors: list[BaseException] = []
+    cleanup_observed = asyncio.Event()
+
+    class FailingResponseAdapter(FakeAdapter):
+        async def synthesize(
+            self,
+            request: TTSRequest,
+            progress_sink: ProgressSink | None = None,
+        ) -> TTSAudioResponse:
+            del progress_sink
+            synthesis_started.set()
+            await allow_synthesis.wait()
+
+            async def stream() -> AsyncGenerator[bytes, None]:
+                yield b"unreachable"
+
+            async def cleanup() -> None:
+                self.response_close_calls += 1
+                response_cleanup_finished.set()
+                raise RuntimeError(f"provider exposed {response_secret}")
+
+            return TTSAudioResponse(
+                provider_id=self.provider_id,
+                model_id=request.model_id,
+                audio_format=request.response_format,
+                content_type="audio/wav",
+                byte_stream=stream(),
+                cleanup=cleanup,
+            )
+
+    class FailingReleaseRegistry(TTSAdapterRegistry):
+        async def _release(self, slot: Any, record: Any) -> None:
+            await super()._release(slot, record)
+            resource_release_finished.set()
+            raise RuntimeError(f"provider exposed {resource_secret}")
+
+    class ObservingService(TTSService):
+        @staticmethod
+        def _observe_shutdown_result(task: asyncio.Task[None]) -> None:
+            try:
+                error = task.exception()
+            except BaseException as error:
+                observed_errors.append(error)
+            else:
+                if error is not None:
+                    observed_errors.append(error)
+            if len(observed_errors) >= 2:
+                cleanup_observed.set()
+
+    adapter = FailingResponseAdapter("openai")
+    service = ObservingService(
+        registry_for_adapter(
+            adapter,
+            shutdown_timeout_seconds=0,
+            registry_type=FailingReleaseRegistry,
+        ),
+        max_concurrent_operations=1,
+    )
+    generation = asyncio.create_task(service.synthesize(tts_request()))
+    await synthesis_started.wait()
+    await service.close()
+    await service.wait_closed()
+
+    loop = asyncio.get_running_loop()
+    previous_exception_handler = loop.get_exception_handler()
+    unobserved_contexts: list[dict[str, Any]] = []
+    loop.set_exception_handler(
+        lambda _loop, context: unobserved_contexts.append(context)
+    )
+    caplog.set_level(logging.WARNING)
+    try:
+        allow_synthesis.set()
+        with pytest.raises(TTSRegistryClosedError):
+            await generation
+        await response_cleanup_finished.wait()
+        await resource_release_finished.wait()
+        await asyncio.wait_for(cleanup_observed.wait(), timeout=1)
+        gc.collect()
+        await asyncio.sleep(0)
+
+        observed_messages = {str(error) for error in observed_errors}
+        assert any(response_secret in message for message in observed_messages)
+        assert any(resource_secret in message for message in observed_messages)
+        assert unobserved_contexts == []
+        assert service._operation_limit._value == 1
+        assert service.registry._closing_records[0].leases == 0
+        assert service.registry._total_leases() == 0
+        assert service._responses == set()
+        assert response_secret not in caplog.text
+        assert resource_secret not in caplog.text
+        await service.wait_closed()
+    finally:
+        loop.set_exception_handler(previous_exception_handler)
+        allow_synthesis.set()
+        await asyncio.gather(
+            generation,
+            service.wait_closed(),
+            return_exceptions=True,
+        )
+
+
+@pytest.mark.asyncio
 async def test_service_shutdown_cancels_legacy_stream_after_drain_deadline() -> None:
     started = asyncio.Event()
     cancelled = asyncio.Event()
@@ -1449,6 +1561,212 @@ async def test_wait_closed_releases_resources_without_joining_stuck_response_fin
             return_exceptions=True,
         )
 
+    assert response not in service._responses
+    assert manager.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_cooperative_legacy_close_finishes_with_registry_deadline_remaining() -> (
+    None
+):
+    timeout = 0.1
+    manager_close_started = asyncio.Event()
+    manager_close_finished = asyncio.Event()
+
+    class Backend:
+        def set_progress_callback(self, callback: object) -> None:
+            del callback
+
+        async def generate_speech_stream(
+            self,
+            request: OpenAISpeechRequest,
+        ) -> AsyncGenerator[bytes, None]:
+            del request
+            yield b"audio"
+
+    class Manager:
+        def __init__(self) -> None:
+            self.backend = Backend()
+            self.close_calls = 0
+
+        async def get_backend(self, internal_model_id: str) -> Backend:
+            del internal_model_id
+            return self.backend
+
+        async def close_all_backends(self) -> None:
+            self.close_calls += 1
+            manager_close_started.set()
+            await asyncio.sleep(0.01)
+            manager_close_finished.set()
+
+    manager = Manager()
+    service = TTSService(
+        TTSAdapterRegistry(
+            specs=legacy_provider_specs(
+                {},
+                manager_factory=lambda _provider_id, _config: manager,
+                shutdown_timeout_seconds=timeout,
+            ),
+            aliases={},
+            shutdown_timeout_seconds=timeout,
+        )
+    )
+    native_request = TTSRequest(
+        provider_id="kokoro",
+        model_id="tts-1",
+        text="hello",
+        voice="af_heart",
+        response_format="mp3",
+        options={
+            "_legacy_openai_request": speech_request(),
+            "_legacy_internal_model_id": "local_kokoro_default_onnx",
+        },
+    )
+    response = await service.synthesize(native_request)
+    assert b"".join([chunk async for chunk in response.byte_stream]) == b"audio"
+
+    loop = asyncio.get_running_loop()
+    shutdown_started = loop.time()
+    close = asyncio.create_task(service.close())
+    await asyncio.sleep(0.02)
+    await response.aclose()
+    await close
+    await service.wait_closed()
+
+    assert loop.time() - shutdown_started < timeout
+    assert manager_close_started.is_set()
+    assert manager_close_finished.is_set()
+    assert manager.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_legacy_shutdown_uses_one_deadline_for_all_cleanup_phases(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    timeout = 0.05
+    started = asyncio.Event()
+    finalizer_started = asyncio.Event()
+    allow_finalizer = asyncio.Event()
+    finalizer_finished = asyncio.Event()
+    manager_close_started = asyncio.Event()
+    allow_manager_close = asyncio.Event()
+    manager_close_finished = asyncio.Event()
+    operation_secret = "SENSITIVE_DEADLINE_OPERATION_8d6f"
+    manager_secret = "SENSITIVE_DEADLINE_MANAGER_c230"
+
+    class UncooperativeBackend:
+        def set_progress_callback(self, callback: object) -> None:
+            del callback
+
+        async def generate_speech_stream(
+            self,
+            request: OpenAISpeechRequest,
+        ) -> AsyncGenerator[bytes, None]:
+            del request
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                finalizer_started.set()
+                while not allow_finalizer.is_set():
+                    try:
+                        await allow_finalizer.wait()
+                    except asyncio.CancelledError:
+                        continue
+                finalizer_finished.set()
+                raise RuntimeError(f"provider exposed {operation_secret}")
+            yield b"unreachable"
+
+    class UncooperativeManager:
+        def __init__(self) -> None:
+            self.backend = UncooperativeBackend()
+            self.close_calls = 0
+
+        async def get_backend(
+            self,
+            internal_model_id: str,
+        ) -> UncooperativeBackend:
+            del internal_model_id
+            return self.backend
+
+        async def close_all_backends(self) -> None:
+            self.close_calls += 1
+            manager_close_started.set()
+            while not allow_manager_close.is_set():
+                try:
+                    await allow_manager_close.wait()
+                except asyncio.CancelledError:
+                    continue
+            manager_close_finished.set()
+            raise RuntimeError(f"provider exposed {manager_secret}")
+
+    manager = UncooperativeManager()
+    service = TTSService(
+        TTSAdapterRegistry(
+            specs=legacy_provider_specs(
+                {},
+                manager_factory=lambda _provider_id, _config: manager,
+                shutdown_timeout_seconds=timeout,
+            ),
+            aliases={},
+            shutdown_timeout_seconds=timeout,
+        ),
+        max_concurrent_operations=1,
+    )
+    native_request = TTSRequest(
+        provider_id="kokoro",
+        model_id="tts-1",
+        text="hello",
+        voice="af_heart",
+        response_format="mp3",
+        options={
+            "_legacy_openai_request": speech_request(),
+            "_legacy_internal_model_id": "local_kokoro_default_onnx",
+        },
+    )
+    response = await service.synthesize(native_request)
+    drive_stream = asyncio.create_task(anext(response.byte_stream))
+    await started.wait()
+    caplog.set_level(logging.WARNING)
+
+    loop = asyncio.get_running_loop()
+    shutdown_started = loop.time()
+    close_error: RuntimeError | None = None
+    try:
+        try:
+            await service.close()
+        except RuntimeError as error:
+            close_error = error
+        with pytest.raises(RuntimeError) as wait_error:
+            await service.wait_closed()
+        elapsed = loop.time() - shutdown_started
+
+        assert elapsed < timeout * 3.5
+        assert finalizer_started.is_set()
+        assert manager_close_started.is_set()
+        assert response in service._responses
+        assert drive_stream.done() is False
+        assert service._operation_limit._value == 1
+        assert service.registry._total_leases() == 0
+        assert operation_secret not in str(wait_error.value)
+        assert manager_secret not in str(wait_error.value)
+        if close_error is not None:
+            assert operation_secret not in str(close_error)
+            assert manager_secret not in str(close_error)
+        assert operation_secret not in caplog.text
+        assert manager_secret not in caplog.text
+    finally:
+        allow_finalizer.set()
+        allow_manager_close.set()
+        await asyncio.gather(
+            drive_stream,
+            response.aclose(),
+            service.wait_closed(),
+            return_exceptions=True,
+        )
+
+    assert finalizer_finished.is_set()
+    assert manager_close_finished.is_set()
     assert response not in service._responses
     assert manager.close_calls == 1
 

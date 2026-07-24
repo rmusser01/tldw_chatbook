@@ -206,8 +206,12 @@ class TTSService:
         self._responses.add(managed_response)
         if self._close_signal.is_set():
             closed_error = TTSRegistryClosedError("The TTS service is closed")
-            managed_response.start_close()
-            managed_response.start_resource_release()
+            cleanup_tasks = (
+                managed_response.start_close(),
+                managed_response.start_resource_release(),
+            )
+            for cleanup_task in cleanup_tasks:
+                cleanup_task.add_done_callback(self._observe_shutdown_result)
             raise closed_error
         return managed_response
 

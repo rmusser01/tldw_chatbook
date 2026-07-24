@@ -631,17 +631,20 @@ async def test_environment_path_override_shadows_stored_reconfiguration(
 
 
 @pytest.mark.asyncio
-async def test_openai_projection_ignores_shadowed_raw_api_change(
+async def test_openai_registry_distinguishes_shadowed_and_effective_raw_api_changes(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     from tldw_chatbook.TTS.TTS_Backends import TTSBackendManager
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    raw_key_before = "SENSITIVE_RAW_OPENAI_BEFORE_4d72"
+    raw_key_after = "SENSITIVE_RAW_OPENAI_AFTER_9aa1"
 
-    def settings(lower_priority_key: str) -> dict[str, Any]:
+    def settings(raw_key: str, lower_priority_key: str) -> dict[str, Any]:
         return {
             "COMPREHENSIVE_CONFIG_RAW": {
-                "openai_api": {"api_key": "raw-legacy-key"},
+                "openai_api": {"api_key": raw_key},
                 "API": {"openai_api_key": lower_priority_key},
             },
             "APP_TTS_CONFIG": {},
@@ -649,7 +652,7 @@ async def test_openai_projection_ignores_shadowed_raw_api_change(
         }
 
     registry = TTSAdapterRegistry(
-        specs=legacy_provider_specs(settings("lower-key-before")),
+        specs=legacy_provider_specs(settings(raw_key_before, "lower-key-before")),
         aliases={},
     )
     lease = await registry.acquire("openai")
@@ -657,7 +660,7 @@ async def test_openai_projection_ignores_shadowed_raw_api_change(
     await lease.release()
     replacement = legacy_provider_config(
         "openai",
-        settings("lower-key-after"),
+        settings(raw_key_before, "lower-key-after"),
     )
 
     assert (
@@ -666,12 +669,25 @@ async def test_openai_projection_ignores_shadowed_raw_api_change(
     )
     assert registry.configuration_revision("openai") == 1
     assert adapter.host._closed is False
-    assert replacement["app_config"]["openai_api"]["api_key"] == "raw-legacy-key"
+    assert replacement["app_config"]["openai_api"]["api_key"] == raw_key_before
     manager = TTSBackendManager(replacement["app_config"])
     assert (
         manager._prepare_backend_config("openai_official_tts-1")["OPENAI_API_KEY"]
-        == "raw-legacy-key"
+        == raw_key_before
     )
+
+    effective_replacement = legacy_provider_config(
+        "openai",
+        settings(raw_key_after, "lower-key-after"),
+    )
+    assert (
+        await registry.reconfigure_provider("openai", effective_replacement)
+        is ReconfigureResult.CHANGED
+    )
+    assert registry.configuration_revision("openai") == 2
+    assert adapter.host._closed is True
+    assert raw_key_before not in caplog.text
+    assert raw_key_after not in caplog.text
 
     await registry.close()
     await registry.wait_closed()
@@ -680,6 +696,21 @@ async def test_openai_projection_ignores_shadowed_raw_api_change(
 @pytest.mark.parametrize(
     ("raw_config", "expected_key"),
     (
+        (
+            {
+                "api_settings.openai": {"api_key": "raw-settings-key"},
+                "openai_api": {"api_key": "raw-legacy-key"},
+                "API": {"openai_api_key": "raw-api-key"},
+            },
+            "raw-settings-key",
+        ),
+        (
+            {
+                "openai_api": {"api_key": "raw-legacy-key"},
+                "API": {"openai_api_key": "raw-api-key"},
+            },
+            "raw-legacy-key",
+        ),
         ({"API": {"openai_api_key": "raw-api-key"}}, "raw-api-key"),
         ({}, "normalized-only-key"),
     ),
@@ -1109,6 +1140,55 @@ async def test_manager_cleanup_can_finish_timed_out_operation_close() -> None:
     assert host._active_operations == 0
     assert host._active_operation_handles == set()
     assert manager.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_reconfigure_retains_cooperative_legacy_host_cleanup() -> None:
+    close_started = asyncio.Event()
+    close_finished = asyncio.Event()
+
+    class CooperativeCloseManager(FakeLegacyManager):
+        async def close_all_backends(self) -> None:
+            self.close_calls += 1
+            close_started.set()
+            await asyncio.sleep(0.01)
+            close_finished.set()
+
+    manager = CooperativeCloseManager(FakeLegacyBackend())
+    initial_settings = {"APP_TTS_CONFIG": {"KOKORO_DEVICE": "cpu"}}
+    registry = TTSAdapterRegistry(
+        specs=legacy_provider_specs(
+            initial_settings,
+            manager_factory=lambda _provider_id, _config: manager,
+            shutdown_timeout_seconds=0.05,
+        ),
+        aliases={},
+    )
+    lease = await registry.acquire("kokoro")
+    adapter = lease.adapter
+    response = await adapter.synthesize(
+        adapter_request("kokoro", "local_kokoro_default_onnx"),
+        None,
+    )
+    assert await collect(response.byte_stream) == b"audio"
+    await response.aclose()
+    await lease.release()
+    replacement = legacy_provider_config(
+        "kokoro",
+        {"APP_TTS_CONFIG": {"KOKORO_DEVICE": "mps"}},
+    )
+
+    assert (
+        await registry.reconfigure_provider("kokoro", replacement)
+        is ReconfigureResult.CHANGED
+    )
+
+    assert close_started.is_set()
+    assert close_finished.is_set()
+    assert manager.close_calls == 1
+    assert adapter.host._closed is True
+    await registry.close()
+    await registry.wait_closed()
 
 
 @pytest.mark.asyncio
