@@ -45,6 +45,7 @@ dependencies = [
     "pillow",
     "PyYAML",
     "pydantic>=2.4,<3",
+    "portalocker==3.2.0",
     "psutil",
     "toml",
     "tomli; python_version < '3.11'",
