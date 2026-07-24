@@ -162,7 +162,7 @@ class ConsoleSessionSettings:
     thinking_effort: str | None = None
     thinking_budget_tokens: int | None = None
     streaming: bool = True
-    persona_label: str = "General"
+    user_profile_label: str = "General"
     character_label: str = ""
     #: Optional per-session system prompt prepended as the first provider
     #: message on every native Console send (submit/retry/regenerate/continue).
@@ -700,11 +700,11 @@ def build_console_settings_summary_state(
         sampling_parts.append(f"thinking {settings.thinking_effort}")
 
     character_label = _string_value(settings.character_label)
-    persona_label = _string_value(settings.persona_label) or "General"
+    user_profile_label = _string_value(settings.user_profile_label) or "General"
     identity_row = (
         f"Character: {character_label}"
         if character_label
-        else f"Persona: {persona_label}"
+        else f"As: {user_profile_label}"
     )
 
     return ConsoleSettingsSummaryState(

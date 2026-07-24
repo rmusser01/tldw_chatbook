@@ -8098,11 +8098,11 @@ class ChatScreen(BaseAppScreen):
             value = label.partition(":")[2].strip()
             return value.split(maxsplit=1)[0] if value else "0"
 
-        persona = str(control_state.persona_label or "General")
+        persona = str(control_state.user_profile_label or "General")
         if persona.startswith("Assistant: "):
             persona = persona.removeprefix("Assistant: ").strip() or "General"
-        elif persona.startswith("Persona: "):
-            persona = persona.removeprefix("Persona: ").strip() or "Persona"
+        elif persona.startswith("As: "):
+            persona = persona.removeprefix("As: ").strip() or "User Profile"
         return (
             "Chat/RAG/Follow"
             f" | {persona}"
@@ -9602,8 +9602,13 @@ class ChatScreen(BaseAppScreen):
         """Return per-session Console settings from a saved state payload."""
         if not isinstance(payload, dict):
             return None
+        values = dict(payload)
+        if "persona_label" in values and "user_profile_label" not in values:
+            # Pre-task-442 blobs serialized the old field name.
+            values["user_profile_label"] = values.pop("persona_label")
+        values.pop("persona_label", None)
         valid_fields = set(ConsoleSessionSettings.__dataclass_fields__)
-        values = {key: value for key, value in payload.items() if key in valid_fields}
+        values = {key: value for key, value in values.items() if key in valid_fields}
         provider = str(values.get("provider") or "").strip()
         if not provider:
             return None
@@ -14462,7 +14467,7 @@ class ChatScreen(BaseAppScreen):
                 next_settings = replace(
                     next_settings,
                     **override_fields,
-                    persona_label=settings.persona_label,
+                    user_profile_label=settings.user_profile_label,
                     character_label=settings.character_label,
                 )
             if temperature is not None:

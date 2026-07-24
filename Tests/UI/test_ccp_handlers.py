@@ -31,8 +31,8 @@ def mock_window():
         selected_conversation_id="chat.server.alice",
     )
     backend = Mock()
-    backend.list_persona_profiles = AsyncMock(return_value=[])
-    backend.get_persona_profile = AsyncMock(
+    backend.list_user_profiles = AsyncMock(return_value=[])
+    backend.get_user_profile = AsyncMock(
         return_value={
             "id": "persona.local.alice",
             "name": "Alice Persona",
@@ -41,7 +41,7 @@ def mock_window():
             "version": 3,
         }
     )
-    backend.create_persona_profile = AsyncMock(
+    backend.create_user_profile = AsyncMock(
         return_value={
             "id": "persona.local.created",
             "name": "Created Persona",
@@ -50,7 +50,7 @@ def mock_window():
             "version": 1,
         }
     )
-    backend.update_persona_profile = AsyncMock(
+    backend.update_user_profile = AsyncMock(
         return_value={
             "id": "persona.local.alice",
             "name": "Alice Persona Updated",
@@ -267,7 +267,7 @@ class TestCCPPersonaHandler:
     async def test_refresh_persona_list_routes_through_scope_service(self, mock_window):
         handler = CCPPersonaHandler(mock_window)
         service = mock_window.app_instance.character_persona_scope_service
-        service.list_persona_profiles = AsyncMock(
+        service.list_user_profiles = AsyncMock(
             return_value=[
                 {
                     "id": "persona.local.alice",
@@ -284,7 +284,7 @@ class TestCCPPersonaHandler:
 
         personas = await handler.refresh_persona_list()
 
-        service.list_persona_profiles.assert_awaited_once()
+        service.list_user_profiles.assert_awaited_once()
         assert personas[0]["id"] == "persona.local.alice"
         assert handler.persona_list[1]["name"] == "Bob Persona"
 
@@ -294,7 +294,7 @@ class TestCCPPersonaHandler:
 
         await handler.load_persona("persona.local.alice")
 
-        mock_window.app_instance.character_persona_scope_service.get_persona_profile.assert_awaited_once_with(
+        mock_window.app_instance.character_persona_scope_service.get_user_profile.assert_awaited_once_with(
             "persona.local.alice",
             mode="local",
         )
@@ -337,7 +337,7 @@ class TestCCPPersonaHandler:
             }
         )
 
-        create_call = mock_window.app_instance.character_persona_scope_service.create_persona_profile.await_args
+        create_call = mock_window.app_instance.character_persona_scope_service.create_user_profile.await_args
         request_data = create_call.args[0]
         assert isinstance(request_data, PersonaProfileCreate)
         assert request_data.name == "Created Persona"
@@ -360,7 +360,7 @@ class TestCCPPersonaHandler:
             }
         )
 
-        update_call = mock_window.app_instance.character_persona_scope_service.update_persona_profile.await_args
+        update_call = mock_window.app_instance.character_persona_scope_service.update_user_profile.await_args
         assert update_call.args[0] == "persona.local.alice"
         request_data = update_call.args[1]
         assert isinstance(request_data, PersonaProfileUpdate)

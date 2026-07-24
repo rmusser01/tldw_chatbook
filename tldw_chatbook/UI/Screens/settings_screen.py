@@ -499,14 +499,14 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
         rows=(
             (
                 "What Roleplay controls",
-                "Picking a character or persona, and sending it to Console",
+                "Picking a character or user profile, and sending it to Console",
             ),
             (
                 "What Settings might add later",
-                "Browsing or display preferences - never which persona is active",
+                "Browsing or display preferences - never which user profile is active",
             ),
         ),
-        follow_up="Add persona display/browsing preferences once Roleplay can hand Settings a saved preference to edit.",
+        follow_up="Add user profile display/browsing preferences once Roleplay can hand Settings a saved preference to edit.",
     ),
     SettingsDomainCategoryContract(
         category=SettingsCategoryId.SKILLS,
@@ -1450,7 +1450,7 @@ class SettingsScreen(BaseAppScreen):
             SettingsCategorySummary(
                 SettingsCategoryId.PERSONAS,
                 "Personas",
-                "Character and persona browsing, plus how they attach to Console chats.",
+                "Character and user profile browsing, plus how they attach to Console chats.",
                 "Read-only",
             ),
             SettingsCategorySummary(

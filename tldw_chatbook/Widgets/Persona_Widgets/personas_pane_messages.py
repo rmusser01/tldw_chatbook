@@ -86,16 +86,16 @@ class CharacterExpressionSetExportRequested(Message):
     """Roleplay P3d-2: export the character's expression set to a .zip."""
 
 
-class EditPersonaRequested(Message):
-    """Edit was requested for the displayed persona profile."""
+class EditUserProfileRequested(Message):
+    """Edit was requested for the displayed user profile."""
 
     def __init__(self, persona_id: str) -> None:
         self.persona_id = persona_id
         super().__init__()
 
 
-class PersonaProfileSaveRequested(Message):
-    """The persona editor form was submitted."""
+class UserProfileSaveRequested(Message):
+    """The user profile editor form was submitted."""
 
     def __init__(self, data: Dict[str, Any]) -> None:
         self.data = data

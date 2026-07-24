@@ -608,6 +608,17 @@ class PersonaProfileDeleteResponse(BaseModel):
     persona_id: StrictStr
 
 
+# task-442 T2: "persona" never refers to the user in this app -- the
+# app-side concept is "user profile". These DTO class names are the wire
+# mirror of the server's own contract (request/response bodies exchanged
+# with tldw_server), so the ``PersonaProfile*`` names above stay put; the
+# ONE sanctioned internal "persona" remnant is this alias block, which lets
+# every app-side importer spell the concept correctly.
+UserProfileCreate = PersonaProfileCreate
+UserProfileUpdate = PersonaProfileUpdate
+UserProfileResponse = PersonaProfileResponse
+
+
 class PersonaInfo(BaseModel):
     id: StrictStr
     name: str

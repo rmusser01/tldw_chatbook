@@ -14,7 +14,7 @@ def _state(**overrides) -> ConsoleControlState:
     base = dict(
         provider_label="Provider: Anthropic",
         model_label="Model: claude-3-haiku",
-        persona_label="Assistant: General",
+        user_profile_label="Assistant: General",
         rag_label="RAG: off",
         sources_label="Sources: 0 staged",
         tools_label="Tools: 0 ready",

@@ -14,7 +14,7 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import Button, Static
 
-from .personas_pane_messages import EditPersonaRequested
+from .personas_pane_messages import EditUserProfileRequested
 
 
 class PersonaProfileCardWidget(Container):
@@ -103,7 +103,7 @@ class PersonaProfileCardWidget(Container):
     def _edit_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         if self._persona_id is not None:
-            self.post_message(EditPersonaRequested(self._persona_id))
+            self.post_message(EditUserProfileRequested(self._persona_id))
 
 
 __all__ = ["PersonaProfileCardWidget"]

@@ -79,7 +79,7 @@ def test_chat_shell_context_defaults_from_none() -> None:
 def test_chat_shell_context_supports_tab_state_and_chat_session_data() -> None:
     resolver = ChatShellLabelResolver(
         workspace_name="Research Lab",
-        persona_label="Priya",
+        user_profile_label="Priya",
         character_label="Vox",
     )
 
@@ -110,7 +110,7 @@ def test_chat_shell_context_supports_tab_state_and_chat_session_data() -> None:
 
     assert tab_context.backend_label == "Server"
     assert tab_context.scope_label == "Workspace: Research Lab"
-    assert tab_context.assistant_label == "Persona: Priya"
+    assert tab_context.assistant_label == "As: Priya"
     assert tab_context.session_label == "Session: A Very Long Session Name"
 
     assert session_context.backend_label == "Server"
@@ -123,7 +123,7 @@ def test_chat_shell_context_truncates_session_label_last() -> None:
     context = ChatShellContext(
         backend_label="Server",
         scope_label="Workspace: Research Lab",
-        assistant_label="Persona: Priya",
+        assistant_label="As: Priya",
         session_label="Session: A very long session title that should be shortened",
     )
 
@@ -132,7 +132,7 @@ def test_chat_shell_context_truncates_session_label_last() -> None:
     assert segments[:3] == [
         "Server",
         "Workspace: Research Lab",
-        "Persona: Priya",
+        "As: Priya",
     ]
     assert segments[-1].startswith("Session:")
     assert len(" | ".join(segments)) <= 80
@@ -290,7 +290,7 @@ async def test_chat_shell_bar_clears_resolver_labels_when_syncing_without_resolv
         ),
         resolver=ChatShellLabelResolver(
             workspace_name="Workspace One",
-            persona_label="Coach One",
+            user_profile_label="Coach One",
         ),
     )
     app = ShellBarTestApp(fixture)
@@ -318,6 +318,6 @@ async def test_chat_shell_bar_clears_resolver_labels_when_syncing_without_resolv
 
             synced_text = _static_text(label)
             assert "Workspace: ws-2" in synced_text
-            assert "Persona: persona-2" in synced_text
+            assert "As: persona-2" in synced_text
             assert "Workspace One" not in synced_text
             assert "Coach One" not in synced_text

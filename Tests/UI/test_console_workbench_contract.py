@@ -173,7 +173,7 @@ def _control_state() -> ConsoleControlState:
     return ConsoleControlState(
         provider_label="Provider: llama.cpp",
         model_label="Model: local-model",
-        persona_label="Assistant: General",
+        user_profile_label="Assistant: General",
         rag_label="RAG: off",
         sources_label="Sources: 0",
         tools_label="Tools: 0",
@@ -910,7 +910,7 @@ def test_console_workbench_state_hides_recovery_banner_when_provider_blocked():
         control_state=ConsoleControlState(
             provider_label="Provider: OpenAI",
             model_label="Model: --",
-            persona_label="Assistant: General",
+            user_profile_label="Assistant: General",
             rag_label="RAG: off",
             sources_label="Sources: 0",
             tools_label="Tools: 0",

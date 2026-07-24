@@ -25,7 +25,7 @@ def test_console_control_state_exposes_provider_model_and_context_labels():
 
     assert state.provider_label == "Provider: OpenAI"
     assert state.model_label == "Model: gpt-5.5"
-    assert state.persona_label == "Persona: Researcher"
+    assert state.user_profile_label == "As: Researcher"
     assert state.rag_label == "RAG: on"
     assert state.sources_label == "Sources: 3 staged"
     assert state.tools_label == "Tools: 4 ready"
@@ -41,7 +41,7 @@ def test_console_control_state_preserves_falsy_labels_and_general_assistant_fall
 
     assert state.provider_label == "Provider: 0"
     assert state.model_label == "Model: False"
-    assert state.persona_label == "Assistant: General"
+    assert state.user_profile_label == "Assistant: General"
 
 
 def test_console_control_state_counter_activity_flags():

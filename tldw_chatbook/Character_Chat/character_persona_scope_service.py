@@ -207,12 +207,12 @@ class CharacterPersonaScopeService:
             if local_backend is not None and self._backend_supports(
                 local_backend,
                 (
-                    "list_persona_profiles",
-                    "get_persona_profile",
-                    "create_persona_profile",
-                    "update_persona_profile",
-                    "delete_persona_profile",
-                    "restore_persona_profile",
+                    "list_user_profiles",
+                    "get_user_profile",
+                    "create_user_profile",
+                    "update_user_profile",
+                    "delete_user_profile",
+                    "restore_user_profile",
                 ),
             ):
                 reports = [
@@ -634,7 +634,7 @@ class CharacterPersonaScopeService:
             **kwargs,
         )
 
-    async def list_persona_profiles(
+    async def list_user_profiles(
         self,
         mode: str = "local",
         active_only: bool = False,
@@ -645,14 +645,14 @@ class CharacterPersonaScopeService:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._persona_action_id(normalized_mode, "list"))
         backend = self._backend(normalized_mode)
-        if normalized_mode == "local" and not hasattr(backend, "list_persona_profiles"):
-            raise ValueError("Local persona profiles are not available yet.")
-        if not hasattr(backend, "list_persona_profiles"):
+        if normalized_mode == "local" and not hasattr(backend, "list_user_profiles"):
+            raise ValueError("Local user profiles are not available yet.")
+        if not hasattr(backend, "list_user_profiles"):
             raise ValueError(
-                "Character/persona backend does not provide list_persona_profiles()."
+                "Character/persona backend does not provide list_user_profiles()."
             )
         return await self._maybe_await(
-            backend.list_persona_profiles(
+            backend.list_user_profiles(
                 active_only=active_only,
                 include_deleted=include_deleted,
                 limit=limit,
@@ -660,41 +660,41 @@ class CharacterPersonaScopeService:
             )
         )
 
-    async def get_persona_profile(self, persona_id: str, mode: str = "local") -> Any:
+    async def get_user_profile(self, persona_id: str, mode: str = "local") -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._persona_action_id(normalized_mode, "detail"))
         backend = self._backend(normalized_mode)
         missing_message = (
-            "Local persona profiles are not available yet."
+            "Local user profiles are not available yet."
             if normalized_mode == "local"
-            else "Character/persona backend does not provide get_persona_profile()."
+            else "Character/persona backend does not provide get_user_profile()."
         )
         return await self._invoke_backend_method(
             backend,
-            ("get_persona_profile", "fetch_persona_by_id"),
+            ("get_user_profile", "fetch_persona_by_id"),
             persona_id,
             missing_message=missing_message,
         )
 
-    async def create_persona_profile(
+    async def create_user_profile(
         self, request_data: Any, mode: str = "local"
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._persona_action_id(normalized_mode, "create"))
         backend = self._backend(normalized_mode)
         missing_message = (
-            "Local persona profiles are not available yet."
+            "Local user profiles are not available yet."
             if normalized_mode == "local"
-            else "Character/persona backend does not provide create_persona_profile()."
+            else "Character/persona backend does not provide create_user_profile()."
         )
         return await self._invoke_backend_method(
             backend,
-            ("create_persona_profile", "create_persona"),
+            ("create_user_profile", "create_persona"),
             request_data,
             missing_message=missing_message,
         )
 
-    async def update_persona_profile(
+    async def update_user_profile(
         self,
         persona_id: str,
         request_data: Any,
@@ -705,23 +705,23 @@ class CharacterPersonaScopeService:
         self._enforce_policy(self._persona_action_id(normalized_mode, "update"))
         backend = self._backend(normalized_mode)
         missing_message = (
-            "Local persona profiles are not available yet."
+            "Local user profiles are not available yet."
             if normalized_mode == "local"
-            else "Character/persona backend does not provide update_persona_profile()."
+            else "Character/persona backend does not provide update_user_profile()."
         )
         kwargs = {}
         if expected_version is not None:
             kwargs["expected_version"] = expected_version
         return await self._invoke_backend_method(
             backend,
-            ("update_persona_profile", "update_persona"),
+            ("update_user_profile", "update_persona"),
             persona_id,
             request_data,
             missing_message=missing_message,
             **kwargs,
         )
 
-    async def delete_persona_profile(
+    async def delete_user_profile(
         self,
         persona_id: str,
         expected_version: int | None = None,
@@ -731,22 +731,22 @@ class CharacterPersonaScopeService:
         self._enforce_policy(self._persona_action_id(normalized_mode, "delete"))
         backend = self._backend(normalized_mode)
         missing_message = (
-            "Local persona profiles are not available yet."
+            "Local user profiles are not available yet."
             if normalized_mode == "local"
-            else "Character/persona backend does not provide delete_persona_profile()."
+            else "Character/persona backend does not provide delete_user_profile()."
         )
         kwargs = {}
         if expected_version is not None:
             kwargs["expected_version"] = expected_version
         return await self._invoke_backend_method(
             backend,
-            ("delete_persona_profile", "delete_persona"),
+            ("delete_user_profile", "delete_persona"),
             persona_id,
             missing_message=missing_message,
             **kwargs,
         )
 
-    async def restore_persona_profile(
+    async def restore_user_profile(
         self,
         persona_id: str,
         expected_version: int,
@@ -756,13 +756,13 @@ class CharacterPersonaScopeService:
         self._enforce_policy(self._persona_action_id(normalized_mode, "update"))
         backend = self._backend(normalized_mode)
         missing_message = (
-            "Local persona profiles are not available yet."
+            "Local user profiles are not available yet."
             if normalized_mode == "local"
-            else "Character/persona backend does not provide restore_persona_profile()."
+            else "Character/persona backend does not provide restore_user_profile()."
         )
         return await self._invoke_backend_method(
             backend,
-            ("restore_persona_profile", "restore_persona"),
+            ("restore_user_profile", "restore_persona"),
             persona_id,
             expected_version,
             missing_message=missing_message,

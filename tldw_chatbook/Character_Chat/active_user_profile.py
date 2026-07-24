@@ -51,9 +51,7 @@ def resolve_active_user_profile_name(service) -> str | None:
     one config read + one profile-list read.
 
     Args:
-        service: the user-profile service (exposes ``list_user_profiles``;
-            the pre-rename ``list_persona_profiles`` is accepted until the
-            Task-2 rename lands).
+        service: the user-profile service (exposes ``list_user_profiles``).
 
     Returns:
         The active profile's name, or None.
@@ -62,9 +60,7 @@ def resolve_active_user_profile_name(service) -> str | None:
     if pointer is None or service is None:
         return None
     try:
-        lister = getattr(service, "list_user_profiles", None) or getattr(
-            service, "list_persona_profiles", None
-        )
+        lister = getattr(service, "list_user_profiles", None)
         if lister is None:
             return None
         for record in lister() or []:

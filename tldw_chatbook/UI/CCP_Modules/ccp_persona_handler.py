@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from loguru import logger
 
 from .ccp_messages import PersonaMessage, ViewChangeMessage
-from ...tldw_api import PersonaProfileCreate, PersonaProfileUpdate
+from ...tldw_api import UserProfileCreate, UserProfileUpdate
 
 if TYPE_CHECKING:
     from ..Screens.personas_screen import PersonasScreen
@@ -122,7 +122,7 @@ class CCPPersonaHandler:
                 ``raise_on_unavailable`` is ``True``.
         """
         service = getattr(self.app_instance, "character_persona_scope_service", None)
-        if service is None or not hasattr(service, "list_persona_profiles"):
+        if service is None or not hasattr(service, "list_user_profiles"):
             logger.debug(
                 "Persona scope service unavailable; returning empty persona list"
             )
@@ -132,7 +132,7 @@ class CCPPersonaHandler:
             return self.persona_list
 
         try:
-            personas = await service.list_persona_profiles(mode=self._current_mode())
+            personas = await service.list_user_profiles(mode=self._current_mode())
         except ValueError:
             logger.opt(exception=True).debug("Persona list unavailable in current mode")
             if raise_on_unavailable:
@@ -156,7 +156,7 @@ class CCPPersonaHandler:
     async def load_persona(self, persona_id: str) -> None:
         """Load a persona profile by identifier via the mode-aware scope service."""
         service = getattr(self.app_instance, "character_persona_scope_service", None)
-        if service is None or not hasattr(service, "get_persona_profile"):
+        if service is None or not hasattr(service, "get_user_profile"):
             logger.warning(
                 "Persona scope service unavailable; cannot load persona {}", persona_id
             )
@@ -164,7 +164,7 @@ class CCPPersonaHandler:
             return
 
         try:
-            persona_data = await service.get_persona_profile(
+            persona_data = await service.get_user_profile(
                 persona_id,
                 mode=self._current_mode(),
             )
@@ -242,19 +242,19 @@ class CCPPersonaHandler:
 
         try:
             if self.current_persona_id:
-                request_data = PersonaProfileUpdate(
+                request_data = UserProfileUpdate(
                     name=name,
                     mode=mode,
                     system_prompt=persona_data.get("system_prompt"),
                 )
-                result = await service.update_persona_profile(
+                result = await service.update_user_profile(
                     self.current_persona_id,
                     request_data,
                     expected_version=persona_data.get("version"),
                     mode=current_mode,
                 )
             else:
-                request_data = PersonaProfileCreate(
+                request_data = UserProfileCreate(
                     id=persona_data.get("id"),
                     name=name,
                     mode=mode,
@@ -263,7 +263,7 @@ class CCPPersonaHandler:
                     setup=persona_data.get("setup") or {},
                     voice_defaults=persona_data.get("voice_defaults") or {},
                 )
-                result = await service.create_persona_profile(
+                result = await service.create_user_profile(
                     request_data,
                     mode=current_mode,
                 )
