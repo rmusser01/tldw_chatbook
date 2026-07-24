@@ -512,8 +512,21 @@ def test_migration_candidate_uses_real_service_and_restart_is_duplicate_free(
     assert result["control_path"] == "bounded legacy fixture scan"
     assert result["persisted_trace_rows"] == 100
     assert result["persisted_owner_rows"] == 100
+    assert result["partial_trace_rows"] > 0
+    assert result["persisted_snapshot_rows"] > 0
+    assert result["persisted_evidence_reference_rows"] > 0
     assert result["duplicate_proxy_rows_after_restart"]["p95"] == 0
     assert result["messages_per_second"]["median"] >= 100
+    sidecar = _load_json(tmp_path / "migration-candidate-0.json")
+    records = next(iter(sidecar["conversations"].values()))
+    evidence_bundle_record = records["legacy-message-000"]
+    assert "legacy_fixture" not in evidence_bundle_record["rag_context"]
+    assert evidence_bundle_record["rag_context"]["evidence_bundle"]["references"]
+    assert evidence_bundle_record["citations"]
+    citation_ref_record = records["legacy-message-001"]
+    assert citation_ref_record["citations"][0]["source_id"] == "legacy-source-001"
+    sidecar_record = records["legacy-message-002"]
+    assert sidecar_record["citation_validation"] == {"valid": True}
 
 
 @pytest.mark.asyncio

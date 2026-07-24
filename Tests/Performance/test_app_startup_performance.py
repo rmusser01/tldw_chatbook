@@ -321,6 +321,285 @@ def test_conversation_wiring_attaches_migration_before_existing_artifact_coordin
 
 
 @pytest.mark.asyncio
+async def test_deferred_migration_drains_bounded_batches_and_multiple_conversations(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Deferred work yields between 100-message units until every conversation ends."""
+
+    import tldw_chatbook.app as app_module
+    from Tests.Chat.test_citation_legacy_migration import (
+        CODEC,
+        _record,
+        _repository,
+        _write_sidecar,
+    )
+    from tldw_chatbook.Chat.citation_legacy_migration import (
+        CitationLegacyMigrationService,
+        LegacyMigrationState,
+    )
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(
+        tmp_path / "deferred-migration.sqlite",
+        client_id="deferred-migration-test",
+    )
+    try:
+        first_conversation = db.add_conversation(
+            {
+                "id": "a-conversation",
+                "title": "First migration",
+                "character_id": None,
+            }
+        )
+        first_ids = [f"first-message-{ordinal:04d}" for ordinal in range(205)]
+        for message_id in first_ids:
+            db.add_message(
+                {
+                    "id": message_id,
+                    "conversation_id": first_conversation,
+                    "sender": "assistant",
+                    "content": "Legacy answer [1].",
+                }
+            )
+        second_conversation = db.add_conversation(
+            {
+                "id": "b-conversation",
+                "title": "Second migration",
+                "character_id": None,
+            }
+        )
+        second_ids = ["second-message-0000"]
+        db.add_message(
+            {
+                "id": second_ids[0],
+                "conversation_id": second_conversation,
+                "sender": "assistant",
+                "content": "Legacy answer [1].",
+            }
+        )
+        sidecar = tmp_path / "chat_rag_context.json"
+        _write_sidecar(sidecar, first_conversation, first_ids)
+        payload = json.loads(sidecar.read_text(encoding="utf-8"))
+        payload["conversations"][second_conversation] = {
+            message_id: {
+                **_record(message_id),
+                "conversation_id": second_conversation,
+            }
+            for message_id in second_ids
+        }
+        sidecar.write_text(json.dumps(payload), encoding="utf-8")
+        migration = CitationLegacyMigrationService(
+            db=db,
+            repository=_repository(db),
+            sidecar_path=sidecar,
+            fingerprint_codec=CODEC,
+        )
+        processed: list[int] = []
+        original_migrate = migration.migrate_idle_unit
+
+        def record_migration_unit():
+            result = original_migrate()
+            processed.append(result.processed_messages)
+            return result
+
+        migration.migrate_idle_unit = record_migration_unit
+        real_sleep = asyncio.sleep
+        yielded: list[float] = []
+
+        async def record_yield(delay: float) -> None:
+            yielded.append(delay)
+            await real_sleep(0)
+
+        monkeypatch.setattr(app_module.asyncio, "sleep", record_yield)
+        fake_app = SimpleNamespace(
+            citation_legacy_migration_service=migration,
+            loguru_logger=Mock(),
+        )
+
+        await app_module.TldwCli._migrate_legacy_citations_idle_unit(fake_app)
+
+        assert processed == [100, 100, 5, 1]
+        assert yielded == [0, 0, 0]
+        assert (
+            migration.get_journal(first_conversation).state
+            is LegacyMigrationState.COMPLETE
+        )
+        assert (
+            migration.get_journal(second_conversation).state
+            is LegacyMigrationState.COMPLETE
+        )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_deferred_migration_is_single_flight(monkeypatch) -> None:
+    """Concurrent scheduler calls share one migration driver."""
+
+    import tldw_chatbook.app as app_module
+    from tldw_chatbook.Chat.citation_legacy_migration import (
+        LegacyMigrationBatchResult,
+        LegacyMigrationState,
+    )
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def blocked_to_thread(function):
+        nonlocal calls
+        calls += 1
+        started.set()
+        await release.wait()
+        return function()
+
+    migration = SimpleNamespace(
+        ready=True,
+        migrate_idle_unit=lambda: LegacyMigrationBatchResult(
+            state=LegacyMigrationState.COMPLETE
+        ),
+    )
+    fake_app = SimpleNamespace(
+        citation_legacy_migration_service=migration,
+        loguru_logger=Mock(),
+    )
+    monkeypatch.setattr(app_module.asyncio, "to_thread", blocked_to_thread)
+
+    first = asyncio.create_task(
+        app_module.TldwCli._migrate_legacy_citations_idle_unit(fake_app)
+    )
+    await started.wait()
+    second = asyncio.create_task(
+        app_module.TldwCli._migrate_legacy_citations_idle_unit(fake_app)
+    )
+    await asyncio.sleep(0)
+    release.set()
+    await asyncio.gather(first, second)
+
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_deferred_migration_retries_exceptions_with_bounded_backoff(
+    monkeypatch,
+) -> None:
+    """A transient worker error gets one bounded retry path instead of a task storm."""
+
+    import tldw_chatbook.app as app_module
+    from tldw_chatbook.Chat.citation_legacy_migration import (
+        LegacyMigrationBatchResult,
+        LegacyMigrationState,
+    )
+
+    calls = 0
+    delays: list[float] = []
+
+    def migrate_idle_unit():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("transient")
+        return LegacyMigrationBatchResult(state=LegacyMigrationState.COMPLETE)
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    fake_app = SimpleNamespace(
+        citation_legacy_migration_service=SimpleNamespace(
+            ready=True,
+            migrate_idle_unit=migrate_idle_unit,
+        ),
+        loguru_logger=Mock(),
+    )
+    monkeypatch.setattr(app_module.asyncio, "sleep", record_sleep)
+
+    await app_module.TldwCli._migrate_legacy_citations_idle_unit(fake_app)
+
+    assert calls == 2
+    assert delays == [1]
+
+
+@pytest.mark.asyncio
+async def test_deferred_migration_backs_off_running_guard_failures(
+    monkeypatch,
+) -> None:
+    """A retryable guard result yields bounded backoff instead of a hot loop."""
+
+    import tldw_chatbook.app as app_module
+    from tldw_chatbook.Chat.citation_legacy_migration import (
+        LegacyMigrationBatchResult,
+        LegacyMigrationState,
+    )
+
+    calls = 0
+    delays: list[float] = []
+
+    def migrate_idle_unit():
+        nonlocal calls
+        calls += 1
+        return LegacyMigrationBatchResult(
+            state=(
+                LegacyMigrationState.RUNNING
+                if calls < 3
+                else LegacyMigrationState.COMPLETE
+            ),
+            reason_code=("legacy_cutover_guard_failed" if calls < 3 else None),
+        )
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    fake_app = SimpleNamespace(
+        citation_legacy_migration_service=SimpleNamespace(
+            ready=True,
+            migrate_idle_unit=migrate_idle_unit,
+        ),
+        loguru_logger=Mock(),
+    )
+    monkeypatch.setattr(app_module.asyncio, "sleep", record_sleep)
+
+    await app_module.TldwCli._migrate_legacy_citations_idle_unit(fake_app)
+
+    assert calls == 3
+    assert delays == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_deferred_migration_rechecks_disabled_policy_between_units() -> None:
+    """Turning off canonical writes stops the driver before another batch."""
+
+    import tldw_chatbook.app as app_module
+    from tldw_chatbook.Chat.citation_legacy_migration import (
+        LegacyMigrationBatchResult,
+        LegacyMigrationState,
+    )
+
+    class Migration:
+        enabled = True
+        calls = 0
+
+        @property
+        def ready(self) -> bool:
+            return self.enabled
+
+        def migrate_idle_unit(self):
+            self.calls += 1
+            self.enabled = False
+            return LegacyMigrationBatchResult(state=LegacyMigrationState.RUNNING)
+
+    migration = Migration()
+    fake_app = SimpleNamespace(
+        citation_legacy_migration_service=migration,
+        loguru_logger=Mock(),
+    )
+
+    await app_module.TldwCli._migrate_legacy_citations_idle_unit(fake_app)
+
+    assert migration.calls == 1
+
+
+@pytest.mark.asyncio
 async def test_ui_ready_before_nonessential_startup_services_finish(
     monkeypatch,
 ) -> None:

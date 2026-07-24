@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 import json
 import os
+from threading import Event
 
 import pytest
 
@@ -415,6 +416,119 @@ def test_concurrent_batch_callers_converge_without_duplicate_owners(
     )
 
 
+def test_stale_generation_cannot_stage_rows_for_a_later_cutover(
+    db: CharactersRAGDB,
+    tmp_path,
+) -> None:
+    conversation_id = db.add_conversation(
+        {"title": "Mixed generation", "character_id": None}
+    )
+    a_ids = [f"a-message-{ordinal:04d}" for ordinal in range(205)]
+    b_ids = [f"b-message-{ordinal:04d}" for ordinal in range(205)]
+    for message_id in (*a_ids, *b_ids):
+        db.add_message(
+            {
+                "id": message_id,
+                "conversation_id": conversation_id,
+                "sender": "assistant",
+                "content": "Legacy answer [1].",
+                "timestamp": NOW.isoformat(),
+            }
+        )
+    sidecar = tmp_path / "chat_rag_context.json"
+    _write_sidecar(sidecar, conversation_id, a_ids)
+    repository = _repository(db)
+    first_generation = CitationLegacyMigrationService(
+        db=db,
+        repository=repository,
+        sidecar_path=sidecar,
+        fingerprint_codec=CODEC,
+    )
+    assert (
+        first_generation.migrate_next_batch(conversation_id).processed_messages == 100
+    )
+
+    stale_caller = CitationLegacyMigrationService(
+        db=db,
+        repository=repository,
+        sidecar_path=sidecar,
+        fingerprint_codec=CODEC,
+    )
+    stale_journal_read = Event()
+    release_stale_caller = Event()
+    original_get_journal = stale_caller.get_journal
+    paused = False
+
+    def pause_after_journal_read(target_conversation_id: str):
+        nonlocal paused
+        journal = original_get_journal(target_conversation_id)
+        if not paused:
+            paused = True
+            stale_journal_read.set()
+            assert release_stale_caller.wait(timeout=10)
+        return journal
+
+    stale_caller.get_journal = pause_after_journal_read
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        stale_future = executor.submit(
+            stale_caller.migrate_next_batch,
+            conversation_id,
+        )
+        assert stale_journal_read.wait(timeout=10)
+        _write_sidecar(sidecar, conversation_id, b_ids)
+        assert (
+            first_generation.migrate_next_batch(conversation_id).state
+            is LegacyMigrationState.DIVERGED
+        )
+        first_generation.retry_diverged(conversation_id)
+        current_generation = CitationLegacyMigrationService(
+            db=db,
+            repository=repository,
+            sidecar_path=sidecar,
+            fingerprint_codec=CODEC,
+        )
+        assert (
+            current_generation.migrate_next_batch(conversation_id).state
+            is LegacyMigrationState.RUNNING
+        )
+        release_stale_caller.set()
+        stale_result = stale_future.result(timeout=10)
+
+    assert stale_result.reason_code == "legacy_cutover_guard_failed"
+    assert (
+        current_generation.migrate_next_batch(conversation_id).processed_messages == 100
+    )
+    assert (
+        current_generation.migrate_next_batch(conversation_id).state
+        is LegacyMigrationState.COMPLETE
+    )
+    connection = db.get_connection()
+    assert (
+        connection.execute(
+            """
+            SELECT count(*)
+            FROM rag_citation_traces
+            WHERE legacy_conversation_id=?
+              AND legacy_message_id LIKE 'a-message-%'
+              AND visibility_state='active'
+            """,
+            (conversation_id,),
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute(
+            """
+            SELECT count(*)
+            FROM rag_citation_traces
+            WHERE legacy_conversation_id=? AND visibility_state='active'
+            """,
+            (conversation_id,),
+        ).fetchone()[0]
+        == 205
+    )
+
+
 def test_explicit_retry_deletes_hidden_staging_before_rebuild(
     db: CharactersRAGDB,
     tmp_path,
@@ -495,6 +609,171 @@ def test_raw_verification_detects_same_stat_rewrite_after_cutover(
         is LegacyCitationReadState.DIVERGED
     )
     assert service.get_journal(conversation_id).state is LegacyMigrationState.DIVERGED
+
+
+def test_completed_migration_becomes_diverged_when_source_is_unreadable(
+    db: CharactersRAGDB,
+    tmp_path,
+) -> None:
+    conversation_id, message_ids = _conversation_with_messages(db, 1)
+    sidecar = tmp_path / "chat_rag_context.json"
+    _write_sidecar(sidecar, conversation_id, message_ids)
+    service = CitationLegacyMigrationService(
+        db=db,
+        repository=_repository(db),
+        sidecar_path=sidecar,
+        fingerprint_codec=CODEC,
+    )
+    assert (
+        service.migrate_next_batch(conversation_id).state
+        is LegacyMigrationState.COMPLETE
+    )
+    sidecar.write_text('{"conversations":[', encoding="utf-8")
+
+    result = service.migrate_next_batch(conversation_id)
+
+    assert result.state is LegacyMigrationState.DIVERGED
+    assert service.get_journal(conversation_id).state is LegacyMigrationState.DIVERGED
+    assert (
+        service.read_conversation(conversation_id, verify_canonical=True).state
+        is LegacyCitationReadState.DIVERGED
+    )
+
+
+def test_stale_mismatch_rechecks_current_source_before_diverging_complete_journal(
+    db: CharactersRAGDB,
+    tmp_path,
+) -> None:
+    conversation_id, message_ids = _conversation_with_messages(db, 1)
+    sidecar = tmp_path / "chat_rag_context.json"
+    _write_sidecar(sidecar, conversation_id, message_ids)
+    service = CitationLegacyMigrationService(
+        db=db,
+        repository=_repository(db),
+        sidecar_path=sidecar,
+        fingerprint_codec=CODEC,
+    )
+    assert (
+        service.migrate_next_batch(conversation_id).state
+        is LegacyMigrationState.COMPLETE
+    )
+    original = sidecar.read_bytes()
+    changed = json.loads(original)
+    changed["conversations"][conversation_id][message_ids[0]]["citations"] = []
+    sidecar.write_text(json.dumps(changed), encoding="utf-8")
+
+    stale_caller = CitationLegacyMigrationService(
+        db=db,
+        repository=service.repository,
+        sidecar_path=sidecar,
+        fingerprint_codec=CODEC,
+    )
+    journal_read = Event()
+    release = Event()
+    original_get_journal = stale_caller.get_journal
+
+    def pause_after_journal_read(target_conversation_id: str):
+        journal = original_get_journal(target_conversation_id)
+        journal_read.set()
+        assert release.wait(timeout=10)
+        return journal
+
+    stale_caller.get_journal = pause_after_journal_read
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(stale_caller.migrate_next_batch, conversation_id)
+        assert journal_read.wait(timeout=10)
+        sidecar.write_bytes(original)
+        release.set()
+        result = future.result(timeout=10)
+
+    assert result.state is LegacyMigrationState.COMPLETE
+    assert (
+        stale_caller.get_journal(conversation_id).state is LegacyMigrationState.COMPLETE
+    )
+
+
+def test_stale_reader_rechecks_current_source_before_diverging_complete_journal(
+    db: CharactersRAGDB,
+    tmp_path,
+) -> None:
+    conversation_id, message_ids = _conversation_with_messages(db, 1)
+    sidecar = tmp_path / "chat_rag_context.json"
+    _write_sidecar(sidecar, conversation_id, message_ids)
+    service = CitationLegacyMigrationService(
+        db=db,
+        repository=_repository(db),
+        sidecar_path=sidecar,
+        fingerprint_codec=CODEC,
+    )
+    assert (
+        service.migrate_next_batch(conversation_id).state
+        is LegacyMigrationState.COMPLETE
+    )
+    original = sidecar.read_bytes()
+    changed = json.loads(original)
+    changed["conversations"][conversation_id][message_ids[0]]["citations"] = []
+    sidecar.write_text(json.dumps(changed), encoding="utf-8")
+    stale_snapshot_read = Event()
+    release = Event()
+    original_source_snapshot = service._source_snapshot
+    paused = False
+
+    def pause_after_source_snapshot(target_conversation_id: str):
+        nonlocal paused
+        snapshot = original_source_snapshot(target_conversation_id)
+        if not paused:
+            paused = True
+            stale_snapshot_read.set()
+            assert release.wait(timeout=10)
+        return snapshot
+
+    service._source_snapshot = pause_after_source_snapshot
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            service.read_conversation,
+            conversation_id,
+            verify_canonical=True,
+        )
+        assert stale_snapshot_read.wait(timeout=10)
+        sidecar.write_bytes(original)
+        release.set()
+        view = future.result(timeout=10)
+
+    assert view.state is LegacyCitationReadState.CANONICAL
+    assert service.get_journal(conversation_id).state is LegacyMigrationState.COMPLETE
+
+
+def test_active_legacy_rows_are_hidden_when_journal_is_not_complete(
+    db: CharactersRAGDB,
+    tmp_path,
+) -> None:
+    conversation_id, message_ids = _conversation_with_messages(db, 1)
+    sidecar = tmp_path / "chat_rag_context.json"
+    _write_sidecar(sidecar, conversation_id, message_ids)
+    service = CitationLegacyMigrationService(
+        db=db,
+        repository=_repository(db),
+        sidecar_path=sidecar,
+        fingerprint_codec=CODEC,
+    )
+    assert (
+        service.migrate_next_batch(conversation_id).state
+        is LegacyMigrationState.COMPLETE
+    )
+    with db.transaction() as cursor:
+        cursor.execute(
+            """
+            UPDATE rag_legacy_migration_journal
+            SET state='running', completed_at=NULL
+            WHERE conversation_id=?
+            """,
+            (conversation_id,),
+        )
+
+    view = service.read_conversation(conversation_id, verify_canonical=True)
+
+    assert view.state is LegacyCitationReadState.VERIFICATION_PENDING
+    assert view.records == {}
 
 
 def test_reader_is_fallback_until_complete_then_canonical_first(
@@ -791,6 +1070,113 @@ def test_oversized_sidecar_is_rejected_before_json_parse(
     result = service.migrate_next_batch(conversation_id)
     assert result.state is LegacyMigrationState.FAILED
     assert result.reason_code == "legacy_sidecar_too_large"
+
+
+def test_extreme_lexical_nesting_is_rejected_without_parser_recursion(
+    db: CharactersRAGDB,
+    tmp_path,
+) -> None:
+    conversation_id, _ = _conversation_with_messages(db, 0)
+    sidecar = tmp_path / "chat_rag_context.json"
+    sidecar.write_bytes(
+        b'{"conversations":' + (b"[" * 10_000) + b"0" + (b"]" * 10_000) + b"}"
+    )
+    service = CitationLegacyMigrationService(
+        db=db,
+        repository=_repository(db),
+        sidecar_path=sidecar,
+        fingerprint_codec=CODEC,
+    )
+
+    result = service.migrate_next_batch(conversation_id)
+
+    assert result.state is LegacyMigrationState.FAILED
+    assert result.reason_code == "legacy_json_too_deep"
+
+
+def test_sidecar_symlink_is_rejected(
+    db: CharactersRAGDB,
+    tmp_path,
+) -> None:
+    conversation_id, message_ids = _conversation_with_messages(db, 1)
+    target = tmp_path / "real-chat-rag-context.json"
+    _write_sidecar(target, conversation_id, message_ids)
+    sidecar = tmp_path / "chat_rag_context.json"
+    try:
+        sidecar.symlink_to(target)
+    except OSError:
+        pytest.skip("symlinks are unavailable on this platform")
+    service = CitationLegacyMigrationService(
+        db=db,
+        repository=_repository(db),
+        sidecar_path=sidecar,
+        fingerprint_codec=CODEC,
+    )
+
+    result = service.migrate_next_batch(conversation_id)
+
+    assert result.state is LegacyMigrationState.FAILED
+    assert result.reason_code == "legacy_sidecar_symlink"
+
+
+def test_sidecar_path_swap_during_descriptor_read_is_rejected(
+    db: CharactersRAGDB,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    conversation_id, message_ids = _conversation_with_messages(db, 1)
+    sidecar = tmp_path / "chat_rag_context.json"
+    replacement = tmp_path / "replacement.json"
+    _write_sidecar(sidecar, conversation_id, message_ids)
+    _write_sidecar(replacement, conversation_id, message_ids)
+    payload = json.loads(replacement.read_text(encoding="utf-8"))
+    payload["conversations"][conversation_id][message_ids[0]]["citations"] = []
+    replacement.write_text(json.dumps(payload), encoding="utf-8")
+    original_read = os.read
+    swapped = False
+
+    def swap_after_first_read(fd: int, size: int) -> bytes:
+        nonlocal swapped
+        raw = original_read(fd, size)
+        if not swapped:
+            swapped = True
+            replacement.replace(sidecar)
+        return raw
+
+    monkeypatch.setattr(os, "read", swap_after_first_read)
+    service = CitationLegacyMigrationService(
+        db=db,
+        repository=_repository(db),
+        sidecar_path=sidecar,
+        fingerprint_codec=CODEC,
+    )
+
+    result = service.migrate_next_batch(conversation_id)
+
+    assert result.state is LegacyMigrationState.FAILED
+    assert result.reason_code == "legacy_sidecar_changed"
+
+
+def test_lexical_nesting_ignores_brackets_and_escapes_inside_strings(
+    db: CharactersRAGDB,
+    tmp_path,
+) -> None:
+    conversation_id, message_ids = _conversation_with_messages(db, 1)
+    sidecar = tmp_path / "chat_rag_context.json"
+    _write_sidecar(sidecar, conversation_id, message_ids)
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    payload["padding"] = '[{"escaped":"\\\\"}]' * 100
+    sidecar.write_text(json.dumps(payload), encoding="utf-8")
+    service = CitationLegacyMigrationService(
+        db=db,
+        repository=_repository(db),
+        sidecar_path=sidecar,
+        fingerprint_codec=CODEC,
+    )
+
+    result = service.migrate_next_batch(conversation_id)
+
+    assert result.state is LegacyMigrationState.COMPLETE
 
 
 @pytest.mark.parametrize(

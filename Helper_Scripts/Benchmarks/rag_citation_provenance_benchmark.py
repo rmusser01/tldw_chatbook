@@ -1375,12 +1375,77 @@ def _init_migration_schema(
     )
 
 
+def _legacy_benchmark_fields(fixture: dict[str, Any]) -> dict[str, Any]:
+    """Map corpus legacy records into fields consumed by the real adapter."""
+
+    payload = fixture.get("payload")
+    payload = payload if isinstance(payload, dict) else {}
+    record_type = fixture.get("record_type")
+    if record_type == "EvidenceBundle":
+        sources = payload.get("sources")
+        sources = sources if isinstance(sources, list) else []
+        references = [
+            {
+                "evidence_id": str(index),
+                "source_id": str(source.get("source_id") or f"legacy-source-{index}"),
+                "source_type": "legacy",
+                "title": str(source.get("title") or fixture.get("id") or "Legacy"),
+                "snippet": str(source.get("text") or ""),
+                "authority_label": "Legacy benchmark",
+            }
+            for index, source in enumerate(sources, start=1)
+            if isinstance(source, dict)
+        ]
+        return {
+            "rag_context": {
+                "citation_validation": {"valid": True},
+                "evidence_bundle": {
+                    "bundle_id": str(fixture.get("id") or "legacy-bundle"),
+                    "query": str(payload.get("query") or ""),
+                    "references": references,
+                },
+            },
+            "citations": [
+                {
+                    "evidence_id": reference["evidence_id"],
+                    "source_id": reference["source_id"],
+                }
+                for reference in references
+            ],
+        }
+    if record_type == "CitationRef":
+        return {
+            "rag_context": {"citation_validation": {"valid": True}},
+            "citations": [
+                {
+                    "evidence_id": str(payload.get("number") or 1),
+                    "source_id": str(
+                        payload.get("source_id") or "legacy-source-unavailable"
+                    ),
+                    "quote": str(payload.get("snippet") or ""),
+                }
+            ],
+        }
+    validation = payload.get("citation_validation")
+    return {
+        "chat_rag_context": {
+            "citation_validation": (
+                validation if isinstance(validation, dict) else {"valid": False}
+            )
+        },
+        "citation_validation": (
+            validation if isinstance(validation, dict) else {"valid": False}
+        ),
+        "citations": [],
+    }
+
+
 def _measure_migration_once(
     workspace: SampleWorkspace,
     legacy_records: Sequence[dict[str, Any]],
     *,
     sample_index: int,
-) -> tuple[float, float, int, int, int]:
+) -> tuple[float, float, int, int, int, int, int, int]:
     from tldw_chatbook.Chat.citation_legacy_migration import (
         CitationLegacyMigrationService,
         LegacyMigrationState,
@@ -1429,11 +1494,7 @@ def _measure_migration_once(
                 "conversation_id": conversation_id,
                 "message_id": message_id,
                 "answer_body": body,
-                "rag_context": {
-                    "citation_validation": {"valid": True},
-                    "legacy_fixture": fixture,
-                },
-                "citations": [],
+                **_legacy_benchmark_fields(fixture),
             }
         raw_sidecar = json.dumps(
             {
@@ -1487,6 +1548,24 @@ def _measure_migration_once(
                 "SELECT count(*) FROM rag_message_trace_owners"
             ).fetchone()[0]
         )
+        partial_rows = int(
+            connection.execute(
+                """
+                SELECT count(*) FROM rag_citation_traces
+                WHERE completeness_at_seal='partial'
+                """
+            ).fetchone()[0]
+        )
+        snapshot_rows = int(
+            connection.execute(
+                "SELECT count(*) FROM rag_evidence_snapshots"
+            ).fetchone()[0]
+        )
+        evidence_reference_rows = int(
+            connection.execute(
+                "SELECT count(*) FROM rag_trace_evidence_refs"
+            ).fetchone()[0]
+        )
         duplicate_count = int(
             connection.execute(
                 """
@@ -1508,6 +1587,9 @@ def _measure_migration_once(
             duplicate_count,
             trace_rows,
             owner_rows,
+            partial_rows,
+            snapshot_rows,
+            evidence_reference_rows,
         )
     finally:
         db.close_connection()
@@ -1532,6 +1614,9 @@ def _measure_migration(
     duplicate_counts: list[float] = []
     persisted_trace_rows = 0
     persisted_owner_rows = 0
+    partial_trace_rows = 0
+    persisted_snapshot_rows = 0
+    persisted_evidence_reference_rows = 0
     for index in range(warmups + samples):
         (
             throughput,
@@ -1539,6 +1624,9 @@ def _measure_migration(
             duplicates,
             persisted_trace_rows,
             persisted_owner_rows,
+            partial_trace_rows,
+            persisted_snapshot_rows,
+            persisted_evidence_reference_rows,
         ) = _measure_migration_once(
             workspace,
             legacy_records,
@@ -1557,6 +1645,9 @@ def _measure_migration(
         "corpus_input_sha256": corpus_input_sha256,
         "persisted_trace_rows": persisted_trace_rows,
         "persisted_owner_rows": persisted_owner_rows,
+        "partial_trace_rows": partial_trace_rows,
+        "persisted_snapshot_rows": persisted_snapshot_rows,
+        "persisted_evidence_reference_rows": persisted_evidence_reference_rows,
         "control_path": "bounded legacy fixture scan",
         "candidate_path": ("CitationLegacyMigrationService.migrate_next_batch"),
     }

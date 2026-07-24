@@ -7646,27 +7646,50 @@ class TldwCli(
             )
 
     async def _migrate_legacy_citations_idle_unit(self) -> None:
-        """Run one bounded legacy batch without delaying application readiness."""
+        """Drain bounded legacy batches while yielding between every idle unit."""
 
-        migration = getattr(
-            self,
-            "citation_legacy_migration_service",
-            None,
-        )
-        if migration is None or not migration.ready:
+        if getattr(self, "_legacy_citation_migration_in_flight", False):
             return
+        self._legacy_citation_migration_in_flight = True
+        retry_count = 0
         try:
-            result = await asyncio.to_thread(migration.migrate_idle_unit)
-        except Exception:
-            self.loguru_logger.error(
-                "Legacy citation migration failed: legacy_migration_failed"
-            )
-            return
-        if result.reason_code is not None:
-            self.loguru_logger.warning(
-                "Legacy citation migration retained retry state: "
-                f"reason_code={result.reason_code!r}"
-            )
+            while True:
+                migration = getattr(
+                    self,
+                    "citation_legacy_migration_service",
+                    None,
+                )
+                if migration is None or not migration.ready:
+                    return
+                try:
+                    result = await asyncio.to_thread(migration.migrate_idle_unit)
+                except Exception:
+                    retry_count += 1
+                    self.loguru_logger.error(
+                        "Legacy citation migration failed: legacy_migration_failed"
+                    )
+                    if retry_count >= 3:
+                        return
+                    await asyncio.sleep(2 ** (retry_count - 1))
+                    continue
+                state = getattr(result.state, "value", result.state)
+                if result.reason_code is not None:
+                    self.loguru_logger.warning(
+                        "Legacy citation migration retained retry state: "
+                        f"reason_code={result.reason_code!r}"
+                    )
+                    if state == "running":
+                        retry_count += 1
+                        if retry_count >= 3:
+                            return
+                        await asyncio.sleep(2 ** (retry_count - 1))
+                        continue
+                retry_count = 0
+                if state != "running":
+                    return
+                await asyncio.sleep(0)
+        finally:
+            self._legacy_citation_migration_in_flight = False
 
     def _schedule_footer_status_updates(self) -> None:
         """Wire status-line DB/token status updates after UI readiness."""
