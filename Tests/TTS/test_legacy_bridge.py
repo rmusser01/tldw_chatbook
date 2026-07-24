@@ -261,6 +261,41 @@ class FinalizingLegacyBackend:
         return self.inner_stream
 
 
+class AsyncFinalizingLegacyBackend:
+    def __init__(self) -> None:
+        self.progress_callback: ProgressCallback | None = None
+        self.cleanup_started = asyncio.Event()
+        self.allow_cleanup = asyncio.Event()
+        self.cleanup_finished = asyncio.Event()
+        self.finalized_with_callback = False
+        self.inner_stream: AsyncIterator[bytes] | None = None
+
+    def set_progress_callback(
+        self,
+        callback: ProgressCallback | None,
+    ) -> None:
+        self.progress_callback = callback
+
+    def generate_speech_stream(
+        self,
+        request: OpenAISpeechRequest,
+    ) -> AsyncIterator[bytes]:
+        del request
+
+        async def stream() -> AsyncIterator[bytes]:
+            try:
+                yield b"first"
+                yield b"second"
+            finally:
+                self.cleanup_started.set()
+                await self.allow_cleanup.wait()
+                self.finalized_with_callback = self.progress_callback is not None
+                self.cleanup_finished.set()
+
+        self.inner_stream = stream()
+        return self.inner_stream
+
+
 class FakeLegacyManager:
     def __init__(
         self,
@@ -858,6 +893,55 @@ async def test_partial_outer_close_finalizes_delegated_stream_first() -> None:
     assert backend.finalized.is_set() is True
     assert backend.finalized_with_callback is True
     assert backend.progress_callback is None
+
+
+@pytest.mark.asyncio
+async def test_cancelled_outer_close_waits_for_inner_async_finalizer() -> None:
+    backend = AsyncFinalizingLegacyBackend()
+    manager = FakeLegacyManager(backend)
+    host = LegacyBackendHost(
+        provider_id="kokoro",
+        app_config={},
+        manager_factory=lambda _: manager,
+    )
+    adapter = LegacyTTSAdapter(
+        "kokoro",
+        host,
+        legacy_catalog("kokoro"),
+    )
+    response = await adapter.synthesize(
+        adapter_request("kokoro", "local_kokoro_default_onnx"),
+        progress_sink([]),
+    )
+    assert await anext(response.byte_stream) == b"first"
+
+    stream_close = getattr(response.byte_stream, "aclose")
+    outer_close = asyncio.create_task(stream_close())
+    await backend.cleanup_started.wait()
+    outer_close.cancel()
+    await asyncio.sleep(0)
+    outer_close_returned_before_cleanup = outer_close.done()
+    callback_cleared_before_cleanup = backend.progress_callback is None
+
+    host_close = asyncio.create_task(host.close())
+    await asyncio.sleep(0)
+    host_close_returned_before_cleanup = host_close.done()
+    manager_close_calls_before_cleanup = manager.close_calls
+
+    backend.allow_cleanup.set()
+    with pytest.raises(asyncio.CancelledError):
+        await outer_close
+    await host_close
+    await host.close()
+
+    assert outer_close_returned_before_cleanup is False
+    assert callback_cleared_before_cleanup is False
+    assert host_close_returned_before_cleanup is False
+    assert manager_close_calls_before_cleanup == 0
+    assert backend.cleanup_finished.is_set() is True
+    assert backend.finalized_with_callback is True
+    assert backend.progress_callback is None
+    assert manager.close_calls == 1
 
 
 @pytest.mark.asyncio

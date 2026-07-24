@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from contextlib import aclosing
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -136,6 +135,21 @@ def _legacy_progress_callback(
     return report
 
 
+async def _close_delegated_stream(
+    stream: AsyncGenerator[bytes, None],
+) -> None:
+    close_task = asyncio.create_task(stream.aclose())
+    cancellation: asyncio.CancelledError | None = None
+    while not close_task.done():
+        try:
+            await asyncio.shield(close_task)
+        except asyncio.CancelledError as error:
+            cancellation = cancellation or error
+    close_task.result()
+    if cancellation is not None:
+        raise cancellation
+
+
 class LegacyBackendHost:
     def __init__(
         self,
@@ -198,11 +212,12 @@ class LegacyBackendHost:
                     else None
                 )
                 try:
-                    async with aclosing(
-                        backend.generate_speech_stream(request)
-                    ) as stream:
+                    stream = backend.generate_speech_stream(request)
+                    try:
                         async for chunk in stream:
                             yield bytes(chunk)
+                    finally:
+                        await _close_delegated_stream(stream)
                 finally:
                     backend.set_progress_callback(None)
         finally:
