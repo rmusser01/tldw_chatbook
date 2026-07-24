@@ -37,8 +37,10 @@ runtime initialization.
 The existing GGUF browser/downloader becomes a frontend over a new
 format-neutral model artifact service. The service supports verified,
 revision-pinned managed downloads and managed local import for both single-file
-GGUF artifacts and multi-file ONNX bundles. STT is the first consumer; moving
-LLM model management onto the service is a separate future task.
+GGUF artifacts and multi-file ONNX bundles, including explicitly declared
+dependent artifacts such as the VAD model required for long-form Parakeet
+recognition. STT is the first consumer; moving LLM model management onto the
+service is a separate future task.
 
 Batch media ingestion is the first delivery surface. Audio/video work moves
 from the shared parse pool to a physically separate one-process heavy-media
@@ -95,6 +97,9 @@ pre-1.0 native runtime responsible for Chatbook's stable default path:
   replacement has passed release gates.
 - Establish reproducible quality, performance, memory, migration, and recovery
   evidence before changing the default.
+- Persist enough versioned transcription provenance to explain the provider,
+  artifact, language routing, device resolution, and explicit retry lineage of
+  every newly stored transcript.
 
 ## Non-goals
 
@@ -202,6 +207,7 @@ Capability metadata distinguishes at least:
 - Cancellation granularity.
 - Punctuation and capitalization.
 - Execution providers and precision variants.
+- Language-input mode: explicit hint, automatic detection, or automatic only.
 
 ### Initial providers
 
@@ -215,6 +221,9 @@ and v3 ONNX bundles.
 - INT8 is the default artifact.
 - F32 is optional and never downloaded as a side effect of selecting INT8.
 - Long input uses the runtime's VAD/long-form path.
+- The Parakeet artifact requirement includes a separately pinned managed VAD
+  dependency. Provider initialization uses managed local directories and
+  remains offline; it never lets `onnx-asr` acquire a missing model implicitly.
 - Buffer input remains available for dictation compatibility.
 - Cancellation is cooperative between VAD/chunk boundaries.
 - Translation is unsupported.
@@ -287,6 +296,10 @@ must pass capability checks:
 - Explicit Parakeet plus translation fails with `UnsupportedCapability`.
 - An explicitly selected compatible transcribe.cpp Whisper or Canary model may
   handle translation if its catalog entry declares that feature.
+- The curated transcribe.cpp Qwen3-ASR port accepts automatic language
+  selection only. Under an explicit language such as the default `en`, the
+  model is unavailable until the user explicitly changes the request to
+  `auto`; Chatbook never silently drops the language constraint.
 
 ### Requested, effective, and detected language
 
@@ -334,6 +347,36 @@ A normalized result carries:
 Diarization, VAD, and timestamp presentation are pipeline capabilities. The
 coordinator evaluates the composed pipeline rather than requiring the inference
 adapter itself to implement every feature.
+
+### Persisted transcription provenance
+
+The normalized provenance is part of the media persistence contract, not only
+an in-memory result. The media database receives a versioned
+`transcription_provenance` document containing at least:
+
+- Schema version and transcription-attempt identity.
+- Provider, model, immutable artifact revision, precision, and effective
+  execution provider.
+- Requested, effective, and detected language.
+- Requested task and capabilities actually produced.
+- Retry relationship to the failed request when the transcript came from an
+  explicit retry.
+
+The database migration adds nullable
+`Media.transcription_provenance_json TEXT` while continuing to populate
+`Media.transcription_model` as a compatibility summary. The JSON document is
+validated at the persistence boundary and written in the same transaction as
+the transcript content. Chatbook export/import, sync, search projections, and
+API schemas preserve the versioned document without requiring old records to
+synthesize missing provenance. The legacy `Transcripts.whisper_model` field is
+not repurposed to hold structured provenance.
+
+Failed attempts remain job history rather than transcript records. A successful
+retry stores its `retry_of` job identity and effective faster-whisper
+provenance; it never overwrites the failed attempt's job history. The Library
+ingest-job persistence contract adds `retry_of_job_id` plus structured STT
+failure provenance because a retry count alone cannot reconstruct the attempt
+lineage.
 
 ## Audio preparation
 
@@ -391,13 +434,23 @@ eventually holding N copies of a multi-gigabyte model.
 
 ### Dictation compatibility and priority
 
-The same execution lane accepts bounded buffer transcription requests so
-removing the legacy Parakeet providers does not break the public buffer path.
-This milestone does not claim true streaming.
+An app-owned `LocalSTTExecutor` controller owns the heavy process and is shared
+by Library ingestion and dictation. Neither parse workers nor individual
+`TranscriptionService` instances create their own heavy process.
+
+The same executor accepts bounded buffer transcription requests so removing the
+legacy Parakeet providers does not break the public buffer path. This milestone
+does not claim true streaming. The compatibility
+`create_streaming_transcriber()` entry point reports streaming unsupported for
+Parakeet ONNX by returning `None`, allowing existing callers to use the
+retained buffer fallback.
 
 - At most one dictation inference is pending.
 - New microphone audio is coalesced into the pending request rather than queued
   without bound.
+- Coalesced audio has a configured maximum duration and byte size. When the
+  bound would be exceeded, capture pauses and the UI reports a dictation
+  overrun; audio is never silently dropped.
 - Dictation receives priority when selecting the next job.
 - Active batch inference is not preempted.
 - The UI reports **Local transcription busy** and allows the user to pause
@@ -480,6 +533,7 @@ Each catalog descriptor includes:
 - License, source URL, and usage notices.
 - Declared platform constraints, if any.
 - Provenance class.
+- Required artifact dependencies, including their exact revision and variant.
 
 STT catalog entries add:
 
@@ -496,10 +550,12 @@ The UI uses precise labels:
 - **Chatbook curated:** a reviewed descriptor, immutable revision, and expected
   digests ship in Chatbook's catalog.
 - **Integrity verified:** an on-demand remote entry is pinned to an immutable
-  revision and matches repository-provided digests, but Chatbook has not
-  curated its behavior or trustworthiness.
+  revision and matches a digest independently supplied by the repository, but
+  Chatbook has not curated its behavior or trustworthiness.
 - **Local integrity recorded:** a validated local import is copied into the
-  managed store and hashed, without an upstream provenance claim.
+  managed store and hashed, without an upstream provenance claim. A remote file
+  for which Chatbook can only calculate the digest after downloading also uses
+  this label rather than implying independent source verification.
 
 Digest verification is not presented as malware safety. Model files are
 untrusted native-runtime input. The curated catalog is the only source of
@@ -525,15 +581,20 @@ The first version does not deduplicate identical file content across artifacts.
 Download flow:
 
 1. Resolve the catalog descriptor and immutable source revision.
-2. Present model, precision, source, license, total size, destination, and
+2. Resolve the complete dependency closure, including a pinned VAD artifact
+   where required.
+3. Present model, precision, source, license, total size, destination, and
    required free space.
-3. Obtain explicit user confirmation.
-4. Acquire the artifact's interprocess installation lock.
-5. Download into a per-artifact staging directory with resume support.
-6. Verify every file's final byte size and SHA-256.
-7. Write and fsync the installed manifest.
-8. Atomically promote the version and active-version record.
-9. Make the artifact visible to consumers.
+4. Obtain explicit user confirmation for the complete dependency set.
+5. Acquire each artifact's interprocess installation lock in stable artifact-ID
+   order.
+6. Download into per-artifact staging directories with resume support.
+7. Verify every file's final byte size and SHA-256.
+8. Write and fsync each installed manifest.
+9. Atomically promote the versions and active-version records.
+10. Mark the requested artifact loadable only after every dependency is
+    installed. Dependencies shared by other installed artifacts remain
+    independently visible and usable.
 
 Failure or cancellation leaves the currently active artifact untouched.
 Incomplete staging is never loadable. A later cleanup removes only staging
@@ -576,6 +637,13 @@ primitive whose ownership is released by process exit.
 The implementation plan must select and test the concrete primitive on every
 supported OS; the architectural requirement is automatic crash release and
 correct shared/exclusive behavior.
+
+This selection is a prerequisite technical spike, not an implementation detail
+to discover after the artifact service is built. On Windows, macOS, and Linux,
+the spike must prove that process A can hold a shared load lease, process B
+cannot delete the version, killing process A releases the lease, and process B
+can then obtain exclusive deletion ownership. The artifact-service task does
+not start until one primitive passes this proof.
 
 ### Deletion and disk pressure
 
@@ -648,7 +716,9 @@ mutates the failed request nor claims that the original engine succeeded.
 A single automatic accelerator-to-CPU retry is permitted only when the same
 provider/model fails during execution-provider initialization. Progress
 reports the retry, and the final result records requested and effective
-devices. General inference failures and native crashes are not automatically
+devices. The controller terminates and recreates the heavy worker before the
+CPU attempt so a partially initialized accelerator runtime cannot contaminate
+the retry. General inference failures and native crashes are not automatically
 rerun on CPU.
 
 Ordinary per-file failures do not stop unrelated batch items. A systemic
@@ -664,7 +734,9 @@ artifact/provider failure pauses only matching work and offers:
 Chatbook's minimal base installation remains free of heavy STT runtimes.
 
 - Repurpose the existing `transcription_parakeet` extra from `parakeet-mlx` to
-  `onnx-asr` plus the CPU ONNX Runtime dependency on supported platforms.
+  `onnx-asr[cpu]==0.12.0`. The `hub` extra is not required because
+  `ModelArtifactService` performs acquisition and providers load only managed
+  local paths.
 - Include the same Parakeet ONNX dependencies in the audio, video, and
   media-processing extras alongside faster-whisper.
 - Keep accelerator-specific ONNX Runtime packages opt-in to avoid mutually
@@ -702,11 +774,16 @@ contains:
 | Whisper small | Q8_0 | F32 | Broad multilingual, auto-detection, segment timestamps, and speech-to-English translation baseline. |
 | Canary 180M Flash | Q8_0 | F32 | Compact English/German/Spanish/French ASR and bidirectional translation; capability metadata states that timestamps are unavailable in the v1 port. |
 | Moonshine tiny | Q8_0 | F32 | Small English batch model for constrained CPU systems. |
-| Qwen3-ASR 0.6B | Q8_0 | F32 | Modern multilingual family representative without admitting a model above 1B. |
+| Qwen3-ASR 0.6B | Q8_0 | BF16 | Modern multilingual, automatic-language-only family representative without admitting a model above 1B. |
 
 Other upstream quantizations may be imported or browsed as uncurated artifacts
 but are not recommended defaults. No transcribe.cpp model participates in
 semantic `provider=default` routing.
+
+Qwen3-ASR's reference artifact is BF16 because the pinned upstream port does
+not publish F32. Its catalog entry declares automatic language selection and
+no explicit language hints. Whisper small remains the curated multilingual
+choice when the user needs explicit language constraints or translation.
 
 The catalog excludes:
 
@@ -774,7 +851,8 @@ provider lists.
 13. Normalize result and provenance.
 14. Release artifact lease.
 15. Return a complete parsed payload to the existing single-writer stage.
-16. Persist atomically and mark the job complete.
+16. Persist transcript content, compatibility model summary, and versioned
+    provenance atomically, then mark the job complete.
 
 Failure before step 15 produces no media transcript write. Failure during the
 short writer transaction rolls back through the existing database transaction
@@ -819,6 +897,8 @@ A local HTTP fixture, not public network access, covers:
 - Size and SHA mismatch.
 - Corrupt active records.
 - Concurrent installs from separate processes.
+- Dependency-closure preflight and atomic visibility.
+- A missing or corrupt VAD dependency preventing Parakeet activation.
 - Shared operation leases and exclusive deletion.
 - Worker death releasing a lease.
 - Atomic activation and rollback to the previous version.
@@ -838,6 +918,7 @@ Gated real-model jobs exercise:
 - Parakeet v3 INT8 and F32.
 - faster-whisper's configured baseline.
 - Every curated transcribe.cpp family and its default Q8_0 artifact.
+- Qwen3-ASR BF16 reference loading and rejection of explicit language hints.
 - File and bounded buffer input.
 - Long-form VAD.
 - Timestamp normalization where declared.
@@ -899,6 +980,24 @@ benchmark assets are obtained through a reproducible script with source,
 license, immutable revision, size, and digest metadata. Evaluation normalizers
 are language-appropriate and versioned with the results.
 
+### Early INT8 artifact qualification
+
+Artifact qualification precedes adapter implementation and default-promotion
+work. Using immutable revisions, the first model task compares the stock
+Parakeet v2 and v3 INT8 exports with their F32 artifacts on:
+
+- Short clean and noisy samples.
+- Samples beyond the runtime's direct-input limit.
+- Ten-minute VAD/long-form samples.
+- Every deep-language slice used for v3.
+
+The stock INT8 artifact cannot become Chatbook's default if it fails the
+INT8-versus-F32 quality gate. An alternative quantized export is considered
+only if its source, conversion and calibration procedure, license, immutable
+files, and hashes are reproducible and reviewed. Until a qualifying INT8
+artifact exists, semantic default promotion and legacy-provider removal remain
+blocked; Chatbook does not silently substitute F32 for an INT8 selection.
+
 ## Default-promotion gates
 
 Before changing the shipped semantic default:
@@ -906,17 +1005,26 @@ Before changing the shipped semantic default:
 - Parakeet v2 INT8 aggregate English WER is no more than 1.0 absolute
   percentage point worse than the current faster-whisper base/int8 baseline,
   and no English slice is more than 3 points worse.
-- Parakeet v3 macro-average WER/CER is no more than 1.5 points worse than the
-  same-language faster-whisper baseline, and no routed language is more than 4
-  points worse.
+- Every evaluated language declares one primary metric and normalizer before
+  results are run. WER and CER populations are aggregated and gated separately;
+  they are never averaged into one mixed value.
+- For each v3 primary-metric population, the macro-average error rate is no more
+  than 1.5 absolute points worse than the same-language faster-whisper
+  baseline, and no routed language is more than 4 points worse.
 - A v3 language that fails its gate is excluded from Chatbook's validated
   routing set and resolves to faster-whisper.
-- INT8 is within 0.5 aggregate WER/CER points of F32.
+- Within each primary-metric population, INT8 is within 0.5 aggregate points of
+  F32.
+- Accuracy deltas use paired samples and report a paired-bootstrap 95 percent
+  confidence interval. Promotion requires both the point estimate and the
+  confidence interval's adverse bound to satisfy the applicable threshold.
 - Silence fixtures produce no non-empty transcript.
 - Timestamp sequences are monotonic, nonnegative, within audio duration, and
   correctly mapped into Chatbook segments.
 - Warm CPU throughput is faster than real time on the designated reference
-  machine recorded in the benchmark manifest.
+  machine. The benchmark manifest records exact CPU, memory, operating system,
+  Python, ONNX Runtime, execution-provider, thread, VAD, and model-artifact
+  revisions so the gate is reproducible.
 - Peak Parakeet INT8 heavy-worker RSS is at most 3 GiB.
 - A 100-file same-model batch does not reload the model per file, and
   post-warm-up RSS remains within 15 percent.
