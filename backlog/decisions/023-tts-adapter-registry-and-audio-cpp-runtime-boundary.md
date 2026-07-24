@@ -98,13 +98,39 @@ policy, and a cross-module interface.
 - Response lifetime extends through async byte consumption, allowing registry
   retirement without closing in-flight resources.
 - Settings updates can replace one provider without restarting the application
-  or disturbing unrelated providers.
+  or disturbing unrelated providers. One declarative STTS binding table owns
+  exact event spelling, atomic batch-persistence destinations, and optional
+  live-refresh provider identity. Direct pre/post comparisons of provider-owned
+  binding values decide which providers need reconfiguration; routing defaults
+  such as `KOKORO_USE_ONNX` persist without retiring an adapter. Factories still
+  receive the complete normalized legacy snapshot. All affected providers are
+  attempted and partial refresh is reported separately from successful
+  persistence. An unmaterialized provider receives updated lazy factory input
+  without being constructed; unchanged provider-owned values are a no-op; and
+  the compatibility accessor never consumes replacement configuration.
+- STTS selects use Textual's native display/value ordering and post canonical
+  values. Non-secret OpenAI connection fields support explicit reset and clear
+  semantics, while blank secret fields preserve stored credentials. One
+  handler lock serializes the full settings read/write/compare/refresh
+  transaction, and STTS retrieves the bound service without constructing
+  discarded compatibility configuration.
+- Service shutdown seals admission before waiting on adapter cleanup, wakes
+  concurrency waiters, uses the registry timeout as its single drain deadline,
+  and owns one retained bounded-close task followed by definitive
+  `wait_closed()` joins. A guaranteed cleanup path closes every abandoned
+  service-wrapped response even when registry cleanup fails, while a shared
+  lifecycle lock prevents responses from appearing untracked after the
+  shutdown snapshot. Service sealing rejects synthesis, catalog, and
+  reconfiguration calls; no synthesis task remains blocked after definitive
+  shutdown.
 - audio.cpp reconfiguration is an exclusive handoff: new operations are blocked
   while active leases drain, the old adapter and owned child close before the
   new configuration becomes active, and the replacement remains lazy.
 - Provider-scoped legacy hosts preserve current implementations while isolating
   configuration replacement and backend caches. The quarantined class registry
-  is their only shared legacy state.
+  is their only shared legacy state. The manager resolves nested
+  `[HiggsSettings]` at this boundary, while the OpenAI backend consumes the
+  endpoint and organization settings already exposed by STTS.
 - Per-internal-backend operation locks prevent double initialization and safely
   serialize mutable legacy progress callbacks.
 - Existing callers retain their generation signature through the bridge.

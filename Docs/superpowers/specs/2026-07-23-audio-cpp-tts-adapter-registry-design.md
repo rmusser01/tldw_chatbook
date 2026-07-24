@@ -1,8 +1,8 @@
 # audio.cpp TTS Adapter Registry — Design
 
-**Status:** approved by the user on 2026-07-23; review amendments approved on 2026-07-23
+**Status:** approved by the user on 2026-07-23; review amendments approved on 2026-07-24
 **Date:** 2026-07-23
-**Related task:** N/A — a Backlog task must be created or selected before implementation planning
+**Related task:** [TASK-402](<../../../backlog/tasks/task-402 - Establish-TTS-adapter-registry-authority-and-legacy-bridge.md>) — reopened for the approved review amendments
 **Canonical ADR:** [ADR-023](../../../backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md)
 **Upstream contract reviewed:** `0xShug0/audio.cpp` commit `d3d748179e5ace353386fbf17bcaedfacf482d75`
 
@@ -83,6 +83,98 @@ service. It does not construct an untracked singleton or silently retain the
 first configuration it receives. Tests and standalone utilities instantiate
 `TTSService` directly. Shutdown and test teardown explicitly clear the
 compatibility binding.
+
+STTS settings use one declarative binding table as the authority for event-key
+spelling, persistence destination, and optional live-refresh provider. All
+currently emitted keys are classified:
+
+- Persisted without adapter refresh: `default_provider`, `default_voice`,
+  `default_model`, `default_format`, `default_speed`, and
+  `KOKORO_USE_ONNX`. The first five are selection defaults. The Kokoro value is
+  a routing default that selects the ONNX or PyTorch internal model per request;
+  the selected internal model remains authoritative for concrete construction.
+- `openai`: `openai_api_key`, `OPENAI_BASE_URL`, and `OPENAI_ORG_ID`.
+- `elevenlabs`: `elevenlabs_api_key`, `ELEVENLABS_DEFAULT_MODEL`,
+  `ELEVENLABS_OUTPUT_FORMAT`, `ELEVENLABS_VOICE_STABILITY`,
+  `ELEVENLABS_SIMILARITY_BOOST`, `ELEVENLABS_STYLE`, and
+  `ELEVENLABS_USE_SPEAKER_BOOST`.
+- `kokoro`: `KOKORO_DEVICE_DEFAULT`, `KOKORO_ONNX_MODEL_PATH_DEFAULT`,
+  `KOKORO_ONNX_VOICES_JSON_DEFAULT`, `KOKORO_MAX_TOKENS`,
+  `KOKORO_ENABLE_VOICE_MIXING`, and `KOKORO_TRACK_PERFORMANCE`.
+- `chatterbox`: `CHATTERBOX_DEVICE`, `CHATTERBOX_VOICE_DIR`,
+  `CHATTERBOX_EXAGGERATION`, `CHATTERBOX_CFG_WEIGHT`,
+  `CHATTERBOX_TEMPERATURE`, `CHATTERBOX_CHUNK_SIZE`,
+  `CHATTERBOX_RANDOM_SEED`, `CHATTERBOX_NUM_CANDIDATES`,
+  `CHATTERBOX_VALIDATE_WHISPER`, `CHATTERBOX_PREPROCESS_TEXT`,
+  `CHATTERBOX_NORMALIZE_AUDIO`, `CHATTERBOX_TARGET_DB`,
+  `CHATTERBOX_MAX_CHUNK_SIZE`, `CHATTERBOX_STREAMING`,
+  `CHATTERBOX_STREAM_CHUNK_SIZE`, `CHATTERBOX_ENABLE_CROSSFADE`, and
+  `CHATTERBOX_CROSSFADE_MS`.
+- `higgs`: `HIGGS_MODEL_PATH`, `HIGGS_VOICE_SAMPLES_DIR`, `HIGGS_DEVICE`,
+  `HIGGS_ENABLE_FLASH_ATTN`, `HIGGS_DTYPE`,
+  `HIGGS_MAX_REFERENCE_DURATION`, `HIGGS_DEFAULT_LANGUAGE`,
+  `HIGGS_ENABLE_VOICE_CLONING`, `HIGGS_ENABLE_MULTI_SPEAKER`,
+  `HIGGS_SPEAKER_DELIMITER`, `HIGGS_TRACK_PERFORMANCE`,
+  `HIGGS_MAX_NEW_TOKENS`, `HIGGS_TEMPERATURE`, `HIGGS_TOP_P`, and
+  `HIGGS_REPETITION_PENALTY`.
+- `alltalk`: `ALLTALK_TTS_URL_DEFAULT`, `ALLTALK_TTS_VOICE_DEFAULT`,
+  `ALLTALK_TTS_LANGUAGE_DEFAULT`, and `ALLTALK_TTS_OUTPUT_FORMAT_DEFAULT`.
+
+`TTSSettingsWidget` follows Textual's native select contract: every option is
+declared as `(display_prompt, canonical_value)`, and `.value` is therefore the
+canonical value posted in the settings event. The settings widget does not use
+its duplicate label-to-key recovery helper. Blank or unknown select values are
+rejected before the event is posted.
+
+Blank secret inputs mean “leave the existing secret unchanged” because secrets
+are not populated back into the form. Non-secret OpenAI connection fields use
+explicit replacement semantics: the speech endpoint is always emitted,
+including when reset to the default, and an empty organization ID clears the
+stored value. The endpoint must be an absolute HTTP or HTTPS URL without
+credentials or a fragment. The organization ID is trimmed and rejects control
+characters before it can become an HTTP header.
+
+The handler rejects an unclassified event key before writing. It translates all
+classified values into one `save_settings_to_cli_config()` call, so persistence
+is atomic and its Boolean result is checked. A failed batch does not trigger
+live reconfiguration. One handler-scoped lock serializes the complete
+old-configuration read, batch write, new-configuration read, comparison, and
+provider-refresh sequence; concurrent save events cannot compute changes from
+the same stale snapshot.
+
+Before and after the batch, the handler directly compares each live-refresh
+provider's owned binding values from the normalized configuration. There is no
+fingerprint type, cache, or second mapping. Values without a live-refresh
+provider and other providers' values are absent from the comparison. Only
+providers whose owned values differ are reconfigured, while the replacement
+factory input remains the complete legacy snapshot normalized exactly as at
+initial bootstrap. Neither comparison values nor replacement configuration are
+logged because they may contain credentials. This prevents a routing default
+or unrelated-provider change from retiring an adapter merely because registry
+storage contains a whole snapshot.
+
+For an unmaterialized affected provider, reconfiguration updates its future
+lazy factory input without constructing or retiring an adapter. For a
+materialized affected provider, only that provider's adapter is retired.
+Providers with unchanged owned values are not sent to the registry.
+
+After persistence, all affected provider reconfigurations are attempted in
+canonical provider order even if one fails. The handler aggregates failures by
+safe provider ID and owns the only completion notification:
+
+- Batch failure: settings were not saved; no live reconfiguration ran.
+- Batch success and no refresh failures: settings were saved and live providers
+  were refreshed.
+- Batch success with refresh failures: settings were saved, but the named
+  providers require retry or application restart to refresh their live
+  adapters.
+
+The settings widget never announces success immediately after posting the
+asynchronous save event. The compatibility accessor remains
+configuration-blind. STTS initialization and settings refresh retrieve the
+bound service without constructing or passing an ignored compatibility
+configuration; replacement configuration enters the service only through
+explicit `reconfigure_provider()` calls.
 
 The service owns an instance-scoped, configurable concurrency semaphore. The
 initial default remains four concurrent TTS operations for compatibility with
@@ -177,6 +269,13 @@ provider-scoped `LegacyBackendHost`, which in turn lazily owns one existing
 Provider-scoped hosts keep configuration replacement and cached backend
 lifecycle isolated; changing one legacy provider does not rebuild or close
 another provider's host.
+
+The existing manager remains the legacy configuration-shape boundary. Its Higgs
+preparation resolves the persisted nested `[HiggsSettings]` fields instead of
+looking only for nonexistent uppercase top-level keys. The OpenAI backend
+consumes the existing `OPENAI_BASE_URL` and optional `OPENAI_ORG_ID` settings;
+the latter becomes the `OpenAI-Organization` request header. These are repairs
+to settings already exposed by the Playground, not new configuration surface.
 
 The app-scoped registry is the only routing authority visible to new service,
 application, and UI code. The existing class-global `BackendRegistry` remains
@@ -549,16 +648,61 @@ An operation lease lasts through response consumption, not merely until
 `synthesize()` returns. Configuration invalidation therefore cannot close an
 HTTP client while a caller is reading its result.
 
-Application shutdown:
+Application shutdown uses the registry's configured shutdown timeout as its
+single drain deadline and one retained `TTSService` bounded-close task:
 
-1. Stops admitting new TTS operations.
-2. Gives Playground work and active adapter operations a bounded drain period.
-3. Cancels remaining work after the deadline.
-4. Closes retired and active adapters.
-5. Closes external HTTP clients.
-6. Terminates only owned managed children.
-7. Joins supervisor monitor and log-drain tasks.
-8. Clears the compatibility service binding.
+1. Starting that task seals service admission and wakes semaphore waiters.
+   `close()` starts or joins this bounded task. `wait_closed()` starts and joins
+   it when necessary, then separately joins definitive registry and response
+   cleanup. This preserves the existing bounded `close()`/definitive
+   `wait_closed()` contract without a second orchestration task.
+2. The retained task immediately begins `TTSAdapterRegistry.close()`, which
+   seals registry lease admission and drains existing leases until that
+   deadline.
+3. At the deadline the registry begins closing active and retired adapters even
+   if leases remain; there is no second drain period.
+4. Whether bounded registry close returns, raises, or its caller is cancelled,
+   a guaranteed cleanup path snapshots every registered service-wrapped
+   response and starts all idempotent response closes. Response cleanup may
+   overlap adapter cleanup after the deadline.
+5. Every response-close attempt runs even if another fails. Each wrapper starts
+   underlying response close and operation-resource release independently, so
+   its lease and service concurrency slot are released even when underlying
+   close raises or is cancelled.
+6. `wait_closed()` joins every response-close task and the registry's
+   definitive adapter cleanup, which closes external HTTP clients, terminates
+   only owned managed children, and joins supervisor monitor and log-drain
+   tasks.
+7. Cleanup errors are reported deterministically: a registry error remains
+   primary; otherwise the first response error in response-creation order is
+   primary. Later cleanup errors are recorded using the existing safe
+   secondary-cleanup policy without skipping any cleanup.
+8. Application teardown clears the compatibility service binding only after
+   definitive shutdown.
+
+A “service-wrapped response” means every `_ManagedAudioResponse` returned by
+`TTSService.synthesize()`, across native audio.cpp, legacy, and external
+providers; it does not mean only a managed-mode audio.cpp response. The service
+tracks each wrapper until its idempotent `aclose()` completes.
+
+A service-level close signal races concurrency admission. If shutdown wins,
+the semaphore acquire task is cancelled; if both finish concurrently, the
+newly acquired slot is released before the caller receives
+`TTSRegistryClosedError`.
+
+The same sealed-service check covers every public provider operation:
+`synthesize()`, `get_catalog()`, and `reconfigure_provider()`. Calls that cross
+the lifecycle lock before sealing are in flight and finish or fail through the
+registry lifecycle; calls that arrive after sealing fail with
+`TTSRegistryClosedError` without reaching the registry.
+
+Response registration and the shutdown snapshot share one lifecycle lock.
+After synthesis produces an underlying response, the service either registers
+its wrapper before shutdown snapshots it, or observes sealed admission, closes
+the new wrapper immediately, and raises `TTSRegistryClosedError` instead of
+returning it. A response cannot appear after the shutdown snapshot without
+being owned by one of those cleanup paths. `wait_closed()` cannot complete
+while a synthesis waiter remains blocked on the service semaphore.
 
 Shutdown is idempotent and never waits indefinitely for native inference.
 
@@ -585,6 +729,35 @@ Shutdown is idempotent and never waits indefinitely for native inference.
 - Progress-sink exceptions do not fail synthesis.
 - Application binding, explicit reset, and configuration replacement without
   first-config retention.
+- Saving one provider's STTS settings retires only that materialized adapter
+  and leaves unrelated materialized adapters running.
+- A representative full settings payload proves every UI-emitted key is
+  classified with its exact spelling and destination.
+- Mounted settings-widget coverage proves Textual selects display labels while
+  posting canonical values, initialize from persisted canonical values, and
+  reject blank selections.
+- Resetting the OpenAI endpoint to its default replaces a prior custom value;
+  an empty organization ID clears it; blank secret fields preserve secrets.
+- Atomic persistence failure performs no reconfiguration and emits no success
+  notification; the widget emits no optimistic success notification.
+- Concurrent settings-save events serialize their complete
+  read/write/compare/refresh sequences.
+- Unrelated/default snapshot changes and unchanged provider-owned values do not
+  retire adapters.
+- Mixed provider reconfiguration results attempt every affected provider and
+  report persisted-but-not-refreshed provider IDs safely.
+- Nested Higgs settings reach a newly materialized legacy backend, configured
+  OpenAI endpoint and organization values reach its request, and the Kokoro
+  routing default does not retire its adapter.
+- An abandoned returned response plus a semaphore-blocked synthesis request
+  converges during shutdown: the response closes, the waiter fails closed, and
+  `wait_closed()` leaves no blocked synthesis admission.
+- Registry and response cleanup failures still attempt every cleanup and retain
+  deterministic error precedence.
+- A response produced concurrently with shutdown is either in the shutdown
+  snapshot or immediately closed and rejected; it is never returned untracked.
+- Catalog and provider-reconfiguration calls made after service sealing fail
+  closed without reaching the registry.
 - Instance-scoped concurrency across independent event loops.
 
 ### audio.cpp contract tests
