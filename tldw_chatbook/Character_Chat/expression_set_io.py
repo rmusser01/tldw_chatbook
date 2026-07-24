@@ -73,15 +73,23 @@ def _detect_vpack(zf: zipfile.ZipFile) -> str | None:
     "Root/" when the pack sits under a single shared top-level directory
     (the extract-and-re-zip papercut), or None when the archive is not a
     pack (deeper nesting and multiple roots fall through to stem mapping).
-    The sniff reads the namelist only -- zero member reads.
+    A pack requires all three of ``manifest.json``, ``metadata/assets.json``,
+    and ``metadata/pack.json`` (the server's REQUIRED_MEMBERS) to be present
+    -- a plain zip that happens to carry only the first two names must still
+    fall through to stem mapping. The sniff reads the namelist only -- zero
+    member reads.
     """
     names = set(zf.namelist())
-    if "manifest.json" in names and "metadata/assets.json" in names:
+    if "manifest.json" in names and "metadata/assets.json" in names and "metadata/pack.json" in names:
         return ""
     roots = {n.split("/", 1)[0] for n in names if n and not n.startswith("/")}
     if len(roots) == 1:
         root = next(iter(roots))
-        if f"{root}/manifest.json" in names and f"{root}/metadata/assets.json" in names:
+        if (
+            f"{root}/manifest.json" in names
+            and f"{root}/metadata/assets.json" in names
+            and f"{root}/metadata/pack.json" in names
+        ):
             return f"{root}/"
     return None
 
@@ -440,7 +448,7 @@ def _resolve_vpack_expression_set(
                 skipped.append((state, "animation has no frames"))
                 continue
             idx = animation.get("preview_frame")
-            frame = frames[idx] if isinstance(idx, int) and 0 <= idx < len(frames) else frames[0]
+            frame = frames[idx] if type(idx) is int and 0 <= idx < len(frames) else frames[0]
             if not isinstance(frame, dict):
                 skipped.append((state, "invalid frame"))
                 continue
@@ -475,7 +483,7 @@ def _resolve_vpack_expression_set(
                     image_cache[member] = img
                 if not (
                     isinstance(region, dict)
-                    and all(isinstance(region.get(k), int) for k in ("x", "y", "width", "height"))
+                    and all(type(region.get(k)) is int for k in ("x", "y", "width", "height"))
                     and region["x"] >= 0 and region["y"] >= 0
                     and region["width"] > 0 and region["height"] > 0
                     and region["x"] + region["width"] <= img.width

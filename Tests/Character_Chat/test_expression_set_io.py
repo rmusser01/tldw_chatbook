@@ -221,8 +221,27 @@ def make_vpack_bytes(
 ) -> bytes:
     """Craft a .tldw-persona-vpack archive in memory.
 
-    asset_files maps archive member path -> raw bytes. extra_members are
-    written FIRST (before manifest) when manifest_last is True.
+    Args:
+        manifest: The pack manifest dict (``states``/``animations``/etc.);
+            ignored when ``manifest_override`` is given.
+        assets_entries: The ``assets`` list for ``metadata/assets.json``;
+            ignored when ``assets_json_override`` is given.
+        asset_files: Archive member path -> raw asset bytes, appended after
+            the core members (and after ``extra_members``).
+        prefix: Member-path prefix applied to every written member, to
+            simulate a pack nested under a single shared top-level directory.
+        manifest_override: Raw bytes to write for ``manifest.json`` instead
+            of JSON-encoding ``manifest`` (e.g. to craft invalid JSON).
+        assets_json_override: Raw bytes to write for ``metadata/assets.json``
+            instead of JSON-encoding ``{"assets": assets_entries}``.
+        extra_members: Additional archive member path -> bytes pairs, written
+            FIRST (before the core members) unless ``manifest_last`` is True.
+        manifest_last: When True, write ``extra_members`` before the core
+            members instead of after -- used to test targeted (non-enumerate)
+            member reads against a manifest buried past the member-count cap.
+
+    Returns:
+        The in-memory zip archive as bytes.
     """
     import json as _json
     members: list[tuple[str, bytes]] = []
@@ -258,7 +277,17 @@ def make_vpack_bytes(
 
 
 def simple_vpack(images: dict[str, bytes], prefix: str = "") -> bytes:
-    """A standard pack: one standalone asset + one 1-frame animation per state."""
+    """A standard pack: one standalone asset + one 1-frame animation per state.
+
+    Args:
+        images: {state: bytes} for each expression state to include; each
+            gets its own standalone asset and single-frame animation.
+        prefix: Member-path prefix applied to every written member, to
+            simulate a pack nested under a single shared top-level directory.
+
+    Returns:
+        The in-memory .tldw-persona-vpack archive as bytes.
+    """
     states, animations, entries, files = {}, {}, [], {}
     for state, data in images.items():
         aid = f"asset-{state}"
@@ -350,6 +379,28 @@ def test_vpack_preview_frame_honored_and_invalid_falls_back():
     assert _extract(pack(99)).images["idle"] == _png((1, 1, 1))      # out of range -> frames[0]
     assert _extract(pack("x")).images["idle"] == _png((1, 1, 1))     # non-int -> frames[0]
     assert _extract(pack(None)).images["idle"] == _png((1, 1, 1))    # absent -> frames[0]
+    # Qodo fix: bool is a subclass of int -- True must NOT be treated as a
+    # valid frame index (it would otherwise select frames[1]).
+    assert _extract(pack(True)).images["idle"] == _png((1, 1, 1))    # bool -> frames[0]
+
+
+def test_vpack_region_with_bool_value_skipped():
+    # Qodo fix: bool is a subclass of int -- a region value of True/False
+    # must NOT pass the int-type check (it would smuggle through as 1/0 and
+    # yield a garbage crop instead of being rejected as an invalid region).
+    data = make_vpack_bytes(
+        manifest={"states": {"idle": "a"},
+                  "animations": {"a": {"frames": [
+                      {"asset_id": "x", "region": {"x": True, "y": 0, "width": 8, "height": 8}},
+                  ]}}},
+        assets_entries=[{"source_asset_id": "x",
+                         "asset_path": "assets/persona_visuals/x.png",
+                         "asset_bytes_status": "present"}],
+        asset_files={"assets/persona_visuals/x.png": _sheet_2x1()},
+    )
+    res = _extract(data)
+    assert "idle" not in res.images
+    assert res.skipped
 
 
 def test_vpack_asset_ids_shorthand():
@@ -534,6 +585,22 @@ def test_dispatch_two_roots_falls_through(tmp_path):
     z.write_bytes(buf.getvalue())
     res = resolve_local_expression_set([z])
     assert res.images == {}   # fell through to stem mapping, nothing matched
+
+
+def test_dispatch_zip_with_manifest_but_no_pack_json_falls_back_to_stems(tmp_path):
+    # Qodo fix: a zip carrying manifest.json + metadata/assets.json but NOT
+    # metadata/pack.json is not a real vpack (the server's REQUIRED_MEMBERS
+    # always include pack.json) -- it must fall through to stem mapping
+    # instead of being routed exclusively to the vpack extractor (which
+    # would silently yield nothing here, even though idle.png is present).
+    z = tmp_path / "not-a-vpack.zip"
+    z.write_bytes(_zip({
+        "manifest.json": b"{}",
+        "metadata/assets.json": b"{}",
+        "idle.png": _png(),
+    }))
+    res = resolve_local_expression_set([z])
+    assert set(res.images) == {"idle"}
 
 
 def test_dispatch_manifest_beyond_member_64(tmp_path):
