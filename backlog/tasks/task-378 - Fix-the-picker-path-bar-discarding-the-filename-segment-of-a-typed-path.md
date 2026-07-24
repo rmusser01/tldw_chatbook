@@ -1,8 +1,9 @@
 ---
 id: TASK-378
 title: Fix the picker path bar discarding the filename segment of a typed path
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
 labels: [console, ux]
 dependencies: []
@@ -23,5 +24,20 @@ Ctrl+L opens a path input (good), but entering an absolute FILE path and pressin
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A full file path entered in the path bar should select/attach that file (standard file-dialog behavior), or at minimum highlight it in the list and explain
+- [x] #1 A full file path entered in the path bar should select/attach that file (standard file-dialog behavior), or at minimum highlight it in the list and explain
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+`DirectoryNavigation` gained `show_and_highlight(target)`: it navigates to the
+file's parent directory and, once the async directory load repopulates the list,
+highlights the file instead of leaving the cursor on `..`. Implemented via a
+`_pending_highlight` target honored in `_repopulate_display` (before the default
+top-of-list settle), with an immediate path when the directory is already shown.
+`base_dialog.py`'s Ctrl+L path-bar handler now calls it for file paths, resolving
+the long-standing `# TODO: Ideally, we would also select the file in the list`.
+A keyboard user pasting a full path now lands on the file. RED->GREEN test
+(verified: neutering the highlight leaves the cursor on `..`); 29 existing picker
+tests green.
+<!-- SECTION:NOTES:END -->
