@@ -16,6 +16,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content
 from textual.css.query import NoMatches
+from textual.dom import NoScreen
 from textual.events import Click, Key
 from textual.widget import Widget
 from textual.widgets import Button, Static
@@ -1370,7 +1371,7 @@ class ConsoleTranscript(VerticalScroll):
         """
         try:
             browse = getattr(self.screen, "_generation_browse", None)
-        except Exception:
+        except NoScreen:
             browse = None
         browsed_index = (browse or {}).get(message_id, 0)
         if not (0 <= browsed_index < variant_count):
