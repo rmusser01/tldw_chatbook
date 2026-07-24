@@ -448,6 +448,35 @@ class ConsoleTranscriptEmptyPanel(Vertical):
         self.refresh(recompose=True)
 
 
+#: TASK-371: the "jump to latest" pill copy per run status. Absent statuses
+#: (idle, blocked) show no pill -- there is no streaming context to jump to.
+_JUMP_PILL_TEXT: Mapping[str, str] = {
+    "validating": "▼ streaming below — jump to latest",
+    "retrying": "▼ streaming below — jump to latest",
+    "streaming": "▼ streaming below — jump to latest",
+    "stopped": "▼ stopped — jump to latest",
+    "failed": "▼ stopped — jump to latest",
+    "completed": "▼ reply ready — jump to latest",
+}
+
+
+class ConsoleTranscriptJumpPill(Static):
+    """Clickable 'jump to latest' pill shown while scrolled up during a run.
+
+    TASK-371: when the reader scrolls off the bottom while a reply streams in,
+    the content grows below the fold with no signal. This pill sits docked at the
+    transcript bottom, states whether the run is streaming / stopped / ready, and
+    on click re-attaches follow and jumps to the newest content.
+    """
+
+    def on_click(self, event: Click) -> None:
+        """Jump the parent transcript to its newest content."""
+        event.stop()
+        transcript = self.parent
+        if isinstance(transcript, ConsoleTranscript):
+            transcript.jump_to_latest()
+
+
 class ConsoleTranscript(VerticalScroll):
     """Focusable native Console transcript with compact rule-separated messages."""
 
@@ -507,6 +536,9 @@ class ConsoleTranscript(VerticalScroll):
         # appends USER + ASSISTANT placeholder together, so the tail
         # alone can miss the send (PR #697 review).
         self._seen_message_ids: set[str] = set()
+        #: TASK-371: last run status seen by `sync_jump_indicator`, so a scroll
+        #: that detaches the reader can refresh the pill without a status source.
+        self._last_run_status = "idle"
 
     def on_mount(self) -> None:
         """Engage tail-follow: stay scrolled to the newest content.
@@ -527,6 +559,15 @@ class ConsoleTranscript(VerticalScroll):
             self._row_widgets[row.key] = widget
             self._row_signatures[row.key] = row.signature
             yield widget
+        # TASK-371: docked (non-scrolling) jump-to-latest pill; hidden until
+        # `sync_jump_indicator` shows it while the reader is scrolled up.
+        pill = ConsoleTranscriptJumpPill(
+            "",
+            id="console-transcript-jump-pill",
+            classes="console-transcript-jump-pill",
+        )
+        pill.display = False
+        yield pill
 
     @property
     def allow_vertical_scroll(self) -> bool:
@@ -547,6 +588,46 @@ class ConsoleTranscript(VerticalScroll):
         if self._messages:
             return True
         return super().allow_vertical_scroll
+
+    def _is_following_tail(self) -> bool:
+        """Return True when the view is pinned to the newest content."""
+        return bool(self.is_anchored and not getattr(self, "_anchor_released", False))
+
+    def sync_jump_indicator(self, run_status: str) -> None:
+        """Show/hide the jump-to-latest pill for the current run + scroll state.
+
+        TASK-371: while the reader is detached from the bottom during (or just
+        after) a run, a docked pill reports whether the reply is streaming,
+        stopped, or ready and offers a one-click jump to the newest content. It
+        stays hidden while following the tail or when no run is in play.
+
+        Args:
+            run_status: The current Console run status value (e.g. ``streaming``).
+        """
+        self._last_run_status = run_status
+        try:
+            pill = self.query_one(
+                "#console-transcript-jump-pill", ConsoleTranscriptJumpPill
+            )
+        except NoMatches:
+            return
+        text = _JUMP_PILL_TEXT.get(run_status, "")
+        if text and self._messages and not self._is_following_tail():
+            pill.update(text)
+            pill.display = True
+        else:
+            pill.display = False
+
+    def jump_to_latest(self) -> None:
+        """Re-engage tail-follow, scroll to the newest content, and hide the pill."""
+        self.anchor()
+        self.scroll_end(animate=False)
+        try:
+            self.query_one(
+                "#console-transcript-jump-pill", ConsoleTranscriptJumpPill
+            ).display = False
+        except NoMatches:
+            pass
 
     def note_follow_intent(self) -> None:
         """Record a programmatic jump-to-tail intent (send/resume/switch).
@@ -569,6 +650,9 @@ class ConsoleTranscript(VerticalScroll):
         """
         self._user_scroll_time = monotonic()
         super().release_anchor()
+        # TASK-371: surface the jump pill the moment the reader detaches, rather
+        # than waiting for the next 0.2s sync tick.
+        self.sync_jump_indicator(self._last_run_status)
 
     def set_messages(self, messages: Iterable[ConsoleChatMessage]) -> None:
         """Replace transcript messages and refresh mounted rows when possible.
