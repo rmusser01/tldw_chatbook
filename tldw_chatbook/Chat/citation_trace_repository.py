@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+import hashlib
+import hmac
 import json
 import sqlite3
 from typing import Any
+import weakref
 
 from pydantic import BaseModel, ConfigDict
 
@@ -101,9 +104,14 @@ _SqlValue = str | int | None
 _PreparedRow = tuple[_SqlValue, ...]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True, eq=False)
 class PreparedCitationWrite:
-    """Immutable canonical SQL rows safe to hand to an active transaction."""
+    """Immutable canonical SQL rows issued to one repository.
+
+    The exact object may be retried after a caller-owned transaction rollback
+    while it remains alive. Repository registration is removed automatically
+    when the object is garbage-collected.
+    """
 
     profile_id: str
     trace_id: str
@@ -125,6 +133,25 @@ def _canonical_json(value: Any) -> str:
         separators=(",", ":"),
         sort_keys=True,
     )
+
+
+def _prepared_write_digest(prepared: PreparedCitationWrite) -> bytes:
+    """Digest every immutable prepared value without exposing governed content."""
+
+    canonical = _canonical_json(
+        (
+            prepared.profile_id,
+            prepared.trace_id,
+            prepared.sealed_at,
+            prepared.trace_row,
+            prepared.run_rows,
+            prepared.snapshot_rows,
+            prepared.answer_rows,
+            prepared.reference_rows,
+            prepared.identity_context.model_dump(mode="json"),
+        )
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).digest()
 
 
 def load_local_citation_identity_context(
@@ -175,6 +202,10 @@ class CitationTraceRepository:
         self._fingerprint_codec = fingerprint_codec
         self._failure_after_row_family = failure_after_row_family
         self._prepared_write_token = object()
+        self._issued_prepared_writes: dict[
+            int,
+            tuple[weakref.ReferenceType[PreparedCitationWrite], bytes],
+        ] = {}
 
     @classmethod
     def from_key_provider(
@@ -349,7 +380,7 @@ class CitationTraceRepository:
             for prompt_set in trace.prompt_evidence_sets
             for entry in prompt_set.entries
         )
-        return PreparedCitationWrite(
+        prepared = PreparedCitationWrite(
             profile_id=profile_id,
             trace_id=trace.trace_id,
             sealed_at=sealed_at,
@@ -376,6 +407,8 @@ class CitationTraceRepository:
             identity_context=identity,
             repository_token=self._prepared_write_token,
         )
+        self._register_prepared_write(prepared)
+        return prepared
 
     def write_prepared(
         self,
@@ -388,10 +421,7 @@ class CitationTraceRepository:
     ) -> None:
         """Write all row families through an already-active outer transaction."""
 
-        if (
-            prepared.repository_token is not self._prepared_write_token
-            or prepared.identity_context != self.identity_context
-        ):
+        if not self._owns_prepared_write(prepared):
             raise CitationPersistenceUnavailable("prepared_citation_write_not_owned")
         if cursor.connection is not self.db.get_connection():
             raise RuntimeError(
@@ -502,6 +532,45 @@ class CitationTraceRepository:
             ),
         )
         self._fail_after("owner")
+
+    def _register_prepared_write(self, prepared: PreparedCitationWrite) -> None:
+        """Bind exact object identity and canonical rows until object collection."""
+
+        prepared_id = id(prepared)
+        repository_ref = weakref.ref(self)
+
+        def discard(
+            prepared_ref: weakref.ReferenceType[PreparedCitationWrite],
+        ) -> None:
+            repository = repository_ref()
+            if repository is None:
+                return
+            issued = repository._issued_prepared_writes.get(prepared_id)
+            if issued is not None and issued[0] is prepared_ref:
+                repository._issued_prepared_writes.pop(prepared_id, None)
+
+        prepared_ref = weakref.ref(prepared, discard)
+        self._issued_prepared_writes[prepared_id] = (
+            prepared_ref,
+            _prepared_write_digest(prepared),
+        )
+
+    def _owns_prepared_write(self, prepared: PreparedCitationWrite) -> bool:
+        """Verify repository, exact object identity, and every prepared row."""
+
+        if (
+            prepared.repository_token is not self._prepared_write_token
+            or prepared.identity_context != self.identity_context
+        ):
+            return False
+        issued = self._issued_prepared_writes.get(id(prepared))
+        if issued is None or issued[0]() is not prepared:
+            return False
+        try:
+            current_digest = _prepared_write_digest(prepared)
+        except (TypeError, ValueError):
+            return False
+        return hmac.compare_digest(issued[1], current_digest)
 
     def get_trace_summary(
         self,

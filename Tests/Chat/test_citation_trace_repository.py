@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
+import gc
 import json
 import sqlite3
+import weakref
 
 import pytest
 from pydantic import ValidationError
@@ -494,6 +496,189 @@ def test_prepared_write_cannot_be_forged_or_reused_across_repositories(
             )
 
     assert db.get_message_by_id("forged-prepared") is None
+
+
+@pytest.mark.parametrize(
+    ("row_family", "cell_index", "replacement"),
+    [
+        ("trace_row", -1, "2027-01-01T00:00:00+00:00"),
+        ("run_rows", 5, '{"tampered":true}'),
+        ("snapshot_rows", 10, "tampered-title"),
+        ("answer_rows", 5, "tampered answer"),
+        ("reference_rows", 7, "redacted"),
+    ],
+)
+def test_same_token_replaced_prepared_rows_are_rejected_before_any_insert(
+    db: CharactersRAGDB,
+    row_family: str,
+    cell_index: int,
+    replacement: str,
+) -> None:
+    repository = _repository(db)
+    prepared = repository.prepare_write(_sealed_write())
+    original_rows = getattr(prepared, row_family)
+    if row_family == "trace_row":
+        forged_rows = list(original_rows)
+        forged_rows[cell_index] = replacement
+        forged = replace(prepared, **{row_family: tuple(forged_rows)})
+    else:
+        forged_row = list(original_rows[0])
+        forged_row[cell_index] = replacement
+        forged = replace(
+            prepared,
+            **{row_family: (tuple(forged_row), *original_rows[1:])},
+        )
+    assert forged.repository_token is prepared.repository_token
+    conversation_id = _conversation(db)
+
+    with pytest.raises(
+        CitationPersistenceUnavailable,
+        match="prepared_citation_write_not_owned",
+    ):
+        with db.transaction() as cursor:
+            db.add_message(
+                {
+                    "id": f"forged-{row_family}",
+                    "conversation_id": conversation_id,
+                    "sender": "assistant",
+                    "content": "Answer [S1].",
+                    "client_id": db.client_id,
+                }
+            )
+            repository.write_prepared(
+                cursor,
+                forged,
+                message_id=f"forged-{row_family}",
+                message_revision=1,
+                message_body="Answer [S1].",
+            )
+
+    connection = db.get_connection()
+    assert db.get_message_by_id(f"forged-{row_family}") is None
+    for table in (
+        "rag_citation_traces",
+        "rag_evidence_runs",
+        "rag_evidence_snapshots",
+        "rag_answer_attempt_payloads",
+        "rag_trace_evidence_refs",
+        "rag_message_trace_owners",
+    ):
+        assert connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+
+
+def test_exact_prepared_object_can_retry_after_outer_transaction_rollback(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    prepared = repository.prepare_write(_sealed_write())
+    conversation_id = _conversation(db)
+
+    with pytest.raises(RuntimeError, match="force caller rollback"):
+        with db.transaction() as cursor:
+            db.add_message(
+                {
+                    "id": "prepared-retry",
+                    "conversation_id": conversation_id,
+                    "sender": "assistant",
+                    "content": "Answer [S1].",
+                    "client_id": db.client_id,
+                }
+            )
+            repository.write_prepared(
+                cursor,
+                prepared,
+                message_id="prepared-retry",
+                message_revision=1,
+                message_body="Answer [S1].",
+            )
+            raise RuntimeError("force caller rollback")
+
+    with db.transaction() as cursor:
+        db.add_message(
+            {
+                "id": "prepared-retry",
+                "conversation_id": conversation_id,
+                "sender": "assistant",
+                "content": "Answer [S1].",
+                "client_id": db.client_id,
+            }
+        )
+        repository.write_prepared(
+            cursor,
+            prepared,
+            message_id="prepared-retry",
+            message_revision=1,
+            message_body="Answer [S1].",
+        )
+
+    assert db.get_message_by_id("prepared-retry") is not None
+    assert (
+        db.get_connection()
+        .execute("SELECT count(*) FROM rag_citation_traces")
+        .fetchone()[0]
+        == 1
+    )
+
+
+def test_prepared_digest_rejects_exact_object_row_tampering_before_insert(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    prepared = repository.prepare_write(_sealed_write())
+    snapshot_row = list(prepared.snapshot_rows[0])
+    snapshot_row[10] = "tampered-title"
+    object.__setattr__(
+        prepared,
+        "snapshot_rows",
+        (tuple(snapshot_row), *prepared.snapshot_rows[1:]),
+    )
+    conversation_id = _conversation(db)
+
+    with pytest.raises(
+        CitationPersistenceUnavailable,
+        match="prepared_citation_write_not_owned",
+    ):
+        with db.transaction() as cursor:
+            db.add_message(
+                {
+                    "id": "digest-tamper",
+                    "conversation_id": conversation_id,
+                    "sender": "assistant",
+                    "content": "Answer [S1].",
+                    "client_id": db.client_id,
+                }
+            )
+            repository.write_prepared(
+                cursor,
+                prepared,
+                message_id="digest-tamper",
+                message_revision=1,
+                message_body="Answer [S1].",
+            )
+
+    assert db.get_message_by_id("digest-tamper") is None
+    assert (
+        db.get_connection()
+        .execute("SELECT count(*) FROM rag_citation_traces")
+        .fetchone()[0]
+        == 0
+    )
+
+
+def test_prepared_registration_is_removed_when_the_exact_object_is_collected(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    prepared = repository.prepare_write(_sealed_write())
+    prepared_id = id(prepared)
+    prepared_ref = weakref.ref(prepared)
+    assert prepared_id in repository._issued_prepared_writes
+
+    del prepared
+    gc.collect()
+
+    assert prepared_ref() is None
+    assert prepared_id not in repository._issued_prepared_writes
 
 
 def test_prepared_write_rejects_an_active_cursor_from_another_database(

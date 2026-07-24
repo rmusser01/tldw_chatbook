@@ -102,7 +102,13 @@ TABLE_INFO_CONTRACT = {
     """,
 }
 
-COMPOSITE_OR_PARTIAL_INDEX_CONTRACT = {
+UNIQUE_INDEX_CONTRACT = {
+    "rag_identity_context": {
+        (1, 0, ("context_name",)),
+        (1, 0, ("profile_id",)),
+        (1, 0, ("local_authority_id",)),
+        (1, 0, ("fingerprint_key_id",)),
+    },
     "rag_citation_traces": {
         (1, 1, ("profile_id", "import_package_fingerprint", "external_trace_id")),
         (
@@ -167,6 +173,7 @@ COMPOSITE_OR_PARTIAL_INDEX_CONTRACT = {
         (1, 0, ("profile_id", "origin_namespace", "origin_payload_id")),
     },
     "rag_artifact_owner_leases": {
+        (1, 0, ("lease_id",)),
         (
             1,
             0,
@@ -560,7 +567,7 @@ def test_schema_enforces_origin_shapes_and_null_safe_uniqueness(
         )
 
 
-def test_schema_has_every_composite_and_partial_index(tmp_path: Path) -> None:
+def test_schema_has_every_unique_and_partial_index(tmp_path: Path) -> None:
     db = _fresh_db(tmp_path / "indexes.sqlite")
     connection = db.get_connection()
 
@@ -571,9 +578,8 @@ def test_schema_has_every_composite_and_partial_index(tmp_path: Path) -> None:
                 row["name"]
                 for row in connection.execute(f"PRAGMA index_info({index['name']})")
             )
-            if len(columns) > 1 or index["partial"]:
-                actual.add((index["unique"], index["partial"], columns))
-        assert actual == COMPOSITE_OR_PARTIAL_INDEX_CONTRACT.get(table, set())
+            actual.add((index["unique"], index["partial"], columns))
+        assert actual == UNIQUE_INDEX_CONTRACT.get(table, set())
 
     expected_partial_predicates = {
         "rag_citation_traces_server_identity_uq": "where origin = 'server'",
