@@ -19,11 +19,17 @@ from tldw_chatbook.Chat.citation_trace_identity import (
     KeyringCitationFingerprintKeyProvider,
     LocalCitationIdentityContext,
     TraceNamespace,
+    cache_owner_idempotency_key,
     imported_trace_namespace,
+    imported_trace_idempotency_key,
     load_fingerprint_codec,
+    local_retry_idempotency_key,
     local_trace_namespace,
+    message_owner_idempotency_key,
     new_opaque_id,
     server_trace_namespace,
+    server_wire_idempotency_key,
+    sync_operation_idempotency_key,
 )
 
 
@@ -310,3 +316,153 @@ def test_fingerprint_provider_failure_traceback_never_includes_provider_message(
 
     assert str(captured.value) == CitationFingerprintKeyUnavailable.reason_code
     assert sentinel not in "".join(traceback.format_exception(captured.value))
+
+
+def test_idempotency_keys_are_stable_domain_separated_and_opaque() -> None:
+    codec = CitationFingerprintCodec(b"k" * MINIMUM_FINGERPRINT_SECRET_BYTES)
+    context = LocalCitationIdentityContext(
+        profile_id="profile",
+        local_authority_id="local-authority",
+        fingerprint_key_id="key",
+    )
+    local = local_trace_namespace(context, trace_id="trace")
+    imported = imported_trace_namespace(
+        profile_id="profile",
+        import_authority_id="import-authority",
+        import_package_fingerprint="secret-scoped-package",
+        external_trace_id="external-trace",
+        wire_schema_version="portable/v1",
+        trace_id="imported-local-trace",
+    )
+
+    builders = (
+        lambda: local_retry_idempotency_key(codec, local),
+        lambda: message_owner_idempotency_key(
+            codec,
+            local,
+            message_id="message",
+            message_revision=1,
+        ),
+        lambda: cache_owner_idempotency_key(
+            codec,
+            local,
+            message_id="message",
+            message_revision=1,
+        ),
+        lambda: imported_trace_idempotency_key(codec, imported),
+        lambda: sync_operation_idempotency_key(
+            codec,
+            local,
+            sync_operation_id="sync-operation",
+        ),
+    )
+    first = tuple(builder() for builder in builders)
+    second = tuple(builder() for builder in builders)
+
+    assert first == second
+    assert len(set(first)) == len(first)
+    assert all(value.startswith("hmac-sha256-v1:") for value in first)
+    serialized = repr(first)
+    for sensitive in (
+        "profile",
+        "local-authority",
+        "trace",
+        "message",
+        "secret-scoped-package",
+        "external-trace",
+        "sync-operation",
+    ):
+        assert sensitive not in serialized
+
+
+def test_server_wire_idempotency_binds_every_authenticated_scope_component() -> None:
+    codec = CitationFingerprintCodec(b"k" * MINIMUM_FINGERPRINT_SECRET_BYTES)
+
+    def key(
+        *,
+        profile_id: str = "profile-a",
+        authority_id: str = "authority-a",
+        tenant_id: str | None = "tenant-a",
+        wire_version: str = "grounding_trace/v1",
+    ) -> str:
+        namespace = server_trace_namespace(
+            profile_id=profile_id,
+            connection_authority_id=authority_id,
+            authenticated_tenant_id=tenant_id,
+            wire_schema_version=wire_version,
+            server_trace_id="shared-external-id",
+        )
+        return server_wire_idempotency_key(codec, namespace)
+
+    keys = {
+        key(),
+        key(profile_id="profile-b"),
+        key(authority_id="authority-b"),
+        key(tenant_id="tenant-b"),
+        key(tenant_id=None),
+        key(wire_version="grounding_trace/v2"),
+    }
+
+    assert len(keys) == 6
+    assert all("shared-external-id" not in value for value in keys)
+
+
+def test_idempotency_external_ids_enforce_exact_utf8_boundaries() -> None:
+    codec = CitationFingerprintCodec(b"k" * MINIMUM_FINGERPRINT_SECRET_BYTES)
+    context = LocalCitationIdentityContext(
+        profile_id="profile",
+        local_authority_id="authority",
+        fingerprint_key_id="key",
+    )
+    namespace = local_trace_namespace(context, trace_id="trace")
+
+    assert sync_operation_idempotency_key(
+        codec,
+        namespace,
+        sync_operation_id="é" * 128,
+    )
+    with pytest.raises(ValueError, match="UTF-8 bytes"):
+        sync_operation_idempotency_key(
+            codec,
+            namespace,
+            sync_operation_id=("é" * 128) + "x",
+        )
+    with pytest.raises(TypeError, match="message_revision"):
+        message_owner_idempotency_key(
+            codec,
+            namespace,
+            message_id="message",
+            message_revision="1",  # type: ignore[arg-type]
+        )
+
+
+def test_import_idempotency_ignores_retry_local_id_but_binds_external_origin() -> None:
+    codec = CitationFingerprintCodec(b"k" * MINIMUM_FINGERPRINT_SECRET_BYTES)
+
+    def key(
+        *,
+        local_trace_id: str,
+        authority_id: str = "import-authority",
+        external_trace_id: str = "external-trace",
+    ) -> str:
+        return imported_trace_idempotency_key(
+            codec,
+            imported_trace_namespace(
+                profile_id="profile",
+                import_authority_id=authority_id,
+                import_package_fingerprint="secret-scoped-package",
+                external_trace_id=external_trace_id,
+                wire_schema_version="portable/v1",
+                trace_id=local_trace_id,
+            ),
+        )
+
+    assert key(local_trace_id="allocated-a") == key(local_trace_id="allocated-b")
+    assert key(local_trace_id="allocated-a") != key(
+        local_trace_id="allocated-b",
+        authority_id="other-authority",
+    )
+    assert key(local_trace_id="allocated-a") != key(
+        local_trace_id="allocated-b",
+        external_trace_id="other-external-trace",
+    )

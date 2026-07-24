@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import Enum
 import hashlib
 import hmac
@@ -11,7 +12,7 @@ import sqlite3
 from typing import Any
 import weakref
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from tldw_chatbook.Chat.citation_provenance_runtime import (
     CitationProvenanceRuntimePolicy,
@@ -28,7 +29,10 @@ from tldw_chatbook.Chat.citation_trace_identity import (
     CitationIdentityNamespace,
     LocalCitationIdentityContext,
     TraceNamespace,
+    cache_owner_idempotency_key,
     load_fingerprint_codec,
+    local_trace_namespace,
+    message_owner_idempotency_key,
 )
 from tldw_chatbook.Chat.citation_trace_models import (
     AnswerAttemptPayload,
@@ -73,6 +77,15 @@ class CitationHydrationState(str, Enum):
     REVOKED = "revoked"
 
 
+class ActiveCitationTraceState(str, Enum):
+    """Bounded active message-owner verification states."""
+
+    ACTIVE = "active"
+    BODY_MISMATCH = "body_mismatch"
+    UNVERIFIABLE = "unverifiable"
+    NOT_FOUND = "not_found"
+
+
 class _FrozenModel(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
@@ -99,6 +112,28 @@ class CitationHydrationResult(_FrozenModel):
     state: CitationHydrationState
     summary: CitationTraceSummary | None = None
     governed_payloads: GovernedCitationPayloads | None = None
+
+
+class ActiveCitationTraceResult(_FrozenModel):
+    """An active summary only when its current message owner was verified."""
+
+    state: ActiveCitationTraceState
+    summary: CitationTraceSummary | None = None
+
+    @model_validator(mode="after")
+    def _validate_summary_state(self) -> "ActiveCitationTraceResult":
+        if self.state is ActiveCitationTraceState.ACTIVE or self.summary is not None:
+            raise ValueError("active summary results are repository-issued only")
+        return self
+
+
+def _verified_active_result(
+    summary: CitationTraceSummary,
+) -> ActiveCitationTraceResult:
+    return ActiveCitationTraceResult.model_construct(
+        state=ActiveCitationTraceState.ACTIVE,
+        summary=summary,
+    )
 
 
 _SqlValue = str | int | None
@@ -284,10 +319,10 @@ class CitationTraceRepository:
                 sealed_write.model_dump(mode="python", round_trip=True),
                 strict=True,
             )
-        except Exception as exc:
+        except Exception:
             raise CitationPersistenceUnavailable(
                 "invalid_sealed_citation_write"
-            ) from exc
+            ) from None
         if validated.trace.origin is not TraceOrigin.LOCAL:
             raise CitationPersistenceUnavailable("unsupported_trace_origin")
         for payload in validated.evidence_run_payloads:
@@ -433,9 +468,10 @@ class CitationTraceRepository:
         codec = self._fingerprint_codec
         if codec is None:  # guarded by prepare_write
             raise CitationPersistenceUnavailable("fingerprint_key_unavailable")
-        cursor.execute(
+        self._insert_or_verify(
+            cursor,
             """
-            INSERT INTO rag_citation_traces(
+            INSERT OR IGNORE INTO rag_citation_traces(
                 profile_id, trace_id, schema_version, request_id, generation_id,
                 origin_scope_id, origin, lifecycle, completeness_at_seal,
                 selected_attempt_id, policy_version, aggregate_json,
@@ -443,25 +479,49 @@ class CitationTraceRepository:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
             """,
             prepared.trace_row,
+            """
+            SELECT
+                profile_id, trace_id, schema_version, request_id, generation_id,
+                origin_scope_id, origin, lifecycle, completeness_at_seal,
+                selected_attempt_id, policy_version, aggregate_json,
+                visibility_state, created_at, sealed_at
+            FROM rag_citation_traces
+            WHERE profile_id = ? AND trace_id = ?
+            """,
+            (prepared.profile_id, prepared.trace_id),
+            (*prepared.trace_row[:12], "active", *prepared.trace_row[12:]),
+            "trace_identity_conflict",
         )
         self._fail_after("trace")
 
         for row in prepared.run_rows:
-            cursor.execute(
+            self._insert_or_verify(
+                cursor,
                 """
-                INSERT INTO rag_evidence_runs(
+                INSERT OR IGNORE INTO rag_evidence_runs(
                     profile_id, trace_id, run_id, run_ordinal, stage,
                     redaction_state, run_payload_json, started_at, ended_at, purged_at
                 ) VALUES (?, ?, ?, ?, ?, 'available', ?, ?, ?, NULL)
                 """,
                 row,
+                """
+                SELECT
+                    profile_id, trace_id, run_id, run_ordinal, stage,
+                    redaction_state, run_payload_json, started_at, ended_at, purged_at
+                FROM rag_evidence_runs
+                WHERE profile_id = ? AND trace_id = ? AND run_id = ?
+                """,
+                row[:3],
+                (*row[:5], "available", *row[5:], None),
+                "run_identity_conflict",
             )
         self._fail_after("runs")
 
         for row in prepared.snapshot_rows:
-            cursor.execute(
+            self._insert_or_verify(
+                cursor,
                 """
-                INSERT INTO rag_evidence_snapshots(
+                INSERT OR IGNORE INTO rag_evidence_snapshots(
                     profile_id, payload_id, governance_scope_id, authority_id,
                     confidentiality_policy_id, revocation_scope_id,
                     origin_namespace, origin_payload_id, storage_mode,
@@ -475,31 +535,78 @@ class CitationTraceRepository:
                 )
                 """,
                 row,
+                """
+                SELECT
+                    profile_id, payload_id, governance_scope_id, authority_id,
+                    confidentiality_policy_id, revocation_scope_id,
+                    origin_namespace, origin_payload_id, storage_mode,
+                    redaction_state, retention_class, snapshot_text, title,
+                    source_identity_json, locator_json, lineage_json,
+                    transformations_json, content_hash, comparison_fingerprint,
+                    created_at, retain_until, purged_at
+                FROM rag_evidence_snapshots
+                WHERE profile_id = ? AND payload_id = ?
+                """,
+                row[:2],
+                (
+                    *row[:6],
+                    "local_payload_v1",
+                    *row[6:9],
+                    "default",
+                    *row[9:],
+                    None,
+                    None,
+                ),
+                "snapshot_identity_conflict",
             )
         self._fail_after("snapshots")
 
         for row in prepared.answer_rows:
-            cursor.execute(
+            self._insert_or_verify(
+                cursor,
                 """
-                INSERT INTO rag_answer_attempt_payloads(
+                INSERT OR IGNORE INTO rag_answer_attempt_payloads(
                     profile_id, payload_id, trace_id, attempt_id,
                     redaction_state, retention_class, answer_body,
                     body_integrity_hmac, created_at, retain_until, purged_at
                 ) VALUES (?, ?, ?, ?, ?, 'default', ?, ?, ?, NULL, ?)
                 """,
                 row,
+                """
+                SELECT
+                    profile_id, payload_id, trace_id, attempt_id,
+                    redaction_state, retention_class, answer_body,
+                    body_integrity_hmac, created_at, retain_until, purged_at
+                FROM rag_answer_attempt_payloads
+                WHERE profile_id = ? AND payload_id = ?
+                """,
+                row[:2],
+                (*row[:5], "default", *row[5:8], None, row[8]),
+                "answer_identity_conflict",
             )
         self._fail_after("attempts")
 
         for row in prepared.reference_rows:
-            cursor.execute(
+            self._insert_or_verify(
+                cursor,
                 """
-                INSERT INTO rag_trace_evidence_refs(
+                INSERT OR IGNORE INTO rag_trace_evidence_refs(
                     profile_id, trace_id, prompt_set_id, evidence_ordinal,
                     run_id, snapshot_payload_id, marker_ordinal, storage_mode
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 row,
+                """
+                SELECT
+                    profile_id, trace_id, prompt_set_id, evidence_ordinal,
+                    run_id, snapshot_payload_id, marker_ordinal, storage_mode
+                FROM rag_trace_evidence_refs
+                WHERE profile_id = ? AND trace_id = ?
+                  AND prompt_set_id = ? AND evidence_ordinal = ?
+                """,
+                row[:4],
+                row,
+                "reference_identity_conflict",
             )
         self._fail_after("refs")
 
@@ -507,32 +614,422 @@ class CitationTraceRepository:
             CitationFingerprintDomain.MESSAGE_BODY,
             message_body,
         )
-        idempotency_key = codec.fingerprint(
-            CitationFingerprintDomain.OWNER_OPERATION,
-            prepared.profile_id,
-            message_id,
-            str(message_revision),
-            prepared.trace_id,
+        namespace = local_trace_namespace(
+            prepared.identity_context,
+            trace_id=prepared.trace_id,
         )
+        idempotency_key = message_owner_idempotency_key(
+            codec,
+            namespace,
+            message_id=message_id,
+            message_revision=message_revision,
+        )
+        prior_owners = cursor.execute(
+            """
+            SELECT message_revision, state, body_fingerprint, idempotency_key
+            FROM rag_message_trace_owners
+            WHERE profile_id = ? AND message_id = ? AND trace_id = ?
+            """,
+            (prepared.profile_id, message_id, prepared.trace_id),
+        ).fetchall()
+        if prior_owners and not any(
+            row["message_revision"] == message_revision
+            and row["state"] == "active"
+            and hmac.compare_digest(row["body_fingerprint"], body_fingerprint)
+            and hmac.compare_digest(row["idempotency_key"], idempotency_key)
+            for row in prior_owners
+        ):
+            raise CitationPersistenceUnavailable("owner_identity_conflict")
+        self._insert_owner(
+            cursor,
+            profile_id=prepared.profile_id,
+            message_id=message_id,
+            message_revision=message_revision,
+            trace_id=prepared.trace_id,
+            body_fingerprint=body_fingerprint,
+            idempotency_key=idempotency_key,
+            timestamp=prepared.sealed_at,
+        )
+        self._fail_after("owner")
+
+    @staticmethod
+    def _insert_or_verify(
+        cursor: sqlite3.Cursor,
+        insert_sql: str,
+        insert_params: tuple[Any, ...],
+        select_sql: str,
+        select_params: tuple[Any, ...],
+        expected: tuple[Any, ...],
+        reason_code: str,
+    ) -> None:
+        """Insert once or prove an existing immutable row is byte-identical."""
+
+        cursor.execute(insert_sql, insert_params)
+        row = cursor.execute(select_sql, select_params).fetchone()
+        if row is None or tuple(row) != expected:
+            raise CitationPersistenceUnavailable(reason_code)
+
+    def _insert_owner(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        profile_id: str,
+        message_id: str,
+        message_revision: int,
+        trace_id: str,
+        body_fingerprint: str,
+        idempotency_key: str,
+        timestamp: str,
+    ) -> None:
         cursor.execute(
             """
-            INSERT INTO rag_message_trace_owners(
+            INSERT OR IGNORE INTO rag_message_trace_owners(
                 profile_id, message_id, message_revision, trace_id, state,
                 body_fingerprint, idempotency_key, created_at, updated_at
             ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)
             """,
             (
-                prepared.profile_id,
+                profile_id,
                 message_id,
                 message_revision,
-                prepared.trace_id,
+                trace_id,
                 body_fingerprint,
                 idempotency_key,
-                prepared.sealed_at,
-                prepared.sealed_at,
+                timestamp,
+                timestamp,
             ),
         )
-        self._fail_after("owner")
+        row = cursor.execute(
+            """
+            SELECT
+                profile_id, message_id, message_revision, trace_id, state,
+                body_fingerprint, idempotency_key
+            FROM rag_message_trace_owners
+            WHERE profile_id = ? AND message_id = ?
+              AND message_revision = ? AND trace_id = ?
+            """,
+            (profile_id, message_id, message_revision, trace_id),
+        ).fetchone()
+        expected = (
+            profile_id,
+            message_id,
+            message_revision,
+            trace_id,
+            "active",
+            body_fingerprint,
+            idempotency_key,
+        )
+        if row is None or tuple(row) != expected:
+            raise CitationPersistenceUnavailable("owner_identity_conflict")
+
+    def link_cache_message_owner(
+        self,
+        cursor: sqlite3.Cursor,
+        namespace: TraceNamespace,
+        *,
+        message_id: str,
+        message_revision: int,
+        message_body: str,
+    ) -> None:
+        """Idempotently link a cache-hit message to the original local trace."""
+
+        identity = self._require_active_write_cursor(cursor)
+        codec = self._fingerprint_codec
+        if codec is None:
+            raise CitationPersistenceUnavailable("fingerprint_key_unavailable")
+        expected_namespace = local_trace_namespace(
+            identity,
+            trace_id=namespace.trace_id or "",
+            wire_schema_version=namespace.wire_schema_version,
+        )
+        if namespace != expected_namespace:
+            raise CitationPersistenceUnavailable("cache_namespace_identity_conflict")
+        message = cursor.execute(
+            """
+            SELECT version, content
+            FROM messages
+            WHERE id = ? AND deleted = 0
+            """,
+            (message_id,),
+        ).fetchone()
+        if (
+            message is None
+            or message["version"] != message_revision
+            or message["content"] != message_body
+        ):
+            raise CitationPersistenceUnavailable("cache_owner_identity_conflict")
+        trace = cursor.execute(
+            """
+            SELECT 1
+            FROM rag_citation_traces
+            WHERE profile_id = ? AND trace_id = ?
+              AND origin = 'local' AND origin_scope_id = ?
+              AND visibility_state = 'active'
+            """,
+            (identity.profile_id, namespace.trace_id, identity.profile_id),
+        ).fetchone()
+        if trace is None:
+            raise CitationPersistenceUnavailable("cache_trace_identity_conflict")
+        self._insert_owner(
+            cursor,
+            profile_id=identity.profile_id,
+            message_id=message_id,
+            message_revision=message_revision,
+            trace_id=namespace.trace_id or "",
+            body_fingerprint=codec.fingerprint(
+                CitationFingerprintDomain.MESSAGE_BODY,
+                message_body,
+            ),
+            idempotency_key=cache_owner_idempotency_key(
+                codec,
+                namespace,
+                message_id=message_id,
+                message_revision=message_revision,
+            ),
+            timestamp=datetime.now(UTC).isoformat(),
+        )
+
+    def get_active_trace_for_message(
+        self,
+        message_id: str,
+        revision: int,
+        current_body: str,
+        codec: CitationFingerprintCodec | None,
+    ) -> ActiveCitationTraceResult:
+        """Return an active trace only after keyed owner-body verification."""
+
+        identity = self.identity_context
+        if (
+            identity is None
+            or codec is None
+            or self._fingerprint_codec is None
+            or not self._codec_matches(codec)
+        ):
+            return ActiveCitationTraceResult(
+                state=ActiveCitationTraceState.UNVERIFIABLE
+            )
+        persisted = load_local_citation_identity_context(self.db)
+        if persisted != identity:
+            return ActiveCitationTraceResult(
+                state=ActiveCitationTraceState.UNVERIFIABLE
+            )
+        row = (
+            self.db.get_connection()
+            .execute(
+                """
+                SELECT
+                    owner.trace_id, owner.state, owner.body_fingerprint,
+                    message.id AS persisted_message_id,
+                    message.version AS persisted_revision,
+                    message.content AS persisted_body
+                FROM rag_message_trace_owners AS owner
+                LEFT JOIN messages AS message
+                  ON message.id = owner.message_id AND message.deleted = 0
+                WHERE owner.profile_id = ?
+                  AND owner.message_id = ?
+                  AND owner.message_revision = ?
+                ORDER BY (owner.state = 'active') DESC, owner.trace_id
+                LIMIT 1
+                """,
+                (identity.profile_id, message_id, revision),
+            )
+            .fetchone()
+        )
+        if row is None or row["state"] == "deleted":
+            return ActiveCitationTraceResult(state=ActiveCitationTraceState.NOT_FOUND)
+        if (
+            row["persisted_message_id"] is None
+            or row["persisted_revision"] != revision
+            or row["persisted_body"] != current_body
+        ):
+            return ActiveCitationTraceResult(
+                state=ActiveCitationTraceState.UNVERIFIABLE
+            )
+        if row["state"] == "body_mismatch":
+            return ActiveCitationTraceResult(
+                state=ActiveCitationTraceState.BODY_MISMATCH
+            )
+        fingerprint = codec.fingerprint(
+            CitationFingerprintDomain.MESSAGE_BODY,
+            current_body,
+        )
+        if not hmac.compare_digest(row["body_fingerprint"], fingerprint):
+            with self.db.transaction() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE rag_message_trace_owners
+                    SET state = 'body_mismatch', updated_at = ?
+                    WHERE profile_id = ? AND message_id = ?
+                      AND message_revision = ? AND trace_id = ?
+                      AND state = 'active' AND body_fingerprint = ?
+                    """,
+                    (
+                        datetime.now(UTC).isoformat(),
+                        identity.profile_id,
+                        message_id,
+                        revision,
+                        row["trace_id"],
+                        row["body_fingerprint"],
+                    ),
+                )
+            return ActiveCitationTraceResult(
+                state=ActiveCitationTraceState.BODY_MISMATCH
+            )
+        summary = self.get_trace_summary(
+            local_trace_namespace(identity, trace_id=row["trace_id"])
+        )
+        if summary is None or summary.visibility_state != "active":
+            return ActiveCitationTraceResult(state=ActiveCitationTraceState.NOT_FOUND)
+        return _verified_active_result(summary)
+
+    def transition_owner_for_message_update(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        message_id: str,
+        previous_revision: int,
+        new_revision: int,
+        new_body: str,
+    ) -> ActiveCitationTraceState:
+        """Carry forward or invalidate the prior active owner in the edit tx."""
+
+        identity = self._require_repository_cursor(cursor)
+        row = cursor.execute(
+            """
+            SELECT trace_id, body_fingerprint
+            FROM rag_message_trace_owners
+            WHERE profile_id = ? AND message_id = ?
+              AND message_revision = ? AND state = 'active'
+            ORDER BY trace_id
+            LIMIT 1
+            """,
+            (identity.profile_id, message_id, previous_revision),
+        ).fetchone()
+        if row is None:
+            return ActiveCitationTraceState.NOT_FOUND
+        message = cursor.execute(
+            """
+            SELECT version, content
+            FROM messages
+            WHERE id = ? AND deleted = 0
+            """,
+            (message_id,),
+        ).fetchone()
+        if (
+            message is None
+            or message["version"] != new_revision
+            or message["content"] != new_body
+        ):
+            raise CitationPersistenceUnavailable("message_revision_identity_conflict")
+        codec = self._fingerprint_codec
+        if codec is None:
+            self._mark_owner_body_mismatch(
+                cursor,
+                profile_id=identity.profile_id,
+                message_id=message_id,
+                message_revision=previous_revision,
+                trace_id=row["trace_id"],
+            )
+            return ActiveCitationTraceState.UNVERIFIABLE
+        new_fingerprint = codec.fingerprint(
+            CitationFingerprintDomain.MESSAGE_BODY,
+            new_body,
+        )
+        if not hmac.compare_digest(row["body_fingerprint"], new_fingerprint):
+            self._mark_owner_body_mismatch(
+                cursor,
+                profile_id=identity.profile_id,
+                message_id=message_id,
+                message_revision=previous_revision,
+                trace_id=row["trace_id"],
+            )
+            return ActiveCitationTraceState.BODY_MISMATCH
+        namespace = local_trace_namespace(identity, trace_id=row["trace_id"])
+        timestamp = datetime.now(UTC).isoformat()
+        self._insert_owner(
+            cursor,
+            profile_id=identity.profile_id,
+            message_id=message_id,
+            message_revision=new_revision,
+            trace_id=row["trace_id"],
+            body_fingerprint=new_fingerprint,
+            idempotency_key=message_owner_idempotency_key(
+                codec,
+                namespace,
+                message_id=message_id,
+                message_revision=new_revision,
+            ),
+            timestamp=timestamp,
+        )
+        return ActiveCitationTraceState.ACTIVE
+
+    @staticmethod
+    def _mark_owner_body_mismatch(
+        cursor: sqlite3.Cursor,
+        *,
+        profile_id: str,
+        message_id: str,
+        message_revision: int,
+        trace_id: str,
+    ) -> None:
+        cursor.execute(
+            """
+            UPDATE rag_message_trace_owners
+            SET state = 'body_mismatch', updated_at = ?
+            WHERE profile_id = ? AND message_id = ?
+              AND message_revision = ? AND trace_id = ? AND state = 'active'
+            """,
+            (
+                datetime.now(UTC).isoformat(),
+                profile_id,
+                message_id,
+                message_revision,
+                trace_id,
+            ),
+        )
+
+    def _codec_matches(self, codec: CitationFingerprintCodec) -> bool:
+        expected = self._fingerprint_codec
+        if expected is None:
+            return False
+        sentinel = b"citation-codec-key-check-v1"
+        return hmac.compare_digest(
+            expected.fingerprint(CitationFingerprintDomain.EXACT_PAYLOAD, sentinel),
+            codec.fingerprint(CitationFingerprintDomain.EXACT_PAYLOAD, sentinel),
+        )
+
+    def _require_repository_cursor(
+        self,
+        cursor: sqlite3.Cursor,
+    ) -> LocalCitationIdentityContext:
+        if cursor.connection is not self.db.get_connection():
+            raise RuntimeError(
+                "citation persistence requires the repository database transaction"
+            )
+        if not cursor.connection.in_transaction:
+            raise RuntimeError("citation persistence requires an active transaction")
+        persisted = load_local_citation_identity_context(self.db)
+        if persisted is None:
+            raise CitationPersistenceUnavailable(
+                "citation_identity_context_unavailable"
+            )
+        identity = self.identity_context
+        if identity is not None and identity != persisted:
+            raise CitationPersistenceUnavailable("citation_identity_context_mismatch")
+        return persisted
+
+    def _require_active_write_cursor(
+        self,
+        cursor: sqlite3.Cursor,
+    ) -> LocalCitationIdentityContext:
+        if not self.policy.canonical_writes_enabled:
+            raise CitationPersistenceUnavailable("canonical_citation_writes_disabled")
+        identity = self._require_repository_cursor(cursor)
+        if self.identity_context is None:
+            raise CitationPersistenceUnavailable(
+                "citation_identity_context_unavailable"
+            )
+        return identity
 
     def _register_prepared_write(self, prepared: PreparedCitationWrite) -> None:
         """Bind exact object identity and canonical rows until object collection."""
@@ -1269,6 +1766,8 @@ class CitationTraceRepository:
 
 
 __all__ = [
+    "ActiveCitationTraceResult",
+    "ActiveCitationTraceState",
     "CitationHydrationResult",
     "CitationHydrationState",
     "CitationPersistenceUnavailable",

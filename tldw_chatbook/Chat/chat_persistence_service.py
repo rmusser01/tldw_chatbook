@@ -407,6 +407,12 @@ class ChatPersistenceService:
         if update_feedback:
             update_data["feedback"] = feedback
 
+        citation_repository = self.citation_repository
+        if citation_repository is not None and citation_repository.db is not self.db:
+            raise CitationPersistenceUnavailable(
+                "citation_repository_database_mismatch"
+            )
+
         if attachments is not None:
             extra_rows = [
                 {
@@ -418,6 +424,31 @@ class ChatPersistenceService:
                 for row in attachments
                 if int(row["position"]) >= 1
             ]
+        else:
+            extra_rows = []
+
+        if citation_repository is not None:
+            with self.db.transaction() as cursor:
+                result = bool(
+                    self.db.update_message(
+                        message_id,
+                        update_data,
+                        expected_version=current_message["version"],
+                    )
+                )
+                if result and attachments is not None:
+                    self.db.set_message_attachments(message_id, extra_rows)
+                if result:
+                    citation_repository.transition_owner_for_message_update(
+                        cursor,
+                        message_id=message_id,
+                        previous_revision=current_message["version"],
+                        new_revision=current_message["version"] + 1,
+                        new_body=content,
+                    )
+            return result
+
+        if attachments is not None:
             # One atomic unit: inside this outer transaction the nested
             # update_message/set_message_attachments transactions are no-ops,
             # so a failed table write rolls back the row update (content and
@@ -569,16 +600,30 @@ class ChatPersistenceService:
         }
         if prepared_citation is not None:
             with self.db.transaction() as cursor:
-                created_message_id = self.db.add_message(message_payload)
-                if attachments is not None:
-                    self.db.set_message_attachments(created_message_id, extra_rows)
-                if feedback is not None:
-                    created_message = self.db.get_message_by_id(created_message_id)
-                    self.db.update_message(
-                        created_message_id,
-                        {"feedback": feedback},
-                        expected_version=created_message["version"],
+                existing_message = (
+                    self.db.get_message_by_id(message_id)
+                    if message_id is not None
+                    else None
+                )
+                if existing_message is not None:
+                    self._verify_citation_message_retry(
+                        existing_message=existing_message,
+                        message_payload=message_payload,
+                        feedback=feedback,
+                        extra_rows=extra_rows,
                     )
+                    created_message_id = existing_message["id"]
+                else:
+                    created_message_id = self.db.add_message(message_payload)
+                    if attachments is not None:
+                        self.db.set_message_attachments(created_message_id, extra_rows)
+                    if feedback is not None:
+                        created_message = self.db.get_message_by_id(created_message_id)
+                        self.db.update_message(
+                            created_message_id,
+                            {"feedback": feedback},
+                            expected_version=created_message["version"],
+                        )
                 created_message = self.db.get_message_by_id(created_message_id)
                 self.citation_repository.write_prepared(
                     cursor,
@@ -607,6 +652,49 @@ class ChatPersistenceService:
                 expected_version=created_message["version"],
             )
         return created_message_id
+
+    def _verify_citation_message_retry(
+        self,
+        *,
+        existing_message: Mapping[str, Any],
+        message_payload: Mapping[str, Any],
+        feedback: str | None,
+        extra_rows: Sequence[Mapping[str, Any]],
+    ) -> None:
+        """Fail closed unless an uncertain retry targets the exact message."""
+
+        expected_fields = {
+            "id": message_payload["id"],
+            "conversation_id": message_payload["conversation_id"],
+            "parent_message_id": message_payload["parent_message_id"],
+            "sender": message_payload["sender"],
+            "content": message_payload["content"],
+            "image_data": message_payload["image_data"],
+            "image_mime_type": message_payload["image_mime_type"],
+            "client_id": message_payload["client_id"],
+            "feedback": feedback,
+        }
+        if any(
+            existing_message.get(field) != expected
+            for field, expected in expected_fields.items()
+        ):
+            raise CitationPersistenceUnavailable("message_identity_conflict")
+        existing_rows = self.db.get_attachments_for_messages(
+            [existing_message["id"]]
+        ).get(existing_message["id"], [])
+
+        def attachment_identity(row: Mapping[str, Any]) -> tuple[Any, ...]:
+            return (
+                int(row["position"]),
+                row["data"],
+                row["mime_type"],
+                row.get("display_name", ""),
+            )
+
+        if tuple(map(attachment_identity, existing_rows)) != tuple(
+            map(attachment_identity, extra_rows)
+        ):
+            raise CitationPersistenceUnavailable("message_identity_conflict")
 
     def get_attachments_for_messages(
         self, message_ids: Sequence[str]

@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import gc
 import json
 import sqlite3
+import traceback
 import weakref
 
 import pytest
@@ -45,6 +46,8 @@ from tldw_chatbook.Chat.citation_trace_models import (
     TraceOrigin,
 )
 from tldw_chatbook.Chat.citation_trace_repository import (
+    ActiveCitationTraceResult,
+    ActiveCitationTraceState,
     CitationHydrationState,
     CitationPersistenceUnavailable,
     CitationTraceRepository,
@@ -372,6 +375,28 @@ def test_preflight_revalidates_a_hostile_model_copy(
         match="invalid_sealed_citation_write",
     ):
         repository.prepare_write(hostile)
+
+
+def test_preflight_validation_error_traceback_does_not_expose_governed_input(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    sentinel = "governed-error-sentinel"
+    write = _sealed_write()
+    hostile = write.model_copy(
+        update={
+            "evidence_snapshot_payloads": (
+                write.evidence_snapshot_payloads[0].model_copy(
+                    update={"snapshot_text": sentinel * 10_000}
+                ),
+            )
+        }
+    )
+
+    with pytest.raises(CitationPersistenceUnavailable) as captured:
+        repository.prepare_write(hostile)
+
+    assert sentinel not in "".join(traceback.format_exception(captured.value))
 
 
 def test_preflight_rejects_a_run_from_another_authority(
@@ -1244,3 +1269,342 @@ def test_injected_identity_must_match_the_persisted_singleton(
         match="citation_identity_context_mismatch",
     ):
         repository.prepare_write(_sealed_write())
+
+
+def test_committed_aggregate_retry_reuses_every_exact_row_identity(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    prepared = repository.prepare_write(_sealed_write())
+
+    with db.transaction() as cursor:
+        repository.write_prepared(
+            cursor,
+            prepared,
+            message_id="message-1",
+            message_revision=1,
+            message_body="Answer [S1].",
+        )
+
+    connection = db.get_connection()
+    expected_counts = {
+        "rag_citation_traces": 1,
+        "rag_evidence_runs": 1,
+        "rag_evidence_snapshots": 1,
+        "rag_answer_attempt_payloads": 1,
+        "rag_trace_evidence_refs": 1,
+        "rag_message_trace_owners": 1,
+    }
+    for table, expected in expected_counts.items():
+        assert connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == (
+            expected
+        )
+
+
+@pytest.mark.parametrize("mutation", ("trace", "governed", "body", "owner"))
+def test_committed_identity_reuse_with_different_immutable_data_fails_closed(
+    db: CharactersRAGDB,
+    mutation: str,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    write = _sealed_write()
+    message_id = "message-1"
+    message_body = "Answer [S1]."
+    if mutation == "trace":
+        write = write.model_copy(
+            update={
+                "trace": write.trace.model_copy(
+                    update={"generation_id": "different-generation"}
+                )
+            }
+        )
+    elif mutation == "governed":
+        snapshot = write.evidence_snapshot_payloads[0]
+        write = write.model_copy(
+            update={
+                "evidence_snapshot_payloads": (
+                    snapshot.model_copy(update={"title": "different-title"}),
+                )
+            }
+        )
+    elif mutation == "body":
+        message_body = "Changed answer [S1]."
+    else:
+        message_id = "different-owner"
+        conversation_id = _conversation(db)
+        db.add_message(
+            {
+                "id": message_id,
+                "conversation_id": conversation_id,
+                "sender": "assistant",
+                "content": message_body,
+                "client_id": db.client_id,
+            }
+        )
+        with db.transaction() as cursor:
+            cursor.execute(
+                """
+                UPDATE rag_message_trace_owners
+                SET idempotency_key = 'hostile-owner-key'
+                WHERE message_id = 'message-1'
+                """
+            )
+        message_id = "message-1"
+
+    prepared = repository.prepare_write(write)
+    with pytest.raises(CitationPersistenceUnavailable, match="identity_conflict"):
+        with db.transaction() as cursor:
+            repository.write_prepared(
+                cursor,
+                prepared,
+                message_id=message_id,
+                message_revision=1,
+                message_body=message_body,
+            )
+
+    assert (
+        db.get_connection()
+        .execute("SELECT count(*) FROM rag_citation_traces")
+        .fetchone()[0]
+        == 1
+    )
+    assert (
+        db.get_connection()
+        .execute("SELECT count(*) FROM rag_message_trace_owners")
+        .fetchone()[0]
+        == 1
+    )
+
+
+def test_cache_reuse_adds_an_idempotent_owner_without_cloning_trace(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    identity = _identity(db)
+    namespace = local_trace_namespace(identity, trace_id="trace-1")
+    conversation_id = _conversation(db)
+    db.add_message(
+        {
+            "id": "cache-message",
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "Answer [S1].",
+            "client_id": db.client_id,
+        }
+    )
+
+    for _ in range(2):
+        with db.transaction() as cursor:
+            repository.link_cache_message_owner(
+                cursor,
+                namespace,
+                message_id="cache-message",
+                message_revision=1,
+                message_body="Answer [S1].",
+            )
+
+    connection = db.get_connection()
+    trace = connection.execute(
+        "SELECT trace_id, generation_id FROM rag_citation_traces"
+    ).fetchone()
+    owners = connection.execute(
+        """
+        SELECT message_id, trace_id, idempotency_key
+        FROM rag_message_trace_owners
+        ORDER BY message_id
+        """
+    ).fetchall()
+    assert tuple(trace) == ("trace-1", "generation-1")
+    assert [(row["message_id"], row["trace_id"]) for row in owners] == [
+        ("cache-message", "trace-1"),
+        ("message-1", "trace-1"),
+    ]
+    assert owners[0]["idempotency_key"] != owners[1]["idempotency_key"]
+
+
+def test_active_lookup_verifies_body_and_preserves_historical_summary_on_mismatch(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    codec = CitationFingerprintCodec(b"k" * 32)
+
+    active = repository.get_active_trace_for_message(
+        "message-1",
+        1,
+        "Answer [S1].",
+        codec,
+    )
+    with db.transaction() as cursor:
+        cursor.execute(
+            "UPDATE messages SET content = ? WHERE id = ?",
+            ("Edited answer [S1].", "message-1"),
+        )
+    mismatch = repository.get_active_trace_for_message(
+        "message-1",
+        1,
+        "Edited answer [S1].",
+        codec,
+    )
+
+    assert active.state is ActiveCitationTraceState.ACTIVE
+    assert active.summary is not None
+    assert active.summary.trace.trace_id == "trace-1"
+    assert mismatch.state is ActiveCitationTraceState.BODY_MISMATCH
+    assert mismatch.summary is None
+    assert (
+        db.get_connection()
+        .execute(
+            """
+        SELECT state FROM rag_message_trace_owners
+        WHERE message_id = 'message-1'
+        """
+        )
+        .fetchone()[0]
+        == "body_mismatch"
+    )
+    assert (
+        repository.get_trace_summary(
+            local_trace_namespace(_identity(db), trace_id="trace-1")
+        )
+        is not None
+    )
+
+
+def test_active_lookup_with_missing_or_wrong_codec_is_unverifiable_without_mutation(
+    db: CharactersRAGDB,
+) -> None:
+    writer = _repository(db)
+    _persist(db, writer)
+    identity = _identity(db)
+    no_key_reader = CitationTraceRepository(
+        db,
+        policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=False),
+        identity_context=identity,
+        fingerprint_codec=None,
+    )
+
+    missing = no_key_reader.get_active_trace_for_message(
+        "message-1",
+        1,
+        "Answer [S1].",
+        None,
+    )
+    wrong = writer.get_active_trace_for_message(
+        "message-1",
+        1,
+        "Answer [S1].",
+        CitationFingerprintCodec(b"x" * 32),
+    )
+
+    assert missing.state is ActiveCitationTraceState.UNVERIFIABLE
+    assert wrong.state is ActiveCitationTraceState.UNVERIFIABLE
+    assert missing.summary is None
+    assert wrong.summary is None
+    assert (
+        db.get_connection()
+        .execute(
+            """
+        SELECT state FROM rag_message_trace_owners
+        WHERE message_id = 'message-1'
+        """
+        )
+        .fetchone()[0]
+        == "active"
+    )
+
+
+def test_active_lookup_never_promotes_summary_without_owner_verification(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    identity = _identity(db)
+    summary = repository.get_trace_summary(
+        local_trace_namespace(identity, trace_id="trace-1")
+    )
+
+    result = repository.get_active_trace_for_message(
+        "message-without-owner",
+        1,
+        "Answer [S1].",
+        CitationFingerprintCodec(b"k" * 32),
+    )
+
+    assert summary is not None
+    assert result.state is ActiveCitationTraceState.NOT_FOUND
+    assert result.summary is None
+    with pytest.raises(ValidationError):
+        ActiveCitationTraceResult(
+            state=ActiveCitationTraceState.ACTIVE,
+            summary=None,
+        )
+    with pytest.raises(ValidationError):
+        ActiveCitationTraceResult(
+            state=ActiveCitationTraceState.ACTIVE,
+            summary=summary,
+        )
+    with pytest.raises(ValidationError):
+        ActiveCitationTraceResult(
+            state=ActiveCitationTraceState.UNVERIFIABLE,
+            summary=summary,
+        )
+
+
+def test_active_lookup_rejects_stale_caller_body_that_is_not_the_message_row(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    current = db.get_message_by_id("message-1")
+    assert current is not None
+    db.update_message(
+        "message-1",
+        {"content": "Edited outside citation service [S1]."},
+        expected_version=current["version"],
+    )
+
+    result = repository.get_active_trace_for_message(
+        "message-1",
+        1,
+        "Answer [S1].",
+        CitationFingerprintCodec(b"k" * 32),
+    )
+
+    assert result.state is ActiveCitationTraceState.UNVERIFIABLE
+    assert result.summary is None
+
+
+def test_owner_transition_rejects_a_new_revision_not_bound_to_the_message_row(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+
+    with pytest.raises(
+        CitationPersistenceUnavailable,
+        match="message_revision_identity_conflict",
+    ):
+        with db.transaction() as cursor:
+            repository.transition_owner_for_message_update(
+                cursor,
+                message_id="message-1",
+                previous_revision=1,
+                new_revision=2,
+                new_body="Answer [S1].",
+            )
+
+    assert (
+        db.get_connection()
+        .execute(
+            """
+        SELECT count(*) FROM rag_message_trace_owners
+        WHERE message_id = 'message-1'
+        """
+        )
+        .fetchone()[0]
+        == 1
+    )

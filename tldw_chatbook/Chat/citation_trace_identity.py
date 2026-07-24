@@ -55,6 +55,11 @@ class CitationFingerprintDomain(str, Enum):
     RAW_QUERY = "raw_query_v1"
     EXACT_PAYLOAD = "exact_payload_v1"
     OWNER_OPERATION = "owner_operation_v1"
+    LOCAL_RETRY = "local_retry_v1"
+    SERVER_WIRE = "server_wire_v1"
+    MESSAGE_OWNER = "message_owner_v1"
+    CACHE_OWNER = "cache_owner_v1"
+    IMPORTED_TRACE = "imported_trace_v1"
     LEGACY_SOURCE = "legacy_source_v1"
     IMPORT_PACKAGE = "import_package_v1"
     SYNC_OPERATION = "sync_operation_v1"
@@ -215,6 +220,143 @@ def imported_trace_namespace(
     )
 
 
+def _namespace_fingerprint_parts(namespace: TraceNamespace) -> tuple[str, ...]:
+    """Return the complete, ordered namespace without serializing it publicly."""
+
+    return (
+        str(namespace.schema_version),
+        namespace.identity_namespace.value,
+        namespace.profile_id,
+        namespace.origin_scope_id,
+        namespace.authority_id,
+        namespace.authenticated_tenant_id or "",
+        namespace.wire_schema_version,
+        namespace.trace_id or "",
+        namespace.server_trace_id or "",
+        namespace.import_package_fingerprint or "",
+        namespace.external_trace_id or "",
+    )
+
+
+def _owner_parts(
+    namespace: TraceNamespace,
+    *,
+    message_id: str,
+    message_revision: int,
+) -> tuple[str, ...]:
+    if isinstance(message_revision, bool) or not isinstance(message_revision, int):
+        raise TypeError("message_revision must be an integer")
+    if message_revision < 0:
+        raise ValueError("message_revision must be a non-negative integer")
+    return (
+        *_namespace_fingerprint_parts(namespace),
+        _bounded_identifier(message_id),
+        str(message_revision),
+    )
+
+
+def local_retry_idempotency_key(
+    codec: CitationFingerprintCodec,
+    namespace: TraceNamespace,
+) -> str:
+    """Derive an opaque retry key for one stable local trace identity."""
+
+    if namespace.identity_namespace is not CitationIdentityNamespace.LOCAL_TRACE:
+        raise ValueError("local retry requires a local trace namespace")
+    return codec.fingerprint(
+        CitationFingerprintDomain.LOCAL_RETRY,
+        *_namespace_fingerprint_parts(namespace),
+    )
+
+
+def server_wire_idempotency_key(
+    codec: CitationFingerprintCodec,
+    namespace: TraceNamespace,
+) -> str:
+    """Derive an opaque key for one authenticated server wire identity."""
+
+    if namespace.identity_namespace is not CitationIdentityNamespace.SERVER_TRACE:
+        raise ValueError("server wire identity requires a server trace namespace")
+    return codec.fingerprint(
+        CitationFingerprintDomain.SERVER_WIRE,
+        *_namespace_fingerprint_parts(namespace),
+    )
+
+
+def message_owner_idempotency_key(
+    codec: CitationFingerprintCodec,
+    namespace: TraceNamespace,
+    *,
+    message_id: str,
+    message_revision: int,
+) -> str:
+    """Derive the normal message-owner operation key."""
+
+    return codec.fingerprint(
+        CitationFingerprintDomain.MESSAGE_OWNER,
+        *_owner_parts(
+            namespace,
+            message_id=message_id,
+            message_revision=message_revision,
+        ),
+    )
+
+
+def cache_owner_idempotency_key(
+    codec: CitationFingerprintCodec,
+    namespace: TraceNamespace,
+    *,
+    message_id: str,
+    message_revision: int,
+) -> str:
+    """Derive the disjoint cache-reuse owner operation key."""
+
+    return codec.fingerprint(
+        CitationFingerprintDomain.CACHE_OWNER,
+        *_owner_parts(
+            namespace,
+            message_id=message_id,
+            message_revision=message_revision,
+        ),
+    )
+
+
+def imported_trace_idempotency_key(
+    codec: CitationFingerprintCodec,
+    namespace: TraceNamespace,
+) -> str:
+    """Derive the dormant imported-trace deduplication key."""
+
+    if namespace.identity_namespace is not CitationIdentityNamespace.IMPORTED_TRACE:
+        raise ValueError("import identity requires an imported trace namespace")
+    return codec.fingerprint(
+        CitationFingerprintDomain.IMPORTED_TRACE,
+        str(namespace.schema_version),
+        namespace.identity_namespace.value,
+        namespace.profile_id,
+        namespace.origin_scope_id,
+        namespace.authority_id,
+        namespace.wire_schema_version,
+        namespace.import_package_fingerprint or "",
+        namespace.external_trace_id or "",
+    )
+
+
+def sync_operation_idempotency_key(
+    codec: CitationFingerprintCodec,
+    namespace: TraceNamespace,
+    *,
+    sync_operation_id: str,
+) -> str:
+    """Derive the dormant Sync operation key without performing a write."""
+
+    return codec.fingerprint(
+        CitationFingerprintDomain.SYNC_OPERATION,
+        *_namespace_fingerprint_parts(namespace),
+        _bounded_identifier(sync_operation_id),
+    )
+
+
 class CitationFingerprintCodec:
     """HMAC-SHA-256 codec with explicit framing and domain separation."""
 
@@ -341,9 +483,15 @@ __all__ = [
     "KeyringCitationFingerprintKeyProvider",
     "LocalCitationIdentityContext",
     "TraceNamespace",
+    "cache_owner_idempotency_key",
     "imported_trace_namespace",
+    "imported_trace_idempotency_key",
     "load_fingerprint_codec",
+    "local_retry_idempotency_key",
     "local_trace_namespace",
+    "message_owner_idempotency_key",
     "new_opaque_id",
     "server_trace_namespace",
+    "server_wire_idempotency_key",
+    "sync_operation_idempotency_key",
 ]
