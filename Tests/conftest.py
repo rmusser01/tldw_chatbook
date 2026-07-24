@@ -342,6 +342,31 @@ def anyio_backend():
 # ========== Test Environment Isolation ==========
 
 
+def _close_database_instance(db_instance):
+    """Best-effort close for a database object cached by application config."""
+    close_db = getattr(db_instance, "close", None)
+    if not callable(close_db):
+        return
+    try:
+        close_db()
+    except Exception as exc:
+        logger.warning(f"Failed to close cached test database: {exc}")
+
+
+def _reset_config_database_instances(config_module):
+    """Close and clear config.py's lazy database singletons."""
+    for db_name in ("chachanotes_db", "prompts_db", "media_db"):
+        _close_database_instance(getattr(config_module, db_name, None))
+        setattr(config_module, db_name, None)
+
+
+def _shutdown_prompts_interop_if_loaded():
+    """Reset the prompt singleton without importing its module into every test."""
+    prompts_interop = sys.modules.get("tldw_chatbook.Prompt_Management.Prompts_Interop")
+    if prompts_interop is not None and prompts_interop.is_initialized():
+        prompts_interop.shutdown_interop()
+
+
 @pytest.fixture(autouse=True)
 def isolate_test_environment(monkeypatch, tmp_path):
     """Automatically isolate test environment to prevent production data access.
@@ -367,16 +392,25 @@ def isolate_test_environment(monkeypatch, tmp_path):
         str(test_data_dir / "config" / "config.toml"),
     )
 
-    # Patch common data directory paths if they're imported
+    # ``BASE_DATA_DIR_CLI`` is computed from Path.home() when config is
+    # imported. Test modules that import the app during collection therefore
+    # capture the real home directory before this fixture can patch HOME.
+    # Redirect that cached fallback explicitly and clear lazy DB instances so
+    # no connection survives after its per-test temp directory is removed.
     try:
         from tldw_chatbook import config
 
-        if hasattr(config, "get_data_dir"):
-            monkeypatch.setattr(config, "get_data_dir", lambda: test_data_dir)
+        monkeypatch.setattr(config, "BASE_DATA_DIR_CLI", test_data_dir)
+        _reset_config_database_instances(config)
+        _shutdown_prompts_interop_if_loaded()
     except ImportError:
-        pass
+        config = None
 
     yield test_data_dir
+
+    if config is not None:
+        _shutdown_prompts_interop_if_loaded()
+        _reset_config_database_instances(config)
 
 
 # ========== Test Data Fixtures ==========
