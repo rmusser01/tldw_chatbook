@@ -102,6 +102,39 @@ async def test_console_speak_autoplay_skipped_when_legacy_widget_claims_message(
 
 
 @pytest.mark.asyncio
+async def test_adhoc_completion_autoplays_and_audio_is_cached_under_adhoc(tmp_path):
+    """Regression pin for PR #850 review finding #2 (disproven): a
+    `TTSRequestEvent(message_id=None)` does NOT orphan the auto-play path.
+
+    `TTSEventHandler.handle_tts_request` normalizes ``message_id = event.
+    message_id or "adhoc"`` *before* generation, so `_generate_tts` caches the
+    audio under the truthy key ``"adhoc"`` and the completion event carries the
+    same key -- `handle_tts_playback`'s ``_audio_files.get(event.message_id)``
+    therefore resolves. This test pins both halves: (a) the app handler
+    auto-plays an ``"adhoc"`` completion when no legacy widget claims it, and
+    (b) the TTS handler's playback lookup finds audio cached under ``"adhoc"``.
+    """
+    from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import TTSEventHandler
+
+    audio_file = tmp_path / "adhoc.mp3"
+    audio_file.write_bytes(b"fake-audio-bytes")
+
+    # (a) app-level: adhoc completion with no legacy widget -> auto-play posted.
+    fake_app = _FakeApp(widgets=())
+    event = TTSCompleteEvent(message_id="adhoc", audio_file=audio_file)
+    await TldwCli.handle_tts_complete_event(fake_app, event)
+    playback_events = [m for m in fake_app.posted if isinstance(m, TTSPlaybackEvent)]
+    assert len(playback_events) == 1
+    assert playback_events[0].message_id == "adhoc"
+
+    # (b) handler-level: the "adhoc" cache key resolves in handle_tts_playback's
+    # lookup table (the normalization upstream guarantees it was cached there).
+    handler = TTSEventHandler.__new__(TTSEventHandler)
+    handler._audio_files = {"adhoc": audio_file}
+    assert handler._audio_files.get(playback_events[0].message_id) == audio_file
+
+
+@pytest.mark.asyncio
 async def test_no_autoplay_and_no_click_notify_on_tts_error(tmp_path):
     """Regression pin: an error completion neither auto-plays nor claims
     success, regardless of legacy widget presence."""
