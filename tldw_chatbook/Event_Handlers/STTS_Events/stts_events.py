@@ -131,8 +131,8 @@ class STTSEventHandler:
 
             self._stts_service = await get_tts_service(app_config)
             logger.info("S/TT/S service initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize S/TT/S service: {e}")
+        except Exception:
+            logger.error("Failed to initialize S/TT/S service")
             self._stts_service = None
 
     async def handle_playground_generate(

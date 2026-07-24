@@ -190,3 +190,56 @@ async def test_stts_settings_save_does_not_echo_secret_from_writer_error(
     assert str(len(secret)) not in rendered
     assert hashlib.sha256(secret.encode()).hexdigest() not in rendered
     assert "length" not in rendered.lower()
+
+
+@pytest.mark.asyncio
+async def test_stts_settings_save_does_not_echo_reinitialization_error_secret(
+    monkeypatch,
+) -> None:
+    secret = "sk-Reinitialize-UniquePrefix-PrivateSuffix"
+    messages: list[str] = []
+    saved: list[tuple[str, str, str]] = []
+
+    class App:
+        def notify(self, message: str, *, severity: str) -> None:
+            messages.append(f"{severity}: {message}")
+
+    handler = STTSEventHandler(App())
+
+    def save_setting(section: str, setting_name: str, value: str) -> None:
+        saved.append((section, setting_name, value))
+
+    async def fail_to_get_service(config):
+        raise RuntimeError(f"rejected credential {secret}")
+
+    monkeypatch.setattr("tldw_chatbook.config.save_setting_to_cli_config", save_setting)
+    monkeypatch.setattr(
+        "tldw_chatbook.config.load_cli_config_and_ensure_existence", lambda: {}
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.STTS_Events.stts_events.get_cli_setting",
+        lambda _section, _key, default: default,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.STTS_Events.stts_events.get_tts_service",
+        fail_to_get_service,
+    )
+
+    sink_id = logger.add(messages.append, level="DEBUG", format="{message}")
+    try:
+        await handler.handle_settings_save(
+            STTSSettingsSaveEvent({"openai_api_key": secret})
+        )
+    finally:
+        logger.remove(sink_id)
+
+    assert saved == [("API", "openai_api_key", secret)]
+    assert handler._stts_service is None
+    rendered = "\n".join(messages)
+    assert "Failed to initialize S/TT/S service" in rendered
+    assert secret not in rendered
+    assert secret[:12] not in rendered
+    assert secret[-12:] not in rendered
+    assert str(len(secret)) not in rendered
+    assert hashlib.sha256(secret.encode()).hexdigest() not in rendered
+    assert "length" not in rendered.lower()
