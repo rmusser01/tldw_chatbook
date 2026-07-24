@@ -1,8 +1,14 @@
-import re
+import shlex
 from pathlib import Path
+
+import pytest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+ARTIFACT_LEASE_TEST_TARGETS = (
+    "Tests/Model_Artifacts/test_operation_leases.py",
+    "Tests/Model_Artifacts/test_operation_leases_process.py",
+)
 
 
 def _workflow_text() -> str:
@@ -41,6 +47,29 @@ def _test_summary_job_block() -> str:
     workflow = _workflow_text()
     start = workflow.index("  test-summary:")
     return workflow[start:]
+
+
+def _assert_artifact_lease_test_targets(block: str) -> None:
+    lines = iter(block.splitlines())
+    pytest_invocations: list[list[str]] = []
+
+    for raw_line in lines:
+        command = raw_line.strip()
+        if command != "pytest" and not command.startswith("pytest "):
+            continue
+
+        while command.endswith("\\"):
+            command = f"{command[:-1].rstrip()} {next(lines).strip()}"
+        pytest_invocations.append(shlex.split(command))
+
+    assert len(pytest_invocations) == 1
+    test_targets = tuple(
+        token.removeprefix("./")
+        for token in pytest_invocations[0][1:]
+        if token.removeprefix("./") == "Tests"
+        or token.removeprefix("./").startswith("Tests/")
+    )
+    assert test_targets == ARTIFACT_LEASE_TEST_TARGETS
 
 
 def test_ci_installs_pytest_timeout_for_configured_test_timeouts() -> None:
@@ -89,16 +118,20 @@ def test_artifact_lease_spike_runs_natively_on_three_operating_systems() -> None
     assert 'python-version: ["3.11"]' in block
     assert "pip install -e ." in block
     assert "pip install -r requirements-test.txt" in block
-    assert "Tests/Model_Artifacts/test_operation_leases.py" in block
-    assert "Tests/Model_Artifacts/test_operation_leases_process.py" in block
-    assert (
-        re.search(
-            r"^\s*(?:pytest\s+)?(?:\./)?Tests/?(?:\s|\\|$)",
-            block,
-            re.MULTILINE,
-        )
-        is None
+    _assert_artifact_lease_test_targets(block)
+
+
+def test_artifact_lease_target_check_rejects_unrelated_explicit_test() -> None:
+    block = _artifact_lease_job_block()
+    mutated = block.replace(
+        "Tests/Model_Artifacts/test_operation_leases_process.py -v",
+        "Tests/Model_Artifacts/test_operation_leases_process.py \\\n"
+        "          Tests/Other/test_unrelated.py -v",
     )
+
+    assert mutated != block
+    with pytest.raises(AssertionError):
+        _assert_artifact_lease_test_targets(mutated)
 
 
 def test_artifact_lease_gate_exposes_stable_required_context() -> None:
