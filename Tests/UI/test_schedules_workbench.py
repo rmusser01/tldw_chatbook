@@ -1,6 +1,7 @@
 """Tests for the SchedulesWorkbench shell."""
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -8,7 +9,11 @@ from textual.app import App
 from textual.containers import Horizontal
 from textual.widgets import Button, DataTable, Input, Static
 
-from tldw_chatbook.Scheduling.events import DeleteTaskRequested, SyncCompleted, SyncFailed
+from tldw_chatbook.Scheduling.events import (
+    DeleteTaskRequested,
+    SyncCompleted,
+    SyncFailed,
+)
 from tldw_chatbook.Scheduling.models import (
     ReminderTask,
     ScheduledTask,
@@ -166,6 +171,40 @@ async def test_schedules_workbench_renders_panes():
         assert pilot.app.screen.query_one("#scheduling-list-pane") is not None
         assert pilot.app.screen.query_one("#scheduling-detail-pane") is not None
         assert pilot.app.screen.query_one("#scheduling-inspector-pane") is not None
+
+
+@pytest.mark.asyncio
+async def test_server_owner_requires_an_active_server_id():
+    """A lazy server-service wrapper is not itself an available connection."""
+    app = WorkbenchTestAppWithService()
+    app.scheduling_service.server_client = _MockServerClient(
+        notifications_service=object()
+    )
+    app.runtime_policy = SimpleNamespace(state=SimpleNamespace(active_server_id=None))
+
+    async with app.run_test() as pilot:
+        workbench = SchedulesWorkbench(app_instance=pilot.app)
+        await pilot.app.push_screen(workbench)
+        await pilot.pause()
+
+        server_button = workbench.query_one("#scheduling-owner-server", Button)
+        assert server_button.disabled
+        assert str(server_button.label) == "Server (unavailable)"
+        assert (
+            str(server_button.tooltip)
+            == "Connect a scheduling server before switching Schedules ownership."
+        )
+
+        app.runtime_policy.state.active_server_id = "example.com"
+        workbench._refresh_owner_select()
+        await pilot.pause()
+
+        assert not server_button.disabled
+        assert str(server_button.label) == "Server (example.com)"
+        assert (
+            str(server_button.tooltip)
+            == "Use the connected server as the Schedules owner."
+        )
 
 
 @pytest.mark.asyncio
@@ -904,8 +943,15 @@ async def test_sync_status_widget_renders_mode_and_timestamps():
 
         local_btn = widget.query_one("#scheduling-owner-local", Button)
         server_btn = widget.query_one("#scheduling-owner-server", Button)
+        clear_btn = widget.query_one("#scheduling-clear-error", Button)
         assert local_btn.variant != "primary"
         assert server_btn.variant == "primary"
+        assert str(local_btn.tooltip) == "Use local storage as the Schedules owner."
+        assert (
+            str(server_btn.tooltip)
+            == "Use the connected server as the Schedules owner."
+        )
+        assert str(clear_btn.tooltip) == "Clear the latest scheduling sync error."
 
         widget.update_status(
             last_pull_at="2026-07-19T10:00:00+00:00",
@@ -931,6 +977,22 @@ async def test_sync_status_widget_disables_server_button_when_unavailable():
         await pilot.pause()
         server_btn = widget.query_one("#scheduling-owner-server", Button)
         assert server_btn.disabled
+        assert (
+            str(server_btn.tooltip)
+            == "Connect a scheduling server before switching Schedules ownership."
+        )
+
+        widget.set_owner_state(
+            current_owner="server:example.com",
+            active_server_id="example.com",
+            server_available=True,
+        )
+        await pilot.pause()
+        assert not server_btn.disabled
+        assert (
+            str(server_btn.tooltip)
+            == "Use the connected server as the Schedules owner."
+        )
 
 
 @pytest.mark.asyncio
@@ -959,18 +1021,30 @@ async def test_conflicts_tab_renders_rows_and_resolves():
         tab = CapturingConflictsTab(sync_engine=engine)
         await pilot.app.mount(tab)
         await pilot.pause()
-        tab.populate([
-            {
-                "id": "c1",
-                "local_id": "l1",
-                "server_state": {},
-                "local_state": {"record": {"title": "Local"}},
-            },
-        ])
+        tab.populate(
+            [
+                {
+                    "id": "c1",
+                    "local_id": "l1",
+                    "server_state": {},
+                    "local_state": {"record": {"title": "Local"}},
+                },
+            ]
+        )
         await pilot.pause()
 
         table = tab.query_one("#scheduling-conflicts-table", DataTable)
         assert table.row_count == 1
+        server_button = tab.query_one("#scheduling-use-server", Button)
+        local_button = tab.query_one("#scheduling-use-local", Button)
+        assert (
+            str(server_button.tooltip)
+            == "Resolve the selected conflict with the server version."
+        )
+        assert (
+            str(local_button.tooltip)
+            == "Resolve the selected conflict with the local version."
+        )
         table.cursor_coordinate = (0, 0)
         await pilot.click("#scheduling-use-server")
         await pilot.pause()
@@ -981,7 +1055,6 @@ async def test_conflicts_tab_renders_rows_and_resolves():
         assert msg.conflict_id == "c1"
         assert msg.resolution == "server"
         assert table.row_count == 0
-
 
 
 @pytest.mark.asyncio
@@ -1010,14 +1083,16 @@ async def test_conflicts_tab_resolve_false_does_not_post_message():
         tab = CapturingConflictsTab(sync_engine=engine)
         await pilot.app.mount(tab)
         await pilot.pause()
-        tab.populate([
-            {
-                "id": "c1",
-                "local_id": "l1",
-                "server_state": {},
-                "local_state": {"record": {"title": "Local"}},
-            },
-        ])
+        tab.populate(
+            [
+                {
+                    "id": "c1",
+                    "local_id": "l1",
+                    "server_state": {},
+                    "local_state": {"record": {"title": "Local"}},
+                },
+            ]
+        )
         await pilot.pause()
 
         table = tab.query_one("#scheduling-conflicts-table", DataTable)

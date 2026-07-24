@@ -35,9 +35,10 @@ async def library_screen():
 
 @pytest.mark.asyncio
 async def test_ingest_button_present(library_screen):
-    """The rail-top Ingest button is rendered with the expected label."""
+    """The rail-top Ingest button explains where it takes the user."""
     button = library_screen.query_one("#library-ingest-top-button", Button)
     assert str(button.label) == "Ingest content…"
+    assert str(button.tooltip) == "Open the ingest canvas to add Library content."
 
 
 # ----- Ingest options snapshot (Task 13) ------------------------------------
@@ -150,7 +151,11 @@ def test_do_submit_ingest_persists_options(monkeypatch) -> None:
     assert screen.app_instance.submit_library_ingest_job.called
     assert ("library.ingest_options.pdf", "pdf_engine", "docling") in saved
     assert ("library.ingest_options.pdf", "ocr", True) in saved
-    assert ("library.ingest_options.audio_video", "transcription_model", "small") in saved
+    assert (
+        "library.ingest_options.audio_video",
+        "transcription_model",
+        "small",
+    ) in saved
     assert ("library.ingest_options.generic", "analyze", True) in saved
     assert ("library.ingest_options.generic", "chunk", False) in saved
     assert ("library.ingest_options.generic", "chunk_size", 1500) in saved
@@ -253,7 +258,9 @@ def test_open_job_in_library_falls_back_to_source_url() -> None:
     job = _minimal_ingest_job(media_id=None, source_path="/tmp/foo.txt")
     screen._open_job_in_library(job)
 
-    screen.app_instance.media_db.get_media_by_url.assert_called_once_with("/tmp/foo.txt")
+    screen.app_instance.media_db.get_media_by_url.assert_called_once_with(
+        "/tmp/foo.txt"
+    )
     screen._navigate_to_media.assert_called_once_with(7)
     screen.notify.assert_not_called()
 
@@ -289,9 +296,7 @@ def test_open_job_in_library_notifies_when_no_match() -> None:
     screen._open_job_in_library(job)
 
     screen._navigate_to_media.assert_not_called()
-    screen.notify.assert_called_once_with(
-        "Already in Library — no single match found"
-    )
+    screen.notify.assert_called_once_with("Already in Library — no single match found")
 
 
 def test_open_job_in_library_handles_missing_media_db() -> None:
@@ -305,9 +310,7 @@ def test_open_job_in_library_handles_missing_media_db() -> None:
     screen._open_job_in_library(job)
 
     screen._navigate_to_media.assert_not_called()
-    screen.notify.assert_called_once_with(
-        "Already in Library — no single match found"
-    )
+    screen.notify.assert_called_once_with("Already in Library — no single match found")
 
 
 @pytest.mark.asyncio
