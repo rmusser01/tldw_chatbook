@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import gc
 import logging
 from collections.abc import AsyncGenerator, Mapping
 from typing import Any, cast
@@ -1203,17 +1202,17 @@ async def test_in_flight_synthesis_cannot_escape_after_service_seals() -> None:
 
 
 @pytest.mark.asyncio
-async def test_post_seal_synthesis_observes_all_fire_and_forget_cleanup_failures(
+async def test_post_seal_synthesis_observes_all_cleanup_task_failures(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     synthesis_started = asyncio.Event()
     allow_synthesis = asyncio.Event()
-    response_cleanup_finished = asyncio.Event()
-    resource_release_finished = asyncio.Event()
+    response_cleanup_attempted = asyncio.Event()
+    resource_release_attempted = asyncio.Event()
+    observations_complete = asyncio.Event()
     response_secret = "SENSITIVE_POST_SEAL_RESPONSE_f79e"
     resource_secret = "SENSITIVE_POST_SEAL_RESOURCE_36a1"
-    observed_errors: list[BaseException] = []
-    cleanup_observed = asyncio.Event()
+    observed_error_types: list[type[BaseException]] = []
 
     class FailingResponseAdapter(FakeAdapter):
         async def synthesize(
@@ -1230,7 +1229,7 @@ async def test_post_seal_synthesis_observes_all_fire_and_forget_cleanup_failures
 
             async def cleanup() -> None:
                 self.response_close_calls += 1
-                response_cleanup_finished.set()
+                response_cleanup_attempted.set()
                 raise RuntimeError(f"provider exposed {response_secret}")
 
             return TTSAudioResponse(
@@ -1245,7 +1244,7 @@ async def test_post_seal_synthesis_observes_all_fire_and_forget_cleanup_failures
     class FailingReleaseRegistry(TTSAdapterRegistry):
         async def _release(self, slot: Any, record: Any) -> None:
             await super()._release(slot, record)
-            resource_release_finished.set()
+            resource_release_attempted.set()
             raise RuntimeError(f"provider exposed {resource_secret}")
 
     class ObservingService(TTSService):
@@ -1254,12 +1253,12 @@ async def test_post_seal_synthesis_observes_all_fire_and_forget_cleanup_failures
             try:
                 error = task.exception()
             except BaseException as error:
-                observed_errors.append(error)
+                observed_error_types.append(type(error))
             else:
                 if error is not None:
-                    observed_errors.append(error)
-            if len(observed_errors) >= 2:
-                cleanup_observed.set()
+                    observed_error_types.append(type(error))
+            if len(observed_error_types) == 2:
+                observations_complete.set()
 
     adapter = FailingResponseAdapter("openai")
     service = ObservingService(
@@ -1286,16 +1285,14 @@ async def test_post_seal_synthesis_observes_all_fire_and_forget_cleanup_failures
         allow_synthesis.set()
         with pytest.raises(TTSRegistryClosedError):
             await generation
-        await response_cleanup_finished.wait()
-        await resource_release_finished.wait()
-        await asyncio.wait_for(cleanup_observed.wait(), timeout=1)
-        gc.collect()
+        await response_cleanup_attempted.wait()
+        await resource_release_attempted.wait()
+        await asyncio.wait_for(observations_complete.wait(), timeout=1)
         await asyncio.sleep(0)
 
-        observed_messages = {str(error) for error in observed_errors}
-        assert any(response_secret in message for message in observed_messages)
-        assert any(resource_secret in message for message in observed_messages)
+        assert observed_error_types == [RuntimeError, RuntimeError]
         assert unobserved_contexts == []
+        assert adapter.response_close_calls == 1
         assert service._operation_limit._value == 1
         assert service.registry._closing_records[0].leases == 0
         assert service.registry._total_leases() == 0
