@@ -852,3 +852,32 @@ def test_cached_default_manager_sees_mutations_from_other_default_dir_callers():
 
     mgr_b = get_profile_manager()
     assert mgr_b.get_profile(p.id) is not None
+
+
+# --- PR #829 review finding 5(b): save_profile must be transactional -- a
+# failed disk write must never leave the in-memory registry pointing at a
+# profile object that was never actually persisted. Before the fix,
+# save_profile registered `self._profiles[profile.id] = profile` BEFORE
+# calling `self._save_one(profile)`, so a raising `_save_one` still left the
+# new object registered (memory diverged from disk while callers were told
+# the save failed). ---
+
+
+def test_save_profile_does_not_register_when_the_disk_write_fails(tmp_path, monkeypatch):
+    m = _mgr(tmp_path)
+    p = ProfileConfig(
+        id="my_profile", name="Mine", description="d", profile_type="custom",
+        rag_config=RAGConfig(vector_store=VectorStoreConfig(type="memory")),
+        read_only=False,
+    )
+
+    def _raise(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(m, "_save_one", _raise)
+
+    with pytest.raises(OSError):
+        m.save_profile(p)
+
+    assert m.get_profile("my_profile") is None
+    assert "my_profile" not in m.list_profiles()

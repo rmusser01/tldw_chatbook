@@ -7,9 +7,19 @@ the default dyld search path):
         .venv/bin/python3 Docs/superpowers/qa/rag-settings-sp3-2026-07/svg_to_png.py
 """
 
+import sys
 from pathlib import Path
 
-import cairosvg
+try:
+    import cairosvg
+except ImportError:
+    print(
+        "cairosvg required: pip install cairosvg; on macOS also "
+        "brew install cairo and run with "
+        "DYLD_FALLBACK_LIBRARY_PATH=$(brew --prefix)/lib",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 OUT = Path(__file__).resolve().parent
 
