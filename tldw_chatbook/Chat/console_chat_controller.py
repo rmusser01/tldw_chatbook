@@ -2924,7 +2924,10 @@ class ConsoleChatController:
         # control returns to a checkpoint the loop actually polls -- it is
         # not a hard timeout on an in-flight, zero-chunk provider call.
         try:
-            outcome = await asyncio.to_thread(
+            # run_reply returns (run_id, outcome): run_id lets us write the
+            # produced reply's PERSISTED id back onto the run after
+            # completion (the load-bearing write for resume marker anchoring).
+            run_id, outcome = await asyncio.to_thread(
                 self._agent_bridge.run_reply,
                 conversation_id=conversation_id,
                 session_id=session_id,
@@ -3008,6 +3011,7 @@ class ConsoleChatController:
             outcome,
             variant_mode=variant_mode,
             cancel_event=cancel_event,
+            run_id=run_id,
         )
 
     def _agent_conversation_id(self, session_id: str) -> str:
@@ -3025,6 +3029,7 @@ class ConsoleChatController:
         *,
         variant_mode: bool,
         cancel_event: threading.Event | None = None,
+        run_id: str | None = None,
     ) -> ConsoleSubmitResult:
         from tldw_chatbook.Agents.agent_models import RUN_CANCELLED, RUN_DONE
 
@@ -3070,7 +3075,8 @@ class ConsoleChatController:
                 assistant_message_id, session_id, outcome, variant_mode=variant_mode)
 
         return self._finalize_agent_success(
-            assistant_message_id, session_id, outcome, variant_mode=variant_mode)
+            assistant_message_id, session_id, outcome,
+            variant_mode=variant_mode, run_id=run_id)
 
     def _ensure_assistant_placeholder(
         self, assistant_message_id: str, session_id: str,
@@ -3166,7 +3172,7 @@ class ConsoleChatController:
 
     def _finalize_agent_success(
         self, assistant_message_id: str, session_id: str, outcome: Any,
-        *, variant_mode: bool,
+        *, variant_mode: bool, run_id: str | None = None,
     ) -> ConsoleSubmitResult:
         """Handle ``RUN_DONE``: complete the placeholder (or a runtime-written one).
 
@@ -3174,24 +3180,57 @@ class ConsoleChatController:
         response was generated.``. If the placeholder is missing, the runtime
         may have streamed content into an assistant row already; complete it
         when possible, otherwise append a new assistant message.
+
+        Once the reply is completed (and its durable ``persisted_message_id``
+        assigned), that persisted id is written back onto the agent run via
+        ``_record_run_assistant_message`` -- the load-bearing correction of
+        the native id ``create_run`` recorded, which resume anchors markers by.
         """
         placeholder = self._ensure_assistant_placeholder(assistant_message_id, session_id)
         if placeholder is not None:
             completed = self._complete_agent_message(assistant_message_id, variant_mode, outcome)
+            self._record_run_assistant_message(run_id, completed)
             self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
             return ConsoleSubmitResult(True, True, completed.content)
 
         runtime_written = self._find_runtime_written_assistant(session_id)
         if runtime_written is not None and runtime_written.status in {"pending", "streaming"}:
             completed = self._complete_agent_message(runtime_written.id, variant_mode=False, outcome=outcome)
+            self._record_run_assistant_message(run_id, completed)
             self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
             return ConsoleSubmitResult(True, True, completed.content)
 
         final_text = getattr(outcome, "final_text", "") or "No response was generated."
         completed = self.store.append_message(
             session_id, role=ConsoleMessageRole.ASSISTANT, content=final_text)
+        self._record_run_assistant_message(run_id, completed)
         self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
         return ConsoleSubmitResult(True, True, completed.content)
+
+    def _record_run_assistant_message(
+        self, run_id: str | None, completed: ConsoleChatMessage,
+    ) -> None:
+        """Write the completed reply's PERSISTED id onto the agent run.
+
+        On resume, markers anchor by matching a transcript message's durable
+        ``persisted_message_id``; the id recorded at ``create_run`` time is
+        the native in-memory id (the reply was not persisted yet), so it must
+        be corrected here, once the reply has its persisted id. A no-op when
+        there is no run id, no bridge, or no persistence (the native id would
+        be useless to resume). Never fails the turn -- a marker-anchoring
+        bookkeeping write, wrapped defensively like the file's other seams.
+        """
+        persisted = getattr(completed, "persisted_message_id", None)
+        if not run_id or persisted is None or self._agent_bridge is None:
+            return
+        try:
+            self._agent_bridge.record_run_assistant_message(run_id, persisted)
+        except Exception:  # noqa: BLE001 -- bookkeeping must never fail the turn
+            logger.opt(exception=True).warning(
+                "failed to record persisted assistant id on agent run",
+                run_id=run_id,
+                persisted_message_id=persisted,
+            )
 
     def _append_failed_assistant(
         self, session_id: str, visible_copy: str,

@@ -163,7 +163,9 @@ def _run(bridge, store, session, assistant_id, **over):
         should_cancel=lambda: False,
     )
     kwargs.update(over)
-    return bridge.run_reply(**kwargs)
+    # run_reply returns (run_id, outcome); these tests assert on the outcome.
+    _run_id, outcome = bridge.run_reply(**kwargs)
+    return outcome
 
 
 def test_compose_prepends_session_prompt_then_agent_prompt():
@@ -1732,7 +1734,7 @@ def test_run_reply_returns_runoutcome_done():
     outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="done")
 
     with patch.object(AgentService, "run_turn", return_value=("run-1", outcome)):
-        result = bridge.run_reply(
+        run_id, result = bridge.run_reply(
             conversation_id="c1",
             session_id="s1",
             resolution=None,
@@ -1743,6 +1745,7 @@ def test_run_reply_returns_runoutcome_done():
             should_cancel=lambda: False,
         )
 
+    assert run_id == "run-1"
     assert result.status == RUN_DONE
     assert result.final_text == "done"
 
@@ -1752,7 +1755,7 @@ def test_run_reply_returns_runoutcome_error():
     outcome = RunOutcome(status=RUN_ERROR, steps=[], final_text="")
 
     with patch.object(AgentService, "run_turn", return_value=("run-1", outcome)):
-        result = bridge.run_reply(
+        run_id, result = bridge.run_reply(
             conversation_id="c1",
             session_id="s1",
             resolution=None,
@@ -1763,7 +1766,33 @@ def test_run_reply_returns_runoutcome_error():
             should_cancel=lambda: False,
         )
 
+    assert run_id == "run-1"
     assert result.status == RUN_ERROR
+
+
+def test_run_reply_returns_run_id_and_threads_assistant_message_id():
+    """run_reply exposes the primary run id to its caller and threads the
+    native assistant_message_id into run_turn (so create_run can record it)."""
+    bridge = _make_bridge()
+    outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="done")
+
+    with patch.object(
+        AgentService, "run_turn", return_value=("run-xyz", outcome)
+    ) as run_turn:
+        run_id, result = bridge.run_reply(
+            conversation_id="c1",
+            session_id="s1",
+            resolution=None,
+            assistant_message_id="native-a1",
+            model="gpt-4",
+            session_system_prompt="sys",
+            agent_messages=[{"role": "user", "content": "hi"}],
+            should_cancel=lambda: False,
+        )
+
+    assert run_id == "run-xyz"
+    assert result is outcome
+    assert run_turn.call_args.kwargs["assistant_message_id"] == "native-a1"
 
 
 def test_native_tool_schemas_returns_builtin_tool_schemas():

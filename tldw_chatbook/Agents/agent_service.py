@@ -332,6 +332,7 @@ class AgentService:
         agent_kind: str,
         task: str | None,
         parent_run_id: str | None,
+        assistant_message_id: str | None = None,
     ) -> tuple[str, RunOutcome]:
         run_id = self.db.create_run(
             conversation_id=conversation_id,
@@ -339,6 +340,7 @@ class AgentService:
             task=task,
             parent_run_id=parent_run_id,
             budget=dataclasses.asdict(config.budget),
+            assistant_message_id=assistant_message_id,
         )
         started = self.clock()
 
@@ -653,6 +655,7 @@ class AgentService:
         api_endpoint: str,
         should_cancel: Callable[[], bool] = lambda: False,
         supersede_run_id: str | None = None,
+        assistant_message_id: str | None = None,
     ) -> tuple[str, RunOutcome]:
         """Run one primary-agent turn (and any sub-agents it spawns).
 
@@ -676,6 +679,14 @@ class AgentService:
             supersede_run_id: When set, marks that prior run (and its
                 sub-agent tree) ``superseded`` before starting this run —
                 used by retry/regenerate/continue.
+            assistant_message_id: Recorded on the primary run at creation
+                time (only the primary run — never a spawned sub-agent,
+                which produces no transcript reply). At create time this is
+                the reply's NATIVE in-memory id; the assistant node is not
+                persisted yet, so the caller overwrites it with the durable
+                persisted id via ``AgentRunsDB.set_run_assistant_message_id``
+                once the reply completes (that later write is what resume's
+                marker anchoring reads).
 
         Returns:
             A ``(run_id, outcome)`` tuple: the new primary run's id and its
@@ -700,4 +711,5 @@ class AgentService:
             agent_kind=AGENT_KIND_PRIMARY,
             task=None,
             parent_run_id=None,
+            assistant_message_id=assistant_message_id,
         )

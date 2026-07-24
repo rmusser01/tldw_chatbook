@@ -865,7 +865,15 @@ class ConsoleAgentBridge:
         review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
-    ) -> RunOutcome:
+    ) -> tuple[str, RunOutcome]:
+        """Run the agent loop as the Console reply engine.
+
+        Returns:
+            A ``(run_id, outcome)`` tuple: the primary run's id (so the
+            caller can record the produced reply's persisted id onto the run
+            via ``record_run_assistant_message`` after the reply is
+            persisted) and its terminal ``RunOutcome``.
+        """
         # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
         # MCP): rebuilt FRESH for this run whenever there is a skills
         # service OR an already-composed MCP provider for this run (never
@@ -1086,10 +1094,15 @@ class ConsoleAgentBridge:
                     }
                     break
         try:
-            _run_id, outcome = service.run_turn(
+            run_id, outcome = service.run_turn(
                 conversation_id=conversation_id,
                 messages=run_messages,
                 config=config,
+                # The reply's NATIVE in-memory id at create_run time (the
+                # assistant node isn't persisted yet); the controller
+                # overwrites it with the durable persisted id once the reply
+                # completes -- that later write is what resume anchoring reads.
+                assistant_message_id=assistant_message_id,
                 # execution_key-first (Task 5): the service's capability
                 # check keys off api_endpoint, and execution_key is by
                 # definition "Provider key passed to chat_api_call" — the
@@ -1136,7 +1149,7 @@ class ConsoleAgentBridge:
         # rather than reading this run's now-superseded snapshot (belt and
         # braces on top of the pop at run start above).
         self._historical_cache.pop(conversation_id, None)
-        return outcome
+        return run_id, outcome
 
     # -- rail reads -----------------------------------------------------
 
@@ -1183,6 +1196,18 @@ class ConsoleAgentBridge:
 
     def subagent_run(self, run_id: str) -> dict | None:
         return self._db.get_run(run_id)
+
+    def record_run_assistant_message(
+        self, run_id: str, persisted_message_id: str
+    ) -> None:
+        """Record the persisted id of the assistant reply ``run_id`` produced.
+
+        Delegates to ``AgentRunsDB.set_run_assistant_message_id``. Called by
+        the controller AFTER the reply is persisted (its native create-time
+        id is thereby corrected to the durable persisted id), so a later
+        resume can anchor markers by ``persisted_message_id``.
+        """
+        self._db.set_run_assistant_message_id(run_id, persisted_message_id)
 
     def subagent_count(self, conversation_id: str) -> int:
         return self._db.count_subagent_runs(conversation_id)
