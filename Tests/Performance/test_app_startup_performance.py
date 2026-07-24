@@ -19,20 +19,34 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 async def _wait_until(
     condition,
     *,
-    pause,
     timeout_seconds: float = 3.0,
     interval_seconds: float = 0.05,
 ) -> None:
-    """Wait for a test-app condition without sleeping the host process."""
+    """Wait for a test-app condition without requiring global screen idleness."""
 
     deadline = asyncio.get_running_loop().time() + timeout_seconds
     while asyncio.get_running_loop().time() < deadline:
         if condition():
             return
-        await pause(interval_seconds)
+        await asyncio.sleep(interval_seconds)
     if condition():
         return
     raise AssertionError(f"condition was not met within {timeout_seconds:.1f}s")
+
+
+@pytest.mark.asyncio
+async def test_wait_until_yields_without_screen_idle_callback() -> None:
+    ready = asyncio.Event()
+    asyncio.get_running_loop().call_soon(ready.set)
+
+    await asyncio.wait_for(
+        _wait_until(
+            ready.is_set,
+            timeout_seconds=0.2,
+            interval_seconds=0.001,
+        ),
+        timeout=0.3,
+    )
 
 
 def _run_isolated_python(
@@ -199,14 +213,13 @@ async def test_ui_ready_before_nonessential_startup_services_finish(
 
     async with app.run_test(size=(120, 36)) as pilot:
         try:
-            await _wait_until(lambda: app._ui_ready, pause=pilot.pause)
+            await _wait_until(lambda: app._ui_ready)
             await _wait_until(
                 lambda: (
                     tts_started.is_set()
                     and stts_started.is_set()
                     and db_size_started.is_set()
                 ),
-                pause=pilot.pause,
             )
             assert app._ui_ready is True
 
