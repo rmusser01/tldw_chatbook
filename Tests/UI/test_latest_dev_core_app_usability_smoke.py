@@ -49,7 +49,7 @@ CORE_FIRST_USE_ROUTES = (
     # tab "library") and checks the skills canvas's own empty-state copy
     # rather than the retired SkillsScreen's.
     (TAB_SKILLS, TAB_LIBRARY, "LibraryScreen", ("No skills yet", "New skill")),
-    (TAB_MCP, TAB_MCP, "MCPScreen", ("MCP", "Unified MCP")),
+    (TAB_MCP, TAB_MCP, "MCPScreen", ("MCP", "Manage MCP servers")),
     (TAB_SETTINGS, TAB_SETTINGS, "SettingsScreen", ("Settings", "Providers & Models")),
 )
 

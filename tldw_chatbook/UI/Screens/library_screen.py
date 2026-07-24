@@ -319,9 +319,7 @@ LIBRARY_SKILL_TEXT_MAX_CHARS = LIBRARY_NOTE_CONTENT_MAX_CHARS
 # task-449: toast shown whenever a dirty skill edit vetoes an exit (Back,
 # skill-row switch, rail-row switch) -- the veto itself is silent widget
 # state, so without this the blocked click looks like a dead button.
-LIBRARY_SKILL_DIRTY_VETO_COPY = (
-    "Unsaved skill changes — Save or Discard changes first."
-)
+LIBRARY_SKILL_DIRTY_VETO_COPY = "Unsaved skill changes — Save or Discard changes first."
 # task-414: specific approve-failure copy for the service's
 # ``ValueError("snapshot_mismatch")`` -- the files changed between capture
 # and approve, and the service has already discarded the review.
@@ -747,9 +745,7 @@ class IngestGuardrailModal(ModalScreen[bool]):
                             classes="copy-command",
                         )
             with Horizontal(id="ingest-guardrail-actions"):
-                yield Button(
-                    "Cancel", id="ingest-guardrail-cancel", variant="error"
-                )
+                yield Button("Cancel", id="ingest-guardrail-cancel", variant="error")
                 yield Button(
                     "Start ingest anyway",
                     id="ingest-guardrail-confirm",
@@ -3435,7 +3431,14 @@ class LibraryScreen(BaseAppScreen):
         Returns a primary Ingest button that jumps directly to the Ingest
         media canvas, surfaced above the rail search box for discoverability.
         """
-        return [Button("Ingest content…", variant="primary", id="library-ingest-top-button")]
+        return [
+            Button(
+                "Ingest content…",
+                variant="primary",
+                id="library-ingest-top-button",
+                tooltip="Open the ingest canvas to add Library content.",
+            )
+        ]
 
     def _compose_workspaces_rail_body(self) -> list[Any]:
         """Build the Workspaces body for the rail Details section.
@@ -4045,7 +4048,10 @@ class LibraryScreen(BaseAppScreen):
         except Exception:
             posture = ""
         self._library_skills_trust_posture = posture if isinstance(posture, str) else ""
-        if self.is_mounted and self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS:
+        if (
+            self.is_mounted
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
+        ):
             self.refresh(recompose=True)
 
     async def _refresh_library_media_detail(self, media_id: str) -> None:
@@ -5321,7 +5327,9 @@ class LibraryScreen(BaseAppScreen):
         runtime_state = getattr(
             getattr(self.app_instance, "runtime_policy", None), "state", None
         )
-        runtime_source = str(getattr(runtime_state, "active_source", "local") or "local")
+        runtime_source = str(
+            getattr(runtime_state, "active_source", "local") or "local"
+        )
         # Sync generic top-level form fields into the generic options group so
         # the canvas renders current values for analyze/chunk/chunk_size.
         form = self._library_ingest_form
@@ -7305,9 +7313,7 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception as exc:
-            self._apply_library_skills_import_outcome_from_exception(
-                skill_name, exc
-            )
+            self._apply_library_skills_import_outcome_from_exception(skill_name, exc)
             return
         self._apply_library_skills_import_success(skill_name)
 
@@ -8496,7 +8502,8 @@ class LibraryScreen(BaseAppScreen):
             # state-driven recompose must not re-show the "No description
             # set" hint next to the populated field (review finding). Stays
             # derived only while the field is still empty.
-            description_derived=state.description_derived and not raw_description.strip(),
+            description_derived=state.description_derived
+            and not raw_description.strip(),
             argument_hint=raw_argument_hint,
             allowed_tools_csv=raw_allowed_tools_csv,
             model=raw_model,
@@ -11706,9 +11713,7 @@ class LibraryScreen(BaseAppScreen):
         else:
             self._do_submit_ingest(submitted_source)
 
-    def _do_submit_ingest(
-        self, submitted_source: str, confirmed: bool = True
-    ) -> None:
+    def _do_submit_ingest(self, submitted_source: str, confirmed: bool = True) -> None:
         """Perform the actual Library ingest job submission.
 
         The ``confirmed`` parameter lets this method be used directly as the

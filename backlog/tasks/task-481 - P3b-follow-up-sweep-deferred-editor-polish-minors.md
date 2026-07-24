@@ -1,5 +1,5 @@
 ---
-id: task-481
+id: TASK-481
 title: P3b follow-up — sweep deferred editor-polish minors
 status: Done
 assignee: []

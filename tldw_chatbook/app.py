@@ -144,12 +144,21 @@ from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_NOTE_ID,
     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
     LIBRARY_NAV_CONTEXT_INGEST,
+    WATCHLISTS_NAV_CONTEXT_BACKEND,
+    WATCHLISTS_NAV_CONTEXT_RUN_ID,
+    WATCHLISTS_NAV_CONTEXT_SECTION,
+    WATCHLISTS_SECTION_RUNS,
     get_tab_display_label,
 )
 from tldw_chatbook.Chat.chat_conversation_scope_service import (
     ChatConversationScopeService,
 )
-from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.citation_artifact_ownership import (
+    CitationArtifactOwnershipCoordinator,
+)
+from tldw_chatbook.Chat.citation_service_factory import (
+    build_local_citation_conversation_service,
+)
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
@@ -3602,8 +3611,12 @@ class TldwCli(
             return False
 
         if action.target_route == TAB_WATCHLISTS_COLLECTIONS:
-            self._stage_subscription_watchlist_run_context(action.target_id)
-            self.post_message(NavigateToScreen(TAB_WATCHLISTS_COLLECTIONS))
+            self.post_message(
+                NavigateToScreen(
+                    TAB_WATCHLISTS_COLLECTIONS,
+                    self._watchlists_run_navigation_context(action.target_id),
+                )
+            )
             return True
 
         if action.target_route == TAB_ARTIFACTS:
@@ -3647,16 +3660,6 @@ class TldwCli(
             invalidate_cache()
         self.notify(result.message, severity=result.severity)
         return result
-
-    def prepare_home_primary_action(self, action: Any) -> None:
-        """Stage route-specific context before Home primary-action navigation."""
-        if getattr(action, "action_id", None) == "review_notifications":
-            self.pending_watchlists_section = "rules"
-        elif (
-            getattr(action, "action_id", None) == "review_failed_work"
-            and getattr(action, "target_route", None) == "subscriptions"
-        ):
-            self.pending_watchlists_section = "runs"
 
     def approve_active_home_item(
         self, *, target_id: str | None = None
@@ -3772,9 +3775,18 @@ class TldwCli(
             target_route=target_route,
         )
         if result.status is HomeControlResultStatus.HANDLED and result.target_route:
-            if result.target_route == "subscriptions":
-                self._stage_subscription_watchlist_run_context(result.target_id or target_id)
-                self.post_message(NavigateToScreen(TAB_WATCHLISTS_COLLECTIONS))
+            if result.target_route in {
+                "subscriptions",
+                TAB_WATCHLISTS_COLLECTIONS,
+            }:
+                self.post_message(
+                    NavigateToScreen(
+                        TAB_WATCHLISTS_COLLECTIONS,
+                        self._watchlists_run_navigation_context(
+                            result.target_id or target_id
+                        ),
+                    )
+                )
             elif result.target_route == "library" and str(
                 result.target_id or target_id or ""
             ).startswith("local:ingest:"):
@@ -3791,10 +3803,21 @@ class TldwCli(
                 self.post_message(NavigateToScreen(result.target_route))
         return result
 
-    def _stage_subscription_watchlist_run_context(self, target_id: str | None) -> None:
-        if target_id and ":watchlist_run:" in str(target_id):
-            self.pending_watchlists_section = "runs"
-            self.pending_watchlists_run_id = str(target_id)
+    @staticmethod
+    def _watchlists_run_navigation_context(
+        target_id: str | None,
+    ) -> dict[str, object]:
+        """Build the destination-owned context for a Watchlists run deep link."""
+        context: dict[str, object] = {
+            WATCHLISTS_NAV_CONTEXT_SECTION: WATCHLISTS_SECTION_RUNS
+        }
+        if target_id:
+            target_id_text = str(target_id)
+            context[WATCHLISTS_NAV_CONTEXT_RUN_ID] = target_id_text
+            backend = target_id_text.partition(":watchlist_run:")[0]
+            if backend in {"local", "server"}:
+                context[WATCHLISTS_NAV_CONTEXT_BACKEND] = backend
+        return context
 
     def open_active_home_item_in_console(
         self,
@@ -3860,18 +3883,64 @@ class TldwCli(
         )
 
     def _wire_chat_conversation_services(self) -> None:
-        self.local_chat_conversation_service = (
-            ChatConversationService(
-                self.chachanotes_db,
-                rag_context_store_path=get_user_data_dir()
-                / "tldw_chatbook_chat_rag_context.json",
-            )
-            if getattr(self, "chachanotes_db", None) is not None
-            else None
+        trace_db = getattr(self, "chachanotes_db", None)
+        sidecar_path = (
+            get_user_data_dir() / "tldw_chatbook_chat_rag_context.json"
         )
+        existing_service = getattr(
+            self,
+            "local_chat_conversation_service",
+            None,
+        )
+        existing_migration = getattr(
+            self,
+            "citation_legacy_migration_service",
+            None,
+        )
+        if (
+            trace_db is not None
+            and existing_service is not None
+            and existing_service.db is trace_db
+            and existing_service.rag_context_store_path == sidecar_path
+            and existing_migration is not None
+            and existing_service.citation_legacy_migration is existing_migration
+        ):
+            repository = getattr(
+                existing_migration,
+                "repository",
+                getattr(self, "citation_trace_repository", None),
+            )
+            migration = existing_migration
+            local_service = existing_service
+        elif trace_db is not None:
+            coordinator = getattr(
+                self,
+                "citation_artifact_ownership_coordinator",
+                None,
+            )
+            coordinator_repository = (
+                coordinator.trace_repository
+                if coordinator is not None
+                and coordinator.trace_repository.db is trace_db
+                else None
+            )
+            local_service, repository, migration = (
+                build_local_citation_conversation_service(
+                    trace_db,
+                    sidecar_path=sidecar_path,
+                    repository=coordinator_repository,
+                )
+            )
+        else:
+            local_service = None
+            repository = None
+            migration = None
+        self.local_chat_conversation_service = local_service
+        self.citation_trace_repository = repository
+        self.citation_legacy_migration_service = migration
         self.conversation_local_marks_service = (
-            ConversationLocalMarksService(self.chachanotes_db)
-            if getattr(self, "chachanotes_db", None) is not None
+            ConversationLocalMarksService(trace_db)
+            if trace_db is not None
             else None
         )
         self.server_chat_conversation_service = (
@@ -3885,6 +3954,7 @@ class TldwCli(
             server_service=self.server_chat_conversation_service,
             policy_enforcer=self.service_policy_enforcer,
         )
+        self._wire_citation_artifact_ownership()
 
     def _wire_writing_services(self) -> None:
         try:
@@ -3976,6 +4046,46 @@ class TldwCli(
             server_chatbook_service=self.server_chatbook_service,
             policy_enforcer=self.service_policy_enforcer,
         )
+        self._wire_citation_artifact_ownership()
+
+    def _wire_citation_artifact_ownership(self) -> None:
+        """Compose cross-store citation ownership after both stores exist."""
+
+        artifact_store = getattr(self, "local_chatbook_service", None)
+        trace_db = getattr(self, "chachanotes_db", None)
+        if artifact_store is None or trace_db is None:
+            if not hasattr(self, "citation_artifact_ownership_coordinator"):
+                self.citation_artifact_ownership_coordinator = None
+            return
+        repository = getattr(self, "citation_trace_repository", None)
+        if repository is None or repository.db is not trace_db:
+            conversation_service, repository, migration = (
+                build_local_citation_conversation_service(
+                    trace_db,
+                    sidecar_path=get_user_data_dir()
+                    / "tldw_chatbook_chat_rag_context.json",
+                )
+            )
+            self.local_chat_conversation_service = conversation_service
+            self.citation_trace_repository = repository
+            self.citation_legacy_migration_service = migration
+        current = getattr(
+            self,
+            "citation_artifact_ownership_coordinator",
+            None,
+        )
+        if (
+            current is not None
+            and current.artifact_store is artifact_store
+            and current.trace_repository is repository
+        ):
+            return
+        coordinator = CitationArtifactOwnershipCoordinator(
+            artifact_store=artifact_store,
+            trace_repository=repository,
+        )
+        artifact_store.set_citation_ownership_coordinator(coordinator)
+        self.citation_artifact_ownership_coordinator = coordinator
 
     def _wire_evaluation_services(self) -> None:
         self.local_evaluation_service = None
@@ -7548,6 +7658,100 @@ class TldwCli(
             self._start_deferred_audio_service_initialization,
         )
         self.schedule_media_cleanup()
+        coordinator = getattr(
+            self,
+            "citation_artifact_ownership_coordinator",
+            None,
+        )
+        if coordinator is not None and coordinator.writes_enabled:
+            self._create_deferred_startup_task(
+                self._reconcile_citation_artifact_ownership(),
+                name="deferred_citation_artifact_reconciliation",
+            )
+        migration = getattr(
+            self,
+            "citation_legacy_migration_service",
+            None,
+        )
+        if migration is not None and migration.ready:
+            self._create_deferred_startup_task(
+                self._migrate_legacy_citations_idle_unit(),
+                name="deferred_legacy_citation_migration",
+            )
+
+    async def _reconcile_citation_artifact_ownership(self) -> None:
+        """Run one bounded recovery batch without blocking the UI loop."""
+
+        coordinator = getattr(
+            self,
+            "citation_artifact_ownership_coordinator",
+            None,
+        )
+        if coordinator is None or not coordinator.writes_enabled:
+            return
+        try:
+            result = await asyncio.to_thread(coordinator.reconcile_pending, limit=25)
+        except Exception:
+            self.loguru_logger.error(
+                "Citation artifact reconciliation failed: "
+                "artifact_reconciliation_failed"
+            )
+            return
+        if result.failed:
+            self.loguru_logger.warning(
+                "Citation artifact reconciliation retained pending operations: "
+                f"operation_ids={result.operation_ids!r} "
+                f"reason_codes={result.reason_codes!r}"
+            )
+
+    async def _migrate_legacy_citations_idle_unit(self) -> None:
+        """Drain bounded legacy batches while yielding between every idle unit."""
+
+        if getattr(self, "_legacy_citation_migration_in_flight", False):
+            return
+        self._legacy_citation_migration_in_flight = True
+        retry_count = 0
+        try:
+            while True:
+                migration = getattr(
+                    self,
+                    "citation_legacy_migration_service",
+                    None,
+                )
+                if migration is None or not migration.ready:
+                    return
+                try:
+                    result = await asyncio.to_thread(migration.migrate_idle_unit)
+                except Exception:
+                    retry_count += 1
+                    self.loguru_logger.error(
+                        "Legacy citation migration failed: legacy_migration_failed"
+                    )
+                    if retry_count >= 3:
+                        return
+                    await asyncio.sleep(2 ** (retry_count - 1))
+                    continue
+                state = getattr(result.state, "value", result.state)
+                if result.reason_code is not None:
+                    self.loguru_logger.warning(
+                        "Legacy citation migration retained retry state: "
+                        f"reason_code={result.reason_code!r}"
+                    )
+                    if (
+                        state == "running"
+                        and result.reason_code == "legacy_cutover_guard_failed"
+                    ):
+                        retry_count += 1
+                        if retry_count >= 3:
+                            return
+                        await asyncio.sleep(2 ** (retry_count - 1))
+                        continue
+                retry_count = 0
+                if state != "running":
+                    return
+                await asyncio.sleep(0)
+        finally:
+            self._legacy_citation_migration_in_flight = False
 
     def _schedule_footer_status_updates(self) -> None:
         """Wire status-line DB/token status updates after UI readiness."""

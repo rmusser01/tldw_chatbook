@@ -5,15 +5,26 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from loguru import logger as _logger
 
 from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
+from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
+from tldw_chatbook.Chat.citation_trace_repository import (
+    CitationPersistenceUnavailable,
+    CitationTraceRepository,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 logger = _logger.bind(module="ChatPersistenceService")
 
 
 class ChatPersistenceService:
-    def __init__(self, db: CharactersRAGDB, workspace_registry: Any | None = None):
+    def __init__(
+        self,
+        db: CharactersRAGDB,
+        workspace_registry: Any | None = None,
+        citation_repository: CitationTraceRepository | None = None,
+    ):
         self.db = db
         self.workspace_registry = workspace_registry
+        self.citation_repository = citation_repository
 
     @staticmethod
     def derive_conversation_title(
@@ -396,6 +407,12 @@ class ChatPersistenceService:
         if update_feedback:
             update_data["feedback"] = feedback
 
+        citation_repository = self.citation_repository
+        if citation_repository is not None and citation_repository.db is not self.db:
+            raise CitationPersistenceUnavailable(
+                "citation_repository_database_mismatch"
+            )
+
         if attachments is not None:
             extra_rows = [
                 {
@@ -407,6 +424,31 @@ class ChatPersistenceService:
                 for row in attachments
                 if int(row["position"]) >= 1
             ]
+        else:
+            extra_rows = []
+
+        if citation_repository is not None:
+            with self.db.transaction() as cursor:
+                result = bool(
+                    self.db.update_message(
+                        message_id,
+                        update_data,
+                        expected_version=current_message["version"],
+                    )
+                )
+                if result and attachments is not None:
+                    self.db.set_message_attachments(message_id, extra_rows)
+                if result:
+                    citation_repository.transition_owner_for_message_update(
+                        cursor,
+                        message_id=message_id,
+                        previous_revision=current_message["version"],
+                        new_revision=current_message["version"] + 1,
+                        new_body=content,
+                    )
+            return result
+
+        if attachments is not None:
             # One atomic unit: inside this outer transaction the nested
             # update_message/set_message_attachments transactions are no-ops,
             # so a failed table write rolls back the row update (content and
@@ -449,6 +491,7 @@ class ChatPersistenceService:
         feedback: Optional[str] = None,
         attachments: Optional[Sequence[Mapping[str, Any]]] = None,
         generation_metadata: Optional[Sequence[Mapping[str, Any]]] = None,
+        citation_write: SealedCitationWrite | None = None,
     ) -> str:
         """Create a new message, optionally with a legacy image or a full attachment list.
 
@@ -502,15 +545,31 @@ class ChatPersistenceService:
                 write, so a sidecar-write failure rolls back everything
                 (including the message row and any attachments already
                 written this call).
+            citation_write: Optional complete sealed citation aggregate.
+                When present, it is preflighted before the transaction and
+                committed atomically with the message, attachments,
+                generation metadata, and feedback.
 
         Returns:
             The newly created message's id.
 
         Raises:
+            CitationPersistenceUnavailable: If citation persistence is
+                disabled, misconfigured, invalid, or bound to another DB.
             CharactersRAGDBError: For database integrity errors during the
                 insert, the attachment-table write, or the
                 generation-metadata write.
         """
+        prepared_citation = None
+        if citation_write is not None:
+            if self.citation_repository is None:
+                raise CitationPersistenceUnavailable("citation_repository_unavailable")
+            if self.citation_repository.db is not self.db:
+                raise CitationPersistenceUnavailable(
+                    "citation_repository_database_mismatch"
+                )
+            prepared_citation = self.citation_repository.prepare_write(citation_write)
+
         # Split addressing: when ``attachments`` is supplied it covers ALL
         # positions (0..N-1) and is authoritative -- position 0 overrides the
         # scalar ``image_data``/``image_mime_type`` kwargs (even overriding
@@ -552,6 +611,46 @@ class ChatPersistenceService:
             "image_mime_type": effective_image_mime_type,
             "client_id": self.db.client_id,
         }
+        if prepared_citation is not None:
+            with self.db.transaction() as cursor:
+                existing_message = (
+                    self.db.get_message_by_id(message_id)
+                    if message_id is not None
+                    else None
+                )
+                if existing_message is not None:
+                    self._verify_citation_message_retry(
+                        existing_message=existing_message,
+                        message_payload=message_payload,
+                        feedback=feedback,
+                        extra_rows=extra_rows,
+                        generation_metadata=generation_metadata,
+                    )
+                    created_message_id = existing_message["id"]
+                else:
+                    created_message_id = self.db.add_message(message_payload)
+                    if attachments is not None:
+                        self.db.set_message_attachments(created_message_id, extra_rows)
+                    if generation_metadata is not None:
+                        self.db.set_message_generation_metadata(
+                            created_message_id, list(generation_metadata)
+                        )
+                    if feedback is not None:
+                        created_message = self.db.get_message_by_id(created_message_id)
+                        self.db.update_message(
+                            created_message_id,
+                            {"feedback": feedback},
+                            expected_version=created_message["version"],
+                        )
+                created_message = self.db.get_message_by_id(created_message_id)
+                self.citation_repository.write_prepared(
+                    cursor,
+                    prepared_citation,
+                    message_id=created_message_id,
+                    message_revision=created_message["version"],
+                    message_body=content,
+                )
+            return created_message_id
         if attachments is not None or generation_metadata is not None:
             # One atomic unit: inside this outer transaction the nested
             # add_message/set_message_attachments/set_message_generation_metadata
@@ -577,6 +676,73 @@ class ChatPersistenceService:
                 expected_version=created_message["version"],
             )
         return created_message_id
+
+    def _verify_citation_message_retry(
+        self,
+        *,
+        existing_message: Mapping[str, Any],
+        message_payload: Mapping[str, Any],
+        feedback: str | None,
+        extra_rows: Sequence[Mapping[str, Any]],
+        generation_metadata: Sequence[Mapping[str, Any]] | None,
+    ) -> None:
+        """Fail closed unless an uncertain retry targets the exact message."""
+
+        expected_fields = {
+            "id": message_payload["id"],
+            "conversation_id": message_payload["conversation_id"],
+            "parent_message_id": message_payload["parent_message_id"],
+            "sender": message_payload["sender"],
+            "content": message_payload["content"],
+            "image_data": message_payload["image_data"],
+            "image_mime_type": message_payload["image_mime_type"],
+            "client_id": message_payload["client_id"],
+            "feedback": feedback,
+        }
+        if any(
+            existing_message.get(field) != expected
+            for field, expected in expected_fields.items()
+        ):
+            raise CitationPersistenceUnavailable("message_identity_conflict")
+        existing_rows = self.db.get_attachments_for_messages(
+            [existing_message["id"]]
+        ).get(existing_message["id"], [])
+
+        def attachment_identity(row: Mapping[str, Any]) -> tuple[Any, ...]:
+            return (
+                int(row["position"]),
+                row["data"],
+                row["mime_type"],
+                row.get("display_name", ""),
+            )
+
+        if tuple(map(attachment_identity, existing_rows)) != tuple(
+            map(attachment_identity, extra_rows)
+        ):
+            raise CitationPersistenceUnavailable("message_identity_conflict")
+
+        existing_generation_metadata = (
+            self.db.get_generation_metadata_for_messages([existing_message["id"]]).get(
+                existing_message["id"], []
+            )
+        )
+
+        def generation_identity(row: Mapping[str, Any]) -> tuple[Any, ...]:
+            return (
+                int(row["position"]),
+                row["prompt"],
+                row.get("negative_prompt", ""),
+                row["backend"],
+                row.get("model"),
+                row.get("seed"),
+                row.get("style"),
+                row.get("params_json", "{}"),
+            )
+
+        if tuple(map(generation_identity, existing_generation_metadata)) != tuple(
+            map(generation_identity, generation_metadata or ())
+        ):
+            raise CitationPersistenceUnavailable("message_identity_conflict")
 
     def append_message_attachment(
         self,

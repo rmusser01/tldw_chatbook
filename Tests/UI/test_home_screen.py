@@ -545,7 +545,7 @@ async def test_home_screen_renders_unread_notification_snapshot_without_controls
 
 
 @pytest.mark.asyncio
-async def test_home_notification_primary_action_opens_notifications_inbox_context():
+async def test_home_notification_primary_action_opens_watchlists_notifications_context():
     app = _build_test_app()
     app._home_dashboard_test_input = HomeDashboardInput(
         model_ready=True,
@@ -561,7 +561,7 @@ async def test_home_notification_primary_action_opens_notifications_inbox_contex
         await pilot.pause(HOME_MOUNT_PAUSE)
 
     assert seen[-1] == "subscriptions"
-    assert app.pending_subscription_initial_tab == "notifications"
+    assert host.seen_contexts[-1] == {"section": "notifications"}
 
 
 @pytest.mark.asyncio
@@ -589,7 +589,7 @@ async def test_home_failed_watchlist_primary_action_opens_watchlist_runs_context
         await pilot.pause(HOME_MOUNT_PAUSE)
 
     assert seen[-1] == "subscriptions"
-    assert app.pending_subscription_initial_tab == "watchlist-runs"
+    assert host.seen_contexts[-1] == {"section": "runs"}
 
 
 @pytest.mark.asyncio
@@ -909,10 +909,48 @@ def test_app_detail_hook_stages_watchlist_runs_context_for_handled_watchlist_det
     )
 
     assert result.status is HomeControlResultStatus.HANDLED
-    assert app.pending_subscription_initial_tab == "watchlist-runs"
-    assert app.pending_subscription_watchlist_run_id == "local:watchlist_run:5"
     app.post_message.assert_called_once()
-    assert app.post_message.call_args.args[0].screen_name == "subscriptions"
+    navigation = app.post_message.call_args.args[0]
+    assert navigation.screen_name == "watchlists_collections"
+    assert navigation.screen_context == {
+        "section": "runs",
+        "backend": "local",
+        "run_id": "local:watchlist_run:5",
+    }
+    assert not hasattr(app, "pending_watchlists_section")
+    assert not hasattr(app, "pending_watchlists_run_id")
+
+
+def test_app_detail_hook_preserves_context_for_canonical_watchlists_route():
+    app = _build_test_app()
+    adapter = RecordingHomeActiveWorkAdapter(
+        responses={
+            HomeControlAction.OPEN_DETAILS: HomeControlResult(
+                action=HomeControlAction.OPEN_DETAILS,
+                status=HomeControlResultStatus.HANDLED,
+                message="Opening server Watchlists run.",
+                target_id="server:watchlist_run:8",
+                target_route="watchlists_collections",
+            ),
+        }
+    )
+    app.home_active_work_adapter = adapter
+    app.notify = Mock()
+    app.post_message = Mock()
+
+    result = app.open_active_home_item_details(
+        target_id="server:watchlist_run:8",
+        target_route="watchlists_collections",
+    )
+
+    assert result.status is HomeControlResultStatus.HANDLED
+    navigation = app.post_message.call_args.args[0]
+    assert navigation.screen_name == "watchlists_collections"
+    assert navigation.screen_context == {
+        "section": "runs",
+        "backend": "server",
+        "run_id": "server:watchlist_run:8",
+    }
 
 
 def test_app_console_hook_requires_adapter_launch_payload():

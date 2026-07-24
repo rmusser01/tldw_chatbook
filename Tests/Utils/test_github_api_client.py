@@ -66,13 +66,23 @@ class TestGitHubAPIClient:
 
     def test_client_property_without_token(self):
         """Test client creation without token."""
-        GitHubAPIClient()
+        with (
+            patch(
+                "tldw_chatbook.Utils.github_api_client.get_cli_setting",
+                side_effect=lambda _section, _key, default: default,
+            ),
+            patch("tldw_chatbook.Utils.github_api_client.os.getenv", return_value=None),
+            patch("httpx.AsyncClient") as mock_client_class,
+        ):
+            api_client = GitHubAPIClient()
+            api_client.client
 
-        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client_class.assert_called_once()
             call_args = mock_client_class.call_args
             headers = call_args.kwargs["headers"]
 
-            # Should not have Authorization header
+            assert headers["Accept"] == "application/vnd.github.v3+json"
+            assert headers["User-Agent"] == "tldw-chatbook-repo-selector"
             assert "Authorization" not in headers
 
     @pytest.mark.parametrize(

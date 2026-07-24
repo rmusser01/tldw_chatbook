@@ -2173,10 +2173,14 @@ async def test_destination_action_buttons_explain_their_outcome(route):
         await pilot.pause(0.1)
         screen = _active_destination_screen(host)
 
-        for button in screen.query(Button):
-            tooltip = getattr(button, "tooltip", None)
-            assert tooltip is not None, button.id
-            assert str(tooltip).strip().lower() not in {"", "none"}, button.id
+        missing_tooltips = [
+            button.id
+            for button in screen.query(Button)
+            if str(getattr(button, "tooltip", None)).strip().lower() in {"", "none"}
+        ]
+        assert not missing_tooltips, (
+            f"{route} buttons without outcome tooltips: {missing_tooltips}"
+        )
 
 
 @pytest.mark.parametrize(
@@ -2490,7 +2494,9 @@ class FakeUnifiedMCPService:
 
     def __init__(self, target_store: ConfiguredServerTargetStore) -> None:
         self.target_store = target_store
-        self.context = UnifiedMCPContext(selected_source="local", selected_section="overview")
+        self.context = UnifiedMCPContext(
+            selected_source="local", selected_section="overview"
+        )
         self.action_calls: list[tuple[str, dict]] = []
         self.runtime_state_override_calls = 0
 
@@ -2500,7 +2506,10 @@ class FakeUnifiedMCPService:
     async def select_source(self, source: str) -> UnifiedMCPContext:
         normalized_source = "server" if source == "server" else "local"
         self.context = replace(self.context, selected_source=normalized_source)
-        if normalized_source == "server" and self.context.selected_active_server_id is None:
+        if (
+            normalized_source == "server"
+            and self.context.selected_active_server_id is None
+        ):
             default_target = self.target_store.resolve_active_target()
             if default_target is not None:
                 return await self.select_server_target(default_target.server_id)
@@ -2541,7 +2550,9 @@ class FakeUnifiedMCPService:
         )
         return self.context
 
-    async def select_scope(self, scope: str | None, scope_ref: str | None = None) -> UnifiedMCPContext:
+    async def select_scope(
+        self, scope: str | None, scope_ref: str | None = None
+    ) -> UnifiedMCPContext:
         server_id = self.context.selected_active_server_id
         if server_id is None:
             return self.context
@@ -2550,7 +2561,9 @@ class FakeUnifiedMCPService:
         elif scope == "org" and scope_ref is None:
             scope_ref = "11"
         else:
-            scope_ref = None if scope in {None, "personal", "system_admin"} else scope_ref
+            scope_ref = (
+                None if scope in {None, "personal", "system_admin"} else scope_ref
+            )
         context = replace(
             self.context.per_server_state[server_id],
             selected_scope=scope or "personal",

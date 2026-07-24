@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.citation_legacy_migration import LegacyCitationReadState
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
@@ -927,3 +929,71 @@ def test_local_rag_context_rejects_message_conversation_mismatches(tmp_path):
         service.record_message_rag_context(
             "conv-1", "msg-1", rag_context={"search_query": "alpha"}
         )
+
+
+def test_canonical_mode_rejects_deprecated_sidecar_writes(tmp_path):
+    migration = SimpleNamespace(writes_enabled=True)
+    service = ChatConversationService(
+        FakeDB(),
+        rag_context_store_path=tmp_path / "chat_rag_context.json",
+        citation_legacy_migration=migration,
+    )
+
+    with pytest.raises(RuntimeError, match="legacy_rag_context_writes_disabled"):
+        service.record_message_rag_context(
+            "conv-1",
+            "msg-1",
+            citations=[{"evidence_id": "1", "source_id": "note-1"}],
+        )
+    assert not service.rag_context_store_path.exists()
+
+
+def test_canonical_reader_never_merges_changed_legacy_records(tmp_path):
+    message = {
+        "id": "msg-1",
+        "conversation_id": "conv-1",
+        "sender": "assistant",
+        "content": "Answer [1].",
+        "version": 1,
+    }
+    db = FakeDB(
+        messages_by_conversation={("conv-1", 10, 0, "ASC"): [message]},
+    )
+
+    class Migration:
+        writes_enabled = True
+
+        @staticmethod
+        def read_conversation(conversation_id, *, verify_canonical):
+            assert conversation_id == "conv-1"
+            assert verify_canonical is True
+            return SimpleNamespace(
+                state=LegacyCitationReadState.DIVERGED,
+                records={},
+            )
+
+    service = ChatConversationService(
+        db,
+        rag_context_store_path=tmp_path / "chat_rag_context.json",
+        citation_legacy_migration=Migration(),
+    )
+    service.rag_context_store_path.write_text(
+        json.dumps(
+            {
+                "conversations": {
+                    "conv-1": {
+                        "msg-1": {"citations": [{"evidence_id": "stale-sidecar"}]}
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    messages = service.get_messages_with_context("conv-1", limit=10)
+    citations = service.get_citations("conv-1")
+
+    assert messages[0]["citation_provenance_state"] == "diverged"
+    assert messages[0]["citations"] == []
+    assert citations["state"] == "diverged"
+    assert citations["citations"] == []

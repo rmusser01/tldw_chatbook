@@ -13,8 +13,11 @@ def _make_character(db) -> int:
     return db.add_character_card({"name": "Ada"})
 
 
-def test_schema_is_v23(db):
-    assert db._get_db_version(db.get_connection()) == 23
+def test_fresh_database_uses_current_schema_version(db):
+    assert (
+        db._get_db_version(db.get_connection())
+        == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+    )
 
 
 def test_set_then_get_round_trips(db):
@@ -62,6 +65,6 @@ def test_set_after_delete_reactivates(db):
 def test_invalid_state_id_rejected(db):
     cid = _make_character(db)
     with pytest.raises(ValueError):
-        db.set_character_expression_image(cid, "idle", b"x")   # idle is never stored
+        db.set_character_expression_image(cid, "idle", b"x")  # idle is never stored
     with pytest.raises(ValueError):
         db.set_character_expression_image(cid, "bogus", b"x")

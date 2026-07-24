@@ -32,9 +32,10 @@ from contextlib import asynccontextmanager  # noqa: E402
 from textual.app import App  # noqa: E402
 from textual.widget import Widget  # noqa: E402
 
-# Import test utilities
-from Tests.textual_test_utils import app_pilot, widget_pilot  # noqa: E402
-from Tests.textual_test_harness import (  # noqa: E402
+# Import test utilities (fixture re-exports for this nested pytest root).
+from Tests.textual_test_utils import app_pilot, widget_pilot  # noqa: F401,E402
+from Tests.conftest import isolate_test_environment  # noqa: F401,E402
+from Tests.textual_test_harness import (  # noqa: F401,E402
     IsolatedWidgetTestApp,
     TestApp,
     enhanced_app_pilot,
@@ -62,15 +63,6 @@ def pytest_sessionfinish(session, exitstatus):
         os.environ.pop(_TEST_CONFIG_ROOT_ENV, None)
         os.environ.pop(_TEST_CONFIG_OWNER_ENV, None)
     shutil.rmtree(_BOOTSTRAP_CONFIG_ROOT, ignore_errors=True)
-
-
-@pytest.fixture(autouse=True)
-def isolate_ui_config_path(monkeypatch, tmp_path):
-    """Isolate config when Tests/UI/pytest.ini is the pytest root."""
-    monkeypatch.setenv(
-        "TLDW_CONFIG_PATH",
-        str(tmp_path / "test_data" / "config" / "config.toml"),
-    )
 
 
 @pytest.fixture(scope="session")

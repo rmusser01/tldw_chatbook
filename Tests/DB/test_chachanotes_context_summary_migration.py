@@ -1,4 +1,3 @@
-import pytest
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
@@ -6,14 +5,16 @@ def _db(tmp_path):
     return CharactersRAGDB(str(tmp_path / "c.db"), client_id="test-client")
 
 
-def test_fresh_db_is_v26_with_context_summary_columns(tmp_path):
+def test_fresh_db_is_v27_with_context_summary_columns(tmp_path):
     db = _db(tmp_path)
     with db.get_connection() as conn:
         version = conn.execute(
             "SELECT version FROM db_schema_version WHERE schema_name = 'rag_char_chat_schema'"
         ).fetchone()["version"]
         cols = {row[1] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()}
-    assert version == 26
+    # Fresh databases always reach the current schema, not merely the version
+    # where these columns were introduced.
+    assert version == 27
     assert "context_summary" in cols
     assert "summary_boundary_message_id" in cols
 

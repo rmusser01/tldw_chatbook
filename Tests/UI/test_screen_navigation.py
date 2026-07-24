@@ -181,7 +181,7 @@ from tldw_chatbook.Voice_Assistant_Interop import (
     ServerVoiceAssistantService,
     VoiceAssistantScopeService,
 )
-from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_SUBSCRIPTIONS
+from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
@@ -269,7 +269,9 @@ def test_home_route_resolves_to_home_screen():
 def test_customize_route_resolves_to_settings_screen():
     app = _build_test_app()
 
-    screen_name, current_tab, screen_class = app._resolve_screen_navigation_target("customize")
+    screen_name, current_tab, screen_class = app._resolve_screen_navigation_target(
+        "customize"
+    )
 
     assert screen_name == "settings"
     assert current_tab == "settings"
@@ -525,7 +527,9 @@ def test_lazy_screen_registry_resolves_visible_shell_destinations():
 def test_subscriptions_route_resolves_to_watchlists_collections_via_alias():
     from tldw_chatbook.UI.Navigation import screen_registry
 
-    screen_name, canonical_tab, screen_class = screen_registry.resolve_screen_target("subscriptions")
+    screen_name, canonical_tab, screen_class = screen_registry.resolve_screen_target(
+        "subscriptions"
+    )
 
     assert screen_name == "watchlists_collections"
     assert canonical_tab == "watchlists_collections"
@@ -535,7 +539,9 @@ def test_subscriptions_route_resolves_to_watchlists_collections_via_alias():
 def test_subscription_route_resolves_to_watchlists_collections_via_alias():
     from tldw_chatbook.UI.Navigation import screen_registry
 
-    screen_name, canonical_tab, screen_class = screen_registry.resolve_screen_target("subscription")
+    screen_name, canonical_tab, screen_class = screen_registry.resolve_screen_target(
+        "subscription"
+    )
 
     assert screen_name == "watchlists_collections"
     assert canonical_tab == "watchlists_collections"
@@ -857,15 +863,18 @@ def _build_test_app(configured_default: str | None = None) -> TldwCli:
                                             ):
                                                 with patch(
                                                     "tldw_chatbook.app.get_subscriptions_db_path",
-                                                    return_value=":memory:",
+                                                    return_value=user_data_dir
+                                                    / "subscriptions.sqlite",
                                                 ):
                                                     with patch(
                                                         "tldw_chatbook.app.get_research_db_path",
-                                                        return_value=":memory:",
+                                                        return_value=user_data_dir
+                                                        / "research.sqlite",
                                                     ):
                                                         with patch(
                                                             "tldw_chatbook.app.get_writing_db_path",
-                                                            return_value=":memory:",
+                                                            return_value=user_data_dir
+                                                            / "writing.sqlite",
                                                         ):
                                                             with patch(
                                                                 "tldw_chatbook.app.get_user_data_dir",
@@ -876,7 +885,12 @@ def _build_test_app(configured_default: str | None = None) -> TldwCli:
                                                                     return_value=user_data_dir
                                                                     / "workspaces.sqlite",
                                                                 ):
-                                                                    return TldwCli()
+                                                                    with patch(
+                                                                        "tldw_chatbook.app.get_scheduled_tasks_db_path",
+                                                                        return_value=user_data_dir
+                                                                        / "scheduled_tasks.sqlite",
+                                                                    ):
+                                                                        return TldwCli()
 
 
 def test_app_uses_screen_navigation_and_wires_media_services():
@@ -920,6 +934,14 @@ def test_app_uses_screen_navigation_and_wires_media_services():
     assert (
         app.server_auth_account_service.client_provider is app.server_context_provider
     )
+
+
+def test_app_harness_multi_connection_databases_keep_initialized_schemas():
+    app = _build_test_app()
+
+    assert app.scheduling_service.watchlist_projection.list_jobs() == []
+    assert list(app.local_research_service.list_runs()) == []
+    assert app.local_writing_service.list_projects() == []
 
 
 @pytest.mark.asyncio

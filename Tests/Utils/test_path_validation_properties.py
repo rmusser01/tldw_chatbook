@@ -86,29 +86,25 @@ class TestPathValidationProperties:
                 # Should never validate
                 assert is_safe_path(str(target), base_dir) is False
 
-    @given(st.lists(path_component_strategy(), min_size=1, max_size=3))
-    def test_traversal_always_caught(self, components):
+    @given(
+        up_levels=st.integers(min_value=1, max_value=5),
+        leaf=st.text(
+            alphabet=string.ascii_letters + string.digits,
+            min_size=1,
+            max_size=32,
+        ),
+    )
+    def test_traversal_always_caught(self, up_levels, leaf):
         """Property: Any path that resolves outside base should be caught."""
-        assume(any(".." in str(c) for c in components))  # Ensure at least one traversal
-
         with tempfile.TemporaryDirectory() as base_dir:
-            try:
-                path = Path(base_dir)
-                for component in components:
-                    path = path / component
+            base = Path(base_dir).resolve()
+            path = base.joinpath(*([".."] * up_levels), f"outside-{leaf}")
+            resolved = path.resolve()
 
-                # If the final path is outside base_dir, validation should fail
-                resolved = path.resolve()
-                base_resolved = Path(base_dir).resolve()
-
-                if not str(resolved).startswith(str(base_resolved)):
-                    with pytest.raises(
-                        ValueError, match="outside the allowed directory"
-                    ):
-                        validate_path(str(path), base_dir)
-            except (OSError, ValueError):
-                # Some paths might be invalid at OS level
-                pass
+            with pytest.raises(ValueError):
+                resolved.relative_to(base)
+            with pytest.raises(ValueError, match="outside the allowed directory"):
+                validate_path(path, base)
 
 
 class TestFilenameValidationProperties:

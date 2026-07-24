@@ -10,6 +10,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from tldw_chatbook.Chat.citation_artifact_ownership import (
+    CitationArtifactOwnershipCoordinator,
+)
+from tldw_chatbook.Chat.citation_trace_repository import (
+    CitationArtifactOwnerRequest,
+)
+
 CONSOLE_SAVE_TITLE_MAX_CHARS = 80
 CONSOLE_SAVE_TITLE_PREFIX = "Console message"
 
@@ -18,6 +25,49 @@ CONSOLE_SAVE_TITLE_PREFIX = "Console message"
 # for the Artifacts and Home surfaces that consume them.
 CONSOLE_CHATBOOK_ARTIFACT_CONTENT_MAX_CHARS = 20_000
 CONSOLE_CHATBOOK_ARTIFACT_DESCRIPTION_MAX_CHARS = 280
+
+
+def resolve_console_artifact_owner_request(
+    *,
+    coordinator: CitationArtifactOwnershipCoordinator | None,
+    persisted_message_id: str | None,
+    message_text: str,
+) -> CitationArtifactOwnerRequest | None:
+    """Resolve ownership only from the current persisted message row."""
+
+    if (
+        coordinator is None
+        or getattr(coordinator, "writes_enabled", False) is not True
+        or not isinstance(persisted_message_id, str)
+        or not persisted_message_id
+        or len(persisted_message_id.encode("utf-8")) > 256
+    ):
+        return None
+    repository = getattr(coordinator, "trace_repository", None)
+    db = getattr(repository, "db", None)
+    get_message = getattr(db, "get_message_by_id", None)
+    owner_request = getattr(coordinator, "owner_request_for_message", None)
+    if not callable(get_message) or not callable(owner_request):
+        return None
+    try:
+        persisted = get_message(persisted_message_id)
+        revision = persisted["version"]
+        if (
+            persisted.get("id") != persisted_message_id
+            or persisted.get("deleted", 0) != 0
+            or persisted.get("content") != message_text
+            or isinstance(revision, bool)
+            or not isinstance(revision, int)
+            or revision < 0
+        ):
+            return None
+        return owner_request(
+            message_id=persisted_message_id,
+            message_revision=revision,
+            current_body=message_text,
+        )
+    except Exception:
+        return None
 
 
 def _collapse_whitespace(text: Any) -> str:

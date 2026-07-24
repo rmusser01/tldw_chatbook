@@ -52,6 +52,7 @@ DESTINATION_BODY_SELECTORS: dict[str, tuple[str, ...]] = {
     "mcp": ("#mcp-shell", "#mcp-hub-workbench"),
     "acp": ("#acp-shell",),
     "lab": ("#llm-destination-header", "#llm-main-content"),
+    "logs": ("#logs-destination-header",),
     "settings": ("#settings-shell",),
 }
 TERMINAL_SIZE_MATRIX = (

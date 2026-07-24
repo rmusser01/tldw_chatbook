@@ -464,6 +464,9 @@ async def test_handle_chat_action_button_pressed_schedules_chatbook_artifact_wor
     mock_app.current_chat_conversation_id = "conv-123"
     mock_app.current_provider = "OpenAI"
     mock_app.current_model = "gpt-4.1"
+    owner_request = object()
+    mock_app.citation_artifact_ownership_coordinator = MagicMock()
+    mock_app.citation_artifact_ownership_coordinator.reconcile_pending = MagicMock()
     mock_button = MagicMock(spec=Button, classes=["artifact-button"])
     mock_action_widget = MagicMock(spec=ChatMessage)
     mock_action_widget.has_class.return_value = True
@@ -472,7 +475,15 @@ async def test_handle_chat_action_button_pressed_schedules_chatbook_artifact_wor
     mock_action_widget.message_id_internal = "msg-456"
     mock_action_widget.remove = AsyncMock()
 
-    await handle_chat_action_button_pressed(mock_app, mock_button, mock_action_widget)
+    with patch(
+        "tldw_chatbook.Event_Handlers.Chat_Events.chat_events.resolve_console_artifact_owner_request",
+        return_value=owner_request,
+    ):
+        await handle_chat_action_button_pressed(
+            mock_app,
+            mock_button,
+            mock_action_widget,
+        )
 
     mock_app.local_chatbook_service.create_chatbook.assert_not_called()
     mock_app.run_worker.assert_called_once()
@@ -496,6 +507,7 @@ async def test_handle_chat_action_button_pressed_schedules_chatbook_artifact_wor
     assert create_kwargs["metadata"]["message_role"] == "Assistant"
     assert create_kwargs["metadata"]["provider"] == "OpenAI"
     assert create_kwargs["metadata"]["model"] == "gpt-4.1"
+    assert create_kwargs["provenance_owner_request"] is owner_request
     assert len(create_kwargs["metadata"]["content"]) == 20000
     assert create_kwargs["metadata"]["content_truncated"] is True
     mock_action_widget.remove.assert_not_awaited()
@@ -504,6 +516,9 @@ async def test_handle_chat_action_button_pressed_schedules_chatbook_artifact_wor
         "Saved response as Chatbook artifact: Important answer",
         severity="information",
         timeout=4,
+    )
+    mock_app.citation_artifact_ownership_coordinator.reconcile_pending.assert_called_once_with(
+        limit=1
     )
 
 
@@ -633,8 +648,10 @@ async def test_console_chatbook_artifact_metadata_preserves_falsey_simple_values
     assert "model" not in metadata
 
 
-async def test_console_chatbook_artifact_metadata_preserves_citation_payloads(mock_app):
-    """Console-saved Chatbook artifacts keep answer citation and evidence metadata."""
+async def test_console_chatbook_artifact_metadata_does_not_copy_citation_payloads(
+    mock_app,
+):
+    """Artifact registry metadata cannot duplicate governed citation payloads."""
     mock_action_widget = MagicMock(spec=ChatMessage)
     mock_action_widget.message_id_internal = "msg-456"
     mock_action_widget.citation_validation_payload = {
@@ -676,14 +693,11 @@ async def test_console_chatbook_artifact_metadata_preserves_citation_payloads(mo
         "Assistant",
     )
 
-    assert metadata["citation_validation"]["status"] == "validated"
-    assert metadata["citation_validation"]["cited_evidence_ids"] == ["S1"]
-    assert metadata["citation_validation"]["citations"][0]["source_id"] == "note-1"
-    assert metadata["evidence_bundle"]["bundle_id"] == "library-rag:incident"
-    assert (
-        metadata["evidence_bundle"]["references"][0]["snippet"]
-        == "Expired credential caused the incident."
-    )
+    assert "citation_validation" not in metadata
+    assert "evidence_bundle" not in metadata
+    serialized = repr(metadata)
+    assert "Incident Review" not in serialized
+    assert "Expired credential caused the incident." not in serialized
 
 
 @patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.load_character_and_image")

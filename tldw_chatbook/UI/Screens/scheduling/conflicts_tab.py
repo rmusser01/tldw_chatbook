@@ -51,8 +51,16 @@ class ConflictsTab(Vertical):
         table.add_columns("Title", "Conflict Type", "Server updated", "Local updated")
         yield table
         with Horizontal(id="scheduling-conflict-actions"):
-            yield Button("Use server", id="scheduling-use-server")
-            yield Button("Use local", id="scheduling-use-local")
+            yield Button(
+                "Use server",
+                id="scheduling-use-server",
+                tooltip="Resolve the selected conflict with the server version.",
+            )
+            yield Button(
+                "Use local",
+                id="scheduling-use-local",
+                tooltip="Resolve the selected conflict with the local version.",
+            )
 
     def populate(self, conflicts: list[dict[str, Any]]) -> None:
         """Populate the table with unresolved conflicts.

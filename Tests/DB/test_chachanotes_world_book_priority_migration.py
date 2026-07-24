@@ -9,6 +9,22 @@ def test_world_book_entries_priority_migrate_v20_to_v21(tmp_path):
     conn.execute("DROP TRIGGER IF EXISTS world_book_entries_sync_create")
     conn.execute("DROP TRIGGER IF EXISTS world_book_entries_sync_update")
     conn.execute("ALTER TABLE world_book_entries DROP COLUMN priority")
+    # A v20 fixture must not retain citation tables introduced at v26→v27.
+    for table in (
+        "rag_artifact_owner_operations",
+        "rag_artifact_owner_leases",
+        "rag_source_observations",
+        "rag_message_trace_owners",
+        "rag_trace_evidence_refs",
+        "rag_answer_attempt_payloads",
+        "rag_evidence_runs",
+        "rag_citation_traces",
+        "rag_evidence_snapshots",
+        "rag_payload_tombstones",
+        "rag_legacy_migration_journal",
+        "rag_identity_context",
+    ):
+        conn.execute(f"DROP TABLE {table}")
     conn.execute(
         "UPDATE db_schema_version SET version = 20 WHERE schema_name = ?",
         (db._SCHEMA_NAME,),

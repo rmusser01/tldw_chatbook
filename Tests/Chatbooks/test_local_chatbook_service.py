@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from tldw_chatbook.Chatbooks import LocalChatbookService
@@ -28,6 +30,7 @@ async def test_local_chatbook_service_persists_record_crud(tmp_path):
     deleted = await reloaded.delete_chatbook(created["chatbook_id"])
 
     assert created["id"] == "1"
+    assert created["artifact_revision"] == 1
     assert created["name"] == "Research Pack"
     assert created["file_path"] == "/tmp/research.chatbook.zip"
     assert listed[0]["chatbook_id"] == created["chatbook_id"]
@@ -36,6 +39,9 @@ async def test_local_chatbook_service_persists_record_crud(tmp_path):
     assert updated["description"] == "Curated notes and chats"
     assert updated["tags"] == ["research"]
     assert persisted["name"] == "Research Pack v2"
+    assert (
+        json.loads(registry_path.read_text(encoding="utf-8"))["provenance_outbox"] == []
+    )
     assert deleted is True
     with pytest.raises(KeyError):
         await reloaded.get_chatbook(created["chatbook_id"])

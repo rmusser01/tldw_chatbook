@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from tldw_chatbook.Chat.answer_citations import (
     build_answer_citation_validation,
     extract_citation_markers,
@@ -95,6 +97,24 @@ def test_extract_citation_markers_preserves_first_seen_order_without_duplicates(
     )
 
     assert markers == ("S2", "S1")
+
+
+def test_extract_citation_markers_ignores_escaped_inline_and_fenced_code() -> None:
+    markers = extract_citation_markers(
+        "Escaped \\[S1]. Inline `[S2]`.\n```\n[S3]\n```\n~~~text\n[S4]\n~~~\nReal [S5]."
+    )
+
+    assert markers == ("S5",)
+
+
+def test_extract_citation_markers_preserves_legacy_bundle_label_grammar() -> None:
+    markers = extract_citation_markers(
+        r"Escaped \[S1_doc]. Inline `[S0]`."
+        "\n```\n[S01]\n```\n"
+        "Real [S1_doc], [S0], and [S01]. Duplicate [S1_doc]."
+    )
+
+    assert markers == ("S1_doc", "S0", "S01")
 
 
 def test_answer_citation_validation_marks_valid_unknown_and_uncited_refs() -> None:
@@ -230,6 +250,24 @@ def test_answer_citation_validation_quote_uses_question_and_exclamation_boundari
     )
 
     assert result.citations[0].quote == "They did [S1]!"
+
+
+@pytest.mark.parametrize(
+    "answer_text",
+    (
+        r"Example \[S1]. Real source [S1]!",
+        "Example `[S1]`. Real source [S1]!",
+        "Example:\n```\n[S1]\n```\nReal source [S1]!",
+    ),
+    ids=("escaped", "inline-code", "fenced-code"),
+)
+def test_answer_citation_quote_uses_first_eligible_marker(answer_text: str) -> None:
+    result = build_answer_citation_validation(
+        answer_text,
+        _bundle(_reference("S1")),
+    )
+
+    assert result.citations[0].quote == "Real source [S1]!"
 
 
 def test_chat_handoff_model_context_uses_answer_citation_prompt_contract() -> None:
