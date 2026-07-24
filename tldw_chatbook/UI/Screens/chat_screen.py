@@ -76,6 +76,8 @@ from ...Chat.console_command_grammar import (
     PREFILL_COMMAND_NAME,
     PROMPT_COMMAND_HANDLER_ID,
     PROMPT_COMMAND_NAME,
+    REWIND_COMMAND_HANDLER_ID,
+    REWIND_COMMAND_NAME,
     SKILLS_COMMAND_HANDLER_ID,
     SKILLS_COMMAND_NAME,
     SYSTEM_COMMAND_HANDLER_ID,
@@ -122,6 +124,7 @@ from ...Chat.console_chat_models import (
     ConsoleWorkspaceContext,
     ConsoleStagedSource,
     MessageAttachment,
+    derive_console_session_title,
 )
 from ...Chat.console_session_settings import (
     ConsoleSessionSettings,
@@ -316,6 +319,11 @@ from ...Widgets.Console.console_rail_section import (
 from ...Widgets.Console.console_session_switcher_modal import (
     ConsoleSessionSwitcherModal,
     ConsoleSwitcherChoice,
+)
+from ...Widgets.Console.console_rewind_modal import (
+    ConsoleRewindChoice,
+    ConsoleRewindModal,
+    RewindPromptRow,
 )
 from ...Widgets.Console.console_workspace_details import ConsoleWorkspaceDetailsTray
 from ...Widgets.Console.console_workbench_state import build_console_workbench_state
@@ -11271,6 +11279,7 @@ class ChatScreen(BaseAppScreen):
         SKILLS_COMMAND_NAME: SKILLS_COMMAND_HANDLER_ID,
         PREFILL_COMMAND_NAME: PREFILL_COMMAND_HANDLER_ID,
         GENERATE_IMAGE_COMMAND_NAME: GENERATE_IMAGE_COMMAND_HANDLER_ID,
+        REWIND_COMMAND_NAME: REWIND_COMMAND_HANDLER_ID,
     }
 
     def _console_unknown_command_hint(self, name: str) -> str:
@@ -11308,6 +11317,7 @@ class ChatScreen(BaseAppScreen):
             SKILLS_COMMAND_HANDLER_ID: self._console_command_skills,
             PREFILL_COMMAND_HANDLER_ID: self._console_command_prefill,
             GENERATE_IMAGE_COMMAND_HANDLER_ID: self._console_command_generate_image,
+            REWIND_COMMAND_HANDLER_ID: self._console_command_rewind,
         }
         handler = dispatch_map.get(handler_id)
         if handler is None:
@@ -11878,6 +11888,124 @@ class ChatScreen(BaseAppScreen):
             await self._sync_native_console_chat_ui()
         finally:
             inflight.discard(message_id)
+    # Preview length used to build `/rewind` menu rows -- collapses the
+    # prompt to one line and truncates it (with a trailing ellipsis) via the
+    # same helper session titles use.
+    _CONSOLE_REWIND_PREVIEW_MAX_LENGTH = 60
+
+    def _console_rewind_prompt_rows(
+        self, session_id: str
+    ) -> tuple[RewindPromptRow, ...]:
+        """Build newest-first `/rewind` menu rows for a session's USER turns.
+
+        Args:
+            session_id: Native Console session id whose active-path USER
+                messages become rows.
+
+        Returns:
+            One `RewindPromptRow` per USER message in `messages_for_session`
+            (which walks the active path; a message not on the active path
+            never appears here), ordered newest first. `index_label` is the
+            USER turn's 1-based chronological position ("#1", "#2", ...);
+            `preview` is a collapsed, truncated single-line preview of its
+            content.
+        """
+        store = self._ensure_console_chat_store()
+        user_messages = [
+            message
+            for message in store.messages_for_session(session_id)
+            if message.role is ConsoleMessageRole.USER
+        ]
+        rows = [
+            RewindPromptRow(
+                message_id=message.id,
+                index_label=f"#{position}",
+                preview=derive_console_session_title(
+                    message.content,
+                    max_length=self._CONSOLE_REWIND_PREVIEW_MAX_LENGTH,
+                )
+                or "(empty prompt)",
+            )
+            for position, message in enumerate(user_messages, start=1)
+        ]
+        rows.reverse()
+        return tuple(rows)
+
+    async def _console_command_rewind(self, parse: CommandParse) -> None:
+        """Open the `/rewind` menu over the active session's prior USER prompts.
+
+        Collects the active path's USER-turn rows (newest first) and pushes
+        `ConsoleRewindModal`; a session with no USER turns yet (or no active
+        session at all) is a no-op notify rather than an empty modal.
+        """
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        rows = self._console_rewind_prompt_rows(session_id) if session_id else ()
+        if not rows:
+            self.app_instance.notify("Nothing to rewind.", severity="warning")
+            return
+
+        async def _apply_choice(choice: "ConsoleRewindChoice | None") -> None:
+            await self._apply_console_rewind_choice(session_id, choice)
+
+        self.app.push_screen(
+            ConsoleRewindModal(prompts=rows),
+            callback=_apply_choice,
+        )
+
+    async def _apply_console_rewind_choice(
+        self, session_id: str, choice: "ConsoleRewindChoice | None"
+    ) -> None:
+        """Apply a `/rewind` modal result.
+
+        `None` (Escape / "Never mind") just returns focus to the composer.
+        `"restore"` is pure tree navigation: gated on
+        `controller.run_state.is_send_allowed` (mirrors regenerate/resend --
+        never mutates while a run is streaming), the new active leaf is the
+        selected prompt's PARENT found by an id lookup in
+        `active_path_message_ids` (never positional -- display-only TOOL rows
+        can pad `messages_for_session`'s view without being tree nodes), with
+        `None` (empty transcript) when the selected prompt was the root. The
+        selected prompt's own text is written back into the composer via the
+        same paste-semantics seam `/prompt` uses.
+        `"summarize-up-to"` is wired in a later task (SP2 Task 3); it dismisses
+        correctly here but only notifies for now.
+
+        Args:
+            session_id: Native Console session id the modal was opened for.
+            choice: The modal's result, or `None`.
+        """
+        if choice is None:
+            self._focus_console_composer_if_needed(force=True)
+            return
+        if choice.kind == "summarize-up-to":
+            self.app_instance.notify(
+                "Summarize is coming in the next task.", severity="information"
+            )
+            return
+        if choice.kind != "restore":
+            return
+        store = self._ensure_console_chat_store()
+        controller = self._ensure_console_chat_controller()
+        if not controller.run_state.is_send_allowed:
+            self.app_instance.notify(
+                CONSOLE_RUN_ALREADY_RUNNING_COPY, severity="warning"
+            )
+            return
+        try:
+            path = store.active_path_message_ids(session_id)
+            index = path.index(choice.message_id)
+        except (KeyError, ValueError):
+            self.app_instance.notify(
+                "Console message action target no longer exists.",
+                severity="error",
+            )
+            return
+        target = path[index - 1] if index > 0 else None
+        store.set_active_leaf(session_id, target)
+        self._insert_prompt_text_into_composer(choice.prompt_text, replace=True)
+        self._focus_console_composer_if_needed(force=True)
+        await self._sync_native_console_chat_ui()
 
     def _clear_console_composer_draft(self) -> None:
         """Clear the native Console composer's draft text, if mounted.
