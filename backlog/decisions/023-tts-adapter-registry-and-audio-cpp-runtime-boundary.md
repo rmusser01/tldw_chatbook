@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-07-23
-Related Task: N/A — create or select a Backlog task before implementation planning
+Related Task: TASK-402
 Supersedes: N/A
 
 ## Decision
