@@ -312,6 +312,7 @@ from ...Widgets.Console.console_prompt_picker_modal import (
     ConsolePromptPickerModal,
 )
 from ...Widgets.Console.console_skill_picker_modal import ConsoleSkillPickerModal
+from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
 from ...Widgets.Console.console_system_prompt_modal import ConsoleSystemPromptModal
 from ...Widgets.Console.console_setup_modal import (
     CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION,
@@ -1463,6 +1464,22 @@ class ChatScreen(BaseAppScreen):
             return
         self.run_worker(
             self._open_console_prompt_picker_for_insert(""),
+            exclusive=False,
+        )
+
+    def action_open_console_style_insert(self) -> None:
+        """Open the image-style picker from the command palette ("Insert image style…").
+
+        Mirrors `action_open_console_prompt_insert`'s guard + launch shape.
+        The picker only inserts an `@<style-id>` token into the composer
+        draft -- `/generate-image @<id> ...` is what later resolves and
+        applies the style at generation time; this action never generates
+        anything itself.
+        """
+        if self._console_setup_modal_blocking():
+            return
+        self.run_worker(
+            self._open_console_style_picker_for_insert(),
             exclusive=False,
         )
 
@@ -11473,6 +11490,50 @@ class ChatScreen(BaseAppScreen):
             ),
             callback=_apply_picker_choice,
         )
+
+    async def _open_console_style_picker_for_insert(self) -> None:
+        """Open the image-style picker, inserting whatever style is chosen."""
+
+        def _apply_picker_choice(record: Optional[Mapping[str, Any]]) -> None:
+            self._focus_console_composer_if_needed(force=True)
+            if record is None:
+                return
+            style_id = str(record.get("id") or "").strip()
+            if not style_id:
+                return
+            self._insert_console_style_token_into_composer(style_id)
+
+        self.app.push_screen(ConsoleStylePickerModal(), callback=_apply_picker_choice)
+
+    def _insert_console_style_token_into_composer(self, style_id: str) -> bool:
+        """Prepend an ``@<style_id> `` token to the Console composer draft.
+
+        Always inserted at the START of the draft, never at whatever the
+        caret happens to be. `/generate-image`'s parser only recognizes
+        `@style`/`:backend` tokens as LEADING tokens, stopping token
+        consumption at the first unprefixed word (Task 2's
+        `parse_generate_image_args`) -- inserting the token anywhere else
+        would silently fail to parse as a style token and just become part
+        of the free-text prompt instead. Uses the same paste-semantics
+        idiom `_insert_prompt_text_into_composer` uses
+        (`insert_text_as_paste`), but only ever prepends -- unlike that
+        helper (suited to a full prompt BODY), this never clears or
+        replaces the rest of the draft.
+
+        Args:
+            style_id: The resolved style template's `id` (e.g. "style_anime").
+
+        Returns:
+            ``True`` when the composer widget was found and the insert
+            applied, ``False`` when no native composer is mounted.
+        """
+        try:
+            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+        except QueryError:
+            return False
+        composer.move_cursor_home()
+        composer.insert_text_as_paste(f"@{style_id} ")
+        return True
 
     def _insert_prompt_text_into_composer(self, text: str, *, replace: bool) -> bool:
         """Insert resolved prompt text into the Console composer via paste semantics.

@@ -65,6 +65,11 @@ class ConsoleCommandProvider(Provider):
                 "Edit this session's system prompt (/system)",
             ),
             (
+                "Console: Insert image style…",
+                screen.action_open_console_style_insert,
+                "Browse image styles and insert an @style token (/generate-image)",
+            ),
+            (
                 "Console: View chat context",
                 screen.action_view_chat_context,
                 "Show current and next-send context (Ctrl+Shift+P)",
