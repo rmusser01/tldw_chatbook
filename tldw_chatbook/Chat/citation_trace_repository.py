@@ -119,6 +119,7 @@ class _SourceObservationReferencePolicy:
 
     allowed_capabilities: frozenset[SourceCapability]
     revoked: bool
+    unavailable: bool
 
 
 class _FrozenModel(BaseModel):
@@ -1503,6 +1504,10 @@ class CitationTraceRepository:
             validated_observation
         ):
             raise CitationPersistenceUnavailable("source_observation_revoked")
+        if reference_policy.unavailable and not reference_policy.revoked:
+            raise CitationPersistenceUnavailable(
+                "source_observation_payload_unavailable"
+            )
 
         key = (
             identity.profile_id,
@@ -1599,6 +1604,81 @@ class CitationTraceRepository:
             raise CitationPersistenceUnavailable("source_observation_write_failed")
         return CitationObservationWriteOutcome.REPLACED
 
+    def record_source_observation_revocations(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        profile_id: str,
+        origin_namespace: str,
+        origin_payload_id: str,
+        revoked_at: datetime,
+    ) -> None:
+        """Replace previously bound observations with one explicit revoke event."""
+
+        identity = self._require_active_write_cursor(cursor)
+        if profile_id != identity.profile_id:
+            raise CitationPersistenceUnavailable(
+                "source_observation_revocation_identity_mismatch"
+            )
+        namespace = _bounded_observation_identifier(
+            origin_namespace,
+            "origin_namespace",
+        )
+        payload_id = _bounded_observation_identifier(
+            origin_payload_id,
+            "origin_payload_id",
+        )
+        try:
+            if revoked_at.utcoffset() is None:
+                raise ValueError("naive revocation timestamp")
+            timestamp = revoked_at.astimezone(UTC)
+        except (AttributeError, OverflowError, TypeError, ValueError):
+            raise CitationPersistenceUnavailable(
+                "source_observation_revocation_time_invalid"
+            ) from None
+        revocation_identity = _canonical_json(
+            (profile_id, namespace, payload_id, timestamp.isoformat())
+        )
+        request_nonce = (
+            "revocation-"
+            + hashlib.sha256(revocation_identity.encode("utf-8")).hexdigest()
+        )
+        cursor.execute(
+            """
+            UPDATE rag_source_observations
+            SET availability = 'unknown',
+                permission_state = 'revoked',
+                content_state = 'unknown',
+                location_state = 'unknown',
+                capabilities_json = ?,
+                request_nonce = ?,
+                observed_at = ?,
+                error_code = 'source_revoked'
+            WHERE profile_id = ?
+              AND snapshot_payload_id IN (
+                  SELECT payload_id
+                  FROM rag_evidence_snapshots
+                  WHERE profile_id = ?
+                    AND origin_namespace = ?
+                    AND origin_payload_id = ?
+              )
+            """,
+            (
+                _canonical_json(
+                    {
+                        "capabilities": [],
+                        "request_generation": 0,
+                    }
+                ),
+                request_nonce,
+                timestamp.isoformat(),
+                profile_id,
+                profile_id,
+                namespace,
+                payload_id,
+            ),
+        )
+
     def _acquire_source_observation_write_lock(
         self,
         cursor: sqlite3.Cursor,
@@ -1613,6 +1693,20 @@ class CitationTraceRepository:
             raise RuntimeError("citation persistence requires an active transaction")
         if not self.policy.canonical_writes_enabled:
             raise CitationPersistenceUnavailable("canonical_citation_writes_disabled")
+        return self._acquire_source_observation_policy_lock(cursor)
+
+    def _acquire_source_observation_policy_lock(
+        self,
+        cursor: sqlite3.Cursor,
+    ) -> LocalCitationIdentityContext:
+        """Serialize observation policy checks with revocation transactions."""
+
+        if cursor.connection is not self.db.get_connection():
+            raise RuntimeError(
+                "citation persistence requires the repository database transaction"
+            )
+        if not cursor.connection.in_transaction:
+            raise RuntimeError("citation persistence requires an active transaction")
         identity = self.identity_context
         if identity is None:
             raise CitationPersistenceUnavailable(
@@ -1630,7 +1724,7 @@ class CitationTraceRepository:
             raise CitationPersistenceUnavailable(
                 "source_observation_identity_lock_failed"
             )
-        return self._require_active_write_cursor(cursor)
+        return self._require_repository_cursor(cursor)
 
     def get_source_observation(
         self,
@@ -1643,91 +1737,85 @@ class CitationTraceRepository:
         resolver_version: str,
         authorization: CitationReadAuthorization,
     ) -> CitationSourceObservation | None:
-        """Read the latest safe keyed status without fingerprint-key access."""
+        """Read a safe keyed status, or ``None`` when currently unavailable."""
 
-        identity = load_local_citation_identity_context(self.db)
-        if identity is None:
-            raise CitationPersistenceUnavailable(
-                "citation_identity_context_unavailable"
+        with self.db.transaction() as cursor:
+            identity = self._acquire_source_observation_policy_lock(cursor)
+            validated_namespace, _, validated_authorization = (
+                self._validate_source_observation_request(
+                    namespace,
+                    observation=None,
+                    authorization=authorization,
+                    identity=identity,
+                    require_refresh=False,
+                )
             )
-        validated_namespace, _, validated_authorization = (
-            self._validate_source_observation_request(
-                namespace,
-                observation=None,
-                authorization=authorization,
-                identity=identity,
-                require_refresh=False,
+            if not isinstance(resolver_kind, CanonicalSourceKind):
+                raise CitationPersistenceUnavailable(
+                    "source_observation_resolver_unsupported"
+                )
+            version = _bounded_observation_identifier(
+                resolver_version,
+                "resolver_version",
             )
-        )
-        if not isinstance(resolver_kind, CanonicalSourceKind):
-            raise CitationPersistenceUnavailable(
-                "source_observation_resolver_unsupported"
+            prompt_id, ordinal, payload_id = self._validate_observation_ref_key(
+                prompt_set_id,
+                evidence_ordinal,
+                snapshot_payload_id,
             )
-        version = _bounded_observation_identifier(
-            resolver_version,
-            "resolver_version",
-        )
-        prompt_id, ordinal, payload_id = self._validate_observation_ref_key(
-            prompt_set_id,
-            evidence_ordinal,
-            snapshot_payload_id,
-        )
-        connection = self.db.get_connection()
-        reference_policy = self._validate_source_observation_reference(
-            connection,
-            validated_namespace,
-            prompt_set_id=prompt_id,
-            evidence_ordinal=ordinal,
-            snapshot_payload_id=payload_id,
-            resolver_kind=resolver_kind,
-            resolver_version=version,
-            authorization=validated_authorization,
-            capabilities=(),
-        )
-        row = connection.execute(
-            """
-            SELECT
-                resolver_kind, resolver_version, availability,
-                permission_state, content_state, location_state,
-                capabilities_json, request_nonce, observed_at, error_code
-            FROM rag_source_observations
-            WHERE profile_id = ? AND trace_id = ? AND prompt_set_id = ?
-              AND evidence_ordinal = ? AND snapshot_payload_id = ?
-              AND resolver_kind = ? AND resolver_version = ?
-            """,
-            (
-                identity.profile_id,
-                validated_namespace.trace_id,
-                prompt_id,
-                ordinal,
-                payload_id,
-                resolver_kind.value,
-                version,
-            ),
-        ).fetchone()
-        if row is None:
-            return None
-        observation = _observation_from_row(row)
-        if reference_policy.revoked:
+            reference_policy = self._validate_source_observation_reference(
+                cursor,
+                validated_namespace,
+                prompt_set_id=prompt_id,
+                evidence_ordinal=ordinal,
+                snapshot_payload_id=payload_id,
+                resolver_kind=resolver_kind,
+                resolver_version=version,
+                authorization=validated_authorization,
+                capabilities=(),
+            )
+            row = cursor.execute(
+                """
+                SELECT
+                    resolver_kind, resolver_version, availability,
+                    permission_state, content_state, location_state,
+                    capabilities_json, request_nonce, observed_at, error_code
+                FROM rag_source_observations
+                WHERE profile_id = ? AND trace_id = ? AND prompt_set_id = ?
+                  AND evidence_ordinal = ? AND snapshot_payload_id = ?
+                  AND resolver_kind = ? AND resolver_version = ?
+                """,
+                (
+                    identity.profile_id,
+                    validated_namespace.trace_id,
+                    prompt_id,
+                    ordinal,
+                    payload_id,
+                    resolver_kind.value,
+                    version,
+                ),
+            ).fetchone()
+            if row is None or (
+                reference_policy.unavailable and not reference_policy.revoked
+            ):
+                return None
+            observation = _observation_from_row(row)
+            if reference_policy.revoked:
+                return (
+                    observation
+                    if self._is_safe_revoked_observation(observation)
+                    else None
+                )
+            allowed_capabilities = reference_policy.allowed_capabilities
             return observation.model_copy(
                 update={
-                    "availability": CitationSourceAvailability.UNKNOWN,
-                    "permission": CitationSourcePermission.REVOKED,
-                    "content_state": CitationContentState.UNKNOWN,
-                    "location_state": CitationLocationState.UNKNOWN,
-                    "capabilities": (),
+                    "capabilities": tuple(
+                        capability
+                        for capability in observation.capabilities
+                        if capability in allowed_capabilities
+                    )
                 }
             )
-        allowed_capabilities = reference_policy.allowed_capabilities
-        return observation.model_copy(
-            update={
-                "capabilities": tuple(
-                    capability
-                    for capability in observation.capabilities
-                    if capability in allowed_capabilities
-                )
-            }
-        )
 
     @staticmethod
     def _validate_observation_ref_key(
@@ -1938,12 +2026,38 @@ class CitationTraceRepository:
                 "source_observation_trace_policy_denied"
             )
 
-        revoked = (
-            row["redaction_state"] != "available"
-            or row["purged_at"] is not None
-            or bool(row["origin_revoked"])
+        revoked = bool(row["origin_revoked"]) or (
+            row["redaction_state"] == "purged" and row["purged_at"] is not None
         )
-        if not revoked:
+        unavailable = (
+            revoked
+            or row["redaction_state"] != "available"
+            or row["locator_json"] is None
+        )
+        if revoked:
+            binding = connection.execute(
+                """
+                SELECT 1
+                FROM rag_source_observations
+                WHERE profile_id = ? AND trace_id = ? AND prompt_set_id = ?
+                  AND evidence_ordinal = ? AND snapshot_payload_id = ?
+                  AND resolver_kind = ? AND resolver_version = ?
+                """,
+                (
+                    namespace.profile_id,
+                    namespace.trace_id,
+                    prompt_set_id,
+                    evidence_ordinal,
+                    snapshot_payload_id,
+                    resolver_kind.value,
+                    resolver_version,
+                ),
+            ).fetchone()
+            if binding is None:
+                raise CitationPersistenceUnavailable(
+                    "source_observation_resolver_binding_unavailable"
+                )
+        elif not unavailable:
             try:
                 locator = json.loads(row["locator_json"])
                 locator_kind = CanonicalSourceKind(locator["source_kind"])
@@ -1980,7 +2094,7 @@ class CitationTraceRepository:
         allowed_capabilities = frozenset(
             capability
             for capability in SourceCapability
-            if not revoked
+            if not unavailable
             and inventory.default_policy.permits(capability)
             and authorization.permits(capability)
             and trace_policy[capability] in trace.policy_capabilities
@@ -1992,6 +2106,7 @@ class CitationTraceRepository:
         return _SourceObservationReferencePolicy(
             allowed_capabilities=allowed_capabilities,
             revoked=revoked,
+            unavailable=unavailable,
         )
 
     def invalidate_trace_capabilities(

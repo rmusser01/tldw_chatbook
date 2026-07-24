@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta, timezone, tzinfo
 import json
+from threading import Event
 
 import pytest
 from pydantic import ValidationError
@@ -938,7 +939,7 @@ def test_observation_write_does_not_mutate_sealed_or_governed_state(
     assert _sealed_state(db) == before
 
 
-def test_revoked_evidence_accepts_safe_observation_without_hydrating_content(
+def test_purged_evidence_rejects_safe_observation_without_prior_resolver_binding(
     db: CharactersRAGDB,
 ) -> None:
     from Tests.Chat.test_citation_payload_lifecycle import _lifecycle, _tombstone
@@ -951,7 +952,7 @@ def test_revoked_evidence_accepts_safe_observation_without_hydrating_content(
         snapshot_payload_id="snapshot-1",
         tombstone=_tombstone(db),
     )
-    revoked = _observation(
+    safe_revoked = _observation(
         availability="unknown",
         permission="revoked",
         content_state="unknown",
@@ -960,8 +961,16 @@ def test_revoked_evidence_accepts_safe_observation_without_hydrating_content(
         request_nonce="revoked-result",
     )
 
-    assert _upsert(db, repository, revoked).value == "inserted"
-    assert _read(db, repository) == revoked
+    with pytest.raises(
+        CitationPersistenceUnavailable,
+        match="source_observation_resolver_binding_unavailable",
+    ):
+        _upsert(db, repository, safe_revoked)
+    with pytest.raises(
+        CitationPersistenceUnavailable,
+        match="source_observation_resolver_binding_unavailable",
+    ):
+        _read(db, repository)
     snapshot = (
         db.get_connection()
         .execute(
@@ -976,7 +985,7 @@ def test_revoked_evidence_accepts_safe_observation_without_hydrating_content(
     assert tuple(snapshot) == (None, None, None, None, None, None)
 
 
-def test_revocation_downgrades_existing_observation_and_rejects_unsafe_refresh(
+def test_revocation_persists_explicit_observation_for_trusted_resolver_binding(
     db: CharactersRAGDB,
 ) -> None:
     from Tests.Chat.test_citation_payload_lifecycle import _lifecycle, _tombstone
@@ -986,24 +995,41 @@ def test_revocation_downgrades_existing_observation_and_rejects_unsafe_refresh(
     original = _observation()
     _upsert(db, repository, original)
     identity = _identity(db)
+    tombstone = _tombstone(db)
     _lifecycle(db).revoke(
         local_trace_namespace(identity, trace_id="trace-1"),
         snapshot_payload_id="snapshot-1",
-        tombstone=_tombstone(db),
+        tombstone=tombstone,
     )
 
     current = _read(db, repository)
 
     assert current is not None
-    assert current == original.model_copy(
-        update={
-            "availability": locators.CitationSourceAvailability.UNKNOWN,
-            "permission": locators.CitationSourcePermission.REVOKED,
-            "content_state": locators.CitationContentState.UNKNOWN,
-            "location_state": locators.CitationLocationState.UNKNOWN,
-            "capabilities": (),
-        }
+    assert current.availability is locators.CitationSourceAvailability.UNKNOWN
+    assert current.permission is locators.CitationSourcePermission.REVOKED
+    assert current.content_state is locators.CitationContentState.UNKNOWN
+    assert current.location_state is locators.CitationLocationState.UNKNOWN
+    assert current.capabilities == ()
+    assert current.observed_at == tombstone.revoked_at
+    assert current.request_generation == 0
+    assert current.request_nonce.startswith("revocation-")
+    assert current.request_nonce != original.request_nonce
+    stored = (
+        db.get_connection()
+        .execute(
+            """
+        SELECT observed_at, request_nonce, capabilities_json
+        FROM rag_source_observations
+        """
+        )
+        .fetchone()
     )
+    assert stored["observed_at"] == tombstone.revoked_at.isoformat()
+    assert stored["request_nonce"] == current.request_nonce
+    assert json.loads(stored["capabilities_json"]) == {
+        "capabilities": [],
+        "request_generation": 0,
+    }
     with pytest.raises(
         CitationPersistenceUnavailable,
         match="source_observation_revoked",
@@ -1030,6 +1056,110 @@ def test_revocation_downgrades_existing_observation_and_rejects_unsafe_refresh(
     )
     assert _upsert(db, repository, safe).value == "replaced"
     assert _read(db, repository) == safe
+
+
+def test_seal_redaction_without_tombstone_is_unavailable_not_revoked(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository, sealed_write=_observation_write())
+    _upsert(db, repository, _observation())
+    with db.transaction() as cursor:
+        cursor.execute(
+            """
+            UPDATE rag_evidence_snapshots
+            SET redaction_state = 'redacted', locator_json = NULL
+            WHERE payload_id = 'snapshot-1'
+            """
+        )
+
+    assert (
+        db.get_connection()
+        .execute("SELECT count(*) FROM rag_payload_tombstones")
+        .fetchone()[0]
+        == 0
+    )
+    assert _read(db, repository) is None
+    with pytest.raises(
+        CitationPersistenceUnavailable,
+        match="source_observation_payload_unavailable",
+    ):
+        _upsert(
+            db,
+            repository,
+            _observation(
+                availability="unknown",
+                permission="unknown",
+                content_state="unknown",
+                location_state="unknown",
+                capabilities=(),
+                request_nonce="redacted-without-tombstone",
+            ),
+        )
+
+
+def test_observation_read_serializes_with_concurrent_revocation(
+    db: CharactersRAGDB,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from Tests.Chat.test_citation_payload_lifecycle import _lifecycle, _tombstone
+
+    repository = _repository(db)
+    _persist(db, repository, sealed_write=_observation_write())
+    original = _observation()
+    _upsert(db, repository, original)
+    identity = _identity(db)
+    namespace = local_trace_namespace(identity, trace_id="trace-1")
+    reference_checked = Event()
+    allow_read_to_finish = Event()
+    revoke_started = Event()
+    revoke_committed = Event()
+    validate_reference = repository._validate_source_observation_reference
+
+    def pause_after_reference_check(*args, **kwargs):
+        policy = validate_reference(*args, **kwargs)
+        reference_checked.set()
+        assert allow_read_to_finish.wait(timeout=5)
+        return policy
+
+    monkeypatch.setattr(
+        CitationTraceRepository,
+        "_validate_source_observation_reference",
+        staticmethod(pause_after_reference_check),
+    )
+
+    def read_observation():
+        try:
+            return _read(db, repository)
+        finally:
+            db.close_connection()
+
+    def revoke_observation() -> None:
+        try:
+            revoke_started.set()
+            _lifecycle(db).revoke(
+                namespace,
+                snapshot_payload_id="snapshot-1",
+                tombstone=_tombstone(db),
+            )
+            revoke_committed.set()
+        finally:
+            db.close_connection()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        read_future = executor.submit(read_observation)
+        assert reference_checked.wait(timeout=5)
+        revoke_future = executor.submit(revoke_observation)
+        assert revoke_started.wait(timeout=5)
+        assert not revoke_committed.wait(timeout=0.2)
+        allow_read_to_finish.set()
+        assert read_future.result(timeout=5) == original
+        revoke_future.result(timeout=5)
+
+    current = _read(db, repository)
+    assert current is not None
+    assert current.permission is locators.CitationSourcePermission.REVOKED
+    assert current.capabilities == ()
 
 
 def test_safe_observation_read_is_keyless_but_still_authorized(
@@ -1059,6 +1189,17 @@ def test_safe_observation_read_is_keyless_but_still_authorized(
         match="source_observation_authorization_denied",
     ):
         _read(db, reader, authorization=wrong_authorization)
+
+
+def test_safe_observation_read_remains_available_when_writes_are_disabled(
+    db: CharactersRAGDB,
+) -> None:
+    writer = _repository(db)
+    _persist(db, writer, sealed_write=_observation_write())
+    observation = _observation()
+    _upsert(db, writer, observation)
+
+    assert _read(db, _repository(db, enabled=False)) == observation
 
 
 def test_observation_upsert_uses_singleton_identity_write_lock(

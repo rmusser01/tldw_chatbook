@@ -259,7 +259,7 @@ class CitationPayloadLifecycle:
         snapshot_payload_id: str,
         tombstone: PayloadTombstone,
     ) -> tuple[PayloadTombstone, tuple[str, ...]]:
-        identity = self.repository._require_active_write_cursor(cursor)
+        identity = self.repository._acquire_source_observation_write_lock(cursor)
         if identity.profile_id != tombstone.profile_id:
             raise CitationPersistenceUnavailable("revoke_profile_identity_mismatch")
         snapshot = cursor.execute(
@@ -428,6 +428,13 @@ class CitationPayloadLifecycle:
             policy_version=stored_row["policy_version"],
             revoked_at=_parse_timestamp(stored_row["revoked_at"]),
             retain_until=_parse_timestamp(stored_row["retain_until"]),
+        )
+        self.repository.record_source_observation_revocations(
+            cursor,
+            profile_id=stored_tombstone.profile_id,
+            origin_namespace=stored_tombstone.origin_namespace,
+            origin_payload_id=stored_tombstone.origin_payload_id,
+            revoked_at=stored_tombstone.revoked_at,
         )
         purge_time = stored_tombstone.revoked_at.isoformat()
         cursor.execute(
