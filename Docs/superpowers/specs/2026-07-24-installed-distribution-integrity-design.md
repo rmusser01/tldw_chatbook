@@ -1,11 +1,13 @@
 # Installed Distribution Integrity Design
 
 Date: 2026-07-24
-Status: Re-reviewed; awaiting written-spec approval
+Status: Approved for implementation
 ADR:
 [ADR-025](../../../backlog/decisions/025-immutable-installed-distribution-assets.md)
 Backlog:
 [TASK-545](../../../backlog/tasks/task-545%20-%20Verify-installed-distributions-and-immutable-packaged-assets.md)
+Plan:
+[implementation plan](../plans/2026-07-24-installed-distribution-integrity.md)
 
 ## Summary
 
@@ -74,6 +76,14 @@ vendored notices while excluding `stats_screen.css` from the wheel. Reusing the
 same setuptools `build/` directory initially produced a false result because a
 stale copied CSS file survived there. The test must therefore own a fresh source
 and build tree rather than cleaning or reusing repository build output.
+
+That setting controls data, not Python module discovery. Setuptools still
+treated the data-only `Chunking/templates/` directory as an implicit namespace
+package and shipped `example_usage.py`. A clean probe confirmed that excluding
+only `tldw_chatbook.Chunking.templates*` from package discovery removes the
+example module while the parent package-data rule continues to ship all
+thirteen JSON templates. Legitimate namespace packages elsewhere remain
+discoverable.
 
 The reproduced sdist also contained root test modules when their directory was
 spelled or normalized as lowercase `tests/`. The manifest currently excludes
@@ -214,11 +224,20 @@ Setuptools package-data is made genuinely explicit:
 ```toml
 [tool.setuptools]
 include-package-data = false
+
+[tool.setuptools.packages.find]
+exclude = [
+    "Tests*",
+    ".venv*",
+    "tldw_chatbook.Chunking.templates*",
+]
 ```
 
 Without that setting, root-manifest entries inside `tldw_chatbook/` are
 implicitly eligible for the wheel and the package-data table is not an
-allowlist.
+allowlist. The narrow namespace exclusion prevents the sibling
+`templates/example_usage.py` file from bypassing that data allowlist without
+disabling namespace discovery for legitimate application modules.
 
 | Package owner | Required data |
 | --- | --- |
@@ -232,10 +251,10 @@ allowlist.
 The data rules do not use a catch-all recursive glob.
 
 The wheel must not contain `stats_screen.css`, example-only TOML, development
-Markdown outside the deliberately shipped Config Files guides, root test
-trees, Python bytecode/cache files, or OS metadata. The CSS source remains in
-the sdist for manual source builds; installed wheels consume only the committed
-runtime bundle.
+Markdown outside the deliberately shipped Config Files guides,
+`Chunking/templates/example_usage.py`, root test trees, Python bytecode/cache
+files, or OS metadata. The CSS source remains in the sdist for manual source
+builds; installed wheels consume only the committed runtime bundle.
 
 The built-in chunking contract is the complete current source set:
 
@@ -458,7 +477,7 @@ The result still uses setuptools, `build`, pip, pytest, and the standard
 library. It adds no packaging framework, state owner, or application
 decomposition.
 
-A second adversarial review then verified five additional hazards:
+A second adversarial review then verified six additional hazards:
 
 - root manifest matches implicitly leaked sdist-only CSS into wheels until
   `include-package-data` was explicitly disabled;
@@ -469,7 +488,11 @@ A second adversarial review then verified five additional hazards:
 - the legacy license-table syntax carries a dated 2027 failure boundary, so the
   same packaging change now emits and checks current SPDX metadata; and
 - CSS bootstrap writes exist in three startup sites, so all three now share the
-  same source-tree predicate instead of guarding only the tested console path.
+  same source-tree predicate instead of guarding only the tested console path;
+  and
+- implicit namespace discovery independently shipped a Python example from the
+  template data directory, so package discovery now excludes only that
+  namespace while explicit JSON data remains included.
 
 The source-only CSS freshness behavior remains unchanged because it is an
 already-approved development convenience and the installed-target hash gate
