@@ -131,20 +131,20 @@ Focus on detecting deception and incomplete implementations, not just syntax err
         """Request analysis from an LLM."""
         # Import here to avoid circular imports
         try:
-            from ..LLM_Calls.LLM_API_Calls import chat_with_provider
+            from ..Chat.Chat_Functions import chat_api_call, extract_response_content
 
             # Use a fast model for analysis
-            response = await asyncio.to_thread(
-                chat_with_provider,
-                prompt=prompt,
-                model="claude-3-haiku",  # Fast model for quick analysis
-                provider="anthropic",
+            raw = await asyncio.to_thread(
+                chat_api_call,
+                api_endpoint="anthropic",
+                messages_payload=[{"role": "user", "content": prompt}],
+                model="claude-3-haiku-20240307",  # fast model for quick analysis
+                temp=0.1,  # low temperature for consistent analysis
                 max_tokens=500,
-                temperature=0.1,  # Low temperature for consistent analysis
-                timeout=30,
+                streaming=False,
             )
 
-            return response.get("content", "Analysis failed")
+            return extract_response_content(raw) or "Analysis failed"
 
         except Exception as e:
             logger.error(f"Failed to get LLM analysis: {e}")
