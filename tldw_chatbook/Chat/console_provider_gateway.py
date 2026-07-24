@@ -548,9 +548,13 @@ class ConsoleProviderGateway:
         main loop) -- either way this must never raise into the caller
         that triggered the swap.
         """
+        close_coroutine = None
         try:
-            future = asyncio.run_coroutine_threadsafe(client.aclose(), loop)
+            close_coroutine = client.aclose()
+            future = asyncio.run_coroutine_threadsafe(close_coroutine, loop)
         except RuntimeError:
+            if close_coroutine is not None:
+                close_coroutine.close()
             return
         future.add_done_callback(lambda f: f.exception())
 

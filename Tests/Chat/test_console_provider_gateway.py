@@ -1642,6 +1642,16 @@ def test_active_http_client_swap_is_mutually_exclusive_across_threads():
         ConsoleProviderGateway._new_owned_http_client = staticmethod(
             original_new_client
         )
+
+        async def drain_scheduled_cleanup() -> None:
+            await asyncio.sleep(0)
+            current = asyncio.current_task()
+            pending = [task for task in asyncio.all_tasks() if task is not current]
+            if pending:
+                await asyncio.gather(*pending)
+
+        loop_a.run_until_complete(drain_scheduled_cleanup())
+        loop_b.run_until_complete(drain_scheduled_cleanup())
         loop_a.close()
         loop_b.close()
 
@@ -1675,6 +1685,29 @@ def test_first_swap_still_schedules_close_of_the_original_owned_client(monkeypat
         "the original owned client must be scheduled for close on the first swap too"
     )
     assert scheduled[0][0] == id(original_client)
+
+
+def test_rejected_stale_client_close_disposes_unscheduled_coroutine(monkeypatch):
+    class CloseCoroutine:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    close_coroutine = CloseCoroutine()
+
+    class Client:
+        def aclose(self):
+            return close_coroutine
+
+    def reject_submission(coroutine, loop):
+        raise RuntimeError("target loop is closed")
+
+    monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", reject_submission)
+
+    ConsoleProviderGateway._schedule_stale_client_close(Client(), object())
+
+    assert close_coroutine.closed is True
 
 
 def test_active_http_client_concurrent_swap_never_leaves_client_bound_to_wrong_loop(
