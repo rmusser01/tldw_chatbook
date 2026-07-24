@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import sys
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Mapping
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from numbers import Real
 from typing import Literal
@@ -277,6 +276,9 @@ class AudioCppAdapter:
         self._close_task: asyncio.Task[None] | None = None
         self._closed = False
         self._httpx_privacy_filter = _HttpxPrivacyFilter()
+        self._http_log_suppression_users = 0
+        self._http_log_client_closed = False
+        self._http_log_filters_installed = True
         for logger_name in _HTTP_LOGGER_NAMES:
             logging.getLogger(logger_name).addFilter(self._httpx_privacy_filter)
 
@@ -382,31 +384,47 @@ class AudioCppAdapter:
                 progress_sink,
                 TTSProgress(status="Generating", fraction=None),
             )
-            payload = {
-                "model": request.model_id,
-                "input": request.text,
-                "response_format": "wav",
-            }
-            if request.voice is not None:
-                payload["voice"] = request.voice
+            if self._closed:
+                failure = _CLOSED_UNAVAILABLE
+            else:
+                payload = {
+                    "model": request.model_id,
+                    "input": request.text,
+                    "response_format": "wav",
+                }
+                if request.voice is not None:
+                    payload["voice"] = request.voice
 
-            suppression_token = _HTTP_LOG_SUPPRESSION_ACTIVE.set(True)
-            try:
+                suppression_token = self._begin_http_log_suppression()
                 try:
-                    async with asyncio.timeout(self._config.synthesis_timeout_seconds):
-                        outcome = await self._post_speech(payload)
-                except asyncio.CancelledError:
-                    raise
-                except TimeoutError:
-                    failure = _GENERATION_TIMEOUT
-                except (httpx.StreamError, httpx.TransportError):
-                    self._mark_catalog_stale(_TRANSIENT_FAILURE_HEALTH)
-                    failure = _CONNECTION_UNAVAILABLE
-            finally:
-                _HTTP_LOG_SUPPRESSION_ACTIVE.reset(suppression_token)
+                    try:
+                        async with asyncio.timeout(
+                            self._config.synthesis_timeout_seconds
+                        ):
+                            outcome = await self._post_speech(payload)
+                    except asyncio.CancelledError:
+                        raise
+                    except TimeoutError:
+                        failure = (
+                            _CLOSED_UNAVAILABLE if self._closed else _GENERATION_TIMEOUT
+                        )
+                    except (httpx.StreamError, httpx.TransportError):
+                        if self._closed:
+                            failure = _CLOSED_UNAVAILABLE
+                        else:
+                            self._mark_catalog_stale(_TRANSIENT_FAILURE_HEALTH)
+                            failure = _CONNECTION_UNAVAILABLE
+                    except RuntimeError:
+                        if not self._closed:
+                            raise
+                        failure = _CLOSED_UNAVAILABLE
+                finally:
+                    self._end_http_log_suppression(suppression_token)
 
         if failure is None and outcome is not None:
-            if outcome.kind == "transient_failure":
+            if self._closed:
+                failure = _CLOSED_UNAVAILABLE
+            elif outcome.kind == "transient_failure":
                 self._mark_catalog_stale(_TRANSIENT_FAILURE_HEALTH)
                 failure = _CONNECTION_UNAVAILABLE
             elif outcome.kind == "contract_failure":
@@ -485,12 +503,7 @@ class AudioCppAdapter:
             return False
         if request.response_format != "wav":
             return False
-        if (
-            isinstance(speed, bool)
-            or not isinstance(speed, Real)
-            or not math.isfinite(speed)
-            or speed != 1.0
-        ):
+        if isinstance(speed, bool) or not isinstance(speed, Real) or speed != 1:
             return False
         if request.options:
             return False
@@ -629,10 +642,8 @@ class AudioCppAdapter:
             try:
                 await self._client.aclose()
             finally:
-                for logger_name in _HTTP_LOGGER_NAMES:
-                    logging.getLogger(logger_name).removeFilter(
-                        self._httpx_privacy_filter
-                    )
+                self._http_log_client_closed = True
+                self._remove_http_log_filters_if_idle()
 
     async def _refresh_catalog(self, *, force: bool) -> None:
         started_generation = self._refresh_generation
@@ -740,7 +751,7 @@ class AudioCppAdapter:
         params: Mapping[str, str] | None = None,
     ) -> bytes:
         for attempt in range(_MAX_GET_ATTEMPTS):
-            suppression_token = _HTTP_LOG_SUPPRESSION_ACTIVE.set(True)
+            suppression_token = self._begin_http_log_suppression()
             try:
                 self._client.cookies.clear()
                 async with self._client.stream(
@@ -764,11 +775,15 @@ class AudioCppAdapter:
                 raise
             except httpx.StreamError:
                 raise _HttpContractFailure from None
+            except RuntimeError:
+                if not self._closed:
+                    raise
+                raise _TransientHttpFailure from None
             except (TimeoutError, httpx.TransportError):
-                if attempt + 1 >= _MAX_GET_ATTEMPTS:
+                if self._closed or attempt + 1 >= _MAX_GET_ATTEMPTS:
                     raise _TransientHttpFailure from None
             finally:
-                _HTTP_LOG_SUPPRESSION_ACTIVE.reset(suppression_token)
+                self._end_http_log_suppression(suppression_token)
         raise _TransientHttpFailure
 
     async def _read_bounded_metadata(
@@ -809,21 +824,43 @@ class AudioCppAdapter:
             if declared_length > sys.maxsize or declared_length > max_bytes:
                 raise _HttpContractFailure
 
-        chunks: list[bytes] = []
-        body_size = 0
+        body = bytearray()
         async for chunk in response.aiter_raw():
-            remaining = max_bytes - body_size
+            if not chunk:
+                continue
+            remaining = max_bytes - len(body)
             if len(chunk) > remaining:
                 raise _HttpContractFailure
-            chunks.append(chunk)
-            body_size += len(chunk)
-        if declared_length is not None and body_size != declared_length:
+            body.extend(chunk)
+        if declared_length is not None and len(body) != declared_length:
             raise _HttpContractFailure
-        if not chunks:
-            return b""
-        if len(chunks) == 1:
-            return chunks[0]
-        return b"".join(chunks)
+        return bytes(body)
+
+    def _begin_http_log_suppression(self) -> Token[bool]:
+        if not self._http_log_filters_installed:
+            for logger_name in _HTTP_LOGGER_NAMES:
+                logging.getLogger(logger_name).addFilter(self._httpx_privacy_filter)
+            self._http_log_filters_installed = True
+        self._http_log_suppression_users += 1
+        return _HTTP_LOG_SUPPRESSION_ACTIVE.set(True)
+
+    def _end_http_log_suppression(self, token: Token[bool]) -> None:
+        try:
+            _HTTP_LOG_SUPPRESSION_ACTIVE.reset(token)
+        finally:
+            self._http_log_suppression_users -= 1
+            self._remove_http_log_filters_if_idle()
+
+    def _remove_http_log_filters_if_idle(self) -> None:
+        if (
+            not self._http_log_client_closed
+            or self._http_log_suppression_users
+            or not self._http_log_filters_installed
+        ):
+            return
+        for logger_name in _HTTP_LOGGER_NAMES:
+            logging.getLogger(logger_name).removeFilter(self._httpx_privacy_filter)
+        self._http_log_filters_installed = False
 
     def _cached_voice_result(
         self,
