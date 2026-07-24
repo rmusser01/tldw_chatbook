@@ -2488,18 +2488,18 @@ class TestConsoleActions:
     async def test_readiness_surfaces_reflect_unready_character_provider(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
-        """Task-440: honest readiness copy when no provider would answer.
+        """Task-440: honest readiness copy when the handoff provider is unready.
 
-        The shipped [character_defaults] (Anthropic) has no API key and the
-        guided setup never wrote a [chat_defaults] provider either (task-425
-        scenario) - a character reply is genuinely impossible, so neither
-        readiness surface may claim things are ready. Start Chat/Attach stay
-        clickable regardless (task-427: Start Chat still opens a real
-        conversation) - only the copy changes.
+        The configured chat_defaults provider (which a fresh Start-Chat
+        Console session resolves - the native Console never reads
+        character_defaults) has no API key - the handoff send would fail, so
+        neither readiness surface may claim things are ready. Start
+        Chat/Attach stay clickable regardless (task-427: Start Chat still
+        opens a real conversation) - only the copy changes.
         """
         mock_app_instance.app_config = {
             "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
-            "chat_defaults": {"model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
         }
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
@@ -2540,7 +2540,7 @@ class TestConsoleActions:
         """Provider ready -> existing "Console ready"/"Ready" copy is unchanged."""
         mock_app_instance.app_config = {
             "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
-            "chat_defaults": {"model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
             "api_settings": {"anthropic": {"api_key": "sk-configured-test-key"}},
         }
         app = PersonasTestApp(mock_app_instance)
@@ -2564,6 +2564,74 @@ class TestConsoleActions:
             )
             assert (
                 screen.query_one("#personas-start-chat", Button).disabled is False
+            )
+
+    async def test_readiness_blocked_when_handoff_provider_unready_despite_ready_character_provider(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Task-440 review: readiness mirrors the Start-Chat HANDOFF resolution.
+
+        Attach/Start Chat create a fresh native-Console session resolved from
+        chat_defaults (chat_screen._start_character_console_session ->
+        _default_console_session_settings); the native Console never reads
+        character_defaults. Shipped-defaults failure shape: only an Anthropic
+        key configured (character_defaults=anthropic READY) while
+        chat_defaults points at OpenAI (UNREADY) - the real handoff send
+        would fail, so neither surface may claim ready. A
+        character_defaults-first readiness short-circuits ready here, which
+        is exactly the dishonesty under review.
+        """
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "openai", "model": "gpt-4o"},
+            "api_settings": {"anthropic": {"api_key": "sk-configured-test-key"}},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+
+            readiness_text = str(
+                screen.query_one("#personas-readiness-console", Static).renderable
+            )
+            assert readiness_text != "Console ready"
+            assert readiness_text.startswith("Console blocked:")
+            assert "openai" in readiness_text.lower()
+            assert (
+                str(
+                    screen.query_one(
+                        "#personas-header #workbench-header-status", Static
+                    ).renderable
+                )
+                != "Ready"
+            )
+            # Copy-only gating: the buttons stay enabled (task-427).
+            assert (
+                screen.query_one("#personas-start-chat", Button).disabled is False
+            )
+
+    async def test_readiness_ready_when_handoff_provider_ready_despite_unready_character_provider(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Handoff provider ready => ready surfaces, whatever character_defaults says."""
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "openai", "model": "gpt-4o"},
+            "api_settings": {"openai": {"api_key": "sk-configured-test-key"}},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+
+            assert "Console ready" in str(
+                screen.query_one("#personas-readiness-console", Static).renderable
+            )
+            assert (
+                str(
+                    screen.query_one(
+                        "#personas-header #workbench-header-status", Static
+                    ).renderable
+                )
+                == "Ready"
             )
 
     async def test_selection_pushes_console_gate_before_async_followup(

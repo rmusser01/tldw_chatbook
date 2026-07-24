@@ -3495,22 +3495,24 @@ class PersonasScreen(BaseAppScreen):
         return "unavailable"
 
     def _provider_send_block_reason(self) -> str | None:
-        """Actionable reason the staged character-chat send would fail, if any.
+        """Actionable reason the staged Console handoff send would fail, if any.
 
-        Reuses ``PersonasPreviewController.resolved_send_readiness`` - the
-        same config/env-only seam the preview's own provider readout is
-        built from, so this never duplicates provider-resolution logic and
-        stays cheap enough to run on every selection sync (task-440).
+        Reuses ``PersonasPreviewController.console_handoff_readiness`` - a
+        config/env-only mirror of the provider a fresh Start-Chat/Attach
+        Console session actually resolves (chat_defaults; the native Console
+        never reads character_defaults) - so this never duplicates
+        provider-resolution logic and stays cheap enough to run on every
+        selection sync (task-440).
 
         Returns:
-            ``None`` when a provider would answer (or no character/persona
-            is staged, so the question does not apply), else a short
-            actionable reason suitable for the inspector/header readiness
-            copy.
+            ``None`` when the handoff provider would answer (or no
+            character/persona is staged, so the question does not apply),
+            else a short actionable reason suitable for the inspector/header
+            readiness copy.
         """
         if self.state.selected_entity_kind not in ("character", "persona_profile"):
             return None
-        ready, reason = self.preview.resolved_send_readiness()
+        ready, reason = self.preview.console_handoff_readiness()
         return None if ready else reason
 
     def _sync_inspector_console_actions(self) -> None:

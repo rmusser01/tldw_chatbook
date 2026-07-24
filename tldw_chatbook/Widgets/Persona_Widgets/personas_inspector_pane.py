@@ -182,8 +182,8 @@ class PersonasInspectorPane(Vertical):
             enabled: Whether Console actions are currently available.
             reason: Optional user-facing reason shown when actions are blocked.
             provider_block_reason: Optional readiness-only blocker naming why
-                the character-chat provider a Start Chat/Attach send would
-                use is not ready (task-440). When set (and ``enabled`` is
+                the provider a Start Chat/Attach Console handoff session
+                would resolve is not ready (task-440). When set (and ``enabled`` is
                 True) it overrides the "Console ready" readiness copy with
                 the same "Console blocked: ..." pattern WITHOUT disabling the
                 buttons: Start Chat still opens a real conversation
