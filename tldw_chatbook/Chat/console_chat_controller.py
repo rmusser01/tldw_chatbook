@@ -78,6 +78,15 @@ _MCP_APPROVAL_POLL_SECONDS = 1.0
 MAX_CONSOLE_DRAFT_LENGTH = 100_000
 CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
 
+# Private payload-row key threading a transcript message's native id from the
+# payload builder to the dispatch choke point, where `/rewind`
+# "summarize up to here" compaction anchors the boundary by IDENTITY rather
+# than by content (see `_apply_context_summary_compaction`). It is opt-in
+# (send paths only, `annotate_ids=True`) and ALWAYS stripped from every row
+# before the payload leaves the controller for a provider/agent, so no
+# provider ever sees it.
+NATIVE_MESSAGE_ID_KEY = "_native_message_id"
+
 
 def _normalize_world_info_history(
     messages: "list[dict[str, Any]]",
@@ -509,7 +518,9 @@ class ConsoleChatController:
         if pendings:
             self.store.clear_pending_attachments(session.id)
         try:
-            provider_messages = self._provider_messages_for_session(session.id)
+            provider_messages = self._provider_messages_for_session(
+                session.id, annotate_ids=True
+            )
             (
                 provider_messages,
                 refuse,
@@ -1194,6 +1205,7 @@ class ConsoleChatController:
         provider_messages = self._provider_messages_for_session(
             session_id,
             before_message_id=message_id,
+            annotate_ids=True,
         )
         self._ensure_user_continuation_instruction(provider_messages)
         (
@@ -1258,7 +1270,7 @@ class ConsoleChatController:
             return self._block(session_id, visible_copy)
 
         provider_messages = self._provider_messages_through_message(
-            session_id, message_id
+            session_id, message_id, annotate_ids=True
         )
         self._ensure_user_continuation_instruction(provider_messages)
         if not self._has_user_turn(provider_messages):
@@ -1363,6 +1375,7 @@ class ConsoleChatController:
         provider_messages = self._provider_messages_for_session(
             session_id,
             before_message_id=message_id,
+            annotate_ids=True,
         )
         self._ensure_user_continuation_instruction(provider_messages)
         if not self._has_user_turn(provider_messages):
@@ -1718,6 +1731,7 @@ class ConsoleChatController:
         provider_messages = self._provider_messages_for_session(
             session_id,
             before_message_id=message_id,
+            annotate_ids=True,
         )
         provider_messages.append(
             {"role": ConsoleMessageRole.USER.value, "content": clean_content}
@@ -2877,6 +2891,18 @@ class ConsoleChatController:
             ),
         )
         provider_messages = bound.messages
+        # Strip the private id-threading key from every row before dispatch:
+        # it existed solely so the compaction above could anchor the boundary
+        # by identity (see NATIVE_MESSAGE_ID_KEY). This is the single latest
+        # point covering BOTH the direct stream path (`stream_chat` below) and
+        # the agent path (`agent_messages = list(provider_messages)` in
+        # `_run_agent_reply`), so no provider/gateway/agent ever sees the key.
+        # Rebuild fresh row dicts rather than mutating in place, since transforms
+        # can leave earlier rows aliased to freshly-built builder dicts.
+        provider_messages = [
+            {k: v for k, v in row.items() if k != NATIVE_MESSAGE_ID_KEY}
+            for row in provider_messages
+        ]
         if bound.dropped_count:
             # Reuse the guarded owner_id resolved above; the note helper
             # swallows a store-close race that happens during the append.
@@ -3517,25 +3543,6 @@ class ConsoleChatController:
             return []
         return [{"role": ConsoleMessageRole.SYSTEM.value, "content": raw_system_prompt}]
 
-    @staticmethod
-    def _payload_row_text(row: dict[str, Any]) -> str:
-        """Return the text content of a provider payload row.
-
-        Flattens a multimodal ``content`` list (``{type:text}`` /
-        ``{type:image_url}`` parts) to its concatenated text so a boundary USER
-        turn that carried an image still matches its stored text.
-        """
-        content = row.get("content")
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            return "".join(
-                part.get("text", "")
-                for part in content
-                if isinstance(part, dict) and part.get("type") == "text"
-            )
-        return ""
-
     def _apply_context_summary_compaction(
         self, session_id: str, provider_messages: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
@@ -3548,27 +3555,33 @@ class ConsoleChatController:
         When ABSENT -- e.g. regenerating a message that sits BEFORE the boundary,
         whose ancestors-only payload ends pre-boundary -- the payload is returned
         untouched: a summary covering LATER turns must never be substituted into
-        an earlier point's context. A dangling/deleted boundary also fails open
-        to full history.
+        an earlier point's context.
 
-        Payload-row -> boundary matching mechanism: match by ``(role == USER,
-        text)`` on the FIRST occurrence, rather than threading native ids
-        alongside the payload. Rationale: the payload dict shape reaches the
-        provider verbatim, and the transform pipeline between build and this
-        choke point (continuation-instruction insert, skill-fork leading-row
-        drop, chat-dictionary/world-info rewrites of the FINAL user turn) would
-        each have to carry -- and never desync -- a parallel id list. Content
-        matching stays localised to this one seam with ZERO payload-shape change,
-        and BOTH of its failure modes fail SAFE toward full history: a boundary
-        whose content a transform rewrote (only ever the final user turn) simply
-        misses and sends full history; a byte-identical earlier duplicate matches
-        first, dropping FEWER rows (redundant, never a leak). The boundary is
-        always a strictly-earlier user turn in the common case, so neither
-        pathology arises there.
+        Payload-row -> boundary matching mechanism: match by native message
+        IDENTITY, not by content. Send-path payload builds thread each row's
+        source transcript id onto it (``annotate_ids=True`` ->
+        ``NATIVE_MESSAGE_ID_KEY``); the boundary is the row whose id equals the
+        stored ``boundary_native_id``. The transform pipeline between build and
+        this choke point only ever rewrites/drops the FINAL user turn (skill
+        fork drops leading rows; chat-dictionary/world-info rewrite the last
+        user row via ``{**row}`` spreads that PRESERVE the key) and appends a
+        synthesized continuation turn (no key) -- so every earlier row, and thus
+        any strictly-earlier boundary, keeps its id intact.
+
+        This is the genuine fail-safe: if the boundary id is not present on any
+        row -- because the boundary sits after the payload's end
+        (pre-boundary regenerate/retry/continue/edit-resend), or a branch
+        switch/deletion made it dangling, or the payload was built WITHOUT id
+        annotation -- NOTHING matches and the FULL history is sent unchanged.
+        A byte-identical earlier duplicate of the boundary's text (e.g. a repeat
+        "continue"/"yes") can no longer false-fire the way first-occurrence
+        content matching did, so the summary of LATER turns is never injected
+        into an EARLIER point's context.
 
         Args:
             session_id: Session owning the payload being dispatched.
-            provider_messages: The fully-built, post-transform payload.
+            provider_messages: The fully-built, post-transform payload
+                (id-annotated on the send path).
 
         Returns:
             The compacted payload, or ``provider_messages`` unchanged.
@@ -3576,19 +3589,10 @@ class ConsoleChatController:
         summary, boundary_native_id = self.store.session_context_summary(session_id)
         if not summary or boundary_native_id is None:
             return provider_messages
-        try:
-            boundary = self.store.get_message(boundary_native_id)
-        except KeyError:
-            return provider_messages
-        if boundary.role is not ConsoleMessageRole.USER:
-            return provider_messages
-        boundary_text = boundary.content
 
         boundary_index: int | None = None
         for index, row in enumerate(provider_messages):
-            if row.get("role") != ConsoleMessageRole.USER.value:
-                continue
-            if self._payload_row_text(row) == boundary_text:
+            if row.get(NATIVE_MESSAGE_ID_KEY) == boundary_native_id:
                 boundary_index = index
                 break
         if boundary_index is None:
@@ -3626,6 +3630,7 @@ class ConsoleChatController:
         session_id: str,
         *,
         before_message_id: str | None = None,
+        annotate_ids: bool = False,
     ) -> list[dict[str, Any]]:
         collected: list[ConsoleChatMessage] = []
         for message in self.store.messages_for_session(session_id):
@@ -3633,13 +3638,15 @@ class ConsoleChatController:
                 break
             collected.append(message)
         return self._leading_system_message() + self._provider_message_payloads(
-            collected, skip_failed=True
+            collected, skip_failed=True, annotate_ids=annotate_ids
         )
 
     def _provider_messages_through_message(
         self,
         session_id: str,
         message_id: str,
+        *,
+        annotate_ids: bool = False,
     ) -> list[dict[str, Any]]:
         collected: list[ConsoleChatMessage] = []
         for message in self.store.messages_for_session(session_id):
@@ -3647,7 +3654,8 @@ class ConsoleChatController:
             if message.id == message_id:
                 break
         return self._leading_system_message() + self._provider_message_payloads(
-            collected, skip_failed=False, use_variant_content=True
+            collected, skip_failed=False, use_variant_content=True,
+            annotate_ids=annotate_ids,
         )
 
     def _provider_message_payloads(
@@ -3656,6 +3664,7 @@ class ConsoleChatController:
         *,
         skip_failed: bool,
         use_variant_content: bool = False,
+        annotate_ids: bool = False,
     ) -> list[dict[str, Any]]:
         model = self.model or self.configured_model
         vision = bool(model) and is_vision_capable(self.provider, model or "")
@@ -3689,6 +3698,16 @@ class ConsoleChatController:
             budget -= take
 
         payloads: list[dict[str, Any]] = []
+
+        def _emit(content: Any, source: ConsoleChatMessage) -> None:
+            # Optionally thread the source transcript message's native id onto
+            # the row so the dispatch choke point can anchor `/rewind` summary
+            # compaction by identity (stripped before any provider sees it).
+            row: dict[str, Any] = {"role": source.role.value, "content": content}
+            if annotate_ids:
+                row[NATIVE_MESSAGE_ID_KEY] = source.id
+            payloads.append(row)
+
         seen_user = False
         for message in session_messages:
             if message.role not in {
@@ -3739,7 +3758,7 @@ class ConsoleChatController:
                             attachment.data, attachment.mime_type or "image/png"
                         )
                     )
-                payloads.append({"role": message.role.value, "content": parts})
+                _emit(parts, message)
                 continue
             if not text:
                 # An image-only user turn whose images all fell outside the
@@ -3757,11 +3776,9 @@ class ConsoleChatController:
                         if len(omitted) == 1
                         else f"[{len(omitted)} images omitted]"
                     )
-                    payloads.append(
-                        {"role": message.role.value, "content": placeholder}
-                    )
+                    _emit(placeholder, message)
                 continue
-            payloads.append({"role": message.role.value, "content": text})
+            _emit(text, message)
         return payloads
 
     def _mark_stream_stopped(

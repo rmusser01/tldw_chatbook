@@ -247,7 +247,11 @@ async def test_compaction_folds_summary_and_drops_pre_boundary_rows():
     u1, a1, u2, a2, u3, a3 = _seed_conversation(store, session.id)
     store.set_session_context_summary(session.id, "S", u3.id)
 
-    payload = controller._provider_messages_for_session(session.id)
+    # Compaction anchors the boundary by native id, so the payload must be
+    # built id-annotated (as every real send path does).
+    payload = controller._provider_messages_for_session(
+        session.id, annotate_ids=True
+    )
     compacted = controller._apply_context_summary_compaction(session.id, payload)
 
     texts = _payload_texts(compacted)
@@ -277,7 +281,9 @@ async def test_compaction_creates_system_message_when_payload_has_none():
     u1, a1, u2, a2, u3, a3 = _seed_conversation(store, session.id)
     store.set_session_context_summary(session.id, "S", u3.id)
 
-    payload = controller._provider_messages_for_session(session.id)
+    payload = controller._provider_messages_for_session(
+        session.id, annotate_ids=True
+    )
     assert payload[0]["role"] != "system"  # no system prompt set
 
     compacted = controller._apply_context_summary_compaction(session.id, payload)
@@ -298,17 +304,17 @@ async def test_leak_rule_pre_boundary_payload_is_byte_identical():
 
     # Payload for regenerating a PRE-boundary message ends before the boundary.
     pre_boundary_payload = controller._provider_messages_for_session(
-        session.id, before_message_id=a1.id
+        session.id, before_message_id=a1.id, annotate_ids=True
     )
 
     store.set_session_context_summary(session.id, "S", u3.id)
     compacted = controller._apply_context_summary_compaction(
         session.id, controller._provider_messages_for_session(
-            session.id, before_message_id=a1.id
+            session.id, before_message_id=a1.id, annotate_ids=True
         )
     )
 
-    # The boundary (u3) is absent from this ancestors-only payload, so
+    # The boundary (u3) id is absent from this ancestors-only payload, so
     # compaction is a no-op -- byte-identical to the no-summary payload.
     assert compacted == pre_boundary_payload
 
@@ -322,7 +328,137 @@ async def test_dangling_boundary_leaves_payload_untouched():
     # A boundary id that is not a live message (branch switch / deletion).
     store.set_session_context_summary(session.id, "S", "ghost-native-id")
 
-    payload = controller._provider_messages_for_session(session.id)
+    payload = controller._provider_messages_for_session(
+        session.id, annotate_ids=True
+    )
     compacted = controller._apply_context_summary_compaction(session.id, payload)
 
     assert compacted == payload
+
+
+# --------------------------------------------------------------------------
+# duplicate-content leak (reviewer repro) + id-anchoring + key stripping
+# --------------------------------------------------------------------------
+
+
+def _seed_duplicate_content(store, session_id):
+    """U1/A1/U2/A2/U3(/A3) where U1 and U3 share the exact text "continue"."""
+    u1 = store.append_message(
+        session_id, role=ConsoleMessageRole.USER, content="continue"
+    )
+    a1 = store.append_message(
+        session_id, role=ConsoleMessageRole.ASSISTANT, content="a1"
+    )
+    u2 = store.append_message(
+        session_id, role=ConsoleMessageRole.USER, content="different"
+    )
+    a2 = store.append_message(
+        session_id, role=ConsoleMessageRole.ASSISTANT, content="a2"
+    )
+    u3 = store.append_message(
+        session_id, role=ConsoleMessageRole.USER, content="continue"
+    )
+    a3 = store.append_message(
+        session_id, role=ConsoleMessageRole.ASSISTANT, content="a3"
+    )
+    return u1, a1, u2, a2, u3, a3
+
+
+@pytest.mark.asyncio
+async def test_leak_rule_duplicate_content_pre_boundary_no_false_fire():
+    """Reviewer repro: a byte-identical EARLIER duplicate of the boundary's
+    text must NOT false-fire compaction on a pre-boundary payload.
+
+    U1 and the boundary U3 both say "continue". Regenerating pre-boundary A1
+    builds an ancestors-only ``[U1]`` payload where the boundary U3 is ABSENT.
+    First-occurrence content matching wrongly anchored on U1 and injected the
+    summary of LATER turns; id-anchored compaction leaves the payload
+    byte-identical to the no-summary payload.
+    """
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=SummaryGateway())
+    session = store.ensure_session()
+    u1, a1, u2, a2, u3, a3 = _seed_duplicate_content(store, session.id)
+
+    baseline = controller._provider_messages_for_session(
+        session.id, before_message_id=a1.id, annotate_ids=True
+    )
+    store.set_session_context_summary(session.id, "S", u3.id)
+    compacted = controller._apply_context_summary_compaction(
+        session.id,
+        controller._provider_messages_for_session(
+            session.id, before_message_id=a1.id, annotate_ids=True
+        ),
+    )
+
+    # No summary folded, no rows dropped -- the LATER-turn summary never reaches
+    # this EARLIER point's context.
+    assert compacted == baseline
+    assert not any(
+        "[Summary of earlier conversation]" in text
+        for text in _payload_texts(compacted)
+    )
+
+
+@pytest.mark.asyncio
+async def test_compaction_anchors_on_boundary_id_not_duplicate_text():
+    """Same duplicate-text tree, but the FULL active-path payload DOES contain
+    the real boundary U3. Compaction must anchor on U3 by native id (dropping
+    U1/A1/U2/A2) even though the earlier U1 shares U3's exact text -- content
+    matching would wrongly anchor on U1 and drop nothing.
+    """
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=SummaryGateway())
+    session = store.ensure_session()
+    u1, a1, u2, a2, u3, a3 = _seed_duplicate_content(store, session.id)
+    store.set_session_context_summary(session.id, "S", u3.id)
+
+    payload = controller._provider_messages_for_session(
+        session.id, annotate_ids=True
+    )
+    compacted = controller._apply_context_summary_compaction(session.id, payload)
+
+    texts = _payload_texts(compacted)
+    # Everything strictly before the real boundary U3 is dropped: the earlier
+    # duplicate "continue" (U1) and the intervening turns are gone.
+    assert "different" not in texts
+    assert "a1" not in texts and "a2" not in texts
+    assert texts.count("continue") == 1  # only the boundary U3 survives
+    assert "a3" in texts
+    # Summary folded into a leading system row.
+    assert compacted[0]["role"] == "system"
+    assert "[Summary of earlier conversation]" in compacted[0]["content"]
+    assert "S" in compacted[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_native_message_id_key_stripped_before_provider():
+    """The private id-threading key must never reach the provider: after a
+    normal compacted send, no captured gateway payload row carries it.
+    """
+    store = ConsoleChatStore()
+    gateway = SummaryGateway(summary="reply")
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="test-model",
+    )
+    session = store.ensure_session()
+    _u1, _a1, _u2, _a2, u3, _a3 = _seed_conversation(store, session.id)
+    store.set_session_context_summary(session.id, "S", u3.id)
+
+    result = await controller.submit_draft("next question")
+    assert result.accepted is True
+
+    assert gateway.captured_messages is not None
+    assert all(
+        "_native_message_id" not in row for row in gateway.captured_messages
+    )
+    # Sanity: compaction genuinely ran on this send (summary folded), so the
+    # strip assertion above is not vacuous.
+    assert any(
+        row["role"] == "system"
+        and "[Summary of earlier conversation]" in row.get("content", "")
+        for row in gateway.captured_messages
+    )
