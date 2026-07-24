@@ -112,7 +112,6 @@ class PersonasInspectorPane(Vertical):
             yield collapse_button
         yield Static("Selected: none", id="personas-selected-name")
         yield Static("Type: -", id="personas-selected-kind")
-        yield Static("Authority: Local", id="personas-selected-authority")
         yield Static("Validation: OK", id="personas-validation-summary")
         yield Static("Conversations", classes="destination-section")
         yield ListView(id="personas-conversations-list")
@@ -150,14 +149,11 @@ class PersonasInspectorPane(Vertical):
                 classes="console-action-subdued personas-destructive",
             )
 
-    def show_selection(self, *, name: str, kind: str, authority: str) -> None:
+    def show_selection(self, *, name: str, kind: str) -> None:
         self._has_selection = True
         self._selected_kind = kind
         self.query_one("#personas-selected-name", Static).update(f"Selected: {name}")
         self.query_one("#personas-selected-kind", Static).update(f"Type: {kind}")
-        self.query_one("#personas-selected-authority", Static).update(
-            f"Authority: {authority}"
-        )
         self._apply_action_state()
 
     async def clear_selection(self) -> None:
@@ -167,9 +163,6 @@ class PersonasInspectorPane(Vertical):
         self.set_console_actions_enabled(False, reason="select an item")
         self.query_one("#personas-selected-name", Static).update("Selected: none")
         self.query_one("#personas-selected-kind", Static).update("Type: -")
-        self.query_one("#personas-selected-authority", Static).update(
-            "Authority: Local"
-        )
         await self.show_conversations(())
         self.show_validation(())
         self._apply_action_state()

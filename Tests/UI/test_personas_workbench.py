@@ -406,7 +406,7 @@ class TestWorkbenchShell:
             await pilot.pause()
             status = screen.query_one("#personas-status-row", Static)
             assert "Characters: 2" in str(status.renderable)
-            assert "Source: Local" in str(status.renderable)
+            assert str(status.renderable) == "Characters: 2"
             await pilot.click("#personas-mode-personas")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()

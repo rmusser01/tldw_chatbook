@@ -1699,11 +1699,7 @@ class PersonasScreen(BaseAppScreen):
             self._show_center("#personas-mode-placeholder")
 
     def _header_subtitle_text(self) -> str:
-        """Live header subtitle: destination purpose plus the editing state.
-
-        "Local" deliberately stays out of the header - the status row directly
-        below already says "Source: Local" (de-dup, P3-15).
-        """
+        """Live header subtitle: destination purpose plus the editing state."""
         suffix = " - unsaved" if self.state.has_unsaved_changes else ""
         if self._edit_mode == "create":
             noun = "persona" if self.state.active_mode == "personas" else "character"
@@ -1752,10 +1748,10 @@ class PersonasScreen(BaseAppScreen):
         if mode == "characters":
             # ``_characters`` is now one page; the full-library count lives in
             # ``_character_total``.
-            return f"Characters: {self._character_total} | Source: Local | Attachments: Console"
+            return f"Characters: {self._character_total}"
         if mode == "personas":
-            return f"Personas: {len(self._profiles)} | Source: Local | Attachments: Console"
-        return f"Mode: {MODE_LABELS.get(mode, mode)} | Source: Local | Attachments: Console"
+            return f"Personas: {len(self._profiles)}"
+        return f"Mode: {MODE_LABELS.get(mode, mode)}"
 
     def _update_status_row(self) -> None:
         """Refresh the status row text; tolerate refreshes racing teardown."""
@@ -1806,7 +1802,7 @@ class PersonasScreen(BaseAppScreen):
         await self.character_handler.load_character(entity_id)
         self._show_center("#ccp-character-card-view")
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(name=entity_name, kind="character", authority="Local")
+        inspector.show_selection(name=entity_name, kind="character")
         inspector.set_unsaved(False)
         inspector.show_validation(())
         self._sync_inspector_console_actions()
@@ -1856,9 +1852,7 @@ class PersonasScreen(BaseAppScreen):
         self.query_one(PersonaProfileCardWidget).show_persona(record)
         self._show_center("#ccp-persona-card-view")
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(
-            name=entity_name, kind="persona_profile", authority="Local"
-        )
+        inspector.show_selection(name=entity_name, kind="persona_profile")
         inspector.set_unsaved(False)
         inspector.show_validation(())
         self._sync_inspector_console_actions()
@@ -1905,7 +1899,7 @@ class PersonasScreen(BaseAppScreen):
         library = self.query_one(PersonasLibraryPane)
         library.mark_active_row("dictionary", entity_id)
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(name=entity_name, kind="dictionary", authority="Local")
+        inspector.show_selection(name=entity_name, kind="dictionary")
         self.query_one(PersonasDictionaryTryItWidget).set_ready(
             True, "Run the preview to see what this dictionary changes."
         )
@@ -1962,7 +1956,7 @@ class PersonasScreen(BaseAppScreen):
         library = self.query_one(PersonasLibraryPane)
         library.mark_active_row("lore", entity_id)
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(name=entity_name, kind="lore", authority="Local")
+        inspector.show_selection(name=entity_name, kind="lore")
         self.query_one(PersonasLoreTryItWidget).set_ready(
             True, "Run the preview to see what this lore book injects."
         )
@@ -2078,7 +2072,7 @@ class PersonasScreen(BaseAppScreen):
         self.state.has_unsaved_changes = False
         self.state.selected_entity_name = str(record.get("name") or "")
         self.query_one(PersonasInspectorPane).show_selection(
-            name=self.state.selected_entity_name, kind="dictionary", authority="Local"
+            name=self.state.selected_entity_name, kind="dictionary"
         )
         detail.load_dictionary(record)
         await self._refresh_dictionary_statistics(record)
@@ -2797,7 +2791,6 @@ class PersonasScreen(BaseAppScreen):
             self.query_one(PersonasInspectorPane).show_selection(
                 name=self.state.selected_entity_name,
                 kind="dictionary",
-                authority="Local",
             )
             detail.load_dictionary(record)
             await self._refresh_dictionary_statistics(record)
@@ -3127,7 +3120,7 @@ class PersonasScreen(BaseAppScreen):
             self._selected_lore_book = record
             self.state.selected_entity_name = str(record.get("name") or "")
             self.query_one(PersonasInspectorPane).show_selection(
-                name=self.state.selected_entity_name, kind="lore", authority="Local"
+                name=self.state.selected_entity_name, kind="lore"
             )
         detail.set_status("Saved.")
         self._update_title()
@@ -5926,7 +5919,7 @@ class PersonasScreen(BaseAppScreen):
         self.query_one(PersonasPreviewPane).set_speakers(character=name)
         self.state.has_unsaved_changes = False
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(name=name, kind="character", authority="Local")
+        inspector.show_selection(name=name, kind="character")
         inspector.set_unsaved(False)
         inspector.show_validation(())
         self._sync_inspector_console_actions()
@@ -6082,7 +6075,7 @@ class PersonasScreen(BaseAppScreen):
             entity_kind="persona_profile", entity_id=saved_id, entity_name=name
         )
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.show_selection(name=name, kind="persona_profile", authority="Local")
+        inspector.show_selection(name=name, kind="persona_profile")
         inspector.set_unsaved(False)
         inspector.show_validation(())
         self._sync_inspector_console_actions()

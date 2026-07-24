@@ -97,17 +97,14 @@ async def test_conversation_rows_carry_subdued_class():
         assert row.has_class("console-action-subdued")
 
 
-async def test_show_selection_enables_export_and_shows_authority():
+async def test_show_selection_enables_export_actions():
     app = InspectorApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
-        pane.show_selection(name="Detective Sam", kind="character", authority="Local")
+        pane.show_selection(name="Detective Sam", kind="character")
         await pilot.pause()
         assert "Selected: Detective Sam" in str(
             pilot.app.query_one("#personas-selected-name", Static).renderable
-        )
-        assert "Authority: Local" in str(
-            pilot.app.query_one("#personas-selected-authority", Static).renderable
         )
         assert (
             pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
@@ -124,7 +121,7 @@ async def test_persona_selection_disables_png_export():
     app = InspectorApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
-        pane.show_selection(name="Archivist", kind="persona_profile", authority="Local")
+        pane.show_selection(name="Archivist", kind="persona_profile")
         await pilot.pause()
         assert pilot.app.query_one("#personas-export-json", Button).disabled is False
         assert pilot.app.query_one("#personas-export-png", Button).disabled is True
@@ -135,7 +132,7 @@ async def test_character_selection_renders_all_actions():
     app = InspectorApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
-        pane.show_selection(name="Detective Sam", kind="character", authority="Local")
+        pane.show_selection(name="Detective Sam", kind="character")
         await pilot.pause()
         for button_id in (
             "#personas-attach-to-console",
@@ -157,7 +154,7 @@ async def test_persona_selection_hides_only_export_png():
     app = InspectorApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
-        pane.show_selection(name="Archivist", kind="persona_profile", authority="Local")
+        pane.show_selection(name="Archivist", kind="persona_profile")
         await pilot.pause()
         for button_id in (
             "#personas-attach-to-console",
@@ -178,7 +175,7 @@ async def test_dictionary_selection_hides_console_and_export_actions():
     app = InspectorApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
-        pane.show_selection(name="Combat Slang", kind="dictionary", authority="Local")
+        pane.show_selection(name="Combat Slang", kind="dictionary")
         await pilot.pause()
         for button_id in (
             "#personas-attach-to-console",
@@ -198,7 +195,7 @@ async def test_lore_selection_hides_console_and_export_actions():
     app = InspectorApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
-        pane.show_selection(name="Frontier World", kind="lore", authority="Local")
+        pane.show_selection(name="Frontier World", kind="lore")
         await pilot.pause()
         for button_id in (
             "#personas-attach-to-console",
@@ -220,7 +217,7 @@ async def test_clear_selection_restores_action_visibility():
     app = InspectorApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
-        pane.show_selection(name="Combat Slang", kind="dictionary", authority="Local")
+        pane.show_selection(name="Combat Slang", kind="dictionary")
         await pilot.pause()
         assert pilot.app.query_one("#personas-start-chat", Button).display is False
         await pane.clear_selection()
@@ -241,7 +238,7 @@ async def test_console_action_enablement_is_explicitly_screen_owned():
     app = InspectorApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
-        pane.show_selection(name="Tutor", kind="character", authority="Local")
+        pane.show_selection(name="Tutor", kind="character")
         await pilot.pause()
 
         # Selection/export state is inspector-local, but Console attach/start
@@ -285,7 +282,7 @@ async def test_unsaved_disables_attach_and_export_with_reason():
     app = InspectorApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
-        pane.show_selection(name="Tutor", kind="character", authority="Local")
+        pane.show_selection(name="Tutor", kind="character")
         pane.set_console_actions_enabled(True)
         pane.set_unsaved(True)
         pane.set_console_actions_enabled(False, reason="unsaved edits")
@@ -403,7 +400,7 @@ async def test_clear_selection_resets_everything():
     app = InspectorApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
-        pane.show_selection(name="Detective Sam", kind="character", authority="Server")
+        pane.show_selection(name="Detective Sam", kind="character")
         await pane.show_conversations((("conv-1", "First case"),))
         pane.set_unsaved(True)
         await pilot.pause()
@@ -411,10 +408,6 @@ async def test_clear_selection_resets_everything():
         await pilot.pause()
         assert "Selected: none" in str(
             pilot.app.query_one("#personas-selected-name", Static).renderable
-        )
-        assert (
-            str(pilot.app.query_one("#personas-selected-authority", Static).renderable)
-            == "Authority: Local"
         )
         assert (
             pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
