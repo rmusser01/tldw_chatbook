@@ -18,6 +18,7 @@ from tldw_chatbook.Chat.console_glyphs import (
 )
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     console_conversation_status_detail,
+    CONSOLE_DEFAULT_CONVERSATION_DETAIL,
     ConsoleConversationBrowserGroup,
     ConsoleConversationBrowserRow,
     ConsoleConversationBrowserSection,
@@ -1041,11 +1042,18 @@ class ConsoleWorkspaceContextTray(Vertical):
                         )
                     continue
                 if section.rows:
+                    # Flat sections have no workspace group header. The Starred
+                    # section pins conversations from multiple workspaces, so the
+                    # workspace is the differentiator that keeps same-titled rows
+                    # distinguishable; the all-global Chats section does not need
+                    # it (Qodo #812).
+                    show_workspace = section.section_id == "starred"
                     for row in section.rows:
                         yield from self._compose_conversation_browser_row(
                             row,
                             row_index,
                             marks_available=browser.marks_available,
+                            show_workspace=show_workspace,
                         )
                         row_index += 1
                 elif section.empty_copy:
@@ -1120,8 +1128,14 @@ class ConsoleWorkspaceContextTray(Vertical):
         index: int,
         *,
         marks_available: bool,
+        show_workspace: bool = False,
     ) -> ComposeResult:
-        """Render one grouped browser row plus its local star control."""
+        """Render one grouped browser row plus its local star control.
+
+        ``show_workspace`` carries the owning workspace into the subtitle for rows
+        rendered without a workspace group header (the cross-workspace Starred
+        section), where it is the disambiguator (Qodo #812).
+        """
 
         with Horizontal(classes="console-conversation-browser-row-line"):
             budget = self._browser_title_budget()
@@ -1129,13 +1143,14 @@ class ConsoleWorkspaceContextTray(Vertical):
             name_lines = wrap_console_conversation_title(row.title, budget)
             status = self._conversation_status(row.status)
             detail = self._conversation_detail_status(row.status)
-            secondary_parts = [
-                part
-                for part in (row.workspace_label, detail, row.updated_label)
-                if str(part or "").strip()
-            ]
             secondary = truncate_console_row_cells(
-                " - ".join(secondary_parts) or "conversation", budget
+                self._conversation_row_secondary(
+                    detail,
+                    row.updated_label,
+                    workspace_label=row.workspace_label if show_workspace else "",
+                )
+                or "conversation",
+                budget,
             )
             status_suffix = f" [{status}]" if status else ""
             row_button = self._conversation_button(
@@ -1231,3 +1246,45 @@ class ConsoleWorkspaceContextTray(Vertical):
         Ctrl+K switcher never disagree on the same conversation's state.
         """
         return console_conversation_status_detail(status)
+
+    @staticmethod
+    def _conversation_row_secondary(
+        detail: str,
+        updated_label: str,
+        *,
+        workspace_label: str = "",
+    ) -> str:
+        """Compress the row's second line to just its differentiator.
+
+        TASK-374: the subtitle used to read ``<workspace> - saved chat - <age>``
+        on every row, so only the age differed and half the section's vertical
+        space carried no information. For a row under a workspace group header the
+        workspace is redundant and ``saved chat`` is the common default -- so keep
+        the age always and the state only when it is a non-default differentiator.
+
+        ``workspace_label`` is supplied only for rows rendered WITHOUT a workspace
+        group header -- the cross-workspace ``Starred`` section -- where the
+        workspace is itself the differentiator that keeps same-titled
+        conversations from different workspaces distinguishable (Qodo #812).
+
+        Args:
+            detail: The friendly state label from ``_conversation_detail_status``.
+            updated_label: The compact relative age (e.g. ``2d``).
+            workspace_label: The owning workspace, included as the leading
+                differentiator only for header-less sections; omitted otherwise.
+
+        Returns:
+            The age alone for a default saved grouped row, ``<workspace> - <age>``
+            for a starred cross-workspace row, ``<state> - <age>`` when the state
+            differentiates, or ``""`` when nothing is present.
+        """
+        parts = [
+            part
+            for part in (
+                workspace_label,
+                detail if detail and detail != CONSOLE_DEFAULT_CONVERSATION_DETAIL else "",
+                updated_label,
+            )
+            if str(part or "").strip()
+        ]
+        return " - ".join(parts)

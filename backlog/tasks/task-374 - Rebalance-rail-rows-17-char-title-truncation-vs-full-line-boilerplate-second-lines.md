@@ -1,8 +1,9 @@
 ---
 id: TASK-374
 title: Rebalance rail rows - 17-char title truncation vs full-line boilerplate second lines
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
 labels: [console, ux]
 dependencies: []
@@ -23,6 +24,30 @@ In a 48-cell-wide rail, titles render as 'Websocket reconne...', 'Compare SQLite
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Titles get the available width (25-35 chars) with tighter right-side controls
-- [ ] #2 Subtitle should compress to just the differentiator (age, or state only when not the default)
+- [x] #1 Titles get the available width (25-35 chars) with tighter right-side controls
+- [x] #2 Subtitle should compress to just the differentiator (age, or state only when not the default)
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+AC#1 (titles get the available width): VERIFIED already met on current dev, then
+regression-locked. The review's 17-char titles were the pre-width-aware fixed cap
+(cad9e271d); the grouped-browser budget is now measured from the real rail width
+(`_browser_title_budget = _row_content_width - chrome`) and the rail grows with
+the terminal. Measured budget: 17 cells @160-col → 25 @200 → 36 @260 → 47 @320,
+so at a wide terminal (2050px ≈ 256 cols) titles get ~36 chars. New harness test
+resizes 160→260 and asserts the budget grows and reaches 25+.
+
+AC#2 (compress the subtitle to the differentiator): every row repeated
+`<workspace> - saved chat - <age>`, so only the age differed and half the
+section's vertical space carried no information. New pure `_conversation_row_secondary`
+keeps the age always and the state ONLY when it is a non-default differentiator
+(`active session`/`open session`), and drops the section-level workspace label:
+`saved chat`+`2d` → `2d`; `active` → `active session - 5m`. Shared default constant
+CONSOLE_DEFAULT_CONVERSATION_DETAIL added to conversation_browser_state so the
+suppression can't drift from the vocabulary. The switcher subtitle + selected-summary
+are built elsewhere and intentionally unchanged.
+
+Files: console_workspace_context.py, conversation_browser_state.py + tests. 56 rail/switcher tests green.
+<!-- SECTION:NOTES:END -->
