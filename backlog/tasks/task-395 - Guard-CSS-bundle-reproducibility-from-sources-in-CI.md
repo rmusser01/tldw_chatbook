@@ -1,8 +1,9 @@
 ---
 id: TASK-395
 title: Guard CSS bundle reproducibility from sources in CI
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 18:35'
 labels: [css, ci, tech-debt]
 dependencies: []
@@ -19,7 +20,24 @@ Raised by review on PR #723 (Qodo suggestion 2).
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A PR that edits a `.tcss` source without regenerating the bundle (or edits the bundle directly) fails the check with a message naming the drifted module
-- [ ] #2 The comparison ignores the `Generated:` timestamp line so a faithful rebuild passes
-- [ ] #3 The check runs on PRs touching `tldw_chatbook/css/**` and post-merge on dev, like backlog-guard
+- [x] #1 A PR that edits a `.tcss` source without regenerating the bundle (or edits the bundle directly) fails the check with a message naming the drifted module
+- [x] #2 The comparison ignores the `Generated:` timestamp line so a faithful rebuild passes
+- [x] #3 The check runs on PRs touching `tldw_chatbook/css/**` and post-merge on dev, like backlog-guard
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+New standalone `.github/workflows/css-bundle-guard.yml` (modeled on backlog-guard,
+so it runs even while general CI is intentionally-cancelled) triggers on PRs
+touching `tldw_chatbook/css/**` and post-merge on dev/main (AC#3). It runs
+`tldw_chatbook/css/check_bundle_sync.py` — a stdlib-only, non-destructive checker
+that rebuilds the bundle into a TEMP file (via `build_css.build_css(css_dir, out)`),
+strips the `Generated:` timestamp line from both (AC#2), and reports drift. On
+drift it names the specific MODULE block(s) via the `/* ===== MODULE: X ===== */`
+markers (AC#1) and exits 1 with `::error::` annotations. build_css/check are
+imported as sibling modules (no package __init__), so no `pip install` is needed.
+Verified: in-sync repo → exit 0; a source edited without rebuilding → exit 1
+naming `utilities/_overrides.tcss`. 3 unit tests (timestamp-ignore, module-naming,
+committed-bundle-in-sync) + existing css_build_integrity green.
+<!-- SECTION:NOTES:END -->
