@@ -11683,6 +11683,22 @@ class ChatScreen(BaseAppScreen):
             self._imagegen_inflight_sessions = sessions
         return sessions
 
+    def _console_imagegen_inflight_message_ids(self) -> set[str]:
+        """Return the lazily-created set of messages with a regenerate-append in flight.
+
+        Mirrors ``_console_imagegen_inflight_sessions``'s lazy
+        getattr/setdefault pattern but keyed by MESSAGE id, not session id:
+        the regenerate (``♻``) action appends one variant to a single
+        generation message, and this guard must not block regenerate on one
+        message in a session while another message in the same session is
+        still generating.
+        """
+        message_ids = getattr(self, "_imagegen_inflight_message_ids", None)
+        if message_ids is None:
+            message_ids = set()
+            self._imagegen_inflight_message_ids = message_ids
+        return message_ids
+
     async def _console_command_generate_image(self, parse: CommandParse) -> None:
         """Resolve and run one `/generate-image` batch (`[:backend] <prompt>`).
 
@@ -11780,6 +11796,87 @@ class ChatScreen(BaseAppScreen):
             await self._sync_native_console_chat_ui()
         finally:
             inflight.discard(session.id)
+
+    async def _regenerate_console_generation_variant(self, message_id: str) -> None:
+        """Append one new generated variant to an existing generation message.
+
+        This is the generation-message branch of the selected-message
+        regenerate (``♻``) action (Task 8): unlike text regeneration it
+        never creates an LLM sibling turn -- it rebuilds a request from the
+        message's position-0 (canonical) ``GenerationVariantMeta`` -- same
+        backend/prompt/negative -- with ``seed`` forced to ``-1`` so the new
+        variant is never a duplicate of the kept image, generates ONE
+        variant off the UI loop (mirroring ``_console_command_generate_image``'s
+        ``asyncio.to_thread(run_generation_batch, ...)`` offload), appends it
+        via ``ConsoleChatStore.append_generation_variant``, and browses to
+        the newly-appended index.
+
+        Refuses with a status line and makes no mutation when a generation
+        is already running for this message, or the message already carries
+        ``[image_generation].max_variants_per_message`` variants. A failed
+        batch (zero successes) leaves the existing message completely
+        untouched, per spec §4 ("a failed append leaves the existing
+        message untouched and reports the error"). The in-flight guard is
+        always cleared in a ``finally``, so a crashed/cancelled batch never
+        wedges this message against further regenerate presses.
+        """
+        store = self._ensure_console_chat_store()
+        try:
+            message = store.get_message(message_id)
+        except KeyError:
+            self.app_instance.notify(
+                "Console message action target no longer exists.",
+                severity="warning",
+            )
+            return
+        if not message.generation_metadata:
+            return
+        inflight = self._console_imagegen_inflight_message_ids()
+        if message_id in inflight:
+            self.app_instance.notify(
+                "An image generation is already running for this message.",
+                severity="warning",
+            )
+            return
+        cfg = get_image_generation_config()
+        if len(message.generation_metadata) >= cfg.max_variants_per_message:
+            self.app_instance.notify(
+                f"Already at the maximum of {cfg.max_variants_per_message} "
+                "variants for this message.",
+                severity="warning",
+            )
+            return
+        inflight.add(message_id)
+        try:
+            base_meta = message.generation_metadata[0]
+            batch = await asyncio.to_thread(
+                run_generation_batch,
+                backend=base_meta.backend,
+                prompt=base_meta.prompt,
+                negative_prompt=base_meta.negative_prompt or None,
+                seed=-1,
+                count=1,
+            )
+            if not batch.successes:
+                detail = "; ".join(batch.errors) or "unknown error"
+                self.app_instance.notify(
+                    f"Image regeneration failed: {detail}", severity="error"
+                )
+                return
+            data, mime_type, meta = batch.successes[0]
+            session_id = store.session_id_for_message(message_id)
+            new_position = store.append_generation_variant(
+                session_id,
+                message_id,
+                data=data,
+                mime_type=mime_type,
+                meta=meta,
+                persist=True,
+            )
+            self._console_generation_browse()[message_id] = new_position
+            await self._sync_native_console_chat_ui()
+        finally:
+            inflight.discard(message_id)
 
     def _clear_console_composer_draft(self) -> None:
         """Clear the native Console composer's draft text, if mounted.
@@ -12718,6 +12815,14 @@ class ChatScreen(BaseAppScreen):
             )
             return True
         if action_id == "regenerate" and result.status == "wip":
+            if message.generation_metadata:
+                # A generation message's regenerate ALWAYS appends one new
+                # image variant -- never an LLM text sibling -- so it skips
+                # the controller/run-state gate entirely (that gate exists
+                # for chat runs; image generation has its own in-flight
+                # guard, checked inside this call).
+                await self._regenerate_console_generation_variant(message_id)
+                return True
             controller = self._ensure_console_chat_controller()
             if not controller.run_state.is_send_allowed:
                 self.app_instance.notify(
@@ -12734,8 +12839,16 @@ class ChatScreen(BaseAppScreen):
             action_id in {"variant-previous", "variant-next"}
             and result.status == "completed"
         ):
-            self._select_console_message_variant(message_id, direction=action_id)
+            if message.generation_metadata:
+                self._select_console_generation_variant(message, direction=action_id)
+            else:
+                self._select_console_message_variant(message_id, direction=action_id)
             await self._sync_native_console_chat_ui()
+            return True
+        if action_id == "keep" and result.status == "completed":
+            self._keep_console_generation_variant(message)
+            await self._sync_native_console_chat_ui()
+            self.app_instance.notify(result.visible_copy, severity="information")
             return True
         if (
             action_id in {"feedback-up", "feedback-down"}
@@ -13329,6 +13442,7 @@ class ChatScreen(BaseAppScreen):
             ("console-message-action-feedback-down-", "feedback-down"),
             ("console-message-action-variant-previous-", "variant-previous"),
             ("console-message-action-variant-next-", "variant-next"),
+            ("console-message-action-keep-", "keep"),
             ("console-message-action-save-as-", "save-as"),
             ("console-message-action-save-image-", "save-image"),
             ("console-message-action-toggle-image-view-", "toggle-image-view"),
@@ -13429,6 +13543,56 @@ class ChatScreen(BaseAppScreen):
         target_sibling_id = siblings[target_index].id
         session_id = store.session_id_for_message(message_id)
         store.set_active_leaf(session_id, store._leaf_under(target_sibling_id))
+
+    def _select_console_generation_variant(
+        self, message: ConsoleChatMessage, *, direction: str
+    ) -> None:
+        """Move a generation message's ephemeral browsed-variant index (clamped).
+
+        The generation-message counterpart of ``_select_console_message_variant``:
+        purely screen-side, in-memory state (``self._generation_browse``) --
+        never touches the store/DB, matching `<`/`>` browsing's documented
+        ephemeral-vs-durable-Keep split (spec §5.2). A no-op at either end of
+        the variant list (nothing before the first / after the last), mirroring
+        the text-sibling version's own boundary behavior.
+        """
+        variant_count = len(message.generation_metadata)
+        if variant_count <= 1:
+            return
+        browse = self._console_generation_browse()
+        current = browse.get(message.id, 0)
+        if not (0 <= current < variant_count):
+            current = 0
+        if direction == "variant-previous":
+            target = current - 1
+        elif direction == "variant-next":
+            target = current + 1
+        else:
+            return
+        if target < 0 or target >= variant_count:
+            return
+        browse[message.id] = target
+
+    def _keep_console_generation_variant(self, message: ConsoleChatMessage) -> None:
+        """Promote the browsed variant to canonical (position 0) -- durable.
+
+        A no-op when the browsed index is already 0 (nothing to promote) or
+        ``message`` isn't a generation message. Defensive: ``available_actions()``
+        only ever offers "keep" when ``generation_browsed_index != 0`` (which
+        implies a generation message), but this guards direct callers too.
+        """
+        if not message.generation_metadata:
+            return
+        browse = self._console_generation_browse()
+        browsed_index = browse.get(message.id, 0)
+        if browsed_index <= 0 or browsed_index >= len(message.generation_metadata):
+            return
+        store = self._ensure_console_chat_store()
+        session_id = store.session_id_for_message(message.id)
+        store.keep_generation_variant(
+            session_id, message.id, position=browsed_index, persist=True
+        )
+        browse[message.id] = 0
 
     def _get_shell_bar(self):
         """Get the mounted combined chat shell bar."""

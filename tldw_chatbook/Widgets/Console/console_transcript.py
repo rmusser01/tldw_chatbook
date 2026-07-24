@@ -71,6 +71,7 @@ _ACTION_TOOLTIPS = {
     "delete": "Delete this message from the Console transcript.",
     "variant-previous": "Show the previous regenerated variant.",
     "variant-next": "Show the next regenerated variant.",
+    "keep": "Keep the browsed variant as this message's canonical image.",
 }
 
 
@@ -1354,10 +1355,49 @@ class ConsoleTranscript(VerticalScroll):
             variants_signature,
         )
 
-    @staticmethod
-    def _action_row_signature(message: ConsoleChatMessage) -> tuple:
+    def _generation_browsed_index(self, message_id: str, variant_count: int) -> int:
+        """Return the screen's ephemeral browsed-variant index for ``message_id``.
+
+        Reads directly off the owning screen's ``_generation_browse`` map
+        (the same ephemeral, never-persisted state ``ChatScreen`` uses to
+        build ``ConsoleGenerationCardSpec``s) rather than the card-spec map
+        this widget also holds, since a card spec can be absent for a
+        message currently in "hidden" view mode while the action row (and
+        its `<`/`>`/Keep gating) still needs the real browsed index. Falls
+        back to 0 -- the canonical variant -- when unmounted (bare
+        unit-construction in tests) or the screen hasn't created its browse
+        map yet, both of which correctly describe "nothing browsed".
+        """
+        try:
+            browse = getattr(self.screen, "_generation_browse", None)
+        except Exception:
+            browse = None
+        browsed_index = (browse or {}).get(message_id, 0)
+        if not (0 <= browsed_index < variant_count):
+            return 0
+        return browsed_index
+
+    def _generation_action_kwargs(self, message: ConsoleChatMessage) -> dict[str, int]:
+        """Return the ``available_actions()`` generation kwargs for ``message``.
+
+        Empty for a non-generation message, so ``available_actions(message)``
+        sees its old, un-keyworded call shape unchanged (regression guard).
+        """
+        variant_count = len(message.generation_metadata)
+        if variant_count == 0:
+            return {}
+        return {
+            "generation_variant_count": variant_count,
+            "generation_browsed_index": self._generation_browsed_index(
+                message.id, variant_count
+            ),
+        }
+
+    def _action_row_signature(self, message: ConsoleChatMessage) -> tuple:
         actions = []
-        for action in ConsoleMessageActionService().available_actions(message):
+        for action in ConsoleMessageActionService().available_actions(
+            message, **self._generation_action_kwargs(message)
+        ):
             if action.action_id == "feedback":
                 actions.append(("feedback-up", "👍", True, ""))
                 actions.append(("feedback-down", "👎", True, ""))
@@ -1374,7 +1414,9 @@ class ConsoleTranscript(VerticalScroll):
 
     def _action_row(self, message: ConsoleChatMessage) -> Horizontal:
         buttons: list[Button] = []
-        for action in ConsoleMessageActionService().available_actions(message):
+        for action in ConsoleMessageActionService().available_actions(
+            message, **self._generation_action_kwargs(message)
+        ):
             if action.action_id == "feedback":
                 buttons.append(
                     self._action_button(
