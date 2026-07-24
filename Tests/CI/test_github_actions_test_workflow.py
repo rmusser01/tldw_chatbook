@@ -22,6 +22,13 @@ def _textual_minimum_job_block() -> str:
     return workflow[start:end]
 
 
+def _artifact_lease_job_block() -> str:
+    workflow = _workflow_text()
+    start = workflow.index("  artifact-lease-spike:")
+    end = workflow.index("  integration-tests:", start)
+    return workflow[start:end]
+
+
 def _test_summary_job_block() -> str:
     workflow = _workflow_text()
     start = workflow.index("  test-summary:")
@@ -62,3 +69,14 @@ def test_ci_exercises_mcp_against_minimum_textual() -> None:
         "needs: [unit-tests, integration-tests, ui-tests, textual-minimum]"
         in test_summary
     )
+
+
+def test_artifact_lease_spike_runs_natively_on_three_operating_systems() -> None:
+    block = _artifact_lease_job_block()
+
+    assert "ubuntu-latest" in block
+    assert "macos-latest" in block
+    assert "windows-latest" in block
+    assert 'python-version: ["3.11"]' in block
+    assert "pip install -e ." in block
+    assert "Tests/Model_Artifacts/test_operation_leases_process.py" in block
