@@ -6161,7 +6161,18 @@ class PersonasScreen(BaseAppScreen):
         self.state.has_unsaved_changes = False
         self._set_active_row_unsaved(False)
         saved_id = str(saved.get("id") or "")
-        name = str(saved.get("name") or "Saved persona")
+        name = str(saved.get("name") or "Saved profile")
+        # task-442 T3 review: renaming the ACTIVE profile follows the pointer.
+        # The spec's dangling->None floor is acceptable, but this save path
+        # knows both names for free (selected_entity_name is still the OLD
+        # name until select_entity below), so keep "who I am" sticky.
+        old_name = str(self.state.selected_entity_name or "")
+        if (
+            old_name
+            and old_name != name
+            and get_active_user_profile_pointer() == old_name
+        ):
+            set_active_user_profile(name)
         self.state.select_entity(
             entity_kind="user_profile", entity_id=saved_id, entity_name=name
         )
