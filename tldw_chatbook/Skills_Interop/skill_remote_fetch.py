@@ -8,8 +8,12 @@ The install path for "paste a GitHub link": classify -> fetch (SSRF-hardened)
 
 from __future__ import annotations
 
+import ipaddress
+import socket
 from dataclasses import dataclass
 from urllib.parse import urlparse
+
+import httpx
 
 
 @dataclass(frozen=True)
@@ -135,3 +139,103 @@ async def resolve_ref_and_subdir(
         subdir = joined[len(best):].strip("/")
         return best, subdir
     return tail[0], "/".join(tail[1:])
+
+
+REMOTE_FETCH_MAX_BYTES = 30 * 1024 * 1024
+REMOTE_FETCH_MAX_HOPS = 3
+_FETCH_CHUNK = 65536
+GITHUB_AUTH_HOSTS = frozenset(
+    {"github.com", "api.github.com", "codeload.github.com",
+     "objects.githubusercontent.com"}
+)
+
+
+def _default_resolver(host: str) -> list[str]:
+    infos = socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
+    return [info[4][0] for info in infos]
+
+
+def _assert_host_allowed(host: str, resolver) -> None:
+    """Reject unless EVERY resolved address is public (mixed sets reject)."""
+    try:
+        literal = ipaddress.ip_address(host)
+        addresses = [str(literal)]
+    except ValueError:
+        try:
+            addresses = resolver(host)
+        except OSError as exc:
+            raise RemoteSkillError(f"Could not resolve {host}.") from exc
+    if not addresses:
+        raise RemoteSkillError(f"Could not resolve {host}.")
+    for raw in addresses:
+        addr = ipaddress.ip_address(raw.split("%", 1)[0])
+        if (addr.is_private or addr.is_loopback or addr.is_link_local
+                or addr.is_reserved or addr.is_multicast or addr.is_unspecified):
+            raise RemoteSkillError("That host is not reachable from here.")
+
+
+async def fetch_zip_bytes(
+    url: str, *, token: str | None = None, transport=None, resolver=None
+) -> bytes:
+    """Download a zip with SSRF hardening, manual redirects, and a size cap.
+
+    Args:
+        url: The (already classified/normalized) https URL to download.
+        token: Optional GitHub token; attached ONLY on GITHUB_AUTH_HOSTS hops.
+        transport: httpx transport override (tests).
+        resolver: ``(host) -> list[str]`` override (tests); defaults to
+            ``socket.getaddrinfo``.
+
+    Returns:
+        The raw (compressed) zip bytes, at most ``REMOTE_FETCH_MAX_BYTES``.
+
+    Raises:
+        RemoteSkillError: On every rejection class (scheme, host, hops, cap,
+            HTTP status, timeouts).
+    """
+    from ..Utils.input_validation import validate_url
+
+    resolver = resolver or _default_resolver
+    timeout = httpx.Timeout(60.0, connect=10.0)
+    current = url
+    async with httpx.AsyncClient(
+        transport=transport, timeout=timeout, follow_redirects=False
+    ) as client:
+        for _hop in range(REMOTE_FETCH_MAX_HOPS + 1):
+            if not validate_url(current):
+                raise RemoteSkillError("Invalid URL after redirect.")
+            parsed = httpx.URL(current)
+            if parsed.scheme != "https":
+                raise RemoteSkillError("Only https:// is allowed (redirect downgraded).")
+            host = (parsed.host or "").lower()
+            _assert_host_allowed(host, resolver)
+            headers = {}
+            if token and host in GITHUB_AUTH_HOSTS:
+                headers["Authorization"] = f"token {token}"
+            try:
+                async with client.stream("GET", current, headers=headers) as response:
+                    if response.status_code in (301, 302, 303, 307, 308):
+                        location = response.headers.get("location")
+                        if not location:
+                            raise RemoteSkillError("Redirect without a location.")
+                        current = str(parsed.join(location))
+                        continue
+                    if response.status_code != 200:
+                        raise RemoteSkillError(
+                            f"Download failed (HTTP {response.status_code})."
+                        )
+                    chunks: list[bytes] = []
+                    received = 0
+                    async for chunk in response.aiter_bytes(_FETCH_CHUNK):
+                        received += len(chunk)
+                        if received > REMOTE_FETCH_MAX_BYTES:
+                            raise RemoteSkillError(
+                                "Download too large (over 30 MB compressed)."
+                            )
+                        chunks.append(chunk)
+                    return b"".join(chunks)
+            except httpx.TimeoutException as exc:
+                raise RemoteSkillError("Download timed out.") from exc
+            except httpx.HTTPError as exc:
+                raise RemoteSkillError(f"Download failed: {exc}") from exc
+        raise RemoteSkillError("Too many redirects.")
