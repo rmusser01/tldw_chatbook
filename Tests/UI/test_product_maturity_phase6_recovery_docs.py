@@ -217,10 +217,27 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
                 "Manage MCP servers, scoped tools, permissions, and audit readiness."
                 in mcp_text
             )
-            # The legacy panel's "Select Section: Inventory ..." line was
-            # retired with the MCP Hub workbench; the Unified MCP Overview
-            # section's next-step line is the surviving guidance copy.
-            assert "Next: select Inventory to inspect tools and actions." in mcp_text
+            assert (
+                "Next: select Inventory to inspect tools and actions." not in mcp_text
+            )
+            # The legacy Inventory section was retired with the MCP Hub
+            # workbench. Recovery now starts in Servers mode: the primary
+            # Add server action is visible and usable, while the readiness
+            # callout explains why the built-in server needs setup.
+            add_server = app.screen.query_one("#mcp-add-server", Button)
+            assert str(add_server.label).strip() == "Add server"
+            assert add_server.display is True
+            assert add_server.disabled is False
+            assert add_server.region.width > 0
+            assert add_server.region.height > 0
+            builtin_setup = app.screen.query_one("#mcp-callout-0", Button)
+            assert builtin_setup.display is True
+            assert builtin_setup.disabled is False
+            assert builtin_setup.region.width > 0
+            assert builtin_setup.region.height > 0
+            assert "Disabled in config ([mcp].enabled = false)." in str(
+                builtin_setup.label
+            )
 
             await app.handle_screen_navigation(NavigateToScreen("library"))
             await _wait_until(
@@ -249,3 +266,18 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
             assert (
                 "Search, pick a content type, or ingest something new." in library_text
             )
+
+
+def test_phase6_mcp_recovery_doc_matches_current_hub_workflow() -> None:
+    mcp_row = _markdown_table_row(
+        _text(RECOVERY_DOC),
+        "MCP server management",
+    )
+
+    assert len(mcp_row) == 4
+    assert "`MCP: Not wired - MCP servers.`" in mcp_row[1]
+    assert "`Add server`" in mcp_row[1]
+    assert "`Import…`" in mcp_row[1]
+    assert "Open MCP → Servers" in mcp_row[2]
+    assert "then use Tools" in mcp_row[2]
+    assert "Inventory" not in " ".join(mcp_row)
