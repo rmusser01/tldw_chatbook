@@ -2810,7 +2810,9 @@ async def test_prefilled_send_bypasses_agent_loop():
 
     def run_reply(**kwargs):
         bridge_calls.append(kwargs)
-        return RunOutcome(status=RUN_DONE, steps=[], final_text="agent says")
+        return "run-test", RunOutcome(
+            status=RUN_DONE, steps=[], final_text="agent says"
+        )
 
     controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
     session = _arm_session(store)
@@ -2874,7 +2876,9 @@ async def test_normal_session_still_uses_agent_when_enabled():
 
     def run_reply(**kwargs):
         bridge_calls.append(kwargs)
-        return RunOutcome(status=RUN_DONE, steps=[], final_text="agent says")
+        return "run-test", RunOutcome(
+            status=RUN_DONE, steps=[], final_text="agent says"
+        )
 
     controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
     session = _arm_session(store)

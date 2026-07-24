@@ -90,6 +90,199 @@ async def test_agent_send_no_tools_streams_like_today(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_agent_run_records_persisted_assistant_message_id(tmp_path):
+    """The load-bearing write: after a full agent reply completes on a
+    persisted store, the primary run's ``assistant_message_id`` is the
+    reply's PERSISTED id (durable ChaChaNotes id), NOT the native in-memory
+    id -- so a later resume can anchor markers by ``persisted_message_id``.
+    The native id create_run recorded is corrected to the persisted id here.
+    """
+    from Tests.Chat.test_console_chat_store import FakePersistence
+
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    gateway = _Gateway([["Tok", "yo."]])
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=gateway
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="test-model",
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+    )
+
+    result = await controller.submit_draft("capital of Japan?")
+    assert result.accepted is True
+
+    session_id = store.active_session_id
+    assistant = next(
+        m
+        for m in store.messages_for_session(session_id)
+        if m.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert assistant.status == "complete"
+    assert assistant.persisted_message_id is not None
+
+    primary = next(r for r in _all_runs(db) if r["agent_kind"] == "primary")
+    assert primary["assistant_message_id"] == assistant.persisted_message_id
+    # The native id create_run stored was corrected to the persisted id.
+    assert primary["assistant_message_id"] != assistant.id
+
+
+@pytest.mark.asyncio
+async def test_stopped_run_records_persisted_id_not_stale_native(tmp_path):
+    """Critical regression (Phase C Task 2 review): a run STOPPED mid-flight
+    must end with the run's ``assistant_message_id`` == the stopped message's
+    PERSISTED id -- never the stale native create-time id (which can never
+    match any ``persisted_message_id`` on resume, so Task 3 would drop its
+    markers as off-path).
+
+    Reproduces the reviewer's scenario on a persistence-backed store + real
+    ``AgentRunsDB``: a real run is created (``create_run`` -- native id was
+    stored PRE-fix, NULL post-Half-1), then a Stop lands in the window after
+    the bridge returns but before ``_finalize_agent_reply``, leaving the
+    message ``stopped`` and persisted. Finalize's ``stopped_now`` branch must
+    then record the persisted id onto the run.
+
+    RED on HEAD 85e2f3d9: the run keeps the stale native id (stopped path
+    never recorded anything). GREEN with both halves: NULL at create, persisted
+    id recorded on the stopped path.
+    """
+    from Tests.Chat.test_console_chat_store import FakePersistence
+
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    gateway = _Gateway([["Tok", "yo."]])
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="test-model",
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+    )
+
+    original = controller._agent_bridge.run_reply
+
+    def stop_after_real_run(**kwargs):
+        # Run the REAL bridge (creates the run row via create_run, streams the
+        # reply into the placeholder), then simulate a Stop landing in the
+        # post-outcome / pre-finalize window: mark the message stopped (which
+        # persists it) exactly as stop_active_run would.
+        run_id, outcome = original(**kwargs)
+        store.mark_message_stopped(kwargs["assistant_message_id"])
+        return run_id, outcome
+
+    controller._agent_bridge.run_reply = stop_after_real_run
+    result = await controller.submit_draft("capital of Japan?")
+    assert result.accepted is True
+
+    session_id = store.active_session_id
+    assistant = next(
+        m
+        for m in store.messages_for_session(session_id)
+        if m.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert assistant.status == "stopped"
+    assert assistant.persisted_message_id is not None
+
+    primary = next(r for r in _all_runs(db) if r["agent_kind"] == "primary")
+    assert primary["assistant_message_id"] == assistant.persisted_message_id
+    assert primary["assistant_message_id"] != assistant.id
+
+
+@pytest.mark.asyncio
+async def test_failed_run_records_persisted_id_on_run(tmp_path):
+    """A run that finalizes via the FAILURE path (RUN_ERROR) must record the
+    failed reply's PERSISTED id onto the run -- same shape as the stopped-run
+    regression, exercising ``_finalize_agent_failure`` instead of the
+    ``stopped_now`` branch. RED on HEAD (only the success path recorded).
+    """
+    from Tests.Chat.test_console_chat_store import FakePersistence
+
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    gateway = _Gateway([["Tok", "yo."]])
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="test-model",
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+    )
+
+    original = controller._agent_bridge.run_reply
+
+    def error_after_real_run(**kwargs):
+        # Real run (create_run + stream), but report a non-done outcome so
+        # finalize routes through _finalize_agent_failure.
+        run_id, _outcome = original(**kwargs)
+        return run_id, RunOutcome(
+            status=RUN_ERROR,
+            steps=[AgentStep(index=0, kind=STEP_ERROR, summary="boom")],
+        )
+
+    controller._agent_bridge.run_reply = error_after_real_run
+    result = await controller.submit_draft("capital of Japan?")
+    assert result.accepted is True
+
+    session_id = store.active_session_id
+    assistant = next(
+        m
+        for m in store.messages_for_session(session_id)
+        if m.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert assistant.status == "failed"
+    assert assistant.persisted_message_id is not None
+
+    primary = next(r for r in _all_runs(db) if r["agent_kind"] == "primary")
+    assert primary["assistant_message_id"] == assistant.persisted_message_id
+
+
+@pytest.mark.asyncio
+async def test_stopped_run_without_persistence_stays_null_not_stale(tmp_path):
+    """With NO persistence backend, a stopped run's message never gets a
+    persisted id -- so the run's ``assistant_message_id`` must stay NULL (the
+    helper no-ops), NOT hold the stale native id. This validates Half 1 (never
+    store the native id at create): the row is NULL both at create and after
+    the null-persisted-id stop.
+    """
+    controller, store, db = _controller(tmp_path, [["Tok", "yo."]])
+
+    original = controller._agent_bridge.run_reply
+
+    def stop_after_real_run(**kwargs):
+        run_id, outcome = original(**kwargs)
+        store.mark_message_stopped(kwargs["assistant_message_id"])
+        return run_id, outcome
+
+    controller._agent_bridge.run_reply = stop_after_real_run
+    result = await controller.submit_draft("capital of Japan?")
+    assert result.accepted is True
+
+    session_id = store.active_session_id
+    assistant = next(
+        m
+        for m in store.messages_for_session(session_id)
+        if m.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert assistant.status == "stopped"
+    assert assistant.persisted_message_id is None
+
+    primary = next(r for r in _all_runs(db) if r["agent_kind"] == "primary")
+    assert primary["assistant_message_id"] is None
+
+
+@pytest.mark.asyncio
 async def test_agent_tool_turn_renders_marker_not_prose(tmp_path):
     controller, store, _db = _controller(
         tmp_path, [[_fence("calculator", {"expression": "6*7"})], ["It is ", "42."]]
@@ -250,7 +443,9 @@ async def test_finalize_after_already_stopped_is_a_benign_noop(tmp_path):
         # bridge "returns" RUN_DONE, a concurrent Stop has already
         # finalized the message to "stopped".
         store.mark_message_stopped(assistant_message_id)
-        return RunOutcome(status=RUN_DONE, steps=[], final_text="late done text")
+        return "run-test", RunOutcome(
+            status=RUN_DONE, steps=[], final_text="late done text"
+        )
 
     controller._agent_bridge.run_reply = parked_run_reply
     result = await controller.submit_draft("hi")
@@ -308,7 +503,9 @@ async def test_finalize_after_already_stopped_regenerate_no_phantom_variant(tmp_
         # _finalize_agent_reply runs.
         controller._active_cancel_event.set()
         store.mark_message_stopped(assistant_message_id)
-        return RunOutcome(status=RUN_DONE, steps=[], final_text="late regenerate text")
+        return "run-test", RunOutcome(
+            status=RUN_DONE, steps=[], final_text="late regenerate text"
+        )
 
     controller._agent_bridge.run_reply = parked_regenerate_reply
     regen = await controller.regenerate_message(assistant.id)
@@ -352,7 +549,7 @@ async def test_finalize_after_already_stopped_regenerate_error_no_wedge(tmp_path
     def parked_regenerate_error_reply(*, assistant_message_id, **_kwargs):
         controller._active_cancel_event.set()
         store.mark_message_stopped(assistant_message_id)
-        return RunOutcome(
+        return "run-test", RunOutcome(
             status=RUN_ERROR,
             steps=[
                 AgentStep(index=0, kind=STEP_ERROR, summary="late regenerate error")
@@ -371,7 +568,9 @@ async def test_finalize_after_already_stopped_regenerate_error_no_wedge(tmp_path
     # The run must not be wedged: a fresh send is accepted immediately.
     def next_send_reply(*, assistant_message_id, **_kwargs):
         store.append_stream_chunk(assistant_message_id, "next turn works.")
-        return RunOutcome(status=RUN_DONE, steps=[], final_text="next turn works.")
+        return "run-test", RunOutcome(
+            status=RUN_DONE, steps=[], final_text="next turn works."
+        )
 
     controller._agent_bridge.run_reply = next_send_reply
     second = await controller.submit_draft("still there?")
@@ -502,7 +701,7 @@ async def test_run_error_via_submit_is_failed_retryable_and_excluded_from_contex
         store.append_stream_chunk(
             assistant_message_id, "partial answer before erroring"
         )
-        return RunOutcome(
+        return "run-test", RunOutcome(
             status=RUN_ERROR,
             steps=[AgentStep(index=0, kind=STEP_ERROR, summary="tool exploded")],
         )
@@ -529,7 +728,7 @@ async def test_run_error_via_submit_is_failed_retryable_and_excluded_from_contex
     # Retryable: status "failed" is exactly what retry_message() requires.
     def fixed_run_reply(*, assistant_message_id, **_kwargs):
         store.append_stream_chunk(assistant_message_id, "fixed.")
-        return RunOutcome(status=RUN_DONE, steps=[], final_text="fixed.")
+        return "run-test", RunOutcome(status=RUN_DONE, steps=[], final_text="fixed.")
 
     controller._agent_bridge.run_reply = fixed_run_reply
     retry_result = await controller.retry_message(assistant.id)
@@ -545,7 +744,7 @@ async def test_run_stuck_outcome_is_visibly_failed_not_silent_complete(tmp_path)
 
     def stuck_run_reply(*, assistant_message_id, **_kwargs):
         store.append_stream_chunk(assistant_message_id, "still thinking about it")
-        return RunOutcome(
+        return "run-test", RunOutcome(
             status=RUN_STUCK,
             steps=[
                 AgentStep(index=0, kind=STEP_ERROR, summary="step budget exhausted")
@@ -574,7 +773,9 @@ async def test_run_error_via_regenerate_preserves_original_answer_and_status(tmp
 
     def good_run_reply(*, assistant_message_id, **_kwargs):
         store.append_stream_chunk(assistant_message_id, "good original answer.")
-        return RunOutcome(status=RUN_DONE, steps=[], final_text="good original answer.")
+        return "run-test", RunOutcome(
+            status=RUN_DONE, steps=[], final_text="good original answer."
+        )
 
     controller._agent_bridge.run_reply = good_run_reply
     first = await controller.submit_draft("hi")
@@ -590,7 +791,7 @@ async def test_run_error_via_regenerate_preserves_original_answer_and_status(tmp
 
     def erroring_run_reply(*, assistant_message_id, **_kwargs):
         store.append_stream_chunk(assistant_message_id, "a bad partial regenerate")
-        return RunOutcome(
+        return "run-test", RunOutcome(
             status=RUN_ERROR,
             steps=[AgentStep(index=0, kind=STEP_ERROR, summary="regenerate exploded")],
         )
@@ -764,7 +965,9 @@ async def test_agent_runtime_gate_refreshes_without_screen_teardown():
 
         def run_reply(self, **_kwargs):
             self.calls += 1
-            return RunOutcome(status=RUN_DONE, steps=[], final_text="agent answer.")
+            return "run-test", RunOutcome(
+                status=RUN_DONE, steps=[], final_text="agent answer."
+            )
 
     fake_bridge = _FakeBridge()
     screen = ChatScreen(app)
@@ -809,7 +1012,9 @@ def _fake_app(service=None):
 def _capturing_run_reply(captured, *, final_text="ok."):
     def run_reply(**kwargs):
         captured.append(kwargs)
-        return RunOutcome(status=RUN_DONE, steps=[], final_text=final_text)
+        return "run-test", RunOutcome(
+            status=RUN_DONE, steps=[], final_text=final_text
+        )
 
     return run_reply
 
