@@ -59,6 +59,13 @@ except ImportError:
 #
 # Local Imports
 from ...Metrics.metrics_logger import log_counter, log_histogram
+from ...Utils.egress import (
+    EgressBlockedError,
+    EgressFetchError,
+    MAX_FETCH_BYTES_PAGE,
+    MAX_FETCH_BYTES_SITEMAP,
+    guarded_fetch_aiohttp,
+)
 #
 #######################################################################################################################
 #
@@ -165,6 +172,10 @@ async def crawl_site(
     # Keep track of the domain to stay on the same site
     base_domain = urlparse(base_url).netloc
 
+    # Trust the crawl's own starting host (user-provided boundary) for the
+    # egress guard — never auto-trust arbitrary URLs discovered mid-crawl.
+    origins = frozenset({(urlparse(base_url).hostname or "").lower()})
+
     # Track statistics
     pages_crawled = 0
     errors_count = 0
@@ -196,62 +207,72 @@ async def crawl_site(
             log_counter("crawler_page_attempt", labels={"depth": str(current_depth)})
 
             try:
-                async with session.get(current_url, timeout=10) as response:
-                    if response.status != 200:
-                        log_counter(
-                            "crawler_http_response",
-                            labels={"status": str(response.status)},
-                        )
-                        continue
-
-                    content_type = response.headers.get("Content-Type", "")
-                    if "text/html" not in content_type:
-                        log_counter(
-                            "crawler_content_type_skip",
-                            labels={"content_type": content_type.split(";")[0]},
-                        )
-                        continue
-
-                    html = await response.text()
-                    soup = BeautifulSoup(html, "lxml")
-
-                    # Count links found
-                    links_found = 0
-                    new_links_added = 0
-
-                    for link in soup.find_all("a", href=True):
-                        href = link.get("href")
-                        if not href:
-                            continue
-
-                        links_found += 1
-
-                        # Create an absolute URL from the relative link
-                        full_url = urljoin(current_url, href).split("#")[
-                            0
-                        ]  # Remove fragments
-
-                        # Check if the URL is on the same domain and hasn't been seen
-                        if (
-                            urlparse(full_url).netloc == base_domain
-                            and full_url not in visited
-                        ):
-                            to_visit.append((full_url, current_depth + 1))
-                            new_links_added += 1
-
-                    # Log page crawl success
-                    page_duration = time.time() - page_start
-                    log_histogram(
-                        "crawler_page_duration",
-                        page_duration,
-                        labels={"status": "success"},
-                    )
-                    log_histogram("crawler_links_per_page", links_found)
-                    log_histogram("crawler_new_links_per_page", new_links_added)
+                response = await guarded_fetch_aiohttp(
+                    current_url,
+                    session=session,
+                    max_bytes=MAX_FETCH_BYTES_PAGE,
+                    trusted_origins=origins,
+                    timeout=10,
+                )
+                if response.status_code != 200:
                     log_counter(
-                        "crawler_page_success", labels={"depth": str(current_depth)}
+                        "crawler_http_response",
+                        labels={"status": str(response.status_code)},
                     )
+                    continue
 
+                content_type = response.headers.get("Content-Type", "")
+                if "text/html" not in content_type:
+                    log_counter(
+                        "crawler_content_type_skip",
+                        labels={"content_type": content_type.split(";")[0]},
+                    )
+                    continue
+
+                html = response.text
+                soup = BeautifulSoup(html, "lxml")
+
+                # Count links found
+                links_found = 0
+                new_links_added = 0
+
+                for link in soup.find_all("a", href=True):
+                    href = link.get("href")
+                    if not href:
+                        continue
+
+                    links_found += 1
+
+                    # Create an absolute URL from the relative link
+                    full_url = urljoin(current_url, href).split("#")[
+                        0
+                    ]  # Remove fragments
+
+                    # Check if the URL is on the same domain and hasn't been seen
+                    if (
+                        urlparse(full_url).netloc == base_domain
+                        and full_url not in visited
+                    ):
+                        to_visit.append((full_url, current_depth + 1))
+                        new_links_added += 1
+
+                # Log page crawl success
+                page_duration = time.time() - page_start
+                log_histogram(
+                    "crawler_page_duration",
+                    page_duration,
+                    labels={"status": "success"},
+                )
+                log_histogram("crawler_links_per_page", links_found)
+                log_histogram("crawler_new_links_per_page", new_links_added)
+                log_counter(
+                    "crawler_page_success", labels={"depth": str(current_depth)}
+                )
+
+            except (EgressBlockedError, EgressFetchError) as e:
+                log_counter("crawler_url_filtered", labels={"reason": "egress_blocked"})
+                logging.warning(f"Skipping blocked/oversize URL {current_url}: {e}")
+                continue
             except asyncio.TimeoutError:
                 errors_count += 1
                 page_duration = time.time() - page_start
@@ -327,21 +348,28 @@ async def get_urls_from_sitemap(
     try:
         async with aiohttp.ClientSession() as session:
             fetch_start = time.time()
-            async with session.get(sitemap_url, timeout=30) as response:
-                response.raise_for_status()
-                xml_content = await response.text()
+            origins = frozenset({(urlparse(sitemap_url).hostname or "").lower()})
+            response = await guarded_fetch_aiohttp(
+                sitemap_url,
+                session=session,
+                max_bytes=MAX_FETCH_BYTES_SITEMAP,
+                trusted_origins=origins,
+                timeout=30,
+            )
+            response.raise_for_status()
+            xml_content = response.text
 
-                # Log successful fetch
-                fetch_duration = time.time() - fetch_start
-                log_histogram(
-                    "crawler_sitemap_fetch_duration",
-                    fetch_duration,
-                    labels={"status": "success"},
-                )
-                log_counter(
-                    "crawler_sitemap_fetch_success",
-                    labels={"status_code": str(response.status)},
-                )
+            # Log successful fetch
+            fetch_duration = time.time() - fetch_start
+            log_histogram(
+                "crawler_sitemap_fetch_duration",
+                fetch_duration,
+                labels={"status": "success"},
+            )
+            log_counter(
+                "crawler_sitemap_fetch_success",
+                labels={"status_code": str(response.status_code)},
+            )
 
         # Parse XML
         parse_start = time.time()

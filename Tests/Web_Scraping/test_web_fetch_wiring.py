@@ -39,3 +39,32 @@ def test_scrape_article_signature_defaults_fail_closed():
     assert sig.parameters["trusted_origins"].default == frozenset()
     sig_async = inspect.signature(AEL.scrape_article_async)
     assert sig_async.parameters["trusted_origins"].default == frozenset()
+
+
+def test_scraper_config_has_fail_closed_trusted_origins_default():
+    from tldw_chatbook.Web_Scraping.Article_Scraper.config import ScraperConfig
+
+    assert ScraperConfig().trusted_origins == frozenset()
+
+
+def test_confluence_make_request_gets_timeout_and_guard(monkeypatch):
+    from tldw_chatbook.Web_Scraping.Confluence import confluence_auth as ca
+
+    calls = {}
+
+    def fake_guarded(url, **kwargs):
+        calls["url"] = url
+        calls.update(kwargs)
+
+        class R:
+            status_code = 200
+
+        return R()
+
+    monkeypatch.setattr(ca, "guarded_fetch_requests", fake_guarded)
+    auth = ca.ConfluenceAuth("https://wiki.corp.example")
+    auth._auth_configured = True
+    auth.make_request("GET", "/rest/api/content/123")
+    assert calls["url"] == "https://wiki.corp.example/rest/api/content/123"
+    assert calls["timeout"] == 30
+    assert calls["trusted_origins"] == frozenset({"wiki.corp.example"})

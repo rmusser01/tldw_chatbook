@@ -6,6 +6,7 @@
 import asyncio
 from typing import Dict, Any, List, Optional
 import re
+from urllib.parse import urlparse
 
 #
 # Third-party imports
@@ -29,6 +30,7 @@ from .confluence_utils import (
     convert_confluence_to_markdown,
     extract_confluence_metadata,
 )
+from ...Utils.egress import MAX_FETCH_BYTES_PAGE, guarded_fetch_requests
 #
 #######################################################################################################################
 #
@@ -52,6 +54,13 @@ class ConfluenceScraper(Scraper):
         self.auth = auth
         self.base_url = auth.base_url
         self.api_base = f"{self.base_url}/rest/api"
+
+        # Trust this instance's own Confluence host for the egress guard —
+        # never auto-trust arbitrary URLs discovered while scraping.
+        base_host = (urlparse(self.base_url).hostname or "").lower()
+        self.config.trusted_origins = frozenset(
+            set(self.config.trusted_origins) | {base_host}
+        )
 
     async def scrape_page_by_id(self, page_id: str) -> Dict[str, Any]:
         """
@@ -321,7 +330,13 @@ class ConfluenceScraper(Scraper):
         try:
             # For legacy URLs, we need to resolve them
             if "/display/" in url:
-                response = self.auth.session.get(url, allow_redirects=True)
+                response = guarded_fetch_requests(
+                    url,
+                    session=self.auth.session,
+                    max_bytes=MAX_FETCH_BYTES_PAGE,
+                    trusted_origins=self.config.trusted_origins,
+                    timeout=30,
+                )
                 if response.status_code == 200:
                     # Look for page ID in the HTML
                     soup = BeautifulSoup(response.text, "html.parser")
