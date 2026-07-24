@@ -56,6 +56,11 @@ from tldw_chatbook.Chat.citation_trace_models import (
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.citation_artifact_ownership import (
+        ArtifactOwnerBinding,
+        ArtifactOwnerOperation,
+        ArtifactOwnerOperationKind,
+    )
     from tldw_chatbook.Chat.citation_payload_lifecycle import SnapshotDedupeScope
 
 
@@ -196,6 +201,32 @@ class _ActiveTraceProof:
     body_fingerprint: str
 
 
+@dataclass(frozen=True, slots=True, weakref_slot=True, eq=False, init=False)
+class CitationArtifactOwnerRequest:
+    """Opaque repository-issued request to retain one active local trace."""
+
+    namespace: TraceNamespace
+    message_id: str
+    message_revision: int
+
+    def __init__(
+        self,
+        *,
+        namespace: TraceNamespace,
+        message_id: str,
+        message_revision: int,
+    ) -> None:
+        del namespace, message_id, message_revision
+        raise ValueError("artifact owner requests are repository-issued only")
+
+    def __copy__(self) -> "CitationArtifactOwnerRequest":
+        raise TypeError("artifact owner requests cannot be copied")
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> "CitationArtifactOwnerRequest":
+        del memo
+        raise TypeError("artifact owner requests cannot be copied")
+
+
 _SqlValue = str | int | None
 _PreparedRow = tuple[_SqlValue, ...]
 
@@ -324,6 +355,21 @@ def _active_result_digest(result: ActiveCitationTraceResult) -> bytes:
     return hashlib.sha256(canonical.encode("utf-8")).digest()
 
 
+def _artifact_owner_request_digest(
+    request: CitationArtifactOwnerRequest,
+) -> bytes:
+    """Digest the complete repository-issued artifact capability."""
+
+    canonical = _canonical_json(
+        (
+            request.namespace.model_dump(mode="json"),
+            request.message_id,
+            request.message_revision,
+        )
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).digest()
+
+
 def load_local_citation_identity_context(
     db: CharactersRAGDB,
 ) -> LocalCitationIdentityContext | None:
@@ -380,6 +426,14 @@ class CitationTraceRepository:
             int,
             tuple[
                 weakref.ReferenceType[ActiveCitationTraceResult],
+                bytes,
+                _ActiveTraceProof,
+            ],
+        ] = {}
+        self._issued_artifact_owner_requests: dict[
+            int,
+            tuple[
+                weakref.ReferenceType[CitationArtifactOwnerRequest],
                 bytes,
                 _ActiveTraceProof,
             ],
@@ -1252,6 +1306,553 @@ class CitationTraceRepository:
         ):
             return self._invalidate_active_trace_result(result)
         return True
+
+    def get_artifact_owner_request(
+        self,
+        *,
+        message_id: str,
+        message_revision: int,
+        current_body: str,
+    ) -> CitationArtifactOwnerRequest | None:
+        """Issue an opaque artifact request for an exact active message owner."""
+
+        if not self.policy.canonical_writes_enabled:
+            return None
+        result = self.get_active_trace_for_message(
+            message_id,
+            message_revision,
+            current_body,
+            self._fingerprint_codec,
+        )
+        if (
+            result.state is not ActiveCitationTraceState.ACTIVE
+            or result.summary is None
+            or not self.verify_active_trace_result(result)
+        ):
+            return None
+        active_issued = self._issued_active_results.get(id(result))
+        if active_issued is None:
+            return None
+        proof = active_issued[2]
+        request = object.__new__(CitationArtifactOwnerRequest)
+        object.__setattr__(request, "namespace", result.summary.namespace)
+        object.__setattr__(request, "message_id", proof.message_id)
+        object.__setattr__(request, "message_revision", proof.message_revision)
+        request_id = id(request)
+        repository_ref = weakref.ref(self)
+
+        def discard(
+            request_ref: weakref.ReferenceType[CitationArtifactOwnerRequest],
+        ) -> None:
+            repository = repository_ref()
+            if repository is None:
+                return
+            issued = repository._issued_artifact_owner_requests.get(request_id)
+            if issued is not None and issued[0] is request_ref:
+                repository._issued_artifact_owner_requests.pop(request_id, None)
+
+        request_ref = weakref.ref(request, discard)
+        self._issued_artifact_owner_requests[request_id] = (
+            request_ref,
+            _artifact_owner_request_digest(request),
+            proof,
+        )
+        return request
+
+    def prepare_artifact_owner_operation(
+        self,
+        request: CitationArtifactOwnerRequest,
+        *,
+        artifact_store_id: str,
+        artifact_id: str,
+        artifact_revision: int,
+        operation_kind: ArtifactOwnerOperationKind,
+    ) -> ArtifactOwnerOperation:
+        """Derive a stable link operation from an exact issued owner request."""
+
+        from tldw_chatbook.Chat.citation_artifact_ownership import (
+            ArtifactOwnerBinding,
+            ArtifactOwnerOperation,
+            ArtifactOwnerOperationKind,
+        )
+
+        if operation_kind is not ArtifactOwnerOperationKind.LINK:
+            raise CitationPersistenceUnavailable("artifact_operation_kind_invalid")
+        proof = self._verify_artifact_owner_request(request)
+        if proof is None:
+            raise CitationPersistenceUnavailable("artifact_owner_request_invalid")
+        codec = self._fingerprint_codec
+        if codec is None:
+            raise CitationPersistenceUnavailable("fingerprint_key_unavailable")
+        binding = self._artifact_owner_binding(
+            ArtifactOwnerBinding,
+            codec=codec,
+            profile_id=proof.identity_context.profile_id,
+            artifact_store_id=artifact_store_id,
+            artifact_id=artifact_id,
+            artifact_revision=artifact_revision,
+            trace_id=proof.trace_id,
+        )
+        return ArtifactOwnerOperation(
+            operation_id=self._artifact_owner_operation_id(
+                codec,
+                binding_id=binding.binding_id,
+                operation_kind=operation_kind.value,
+            ),
+            operation_kind=operation_kind,
+            binding=binding,
+            created_at=datetime.now(UTC),
+        )
+
+    def prepare_artifact_unlink_operation(
+        self,
+        binding: ArtifactOwnerBinding,
+    ) -> ArtifactOwnerOperation:
+        """Derive a stable unlink only for an integrity-checked local binding."""
+
+        from tldw_chatbook.Chat.citation_artifact_ownership import (
+            ArtifactOwnerBinding,
+            ArtifactOwnerOperation,
+            ArtifactOwnerOperationKind,
+        )
+
+        validated = ArtifactOwnerBinding.model_validate(
+            binding.model_dump(mode="python"),
+            strict=True,
+        )
+        codec = self._fingerprint_codec
+        identity = self.identity_context
+        if (
+            not self.policy.canonical_writes_enabled
+            or codec is None
+            or identity is None
+            or validated.profile_id != identity.profile_id
+            or not self._artifact_binding_matches(codec, validated)
+        ):
+            raise CitationPersistenceUnavailable("artifact_owner_binding_invalid")
+        return ArtifactOwnerOperation(
+            operation_id=self._artifact_owner_operation_id(
+                codec,
+                binding_id=validated.binding_id,
+                operation_kind=ArtifactOwnerOperationKind.UNLINK.value,
+            ),
+            operation_kind=ArtifactOwnerOperationKind.UNLINK,
+            binding=validated,
+            created_at=datetime.now(UTC),
+        )
+
+    def apply_artifact_owner_operation(
+        self,
+        operation: ArtifactOwnerOperation,
+    ) -> None:
+        """Idempotently apply one durable artifact-side operation receipt."""
+
+        from tldw_chatbook.Chat.citation_artifact_ownership import (
+            ArtifactOwnerOperation,
+            ArtifactOwnerOperationKind,
+        )
+
+        validated = ArtifactOwnerOperation.model_validate(
+            operation.model_dump(mode="python"),
+            strict=True,
+        )
+        codec = self._fingerprint_codec
+        if codec is None or not self._artifact_binding_matches(
+            codec, validated.binding
+        ):
+            raise CitationPersistenceUnavailable("artifact_owner_binding_invalid")
+        expected_operation_id = self._artifact_owner_operation_id(
+            codec,
+            binding_id=validated.binding.binding_id,
+            operation_kind=validated.operation_kind.value,
+        )
+        if not hmac.compare_digest(validated.operation_id, expected_operation_id):
+            raise CitationPersistenceUnavailable("artifact_operation_identity_invalid")
+        with self.db.transaction() as cursor:
+            identity = self._require_active_write_cursor(cursor)
+            if identity.profile_id != validated.binding.profile_id:
+                raise CitationPersistenceUnavailable("artifact_owner_profile_mismatch")
+            self._acquire_artifact_owner_lock(cursor, identity.profile_id)
+            binding = validated.binding
+            now = datetime.now(UTC).isoformat()
+            if validated.operation_kind is ArtifactOwnerOperationKind.LINK:
+                trace = cursor.execute(
+                    """
+                    SELECT 1
+                    FROM rag_citation_traces
+                    WHERE profile_id = ? AND trace_id = ?
+                      AND origin = 'local' AND origin_scope_id = ?
+                      AND visibility_state = 'active'
+                    """,
+                    (binding.profile_id, binding.trace_id, binding.profile_id),
+                ).fetchone()
+                if trace is None:
+                    raise CitationPersistenceUnavailable("artifact_trace_unavailable")
+                cursor.execute(
+                    """
+                    INSERT OR IGNORE INTO rag_artifact_owner_leases(
+                        profile_id, artifact_store_id, artifact_id,
+                        artifact_revision, trace_id, lease_id, state,
+                        created_at, updated_at, retain_until
+                    ) VALUES (?, ?, ?, ?, ?, ?, 'link_pending', ?, ?, NULL)
+                    """,
+                    (
+                        binding.profile_id,
+                        binding.artifact_store_id,
+                        binding.artifact_id,
+                        binding.artifact_revision,
+                        binding.trace_id,
+                        binding.lease_id,
+                        validated.created_at.isoformat(),
+                        now,
+                    ),
+                )
+            lease = cursor.execute(
+                """
+                SELECT lease_id, state
+                FROM rag_artifact_owner_leases
+                WHERE profile_id = ? AND artifact_store_id = ?
+                  AND artifact_id = ? AND artifact_revision = ? AND trace_id = ?
+                """,
+                (
+                    binding.profile_id,
+                    binding.artifact_store_id,
+                    binding.artifact_id,
+                    binding.artifact_revision,
+                    binding.trace_id,
+                ),
+            ).fetchone()
+            if lease is None or not hmac.compare_digest(
+                lease["lease_id"], binding.lease_id
+            ):
+                raise CitationPersistenceUnavailable("artifact_lease_identity_conflict")
+            if (
+                validated.operation_kind is ArtifactOwnerOperationKind.UNLINK
+                and lease["state"] == "link_pending"
+            ):
+                raise CitationPersistenceUnavailable("artifact_link_not_live")
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO rag_artifact_owner_operations(
+                    profile_id, operation_id, artifact_store_id, artifact_id,
+                    artifact_revision, trace_id, operation_kind, state,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                """,
+                (
+                    binding.profile_id,
+                    validated.operation_id,
+                    binding.artifact_store_id,
+                    binding.artifact_id,
+                    binding.artifact_revision,
+                    binding.trace_id,
+                    validated.operation_kind.value,
+                    validated.created_at.isoformat(),
+                    now,
+                ),
+            )
+            receipt = cursor.execute(
+                """
+                SELECT
+                    artifact_store_id, artifact_id, artifact_revision,
+                    trace_id, operation_kind, state
+                FROM rag_artifact_owner_operations
+                WHERE profile_id = ? AND operation_id = ?
+                """,
+                (binding.profile_id, validated.operation_id),
+            ).fetchone()
+            expected = (
+                binding.artifact_store_id,
+                binding.artifact_id,
+                binding.artifact_revision,
+                binding.trace_id,
+                validated.operation_kind.value,
+            )
+            if receipt is None or tuple(receipt)[:5] != expected:
+                raise CitationPersistenceUnavailable(
+                    "artifact_operation_identity_conflict"
+                )
+            cursor.execute(
+                """
+                UPDATE rag_artifact_owner_operations
+                SET state = 'applied', updated_at = ?
+                WHERE profile_id = ? AND operation_id = ? AND state = 'pending'
+                """,
+                (now, binding.profile_id, validated.operation_id),
+            )
+            if validated.operation_kind is ArtifactOwnerOperationKind.LINK:
+                cursor.execute(
+                    """
+                    UPDATE rag_artifact_owner_leases
+                    SET state = 'live', updated_at = ?
+                    WHERE profile_id = ? AND artifact_store_id = ?
+                      AND artifact_id = ? AND artifact_revision = ?
+                      AND trace_id = ? AND state = 'link_pending'
+                    """,
+                    (
+                        now,
+                        binding.profile_id,
+                        binding.artifact_store_id,
+                        binding.artifact_id,
+                        binding.artifact_revision,
+                        binding.trace_id,
+                    ),
+                )
+            elif lease["state"] != "released":
+                cursor.execute(
+                    """
+                    UPDATE rag_artifact_owner_leases
+                    SET state = 'unlink_pending', updated_at = ?
+                    WHERE profile_id = ? AND artifact_store_id = ?
+                      AND artifact_id = ? AND artifact_revision = ?
+                      AND trace_id = ? AND state = 'live'
+                    """,
+                    (
+                        now,
+                        binding.profile_id,
+                        binding.artifact_store_id,
+                        binding.artifact_id,
+                        binding.artifact_revision,
+                        binding.trace_id,
+                    ),
+                )
+
+    def acknowledge_artifact_owner_operation(
+        self,
+        operation: ArtifactOwnerOperation,
+    ) -> None:
+        """Finalize an artifact-acknowledged receipt and release unlinks."""
+
+        from tldw_chatbook.Chat.citation_artifact_ownership import (
+            ArtifactOwnerOperation,
+            ArtifactOwnerOperationKind,
+            ArtifactOwnerOutboxState,
+        )
+
+        validated = ArtifactOwnerOperation.model_validate(
+            operation.model_dump(mode="python"),
+            strict=True,
+        )
+        if validated.state is not ArtifactOwnerOutboxState.ACKNOWLEDGED:
+            raise CitationPersistenceUnavailable(
+                "artifact_registry_acknowledgement_required"
+            )
+        self.apply_artifact_owner_operation(validated)
+        binding = validated.binding
+        with self.db.transaction() as cursor:
+            identity = self._require_active_write_cursor(cursor)
+            self._acquire_artifact_owner_lock(cursor, identity.profile_id)
+            receipt = cursor.execute(
+                """
+                SELECT operation_kind, state
+                FROM rag_artifact_owner_operations
+                WHERE profile_id = ? AND operation_id = ?
+                """,
+                (binding.profile_id, validated.operation_id),
+            ).fetchone()
+            if (
+                receipt is None
+                or receipt["operation_kind"] != validated.operation_kind.value
+            ):
+                raise CitationPersistenceUnavailable(
+                    "artifact_operation_identity_conflict"
+                )
+            now = datetime.now(UTC).isoformat()
+            if validated.operation_kind is ArtifactOwnerOperationKind.UNLINK:
+                cursor.execute(
+                    """
+                    UPDATE rag_artifact_owner_leases
+                    SET state = 'released', updated_at = ?
+                    WHERE profile_id = ? AND artifact_store_id = ?
+                      AND artifact_id = ? AND artifact_revision = ?
+                      AND trace_id = ? AND state = 'unlink_pending'
+                    """,
+                    (
+                        now,
+                        binding.profile_id,
+                        binding.artifact_store_id,
+                        binding.artifact_id,
+                        binding.artifact_revision,
+                        binding.trace_id,
+                    ),
+                )
+                state = cursor.execute(
+                    """
+                    SELECT state FROM rag_artifact_owner_leases
+                    WHERE profile_id = ? AND artifact_store_id = ?
+                      AND artifact_id = ? AND artifact_revision = ?
+                      AND trace_id = ?
+                    """,
+                    (
+                        binding.profile_id,
+                        binding.artifact_store_id,
+                        binding.artifact_id,
+                        binding.artifact_revision,
+                        binding.trace_id,
+                    ),
+                ).fetchone()
+                if state is None or state["state"] != "released":
+                    raise CitationPersistenceUnavailable(
+                        "artifact_unlink_release_failed"
+                    )
+            cursor.execute(
+                """
+                UPDATE rag_artifact_owner_operations
+                SET state = 'acknowledged', updated_at = ?
+                WHERE profile_id = ? AND operation_id = ?
+                  AND state IN ('pending','applied')
+                """,
+                (now, binding.profile_id, validated.operation_id),
+            )
+
+    def _verify_artifact_owner_request(
+        self,
+        request: CitationArtifactOwnerRequest,
+    ) -> _ActiveTraceProof | None:
+        if not isinstance(request, CitationArtifactOwnerRequest):
+            return None
+        issued = self._issued_artifact_owner_requests.get(id(request))
+        if issued is None or issued[0]() is not request:
+            return None
+        try:
+            digest = _artifact_owner_request_digest(request)
+        except (AttributeError, TypeError, ValueError):
+            return None
+        if not hmac.compare_digest(issued[1], digest):
+            return None
+        proof = issued[2]
+        codec = self._fingerprint_codec
+        if codec is None or self.identity_context != proof.identity_context:
+            return None
+        message = (
+            self.db.get_connection()
+            .execute(
+                """
+            SELECT message.version, message.content, owner.state,
+                   owner.body_fingerprint, trace.visibility_state
+            FROM messages AS message
+            JOIN rag_message_trace_owners AS owner
+              ON owner.message_id = message.id
+             AND owner.message_revision = message.version
+            JOIN rag_citation_traces AS trace
+              ON trace.profile_id = owner.profile_id
+             AND trace.trace_id = owner.trace_id
+            WHERE message.id = ? AND message.deleted = 0
+              AND owner.profile_id = ? AND owner.trace_id = ?
+            """,
+                (
+                    proof.message_id,
+                    proof.identity_context.profile_id,
+                    proof.trace_id,
+                ),
+            )
+            .fetchone()
+        )
+        if (
+            message is None
+            or message["version"] != proof.message_revision
+            or message["state"] != "active"
+            or message["visibility_state"] != "active"
+        ):
+            return None
+        current = codec.fingerprint(
+            CitationFingerprintDomain.MESSAGE_BODY,
+            message["content"],
+        )
+        if not (
+            hmac.compare_digest(message["body_fingerprint"], proof.body_fingerprint)
+            and hmac.compare_digest(current, proof.body_fingerprint)
+        ):
+            return None
+        return proof
+
+    @staticmethod
+    def _artifact_owner_binding(
+        binding_type: type[ArtifactOwnerBinding],
+        *,
+        codec: CitationFingerprintCodec,
+        profile_id: str,
+        artifact_store_id: str,
+        artifact_id: str,
+        artifact_revision: int,
+        trace_id: str,
+    ) -> ArtifactOwnerBinding:
+        parts = (
+            profile_id,
+            artifact_store_id,
+            artifact_id,
+            str(artifact_revision),
+            trace_id,
+        )
+        return binding_type(
+            profile_id=profile_id,
+            artifact_store_id=artifact_store_id,
+            artifact_id=artifact_id,
+            artifact_revision=artifact_revision,
+            trace_id=trace_id,
+            lease_id=codec.fingerprint(
+                CitationFingerprintDomain.OWNER_OPERATION,
+                "artifact-lease",
+                *parts,
+            ),
+            binding_id=codec.fingerprint(
+                CitationFingerprintDomain.OWNER_OPERATION,
+                "artifact-binding",
+                *parts,
+            ),
+        )
+
+    @staticmethod
+    def _artifact_owner_operation_id(
+        codec: CitationFingerprintCodec,
+        *,
+        binding_id: str,
+        operation_kind: str,
+    ) -> str:
+        return codec.fingerprint(
+            CitationFingerprintDomain.OWNER_OPERATION,
+            "artifact-operation",
+            binding_id,
+            operation_kind,
+        )
+
+    @classmethod
+    def _artifact_binding_matches(
+        cls,
+        codec: CitationFingerprintCodec,
+        binding: ArtifactOwnerBinding,
+    ) -> bool:
+        try:
+            expected = cls._artifact_owner_binding(
+                type(binding),
+                codec=codec,
+                profile_id=binding.profile_id,
+                artifact_store_id=binding.artifact_store_id,
+                artifact_id=binding.artifact_id,
+                artifact_revision=binding.artifact_revision,
+                trace_id=binding.trace_id,
+            )
+        except (TypeError, ValueError):
+            return False
+        return hmac.compare_digest(expected.binding_id, binding.binding_id) and (
+            hmac.compare_digest(expected.lease_id, binding.lease_id)
+        )
+
+    @staticmethod
+    def _acquire_artifact_owner_lock(
+        cursor: sqlite3.Cursor,
+        profile_id: str,
+    ) -> None:
+        cursor.execute(
+            """
+            UPDATE rag_identity_context
+            SET profile_id = profile_id
+            WHERE context_name = 'default' AND profile_id = ?
+            """,
+            (profile_id,),
+        )
+        if cursor.rowcount != 1:
+            raise CitationPersistenceUnavailable("artifact_owner_lock_failed")
 
     def transition_owner_for_message_update(
         self,
@@ -3248,6 +3849,7 @@ class CitationTraceRepository:
 __all__ = [
     "ActiveCitationTraceResult",
     "ActiveCitationTraceState",
+    "CitationArtifactOwnerRequest",
     "CitationAvailabilityWarning",
     "CitationHydrationResult",
     "CitationHydrationState",

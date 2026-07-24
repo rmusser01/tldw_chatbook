@@ -3,11 +3,24 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from tldw_chatbook.Chat.citation_artifact_ownership import (
+    ARTIFACT_PROVENANCE_OUTBOX_MAX_ENTRIES,
+    ArtifactBackendMode,
+    ArtifactOwnerBinding,
+    ArtifactOwnerOperation,
+    ArtifactOwnerOutboxState,
+    CitationArtifactOwnershipCoordinator,
+)
+from tldw_chatbook.Chat.citation_trace_repository import (
+    CitationArtifactOwnerRequest,
+    CitationPersistenceUnavailable,
+)
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
 
 from .chatbook_creator import ChatbookCreator
@@ -16,8 +29,22 @@ from .chatbook_models import ContentType
 from .conflict_resolver import ConflictResolution
 
 
+_REGISTRY_LOCKS_GUARD = threading.Lock()
+_REGISTRY_LOCKS: dict[Path, threading.Lock] = {}
+_SAFE_PROVENANCE_ERROR = re.compile(r"[a-z][a-z0-9_]{0,127}\Z")
+
+
+def _registry_lock(path: Path) -> threading.Lock:
+    resolved = path.resolve()
+    with _REGISTRY_LOCKS_GUARD:
+        return _REGISTRY_LOCKS.setdefault(resolved, threading.Lock())
+
+
 class LocalChatbookService:
     """Expose local chatbook import/export operations through a service contract."""
+
+    artifact_backend_mode = ArtifactBackendMode.CROSS_STORE
+    artifact_store_id = "local-chatbook-json-v1"
 
     def __init__(
         self,
@@ -34,7 +61,20 @@ class LocalChatbookService:
         # Guards every load -> mutate -> save span against overlapping registry
         # read-modify-writes from concurrent OS threads (e.g. two overlapping
         # `asyncio.run(...)` exports on separate `@work(thread=True)` workers).
-        self._registry_lock = threading.Lock()
+        self._registry_lock = _registry_lock(self.registry_path)
+        self._citation_ownership_coordinator: (
+            CitationArtifactOwnershipCoordinator | None
+        ) = None
+
+    def set_citation_ownership_coordinator(
+        self,
+        coordinator: CitationArtifactOwnershipCoordinator | None,
+    ) -> None:
+        """Install the cross-store coordinator after both stores are available."""
+
+        if coordinator is not None and coordinator.artifact_store is not self:
+            raise ValueError("citation ownership coordinator store mismatch")
+        self._citation_ownership_coordinator = coordinator
 
     def _default_registry_path(self) -> Path:
         for key in ("Prompts", "ChaChaNotes", "Media"):
@@ -73,7 +113,7 @@ class LocalChatbookService:
 
     def _load_registry(self) -> dict[str, Any]:
         if not self.registry_path.exists():
-            return {"next_id": 1, "records": []}
+            return {"next_id": 1, "records": [], "provenance_outbox": []}
         with self.registry_path.open("r", encoding="utf-8") as handle:
             payload = json.load(handle)
         if not isinstance(payload, dict):
@@ -83,8 +123,52 @@ class LocalChatbookService:
             raise ValueError(
                 f"Invalid local chatbook registry records: {self.registry_path}"
             )
-        next_id = int(payload.get("next_id") or 1)
-        return {"next_id": next_id, "records": [dict(record) for record in records]}
+        raw_outbox = payload.get("provenance_outbox", [])
+        if (
+            not isinstance(raw_outbox, list)
+            or len(raw_outbox) > ARTIFACT_PROVENANCE_OUTBOX_MAX_ENTRIES
+        ):
+            raise ValueError(
+                f"Invalid local chatbook provenance_outbox: {self.registry_path}"
+            )
+        try:
+            outbox = [
+                ArtifactOwnerOperation.model_validate_json(
+                    json.dumps(item),
+                    strict=True,
+                ).model_dump(mode="json")
+                for item in raw_outbox
+            ]
+            normalized_records = []
+            for raw_record in records:
+                record = dict(raw_record)
+                if "provenance_owner" in record:
+                    binding = ArtifactOwnerBinding.model_validate_json(
+                        json.dumps(record["provenance_owner"]),
+                        strict=True,
+                    )
+                    record_id = str(record.get("chatbook_id") or record.get("id") or "")
+                    record_revision = record.get("artifact_revision")
+                    if (
+                        binding.artifact_store_id != self.artifact_store_id
+                        or binding.artifact_id != record_id
+                        or isinstance(record_revision, bool)
+                        or not isinstance(record_revision, int)
+                        or record_revision != binding.artifact_revision
+                    ):
+                        raise ValueError("artifact owner binding mismatch")
+                    record["provenance_owner"] = binding.model_dump(mode="json")
+                normalized_records.append(record)
+            next_id = int(payload.get("next_id") or 1)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"Invalid local chatbook provenance registry: {self.registry_path}"
+            ) from None
+        return {
+            "next_id": next_id,
+            "records": normalized_records,
+            "provenance_outbox": outbox,
+        }
 
     def _save_registry(self, payload: dict[str, Any]) -> None:
         atomic_write_json(self.registry_path, payload)
@@ -104,6 +188,7 @@ class LocalChatbookService:
     @staticmethod
     def _record_copy(record: dict[str, Any]) -> dict[str, Any]:
         copied = dict(record)
+        copied.pop("provenance_owner", None)
         copied["tags"] = list(copied.get("tags") or [])
         copied["categories"] = list(copied.get("categories") or [])
         copied["metadata"] = dict(copied.get("metadata") or {})
@@ -225,6 +310,7 @@ class LocalChatbookService:
         tags: list[Any] | None = None,
         categories: list[Any] | None = None,
         metadata: dict[str, Any] | None = None,
+        provenance_owner_request: CitationArtifactOwnerRequest | None = None,
         **extra: Any,
     ) -> dict[str, Any]:
         with self._registry_lock:
@@ -242,18 +328,36 @@ class LocalChatbookService:
                 "metadata": self._coerce_metadata(metadata),
                 "created_at": now,
                 "updated_at": now,
+                "artifact_revision": 1,
             }
             if extra:
                 record["metadata"].update(
                     {key: value for key, value in extra.items() if value is not None}
                 )
+            coordinator = self._citation_ownership_coordinator
+            if (
+                provenance_owner_request is not None
+                and coordinator is not None
+                and coordinator.writes_enabled
+            ):
+                operation = coordinator.prepare_link_operation(
+                    provenance_owner_request,
+                    artifact_id=str(chatbook_id),
+                    artifact_revision=1,
+                )
+                self._append_provenance_operation(registry, operation)
+                record["provenance_owner"] = operation.binding.model_dump(mode="json")
             registry["records"].append(record)
             registry["next_id"] = chatbook_id + 1
             self._save_registry(registry)
         return self._record_copy(record)
 
     async def update_chatbook(
-        self, chatbook_id: int | str, **fields: Any
+        self,
+        chatbook_id: int | str,
+        *,
+        provenance_owner_request: CitationArtifactOwnerRequest | None = None,
+        **fields: Any,
     ) -> dict[str, Any]:
         with self._registry_lock:
             registry = self._load_registry()
@@ -271,6 +375,27 @@ class LocalChatbookService:
                 record["categories"] = self._coerce_string_list(fields["categories"])
             if "metadata" in fields:
                 record["metadata"] = self._coerce_metadata(fields["metadata"])
+            coordinator = self._citation_ownership_coordinator
+            if (
+                provenance_owner_request is not None
+                and coordinator is not None
+                and coordinator.writes_enabled
+            ):
+                previous_binding = self._record_owner_binding(record)
+                next_revision = int(record.get("artifact_revision") or 0) + 1
+                if previous_binding is not None:
+                    self._append_provenance_operation(
+                        registry,
+                        coordinator.prepare_unlink_operation(previous_binding),
+                    )
+                link = coordinator.prepare_link_operation(
+                    provenance_owner_request,
+                    artifact_id=str(record.get("chatbook_id") or record.get("id")),
+                    artifact_revision=next_revision,
+                )
+                self._append_provenance_operation(registry, link)
+                record["provenance_owner"] = link.binding.model_dump(mode="json")
+                record["artifact_revision"] = next_revision
             record["updated_at"] = self._utc_now()
             self._save_registry(registry)
         return self._record_copy(record)
@@ -279,6 +404,23 @@ class LocalChatbookService:
         with self._registry_lock:
             registry = self._load_registry()
             wanted = str(chatbook_id)
+            record = self._find_record(registry, chatbook_id)
+            binding = self._record_owner_binding(record)
+            coordinator = self._citation_ownership_coordinator
+            if (
+                binding is not None
+                and coordinator is not None
+                and coordinator.writes_enabled
+            ):
+                try:
+                    self._append_provenance_operation(
+                        registry,
+                        coordinator.prepare_unlink_operation(binding),
+                    )
+                except CitationPersistenceUnavailable:
+                    # A tampered/imported binding is inert. Deleting the ordinary
+                    # artifact remains available and cannot mutate trace state.
+                    pass
             remaining = [
                 record
                 for record in registry["records"]
@@ -290,6 +432,136 @@ class LocalChatbookService:
             registry["records"] = remaining
             self._save_registry(registry)
         return True
+
+    @staticmethod
+    def _record_owner_binding(
+        record: dict[str, Any],
+    ) -> ArtifactOwnerBinding | None:
+        raw = record.get("provenance_owner")
+        if raw is None:
+            return None
+        return ArtifactOwnerBinding.model_validate_json(
+            json.dumps(raw),
+            strict=True,
+        )
+
+    @staticmethod
+    def _append_provenance_operation(
+        registry: dict[str, Any],
+        operation: ArtifactOwnerOperation,
+    ) -> None:
+        outbox = registry["provenance_outbox"]
+        for existing in outbox:
+            if existing["operation_id"] == operation.operation_id:
+                current = ArtifactOwnerOperation.model_validate_json(
+                    json.dumps(existing),
+                    strict=True,
+                )
+                if (
+                    current.operation_kind is not operation.operation_kind
+                    or current.binding != operation.binding
+                ):
+                    raise ValueError("provenance operation identity conflict")
+                return
+        if len(outbox) >= ARTIFACT_PROVENANCE_OUTBOX_MAX_ENTRIES:
+            raise ValueError("local chatbook provenance_outbox is full")
+        outbox.append(operation.model_dump(mode="json"))
+
+    def list_provenance_outbox(
+        self,
+        *,
+        limit: int,
+    ) -> list[ArtifactOwnerOperation]:
+        """Read a bounded copy of the durable cross-store outbox."""
+
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= ARTIFACT_PROVENANCE_OUTBOX_MAX_ENTRIES
+        ):
+            raise ValueError("provenance outbox limit is invalid")
+        with self._registry_lock:
+            registry = self._load_registry()
+            return [
+                ArtifactOwnerOperation.model_validate_json(
+                    json.dumps(item),
+                    strict=True,
+                )
+                for item in registry["provenance_outbox"][:limit]
+            ]
+
+    def mark_provenance_operation_acknowledged(self, operation_id: str) -> None:
+        """Durably record trace-side application before release."""
+
+        with self._registry_lock:
+            registry = self._load_registry()
+            for index, item in enumerate(registry["provenance_outbox"]):
+                operation = ArtifactOwnerOperation.model_validate_json(
+                    json.dumps(item),
+                    strict=True,
+                )
+                if operation.operation_id != operation_id:
+                    continue
+                if operation.state is ArtifactOwnerOutboxState.ACKNOWLEDGED:
+                    return
+                registry["provenance_outbox"][index] = operation.model_copy(
+                    update={
+                        "state": ArtifactOwnerOutboxState.ACKNOWLEDGED,
+                        "acknowledged_at": datetime.now(timezone.utc),
+                        "error_code": None,
+                    }
+                ).model_dump(mode="json")
+                self._save_registry(registry)
+                return
+            raise KeyError(f"Unknown provenance operation: {operation_id}")
+
+    def prune_provenance_operation(self, operation_id: str) -> None:
+        """Remove only an artifact-acknowledged, trace-finalized entry."""
+
+        with self._registry_lock:
+            registry = self._load_registry()
+            kept = []
+            found = False
+            for item in registry["provenance_outbox"]:
+                operation = ArtifactOwnerOperation.model_validate_json(
+                    json.dumps(item),
+                    strict=True,
+                )
+                if operation.operation_id != operation_id:
+                    kept.append(item)
+                    continue
+                found = True
+                if operation.state is not ArtifactOwnerOutboxState.ACKNOWLEDGED:
+                    raise ValueError("pending provenance operation cannot be pruned")
+            if not found:
+                return
+            registry["provenance_outbox"] = kept
+            self._save_registry(registry)
+
+    def record_provenance_operation_failure(
+        self,
+        operation_id: str,
+        reason_code: str,
+    ) -> None:
+        """Persist only one bounded sanitized reason code."""
+
+        bounded_reason = str(reason_code)
+        if _SAFE_PROVENANCE_ERROR.fullmatch(bounded_reason) is None:
+            bounded_reason = "artifact_reconciliation_failed"
+        with self._registry_lock:
+            registry = self._load_registry()
+            for index, item in enumerate(registry["provenance_outbox"]):
+                operation = ArtifactOwnerOperation.model_validate_json(
+                    json.dumps(item),
+                    strict=True,
+                )
+                if operation.operation_id != operation_id:
+                    continue
+                registry["provenance_outbox"][index] = operation.model_copy(
+                    update={"error_code": bounded_reason}
+                ).model_dump(mode="json")
+                self._save_registry(registry)
+                return
 
     async def export_chatbook(
         self,

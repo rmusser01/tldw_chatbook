@@ -150,6 +150,19 @@ from tldw_chatbook.Chat.chat_conversation_scope_service import (
     ChatConversationScopeService,
 )
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.citation_artifact_ownership import (
+    CitationArtifactOwnershipCoordinator,
+)
+from tldw_chatbook.Chat.citation_provenance_runtime import (
+    CitationProvenanceRuntimePolicy,
+)
+from tldw_chatbook.Chat.citation_trace_identity import (
+    KeyringCitationFingerprintKeyProvider,
+)
+from tldw_chatbook.Chat.citation_trace_repository import (
+    CitationTraceRepository,
+    load_local_citation_identity_context,
+)
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
@@ -3878,6 +3891,7 @@ class TldwCli(
             server_service=self.server_chat_conversation_service,
             policy_enforcer=self.service_policy_enforcer,
         )
+        self._wire_citation_artifact_ownership()
 
     def _wire_writing_services(self) -> None:
         try:
@@ -3969,6 +3983,44 @@ class TldwCli(
             server_chatbook_service=self.server_chatbook_service,
             policy_enforcer=self.service_policy_enforcer,
         )
+        self._wire_citation_artifact_ownership()
+
+    def _wire_citation_artifact_ownership(self) -> None:
+        """Compose cross-store citation ownership after both stores exist."""
+
+        artifact_store = getattr(self, "local_chatbook_service", None)
+        trace_db = getattr(self, "chachanotes_db", None)
+        if artifact_store is None or trace_db is None:
+            if not hasattr(self, "citation_artifact_ownership_coordinator"):
+                self.citation_trace_repository = None
+                self.citation_artifact_ownership_coordinator = None
+            return
+        current = getattr(
+            self,
+            "citation_artifact_ownership_coordinator",
+            None,
+        )
+        if (
+            current is not None
+            and current.artifact_store is artifact_store
+            and current.trace_repository.db is trace_db
+        ):
+            return
+        policy = CitationProvenanceRuntimePolicy.from_config()
+        identity = load_local_citation_identity_context(trace_db)
+        repository = CitationTraceRepository.from_key_provider(
+            trace_db,
+            policy=policy,
+            identity_context=identity,
+            key_provider=KeyringCitationFingerprintKeyProvider(),
+        )
+        coordinator = CitationArtifactOwnershipCoordinator(
+            artifact_store=artifact_store,
+            trace_repository=repository,
+        )
+        artifact_store.set_citation_ownership_coordinator(coordinator)
+        self.citation_trace_repository = repository
+        self.citation_artifact_ownership_coordinator = coordinator
 
     def _wire_evaluation_services(self) -> None:
         self.local_evaluation_service = None
@@ -7507,6 +7559,41 @@ class TldwCli(
             self._start_deferred_audio_service_initialization,
         )
         self.schedule_media_cleanup()
+        coordinator = getattr(
+            self,
+            "citation_artifact_ownership_coordinator",
+            None,
+        )
+        if coordinator is not None and coordinator.writes_enabled:
+            self._create_deferred_startup_task(
+                self._reconcile_citation_artifact_ownership(),
+                name="deferred_citation_artifact_reconciliation",
+            )
+
+    async def _reconcile_citation_artifact_ownership(self) -> None:
+        """Run one bounded recovery batch without blocking the UI loop."""
+
+        coordinator = getattr(
+            self,
+            "citation_artifact_ownership_coordinator",
+            None,
+        )
+        if coordinator is None or not coordinator.writes_enabled:
+            return
+        try:
+            result = await asyncio.to_thread(coordinator.reconcile_pending, limit=25)
+        except Exception:
+            self.loguru_logger.error(
+                "Citation artifact reconciliation failed: "
+                "artifact_reconciliation_failed"
+            )
+            return
+        if result.failed:
+            self.loguru_logger.warning(
+                "Citation artifact reconciliation retained pending operations: "
+                f"operation_ids={result.operation_ids!r} "
+                f"reason_codes={result.reason_codes!r}"
+            )
 
     def _schedule_footer_status_updates(self) -> None:
         """Wire status-line DB/token status updates after UI readiness."""

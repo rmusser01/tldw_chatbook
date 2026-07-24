@@ -4,7 +4,7 @@ import re
 from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from textual import on
@@ -3494,19 +3494,27 @@ async def test_console_save_as_prompt_retries_with_suffix_on_name_conflict():
 async def test_console_selected_message_save_as_chatbook_registers_console_artifact():
     app = _build_test_app()
     _install_console_save_service_fakes(app)
+    owner_request = object()
+    app.citation_artifact_ownership_coordinator = SimpleNamespace(
+        reconcile_pending=Mock()
+    )
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-transcript")
-        message, _modal = await _open_save_as_modal_for_message(
-            host, pilot, console, ConsoleMessageRole.ASSISTANT, "answer"
-        )
-        await _wait_for_selector(
-            host.screen_stack[-1], pilot, "#console-save-as-destination-chatbook"
-        )
-        await pilot.click("#console-save-as-destination-chatbook")
-        await pilot.pause()
+    with patch(
+        "tldw_chatbook.UI.Screens.chat_screen.resolve_console_artifact_owner_request",
+        return_value=owner_request,
+    ):
+        async with host.run_test(size=(160, 48)) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-native-transcript")
+            message, _modal = await _open_save_as_modal_for_message(
+                host, pilot, console, ConsoleMessageRole.ASSISTANT, "answer"
+            )
+            await _wait_for_selector(
+                host.screen_stack[-1], pilot, "#console-save-as-destination-chatbook"
+            )
+            await pilot.click("#console-save-as-destination-chatbook")
+            await pilot.pause()
 
     create_chatbook = app.local_chatbook_service.create_chatbook
     create_chatbook.assert_awaited_once()
@@ -3518,6 +3526,10 @@ async def test_console_selected_message_save_as_chatbook_registers_console_artif
     assert metadata["artifact_kind"] == "assistant-response"
     assert metadata["content"] == "answer"
     assert metadata["message_id"] == message.id
+    assert kwargs["provenance_owner_request"] is owner_request
+    app.citation_artifact_ownership_coordinator.reconcile_pending.assert_called_once_with(
+        limit=1
+    )
     assert console._last_console_action.action_id == "save-as-chatbook"
     assert (
         console._last_console_action.visible_copy

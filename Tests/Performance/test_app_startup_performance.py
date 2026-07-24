@@ -9,6 +9,8 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -144,6 +146,41 @@ def test_app_import_does_not_load_legacy_feature_windows(tmp_path: Path) -> None
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["loaded"] == []
+
+
+@pytest.mark.parametrize(("enabled", "expected_tasks"), [(False, 0), (True, 1)])
+def test_citation_artifact_reconciliation_is_deferred_and_policy_gated(
+    enabled: bool,
+    expected_tasks: int,
+) -> None:
+    """Ownership recovery starts after readiness and only under the write switch."""
+
+    from tldw_chatbook.app import TldwCli
+
+    scheduled: list[tuple[object, str]] = []
+
+    def capture(coroutine, *, name: str):
+        scheduled.append((coroutine, name))
+        coroutine.close()
+
+    async def reconcile() -> None:
+        return None
+
+    fake_app = SimpleNamespace(
+        set_timer=Mock(),
+        _schedule_footer_status_updates=Mock(),
+        _start_deferred_audio_service_initialization=Mock(),
+        schedule_media_cleanup=Mock(),
+        citation_artifact_ownership_coordinator=SimpleNamespace(writes_enabled=enabled),
+        _reconcile_citation_artifact_ownership=reconcile,
+        _create_deferred_startup_task=capture,
+    )
+
+    TldwCli._schedule_deferred_startup_work(fake_app)
+
+    assert len(scheduled) == expected_tasks
+    if scheduled:
+        assert scheduled[0][1] == "deferred_citation_artifact_reconciliation"
 
 
 @pytest.mark.asyncio

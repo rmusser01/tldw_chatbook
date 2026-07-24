@@ -7,7 +7,7 @@ import binascii
 from datetime import UTC, datetime, timedelta
 import json
 import sqlite3
-from typing import Annotated, Literal
+from typing import Annotated, Callable, Literal
 
 from pydantic import (
     AfterValidator,
@@ -167,6 +167,9 @@ class CitationPayloadLifecycle:
         repository: CitationTraceRepository,
         *,
         retention_policy: PayloadRetentionPolicy,
+        artifact_barrier_provider: (
+            Callable[[], CitationCollectionBarriers] | None
+        ) = None,
     ) -> None:
         if not isinstance(repository, CitationTraceRepository):
             raise TypeError("repository must be a CitationTraceRepository")
@@ -175,6 +178,7 @@ class CitationPayloadLifecycle:
             retention_policy.model_dump(mode="python"),
             strict=True,
         )
+        self._artifact_barrier_provider = artifact_barrier_provider
 
     def revoke(
         self,
@@ -547,6 +551,24 @@ class CitationPayloadLifecycle:
             (barriers or CitationCollectionBarriers()).model_dump(mode="python"),
             strict=True,
         )
+        if self._artifact_barrier_provider is not None:
+            artifact_barriers = CitationCollectionBarriers.model_validate(
+                self._artifact_barrier_provider().model_dump(mode="python"),
+                strict=True,
+            )
+            active_barriers = CitationCollectionBarriers(
+                trace_ids=tuple(
+                    sorted({*active_barriers.trace_ids, *artifact_barriers.trace_ids})
+                ),
+                payload_origins=tuple(
+                    sorted(
+                        {
+                            *active_barriers.payload_origins,
+                            *artifact_barriers.payload_origins,
+                        }
+                    )
+                ),
+            )
         batch_limit = (
             self.retention_policy.max_collection_batch_size if limit is None else limit
         )
