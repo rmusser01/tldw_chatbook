@@ -1,8 +1,9 @@
 ---
 id: TASK-388
 title: Clear stale provider fields promptly when switching provider in Settings
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
 labels: [console, ux]
 dependencies: []
@@ -23,5 +24,23 @@ priority: low
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Dependent fields update atomically with the provider selection, or show a brief loading placeholder instead of the previous provider's values
+- [x] #1 Dependent fields update atomically with the provider selection, or show a brief loading placeholder instead of the previous provider's values
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+VERIFIED already met (like task-361), then regression-locked. Pilot-reproduced the
+provider switch: `handle_provider_value_changed(Select.Changed(..., "llama.cpp"))`
+updates readiness, provider-source, and the model field SYNCHRONOUSLY in the same
+tick — reading the dependent widgets IMMEDIATELY (no event-loop pause) already
+shows the new provider ("llama.cpp / not selected", "Unsaved Settings draft",
+model cleared), never the old "OpenAI / gpt-4o" combination; stable after further
+pauses. `_apply_provider_value_change` (the core both the Select and manual paths
+funnel through) stages the provider and rebuilds every dependent widget inline, so
+there is no stale window on the native path. The review's ~1-3s staleness (j1-10
+vs j1-12) was a textual-serve browser render-latency artifact (same class as
+task-361's reflow finding) and/or was closed by the task-364 provider-settings
+mount-echo work. AC#1 (atomic update) met; regression test asserts the dependent
+fields flip with no intervening pause. No code change needed.
+<!-- SECTION:NOTES:END -->
