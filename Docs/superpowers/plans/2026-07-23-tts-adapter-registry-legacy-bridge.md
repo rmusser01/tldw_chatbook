@@ -2614,7 +2614,7 @@ Before repeating closeout verification, add failing tests and fixes proving:
 Run the focused regression tests for each change before the full suites below,
 and obtain fresh correctness and quality review after they pass.
 
-- [ ] **Step 1: Run focused registry and bridge suites**
+- [x] **Step 1: Run focused registry and bridge suites**
 
 Run:
 
@@ -2631,7 +2631,7 @@ pytest \
 
 Expected: all selected tests pass.
 
-- [ ] **Step 2: Run existing TTS, STTS, media-reading, and audio-service regressions**
+- [x] **Step 2: Run existing TTS, STTS, media-reading, and audio-service regressions**
 
 Run:
 
@@ -2645,7 +2645,7 @@ pytest \
 
 Expected: all selected tests pass; optional-backend skips remain skips.
 
-- [ ] **Step 3: Run static and boundary checks**
+- [x] **Step 3: Run static and boundary checks**
 
 Run:
 
@@ -2673,7 +2673,7 @@ Expected:
 - `rg` prints no matches.
 - `git diff --check` prints nothing and exits zero.
 
-- [ ] **Step 4: Perform the ADR and scope audit**
+- [x] **Step 4: Perform the ADR and scope audit**
 
 Confirm:
 
@@ -2689,7 +2689,7 @@ Expected: the task and guide link ADR-023. The second command finds no native
 audio.cpp adapter, HTTP client, supervisor, settings, or process code in this
 slice.
 
-- [ ] **Step 5: Update Backlog implementation notes and acceptance criteria**
+- [x] **Step 5: Update Backlog implementation notes and acceptance criteria**
 
 Use:
 
@@ -2697,7 +2697,7 @@ Use:
 backlog task edit 402 --notes "Implemented the app-owned sealed TTS adapter registry, operation leases and targeted provider retirement, six provider-scoped legacy adapters, enumerated compatibility routing, operation-scoped progress delivery, explicit application binding/shutdown, and the OpenAI key-prefix logging fix. Added focused registry, bridge, lifecycle, concurrency, privacy, and compatibility coverage. ADR-023 remains the governing architecture decision; audio.cpp native transport and supervision remain in later ordered tasks."
 ```
 
-After the verification evidence passes, check all eight criteria and set Done:
+After the verification evidence passes, check all twelve criteria and set Done:
 
 ```bash
 backlog task edit 402 \
@@ -2708,7 +2708,11 @@ backlog task edit 402 \
   --check-ac 5 \
   --check-ac 6 \
   --check-ac 7 \
-  --check-ac 8
+  --check-ac 8 \
+  --check-ac 9 \
+  --check-ac 10 \
+  --check-ac 11 \
+  --check-ac 12
 backlog task edit 402 \
   --check-dod 1 \
   --check-dod 2 \
