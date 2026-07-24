@@ -186,6 +186,72 @@ def validate_url(url: str) -> bool:
     return result
 
 
+_GIT_ALLOWED_SCHEMES = frozenset({"https", "ssh"})
+_GIT_REF_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
+
+
+def validate_git_repo_url(url: str) -> None:
+    """Validate a git clone repo URL against a strict transport allowlist.
+
+    Only explicit ``https://`` and ``ssh://`` schemes are accepted. scp-style
+    shorthand (``user@host:path``) is rejected because its no-scheme,
+    colon-before-slash shape is ambiguous with git's ``ext::``/``fd::`` custom
+    transports and with leading-dash argument-injection payloads; use
+    ``ssh://git@host/path`` instead. Rejects custom transports (``ext``,
+    ``file``, ``fd``, ``git``, ...), whitespace/backslash/control characters,
+    a leading ``-`` (git-option injection), and anything without a scheme.
+
+    Args:
+        url: The candidate repo URL.
+
+    Raises:
+        ValidationError: If ``url`` is not an allowlisted, well-formed git URL.
+    """
+    if not isinstance(url, str) or not url:
+        raise ValidationError("repo_url must be a non-empty string")
+    if url != url.strip() or any(c.isspace() for c in url):
+        raise ValidationError("repo_url must not contain whitespace")
+    if "\\" in url or any(ord(c) < 0x20 for c in url):
+        raise ValidationError("repo_url must not contain backslashes or control characters")
+    if url.startswith("-"):
+        raise ValidationError("repo_url must not start with '-' (git-option injection)")
+    try:
+        parsed = urlparse(url)
+    except ValueError as exc:
+        raise ValidationError(f"repo_url is not a parseable URL: {exc}")
+    if parsed.scheme.lower() not in _GIT_ALLOWED_SCHEMES:
+        raise ValidationError(
+            f"repo_url scheme {parsed.scheme!r} is not allowed; "
+            "only https:// and ssh:// git URLs are permitted"
+        )
+    if not parsed.hostname:
+        raise ValidationError("repo_url must include a host")
+
+
+def validate_git_ref(ref: str) -> None:
+    """Validate a git branch/ref name for use as a ``--branch`` value.
+
+    Rejects a leading ``-`` (git-option injection), whitespace/control chars,
+    ``..``, and any character outside ``[A-Za-z0-9._/-]``.
+
+    Args:
+        ref: The candidate branch/ref name.
+
+    Raises:
+        ValidationError: If ``ref`` is unsafe or not a well-formed ref name.
+    """
+    if not isinstance(ref, str) or not ref:
+        raise ValidationError("ref must be a non-empty string")
+    if ref.startswith("-"):
+        raise ValidationError("ref must not start with '-' (git-option injection)")
+    if ".." in ref:
+        raise ValidationError("ref must not contain '..'")
+    if not _GIT_REF_RE.match(ref):
+        raise ValidationError(
+            "ref may only contain letters, digits, '.', '_', '/', '-'"
+        )
+
+
 def validate_filename(filename: str) -> bool:
     """Validate filename to prevent path traversal and dangerous characters."""
     log_counter("input_validation_filename_attempt")
