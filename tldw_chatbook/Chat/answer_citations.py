@@ -11,6 +11,7 @@ from tldw_chatbook.Chat.citation_evidence_models import (
     EvidenceReference,
 )
 from tldw_chatbook.Chat.citation_trace_models import (
+    CitationMarkerSpan,
     MarkerNamespace,
     eligible_citation_marker_spans,
 )
@@ -208,15 +209,26 @@ def extract_citation_markers(answer_text: Any) -> tuple[str, ...]:
     Returns:
         Citation labels in first-seen order with duplicates removed.
     """
+    return tuple(
+        evidence_id
+        for evidence_id, _marker_span in _first_seen_citation_marker_spans(
+            str(answer_text or "")
+        )
+    )
+
+
+def _first_seen_citation_marker_spans(
+    answer_text: str,
+) -> tuple[tuple[str, CitationMarkerSpan], ...]:
     seen: set[str] = set()
-    markers: list[str] = []
+    markers: list[tuple[str, CitationMarkerSpan]] = []
     for span in eligible_citation_marker_spans(
-        str(answer_text or ""),
+        answer_text,
         MarkerNamespace.CHATBOOK_S_V1,
     ):
         marker = span.raw_marker[1:-1]
         if marker not in seen:
-            markers.append(marker)
+            markers.append((marker, span))
             seen.add(marker)
     return tuple(markers)
 
@@ -246,13 +258,15 @@ def build_answer_citation_validation(
             recovery="No evidence bundle is available for citation validation.",
         )
 
-    cited_ids = extract_citation_markers(answer_text)
+    answer_body = str(answer_text or "")
+    cited_marker_spans = _first_seen_citation_marker_spans(answer_body)
+    cited_ids = tuple(evidence_id for evidence_id, _span in cited_marker_spans)
     citations: list[CitationRef] = []
     unknown_ids: list[str] = []
     invalid_cited_ids: list[str] = []
     validated_count = 0
 
-    for evidence_id in cited_ids:
+    for evidence_id, marker_span in cited_marker_spans:
         reference = bundle.reference_by_id(evidence_id)
         if reference is None:
             unknown_ids.append(evidence_id)
@@ -261,7 +275,7 @@ def build_answer_citation_validation(
                 CitationRef(
                     evidence_id=evidence_id,
                     source_id="unknown",
-                    quote=_quote_for_marker(str(answer_text or ""), evidence_id),
+                    quote=_quote_for_marker(answer_body, marker_span),
                     status="unknown",
                 )
             )
@@ -270,7 +284,7 @@ def build_answer_citation_validation(
         citation = CitationRef(
             evidence_id=evidence_id,
             source_id=reference.source_id,
-            quote=_quote_for_marker(str(answer_text or ""), evidence_id),
+            quote=_quote_for_marker(answer_body, marker_span),
             status="validated",
         ).validate_against(bundle)
         if citation.status == "validated":
@@ -345,12 +359,9 @@ def _format_reference_for_prompt(reference: EvidenceReference) -> list[str]:
     return lines
 
 
-def _quote_for_marker(answer_text: str, evidence_id: str) -> str:
-    marker = f"[{evidence_id}]"
-    marker_index = answer_text.find(marker)
-    if marker_index < 0:
-        return ""
-
+def _quote_for_marker(answer_text: str, marker_span: CitationMarkerSpan) -> str:
+    marker = marker_span.raw_marker
+    marker_index = marker_span.marker_start
     sentence_start = max(
         answer_text.rfind(boundary, 0, marker_index)
         for boundary in QUOTE_BOUNDARY_CHARS

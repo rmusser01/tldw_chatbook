@@ -654,6 +654,74 @@ def test_occurrence_and_trace_trust_summaries_are_selected_attempt_derived() -> 
     )
 
 
+def test_grouped_markers_count_as_one_semantic_claim() -> None:
+    answer = "Claim [S1][S2]."
+    occurrences = tuple(
+        CitationOccurrence(
+            occurrence_id=f"occurrence-{ordinal}",
+            occurrence_ordinal=ordinal,
+            raw_marker=marker,
+            marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+            evidence_ordinal=ordinal,
+            marker_start=answer.index(marker),
+            marker_end=answer.index(marker) + len(marker),
+            claim_start=0,
+            claim_end=5,
+            structural_state=StructuralValidationState.VALID,
+            claim_support=ClaimSupport.SUPPORTED,
+        )
+        for ordinal, marker in enumerate(("[S1]", "[S2]"), start=1)
+    )
+
+    attempt = AnswerAttempt(
+        attempt_id="grouped-attempt",
+        attempt_ordinal=1,
+        kind=AnswerAttemptKind.INITIAL,
+        prompt_evidence_set_id="prompt-1",
+        occurrences=occurrences,
+        created_at=NOW,
+    )
+
+    assert attempt.semantic_summary == SemanticTrustSummary(supported_claims=1)
+
+
+def test_grouped_markers_reject_conflicting_claim_support() -> None:
+    answer = "Claim [S1][S2]."
+    occurrences = tuple(
+        CitationOccurrence(
+            occurrence_id=f"occurrence-{ordinal}",
+            occurrence_ordinal=ordinal,
+            raw_marker=marker,
+            marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+            evidence_ordinal=ordinal,
+            marker_start=answer.index(marker),
+            marker_end=answer.index(marker) + len(marker),
+            claim_start=0,
+            claim_end=5,
+            structural_state=StructuralValidationState.VALID,
+            claim_support=support,
+        )
+        for ordinal, (marker, support) in enumerate(
+            zip(
+                ("[S1]", "[S2]"),
+                (ClaimSupport.SUPPORTED, ClaimSupport.UNSUPPORTED),
+                strict=True,
+            ),
+            start=1,
+        )
+    )
+
+    with pytest.raises(ValidationError, match="claim span.*claim_support"):
+        AnswerAttempt(
+            attempt_id="conflicting-grouped-attempt",
+            attempt_ordinal=1,
+            kind=AnswerAttemptKind.INITIAL,
+            prompt_evidence_set_id="prompt-1",
+            occurrences=occurrences,
+            created_at=NOW,
+        )
+
+
 @given(st.sampled_from(tuple(permutations(EvidenceStorageMode, 4))))
 def test_completeness_reduction_is_stable_under_entry_permutations(
     modes: tuple[EvidenceStorageMode, ...],

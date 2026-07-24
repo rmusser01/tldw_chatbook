@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from tldw_chatbook.Chat.answer_citations import (
     build_answer_citation_validation,
     extract_citation_markers,
@@ -238,6 +240,24 @@ def test_answer_citation_validation_quote_uses_question_and_exclamation_boundari
     )
 
     assert result.citations[0].quote == "They did [S1]!"
+
+
+@pytest.mark.parametrize(
+    "answer_text",
+    (
+        r"Example \[S1]. Real source [S1]!",
+        "Example `[S1]`. Real source [S1]!",
+        "Example:\n```\n[S1]\n```\nReal source [S1]!",
+    ),
+    ids=("escaped", "inline-code", "fenced-code"),
+)
+def test_answer_citation_quote_uses_first_eligible_marker(answer_text: str) -> None:
+    result = build_answer_citation_validation(
+        answer_text,
+        _bundle(_reference("S1")),
+    )
+
+    assert result.citations[0].quote == "Real source [S1]!"
 
 
 def test_chat_handoff_model_context_uses_answer_citation_prompt_contract() -> None:

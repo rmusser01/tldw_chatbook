@@ -1048,8 +1048,21 @@ def _structural_summary_for_occurrences(
 def _semantic_summary_for_occurrences(
     occurrences: tuple[CitationOccurrence, ...],
 ) -> SemanticTrustSummary:
+    support_by_claim: dict[tuple[Any, ...], ClaimSupport] = {}
+    for occurrence in occurrences:
+        claim_key = (
+            ("span", occurrence.claim_start, occurrence.claim_end)
+            if occurrence.claim_start is not None
+            else ("occurrence", occurrence.occurrence_id)
+        )
+        existing = support_by_claim.setdefault(claim_key, occurrence.claim_support)
+        if existing is not occurrence.claim_support:
+            raise ValueError(
+                "occurrences sharing a claim span must use one claim_support state"
+            )
+
     counts = {
-        support: sum(occurrence.claim_support is support for occurrence in occurrences)
+        support: sum(value is support for value in support_by_claim.values())
         for support in ClaimSupport
     }
     return SemanticTrustSummary(
