@@ -26,7 +26,7 @@ import inspect
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button, Input, Select
+from textual.widgets import Button, Input, Select, Static
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -357,6 +357,160 @@ def test_after_set_active_failure_syncs_profile_widgets_and_notifies_error(
     )
 
 
+# --- UX review item 1 (P0, clone flow): a successful clone must land the
+# user ON the new clone (picker selection) with an actionable next step --
+# not silently snap back to whatever was active (the pre-fix behaviour:
+# clone_profile_as's returned new id was discarded entirely, and
+# _sync_library_rag_profile_widgets always re-selected active_id). ---
+
+
+def test_after_profile_action_clone_selects_the_clone_and_prompts_set_active(
+    monkeypatch, tmp_path, fake_app
+):
+    mgr, _profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    clone = mgr.clone_profile("hybrid_basic", "My Clone")
+    mgr.save_profile(clone)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    sync_widgets_calls: list[bool] = []
+    sync_profile_calls: list[dict] = []
+    screen._sync_library_rag_widgets = lambda: sync_widgets_calls.append(True)
+    screen._sync_library_rag_profile_widgets = lambda **kwargs: sync_profile_calls.append(
+        kwargs
+    )
+
+    # `result` is clone_profile_as's own return shape on success: the new
+    # profile's id (see settings_rag_profile_adapter.clone_profile_as).
+    screen._rag_after_profile_action("clone", True, clone.id)
+
+    assert sync_widgets_calls == [True]
+    assert sync_profile_calls == [{"select_override": clone.id}]
+    message, severity = fake_app.notifications[-1]
+    assert message == "Cloned to 'My Clone'. Select 'Set active' to edit it."
+    assert severity == "information"
+
+
+def test_after_profile_action_rename_and_delete_still_call_sync_with_no_override(
+    monkeypatch, tmp_path, fake_app
+):
+    """Non-clone actions must keep calling
+    ``_sync_library_rag_profile_widgets()`` with NO arguments -- the
+    ``select_override`` kwarg is clone-only. Guards the exact call shape the
+    pre-existing delete tests (see above) already monkeypatch a zero-arg
+    lambda for."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    sync_profile_calls: list[dict] = []
+    screen._sync_library_rag_profile_widgets = lambda **kwargs: sync_profile_calls.append(
+        kwargs
+    )
+
+    screen._rag_after_profile_action("rename", True, "")
+    screen._rag_after_profile_action("delete", True, "")
+
+    assert sync_profile_calls == [{}, {}]
+
+
+@pytest.mark.asyncio
+async def test_clone_success_selects_the_clone_in_the_real_select_widget(
+    monkeypatch, tmp_path
+):
+    """Full-mount regression lock for item 1: after a clone completes, the
+    ACTUAL profile Select widget's value is the clone's id (not snapped
+    back to the still-active source profile)."""
+    mgr, _profile, _state = _wire_rag_profile_adapter(
+        monkeypatch, tmp_path, active_id="hybrid_basic"
+    )
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        toasts = []
+        host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
+
+        clone = mgr.clone_profile("hybrid_basic", "My Clone")
+        mgr.save_profile(clone)
+        screen._rag_after_profile_action("clone", True, clone.id)
+        await pilot.pause()
+
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        assert select.value == clone.id
+        assert toasts, "clone produced no toast"
+        message, kwargs = toasts[-1]
+        assert "Set active" in message
+        # The active profile hasn't changed (only the picker's highlight
+        # has) -- the decoupling caption (item 2) must still name the
+        # original active profile, not the clone.
+        assert "Editing: Hybrid Basic." in _visible_text(screen)
+
+
+# --- UX review item 2 (P0 root cause, decoupling caption): the profile
+# Select lets a user BROWSE profiles without editing them -- only "Set
+# active" actually switches which profile the fields below edit. The
+# caption must always name the ACTIVE profile, never whatever the Select
+# happens to be showing. ---
+
+
+@pytest.mark.asyncio
+async def test_editing_caption_names_the_active_profile_not_the_select_value(
+    monkeypatch, tmp_path
+):
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    other = mgr.clone_profile("hybrid_basic", "Other RAG")
+    mgr.save_profile(other)
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        assert (
+            f"Editing: {profile.name}. Pick a profile and press 'Set active' "
+            "to edit a different one."
+        ) in _visible_text(screen)
+
+        # Browse to a different profile in the dropdown WITHOUT pressing
+        # "Set active" -- the caption must not follow the Select.
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        select.value = other.id
+        await pilot.pause()
+
+        assert f"Editing: {profile.name}." in _visible_text(screen)
+        assert "Editing: Other RAG." not in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_sync_profile_widgets_caption_ignores_select_override(
+    monkeypatch, tmp_path
+):
+    """The caption must read the ACTIVE profile even when
+    ``_sync_library_rag_profile_widgets`` is called with a
+    ``select_override`` (the clone-flow case, item 1) -- the override only
+    steers the Select, never the caption."""
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    other = mgr.clone_profile("hybrid_basic", "Other RAG")
+    mgr.save_profile(other)
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        screen._sync_library_rag_profile_widgets(select_override=other.id)
+        await pilot.pause()
+
+        select = screen.query_one("#settings-library-rag-profile-select", Select)
+        assert select.value == other.id
+        assert f"Editing: {profile.name}." in _visible_text(screen)
+
+
 # --- I1 (SP3 final review): `_rag_after_profile_action`'s delete branch
 # must surface the adapter's hybrid_basic-fallback note and still resync the
 # profile widgets (the Select may now be showing a deleted id / the picker
@@ -434,7 +588,210 @@ async def test_library_rag_detail_renders_fields_disabled_for_readonly_active_pr
         assert screen.query_one("#settings-library-rag-max-context-size", Input).disabled
 
 
+# --- UX review item 6 (P2, imported-settings provenance): the active
+# profile's own description renders as a dim sub-line under "Active: <name>"
+# when non-empty -- most useful for a first-run "Imported settings" snapshot
+# ("Snapshot of your active RAG profile... edit freely"), which is
+# otherwise indistinguishable from a hand-authored profile. ---
+
+
+@pytest.mark.asyncio
+async def test_active_profile_description_renders_as_a_subline_when_present(
+    monkeypatch, tmp_path
+):
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    profile.description = (
+        "Snapshot of your active RAG profile (plus any RAG_* env "
+        "overrides) at first run -- edit freely."
+    )
+    mgr.save_profile(profile)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        row = screen.query_one(
+            "#settings-library-rag-active-profile-description", Static
+        )
+        assert row.display is True
+        assert "Snapshot of your active RAG profile" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_active_profile_description_hidden_when_blank(monkeypatch, tmp_path):
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    profile.description = ""
+    mgr.save_profile(profile)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        row = screen.query_one(
+            "#settings-library-rag-active-profile-description", Static
+        )
+        assert row.display is False
+
+
+@pytest.mark.asyncio
+async def test_active_profile_description_resyncs_after_set_active(
+    monkeypatch, tmp_path
+):
+    """Switching the active profile must refresh the sub-line to the NEW
+    active profile's description, not leave the previous one showing."""
+    mgr, profile, state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    profile.description = "Original description."
+    mgr.save_profile(profile)
+    other = mgr.clone_profile("hybrid_basic", "Other RAG")
+    other.description = "Other description."
+    mgr.save_profile(other)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        assert "Original description." in _visible_text(screen)
+
+        state["active"] = other.id
+        screen._sync_library_rag_profile_widgets()
+        await pilot.pause()
+
+        assert "Other description." in _visible_text(screen)
+        assert "Original description." not in _visible_text(screen)
+
+
+# --- UX review item 5 (P2, ⚠ legend): the ⚠ markers scattered across
+# individual field labels (Embedding model, Max length, Chunk size/overlap/
+# method, Distance metric) are otherwise unexplained. ---
+
+
+@pytest.mark.asyncio
+async def test_warning_legend_is_rendered_under_the_profiles_block(
+    monkeypatch, tmp_path
+):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        assert (
+            "⚠ = changing this field rebuilds the index — run Backfill "
+            "after saving." in _visible_text(screen)
+        )
+
+
+# --- UX review item 7 (P2, delete danger styling): the Delete button in the
+# profile-manager row must read as destructive and be visually separated
+# from Set active/Clone/Rename. ---
+
+
+@pytest.mark.asyncio
+async def test_delete_button_has_error_variant_and_spacer_class(monkeypatch, tmp_path):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        delete_button = screen.query_one(
+            "#settings-library-rag-profile-delete", Button
+        )
+        assert delete_button.variant == "error"
+        assert delete_button.has_class(
+            "settings-library-rag-profile-delete-button"
+        )
+
+
 # --- Task 4 (SP3): index status readout + Backfill + honest re-index warnings ---
+
+# --- UX review item 3 (P1, first-run Backfill nudge): a brand-new install's
+# absent index must say WHY it matters (results are keyword-only) when the
+# active profile's search mode actually needs the vector index, instead of
+# the generic "will be created on next backfill" notice that reads as if
+# nothing is missing yet. ---
+
+
+def test_index_status_line_nudges_for_hybrid_mode_when_absent(
+    monkeypatch, tmp_path, fake_app
+):
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    profile.rag_config.search.default_search_mode = "hybrid"
+    mgr.save_profile(profile)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    line = screen._library_rag_index_status_line({"state": "absent"})
+
+    assert line == (
+        "Semantic index not built — Hybrid search is keyword-only until "
+        "you Backfill."
+    )
+
+
+def test_index_status_line_nudges_for_semantic_mode_when_absent(
+    monkeypatch, tmp_path, fake_app
+):
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    profile.rag_config.search.default_search_mode = "semantic"
+    mgr.save_profile(profile)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    line = screen._library_rag_index_status_line({"state": "absent"})
+
+    assert line == (
+        "Semantic index not built — Semantic search is keyword-only until "
+        "you Backfill."
+    )
+
+
+def test_index_status_line_keeps_plain_notice_for_plain_mode_when_absent(
+    monkeypatch, tmp_path, fake_app
+):
+    """A `plain`-mode profile never needs the vector index -- the generic
+    notice stays, no nudge (the semantic/hybrid consequence doesn't apply)."""
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    profile.rag_config.search.default_search_mode = "plain"
+    mgr.save_profile(profile)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    line = screen._library_rag_index_status_line({"state": "absent"})
+
+    assert line == settings_screen_module.RAG_INDEX_ABSENT_STATUS_TEXT
+
+
+def test_index_status_line_ignores_search_mode_when_not_absent(
+    monkeypatch, tmp_path, fake_app
+):
+    """The nudge is absent-state-only -- a built/empty index must keep its
+    normal count/provenance rendering regardless of search mode."""
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    profile.rag_config.search.default_search_mode = "hybrid"
+    mgr.save_profile(profile)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    line = screen._library_rag_index_status_line({"state": "empty", "count": 0})
+
+    assert line == "Index: empty · 0 vectors"
 
 
 @pytest.mark.asyncio
@@ -583,6 +940,87 @@ def test_backfill_button_click_while_in_flight_does_not_start_a_second_worker(
 
     assert worker_calls == []
     assert fake_app.notifications[-1] == ("Backfill is already running.", "warning")
+
+
+# --- UX review item 8 (P2, wire 't' for RAG): 't test category' used to
+# fall all the way through to the generic "No test action is available..."
+# toast for RAG. Now it refetches index status (same off-thread pattern as
+# the other triggers) and reports it alongside the current preview
+# defaults. ---
+
+
+def test_test_category_action_dispatches_the_rag_check_worker_for_rag(
+    monkeypatch, tmp_path, fake_app
+):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    worker_calls: list[bool] = []
+    screen._rag_test_category_worker = lambda: worker_calls.append(True)
+
+    screen.action_settings_test_category(allow_text_entry_focus=True)
+
+    assert worker_calls == [True]
+    all_messages = " ".join(m for m, _ in fake_app.notifications)
+    assert "No test action is available" not in all_messages
+
+
+def test_test_category_action_does_not_dispatch_rag_worker_for_other_categories(
+    monkeypatch, tmp_path, fake_app
+):
+    """Regression guard: the new RAG branch must not swallow the existing
+    generic fallback for a category with no test action."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.THEME.value
+    worker_calls: list[bool] = []
+    screen._rag_test_category_worker = lambda: worker_calls.append(True)
+
+    screen.action_settings_test_category(allow_text_entry_focus=True)
+
+    assert worker_calls == []
+    assert fake_app.notifications[-1] == (
+        "No test action is available for this Settings category yet.",
+        "warning",
+    )
+
+
+def test_rag_test_category_worker_completion_notifies_state_and_preview(
+    monkeypatch, tmp_path, fake_app
+):
+    """Invokes the thread-body directly (same idiom as the backfill-worker
+    tests below), feeding a canned status through -- verifies the completion
+    handler both refreshes the index-status Static AND notifies the honest
+    one-line summary."""
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    profile.rag_config.search.default_top_k = 15
+    profile.rag_config.search.default_search_mode = "hybrid"
+    profile.rag_config.search.include_citations = False
+    mgr.save_profile(profile)
+    monkeypatch.setattr(
+        settings_screen_module,
+        "fetch_index_status",
+        lambda: {"state": "absent", "count": 0, "provenance": {}},
+    )
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    worker = SettingsScreen.__dict__["_rag_test_category_worker"]
+    wrapped = getattr(worker, "__wrapped__", worker)
+    wrapped(screen)  # invoke the thread-body directly, bypassing @work dispatch
+
+    message, severity = fake_app.notifications[-1]
+    assert message.startswith("RAG check: absent index")
+    assert "Hybrid search" in message  # the preview summary line
+    assert severity == "information"
+    assert (
+        screen._library_rag_index_status_text
+        == "Semantic index not built — Hybrid search is keyword-only "
+        "until you Backfill."
+    )
 
 
 # --- Task 4 review Finding 1: backfill worker must be thread-isolated, not

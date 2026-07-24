@@ -2971,7 +2971,7 @@ class SettingsScreen(BaseAppScreen):
             return "embedding_max_length"
         if message.startswith("Chunking method"):
             return "chunking_method"
-        if message.startswith("Reranker top-k"):
+        if message.startswith("Rerank results"):
             return "reranker_top_k"
         # M3 (SP3 final review): chunk_size, chunk_overlap, distance_metric,
         # and embedding_batch_size are validated by RAGConfig.validate()
@@ -3171,7 +3171,7 @@ class SettingsScreen(BaseAppScreen):
             f"{mode_label} search | {values['default_top_k']} results | {citation_label}",
             (
                 f"Keyword {values['fts_top_k']} | Vector {values['vector_top_k']} | "
-                f"Hybrid alpha {values['hybrid_alpha']} | Min score {values['score_threshold']}"
+                f"Hybrid balance {values['hybrid_alpha']} | Min score {values['score_threshold']}"
             ),
             (
                 f"Snippet: {values['snippet_max_chars']} chars | "
@@ -7626,20 +7626,35 @@ class SettingsScreen(BaseAppScreen):
                 return entry["name"]
         return profile_id
 
-    @staticmethod
-    def _library_rag_index_status_line(status: Mapping[str, object]) -> str:
+    def _library_rag_index_status_line(self, status: Mapping[str, object]) -> str:
         """Render ``fetch_index_status()``'s dict as the status-row text.
 
         Graceful when the store is non-persistent or the collection hasn't
         been created yet (``state == "absent"``, ``provenance`` always
         empty in that case -- see ``collection_indexes.index_status``): a
-        dedicated, friendlier line rather than "absent · 0 vectors". When
-        provenance is present (built/empty), append the "built with
+        dedicated, friendlier line rather than "absent · 0 vectors". UX
+        review item 3 (first-run Backfill nudge): when the active profile's
+        ``default_search_mode`` actually NEEDS the vector index (semantic or
+        hybrid), that friendlier line names the concrete consequence
+        (results are keyword-only until Backfill runs) instead of the
+        generic notice -- a brand-new install otherwise looks like search
+        already works fully when only keyword search does. A `plain`-mode
+        profile never needs the vector index, so it keeps the plain notice.
+        When provenance is present (built/empty), append the "built with
         <model> / chunk <size>·<overlap>" tail; omit it when provenance is
         missing so a legacy/unstamped collection still renders sensibly.
         """
         state = str(status.get("state") or "unknown")
         if state == "absent":
+            search_mode = normalise_library_rag_search_mode(
+                self._library_rag_loaded_defaults().default_search_mode
+            )
+            if search_mode in ("semantic", "hybrid"):
+                mode_label = "Hybrid" if search_mode == "hybrid" else "Semantic"
+                return (
+                    "Semantic index not built — "
+                    f"{mode_label} search is keyword-only until you Backfill."
+                )
             return RAG_INDEX_ABSENT_STATUS_TEXT
         count = status.get("count", 0)
         provenance = status.get("provenance") or {}
@@ -7674,6 +7689,25 @@ class SettingsScreen(BaseAppScreen):
         if not getattr(self, "is_mounted", False):
             return
         self._rag_index_status_worker()
+
+    def _apply_rag_test_category_result(self, status: Mapping[str, object]) -> None:
+        """UX review item 8: 't test category' completion for RAG -- refresh
+        the same index-status Static the other triggers do, then notify a
+        one-line honest summary (index state + current preview defaults)
+        instead of silently doing nothing."""
+        self._apply_library_rag_index_status(status)
+        state = str(status.get("state") or "unknown")
+        preview_summary, _preview_retrieval, _preview_context = (
+            self._library_rag_preview_rows()
+        )
+        self.app.notify(
+            f"RAG check: {state} index · {preview_summary}", severity="information"
+        )
+
+    @work(exclusive=True, thread=True, group="settings-rag-index-status")
+    def _rag_test_category_worker(self) -> None:
+        status = fetch_index_status()
+        self.app.call_from_thread(self._apply_rag_test_category_result, status)
 
     def _clear_library_rag_backfill_in_flight(self) -> None:
         """Main-thread flip of the in-flight flag -- see
@@ -7778,6 +7812,16 @@ class SettingsScreen(BaseAppScreen):
             id="settings-library-rag-active-profile",
             classes="settings-detail-row",
         )
+        # UX review item 6 (provenance): the active profile's own
+        # description, most useful for a first-run "Imported settings"
+        # snapshot -- hidden entirely (not just blank) when there's none.
+        description_row = Static(
+            info["description"],
+            id="settings-library-rag-active-profile-description",
+            classes="settings-status-row",
+        )
+        description_row.display = bool(info["description"])
+        yield description_row
         with Horizontal(classes="settings-input-row settings-select-row"):
             yield Static("Profile", classes="settings-input-label")
             yield Select(
@@ -7788,13 +7832,36 @@ class SettingsScreen(BaseAppScreen):
                 allow_blank=True,
                 compact=True,
             )
+        # UX review item 2 (decoupling caption): the Select above lets a
+        # user BROWSE profiles without editing them -- only "Set active"
+        # actually switches which profile the fields below edit. Without
+        # this line, picking a different profile in the dropdown reads as
+        # "now editing that one" even though nothing has happened yet.
+        # Always names the ACTIVE profile (never the Select's current
+        # highlight); refreshed by _sync_library_rag_profile_widgets.
+        yield Static(
+            f"Editing: {info['name']}. Pick a profile and press 'Set active' "
+            "to edit a different one.",
+            id="settings-library-rag-editing-caption",
+            classes="settings-status-row",
+        )
         with Horizontal(classes="settings-action-row"):
             yield Button("Set active", id="settings-library-rag-profile-set-active")
             yield Button("Clone…", id="settings-library-rag-profile-clone")
             yield Button("Rename…", id="settings-library-rag-profile-rename")
-            yield Button("Delete", id="settings-library-rag-profile-delete")
+            # UX review item 7 (delete danger styling): destructive action,
+            # visually separated from the other three (margin-left, see
+            # .settings-library-rag-profile-delete-button) and given the
+            # repo's standard destructive-button variant (see e.g.
+            # settings_theme_editor.py's own "Delete" button).
+            yield Button(
+                "Delete",
+                id="settings-library-rag-profile-delete",
+                variant="error",
+                classes="settings-library-rag-profile-delete-button",
+            )
         readonly_banner = Static(
-            "Built-in profile — read-only. Clone to edit.",
+            "Built-in profile — read-only. Clone it, then Set active, to edit.",
             id="settings-library-rag-profile-readonly-banner",
             classes="settings-status-row settings-library-rag-readonly-banner",
         )
@@ -7827,13 +7894,24 @@ class SettingsScreen(BaseAppScreen):
         with Horizontal(classes="settings-action-row"):
             yield Button("Backfill", id="settings-library-rag-index-backfill")
 
-    def _sync_library_rag_profile_widgets(self) -> None:
+    def _sync_library_rag_profile_widgets(
+        self, *, select_override: str | None = None
+    ) -> None:
         """Refresh the Profiles block imperatively (no recompose) after any
         set-active/clone/rename/delete action, and after a category revert.
 
         Mirrors ``_sync_library_rag_widgets``: query-and-update each widget,
         swallowing ``QueryError`` so a not-yet-mounted region never crashes a
         call from an off-thread worker's main-thread callback.
+
+        Args:
+            select_override: UX review item 1 (clone flow) -- when given (a
+                valid profile id), the profile Select is left pointed at
+                THIS profile rather than snapped back to the active one, so
+                a just-cloned profile stays highlighted/selected for the
+                user's next click ("Set active"). Callers that don't pass it
+                keep the pre-existing "always show the active profile"
+                behaviour (set-active/rename/delete/revert).
         """
         info = active_profile_info()
         grouped = list_profiles_grouped()
@@ -7841,14 +7919,35 @@ class SettingsScreen(BaseAppScreen):
         self._set_static_text(
             "#settings-library-rag-active-profile", f"Active: {active_label}"
         )
+        try:
+            description_row = self.query_one(
+                "#settings-library-rag-active-profile-description", Static
+            )
+            description_row.update(info["description"])
+            description_row.display = bool(info["description"])
+        except QueryError:
+            pass
+        # UX review item 2 (decoupling caption): always names the ACTIVE
+        # profile, independent of select_override / whatever the Select is
+        # currently showing.
+        self._set_static_text(
+            "#settings-library-rag-editing-caption",
+            f"Editing: {info['name']}. Pick a profile and press 'Set active' "
+            "to edit a different one.",
+        )
 
         options = self._library_rag_profile_select_options(grouped)
         valid_ids = {value for _, value in options}
         active_id = grouped["active_id"]
+        target_id = (
+            select_override
+            if select_override is not None and select_override in valid_ids
+            else active_id
+        )
         try:
             select = self.query_one("#settings-library-rag-profile-select", Select)
             select.set_options(options)
-            select.value = active_id if active_id in valid_ids else Select.BLANK
+            select.value = target_id if target_id in valid_ids else Select.BLANK
         except QueryError:
             pass
 
@@ -7919,6 +8018,16 @@ class SettingsScreen(BaseAppScreen):
         with Vertical(id="settings-library-rag-card", classes="settings-focus-card"):
             yield self._render_category_state_banner(SettingsCategoryId.LIBRARY_RAG)
             yield from self._render_library_rag_profile_block()
+            # UX review item 5 (⚠ legend): the ⚠ markers on individual field
+            # labels below (Embedding model, Max length, Chunk size/overlap/
+            # method, Distance metric) are otherwise unexplained the first
+            # time a user sees one.
+            yield Static(
+                "⚠ = changing this field rebuilds the index — run Backfill "
+                "after saving.",
+                id="settings-library-rag-warning-legend",
+                classes="settings-status-row",
+            )
             with Collapsible(
                 title="Search", collapsed=False, id="settings-library-rag-search-group"
             ):
@@ -7973,7 +8082,7 @@ class SettingsScreen(BaseAppScreen):
                         disabled=field_disabled,
                     )
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Hybrid alpha", classes="settings-input-label")
+                    yield Static("Hybrid balance", classes="settings-input-label")
                     yield Input(
                         value=str(values["hybrid_alpha"]),
                         id="settings-library-rag-hybrid-alpha",
@@ -8038,8 +8147,8 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-library-rag-embedding-group",
             ):
                 yield Static(
-                    "Changing the embedding model or its max length changes the "
-                    "vector fingerprint -- the index must be rebuilt to take effect.",
+                    "Changing this changes what the index is built from -- the "
+                    "index must be rebuilt (run Backfill).",
                     classes="settings-detail-row",
                 )
                 with Horizontal(classes="settings-input-row"):
@@ -8090,8 +8199,8 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-library-rag-chunking-group",
             ):
                 yield Static(
-                    "Chunk size, overlap, and method all change the vector "
-                    "fingerprint -- the index must be rebuilt to take effect.",
+                    "Changing this changes what the index is built from -- the "
+                    "index must be rebuilt (run Backfill).",
                     classes="settings-detail-row",
                 )
                 with Horizontal(classes="settings-input-row"):
@@ -8141,8 +8250,8 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-library-rag-vector-store-group",
             ):
                 yield Static(
-                    "Distance metric changes the vector fingerprint -- the index "
-                    "must be rebuilt to take effect.",
+                    "Changing this changes what the index is built from -- the "
+                    "index must be rebuilt (run Backfill).",
                     classes="settings-detail-row",
                 )
                 with Horizontal(classes="settings-input-row settings-select-row"):
@@ -8189,7 +8298,7 @@ class SettingsScreen(BaseAppScreen):
                         disabled=field_disabled,
                     )
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Reranker top-k", classes="settings-input-label")
+                    yield Static("Rerank results", classes="settings-input-label")
                     yield Input(
                         value=str(values["reranker_top_k"]),
                         id="settings-library-rag-reranker-top-k",
@@ -8812,35 +8921,46 @@ class SettingsScreen(BaseAppScreen):
                     identifier=f"settings-provider-field-guide-{index}",
                 )
         elif summary.category is SettingsCategoryId.LIBRARY_RAG:
+            # UX review item 9 (Scope Inspector clipping): a blank spacer
+            # ahead of the RAG-specific guidance, separating it from the
+            # shared Save/Revert buttons yielded just above (this branch is
+            # the only content that changes per category; the Button pair
+            # itself is shared plumbing rendered for every category and is
+            # left alone -- see the report for why).
+            yield Static("")
             yield Static(
                 "Affects Library search defaults and future RAG answers.",
                 classes="destination-section",
             )
             yield Static("Control guide", classes="destination-section")
+            # Guidance values below are intentionally terse (UX review item
+            # 9): the original prose wrapped across enough lines in this
+            # narrow rail that the "Citations" row clipped mid-sentence
+            # ("...source markers when") at the pane's unscrolled fold.
             yield self._detail_row(
                 "Search mode",
-                "plain uses keyword search, semantic uses embeddings, hybrid blends both",
+                "plain=keyword, semantic=embeddings, hybrid=blend",
             )
             yield self._detail_row(
                 "Result limits",
-                "default, keyword, and vector result counts bound retrieval fan-out",
+                "bounds default/keyword/vector result counts",
             )
             yield self._detail_row(
                 "Hybrid balance",
-                "0.0 favors keyword results; 1.0 favors semantic results",
+                "0.0=keyword, 1.0=semantic",
             )
             yield self._detail_row(
                 "Citations",
-                "sets whether future RAG answers include source markers when supported",
+                "adds source markers to answers when supported",
             )
             yield self._detail_row(
                 "Snippet/context",
-                "snippet length controls preview text; context budget limits staged evidence",
+                "snippet length + context budget for retrieved text",
             )
             yield Static("Boundary", classes="destination-section")
             yield self._detail_row(
                 "Library owns",
-                "indexing, query execution, source browse, Collections, and Console staging",
+                "indexing, query, source browse, Collections, Console staging",
             )
             yield self._detail_row("Runtime owner", ownership.runtime_owner)
             yield self._detail_row("Writes allowed", "Yes")
@@ -10223,12 +10343,22 @@ class SettingsScreen(BaseAppScreen):
 
     def _rag_after_profile_action(self, action: str, ok: bool, result: str) -> None:
         if ok:
-            messages = {
-                "clone": "Profile cloned.",
-                "rename": "Profile renamed.",
-                "delete": "Profile deleted.",
-            }
-            message = messages.get(action, "Done.")
+            # UX review item 1 (P0, clone flow): clone_profile_as returns
+            # (True, new_profile_id) on success -- `result` IS that id here.
+            # Land the user ON the new clone (picker selection) with an
+            # actionable next step, instead of the generic "Profile cloned."
+            # that silently snapped the Select back to whatever was active
+            # (the id was discarded entirely pre-fix).
+            new_clone_id = result if action == "clone" else None
+            if action == "clone":
+                clone_name = self._library_rag_profile_name(new_clone_id)
+                message = f"Cloned to '{clone_name}'. Select 'Set active' to edit it."
+            else:
+                messages = {
+                    "rename": "Profile renamed.",
+                    "delete": "Profile deleted.",
+                }
+                message = messages.get(action, "Done.")
             # I1 (SP3 final review): delete_user_profile's success `result` is
             # normally "" (nothing to add), but carries a human-readable note
             # when the delete just fell back the active-profile pointer to
@@ -10242,7 +10372,10 @@ class SettingsScreen(BaseAppScreen):
             self._library_rag_profile_result = message
             self._set_static_text("#settings-library-rag-profile-result", message)
             self._sync_library_rag_widgets()
-            self._sync_library_rag_profile_widgets()
+            if new_clone_id:
+                self._sync_library_rag_profile_widgets(select_override=new_clone_id)
+            else:
+                self._sync_library_rag_profile_widgets()
             self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
             self.app.notify(message, severity="information")
             return
@@ -11422,6 +11555,16 @@ class SettingsScreen(BaseAppScreen):
                 "#settings-appearance-save-result", self._appearance_result
             )
             self.app.notify("Appearance preview complete.", severity="information")
+            return
+        if self._active_category_id() is SettingsCategoryId.LIBRARY_RAG:
+            # UX review item 8: 't test category' previously fell all the
+            # way through to the generic "No test action..." toast for RAG
+            # even though there's a cheap, honest check available -- refetch
+            # the active profile's index status (same off-thread worker
+            # pattern as category-show/set-active/save) and report it
+            # alongside the current preview defaults.
+            self.app.notify("RAG check started.", severity="information")
+            self._rag_test_category_worker()
             return
         self.app.notify(
             "No test action is available for this Settings category yet.",
