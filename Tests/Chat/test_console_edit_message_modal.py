@@ -143,8 +143,27 @@ async def test_cancel_dismisses_none_even_with_resend_available():
     assert result == [None]
 
 
-def test_context_copy_mentions_resend_only_when_can_resend():
-    m_plain = ConsoleEditMessageModal(content="orig")
-    m_resend = ConsoleEditMessageModal(content="orig", can_resend=True)
-    assert m_plain._can_resend is False
-    assert m_resend._can_resend is True
+@pytest.mark.asyncio
+async def test_context_copy_mentions_resend_only_when_can_resend():
+    # can_resend=True: the context Static explains the resend fork option.
+    app = _ModalHost()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = ConsoleEditMessageModal(content="orig", can_resend=True)
+        app.push_screen(modal)
+        await pilot.pause()
+        context = _static_plain_text(
+            modal.query_one("#console-edit-message-context", Static)
+        )
+        assert "Edit & resend" in context
+
+    # can_resend=False: the context Static uses the plain in-place copy only.
+    app_plain = _ModalHost()
+    async with app_plain.run_test(size=(120, 40)) as pilot:
+        modal_plain = ConsoleEditMessageModal(content="orig")
+        app_plain.push_screen(modal_plain)
+        await pilot.pause()
+        context_plain = _static_plain_text(
+            modal_plain.query_one("#console-edit-message-context", Static)
+        )
+        assert "Edit & resend" not in context_plain
+        assert "will not create a new prompt" in context_plain
