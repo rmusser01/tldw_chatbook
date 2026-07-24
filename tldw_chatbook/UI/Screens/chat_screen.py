@@ -12213,8 +12213,12 @@ class ChatScreen(BaseAppScreen):
             composer.insert_file_segment(
                 attachment.text_content, f"📄 {attachment.label}"
             )
+            # TASK-376: name the action distinctly -- a text file is inserted as
+            # draft text, not attached like an image, so the user isn't misled
+            # into thinking they attached a file.
             self.app_instance.notify(
-                f"{escape_markup(attachment.display_name)} content inserted"
+                f"{escape_markup(attachment.display_name)} inserted as text "
+                "(not attached)"
             )
         else:
             store = self._ensure_console_chat_store()
@@ -13387,7 +13391,11 @@ class ChatScreen(BaseAppScreen):
             attachment_label = pendings[0].label
         else:
             attachment_label = f"{len(pendings)} files"
-        composer.set_pending_attachment_label(attachment_label)
+        composer.set_pending_attachment_label(
+            attachment_label,
+            count=len(pendings),
+            total=MAX_PENDING_ATTACHMENTS,
+        )
 
     def _hide_console_legacy_chat_inputs(self) -> None:
         """Keep Console on a single native composer surface."""

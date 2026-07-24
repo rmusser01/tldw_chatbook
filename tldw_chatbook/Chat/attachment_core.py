@@ -214,8 +214,17 @@ class PendingAttachment:
 
     @property
     def label(self) -> str:
-        """Return the user-facing chip/indicator label."""
-        size = self.processed_size or self.original_size
+        """Return the user-facing chip/indicator label.
+
+        TASK-376: an inserted text file (``insert_mode == "inline"``) shows the
+        real FILE size the user picked, not the wrapped-content length -- the
+        latter is larger and misleading (e.g. ``115 B`` for a 60-byte file). Real
+        attachments keep their processed (attached) byte size.
+        """
+        if self.insert_mode == "inline":
+            size = self.original_size or self.processed_size
+        else:
+            size = self.processed_size or self.original_size
         return f"{self.display_name} · {_format_size(size)}"
 
 
