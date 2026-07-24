@@ -56,6 +56,15 @@ class ConsoleSessionTabButton(Button):
     button and stops the event, so the middle-click path must live here.
     """
 
+    # TASK-375: keep the (middle-truncated) label on one line so its ellipsis
+    # renders instead of being word-wrapped onto a hidden second row.
+    DEFAULT_CSS = """
+    ConsoleSessionTabButton {
+        text-wrap: nowrap;
+        text-overflow: clip;
+    }
+    """
+
     def __init__(self, *args: Any, session_id: str, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._session_id = session_id
@@ -136,12 +145,25 @@ class ConsoleSessionSurface(Vertical):
 
     @classmethod
     def _display_title(cls, title: str) -> str:
-        """Return a tab label that preserves space for close/rename controls."""
+        """Return a tab label that preserves space for close/rename controls.
+
+        TASK-375: middle-truncate with a single-cell ellipsis rather than an
+        end "...". The old end-truncation was defeated by the tab button's
+        word-wrap (height-1 showed only the first word, never the mark); a
+        middle ellipsis sits early in the label (well inside the button width),
+        so with the button's nowrap it is always visible, and it preserves the
+        distinguishing words at BOTH ends so two conversations sharing a first
+        word are not reduced to the same fragment.
+        """
         normalized_title = title.strip() or "Untitled"
         if len(normalized_title) <= CONSOLE_SESSION_TAB_DISPLAY_CHARS:
             return normalized_title
-        visible_chars = CONSOLE_SESSION_TAB_DISPLAY_CHARS - 3
-        return f"{normalized_title[:visible_chars].rstrip()}..."
+        keep = CONSOLE_SESSION_TAB_DISPLAY_CHARS - 1  # room for the ellipsis cell
+        head = (keep + 1) // 2
+        tail = keep - head
+        head_text = normalized_title[:head].rstrip()
+        tail_text = normalized_title[len(normalized_title) - tail:].lstrip()
+        return f"{head_text}…{tail_text}"
 
     def _build_session_tab_button(
         self,

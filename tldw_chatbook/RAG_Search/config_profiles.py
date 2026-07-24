@@ -305,9 +305,16 @@ class ConfigProfileManager:
         hybrid_full_rag = RAGConfig()
         hybrid_full_rag.embedding.model = "BAAI/bge-base-en-v1.5"
         hybrid_full_rag.embedding.batch_size = 32
-        hybrid_full_rag.chunking.chunk_size = 512
-        hybrid_full_rag.chunking.chunk_overlap = 128
-        hybrid_full_rag.chunking.chunking_method = "hierarchical"
+        # was "hierarchical" (invalid at runtime); paragraphs is the closest
+        # structure-respecting valid method (see task-484). Chunker._chunk_text_by_paragraphs
+        # (Chunking/Chunk_Lib.py) treats chunk_size/chunk_overlap as a PARAGRAPH COUNT, not
+        # a word count, and hard-caps chunk_size at MAX_CHUNK_SIZE_PARAGRAPHS=100 -- 512 would
+        # raise ValueError the moment paragraph chunking actually runs. 5/1 keeps this profile
+        # slightly larger than technical_docs (denser/precise) but smaller than research_papers
+        # (long-context intent).
+        hybrid_full_rag.chunking.chunk_size = 5
+        hybrid_full_rag.chunking.chunk_overlap = 1
+        hybrid_full_rag.chunking.chunking_method = "paragraphs"
         hybrid_full_rag.chunking.enable_parent_retrieval = True
         hybrid_full_rag.chunking.parent_size_multiplier = 3
         hybrid_full_rag.chunking.clean_artifacts = True
@@ -437,8 +444,17 @@ class ConfigProfileManager:
         # Technical Documentation Profile
         tech_rag = RAGConfig()
         tech_rag.embedding.model = "sentence-transformers/all-mpnet-base-v2"
-        tech_rag.chunking.chunk_size = 512
-        tech_rag.chunking.chunking_method = "structural"  # Preserve document structure
+        # was "structural" (invalid at runtime); paragraphs is the closest
+        # structure-respecting valid method (see task-484). chunk_size/chunk_overlap are a
+        # PARAGRAPH COUNT under this method (Chunker._chunk_text_by_paragraphs), capped at
+        # MAX_CHUNK_SIZE_PARAGRAPHS=100 -- the prior 512 (word-denominated) value would raise
+        # ValueError. 4/1 is deliberately the smallest of the three paragraphs-method builtins:
+        # technical content favors precise, dense chunks over the tables/code it preserves.
+        # Previously this profile did not set chunk_overlap at all and inherited the
+        # words-denominated default (100), which as a paragraph count would exceed chunk_size.
+        tech_rag.chunking.chunk_size = 4
+        tech_rag.chunking.chunk_overlap = 1
+        tech_rag.chunking.chunking_method = "paragraphs"  # Preserve document structure
         tech_rag.chunking.clean_artifacts = True
         tech_rag.chunking.preserve_tables = True
         tech_rag.chunking.preserve_structure = True
@@ -460,8 +476,18 @@ class ConfigProfileManager:
         research_rag.embedding.model = (
             "allenai-specter"  # Specialized for scientific text
         )
-        research_rag.chunking.chunk_size = 512
-        research_rag.chunking.chunking_method = "hierarchical"
+        # was "hierarchical" (invalid at runtime); paragraphs is the closest
+        # structure-respecting valid method (see task-484). chunk_size/chunk_overlap are a
+        # PARAGRAPH COUNT under this method (Chunker._chunk_text_by_paragraphs), capped at
+        # MAX_CHUNK_SIZE_PARAGRAPHS=100 -- the prior 512 (word-denominated) value would raise
+        # ValueError. 6/2 is the largest of the three paragraphs-method builtins: research
+        # papers have longer structured sections (abstract/methods/results) than technical
+        # docs or the general hybrid_full profile. Previously this profile did not set
+        # chunk_overlap at all and inherited the words-denominated default (100), which as a
+        # paragraph count would exceed chunk_size.
+        research_rag.chunking.chunk_size = 6
+        research_rag.chunking.chunk_overlap = 2
+        research_rag.chunking.chunking_method = "paragraphs"
         research_rag.chunking.clean_artifacts = True  # Clean PDF artifacts
         research_rag.chunking.preserve_structure = True
         research_rag.search.include_citations = True
@@ -748,6 +774,11 @@ class ConfigProfileManager:
                 defeated by flipping ``read_only`` on a shared instance), or
                 ``profile.id`` collides with a different, read-only,
                 already-registered profile.
+            OSError: Propagated from a failed disk write (``_save_one``).
+                Transactional: the write happens BEFORE the profile is
+                registered in ``self._profiles``, so a failed write never
+                leaves the in-memory registry pointing at an object that was
+                never actually persisted (PR #829 review finding 5(b)).
         """
         if profile.read_only or profile.id in self._builtin_ids:
             raise ValueError(f"Profile '{profile.id}' is read-only")
@@ -756,8 +787,8 @@ class ConfigProfileManager:
             raise ValueError(
                 f"Profile id '{profile.id}' collides with read-only builtin '{existing.name}'"
             )
-        self._profiles[profile.id] = profile
         self._save_one(profile)
+        self._profiles[profile.id] = profile
         return profile
 
     def delete_profile(self, profile_id: str) -> bool:
@@ -1125,9 +1156,50 @@ class ConfigProfileManager:
 # Convenience functions
 
 
+# Cached singleton for the DEFAULT profiles directory only. Every no-arg
+# caller (query hot path via active_config.resolve_active_rag_config(), plus
+# enhanced_rag_service_v2 / pipeline_loader / rag_factory) shares this one
+# instance instead of re-instantiating ConfigProfileManager (mkdir + building
+# ~13 builtin profiles + globbing/reading every profile JSON from disk) on
+# every call. Profile CRUD mutates ConfigProfileManager._profiles in place, so
+# sharing one instance keeps writes visible to every default-dir caller.
+# An explicit profiles_dir always bypasses the cache and gets a fresh
+# instance -- tests rely on that for per-test isolation.
+_GLOBAL_PROFILE_MANAGER: Optional["ConfigProfileManager"] = None
+
+
 def get_profile_manager(profiles_dir: Optional[Path] = None) -> ConfigProfileManager:
-    """Get or create the global profile manager."""
-    return ConfigProfileManager(profiles_dir)
+    """Get or create the global profile manager.
+
+    Args:
+        profiles_dir: Explicit profiles directory. When provided, always
+            returns a FRESH ``ConfigProfileManager`` over that directory
+            (never cached) -- this is the seam tests use for isolation. When
+            omitted, returns the process-wide cached singleton over the
+            default directory (``get_user_data_dir() / "rag_profiles"``),
+            creating it on first use.
+
+    Returns:
+        A ``ConfigProfileManager`` instance.
+    """
+    global _GLOBAL_PROFILE_MANAGER
+    if profiles_dir is not None:
+        return ConfigProfileManager(profiles_dir)
+    if _GLOBAL_PROFILE_MANAGER is None:
+        _GLOBAL_PROFILE_MANAGER = ConfigProfileManager()
+    return _GLOBAL_PROFILE_MANAGER
+
+
+def reset_profile_manager_cache() -> None:
+    """Drop the cached default-dir profile manager singleton.
+
+    Primarily for test isolation: tests that rely on a fresh default-dir
+    ``ConfigProfileManager`` per test (e.g. via monkeypatched ``HOME``/
+    ``XDG_*`` env vars) must call this in setup/teardown, since the cached
+    singleton otherwise outlives any single test's env patching.
+    """
+    global _GLOBAL_PROFILE_MANAGER
+    _GLOBAL_PROFILE_MANAGER = None
 
 
 def quick_profile(use_case: ProfileType) -> ProfileConfig:

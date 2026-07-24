@@ -1,8 +1,9 @@
 ---
 id: TASK-389
 title: Fix clipped setup-card step 3 copy
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
 labels: [console, ux]
 dependencies: []
@@ -23,6 +24,20 @@ The card renders '3. ○ Send your first message  Composer unlocks after      ' 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The full sentence fits or wraps
-- [ ] #2 If truncation is unavoidable, show an ellipsis
+- [x] #1 The full sentence fits or wraps
+- [x] #2 If truncation is unavoidable, show an ellipsis
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Served-app-reproduced at 2050x1240: the first-run card row 3 read "Composer
+unlocks after" with "setup" clipped (wrapped to a hidden 2nd line, ~6 blank
+cells, no ellipsis). The honest step-3 line is 59 cells but `.console-setup-modal-card`
+width:62 gave only 56 content (−2 border −4 padding). AC#1: widened the card to
+width:66 (60 content) so the full sentence fits. AC#2: `.console-setup-step` now
+`text-wrap: nowrap; text-overflow: ellipsis` so a narrow terminal that caps the
+card (max-width:90%) marks the overflow instead of silently clipping. Served-app-
+VERIFIED (row 40: "…Composer unlocks after setup"). Regression test ties the card
+width to the actual _step_text length + asserts the ellipsis.
+<!-- SECTION:NOTES:END -->

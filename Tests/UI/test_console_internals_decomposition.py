@@ -1242,7 +1242,13 @@ async def test_console_collapsed_paste_composer_row_click_enters_unfurl_prompt()
         pasted_text = "container row paste " * 8
 
         composer.insert_pasted_text(pasted_text)
-        await pilot.click("#console-native-composer", offset=(13, 1))
+        visible_draft_offset = (
+            visible_draft.region.offset - composer.region.offset + (1, 0)
+        )
+        await pilot.click(
+            "#console-native-composer",
+            offset=visible_draft_offset,
+        )
         await pilot.pause(0.1)
 
         assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"

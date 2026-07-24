@@ -367,14 +367,35 @@ def isolate_test_environment(monkeypatch, tmp_path):
         str(test_data_dir / "config" / "config.toml"),
     )
 
-    # Patch common data directory paths if they're imported
-    try:
-        from tldw_chatbook import config
+    # NOTE (task-519): this used to also try to
+    # `monkeypatch.setattr(config, "get_data_dir", ...)`, but `config` has no
+    # `get_data_dir` attribute -- that patch was a silent no-op. It's removed
+    # rather than fixed because it's no longer needed: `get_user_data_dir()`'s
+    # default-dir fallback now resolves HOME/XDG_DATA_HOME at CALL time (see
+    # `config._default_base_data_dir`), so the HOME/XDG_DATA_HOME env patches
+    # above are sufficient on their own.
 
-        if hasattr(config, "get_data_dir"):
-            monkeypatch.setattr(config, "get_data_dir", lambda: test_data_dir)
-    except ImportError:
-        pass
+    # Pre-arm SP2b's first-run-import once-flag so the RAG ingestion module's
+    # real (no-longer-pytest-gated, see task-519) first-run wiring never fires
+    # organically inside an unrelated test and creates a real
+    # "imported_settings" RAG profile under the (now-isolated, but still
+    # real-filesystem) data dir. Tests that specifically want to exercise
+    # `_maybe_run_first_run_import` reset this flag themselves (see
+    # `Tests/RAG/test_first_run_import.py`).
+    #
+    # This must NOT `import tldw_chatbook.RAG_Search.ingestion_indexing` itself
+    # (review finding on task-519/PR #845): that would drag the RAG stack into
+    # every single test in the suite, autouse, even ones that never touch RAG.
+    # Instead only arm the flag if the module is ALREADY in sys.modules (i.e.
+    # some earlier-collected test already imported it) -- the first-run wiring
+    # lives INSIDE that module, so if it isn't imported it cannot fire. If a
+    # test imports it later in its own body, task-519's call-time HOME
+    # resolution already isolates any first-run write under the HOME/
+    # XDG_DATA_HOME patched above, so this pre-arm is belt-and-braces for
+    # modules that happen to already be loaded, not a correctness requirement.
+    ii = sys.modules.get("tldw_chatbook.RAG_Search.ingestion_indexing")
+    if ii is not None:
+        monkeypatch.setattr(ii, "_first_run_import_attempted", True, raising=False)
 
     yield test_data_dir
 

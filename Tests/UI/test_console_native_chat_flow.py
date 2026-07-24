@@ -22,11 +22,13 @@ from tldw_chatbook.Chat.chat_conversation_scope_service import (
     ChatConversationScopeService,
 )
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleRunStatus,
+    GenerationVariantMeta,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.Chat.console_image_view import IMAGE_CACHE_MAX_ENTRIES
@@ -1473,6 +1475,83 @@ async def test_console_stop_interrupts_stream_and_keeps_partial_message_visible(
 
 
 @pytest.mark.asyncio
+async def test_console_collapsed_stop_interrupts_real_run_without_expanding():
+    gateway = WaitingGateway()
+    app = _build_test_app()
+    _configure_native_ready_console(app, model="test-model")
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        _select_llamacpp_console(console)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello")
+
+        composer.query_one("#console-send-message", Button).press()
+        await asyncio.wait_for(gateway.started.wait(), timeout=1)
+        await _wait_for_text(console, pilot, "partial")
+        console._set_console_composer_collapsed(True)
+        await pilot.pause()
+
+        collapsed_stop = composer.query_one(
+            "#console-collapsed-stop-generation", Button
+        )
+        expanded_stop = composer.query_one("#console-stop-generation", Button)
+        assert composer.region.height == 1
+        assert collapsed_stop.display is True
+        assert composer.query_one("#console-composer-expanded").display is False
+
+        collapsed_stop.press()
+        await _wait_for_text(console, pilot, "stopped")
+
+        store = console._ensure_console_chat_store()
+        messages = store.messages_for_session(store.active_session_id)
+        assert messages[-1].content == "Response stopped by user."
+        assert messages[-2].content == "partial"
+        assert messages[-2].status == "stopped"
+        assert composer.collapsed is True
+        assert composer.query_one("#console-composer-expanded").display is False
+        assert expanded_stop.display is False
+
+
+@pytest.mark.asyncio
+async def test_console_collapsed_stop_stale_action_warns_without_expanding():
+    gateway = WaitingGateway()
+    app = _build_test_app()
+    _configure_native_ready_console(app, model="test-model")
+    app.console_provider_gateway_factory = lambda: gateway
+    notifications: list[tuple[str, dict]] = []
+    app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        _select_llamacpp_console(console)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello")
+
+        composer.query_one("#console-send-message", Button).press()
+        await asyncio.wait_for(gateway.started.wait(), timeout=1)
+        await _wait_for_text(console, pilot, "partial")
+        console._set_console_composer_collapsed(True)
+        await pilot.pause()
+        assert composer.query_one("#console-collapsed-stop-generation", Button).display
+
+        gateway.release.set()
+        await _wait_for_text(console, pilot, "partial done")
+        await console._stop_console_generation_from_visible_action()
+
+        assert (
+            "No active Console run to stop.",
+            {"severity": "warning"},
+        ) in notifications
+        assert composer.collapsed is True
+
+
+@pytest.mark.asyncio
 async def test_console_composer_stop_is_subdued_when_idle():
     gateway = WaitingGateway()
     app = _build_test_app()
@@ -2427,7 +2506,19 @@ async def test_console_message_action_keyboard_focus_stays_inside_action_row():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(160, 48)) as pilot:
+    # TASK-1: the row now carries a 9th always-visible action button (speak,
+    # right after copy). ConsoleHarness is a bare App (not TldwCli), so it
+    # never loads the app's built CSS bundle -- only widget DEFAULT_CSS (see
+    # the note at chat_screen.py:726-728) -- so the bundle's
+    # `.console-transcript-action-button { min-width: 5 }` override never
+    # applies in this harness and every button falls back to Textual's
+    # built-in Button min-width of 16. That no longer fits inside the
+    # previous 160-col reference width without the trailing buttons (delete
+    # included) landing off the right edge of the terminal, so this widened
+    # just enough to keep every button in-bounds and genuinely clickable
+    # here. This is a test-harness gap, not a CSS bug: the real app loads
+    # the bundle and renders the row far narrower.
+    async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
         store = console._ensure_console_chat_store()
@@ -2457,6 +2548,12 @@ async def test_console_message_action_keyboard_focus_stays_inside_action_row():
             f"#console-message-action-copy-{message.id}", Button
         )
         await _wait_for_focus(console.app, pilot, copy_button)
+
+        await pilot.press("tab")
+        speak_button = console.query_one(
+            f"#console-message-action-speak-{message.id}", Button
+        )
+        await _wait_for_focus(console.app, pilot, speak_button)
 
         await pilot.press("tab")
         edit_button = console.query_one(
@@ -2850,7 +2947,13 @@ async def test_console_selected_message_delete_action_removes_message_from_trans
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(160, 48)) as pilot:
+    # TASK-1: widened per the comment on test_console_message_action_
+    # keyboard_focus_stays_inside_action_row -- ConsoleHarness's missing CSS
+    # bundle (not a CSS bug) forces the row's now-9 buttons to Textual's
+    # default min-width of 16, no longer fitting inside 160 cols, which put
+    # the coordinate-clicked delete button off the right edge of the
+    # terminal.
+    async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
         store = console._ensure_console_chat_store()
@@ -2897,7 +3000,11 @@ async def test_console_delete_confirmation_resets_when_selection_changes():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
-    async with host.run_test(size=(160, 48)) as pilot:
+    # TASK-1: widened for the same reason as the other two tests above --
+    # ConsoleHarness's missing CSS bundle (not a CSS bug) forces the row's
+    # now-9 buttons to Textual's default min-width of 16, no longer fitting
+    # inside 160 cols.
+    async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
         store = console._ensure_console_chat_store()
@@ -3604,13 +3711,29 @@ async def test_console_regenerate_action_streams_selected_variant():
         await pilot.click(f"#console-message-action-regenerate-{source.id}")
         await _wait_for_text(console, pilot, "hello")
 
-        updated = store.get_message(source.id)
-        assert updated.variants.current.content == "hello"
-        assert updated.variants.can_go_previous is True
+        # TASK-6: regenerate forks a persisted SIBLING node and streams into
+        # it, rather than replacing the anchor's content in place as an
+        # in-message variant. The anchor is untouched and drops off the
+        # active path; the new sibling is the active leaf and carries the
+        # freshly streamed text.
+        unchanged_source = store.get_message(source.id)
+        assert unchanged_source.content == "seed"
+        assert unchanged_source.variants is None
+        assert source.id not in store.active_path_message_ids(session.id)
+
+        new_leaf_id = store.active_leaf(session.id)
+        assert new_leaf_id != source.id
+        new_sibling = store.get_message(new_leaf_id)
+        assert new_sibling.content == "hello"
+        assert new_sibling.variants is None
 
 
 @pytest.mark.asyncio
-async def test_console_regenerated_message_variant_controls_cycle_visible_content():
+async def test_console_sibling_swipe_buttons_navigate_between_regenerated_siblings():
+    """TASK-7: `<`/`>` navigate persisted SIBLING nodes (Task 6's regenerate
+    fork), not the old in-memory ``ConsoleVariantSet`` cycling this test used
+    to exercise via ``store.add_variant`` -- superseded now that the gate is
+    ``sibling_count``-based. Also pins the `(n/m)` counter this task adds."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -3619,57 +3742,76 @@ async def test_console_regenerated_message_variant_controls_cycle_visible_conten
         await _wait_for_selector(console, pilot, "#console-native-transcript")
         store = console._ensure_console_chat_store()
         session = store.ensure_session(title="Chat 1")
-        source = store.append_message(
+        a1 = store.append_message(
             session.id,
             role=ConsoleMessageRole.ASSISTANT,
             content="seed",
         )
-        store.add_variant(source.id, "updated answer")
+        a2 = store.create_sibling(
+            a1.id, role=ConsoleMessageRole.ASSISTANT, content="updated answer"
+        )
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
-        transcript.select_message(source.id)
+        transcript.select_message(a2.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
-            console, pilot, f"#console-message-action-variant-previous-{source.id}"
+            console, pilot, f"#console-message-action-variant-previous-{a2.id}"
         )
         await _wait_for_selector(
-            console, pilot, f"#console-message-action-variant-next-{source.id}"
+            console, pilot, f"#console-message-action-variant-next-{a2.id}"
         )
 
         previous_button = console.query_one(
-            f"#console-message-action-variant-previous-{source.id}", Button
+            f"#console-message-action-variant-previous-{a2.id}", Button
         )
         next_button = console.query_one(
-            f"#console-message-action-variant-next-{source.id}", Button
+            f"#console-message-action-variant-next-{a2.id}", Button
         )
         assert previous_button.disabled is False
         assert next_button.disabled is True
-        assert "updated answer" in _static_plain_text(
-            console.query_one(f"#console-message-{source.id}", Static)
+        row_text = _static_plain_text(
+            console.query_one(f"#console-message-{a2.id}", Static)
         )
+        assert "updated answer" in row_text
+        assert "(2/2)" in row_text
 
-        await pilot.click(f"#console-message-action-variant-previous-{source.id}")
+        await pilot.click(f"#console-message-action-variant-previous-{a2.id}")
         await _wait_for_text(console, pilot, "seed")
+        row_text = _static_plain_text(
+            console.query_one(f"#console-message-{a1.id}", Static)
+        )
+        assert "(1/2)" in row_text
+        # a2 drops off the active path, so its id is no longer in the
+        # transcript's message set and selection clears (same rule an
+        # existing test already pins for "continue": selection tracks a
+        # message ID, and that ID vanishing from view resets it -- swiping
+        # again requires re-selecting the now-active row, exactly like any
+        # other action that swaps which message is active).
+        assert transcript.selected_message_id is None
+        assert not list(console.query(f"#console-message-actions-{a1.id}"))
+
+        transcript.select_message(a1.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-variant-next-{a1.id}"
+        )
         previous_button = console.query_one(
-            f"#console-message-action-variant-previous-{source.id}", Button
+            f"#console-message-action-variant-previous-{a1.id}", Button
         )
         next_button = console.query_one(
-            f"#console-message-action-variant-next-{source.id}", Button
+            f"#console-message-action-variant-next-{a1.id}", Button
         )
         assert previous_button.disabled is True
         assert next_button.disabled is False
 
-        await pilot.click(f"#console-message-action-variant-next-{source.id}")
+        await pilot.click(f"#console-message-action-variant-next-{a1.id}")
         await _wait_for_text(console, pilot, "updated answer")
-        previous_button = console.query_one(
-            f"#console-message-action-variant-previous-{source.id}", Button
+        row_text = _static_plain_text(
+            console.query_one(f"#console-message-{a2.id}", Static)
         )
-        next_button = console.query_one(
-            f"#console-message-action-variant-next-{source.id}", Button
-        )
-        assert previous_button.disabled is False
-        assert next_button.disabled is True
+        assert "(2/2)" in row_text
+        assert transcript.selected_message_id is None
 
 
 @pytest.mark.asyncio
@@ -5950,7 +6092,14 @@ async def test_console_workspace_conversation_row_resumes_persisted_conversation
         assert "Resume state: restored from persisted-chat-1" in inspector_text
         assert "Workspace: Default" in inspector_text
         assert app.chat_conversation_scope_service.calls == [
-            {"conversation_id": "persisted-chat-1", "mode": "local"}
+            {
+                "conversation_id": "persisted-chat-1",
+                "mode": "local",
+                # Task 8: resume loads the full tree with raised caps so a long
+                # or branchy conversation is not truncated.
+                "depth_cap": 10_000,
+                "root_limit": 10_000,
+            }
         ]
 
 
@@ -6210,6 +6359,110 @@ async def test_console_workspace_conversation_resume_uses_real_local_services(tm
         assert restored_session.workspace_id == workspace.workspace_id
 
 
+def _resume_generation_variant_meta(seed: int) -> GenerationVariantMeta:
+    return GenerationVariantMeta(
+        prompt="a red dragon",
+        negative_prompt="",
+        backend="swarmui",
+        model=None,
+        seed=seed,
+        style=None,
+        params={},
+    )
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_conversation_resume_hydrates_generation_metadata(
+    tmp_path,
+):
+    """Resuming a saved conversation rehydrates a generation card (P2a §2).
+
+    Task 9's report flagged a real gap: ``ChatScreen
+    ._resume_console_workspace_conversation`` -- the production path a
+    saved-conversation click (and, after an app restart, the only way back
+    into a persisted conversation) drives -- restores a generation
+    message's tree node and its kept-variant bytes, but never calls the
+    store's documented hydration seam (``get_generation_metadata_for_messages``
+    + ``hydrate_generation_metadata``), so the resumed message's
+    ``generation_metadata`` comes back empty and the transcript renders a
+    plain image instead of a generation card (losing the ``< >``/keep/
+    regenerate actions and the other variant).
+
+    Persists a 2-variant generation message via a real ``ConsoleChatStore``
+    bound to a real ``ChatPersistenceService``, keeps variant position 1
+    (promoting it to canonical), then resumes the SAME conversation by
+    driving the real production coroutine directly against a FRESH app/
+    screen/store -- the same "real production coroutine, not a rebuilt
+    double" pattern ``test_console_scope_row.py`` uses for this exact
+    method. Asserts the resumed message is card-eligible: non-empty
+    ``generation_metadata`` in kept-first order, matching the DB, with no
+    manual hydrate call in this test.
+    """
+    db = CharactersRAGDB(tmp_path / "resume_hydrate.sqlite", "test-client")
+    try:
+        chat_service = ChatConversationService(db)
+
+        setup_store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        setup_session = setup_store.create_session(title="Generation resume")
+        setup_store.active_session_id = setup_session.id
+        seed_message = setup_store.append_generation_message(
+            setup_session.id,
+            content="[image] a red dragon",
+            variants=[
+                (b"variant-a-bytes", "image/png", _resume_generation_variant_meta(1)),
+                (b"variant-b-bytes", "image/png", _resume_generation_variant_meta(2)),
+            ],
+            persist=True,
+        )
+        setup_store.keep_generation_variant(
+            setup_session.id, seed_message.id, position=1
+        )
+        conversation_id = setup_session.persisted_conversation_id
+        assert conversation_id is not None
+        persisted_message_id = seed_message.persisted_message_id
+        assert persisted_message_id is not None
+
+        app = _build_test_app()
+        _configure_native_ready_console(app)
+        app.chachanotes_db = db
+        app.chat_conversation_scope_service = ChatConversationScopeService(
+            local_service=chat_service,
+            server_service=None,
+        )
+        host = ConsoleHarness(app)
+        async with host.run_test(size=(160, 48)) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+            resumed = await console._resume_console_workspace_conversation(
+                conversation_id
+            )
+            await pilot.pause()
+            assert resumed is True
+
+            store = console._ensure_console_chat_store()
+            active_session = store.switch_session(store.active_session_id)
+            assert active_session.persisted_conversation_id == conversation_id
+
+            reloaded = store.messages_for_session(active_session.id)
+            reloaded_generation_msg = next(
+                m for m in reloaded if m.persisted_message_id == persisted_message_id
+            )
+
+            # Card-eligible: non-empty generation_metadata survived resume,
+            # kept variant (seed 2) first, matching the DB's post-keep order.
+            assert len(reloaded_generation_msg.generation_metadata) == 2
+            assert [
+                variant.seed
+                for variant in reloaded_generation_msg.generation_metadata
+            ] == [2, 1]
+            # Position-0/canonical bytes are still the kept variant's.
+            assert reloaded_generation_msg.image_data == b"variant-b-bytes"
+            assert reloaded_generation_msg.attachments[0].data == b"variant-b-bytes"
+    finally:
+        db.close_connection()
+
+
 @pytest.mark.asyncio
 async def test_console_workspace_rail_keeps_active_native_session_visible_when_scope_is_global():
     app = _build_test_app()
@@ -6366,6 +6619,58 @@ async def test_console_native_tab_strip_isolates_composer_drafts():
 
 
 @pytest.mark.asyncio
+async def test_console_collapsed_layout_follows_cross_workspace_tab_state():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    service = app.workspace_registry_service
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace B")
+    service.set_active_workspace("ws-a")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Workspace A Chat", workspace_id="ws-a")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("workspace A draft")
+
+        second = store.create_session(
+            title="Workspace B Chat",
+            workspace_id="ws-b",
+        )
+        store.set_session_draft(second.id, "workspace B draft")
+        store.set_pending_attachment(second.id, _staged_image_attachment())
+        store.switch_session(first.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{second.id}")
+
+        console._set_console_composer_collapsed(True)
+        await pilot.pause()
+        await pilot.click(f"#console-session-tab-{second.id}")
+        await _wait_for_active_session(store, pilot, second.id)
+        expand = composer.query_one("#console-composer-expand", Button)
+        await _wait_for_focus(host, pilot, expand)
+
+        status = composer.query_one("#console-composer-collapsed-status", Static)
+        assert composer.collapsed is True
+        assert composer.draft_text() == "workspace B draft"
+        assert "Draft retained" in str(status.renderable)
+        assert "Attachment retained" in str(status.renderable)
+        assert service.get_active_workspace().workspace_id == "ws-b"
+
+        await pilot.click(f"#console-session-tab-{first.id}")
+        await _wait_for_active_session(store, pilot, first.id)
+        await _wait_for_focus(host, pilot, expand)
+
+        assert composer.collapsed is True
+        assert composer.draft_text() == "workspace A draft"
+        assert "Attachment retained" not in str(status.renderable)
+        assert service.get_active_workspace().workspace_id == "ws-a"
+
+
+@pytest.mark.asyncio
 async def test_console_native_tab_strip_keeps_compact_close_x():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -6416,9 +6721,38 @@ async def test_console_native_tab_title_has_stable_visible_label_region():
             "Active Console tab: Planning session with a long descriptive name. "
             "Click again to rename."
         )
-        assert str(tab.label) == "Planning session..."
+        # TASK-375: middle-truncated with a single-cell ellipsis (visible mark),
+        # preserving the distinguishing words at both ends.
+        assert str(tab.label) == "Planning…tive name"
         assert tab.region.width >= 18
-        assert "Planning session" in _visible_text(console)
+        assert "Planning" in _visible_text(console)
+        assert "…" in _visible_text(console)
+
+
+def test_console_tab_label_middle_truncates_with_visible_ellipsis():
+    """TASK-375: long tab titles middle-truncate with a single-cell ellipsis,
+    always showing the truncation mark and keeping distinguishing words at both
+    ends (so two titles sharing a first word are not the same fragment)."""
+    from tldw_chatbook.Widgets.Console.console_session_surface import (
+        CONSOLE_SESSION_TAB_DISPLAY_CHARS,
+        ConsoleSessionSurface,
+    )
+
+    display = ConsoleSessionSurface._display_title
+
+    short = display("Chat 1")
+    assert short == "Chat 1"  # short titles are untouched
+
+    a = display("Long conversation about embeddings and vector stores in local RAG")
+    b = display("Long conversation about Terraform state migration and remote backends")
+    for label in (a, b):
+        assert "…" in label
+        assert "..." not in label
+        assert len(label) <= CONSOLE_SESSION_TAB_DISPLAY_CHARS
+        assert label.startswith("Long")  # head preserved
+    # The distinguishing END survives, so the two aren't the same fragment.
+    assert a.endswith("RAG")
+    assert a != b
 
 
 @pytest.mark.asyncio
@@ -6769,6 +7103,107 @@ async def test_ctrl_k_is_inert_while_setup_modal_blocks():
 
 
 @pytest.mark.asyncio
+async def test_console_setup_modal_blocks_programmatic_composer_toggles():
+    app = _build_test_app()
+    _configure_openai_missing_api_key(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        collapse = composer.query_one("#console-composer-collapse", Button)
+        expand = composer.query_one("#console-composer-expand", Button)
+        assert console._console_setup_modal_blocking()
+
+        collapse.press()
+        expand.press()
+        await pilot.pause()
+
+        assert console._console_composer_collapsed is False
+        assert composer.collapsed is False
+        assert console.check_action("expand_collapsed_console_composer", ()) is False
+
+
+@pytest.mark.asyncio
+async def test_console_setup_modal_retains_collapsed_layout_and_restores_expand_focus():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        console._set_console_composer_collapsed(True)
+        await pilot.pause()
+
+        _configure_openai_missing_api_key(app)
+        console._replace_active_console_session_settings(
+            ConsoleSessionSettings(
+                provider="openai",
+                model="gpt-4o",
+                source="user",
+            )
+        )
+        console._sync_console_transcript_guidance()
+        await pilot.pause()
+        assert console._console_setup_modal_blocking()
+        assert console._console_composer_collapsed is True
+        assert composer.collapsed is True
+
+        composer.query_one("#console-composer-expand", Button).press()
+        await pilot.pause()
+        assert composer.collapsed is True
+        assert console.check_action("expand_collapsed_console_composer", ()) is False
+
+        _configure_native_ready_console(app)
+        console._replace_active_console_session_settings(
+            ConsoleSessionSettings(
+                provider="llama_cpp",
+                model="local-model",
+                base_url="http://127.0.0.1:9099",
+                source="user",
+            )
+        )
+        console._sync_console_transcript_guidance()
+        await pilot.pause()
+        assert console._console_setup_modal_blocking() is False
+
+        console._restore_console_workbench_focus()
+        await pilot.pause()
+        expand = composer.query_one("#console-composer-expand", Button)
+        assert host.focused is expand
+        assert composer.can_focus is False
+
+
+@pytest.mark.asyncio
+async def test_console_navigation_resume_retains_collapsed_composer():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleNavigationHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        console._set_console_composer_collapsed(True)
+        await pilot.pause()
+
+        console.post_message(NavigateToScreen("library"))
+        await pilot.pause()
+        assert [message.screen_name for message in host.navigation_messages] == [
+            "library"
+        ]
+
+        console.on_screen_resume()
+        await pilot.pause()
+
+        assert console._console_composer_collapsed is True
+        assert composer.collapsed is True
+
+
+@pytest.mark.asyncio
 async def test_switcher_rename_choice_chains_to_rename_modal():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -6830,6 +7265,35 @@ async def test_attachment_indicator_visibility_follows_label():
         await pilot.pause()
         assert indicator.styles.display == "none"
         assert clear_button.styles.display == "none"
+
+
+@pytest.mark.asyncio
+async def test_staged_attach_button_keeps_verb_and_count_accurate_tooltips():
+    """TASK-380: staging must not morph Attach into a status glyph -- the button
+    keeps the action verb and the tooltips reflect the real staged count."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        attach_button = console.query_one("#console-attach-context", Button)
+        clear_button = console.query_one("#console-clear-attachment", Button)
+
+        composer.set_pending_attachment_label("2 files", count=2, total=5)
+        await pilot.pause()
+        # Verb kept, not the "attached OK" status glyph.
+        assert "Attach" in str(attach_button.label)
+        assert "✓" not in str(attach_button.label)
+        # Count-accurate tooltips.
+        assert "2 of 5" in str(attach_button.tooltip)
+        assert "2 attachments" in str(clear_button.tooltip)
+
+        composer.set_pending_attachment_label("photo.png · 240 B", count=1, total=5)
+        await pilot.pause()
+        assert "Attach" in str(attach_button.label)
+        assert str(clear_button.tooltip) == "Clear the attachment."
 
 
 @pytest.mark.asyncio
@@ -6926,6 +7390,75 @@ async def test_pending_image_on_vision_model_does_not_block(monkeypatch):
         assert console._console_attachment_blocked_reason() == ""
 
 
+@pytest.mark.asyncio
+async def test_attach_at_cap_blocks_picker_before_selection(monkeypatch):
+    """TASK-377: at the attachment cap, pressing Attach must report the limit
+    immediately rather than opening the picker and rejecting the pick afterwards.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from tldw_chatbook.Chat.console_chat_store import MAX_PENDING_ATTACHMENTS
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        for _ in range(MAX_PENDING_ATTACHMENTS):
+            assert store.add_pending_attachment(session.id, _staged_image_attachment())
+        assert len(store.pending_attachments(session.id)) == MAX_PENDING_ATTACHMENTS
+
+        pushed: list = []
+        monkeypatch.setattr(
+            console.app,
+            "push_screen",
+            AsyncMock(side_effect=lambda *a, **k: pushed.append(a)),
+        )
+        notes: list = []
+        monkeypatch.setattr(
+            console.app_instance,
+            "notify",
+            MagicMock(side_effect=lambda *a, **k: notes.append(a)),
+        )
+
+        await console._handle_console_attach_context(MagicMock())
+
+        assert not pushed, "picker opened despite being at the attachment cap"
+        assert any("limit reached" in str(a[0]).lower() for a in notes), notes
+
+
+@pytest.mark.asyncio
+async def test_attach_below_cap_still_opens_picker(monkeypatch):
+    """TASK-377 guard: below the cap the Attach button still opens the picker."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from tldw_chatbook.Chat.console_chat_store import MAX_PENDING_ATTACHMENTS
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        for _ in range(MAX_PENDING_ATTACHMENTS - 1):
+            store.add_pending_attachment(session.id, _staged_image_attachment())
+
+        pushed: list = []
+        monkeypatch.setattr(
+            console.app,
+            "push_screen",
+            AsyncMock(side_effect=lambda *a, **k: pushed.append(a)),
+        )
+        await console._handle_console_attach_context(MagicMock())
+
+        assert pushed, "picker did not open while below the attachment cap"
+
+
 def test_resume_hydrates_image_messages_including_image_only_rows():
     """Verify resuming a saved conversation keeps image-only rows and their bytes."""
     screen = ChatScreen(_build_test_app())
@@ -6964,7 +7497,13 @@ def test_resume_wiring_injects_agent_markers_from_agent_runs_db(tmp_path):
     (`_inject_resume_agent_markers`) must re-derive TOOL markers from the
     real sibling `AgentRunsDB` the same way `_ensure_console_agent_bridge`
     locates it (keyed off `chachanotes_db.db_path`), not just the pure
-    helper functions in isolation."""
+    helper functions in isolation.
+
+    Task 3: the run carries an `assistant_message_id` matching the
+    assistant message's `persisted_message_id`, so this exercises the real
+    id-anchored placement path -- not the ordinal fallback that would
+    coincidentally land the block in the same place for a single-run,
+    single-reply conversation."""
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     screen = ChatScreen(_build_test_app())
@@ -6972,7 +7511,11 @@ def test_resume_wiring_injects_agent_markers_from_agent_runs_db(tmp_path):
         db_path=str(tmp_path / "chacha.db")
     )
     runs_db = AgentRunsDB(tmp_path / "agent_runs.db", client_id="t")
-    primary_id = runs_db.create_run(conversation_id="conv-x", agent_kind="primary")
+    primary_id = runs_db.create_run(
+        conversation_id="conv-x",
+        agent_kind="primary",
+        assistant_message_id="asst-42",
+    )
     runs_db.append_steps(
         primary_id,
         [
@@ -6992,7 +7535,10 @@ def test_resume_wiring_injects_agent_markers_from_agent_runs_db(tmp_path):
     messages = [
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="what is 6*7"),
         ConsoleChatMessage(
-            role=ConsoleMessageRole.ASSISTANT, content="It is 42.", status="complete"
+            role=ConsoleMessageRole.ASSISTANT,
+            content="It is 42.",
+            status="complete",
+            persisted_message_id="asst-42",
         ),
     ]
 

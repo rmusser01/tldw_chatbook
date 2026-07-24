@@ -12,6 +12,7 @@ from tldw_chatbook.Chat.console_agent_bridge import (
     compose_agent_system_prompt,
     format_agent_step_marker,
     inject_resume_agent_markers,
+    _BridgeSkillRunner,
     _compose_run_allowed_tools,
     _compose_run_registry_and_allowed,
     _non_colliding_mcp_names,
@@ -33,6 +34,7 @@ from tldw_chatbook.Agents.agent_models import (
     STEP_SPAWN,
     STEP_TOOL_RESULT,
     RunOutcome,
+    SkillFileBindings,
     ToolCatalogEntry,
     ToolResult,
     ToolSchema,
@@ -161,7 +163,9 @@ def _run(bridge, store, session, assistant_id, **over):
         should_cancel=lambda: False,
     )
     kwargs.update(over)
-    return bridge.run_reply(**kwargs)
+    # run_reply returns (run_id, outcome); these tests assert on the outcome.
+    _run_id, outcome = bridge.run_reply(**kwargs)
+    return outcome
 
 
 def test_compose_prepends_session_prompt_then_agent_prompt():
@@ -626,8 +630,60 @@ def test_resume_marker_messages_reproduces_live_markers_after_simulated_restart(
         agent_runs_db=db, store=None, provider_gateway=None
     )
     blocks = fresh_bridge.resume_marker_messages("conv-1")
-    resumed_tool_contents = [m.content for block in blocks for m in block]
+    resumed_tool_contents = [m.content for _anchor, block in blocks for m in block]
     assert resumed_tool_contents == live_tool_contents
+
+
+def test_resume_marker_messages_surfaces_assistant_message_id_anchor(tmp_path):
+    """Task 3: each block is paired with the run's ``assistant_message_id``
+    (``None`` for a legacy/pre-Phase-C run that never recorded one) so the
+    placement layer can anchor by id instead of guessing ordinally."""
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    anchored = db.create_run(
+        conversation_id="conv-1",
+        agent_kind="primary",
+        assistant_message_id="asst-anchor",
+    )
+    db.append_steps(
+        anchored,
+        [
+            {
+                "index": 0,
+                "kind": STEP_ERROR,
+                "summary": "boom",
+                "tool_name": "",
+                "result": "",
+                "args": None,
+                "created_at": "",
+            },
+        ],
+    )
+    db.set_status(anchored, "done", result="ok")
+    legacy = db.create_run(conversation_id="conv-1", agent_kind="primary")
+    db.append_steps(
+        legacy,
+        [
+            {
+                "index": 0,
+                "kind": STEP_ERROR,
+                "summary": "legacy",
+                "tool_name": "",
+                "result": "",
+                "args": None,
+                "created_at": "",
+            },
+        ],
+    )
+    db.set_status(legacy, "done", result="ok")
+
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+    blocks = bridge.resume_marker_messages("conv-1")
+
+    assert len(blocks) == 2
+    assert blocks[0][0] == "asst-anchor"
+    assert "boom" in blocks[0][1][0].content
+    assert blocks[1][0] is None
+    assert "legacy" in blocks[1][1][0].content
 
 
 def test_resume_marker_messages_orders_blocks_chronologically_oldest_first(tmp_path):
@@ -668,8 +724,8 @@ def test_resume_marker_messages_orders_blocks_chronologically_oldest_first(tmp_p
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     blocks = bridge.resume_marker_messages("conv-1")
     assert len(blocks) == 2
-    assert "calculator" in blocks[0][0].content
-    assert "timed out" in blocks[1][0].content
+    assert "calculator" in blocks[0][1][0].content
+    assert "timed out" in blocks[1][1][0].content
 
 
 def test_resume_marker_messages_skips_superseded_runs(tmp_path):
@@ -710,7 +766,7 @@ def test_resume_marker_messages_skips_superseded_runs(tmp_path):
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     blocks = bridge.resume_marker_messages("conv-1")
     assert len(blocks) == 1
-    assert "final attempt" in blocks[0][0].content
+    assert "final attempt" in blocks[0][1][0].content
 
 
 def _tool_marker(text: str) -> ConsoleChatMessage:
@@ -720,17 +776,32 @@ def _tool_marker(text: str) -> ConsoleChatMessage:
 
 
 def test_inject_resume_agent_markers_places_block_after_matching_assistant_message():
+    """Task 3: placement follows the block's anchor id (matched against
+    each message's ``persisted_message_id``), not block order/ordinal
+    position. The blocks below are listed in the OPPOSITE order of their
+    anchors -- the block for the SECOND assistant reply ("asst-2") comes
+    first in the list -- so an ordinal placement would put it after "42."
+    (wrong); id-anchoring must still put it after "ok." (right)."""
     messages = [
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
         ConsoleChatMessage(
-            role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"
+            role=ConsoleMessageRole.ASSISTANT,
+            content="42.",
+            status="complete",
+            persisted_message_id="asst-1",
         ),
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="again"),
         ConsoleChatMessage(
-            role=ConsoleMessageRole.ASSISTANT, content="ok.", status="complete"
+            role=ConsoleMessageRole.ASSISTANT,
+            content="ok.",
+            status="complete",
+            persisted_message_id="asst-2",
         ),
     ]
-    blocks = [[_tool_marker("⚙ calculator → 42")], [_tool_marker("⚠ retry")]]
+    blocks = [
+        ("asst-2", [_tool_marker("⚠ retry")]),
+        ("asst-1", [_tool_marker("⚙ calculator → 42")]),
+    ]
 
     result = inject_resume_agent_markers(messages, blocks)
 
@@ -745,14 +816,110 @@ def test_inject_resume_agent_markers_places_block_after_matching_assistant_messa
     ]
 
 
+def test_inject_resume_agent_markers_drops_block_whose_anchor_matches_no_active_path_message():
+    """A block anchored to an assistant_message_id that isn't in the
+    active-path ``messages`` (the run's reply lives on another branch) must
+    be hidden entirely -- never appended anywhere -- rather than leak an
+    off-branch tool trace onto the visible transcript."""
+    messages = [
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT,
+            content="42.",
+            status="complete",
+            persisted_message_id="asst-1",
+        ),
+    ]
+    blocks = [("asst-OFF-PATH", [_tool_marker("⚙ calculator → 999")])]
+
+    result = inject_resume_agent_markers(messages, blocks)
+
+    assert [m.content for m in result] == ["hi", "42."]
+    assert not any(m.role is ConsoleMessageRole.TOOL for m in result)
+
+
+def test_inject_resume_agent_markers_null_anchor_blocks_place_ordinally_when_no_id_claims():
+    """Legacy (pre-Phase-C) runs never recorded an assistant_message_id --
+    their blocks carry a ``None`` anchor and keep the old ordinal
+    placement: Nth null block <-> Nth assistant reply."""
+    messages = [
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"
+        ),
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="again"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT, content="ok.", status="complete"
+        ),
+    ]
+    blocks = [
+        (None, [_tool_marker("⚙ calculator → 42")]),
+        (None, [_tool_marker("⚠ retry")]),
+    ]
+
+    result = inject_resume_agent_markers(messages, blocks)
+
+    roles = [(m.role, m.content) for m in result]
+    assert roles == [
+        (ConsoleMessageRole.USER, "hi"),
+        (ConsoleMessageRole.ASSISTANT, "42."),
+        (ConsoleMessageRole.TOOL, "⚙ calculator → 42"),
+        (ConsoleMessageRole.USER, "again"),
+        (ConsoleMessageRole.ASSISTANT, "ok."),
+        (ConsoleMessageRole.TOOL, "⚠ retry"),
+    ]
+
+
+def test_inject_resume_agent_markers_mixed_id_and_null_anchors_null_skips_claimed_assistant():
+    """Mixed case: one block is id-anchored to the FIRST assistant reply: the
+    remaining null (legacy) block's ordinal fallback must skip that already
+    id-claimed reply and land on the next unclaimed one, not double up on
+    "42."."""
+    messages = [
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT,
+            content="42.",
+            status="complete",
+            persisted_message_id="asst-1",
+        ),
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="again"),
+        ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT, content="ok.", status="complete"
+        ),
+    ]
+    blocks = [
+        ("asst-1", [_tool_marker("⚙ calculator → 42")]),
+        (None, [_tool_marker("⚠ legacy retry")]),
+    ]
+
+    result = inject_resume_agent_markers(messages, blocks)
+
+    roles = [(m.role, m.content) for m in result]
+    assert roles == [
+        (ConsoleMessageRole.USER, "hi"),
+        (ConsoleMessageRole.ASSISTANT, "42."),
+        (ConsoleMessageRole.TOOL, "⚙ calculator → 42"),
+        (ConsoleMessageRole.USER, "again"),
+        (ConsoleMessageRole.ASSISTANT, "ok."),
+        (ConsoleMessageRole.TOOL, "⚠ legacy retry"),
+    ]
+
+
 def test_inject_resume_agent_markers_appends_leftover_block_when_more_runs_than_replies():
+    """Preserves the old leftover-append behavior, now for NULL-anchored
+    blocks: a legacy run with no corresponding assistant reply left in the
+    active path is appended at the end rather than dropped."""
     messages = [
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
         ConsoleChatMessage(
             role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"
         ),
     ]
-    blocks = [[_tool_marker("⚙ calculator → 42")], [_tool_marker("⚠ orphan run")]]
+    blocks = [
+        (None, [_tool_marker("⚙ calculator → 42")]),
+        (None, [_tool_marker("⚠ orphan run")]),
+    ]
 
     result = inject_resume_agent_markers(messages, blocks)
 
@@ -770,7 +937,7 @@ def test_inject_resume_agent_markers_skips_empty_blocks():
             role=ConsoleMessageRole.ASSISTANT, content="ok.", status="complete"
         ),
     ]
-    result = inject_resume_agent_markers(messages, [[], []])
+    result = inject_resume_agent_markers(messages, [(None, []), ("some-id", [])])
     assert [m.content for m in result] == ["ok."]
 
 
@@ -778,10 +945,13 @@ def test_inject_resume_agent_markers_is_idempotent_no_duplicates_on_second_call(
     messages = [
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
         ConsoleChatMessage(
-            role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"
+            role=ConsoleMessageRole.ASSISTANT,
+            content="42.",
+            status="complete",
+            persisted_message_id="asst-1",
         ),
     ]
-    blocks = [[_tool_marker("⚙ calculator → 42")]]
+    blocks = [("asst-1", [_tool_marker("⚙ calculator → 42")])]
 
     once = inject_resume_agent_markers(messages, blocks)
     twice = inject_resume_agent_markers(once, blocks)
@@ -798,11 +968,14 @@ def test_inject_resume_agent_markers_leaves_live_session_with_markers_untouched(
     messages = [
         ConsoleChatMessage(role=ConsoleMessageRole.USER, content="hi"),
         ConsoleChatMessage(
-            role=ConsoleMessageRole.ASSISTANT, content="42.", status="complete"
+            role=ConsoleMessageRole.ASSISTANT,
+            content="42.",
+            status="complete",
+            persisted_message_id="asst-1",
         ),
         _tool_marker("⚙ calculator → 42"),
     ]
-    blocks = [[_tool_marker("⚙ calculator → 42")]]
+    blocks = [("asst-1", [_tool_marker("⚙ calculator → 42")])]
 
     result = inject_resume_agent_markers(messages, blocks)
 
@@ -966,6 +1139,283 @@ def test_skill_trust_blocked_refuses_without_spawning(tmp_path):
 
     assert outcome.status == "done"
     assert db.count_subagent_runs("conv-blocked") == 0
+
+
+# -- task-4 (skills-fork-reachability): _BridgeSkillRunner grants its own
+# name skill_file authorization pre-spawn and appends a "Bundled files"
+# pointer block to the rendered task text whenever execute_skill reports
+# reference_files -- unit-level, directly against _BridgeSkillRunner, so
+# these don't need a full run_reply/model round trip. --
+
+
+class _FakeSkillsServiceWithRefs(_FakeSkillsService):
+    """Same fake as above, but execute_skill also reports a bundle manifest."""
+
+    async def execute_skill(self, name, *, mode="local", args=None):
+        self.execute_calls.append(args)
+        return {
+            "skill_name": name,
+            "rendered_prompt": f"Review this: {args}",
+            "allowed_tools": self.allowed_tools,
+            "execution_mode": "inline",
+            "reference_files": [
+                {"path": "references/api.md", "size": 120, "is_text": True},
+                {"path": "assets/logo.png", "size": 2048, "is_text": False},
+            ],
+        }
+
+
+def test_bridge_skill_runner_grants_own_name_and_appends_bundle_block_before_spawn():
+    skills_service = _FakeSkillsServiceWithRefs()
+    bindings = SkillFileBindings(authorized=set())
+    runner = _BridgeSkillRunner(
+        skills_service=skills_service,
+        skill_names=frozenset({"code-review"}),
+        builtin_names=(),
+        skill_file_bindings=bindings,
+    )
+    spawn_calls = []
+
+    def spawn(rendered, *, allowed_tools):
+        # The name must already be authorized by the time spawn actually
+        # runs -- so the spawned child's very first turn can read its own
+        # bundle -- not merely by the time .run() returns.
+        assert "code-review" in bindings.authorized
+        spawn_calls.append(rendered)
+        return ToolResult(ok=True, content="sub-agent result")
+
+    result = runner.run("code-review", "the diff", spawn)
+
+    assert result.ok
+    assert spawn_calls == [
+        "Review this: the diff\n\nBundled files (readable via skill_file): "
+        "references/api.md (120 bytes), assets/logo.png (2048 bytes, binary)"
+    ]
+    assert "code-review" in bindings.authorized
+
+
+def test_bridge_skill_runner_no_reference_files_body_unchanged_still_authorizes():
+    skills_service = _FakeSkillsService()  # no reference_files key at all
+    bindings = SkillFileBindings(authorized=set())
+    runner = _BridgeSkillRunner(
+        skills_service=skills_service,
+        skill_names=frozenset({"code-review"}),
+        builtin_names=(),
+        skill_file_bindings=bindings,
+    )
+    spawn_calls = []
+
+    def spawn(rendered, *, allowed_tools):
+        spawn_calls.append(rendered)
+        return ToolResult(ok=True, content="sub-agent result")
+
+    runner.run("code-review", "the diff", spawn)
+
+    assert spawn_calls == ["Review this: the diff"]
+    assert "code-review" in bindings.authorized
+
+
+def test_bridge_skill_runner_bindings_none_is_byte_identical_legacy_behavior():
+    # reference_files IS present in the execute_skill result, but with no
+    # skill_file_bindings wired at all (legacy/non-bridge construction) the
+    # block must never be appended and nothing must crash.
+    skills_service = _FakeSkillsServiceWithRefs()
+    runner = _BridgeSkillRunner(
+        skills_service=skills_service,
+        skill_names=frozenset({"code-review"}),
+        builtin_names=(),
+    )
+    spawn_calls = []
+
+    def spawn(rendered, *, allowed_tools):
+        spawn_calls.append(rendered)
+        return ToolResult(ok=True, content="sub-agent result")
+
+    runner.run("code-review", "the diff", spawn)
+
+    assert spawn_calls == ["Review this: the diff"]
+
+
+def test_run_reply_wires_one_skill_file_bindings_to_both_service_and_runner(
+    tmp_path,
+):
+    """run_reply must construct exactly ONE SkillFileBindings per run and
+    hand the SAME object to both AgentService and the _BridgeSkillRunner --
+    never two independently-seeded copies (which would let the runner's
+    pre-spawn grant silently fail to reach the loop's authorization check)."""
+    captured = {}
+    real_runner_init = _BridgeSkillRunner.__init__
+    real_service_init = AgentService.__init__
+
+    def spy_runner_init(self, **kwargs):
+        captured["runner_bindings"] = kwargs.get("skill_file_bindings")
+        real_runner_init(self, **kwargs)
+
+    def spy_service_init(self, *args, **kwargs):
+        captured["service_bindings"] = kwargs.get("skill_file_bindings")
+        real_service_init(self, *args, **kwargs)
+
+    scripts = [
+        [_fence("code-review", {"args": "the diff"})],
+        ["Looks fine to me."],
+        ["All done."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    skills_service = _FakeSkillsService()
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=_ChunkGateway(scripts),
+        skills_service=skills_service,
+    )
+
+    with patch.object(_BridgeSkillRunner, "__init__", spy_runner_init), patch.object(
+        AgentService, "__init__", spy_service_init
+    ):
+        outcome = _run(
+            bridge, store, session, assistant.id, conversation_id="conv-bindings"
+        )
+
+    assert outcome.status == "done"
+    assert captured["runner_bindings"] is not None
+    assert captured["runner_bindings"] is captured["service_bindings"]
+
+
+def test_run_reply_seeds_turn_bindings_into_shared_object(tmp_path):
+    """Task 5: the turn's already-resolved `$skill` binding names (splice
+    output the CONTROLLER computed for the triggering turn) must be seeded
+    into THIS run's SkillFileBindings.authorized -- the SAME shared object
+    handed to both AgentService and the _BridgeSkillRunner (Task 4) -- so
+    the primary agent's very first turn can already read that skill's own
+    bundle via skill_file. Reuses the sibling wiring test's spy idiom to
+    prove the seed lands on the one shared object, not a second copy."""
+    captured = {}
+    real_runner_init = _BridgeSkillRunner.__init__
+    real_service_init = AgentService.__init__
+
+    def spy_runner_init(self, **kwargs):
+        captured["runner_bindings"] = kwargs.get("skill_file_bindings")
+        real_runner_init(self, **kwargs)
+
+    def spy_service_init(self, *args, **kwargs):
+        captured["service_bindings"] = kwargs.get("skill_file_bindings")
+        real_service_init(self, *args, **kwargs)
+
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    skills_service = _FakeSkillsService()
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=_ChunkGateway([["Tokyo."]]),
+        skills_service=skills_service,
+    )
+
+    with patch.object(_BridgeSkillRunner, "__init__", spy_runner_init), patch.object(
+        AgentService, "__init__", spy_service_init
+    ):
+        outcome = _run(
+            bridge,
+            store,
+            session,
+            assistant.id,
+            conversation_id="conv-turn-bindings",
+            turn_skill_bindings=("code-review",),
+        )
+
+    assert outcome.status == "done"
+    assert captured["runner_bindings"] is not None
+    assert "code-review" in captured["runner_bindings"].authorized
+    # Seeded onto the ONE shared object -- never two independently-seeded
+    # copies (Task 4's invariant, re-verified here under a non-empty seed).
+    assert captured["runner_bindings"] is captured["service_bindings"]
+
+
+def test_run_reply_appends_bundle_block_copy_safely(tmp_path):
+    """Task 5: the turn's pre-rendered "Bundled files" block is appended to
+    a NEW list + NEW dict for the last role=="user" entry -- the caller's
+    own `agent_messages` list and its message dict are never mutated. A
+    future refactor that switches to in-place `message["content"] += ...`
+    must fail assertions (b) below."""
+    real_run_turn = AgentService.run_turn
+
+    def _spy(captured):
+        def spy_run_turn(self, **kwargs):
+            captured["messages"] = kwargs.get("messages")
+            return real_run_turn(self, **kwargs)
+
+        return spy_run_turn
+
+    block = "Bundled files (readable via skill_file): notes.md (1 bytes)"
+
+    # -- (a) + (b): a non-empty block is appended copy-safely -------------
+    bridge, _db, store, session, aid = _bridge(tmp_path, [["Tokyo."]])
+    original_user_message = {"role": "user", "content": "hi"}
+    agent_messages = [original_user_message]
+    captured = {}
+
+    with patch.object(AgentService, "run_turn", _spy(captured)):
+        outcome = _run(
+            bridge,
+            store,
+            session,
+            aid,
+            conversation_id="conv-bundle-block",
+            agent_messages=agent_messages,
+            turn_bundle_block=block,
+        )
+
+    assert outcome.status == "done"
+    run_messages = captured["messages"]
+    assert run_messages is not None
+    # (a) the run actually received the block appended after "\n\n" on the
+    # last user entry.
+    assert run_messages[-1]["content"] == f"hi\n\n{block}"
+    assert run_messages[-1]["role"] == "user"
+    # (b) non-mutation contract: the caller's own list length and the dict
+    # identity at that index are unchanged, and the original dict's content
+    # carries no trace of the block. This is exactly what would break if
+    # the append were switched to in-place `message["content"] += ...`.
+    assert len(agent_messages) == 1
+    assert agent_messages[0] is original_user_message
+    assert original_user_message["content"] == "hi"
+    assert "Bundled files" not in original_user_message["content"]
+    # A new list AND a new dict were built for the run -- not the caller's.
+    assert run_messages is not agent_messages
+    assert run_messages[-1] is not original_user_message
+
+    # -- (c) sibling case: an empty block appends nothing, no-op path -----
+    bridge2, _db2, store2, session2, aid2 = _bridge(tmp_path, [["Tokyo."]])
+    agent_messages2 = [{"role": "user", "content": "hi"}]
+    captured2 = {}
+
+    with patch.object(AgentService, "run_turn", _spy(captured2)):
+        outcome2 = _run(
+            bridge2,
+            store2,
+            session2,
+            aid2,
+            conversation_id="conv-bundle-block-empty",
+            agent_messages=agent_messages2,
+            turn_bundle_block="",
+        )
+
+    assert outcome2.status == "done"
+    assert captured2["messages"][-1]["content"] == "hi"
+    # No block to append: the original list is used unchanged (not merely
+    # equal -- the very same object), matching the documented no-op path.
+    assert captured2["messages"] is agent_messages2
 
 
 def test_no_skills_service_leaves_shared_registry_path_untouched(tmp_path):
@@ -1453,7 +1903,7 @@ def test_run_reply_returns_runoutcome_done():
     outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="done")
 
     with patch.object(AgentService, "run_turn", return_value=("run-1", outcome)):
-        result = bridge.run_reply(
+        run_id, result = bridge.run_reply(
             conversation_id="c1",
             session_id="s1",
             resolution=None,
@@ -1464,6 +1914,7 @@ def test_run_reply_returns_runoutcome_done():
             should_cancel=lambda: False,
         )
 
+    assert run_id == "run-1"
     assert result.status == RUN_DONE
     assert result.final_text == "done"
 
@@ -1473,7 +1924,7 @@ def test_run_reply_returns_runoutcome_error():
     outcome = RunOutcome(status=RUN_ERROR, steps=[], final_text="")
 
     with patch.object(AgentService, "run_turn", return_value=("run-1", outcome)):
-        result = bridge.run_reply(
+        run_id, result = bridge.run_reply(
             conversation_id="c1",
             session_id="s1",
             resolution=None,
@@ -1484,7 +1935,40 @@ def test_run_reply_returns_runoutcome_error():
             should_cancel=lambda: False,
         )
 
+    assert run_id == "run-1"
     assert result.status == RUN_ERROR
+
+
+def test_run_reply_returns_run_id_and_does_not_store_native_assistant_id():
+    """run_reply exposes the primary run id to its caller but must NOT forward
+    the native in-memory assistant_message_id into run_turn: create_run would
+    store it, and that native id can never match any persisted_message_id, so an
+    unfinished/crashed run would be left holding a stale non-null id. The run
+    row therefore starts NULL (assistant_message_id omitted / None); the
+    controller writes the durable persisted id onto the run on every terminal
+    path later, via record_run_assistant_message."""
+    bridge = _make_bridge()
+    outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="done")
+
+    with patch.object(
+        AgentService, "run_turn", return_value=("run-xyz", outcome)
+    ) as run_turn:
+        run_id, result = bridge.run_reply(
+            conversation_id="c1",
+            session_id="s1",
+            resolution=None,
+            assistant_message_id="native-a1",
+            model="gpt-4",
+            session_system_prompt="sys",
+            agent_messages=[{"role": "user", "content": "hi"}],
+            should_cancel=lambda: False,
+        )
+
+    assert run_id == "run-xyz"
+    assert result is outcome
+    # The native id is NOT forwarded -- the kwarg is omitted (or None), so
+    # create_run leaves the run's assistant_message_id NULL at create time.
+    assert run_turn.call_args.kwargs.get("assistant_message_id") is None
 
 
 def test_native_tool_schemas_returns_builtin_tool_schemas():
@@ -1499,3 +1983,181 @@ def test_native_tool_schemas_returns_builtin_tool_schemas():
         assert "name" in schema
         assert "description" in schema
         assert "parameters" in schema
+
+
+# -- task-4 (skills-agent-install): the install_skill closure built in
+# run_reply and threaded via AgentService(install_skill_tool=...). Order is
+# load-bearing: enforce policy -> classify URL -> in-chat confirm -> install
+# -> broad-catch wrap. --
+
+
+def _install_skills_service():
+    svc = _FakeSkillsService()
+
+    def enforce_install_remote():
+        return None
+
+    async def import_skill_file(*a, **k):  # not used (install_skill_from_url is patched)
+        return {"name": "unused"}
+
+    svc.enforce_install_remote = enforce_install_remote
+    svc.import_skill_file = import_skill_file
+    return svc
+
+
+def test_install_skill_confirm_allow_installs(tmp_path, monkeypatch):
+    import tldw_chatbook.Skills_Interop.skill_remote_fetch as srf
+
+    installed = []
+
+    async def fake_install(url, *, scope_service, **kw):
+        installed.append(url)
+        return {"name": "demo", "trust_status": "quarantined_added", "trust_blocked": True}
+
+    monkeypatch.setattr(srf, "install_skill_from_url", fake_install)
+
+    scripts = [
+        [_fence("install_skill", {"url": "https://github.com/o/r"})],
+        ["Installed it."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        skills_service=_install_skills_service(),
+    )
+    confirmed = []
+
+    outcome = _run(
+        bridge, store, session, assistant.id,
+        conversation_id="conv-install",
+        request_skill_install_confirm=lambda url: confirmed.append(url) or True,
+    )
+    assert outcome.status == "done"
+    assert confirmed == ["https://github.com/o/r"]
+    assert installed == ["https://github.com/o/r"]
+    tool_msgs = [m.content for m in store.messages_for_session(session.id)
+                 if m.role == ConsoleMessageRole.TOOL]
+    assert any("demo" in c and "pending" in c.lower() for c in tool_msgs)
+
+
+def test_install_skill_confirm_deny_does_not_install(tmp_path, monkeypatch):
+    import tldw_chatbook.Skills_Interop.skill_remote_fetch as srf
+
+    async def fake_install(url, *, scope_service, **kw):
+        raise AssertionError("install must not run when the user denies")
+
+    monkeypatch.setattr(srf, "install_skill_from_url", fake_install)
+
+    scripts = [
+        [_fence("install_skill", {"url": "https://github.com/o/r"})],
+        ["Okay, cancelled."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        skills_service=_install_skills_service(),
+    )
+    outcome = _run(
+        bridge, store, session, assistant.id,
+        conversation_id="conv-deny",
+        request_skill_install_confirm=lambda url: False,
+    )
+    assert outcome.status == "done"
+    tool_msgs = [m.content for m in store.messages_for_session(session.id)
+                 if m.role == ConsoleMessageRole.TOOL]
+    assert any("declined" in c.lower() for c in tool_msgs)
+
+
+def test_install_skill_malformed_url_never_prompts(tmp_path):
+    """A URL that fails classification returns an error WITHOUT prompting."""
+    prompted = []
+    scripts = [
+        [_fence("install_skill", {"url": "not-a-url"})],
+        ["That URL is not valid."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        skills_service=_install_skills_service(),
+    )
+    outcome = _run(
+        bridge, store, session, assistant.id, conversation_id="conv-bad",
+        request_skill_install_confirm=lambda url: prompted.append(url) or True,
+    )
+    assert outcome.status == "done"
+    assert prompted == []  # classification failed before any prompt
+
+
+def test_install_skill_collision_error_survives_turn(tmp_path, monkeypatch):
+    """A bare ValueError('local_skill_exists:...') is wrapped, not fatal."""
+    import tldw_chatbook.Skills_Interop.skill_remote_fetch as srf
+
+    async def fake_install(url, *, scope_service, **kw):
+        raise ValueError("local_skill_exists:demo")
+
+    monkeypatch.setattr(srf, "install_skill_from_url", fake_install)
+    scripts = [
+        [_fence("install_skill", {"url": "https://github.com/o/r"})],
+        ["It already exists."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        skills_service=_install_skills_service(),
+    )
+    outcome = _run(
+        bridge, store, session, assistant.id, conversation_id="conv-exists",
+        request_skill_install_confirm=lambda url: True,
+    )
+    assert outcome.status == "done"  # turn survives the bare ValueError
+    tool_msgs = [m.content for m in store.messages_for_session(session.id)
+                 if m.role == ConsoleMessageRole.TOOL]
+    assert any("local_skill_exists" in c for c in tool_msgs)
+
+
+def test_install_skill_absent_without_confirm_callback(tmp_path):
+    """No request_skill_install_confirm wired -> the tool is ABSENT, not auto-denied.
+
+    A skills service alone is not enough to advertise install_skill: without a
+    confirm callback, run_reply must never pin/dispatch the tool at all, so a
+    model call to it falls through the same "Tool not permitted" path as any
+    other undisclosed tool -- never the misleading "declined" message.
+    """
+    scripts = [
+        [_fence("install_skill", {"url": "https://github.com/o/r"})],
+        ["It seems that tool is unavailable."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        skills_service=_install_skills_service(),
+    )
+    outcome = _run(
+        bridge, store, session, assistant.id, conversation_id="conv-no-confirm",
+        # request_skill_install_confirm intentionally omitted.
+    )
+    assert outcome.status == "done"
+    tool_msgs = [m.content for m in store.messages_for_session(session.id)
+                 if m.role == ConsoleMessageRole.TOOL]
+    assert any("Tool not permitted: install_skill" in c for c in tool_msgs)
+    assert not any("declined" in c.lower() for c in tool_msgs)

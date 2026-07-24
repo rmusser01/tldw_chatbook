@@ -66,6 +66,9 @@ from tldw_chatbook.Utils.Emoji_Handling import (
     FALLBACK_SEND,
 )
 from tldw_chatbook.Character_Chat import Character_Chat_Lib as ccl
+from tldw_chatbook.Character_Chat.active_user_profile import (
+    resolve_active_user_profile_name,
+)
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import load_character_and_image
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     ConflictError,
@@ -1176,19 +1179,12 @@ async def handle_chat_send_button_pressed(
             f"Mounted new user message to UI: '{message_text_from_input[:50]}...'"
         )
 
-        # Add world info indicator if entries were matched
-        if hasattr(app, "current_world_info_active") and app.current_world_info_active:
-            world_info_count = getattr(app, "current_world_info_count", 0)
-            world_info_msg = f"[dim][World Info: {world_info_count} {'entry' if world_info_count == 1 else 'entries'} activated][/dim]"
-            world_info_widget = ChatMessage(
-                Text.from_markup(world_info_msg),
-                role="System",
-                classes="-world-info-indicator",
-            )
-            await chat_container.mount(world_info_widget)
-            loguru_logger.debug(
-                f"Added world info indicator: {world_info_count} entries"
-            )
+        # NOTE: the [World Info: N entries activated] indicator is mounted
+        # later, after world-info resolution (~step 10.7 below) so it reflects
+        # the CURRENT send rather than a stale value from the previous send
+        # (task-413). It is inserted with before=ai_placeholder_widget so its
+        # transcript position (after the user message, before the AI reply)
+        # is preserved even though it is constructed after the AI placeholder.
 
         # Update token counter after adding user message
         try:
@@ -1397,6 +1393,34 @@ async def handle_chat_send_button_pressed(
         # World info disabled: clear any stale indicator from a prior send.
         app.current_world_info_active = False
         app.current_world_info_count = 0
+
+    # Add world info indicator if entries were matched by THIS send's
+    # resolution above (task-413: previously mounted before resolution ran,
+    # so it showed the previous send's count/state). Mounted with
+    # before=ai_placeholder_widget to preserve its transcript position
+    # (after the user's message, before the AI reply) even though the AI
+    # placeholder was already mounted (step 10) by the time we get here.
+    if (
+        not reuse_last_user_bubble
+        and not resend_conversation
+        and user_msg_widget_instance is not None
+        and app.current_world_info_active
+    ):
+        world_info_count = app.current_world_info_count
+        world_info_msg = f"[dim][World Info: {world_info_count} {'entry' if world_info_count == 1 else 'entries'} activated][/dim]"
+        world_info_widget = ChatMessage(
+            Text.from_markup(world_info_msg),
+            role="System",
+            classes="-world-info-indicator",
+        )
+        await chat_container.mount(world_info_widget, before=ai_placeholder_widget)
+        # Re-scroll after inserting above the placeholder: both step-8/step-10
+        # scroll_end calls ran BEFORE this mount, so without this the added
+        # content height would leave the placeholder (and this indicator)
+        # below the viewport until the first streamed chunk re-scrolls
+        # (task-413 review).
+        chat_container.scroll_end(animate=False)
+        loguru_logger.debug(f"Added world info indicator: {world_info_count} entries")
 
     # --- 11. Prepare and Dispatch API Call via Worker ---
     loguru_logger.debug(
@@ -4217,7 +4241,14 @@ async def display_conversation_in_chat_tab_ui(app: "TldwCli", conversation_id: s
     try:
         character_id_from_conv = conv_metadata.get("character_id")
         loaded_char_data_for_ui_fields: Optional[Dict[str, Any]] = None
-        current_user_name = app.app_config.get("USERS_NAME", "User")
+        # task-442: {{user}} renders the active user profile's name; with no
+        # active profile the pre-existing USERS_NAME fallback is preserved
+        # byte-exact. The same resolved name threads into
+        # load_character_and_image below, so card fields and message display
+        # substitute consistently.
+        current_user_name = resolve_active_user_profile_name(
+            getattr(app, "local_character_persona_service", None)
+        ) or app.app_config.get("USERS_NAME", "User")
 
         if (
             character_id_from_conv

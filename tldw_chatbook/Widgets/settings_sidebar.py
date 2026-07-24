@@ -1263,78 +1263,13 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
                 dictionary_details.styles.height = 8
                 yield dictionary_details
 
-        # -------------------------------------------------------------------
-        # World Books (from right sidebar)
-        # -------------------------------------------------------------------
-        if id_prefix == "chat":
-            with Collapsible(
-                title="World Books",
-                collapsed=True,
-                id=f"{id_prefix}-worldbooks-collapsible",
-                classes="settings-collapsible advanced-mode advanced-only",
-            ):
-                # Search for available world books
-                yield Label("Search World Books:", classes="sidebar-label")
-                yield Input(
-                    id=f"{id_prefix}-worldbook-search-input",
-                    placeholder="Search world books...",
-                    classes="sidebar-input",
-                )
-
-                # List of available world books
-                yield Label("Available World Books:", classes="sidebar-label")
-                worldbook_available_list = ListView(
-                    id=f"{id_prefix}-worldbook-available-listview",
-                    classes="sidebar-listview",
-                )
-                worldbook_available_list.styles.height = 5
-                yield worldbook_available_list
-
-                # Add button for world books
-                yield Button(
-                    "Add to Chat",
-                    id=f"{id_prefix}-worldbook-add-button",
-                    classes="sidebar-button",
-                    variant="primary",
-                    disabled=True,
-                )
-
-                # Currently associated world books
-                yield Label("Active World Books:", classes="sidebar-label")
-                worldbook_active_list = ListView(
-                    id=f"{id_prefix}-worldbook-active-listview",
-                    classes="sidebar-listview",
-                )
-                worldbook_active_list.styles.height = 5
-                yield worldbook_active_list
-
-                # Remove button for active world books
-                yield Button(
-                    "Remove from Chat",
-                    id=f"{id_prefix}-worldbook-remove-button",
-                    classes="sidebar-button",
-                    variant="warning",
-                    disabled=True,
-                )
-
-                # Quick enable/disable for world book processing
-                yield Checkbox(
-                    "Enable World Book Processing",
-                    value=True,
-                    id=f"{id_prefix}-worldbook-enable-checkbox",
-                    classes="sidebar-checkbox",
-                )
-
-                # Selected world book details
-                yield Label("Selected World Book Details:", classes="sidebar-label")
-                worldbook_details = TextArea(
-                    "",
-                    id=f"{id_prefix}-worldbook-details-display",
-                    classes="sidebar-textarea",
-                    read_only=True,
-                )
-                worldbook_details.styles.height = 8
-                yield worldbook_details
+        # NOTE (task-412): the "World Books (from right sidebar)" Collapsible
+        # that used to live here (id_prefix == "chat" gate, f"{id_prefix}-worldbook-*"
+        # ids) was deleted. It was dead-reachable: create_settings_sidebar() is only
+        # called by the production-dead ChatWindow (UI/Chat_Window.py, also deleted
+        # in task-412); the live chat window uses EnhancedSettingsSidebar /
+        # settings_sidebar_optimized instead, neither of which has a World Books
+        # section. Its event handlers + CSS were already removed by P2g-3.
 
         # -------------------------------------------------------------------
         # Tools & Templates (Hidden in Basic Mode)

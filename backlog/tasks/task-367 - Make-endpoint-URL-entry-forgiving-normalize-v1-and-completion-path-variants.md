@@ -1,9 +1,11 @@
 ---
 id: TASK-367
 title: Make endpoint URL entry forgiving - normalize v1 and completion-path variants
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
+updated_date: '2026-07-23 09:00'
 labels: [console, ux]
 dependencies: []
 priority: medium
@@ -23,8 +25,39 @@ Three contradictory URL shapes in one flow: (1) selecting llama.cpp prefills 'ht
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Prefill a default that works with the app's own features
-- [ ] #2 Auto-append or auto-probe /v1 instead of demanding the user reformat
-- [ ] #3 Distinguish 'malformed URL' from 'missing /v1 path'
-- [ ] #4 Validate the URL inline on blur
+- [x] #1 Prefill a default that works with the app's own features
+- [x] #2 Auto-append or auto-probe /v1 instead of demanding the user reformat
+- [x] #3 Distinguish 'malformed URL' from 'missing /v1 path'
+- [x] #4 Validate the URL inline on blur
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**#1/#2 already resolved on dev since the review.** `_models_path_for_endpoint_path`
+now maps a bare origin (`/`) AND llama.cpp's native `/completion`/`/completions`
+to `/v1/models`, so the prefilled default works and a bare origin is auto-probed
+at `/v1` without the user reformatting (locked by the existing discovery tests
+`test_llamacpp_completion_url_maps_to_v1_models` etc.).
+
+**#3 malformed vs unsupported — implemented.** `discover_openai_compatible_models`
+previously returned a single `unsupported_endpoint` error for BOTH a malformed
+URL (bad scheme/host, e.g. a dropped 'h' → `ttp://…`) and a valid-but-unsupported
+path, so `settings_screen._discovery_status_from_error` could only show the one
+generic "configure a /v1 endpoint" copy — misdiagnosing a scheme typo as a path
+problem. Now a malformed endpoint (`_parse_endpoint(...) is None`) returns a
+distinct `malformed_endpoint` kind with its own message, and
+`_discovery_status_from_error` surfaces the client's DISTINCT message/recovery
+for both kinds instead of flattening them.
+
+**#4 inline validation on blur — implemented.** New `ProviderEndpointURLValidator`
+(passes empty/well-formed http(s) URLs, fails a malformed one) is attached to the
+endpoint `SettingsURLInput` with `validate_on={"blur", "submitted"}`, so a
+malformed URL is flagged at the field on blur (Textual `-invalid` state) rather
+than only when the user later saves or runs Discover.
+
+Verified RED→GREEN: `test_malformed_endpoint_reports_distinct_error_kind`
+(discovery module), `test_discovery_status_distinguishes_malformed_from_unsupported`
++ `test_provider_endpoint_url_validator_flags_malformed_only` (settings); 67
+discovery + provider-test tests green.
+<!-- SECTION:NOTES:END -->

@@ -165,7 +165,7 @@ async def test_native_send_applies_conversation_dictionary_agent_branch(dictiona
 
             store = screen._ensure_console_chat_store()
             store.append_stream_chunk(assistant_message_id, "ok")
-            return RunOutcome(status=RUN_DONE, steps=[])
+            return "run-test", RunOutcome(status=RUN_DONE, steps=[])
 
         class _Bridge:
             run_reply = staticmethod(_fake_run_reply)

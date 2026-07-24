@@ -1,10 +1,13 @@
 """Mounted tests for the Personas preview-conversation pane."""
 
+from types import SimpleNamespace
+
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Select, Static
 
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+    PreviewGreetingSelected,
     PreviewOpenInConsoleRequested,
     PreviewReplyRequested,
     PreviewResetRequested,
@@ -405,3 +408,304 @@ async def test_status_is_readable():
         status = str(pilot.app.query_one("#personas-preview-status", Static).renderable)
         assert status == "Running"
         assert "Traceback" not in status
+
+
+async def test_greeting_text_property_returns_seeded_greeting():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasPreviewPane)
+        await pane.seed_greeting("Hello, traveller.")
+        assert pane.greeting_text == "Hello, traveller."
+        pane.refresh_greeting_seed("Updated greeting.")
+        assert pane.greeting_text == "Updated greeting."
+
+
+async def test_speaker_labels_use_character_name():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.set_speakers(character="Sherlock Holmes")
+        await pane.seed_greeting("Greetings.")
+        await pilot.pause()
+        pane.append_user("Hi")
+        pane.append_reply("Elementary.")
+        await pilot.pause()
+        assert _line_texts(app) == [
+            "Sherlock Holmes: Greetings.",
+            "you: Hi",
+            "Sherlock Holmes: Elementary.",
+        ]
+        assert pane.transcript_text() == (
+            "Sherlock Holmes: Greetings.\nyou: Hi\nSherlock Holmes: Elementary."
+        )
+
+
+async def test_speaker_labels_default_without_name():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.append_user("Hi")
+        pane.append_reply("Hello.")
+        await pilot.pause()
+        assert _line_texts(app) == ["you: Hi", "character: Hello."]
+
+
+async def test_set_speakers_ignores_empty_name():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.set_speakers(character="")
+        pane.append_reply("Hi.")
+        await pilot.pause()
+        assert _line_texts(app) == ["character: Hi."]
+
+
+async def test_styled_line_italicizes_action_and_escapes_markup():
+    app = PreviewApp()
+    async with app.run_test():
+        pane = app.query_one(PersonasPreviewPane)
+        waves = pane._styled_line("*waves*")
+        assert str(waves) == "waves"
+        assert any("italic" in str(span.style) for span in waves.spans)
+        assert str(pane._styled_line("[/oops]")) == "[/oops]"
+        assert str(pane._styled_line("you: 5 * 3")) == "you: 5 * 3"
+
+
+async def test_action_span_renders_italic_not_literal_asterisks():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.append_reply("*smiles warmly*")
+        await pilot.pause()
+        line = app.query(".personas-preview-line").last()
+        assert "*" not in str(line.renderable)
+        assert "smiles warmly" in str(line.renderable)
+        assert any("italic" in str(s.style) for s in line.renderable.spans)
+
+
+async def test_set_speakers_relabels_existing_character_lines():
+    # task-437 review: a rename mid-conversation relabels already-rendered
+    # character lines (no stale/mixed prefixes); user lines are untouched.
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.set_speakers(character="Alice")
+        await pane.seed_greeting("Hi.")
+        pane.append_user("hello")
+        pane.append_reply("hey")
+        await pilot.pause()
+        pane.set_speakers(character="Bob")
+        await pilot.pause()
+        assert pane.transcript_text() == "Bob: Hi.\nyou: hello\nBob: hey"
+        assert "Alice" not in pane.transcript_text()
+        assert _line_texts(app) == ["Bob: Hi.", "you: hello", "Bob: hey"]
+
+
+async def test_reset_speakers_restores_defaults():
+    # task-437: leaving a character context must drop the stale name so a later
+    # reply renders under the neutral default, not the previous character's name.
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.set_speakers(character="Alice")
+        pane.reset_speakers()
+        pane.append_user("Hi")
+        pane.append_reply("Hello.")
+        await pilot.pause()
+        assert _line_texts(app) == ["you: Hi", "character: Hello."]
+
+
+# ===== TASK-438: alternate-greeting selector =====
+
+
+async def test_greeting_selector_hidden_without_alternates():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.set_greetings(["Only greeting."])
+        await pilot.pause()
+        assert app.query_one("#personas-preview-greeting-row").display is False
+
+
+async def test_greeting_selector_shown_with_alternates():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.set_greetings(["Primary.", "Alt one.", "Alt two."])
+        await pilot.pause()
+        assert app.query_one("#personas-preview-greeting-row").display is True
+        select = app.query_one("#personas-preview-greeting-select", Select)
+        assert len(list(select._options)) == 3  # 3 greetings
+
+
+async def test_choosing_greeting_posts_message():
+    posted: list[int] = []
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+
+        original_post_message = pane.post_message
+
+        def _capture(message):
+            if isinstance(message, PreviewGreetingSelected):
+                posted.append(message.index)
+            return original_post_message(message)
+
+        pane.post_message = _capture
+
+        pane.set_greetings(["Primary.", "Alt one."])
+        await pilot.pause()
+        select = app.query_one("#personas-preview-greeting-select", Select)
+        select.value = 1
+        await pilot.pause()
+        # set_greetings populates the Select under prevent(Select.Changed), so the
+        # only PreviewGreetingSelected is this genuine user pick (index 1) - no
+        # spurious programmatic index-0 post (task-438 review).
+        assert posted == [1]
+
+
+# ===== task-442 T4: {{user}} renders the active user profile's name =====
+
+
+@pytest.fixture
+def _isolated_active_profile_config(monkeypatch):
+    """Route the active-profile pointer at an in-memory store (never real config)."""
+    store: dict = {}
+    import tldw_chatbook.Character_Chat.active_user_profile as active_profile_module
+
+    monkeypatch.setattr(
+        active_profile_module,
+        "get_cli_setting",
+        lambda section, key, default=None: store.get((section, key), default),
+    )
+
+    def _save(section, key, value):
+        store[(section, key)] = value
+        return True
+
+    monkeypatch.setattr(active_profile_module, "save_setting_to_cli_config", _save)
+    return store
+
+
+class _ProfileService:
+    """Sync ``list_user_profiles`` double matching the T1 resolver contract."""
+
+    def __init__(self, names):
+        self._names = list(names)
+
+    def list_user_profiles(self, **kwargs):
+        return [{"name": name} for name in self._names]
+
+
+class _ControllerScreen:
+    """Minimal screen double driving the controller against the mounted pane."""
+
+    def __init__(self, app, profile_service=None):
+        self._app = app
+        self.app_instance = SimpleNamespace(
+            local_character_persona_service=profile_service
+        )
+
+    def query_one(self, selector, *args):
+        return self._app.query_one(PersonasPreviewPane)
+
+
+async def test_greeting_renders_active_profile_name_and_labels_user_lines(
+    _isolated_active_profile_config,
+):
+    """Active profile "Sam": {{user}} renders "Sam" and user lines are labeled."""
+    from tldw_chatbook.Character_Chat.active_user_profile import (
+        set_active_user_profile,
+    )
+    from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
+        PersonasPreviewController,
+    )
+
+    set_active_user_profile("Sam")
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        controller = PersonasPreviewController(
+            _ControllerScreen(app, _ProfileService(["Sam"]))
+        )
+        seed = controller._load_greetings(
+            {"first_message": "Hello {{user}}, I am {{char}}."}, "Elara"
+        )
+        assert seed == "Hello Sam, I am Elara."
+        assert pane._user_label == "Sam"  # set_speakers(user="Sam") was called
+        await pane.seed_greeting(seed)
+        pane.append_user("hi")
+        await pilot.pause()
+        assert "Sam: hi" in pane.transcript_text()
+
+
+async def test_greeting_falls_back_to_user_without_active_profile(
+    _isolated_active_profile_config,
+):
+    """No active profile: output stays byte-identical to the "User" literal and
+    the user speaker label is untouched (AC3 twin)."""
+    from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
+        PersonasPreviewController,
+    )
+
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        controller = PersonasPreviewController(
+            _ControllerScreen(app, _ProfileService(["Sam"]))
+        )
+        seed = controller._load_greetings(
+            {"first_message": "Hello {{user}}, I am {{char}}."}, "Elara"
+        )
+        assert seed == "Hello User, I am Elara."
+        assert pane._user_label == "you"  # default label: no user override
+        await pane.seed_greeting(seed)
+        pane.append_user("hi")
+        await pilot.pause()
+        assert "you: hi" in pane.transcript_text()
+
+
+async def test_dangling_active_profile_pointer_falls_back_to_user(
+    _isolated_active_profile_config,
+):
+    """A pointer at a deleted/renamed profile reads as no-active (byte-compat)."""
+    from tldw_chatbook.Character_Chat.active_user_profile import (
+        set_active_user_profile,
+    )
+    from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
+        PersonasPreviewController,
+    )
+
+    set_active_user_profile("Ghost")
+    app = PreviewApp()
+    async with app.run_test():
+        pane = app.query_one(PersonasPreviewPane)
+        controller = PersonasPreviewController(
+            _ControllerScreen(app, _ProfileService(["Sam"]))
+        )
+        seed = controller._load_greetings({"first_message": "Hello {{user}}."}, "Elara")
+        assert seed == "Hello User."
+        assert pane._user_label == "you"
+
+
+async def test_alias_tokens_substitute_character_name_without_active_profile(
+    _isolated_active_profile_config,
+):
+    """{{persona}}/{{character}} always resolve to the character's name, even
+    with no active user profile: T4's active-profile branching only ever
+    touches the user-side tokens, so the character-side aliases (task-437)
+    are unaffected (task-442 T5 alias pin)."""
+    from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
+        PersonasPreviewController,
+    )
+
+    app = PreviewApp()
+    async with app.run_test():
+        controller = PersonasPreviewController(
+            _ControllerScreen(app, _ProfileService(["Sam"]))
+        )
+        seed = controller._load_greetings(
+            {"first_message": "Hello {{user}}, I am {{persona}}/{{character}}."},
+            "Elara",
+        )
+        assert seed == "Hello User, I am Elara/Elara."

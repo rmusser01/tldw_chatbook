@@ -58,6 +58,56 @@ def test_help_state_lists_visible_actions_not_palette_only():
     assert "Ctrl+P" not in rendered
 
 
+def test_help_state_renders_grouped_shortcuts():
+    """TASK-362: a grouped keyboard map renders group headers with their keys,
+    replacing the flat shortcut list."""
+    help_state = WorkbenchHelpState(
+        route_id="chat",
+        title="Console",
+        shortcut_groups=(
+            ("Transcript", (("j / k", "select"), ("c", "copy"))),
+            ("Composer", (("Shift+Enter", "newline"),)),
+        ),
+    )
+
+    rendered = help_state.render_text()
+
+    assert "Transcript:" in rendered
+    assert "j / k" in rendered and "select" in rendered
+    assert "c" in rendered and "copy" in rendered
+    assert "Composer:" in rendered and "Shift+Enter" in rendered
+
+
+def test_console_help_map_covers_the_full_keyboard_vocabulary():
+    """TASK-362: the Console F1 map must surface the transcript j/k/c/e/r keys,
+    Shift+Enter, Alt+M, F2 and Escape (previously undiscoverable anywhere),
+    grouped by surface."""
+    from tldw_chatbook.UI.Screens.chat_screen import (
+        CONSOLE_WORKBENCH_SHORTCUT_GROUPS,
+    )
+
+    rendered = WorkbenchHelpState(
+        route_id="chat",
+        title="Console",
+        shortcut_groups=CONSOLE_WORKBENCH_SHORTCUT_GROUPS,
+    ).render_text()
+
+    for token in (
+        "Panes:",
+        "Transcript:",
+        "Composer:",
+        "j / k",
+        "c",
+        "e",
+        "r",
+        "Shift+Enter",
+        "Alt+M",
+        "F2",
+        "Escape",
+    ):
+        assert token in rendered, token
+
+
 class _WorkbenchHelpPanelApp(App[None]):
     def compose(self) -> ComposeResult:
         yield from ()

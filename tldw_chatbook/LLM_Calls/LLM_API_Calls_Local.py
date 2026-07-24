@@ -645,6 +645,13 @@ def chat_with_llama(
             provider=llama_cpp_config_key_in_api_settings,
             message=f"{provider_display_name} API URL (api_url) is required and could not be determined from configuration.",
         )
+    # task-433: tolerate legacy/partial endpoint forms (/completion, /v1, full
+    # OpenAI path) by normalizing to the server root; the shared caller then
+    # appends v1/chat/completions exactly once. Deferred import keeps
+    # console_provider_gateway's deps out of app startup.
+    from ..Chat.console_provider_gateway import normalize_llamacpp_base_url
+
+    api_base_url = normalize_llamacpp_base_url(api_base_url)
     current_api_key = api_key or llama_config.get("api_key")
     current_model = model or llama_config.get("model")
     if (

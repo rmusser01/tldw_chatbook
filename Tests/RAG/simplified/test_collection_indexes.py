@@ -74,6 +74,16 @@ def test_no_legacy_is_noop(chroma_persist_dir):
     ) is False
 
 
+@pytest.mark.requires_chromadb
+def test_no_legacy_database_does_not_initialize_chroma(chroma_persist_dir):
+    cfg = _cfg(chroma_persist_dir)
+    sqlite_path = chroma_persist_dir / "chroma.sqlite3"
+
+    assert not sqlite_path.exists()
+    maybe_adopt_legacy_collection(cfg)
+    assert not sqlite_path.exists()
+
+
 def test_memory_type_is_noop():
     cfg = RAGConfig(vector_store=VectorStoreConfig(type="memory", collection_name="default"))
     maybe_adopt_legacy_collection(cfg)  # must not touch disk / raise
@@ -178,10 +188,11 @@ def test_adopt_preserves_legacy_distance_metric(chroma_persist_dir):
 def test_list_and_delete_indexes(chroma_persist_dir):
     from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
     from tldw_chatbook.RAG_Search.simplified.collection_indexes import (
-        list_indexes, delete_index, index_status,
+        list_indexes, delete_index,
     )
     a = _cfg(chroma_persist_dir)
-    b = _cfg(chroma_persist_dir); b.chunking.chunk_size = 512  # different fp
+    b = _cfg(chroma_persist_dir)
+    b.chunking.chunk_size = 512  # different fingerprint
     RAGService(a).vector_store.collection            # force-create collection a
     RAGService(b).vector_store.collection            # force-create collection b
 

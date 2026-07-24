@@ -87,6 +87,7 @@ def test_console_run_and_sync_workers_use_disjoint_groups():
         "_retry_console_message",
         "_regenerate_console_message",
         "_continue_console_message",
+        "_edit_resend_console_message",
     }
     SYNC_COROUTINE = "_sync_native_console_chat_ui"
     run_groups: set[str] = set()

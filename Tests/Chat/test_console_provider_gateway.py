@@ -25,11 +25,26 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     LlamaCppProviderConfig,
     ProviderToolCalls,
     build_llamacpp_chat_payload,
+    normalize_llamacpp_base_url,
     safe_provider_error_copy,
 )
 from tldw_chatbook.Chat.console_provider_support import (
     resolve_console_provider_identity,
 )
+
+
+def test_normalize_llamacpp_base_url_strips_known_suffixes_to_root() -> None:
+    root = "http://localhost:8080"
+    assert normalize_llamacpp_base_url("http://localhost:8080/completion") == root
+    assert normalize_llamacpp_base_url("http://localhost:8080/v1") == root
+    assert normalize_llamacpp_base_url("http://localhost:8080/v1/chat/completions") == root
+    assert normalize_llamacpp_base_url("http://localhost:8080") == root
+    assert normalize_llamacpp_base_url("localhost:8080/completion") == root  # scheme-less
+    # a reverse-proxy prefix is NOT an exact suffix -> left unchanged
+    assert (
+        normalize_llamacpp_base_url("http://host/proxy/v1/chat/completions")
+        == "http://host/proxy/v1/chat/completions"
+    )
 
 
 def test_llamacpp_payload_includes_supported_sampling_params() -> None:

@@ -165,6 +165,11 @@ from ...Library.library_shell_state import (
 from ...Library.row_selection import RowSelection
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...runtime_policy.types import PolicyDeniedError, RuntimeSourceState
+from ...Skills_Interop.skill_remote_fetch import (
+    RemoteSkillError,
+    classify_skill_source_url,
+    install_skill_from_url,
+)
 from ...Sync_Interop.sync_promotion_state import build_sync_promotion_state
 from ...Sync_Interop.sync_readiness import (
     DEFAULT_SYNC_ELIGIBILITY_REGISTRY,
@@ -7243,8 +7248,14 @@ class LibraryScreen(BaseAppScreen):
         Args:
             raw_path: The Import row's typed path (SKILL.md file, skill
                 directory, standalone ``.md`` file, or ``.zip`` export),
-                already known non-blank by the caller.
+                already known non-blank by the caller. A pasted
+                ``http(s)://`` URL routes to
+                ``_install_library_skill_from_url`` instead -- see that
+                method's docstring for the remote-install flow.
         """
+        if raw_path.startswith(("http://", "https://")):
+            await self._install_library_skill_from_url(raw_path)
+            return
         try:
             validated_path = validate_path_simple(
                 Path(raw_path).expanduser(), require_exists=True
@@ -7374,6 +7385,65 @@ class LibraryScreen(BaseAppScreen):
             if stored_name
             else self._safe_text(file_path.stem, max_length=64)
         )
+
+    async def _install_library_skill_from_url(self, url: str) -> None:
+        """Install a skill fetched from a pasted GitHub repo/tree or zip URL.
+
+        Mirrors ``_import_library_skill_from_loose_file``'s worker/
+        threading pattern and outcome routing: the "file" here is a
+        remote download instead of local bytes, but
+        ``install_skill_from_url`` (``Skills_Interop.skill_remote_fetch``)
+        owns classification, policy enforcement, the SSRF-hardened fetch,
+        and re-rooting before handing the resulting bytes to the SAME
+        ``import_skill_file`` seam every other import path uses -- so the
+        imported skill lands TRUST-PENDING exactly like a local import.
+
+        Three outcome routes, same shape as every other import path:
+        - Success: primes the Review button with the service-reported name.
+        - ``RemoteSkillError``: its message IS the outcome line -- these
+          are user-presentable by construction (bad URL, SSRF rejection,
+          download failure, corrupt/ambiguous archive).
+        - Any other exception (a policy denial, or a plain
+          ``import_skill_file`` failure such as a duplicate name): routed
+          through the shared exception-to-outcome translator, using a
+          name guess derived from the URL -- the same "derive a plausible
+          skill name from what the user typed" convention the loose-file
+          branch uses (``file_path.stem``), here via the same
+          classification the seam itself uses (``suggested_name``, e.g.
+          the repo or release-asset basename) so the guess matches what
+          the seam would actually have named the skill.
+
+        Args:
+            url: The Import row's typed ``http(s)://`` URL, already known
+                non-blank by the caller.
+        """
+        service = getattr(self.app_instance, "skills_scope_service", None)
+        if service is None:
+            self._apply_library_skills_import_status("Skill import is unavailable.")
+            return
+
+        try:
+            name_guess = self._safe_text(
+                classify_skill_source_url(url).suggested_name, max_length=64
+            )
+        except RemoteSkillError:
+            name_guess = self._safe_text(
+                url.rstrip("/").rsplit("/", 1)[-1], max_length=64
+            )
+        try:
+            result = await self._run_library_service_call(
+                install_skill_from_url,
+                url,
+                scope_service=service,
+                isolate_in_worker=True,
+            )
+        except RemoteSkillError as exc:
+            self._apply_library_skills_import_status(str(exc))
+            return
+        except Exception as exc:
+            self._apply_library_skills_import_outcome_from_exception(name_guess, exc)
+            return
+        self._apply_library_skills_import_success(result.get("name", ""))
 
     def _apply_library_skills_import_success(self, skill_name: str) -> None:
         """Report a successful single-skill import and refresh the rail/list.

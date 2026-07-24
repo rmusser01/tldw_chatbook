@@ -16,6 +16,7 @@ def test_assistant_message_actions_include_required_order():
 
     assert [action.label for action in actions] == [
         "Copy",
+        "🔊",
         "Edit",
         "Save as...",
         "♻",
@@ -58,6 +59,7 @@ def test_streaming_assistant_message_shows_completed_actions_disabled_with_reaso
 
     assert [action.label for action in actions] == [
         "Copy",
+        "🔊",
         "Edit",
         "Save as...",
         "♻",
@@ -150,25 +152,25 @@ def test_action_labels_fit_compact_terminal_width_budget():
 
     labels = service.plain_action_labels(message)
 
-    assert " ".join(labels) == "Copy Edit Save as... ♻ ---> 👍 👎 🗑"
+    assert " ".join(labels) == "Copy 🔊 Edit Save as... ♻ ---> 👍 👎 🗑"
     assert len(" ".join(labels)) <= 48
 
 
 def test_variant_action_labels_use_symbolic_navigation():
     service = ConsoleMessageActionService()
     message = ConsoleChatMessage(
-        role=ConsoleMessageRole.ASSISTANT, content="first", id="m1"
-    )
-    message.variants = ConsoleVariantSet.from_contents(
-        turn_id="turn-1",
-        contents=["first", "second"],
-        selected_index=1,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="first",
+        id="m1",
+        sibling_index=1,
+        sibling_count=2,
     )
 
     actions = service.available_actions(message)
 
     assert [action.label for action in actions] == [
         "Copy",
+        "🔊",
         "Edit",
         "Save as...",
         "<",
@@ -180,20 +182,66 @@ def test_variant_action_labels_use_symbolic_navigation():
     ]
 
 
+@pytest.mark.parametrize(
+    ("sibling_index", "sibling_count", "previous_enabled", "next_enabled"),
+    [
+        (0, 3, False, True),
+        (1, 3, True, True),
+        (2, 3, True, False),
+    ],
+)
+def test_variant_nav_actions_gate_on_sibling_position(
+    sibling_index: int,
+    sibling_count: int,
+    previous_enabled: bool,
+    next_enabled: bool,
+):
+    """TASK-7: `<`/`>` enable state follows the sibling position, not the
+    retired ``ConsoleVariantSet`` selection index."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="reply",
+        id="m1",
+        sibling_index=sibling_index,
+        sibling_count=sibling_count,
+    )
+
+    actions = {
+        action.action_id: action for action in service.available_actions(message)
+    }
+
+    assert actions["variant-previous"].enabled is previous_enabled
+    assert actions["variant-next"].enabled is next_enabled
+
+
+def test_variant_nav_actions_absent_for_linear_single_child_message():
+    """TASK-7: gate is now ``sibling_count > 1``, not ``variants is not None``
+    -- a linear (unforked) message offers no `<`/`>` at all."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="reply", id="m1"
+    )
+
+    action_ids = [action.action_id for action in service.available_actions(message)]
+
+    assert "variant-previous" not in action_ids
+    assert "variant-next" not in action_ids
+
+
 def test_variant_action_labels_fit_compact_terminal_width_budget():
     service = ConsoleMessageActionService()
     message = ConsoleChatMessage(
-        role=ConsoleMessageRole.ASSISTANT, content="first", id="m1"
-    )
-    message.variants = ConsoleVariantSet.from_contents(
-        turn_id="turn-1",
-        contents=["first", "second"],
-        selected_index=1,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="first",
+        id="m1",
+        sibling_index=1,
+        sibling_count=2,
     )
 
     labels = service.plain_action_labels(message)
 
-    assert " ".join(labels) == "Copy Edit Save as... < > ♻ ---> 👍 👎 🗑"
+    assert " ".join(labels) == "Copy 🔊 Edit Save as... < > ♻ ---> 👍 👎 🗑"
     assert len(" ".join(labels)) <= 52
 
 
@@ -272,6 +320,178 @@ def test_unimplemented_actions_return_wip_reason():
     assert "WIP" in result.visible_copy
 
 
+def test_regression_no_generation_kwargs_matches_text_sibling_gating():
+    """Regression guard: callers that don't pass the new generation kwargs
+    (every existing call site as of this task) must see byte-identical
+    behavior to before -- pinned against a real text-sibling case. Also pins
+    the TASK-1 speak action landing in its one new legacy spot (right after
+    Copy) without disturbing anything else in this set."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="reply",
+        id="m1",
+        sibling_index=1,
+        sibling_count=3,
+    )
+
+    actions = service.available_actions(message)
+
+    assert [action.label for action in actions] == [
+        "Copy",
+        "🔊",
+        "Edit",
+        "Save as...",
+        "<",
+        ">",
+        "♻",
+        "--->",
+        "Feedback",
+        "🗑",
+    ]
+    by_id = {action.action_id: action for action in actions}
+    assert by_id["variant-previous"].enabled is True
+    assert by_id["variant-next"].enabled is True
+    assert "keep" not in by_id
+
+
+def test_generation_variant_nav_hidden_at_count_one():
+    """A single-variant generation message offers no `<`/`>`/keep at all."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="[image] x")
+
+    action_ids = [
+        action.action_id
+        for action in service.available_actions(
+            message, generation_variant_count=1, generation_browsed_index=0
+        )
+    ]
+
+    assert "variant-previous" not in action_ids
+    assert "variant-next" not in action_ids
+    assert "keep" not in action_ids
+
+
+def test_generation_variant_nav_visible_at_count_two():
+    """Two-plus variants show `<`/`>`, gated by the GENERATION browsed index
+    -- not by the message's (absent) text-sibling fields."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="[image] x")
+
+    actions = {
+        action.action_id: action
+        for action in service.available_actions(
+            message, generation_variant_count=2, generation_browsed_index=0
+        )
+    }
+
+    assert "variant-previous" in actions
+    assert "variant-next" in actions
+    assert actions["variant-previous"].enabled is False
+    assert actions["variant-next"].enabled is True
+
+
+@pytest.mark.parametrize(
+    ("browsed_index", "variant_count", "previous_enabled", "next_enabled"),
+    [
+        (0, 3, False, True),
+        (1, 3, True, True),
+        (2, 3, True, False),
+    ],
+)
+def test_generation_variant_nav_boundary_enables(
+    browsed_index: int,
+    variant_count: int,
+    previous_enabled: bool,
+    next_enabled: bool,
+):
+    """Boundary-enable mirrors the text-sibling check exactly, but keyed off
+    the generation browsed index/count instead of sibling_index/count."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="[image] x")
+
+    actions = {
+        action.action_id: action
+        for action in service.available_actions(
+            message,
+            generation_variant_count=variant_count,
+            generation_browsed_index=browsed_index,
+        )
+    }
+
+    assert actions["variant-previous"].enabled is previous_enabled
+    assert actions["variant-next"].enabled is next_enabled
+
+
+@pytest.mark.parametrize("browsed_index", [0, 1, 2])
+def test_keep_action_only_visible_when_browsed_away_from_canonical(browsed_index: int):
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="[image] x")
+
+    action_ids = [
+        action.action_id
+        for action in service.available_actions(
+            message, generation_variant_count=3, generation_browsed_index=browsed_index
+        )
+    ]
+
+    assert ("keep" in action_ids) is (browsed_index != 0)
+
+
+def test_generation_message_ignores_text_sibling_fields():
+    """A generation message that (hypothetically) also carries stale
+    text-sibling fields must still be gated by the generation kwargs --
+    generation-variant gating takes precedence (spec §5.1/§7)."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="[image] x",
+        sibling_index=0,
+        sibling_count=1,  # would hide <> under the old sibling-only gate
+    )
+
+    actions = {
+        action.action_id: action
+        for action in service.available_actions(
+            message, generation_variant_count=4, generation_browsed_index=2
+        )
+    }
+
+    assert "variant-previous" in actions
+    assert "variant-next" in actions
+    assert actions["variant-previous"].enabled is True
+    assert actions["variant-next"].enabled is True
+    assert "keep" in actions
+
+
+def test_generation_regenerate_stays_visible_and_enabled():
+    """Regenerate (`♻`) stays visible on a generation message, still gated
+    only by assistant-role as today (spec §7)."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="[image] x")
+
+    actions = {
+        action.action_id: action
+        for action in service.available_actions(
+            message, generation_variant_count=3, generation_browsed_index=1
+        )
+    }
+
+    assert actions["regenerate"].enabled is True
+
+
+def test_keep_action_dispatch_returns_completed_result():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="[image] x", id="m1"
+    )
+
+    result = service.dispatch("keep", message)
+
+    assert result.status == "completed"
+    assert result.target_message_id == "m1"
+
+
 def test_continue_action_targets_selected_variant_content():
     service = ConsoleMessageActionService()
     message = ConsoleChatMessage(
@@ -288,3 +508,95 @@ def test_continue_action_targets_selected_variant_content():
     assert result.status == "continue_requested"
     assert result.target_message_id == "m1"
     assert result.target_content == "second"
+
+
+# --- TASK-1: speak (TTS) action ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "role", [ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT]
+)
+def test_speak_action_present_for_completed_text_message_any_role(
+    role: ConsoleMessageRole,
+):
+    """Spec §1a: speak is available for any COMPLETED message with
+    non-empty text -- both roles, not just assistant responses."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=role, content="hello there")
+
+    action_ids = [action.action_id for action in service.available_actions(message)]
+
+    assert "speak" in action_ids
+
+
+def test_speak_action_present_for_generation_card_marker_text():
+    """Spec §1a: a generation-card message's ``[image] ...`` marker text is
+    harmless input to TTS -- speak is offered for it like any other text."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="[image] a red dragon"
+    )
+
+    action_ids = [
+        action.action_id
+        for action in service.available_actions(
+            message, generation_variant_count=1, generation_browsed_index=0
+        )
+    ]
+
+    assert "speak" in action_ids
+
+
+def test_speak_action_absent_for_empty_content_message():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="", status="pending"
+    )
+
+    action_ids = [action.action_id for action in service.available_actions(message)]
+
+    assert "speak" not in action_ids
+
+
+def test_speak_action_absent_for_whitespace_only_content_message():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="   ")
+
+    action_ids = [action.action_id for action in service.available_actions(message)]
+
+    assert "speak" not in action_ids
+
+
+def test_speak_action_absent_for_failed_assistant_message():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="partial answer", status="failed"
+    )
+
+    action_ids = [action.action_id for action in service.available_actions(message)]
+
+    assert "speak" not in action_ids
+
+
+def test_speak_action_absent_for_failed_user_message():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER, content="hello", status="failed"
+    )
+
+    action_ids = [action.action_id for action in service.available_actions(message)]
+
+    assert "speak" not in action_ids
+
+
+def test_speak_action_dispatch_returns_completed_result_with_message_content_and_id():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="answer", id="m1"
+    )
+
+    result = service.dispatch("speak", message)
+
+    assert result.status == "completed"
+    assert result.target_message_id == "m1"
+    assert result.target_content == "answer"

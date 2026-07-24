@@ -289,7 +289,7 @@ class ConsoleControlState:
 
     provider_label: str
     model_label: str
-    persona_label: str
+    user_profile_label: str
     rag_label: str
     sources_label: str
     tools_label: str
@@ -330,8 +330,8 @@ class ConsoleControlState:
             chip emphasis.
         """
         persona_text = _clean(persona, "")
-        persona_label = (
-            f"Persona: {persona_text}" if persona_text else "Assistant: General"
+        user_profile_label = (
+            f"As: {persona_text}" if persona_text else "Assistant: General"
         )
         # TASK-350: the chip must reflect the tools that can ACTUALLY run — built-in
         # AND MCP. Counting only built-in read "Tools: 0 ready" while the inspector
@@ -341,7 +341,7 @@ class ConsoleControlState:
         return cls(
             provider_label=f"Provider: {_clean(provider, 'not selected')}",
             model_label=f"Model: {_clean(model, 'not selected')}",
-            persona_label=persona_label,
+            user_profile_label=user_profile_label,
             rag_label=f"RAG: {'on' if rag_enabled else 'off'}",
             sources_label=f"Sources: {staged_source_count} staged",
             tools_label=f"Tools: {effective_tool_count} ready",

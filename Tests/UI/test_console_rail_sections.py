@@ -846,6 +846,67 @@ async def test_popover_model_search_inserts_transient_option():
 
 
 @pytest.mark.asyncio
+async def test_popover_preserves_prefilled_model_after_mount():
+    """TASK-364: the model Select must still show the session's current model
+    after mount — the provider Select's mount-time Select.Changed must not wipe
+    the prefill to blank (a user cannot confirm/Apply a model they can't see)."""
+    from textual.widgets import Select
+
+    app = _PopoverApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.pause()
+        model_select = app.screen.query_one("#console-popover-model", Select)
+        assert model_select.value == "model-a"
+
+
+@pytest.mark.asyncio
+async def test_popover_changing_provider_still_resets_the_model():
+    """TASK-364 guard must not over-fire: a REAL provider change (to one whose
+    models differ) must still clear the stale model selection."""
+    from textual.widgets import Select
+
+    app = _PopoverApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.pause()
+        provider_select = app.screen.query_one("#console-popover-provider", Select)
+        provider_select.value = "openai"
+        await pilot.pause()
+        model_select = app.screen.query_one("#console-popover-model", Select)
+        # The stale llama.cpp model must not linger under the new provider.
+        assert model_select.value != "model-a"
+
+
+@pytest.mark.asyncio
+async def test_popover_provider_options_use_display_names():
+    """TASK-364: the provider Select must use the same catalog display names as
+    the full settings modal ('llama.cpp'), not the raw 'llama_cpp' key."""
+    from textual.widgets import Select
+
+    app = _PopoverApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        provider_select = app.screen.query_one("#console-popover-provider", Select)
+        labels = {label: value for label, value in provider_select._options}
+        assert "llama.cpp" in labels
+        assert labels["llama.cpp"] == "llama_cpp"
+        assert "llama_cpp" not in labels
+
+
+@pytest.mark.asyncio
+async def test_popover_labels_temperature_input():
+    """TASK-364: the temperature Input needs a visible label — its placeholder
+    disappears once a value is present, leaving a bare cryptic number."""
+    from textual.widgets import Static
+
+    app = _PopoverApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        texts = [
+            str(getattr(w.renderable, "plain", w.renderable))
+            for w in app.screen.query(Static)
+        ]
+        assert any("Temperature" in text for text in texts)
+
+
+@pytest.mark.asyncio
 async def test_switcher_result_shows_saved_chat_vocabulary_not_in_progress():
     """TASK-356 end-to-end: a saved conversation with a membership role
     renders in the switcher as 'saved chat' (the rail's vocabulary), never

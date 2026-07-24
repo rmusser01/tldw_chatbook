@@ -58,6 +58,7 @@ class ConsoleMessageActionService:
 
     _COMPLETED_ACTIONS: tuple[tuple[str, str], ...] = (
         ("copy", "Copy"),
+        ("speak", "🔊"),
         ("edit", "Edit"),
         ("save-as", "Save as..."),
         ("regenerate", "♻"),
@@ -69,6 +70,7 @@ class ConsoleMessageActionService:
         ("variant-previous", "<"),
         ("variant-next", ">"),
     )
+    _KEEP_ACTION: tuple[tuple[str, str], ...] = (("keep", "keep"),)
     _FAILED_RETRY_ACTIONS: tuple[tuple[str, str], ...] = (("retry", "Try"),)
     _IMAGE_VIEW_ACTIONS: tuple[tuple[str, str], ...] = (("toggle-image-view", "View"),)
     _SAVE_IMAGE_ACTIONS: tuple[tuple[str, str], ...] = (("save-image", "Save Image"),)
@@ -76,6 +78,14 @@ class ConsoleMessageActionService:
     @staticmethod
     def _has_image(message: ConsoleChatMessage) -> bool:
         return message.image_data is not None or bool(message.image_mime_type)
+
+    @staticmethod
+    def _speak_visible(message: ConsoleChatMessage) -> bool:
+        """Spec §1a: speak is offered for any completed message with
+        non-empty text (any role, generation-card marker text included) --
+        absent (not merely disabled) for a failed message or one with no
+        text yet (e.g. a still-pending assistant turn)."""
+        return message.status != "failed" and bool(message.content.strip())
 
     def __init__(
         self,
@@ -99,38 +109,85 @@ class ConsoleMessageActionService:
         return actions
 
     def available_actions(
-        self, message: ConsoleChatMessage
+        self,
+        message: ConsoleChatMessage,
+        *,
+        generation_variant_count: int = 0,
+        generation_browsed_index: int = 0,
     ) -> list[ConsoleMessageAction]:
-        """Return canonical selected-message actions for a transcript message."""
+        """Return canonical selected-message actions for a transcript message.
+
+        Args:
+            message: Transcript message to resolve actions for.
+            generation_variant_count: Number of image-generation variants
+                carried by this message (0 for a non-generation message).
+                When > 0 this gates `<`/`>`/Keep INSTEAD of the text-sibling
+                ``sibling_count``/``sibling_index`` fields on ``message`` --
+                an image-variant set and a text-sibling set are mutually
+                exclusive shapes (spec §5.1). Defaults to 0 so existing
+                callers that don't pass these kwargs see byte-identical
+                behavior.
+            generation_browsed_index: Currently browsed variant index for a
+                generation message (ignored when ``generation_variant_count``
+                is 0).
+        """
         disabled_reason = self._disabled_reason(message)
+        is_generation_message = generation_variant_count > 0
         completed_actions = list(self._COMPLETED_ACTIONS)
-        if message.variants is not None:
-            completed_actions = self._base_actions_with(self._VARIANT_NAV_ACTIONS)
+        extra_actions: list[tuple[str, str]] = []
+        if is_generation_message:
+            if generation_variant_count > 1:
+                extra_actions.extend(self._VARIANT_NAV_ACTIONS)
+            if generation_browsed_index != 0:
+                extra_actions.extend(self._KEEP_ACTION)
+        elif message.sibling_count > 1:
+            extra_actions.extend(self._VARIANT_NAV_ACTIONS)
+        if extra_actions:
+            completed_actions = self._base_actions_with(tuple(extra_actions))
         if self._has_image(message):
             completed_actions = (
                 completed_actions
                 + list(self._IMAGE_VIEW_ACTIONS)
                 + list(self._SAVE_IMAGE_ACTIONS)
             )
+        if not self._speak_visible(message):
+            completed_actions = [
+                (action_id, label)
+                for action_id, label in completed_actions
+                if action_id != "speak"
+            ]
         if message.status == "failed" and self._is_assistant_message(message):
             # Retry regenerates a failed ASSISTANT response. A failed USER row —
             # e.g. the TASK-457(a) optimistic echo rejected before any provider
             # send — has nothing to regenerate, so it must not offer retry (the
-            # user re-sends from the composer instead).
+            # user re-sends from the composer instead). Speak is also absent
+            # here (spec §1a) -- a failed row's content is not a completed
+            # response worth reading aloud.
             return [
                 ConsoleMessageAction(action_id, label)
                 for action_id, label in self._base_actions_with(
                     self._FAILED_RETRY_ACTIONS
                 )
+                if action_id != "speak"
             ]
         return [
             ConsoleMessageAction(
                 action_id=action_id,
                 label=label,
                 enabled=disabled_reason == ""
-                and self._action_enabled(action_id, message),
+                and self._action_enabled(
+                    action_id,
+                    message,
+                    generation_variant_count=generation_variant_count,
+                    generation_browsed_index=generation_browsed_index,
+                ),
                 disabled_reason=disabled_reason
-                or self._action_disabled_reason(action_id, message),
+                or self._action_disabled_reason(
+                    action_id,
+                    message,
+                    generation_variant_count=generation_variant_count,
+                    generation_browsed_index=generation_browsed_index,
+                ),
             )
             for action_id, label in completed_actions
         ]
@@ -193,6 +250,14 @@ class ConsoleMessageActionService:
                 visible_copy="Copied message to clipboard.",
                 clipboard_text=message.content,
             )
+        if action_id == "speak":
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy="Speaking message.",
+                target_message_id=message.id,
+                target_content=message.content,
+            )
         if action_id == "retry" and message.status == "failed":
             return ConsoleActionResult(
                 action_id=action_id,
@@ -233,6 +298,13 @@ class ConsoleMessageActionService:
                 action_id=action_id,
                 status="completed",
                 visible_copy="Selected response variant.",
+            )
+        if action_id == "keep":
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy="Kept this variant as the message's canonical image.",
+                target_message_id=message.id,
             )
         if (
             action_id == "regenerate"
@@ -283,21 +355,53 @@ class ConsoleMessageActionService:
         return ""
 
     @staticmethod
-    def _variant_action_enabled(action_id: str, message: ConsoleChatMessage) -> bool:
+    def _variant_action_enabled(
+        action_id: str,
+        message: ConsoleChatMessage,
+        *,
+        generation_variant_count: int = 0,
+        generation_browsed_index: int = 0,
+    ) -> bool:
+        if generation_variant_count > 0:
+            # Generation-variant boundary check takes precedence over the
+            # text-sibling fields for these two ids (spec §7) -- a
+            # generation message never carries text siblings.
+            if action_id == "variant-previous":
+                return generation_browsed_index > 0
+            if action_id == "variant-next":
+                return generation_browsed_index < generation_variant_count - 1
+            return True
         if action_id == "variant-previous":
-            return message.variants is not None and message.variants.can_go_previous
+            return message.sibling_index > 0
         if action_id == "variant-next":
-            return message.variants is not None and message.variants.can_go_next
+            return message.sibling_index < message.sibling_count - 1
         return True
 
     @staticmethod
-    def _action_enabled(action_id: str, message: ConsoleChatMessage) -> bool:
+    def _action_enabled(
+        action_id: str,
+        message: ConsoleChatMessage,
+        *,
+        generation_variant_count: int = 0,
+        generation_browsed_index: int = 0,
+    ) -> bool:
         if action_id == "regenerate":
             return ConsoleMessageActionService._is_assistant_message(message)
-        return ConsoleMessageActionService._variant_action_enabled(action_id, message)
+        return ConsoleMessageActionService._variant_action_enabled(
+            action_id,
+            message,
+            generation_variant_count=generation_variant_count,
+            generation_browsed_index=generation_browsed_index,
+        )
 
     @staticmethod
-    def _action_disabled_reason(action_id: str, message: ConsoleChatMessage) -> str:
+    def _action_disabled_reason(
+        action_id: str,
+        message: ConsoleChatMessage,
+        *,
+        generation_variant_count: int = 0,
+        generation_browsed_index: int = 0,
+    ) -> str:
         if (
             action_id == "regenerate"
             and not ConsoleMessageActionService._is_assistant_message(message)
@@ -307,7 +411,10 @@ class ConsoleMessageActionService:
             "variant-previous",
             "variant-next",
         } and not ConsoleMessageActionService._variant_action_enabled(
-            action_id, message
+            action_id,
+            message,
+            generation_variant_count=generation_variant_count,
+            generation_browsed_index=generation_browsed_index,
         ):
             return "No response variant in that direction."
         return ""

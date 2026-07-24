@@ -435,6 +435,67 @@ ConsoleSkillPickerModal {
     color: $ds-text-muted;
 }
 
+ConsoleStylePickerModal {
+    align: center middle;
+}
+
+#console-style-picker-modal {
+    width: 76;
+    max-width: 95%;
+    height: auto;
+    max-height: 85%;
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+    padding: 1 2;
+}
+
+#console-style-picker-filter {
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#console-style-picker-filter:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+}
+
+#console-style-picker-results {
+    height: auto;
+    max-height: 20;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+}
+
+.console-style-picker-row {
+    width: 100%;
+    height: auto;
+    min-height: 3;
+    margin: 0 0 1 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+.console-style-picker-row-highlighted {
+    border: tall $ds-action-focus;
+    background: $ds-input-focus-bg;
+    text-style: bold;
+}
+
+#console-style-picker-empty {
+    height: auto;
+    margin: 1 0;
+    color: $ds-text-muted;
+}
+
 ConsoleSystemPromptModal {
     align: center middle;
 }
@@ -2019,6 +2080,12 @@ ConsoleSystemPromptModal {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
+    /* TASK-383: the global `*:focus { outline: solid }` fallback OVERLAYS a box
+       onto this height-1 chip, replacing the label with border glyphs (the
+       "empty outlined box" defect). The high-contrast bg/fg + bold underline
+       above already give a non-obscuring focus cue, so suppress the outline
+       that would otherwise hide the label. */
+    outline: none;
 }
 
 .console-control-action {
@@ -2667,7 +2734,25 @@ ConsoleSystemPromptModal {
     color: $ds-status-warning;
 }
 
-#console-composer-title,
+#console-composer-expanded,
+#console-composer-collapsed {
+    width: 1fr;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    layout: horizontal;
+    align: left middle;
+}
+
+#console-native-composer.console-composer-collapsed {
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    padding: 0;
+    border: none;
+    background: $ds-surface-raised;
+}
+
 #console-composer-status,
 .console-composer-recovery,
 .console-send-disabled-reason,
@@ -2676,9 +2761,29 @@ ConsoleSystemPromptModal {
     min-height: 1;
 }
 
-#console-composer-title {
-    width: 10;
-    min-width: 10;
+#console-composer-collapse {
+    width: 14;
+    min-width: 14;
+}
+
+#console-composer-collapsed-status {
+    width: 1fr;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    text-overflow: ellipsis;
+    text-wrap: nowrap;
+    color: $ds-text-muted;
+}
+
+#console-collapsed-stop-generation {
+    width: 8;
+    min-width: 8;
+}
+
+#console-composer-expand {
+    width: 12;
+    min-width: 12;
 }
 
 #console-command-visible-text {
@@ -2906,6 +3011,31 @@ ConsoleSystemPromptModal {
     color: $ds-text-muted;
 }
 
+/* TASK-385: a selected Tool/System row must read the same as a selected
+   user/assistant row. The muted `-tool`/`-system` rules above share the
+   single-class specificity of `-selected` and follow it in source order, so
+   they would otherwise strip the selection treatment off the text. These
+   two-class selectors out-specify them and re-assert the focus colours + bold
+   underline for the selected state. */
+.console-transcript-message-tool.console-transcript-message-selected,
+.console-transcript-message-system.console-transcript-message-selected {
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+/* TASK-371: docked "jump to latest" pill shown while the reader is scrolled up
+   during (or just after) a streaming reply. Pinned to the transcript's bottom
+   edge, high-contrast so it reads as an actionable status, click to re-attach. */
+.console-transcript-jump-pill {
+    dock: bottom;
+    width: 100%;
+    height: 1;
+    content-align: center middle;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+}
+
 .console-transcript-action-row {
     height: 3;
     min-height: 3;
@@ -3021,8 +3151,15 @@ ConsoleSystemPromptModal {
 }
 
 .console-setup-step {
-    height: 1;
+    height: auto;
+    min-height: 1;
     color: $ds-text-primary;
+    /* TASK-389 made a height-1 line ellipsize on unavoidable overflow instead
+       of silently clipping. TASK-441: ellipsizing still drops the tail of the
+       sentence, so wrap onto a second row instead -- height:auto (Static's
+       default text-wrap is already "wrap") lets the widget grow to fit
+       however many rows a narrow terminal's capped card width needs, and
+       .console-setup-modal-card's own height:auto absorbs the extra row. */
 }
 
 .console-setup-step-done {
@@ -3075,7 +3212,10 @@ ConsoleSystemPromptModal {
 /* Console's rendered frame color (#6f7782) — see chat_screen.CONSOLE_FRAME_COLOR. */
 .console-setup-modal-card {
     layer: console-setup-card;
-    width: 62;
+    /* TASK-389: 62 gave 56 content cells (−2 border −4 padding); the honest
+       step-3 line "…Composer unlocks after setup" is 59 cells, so its last word
+       wrapped off. 66 gives 60 content cells so the full sentence fits. */
+    width: 66;
     max-width: 90%;
     height: auto;
     padding: 1 2;
@@ -3666,6 +3806,22 @@ Button.settings-category-button.settings-secondary-search-match {
     content-align: left middle;
 }
 
+/* The Library/RAG detail card (Search/Embedding/Chunking/Vector store/
+ * Reranking groups) has the longest field labels in Settings ("Default
+ * results", "Embedding model ⚠", "Distance metric ⚠", "Rerank results", ...).
+ * The generic 12-column label width clips them to their first wrapped word
+ * (Static wraps at the column width but the row stays height:1, so only
+ * that first line paints) -- e.g. "Default results" rendered as just
+ * "Default", and "Reranker model"/"Reranker top-k" (pre UX-review-2026-07
+ * naming) both rendered as the identical "Reranker". Widen the column for
+ * this card only so every RAG label fits on one line unambiguously; other
+ * Settings categories keep the base 12-column rhythm.
+ */
+#settings-library-rag-card .settings-input-label {
+    width: 20;
+    min-width: 20;
+}
+
 .settings-compact-input {
     width: 1fr;
     height: 1;
@@ -3800,6 +3956,35 @@ Button.settings-category-button.settings-secondary-search-match {
     text-style: bold;
 }
 
+/* RAG profile-manager region (task-2): read-only note for a built-in active
+   profile -- attention-worthy like #library-skill-warnings above, not muted
+   like the surrounding .settings-status-row lines. */
+.settings-library-rag-readonly-banner {
+    color: $ds-status-warning;
+    text-style: bold;
+}
+
+/* RAG profile editor (task-3 review): reranker top-k vs default-results
+   advisory -- same attention-worthy treatment as the readonly banner above.
+   Purely informational (never gates Save; see soft_config_warnings). */
+.settings-library-rag-soft-warning {
+    color: $ds-status-warning;
+    text-style: bold;
+}
+
+RagProfileNameModal,
+RagProfileSwitchConfirmModal {
+    align: center middle;
+}
+
+.settings-rag-profile-modal {
+    width: 60;
+    height: auto;
+    padding: 1 2;
+    border: thick $ds-action-focus;
+    background: $ds-surface-panel;
+}
+
 .settings-focus-card {
     width: 100%;
     height: auto;
@@ -3848,6 +4033,15 @@ Button.settings-category-button.settings-secondary-search-match {
     color: $ds-text-primary;
     text-style: bold underline;
     outline: none;
+}
+
+/* UX review item 7 (delete danger styling): visually separate the RAG
+   profile-manager's destructive Delete button from the other three
+   (Set active/Clone/Rename) in the same row -- variant="error" alone
+   (settings_screen.py) gives it distinct color, but it still read as just
+   another button in the row without the extra gap. */
+.settings-library-rag-profile-delete-button {
+    margin-left: 2;
 }
 
 .settings-sync-safety-row {
@@ -3990,6 +4184,18 @@ ListItem.personas-library-row.is-active.-highlight {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold;
+}
+
+/* task-445: the global `*:focus { outline: solid $ds-focus-accent; }`
+   fallback (core/_reset.tcss) draws its outline around the ListView's own
+   box once it takes keyboard focus after a row is selected -- and that box
+   is taller than the 1-2 rows it holds (it fills the rail's remaining
+   height), so the outline rendered as a tall empty bordered rectangle
+   hanging below the selected row (RP UX review). Rows already show
+   selection via .is-active/.-highlight backgrounds above, so the fallback
+   outline is both redundant and visually broken here. */
+#personas-library-rows:focus {
+    outline: none;
 }
 
 .library-source-action {

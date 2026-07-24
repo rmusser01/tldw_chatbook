@@ -455,6 +455,14 @@ __all__ = [
     "PersonaSessionSummary",
     "PersonaSetupState",
     "PersonaVoiceDefaults",
+    # task-442 T2: app-side aliases of the PersonaProfile* wire mirror above.
+    # NOTE: "UserProfileResponse" is deliberately NOT re-exported here -- it
+    # would collide with the unrelated, already-exported auth_user_schemas
+    # "UserProfileResponse" (the logged-in account's profile, a different
+    # concept). Importers of the persona-flavored response type must go
+    # through ``tldw_chatbook.tldw_api.character_persona_schemas`` directly.
+    "UserProfileCreate",
+    "UserProfileUpdate",
     "PresetCreate",
     "PresetDetail",
     "PresetListResponse",
@@ -1749,6 +1757,10 @@ _SUBMODULE_BY_NAME = {
     "PersonaSessionSummary": "character_persona_schemas",
     "PersonaSetupState": "character_persona_schemas",
     "PersonaVoiceDefaults": "character_persona_schemas",
+    # task-442 T2 aliases (see the __all__ comment above for the
+    # UserProfileResponse collision note).
+    "UserProfileCreate": "character_persona_schemas",
+    "UserProfileUpdate": "character_persona_schemas",
     "PersonalizationDetailResponse": "personalization_schemas",
     "PersonalizationExplanationEntry": "personalization_schemas",
     "PersonalizationExplanationListResponse": "personalization_schemas",

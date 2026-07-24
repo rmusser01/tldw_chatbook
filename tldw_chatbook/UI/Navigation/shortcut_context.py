@@ -14,8 +14,12 @@ class ShortcutAction:
     available: bool = True
 
     def render(self) -> str:
-        suffix = "" if self.available else " unavailable"
-        return f"{self.key} {self.label}{suffix}"
+        """Render this hint as the footer's ``key label`` fragment.
+
+        Returns:
+            The single-hint text, e.g. ``"ctrl+n new"``.
+        """
+        return f"{self.key} {self.label}"
 
 
 @dataclass(frozen=True)
@@ -26,5 +30,19 @@ class ShortcutContext:
     actions: tuple[ShortcutAction, ...]
 
     def render(self) -> str:
-        visible = [action.render() for action in self.actions]
+        """Render the visible footer hint line for this context.
+
+        Returns:
+            The `` | ``-joined hints for the AVAILABLE actions only (may be
+            an empty string when nothing is available -- the footer widget
+            falls back to its default text in that case).
+        """
+        # task-445: the footer is a single plain-text Static -- it has no way
+        # to dim a hint, so the two AC-permitted options collapse to one:
+        # only currently-available actions are shown at all. Previously every
+        # action rendered unconditionally with a literal " unavailable" tacked
+        # on, so screens with several gated actions (personas) could show a
+        # footer that was MOSTLY the word "unavailable" the instant nothing
+        # was selected/editing.
+        visible = [action.render() for action in self.actions if action.available]
         return " | ".join(visible)

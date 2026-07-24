@@ -47,7 +47,9 @@ class PersonasCharacterDictionariesWidget(Container):
         self._rows: list[dict[str, Any]] = []
 
     def compose(self) -> ComposeResult:
-        yield Static("Dictionaries (embedded copies)", classes="destination-section")
+        yield Static(
+            "Dictionaries (copied into this character)", classes="destination-section"
+        )
         yield Static(
             "No dictionaries attached to this character yet.",
             id="personas-char-dicts-empty",

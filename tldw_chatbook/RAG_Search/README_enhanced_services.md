@@ -10,6 +10,14 @@ The RAG module now uses a single, highly configurable V2 service with predefined
 - **Configuration Profiles** - Predefined settings for different use cases
 - **Custom Overrides** - Fine-tune any profile with specific settings
 
+### Configuration source of truth
+
+The active profile (`[rag.service].profile`) is the single source of RAG
+config — both ingestion and search resolve via
+`active_config.resolve_active_rag_config` (profile base + env overrides). The
+old `[AppRAGSearchConfig.rag.*]` value keys are deprecated in favor of
+profiles.
+
 ## Available Profiles
 
 ### Basic Search Profiles
@@ -57,12 +65,8 @@ The RAG module now uses a single, highly configurable V2 service with predefined
 Add to your `~/.config/tldw_cli/config.toml`:
 
 ```toml
-[rag_search.service]
+[rag.service]
 profile = "hybrid_basic"  # Choose your profile
-
-# Optional: Override specific settings
-[rag_search.service.custom_overrides]
-enable_reranking = true
 ```
 
 ### 2. Programmatic Usage

@@ -245,14 +245,18 @@ class TestResolveHybridAlpha:
         )
         assert resolve_hybrid_alpha(0.4) == 0.4
 
-    def test_reads_authoritative_config_knob(self, monkeypatch):
-        import tldw_chatbook.config as app_config
+    def test_reads_from_active_profile(self, monkeypatch):
+        import tldw_chatbook.RAG_Search.simplified.active_config as ac
 
-        def fake_get_cli_setting(section, key=None, default=None):
-            assert (section, key) == ("AppRAGSearchConfig", "rag")
-            return {"retriever": {"hybrid_alpha": 0.25}}
+        class _FakeSearch:
+            hybrid_alpha = 0.25
 
-        monkeypatch.setattr(app_config, "get_cli_setting", fake_get_cli_setting)
+        class _FakeConfig:
+            search = _FakeSearch()
+
+        monkeypatch.setattr(
+            ac, "resolve_active_rag_config", lambda *a, **k: _FakeConfig()
+        )
         assert resolve_hybrid_alpha() == 0.25
 
     def test_defaults_to_server_parity_when_unset(self, monkeypatch):

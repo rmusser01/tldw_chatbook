@@ -3,10 +3,13 @@ import json as _json
 
 import pytest
 
-from tldw_chatbook.RAG_Search.config_profiles import ConfigProfileManager, ProfileConfig
+from tldw_chatbook.RAG_Search.config_profiles import (
+    ConfigProfileManager, ProfileConfig, get_profile_manager, reset_profile_manager_cache,
+)
 from tldw_chatbook.RAG_Search.simplified.config import (
     RAGConfig, EmbeddingConfig, ChunkingConfig, VectorStoreConfig,
 )
+from tldw_chatbook.Chunking.Chunk_Lib import MAX_CHUNK_SIZE_PARAGRAPHS
 
 
 def _profile():
@@ -79,6 +82,64 @@ def test_high_accuracy_has_no_stray_method_attr(tmp_path):
     # '.method' is a typo of the real field 'chunking_method' -> must not exist as a stray attr
     assert "method" not in vars(chunking)
     assert chunking.chunking_method in {"words", "sentences", "paragraphs"}
+
+
+# Runtime-accepted chunking_method values, enumerated from the terminal
+# if/elif dispatch chain in Chunking/Chunk_Lib.py's Chunker.chunk_text
+# (the elif chunk_method == "..." branches immediately before the final
+# `else: raise InvalidChunkingMethodError(...)`). Any value not in this set
+# raises InvalidChunkingMethodError the moment the enhanced/full chunker
+# path (Chunker.chunk_text) is exercised for it -- see task-484.
+RUNTIME_VALID_CHUNKING_METHODS = {
+    "words", "sentences", "paragraphs", "tokens", "semantic",
+    "json", "ebook_chapters", "xml", "rolling_summarize",
+}
+
+
+def test_all_builtins_use_a_runtime_valid_chunking_method(tmp_path):
+    """Every builtin profile's chunking_method must be one Chunk_Lib actually accepts.
+
+    task-484: hybrid_full, technical_docs, and research_papers used to set
+    chunking_method to "hierarchical"/"structural", values Chunk_Lib's
+    Chunker.chunk_text does not accept -- it raises InvalidChunkingMethodError
+    for anything outside RUNTIME_VALID_CHUNKING_METHODS. ChunkingService.chunk_text
+    (RAG_Search/chunking_service.py) does not special-case those two values
+    either (only "words"/"sentences"/"paragraphs" get its in-process fast
+    path), so it delegates straight into Chunker.chunk_text and the raise
+    propagates (wrapped) up through indexing whenever a profile with an
+    invalid method is actually used.
+
+    This also asserts a size-sanity invariant for the "paragraphs" method
+    specifically: Chunker._chunk_text_by_paragraphs (Chunking/Chunk_Lib.py)
+    treats chunk_size/chunk_overlap as a PARAGRAPH COUNT, not a word count,
+    and hard-caps chunk_size at MAX_CHUNK_SIZE_PARAGRAPHS -- a word-scale
+    value like 512 raises ValueError the moment paragraph chunking actually
+    runs, so builtins using "paragraphs" must stay within that cap and keep
+    overlap < chunk_size (see task-484 review follow-up).
+
+    Raises:
+        AssertionError: If any builtin profile uses a chunking_method Chunk_Lib
+            rejects at runtime, or a "paragraphs"-method builtin has a
+            chunk_size/chunk_overlap combination that would raise inside
+            Chunker._chunk_text_by_paragraphs.
+    """
+    m = _mgr(tmp_path)
+    invalid = {}
+    paragraph_size_violations = {}
+    for name in m.list_profiles():
+        chunking = m.get_profile(name).rag_config.chunking
+        method = chunking.chunking_method
+        if method not in RUNTIME_VALID_CHUNKING_METHODS:
+            invalid[name] = method
+        if method == "paragraphs":
+            size, overlap = chunking.chunk_size, chunking.chunk_overlap
+            if not (0 < size <= MAX_CHUNK_SIZE_PARAGRAPHS and 0 <= overlap < size):
+                paragraph_size_violations[name] = (size, overlap)
+    assert invalid == {}, f"builtins with a runtime-invalid chunking_method: {invalid}"
+    assert paragraph_size_violations == {}, (
+        "paragraphs-method builtins with a chunk_size/chunk_overlap that would raise "
+        f"in Chunker._chunk_text_by_paragraphs: {paragraph_size_violations}"
+    )
 
 
 def test_builtins_are_read_only_with_ids(tmp_path):
@@ -792,3 +853,90 @@ def test_create_custom_profile_never_canonicalizes_onto_reserved_blob_filename(t
     reloaded = m2.get_profile(created.id)
     assert reloaded is not None
     assert reloaded.name == "Custom Profiles"
+
+
+# --- Finding #5: default-dir get_profile_manager() is a cached singleton ---
+
+
+@pytest.fixture(autouse=True)
+def _isolated_default_profile_manager(tmp_path, monkeypatch):
+    """Isolate every no-arg get_profile_manager() call in this file to a temp
+    dir instead of the real ~/.local/share/tldw_cli/.../rag_profiles/.
+
+    get_user_data_dir() falls back to BASE_DATA_DIR_CLI, a module-level
+    Path.home() constant baked in at import time -- it is NOT covered by
+    HOME/XDG_* env monkeypatches (see ingestion_indexing's
+    _maybe_run_first_run_import docstring for the same hazard). So instead
+    of an env var, patch config_profiles.get_user_data_dir directly, and
+    reset the cache around the test so no manager (real-dir or temp-dir)
+    leaks across tests.
+    """
+    import tldw_chatbook.RAG_Search.config_profiles as cp
+    reset_profile_manager_cache()
+    monkeypatch.setattr(cp, "get_user_data_dir", lambda: tmp_path / "default_user_data")
+    yield
+    reset_profile_manager_cache()
+
+
+def test_get_profile_manager_no_arg_returns_same_cached_instance():
+    first = get_profile_manager()
+    second = get_profile_manager()
+    assert first is second
+
+
+def test_get_profile_manager_explicit_dir_bypasses_cache(tmp_path):
+    default_call = get_profile_manager()
+    explicit_call = get_profile_manager(profiles_dir=tmp_path / "explicit")
+    assert explicit_call is not default_call
+    # A second explicit-dir call is also always fresh (never cached).
+    explicit_call_2 = get_profile_manager(profiles_dir=tmp_path / "explicit")
+    assert explicit_call_2 is not explicit_call
+
+
+def test_reset_profile_manager_cache_forces_a_new_instance():
+    first = get_profile_manager()
+    reset_profile_manager_cache()
+    second = get_profile_manager()
+    assert first is not second
+
+
+def test_cached_default_manager_sees_mutations_from_other_default_dir_callers():
+    """Because CRUD mutates ConfigProfileManager._profiles in place and all
+    default-dir callers now share one instance, a profile saved through one
+    no-arg get_profile_manager() call must be visible to another."""
+    mgr_a = get_profile_manager()
+    p = ProfileConfig(name="Shared", description="d", profile_type="custom",
+                      rag_config=RAGConfig(vector_store=VectorStoreConfig(type="memory")))
+    mgr_a.save_profile(p)
+
+    mgr_b = get_profile_manager()
+    assert mgr_b.get_profile(p.id) is not None
+
+
+# --- PR #829 review finding 5(b): save_profile must be transactional -- a
+# failed disk write must never leave the in-memory registry pointing at a
+# profile object that was never actually persisted. Before the fix,
+# save_profile registered `self._profiles[profile.id] = profile` BEFORE
+# calling `self._save_one(profile)`, so a raising `_save_one` still left the
+# new object registered (memory diverged from disk while callers were told
+# the save failed). ---
+
+
+def test_save_profile_does_not_register_when_the_disk_write_fails(tmp_path, monkeypatch):
+    m = _mgr(tmp_path)
+    p = ProfileConfig(
+        id="my_profile", name="Mine", description="d", profile_type="custom",
+        rag_config=RAGConfig(vector_store=VectorStoreConfig(type="memory")),
+        read_only=False,
+    )
+
+    def _raise(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(m, "_save_one", _raise)
+
+    with pytest.raises(OSError):
+        m.save_profile(p)
+
+    assert m.get_profile("my_profile") is None
+    assert "my_profile" not in m.list_profiles()

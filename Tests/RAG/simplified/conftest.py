@@ -21,6 +21,29 @@ from tldw_chatbook.Utils.optional_deps import check_embeddings_rag_deps
 check_embeddings_rag_deps()
 
 
+@pytest.fixture(autouse=True)
+def _reset_default_profile_manager_cache():
+    """Reset the process-wide default-dir profile manager singleton around
+    every test in this directory (config_profiles.get_profile_manager()).
+
+    Several tests here (e.g. test_vector_store_selection.py) monkeypatch
+    ``rag_config_module._embeddings_rag_available`` per test and exercise
+    ``RAGConfig.from_settings()`` unmocked, which resolves through
+    ``active_config.resolve_active_rag_config() -> _manager() ->
+    get_profile_manager()``. Builtin profiles (e.g. "hybrid_basic") resolve
+    their "auto" vector_store.type ONCE, at ConfigProfileManager
+    construction time -- fine in production (dependency availability can't
+    change mid-process), but without this reset the FIRST test to construct
+    the cached default-dir manager would freeze that resolution for every
+    later test in the session, even ones that flip the deps-availability
+    mock to the opposite value.
+    """
+    from tldw_chatbook.RAG_Search.config_profiles import reset_profile_manager_cache
+    reset_profile_manager_cache()
+    yield
+    reset_profile_manager_cache()
+
+
 # === Directory Fixtures ===
 
 

@@ -17,6 +17,7 @@ evaluation logic and metrics.
 """
 
 import ast
+import platform
 import re
 import json
 import subprocess
@@ -30,6 +31,38 @@ from loguru import logger
 from .eval_runner import BaseEvalRunner, EvalSampleResult, EvalSample
 from .task_loader import TaskConfig
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+
+
+_MEMORY_LIMIT_WARNED = False
+
+
+def _memory_limit_enforced() -> bool:
+    """Whether the eval sandbox's RLIMIT_AS memory cap is enforced here.
+
+    On macOS/BSD ``setrlimit(RLIMIT_AS, ...)`` raises ``ValueError`` (the
+    address-space limit is aliased to RSS and cannot be lowered), so the
+    256MB memory cap silently does not apply. Time is still bounded by the
+    subprocess wall-clock timeout on every platform; only peak memory is
+    unbounded where this returns False.
+    """
+    return platform.system() != "Darwin"
+
+
+def _sandbox_warnings() -> list:
+    """One-time-logged, per-result warnings about non-enforced sandbox limits."""
+    global _MEMORY_LIMIT_WARNED
+    warnings: list = []
+    if not _memory_limit_enforced():
+        msg = (
+            "eval sandbox: RLIMIT_AS memory limit is NOT enforced on this "
+            "platform (macOS/BSD); model-generated code is bounded by the "
+            "execution timeout but not by peak memory"
+        )
+        warnings.append(msg)
+        if not _MEMORY_LIMIT_WARNED:
+            logger.warning(msg)
+            _MEMORY_LIMIT_WARNED = True
+    return warnings
 
 
 class CodeExecutionRunner(BaseEvalRunner):
@@ -259,10 +292,13 @@ class CodeExecutionRunner(BaseEvalRunner):
         """Execute code and run test cases.
 
         Security measures implemented:
-        - Resource limits (CPU, memory, processes, file descriptors)
+        - CPU time + wall-clock timeout (cross-platform)
+        - Memory cap via RLIMIT_AS -- best-effort; NOT enforced on macOS/BSD
+          (setrlimit(RLIMIT_AS) raises ValueError there), surfaced via
+          results["sandbox_warnings"]; see _memory_limit_enforced()
+        - Process/file-descriptor/file-write limits (RLIMIT_NPROC/NOFILE/FSIZE)
         - Dangerous builtins disabled (eval, exec, compile, etc.)
         - Restricted environment with minimal PATH
-        - Execution timeout
         - Runs in temporary directory with restricted HOME
 
         Future improvements:
@@ -277,6 +313,7 @@ class CodeExecutionRunner(BaseEvalRunner):
             "test_results": [],
             "error_message": None,
             "execution_time": 0.0,
+            "sandbox_warnings": _sandbox_warnings(),
         }
 
         try:

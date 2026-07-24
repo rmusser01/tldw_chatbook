@@ -49,7 +49,8 @@ async def test_rename_modal_persists_saved_conversation_title():
             title="Websocket reconnect strategy",
             workspace_id=None,
             persisted_conversation_id="conv-341",
-            messages=[],
+            all_nodes=[],
+            active_leaf_persisted_id=None,
         )
 
         console._open_console_session_rename_modal(session.id)

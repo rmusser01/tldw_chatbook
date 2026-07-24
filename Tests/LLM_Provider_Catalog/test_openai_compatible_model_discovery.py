@@ -286,6 +286,31 @@ def test_endpoint_with_userinfo_but_no_host_is_not_eligible_or_leaky():
 
 
 @pytest.mark.asyncio
+async def test_malformed_endpoint_reports_distinct_error_kind():
+    """TASK-367: a malformed URL (e.g. a dropped 'h' → invalid scheme) must be
+    reported as a distinct 'malformed_endpoint' error, not misdiagnosed as a
+    missing-/v1-path 'unsupported_endpoint' problem."""
+    malformed = await discover_openai_compatible_models(
+        provider="custom",
+        provider_list_key="custom",
+        endpoint="ttp://127.0.0.1:9099/v1",
+        api_key=None,
+    )
+    assert malformed.status == "unsupported"
+    assert malformed.error.kind == "malformed_endpoint"
+
+    # A valid URL whose PATH is not OpenAI-compatible stays unsupported_endpoint.
+    unsupported = await discover_openai_compatible_models(
+        provider="koboldcpp",
+        provider_list_key="koboldcpp",
+        endpoint="http://127.0.0.1:5001/api/v1/generate",
+        api_key=None,
+    )
+    assert unsupported.status == "unsupported"
+    assert unsupported.error.kind == "unsupported_endpoint"
+
+
+@pytest.mark.asyncio
 async def test_discovers_models_with_authorization_header_when_api_key_present():
     requests: list[httpx.Request] = []
 

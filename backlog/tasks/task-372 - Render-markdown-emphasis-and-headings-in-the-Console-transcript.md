@@ -1,8 +1,9 @@
 ---
 id: TASK-372
 title: Render markdown emphasis and headings in the Console transcript
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
 labels: [console, ux]
 dependencies: []
@@ -25,5 +26,24 @@ Also observed independently in J2 returning power user as `j2-markdown-asterisks
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Render headings with terminal-appropriate emphasis (bold/underline/color) or strip the marker characters
+- [x] #1 Render headings with terminal-appropriate emphasis (bold/underline/color) or strip the marker characters
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+The transcript rendered assistant markdown with literal markers (### / ** / `)
+because `_message_render_text` used markup-off `Content.assemble` (injection
+safety). A safe subset now renders with terminal emphasis: headings -> bold
+underline (markers stripped), **bold** -> bold, `code` -> italic, via new pure
+`_markdown_body_spans`/`_inline_markdown_spans`. CRITICAL: every segment is
+emitted as literal text with the style applied through a `(text, style)` tuple --
+the message text is NEVER markup-parsed, so a reply containing `[red]` renders
+literally (injection-safety guarantee preserved, covered by test). Applied to
+non-USER, non-placeholder bodies only (user text stays verbatim); unclosed
+markers mid-stream stay literal until they close. This is pure Content-assembly
+logic, so it is unit-test-definitive (5 tests incl. exact spans + injection
+safety) rather than needing served-app repro like the CSS/layout tasks. The 2
+continue/regen native-chat-flow failures are pre-existing baseline (verified
+failing identically on clean origin/dev).
+<!-- SECTION:NOTES:END -->

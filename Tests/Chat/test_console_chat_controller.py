@@ -371,6 +371,46 @@ async def test_probe_exception_after_optimistic_echo_marks_row_blocked():
 
 
 @pytest.mark.asyncio
+async def test_blocked_send_persists_no_durable_record():
+    """TASK-485: a send blocked before it reaches the provider must leave NO
+    durable record (no conversation, no message), so it cannot re-enter the next
+    send's context after a resume/restart and leaves no orphan row. The in-memory
+    echo is still shown (feedback) and failed (in-session context exclusion)."""
+    from Tests.Chat.test_console_chat_store import FakePersistence
+
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    controller = ConsoleChatController(store=store, provider_gateway=BlockedGateway())
+
+    result = await controller.submit_draft("hello")
+
+    assert result.accepted is False
+    messages = store.messages_for_session(store.active_session_id)
+    assert messages[0].role.value == "user"
+    assert messages[0].status == "failed"
+    assert persistence.created_conversations == []
+    assert persistence.created_messages == []
+
+
+@pytest.mark.asyncio
+async def test_accepted_send_persists_the_deferred_user_echo():
+    """TASK-485: once a send is accepted the deferred USER echo is flushed to the
+    durable conversation, so a reload shows the user's prompt (not just the
+    assistant reply) — the successful path must not regress to a missing echo."""
+    from Tests.Chat.test_console_chat_store import FakePersistence
+
+    persistence = FakePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+
+    await controller.submit_draft("hello")
+
+    senders = [m["sender"] for m in persistence.created_messages]
+    assert "user" in senders
+    assert len(persistence.created_conversations) == 1
+
+
+@pytest.mark.asyncio
 async def test_skill_refuse_after_optimistic_echo_marks_row_blocked():
     """TASK-457(a) (code-review finding 1): a skill-substitution refusal after
     the optimistic echo is a block outcome like the not-ready / probe-raise
@@ -380,7 +420,7 @@ async def test_skill_refuse_after_optimistic_echo_marks_row_blocked():
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
 
     async def _refuse(messages):
-        return messages, "Refused: untrusted skill."
+        return messages, "Refused: untrusted skill.", (), (), ""
 
     controller._apply_skill_substitution = _refuse
 
@@ -1179,7 +1219,12 @@ async def test_continue_from_user_message_preserves_user_final_payload():
 
 
 @pytest.mark.asyncio
-async def test_regenerate_message_streams_new_selected_variant():
+async def test_regenerate_message_streams_into_new_sibling_node():
+    """TASK-6: regenerate forks a persisted sibling node under the anchor's
+    own parent and streams into that NEW node -- the anchor is untouched and
+    drops off the active path, reachable via ``set_active_leaf`` (see
+    ``Tests/Chat/test_console_regenerate_branching.py`` for the full
+    controller-level branching contract)."""
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
     session = store.ensure_session()
@@ -1196,10 +1241,17 @@ async def test_regenerate_message_streams_new_selected_variant():
 
     result = await controller.regenerate_message(source.id)
 
-    updated = store.get_message(source.id)
     assert result.accepted is True
-    assert updated.variants.current.content == "hello"
-    assert updated.variants.can_go_previous is True
+    unchanged_source = store.get_message(source.id)
+    assert unchanged_source.content == "seed"
+    assert unchanged_source.variants is None
+    assert source.id not in store.active_path_message_ids(session.id)
+
+    new_leaf_id = store.active_leaf(session.id)
+    assert new_leaf_id != source.id
+    new_sibling = store.get_message(new_leaf_id)
+    assert new_sibling.content == "hello"
+    assert new_sibling.variants is None
 
 
 @pytest.mark.asyncio
@@ -2045,9 +2097,9 @@ async def test_build_context_snapshot_does_not_execute_skills():
 
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="Hello")
 
-    snapshot = await controller.build_context_snapshot(draft="/search tools")
+    snapshot = await controller.build_context_snapshot(draft="$search tools")
     final_content = snapshot.next_send_payload["messages"][-1]["content"]
-    assert "/search tools" in final_content
+    assert "$search tools" in final_content
     assert "Skill command not resolved in preview" in final_content
 
 
@@ -2369,11 +2421,18 @@ async def test_build_context_snapshot_isolates_assembly_errors():
 
 
 def test_annotate_skill_commands_multimodal_text_part():
+    """Fix 4 (Qodo PR #801 fix wave): a multimodal (list-content) draft must
+    NEVER be annotated, even when its text part starts with a `$name`
+    mention. `_apply_skill_substitution` early-returns on non-str content at
+    send time (replacing list content would drop attachments), so
+    annotating a list-content draft here promised a substitution the actual
+    send never performed -- a dishonest preview. List content now passes
+    through unchanged."""
     messages = [
         {
             "role": "user",
             "content": [
-                {"type": "text", "text": "/search tools"},
+                {"type": "text", "text": "$search tools"},
                 {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
             ],
         }
@@ -2381,30 +2440,39 @@ def test_annotate_skill_commands_multimodal_text_part():
 
     annotated = ConsoleChatController._annotate_skill_commands(messages)
 
-    text_part = annotated[0]["content"][0]
-    assert text_part["type"] == "text"
-    assert text_part["text"].startswith("/search tools")
-    assert "Skill command not resolved in preview" in text_part["text"]
-    assert annotated[0]["content"][1] == messages[0]["content"][1]
+    assert annotated[0]["content"] == messages[0]["content"]
+    assert "Skill command not resolved in preview" not in str(annotated[0]["content"])
 
 
 def test_annotate_skill_commands_ignores_leading_whitespace():
-    messages = [{"role": "user", "content": "  /search tools"}]
+    messages = [{"role": "user", "content": "  $search tools"}]
 
     annotated = ConsoleChatController._annotate_skill_commands(messages)
 
-    assert annotated[0]["content"].startswith("  /search tools")
+    assert annotated[0]["content"].startswith("  $search tools")
     assert "Skill command not resolved in preview" in annotated[0]["content"]
 
 
 def test_annotate_skill_commands_synthetic_turn_added_false_returns_unchanged():
-    messages = [{"role": "user", "content": "/search tools"}]
+    messages = [{"role": "user", "content": "$search tools"}]
 
     annotated = ConsoleChatController._annotate_skill_commands(
         messages, synthetic_turn_added=False
     )
 
     assert annotated == messages
+    assert "Skill command not resolved in preview" not in annotated[0]["content"]
+
+
+def test_annotate_skill_commands_slash_command_is_not_annotated():
+    """A `/`-prefixed draft is a registered slash command post-migration, not a
+    skill invocation (Task 5 of the `$`-mention migration) -- it must not be
+    flagged as an unresolved skill command in the preview."""
+    messages = [{"role": "user", "content": "/skills search"}]
+
+    annotated = ConsoleChatController._annotate_skill_commands(messages)
+
+    assert annotated[0]["content"] == "/skills search"
     assert "Skill command not resolved in preview" not in annotated[0]["content"]
 
 
@@ -2689,7 +2757,7 @@ async def test_retry_applies_pinned_but_not_one_shot():
 
 
 @pytest.mark.asyncio
-async def test_regenerate_applies_pinned_into_variant():
+async def test_regenerate_applies_pinned_into_new_sibling():
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
@@ -2700,7 +2768,12 @@ async def test_regenerate_applies_pinned_into_variant():
 
     await controller.regenerate_message(original.id)
     assert gateway.messages_seen[-1] == {"role": "assistant", "content": "PINNED"}
-    regenerated = store.get_message(original.id)
+    # The anchor is untouched; the pinned prefill lands in the NEW sibling.
+    unchanged_original = store.get_message(original.id)
+    assert unchanged_original.content == "ok"
+    new_leaf_id = store.active_leaf(session.id)
+    assert new_leaf_id != original.id
+    regenerated = store.get_message(new_leaf_id)
     assert regenerated.content == "PINNEDok"
 
 
@@ -2737,7 +2810,9 @@ async def test_prefilled_send_bypasses_agent_loop():
 
     def run_reply(**kwargs):
         bridge_calls.append(kwargs)
-        return RunOutcome(status=RUN_DONE, steps=[], final_text="agent says")
+        return "run-test", RunOutcome(
+            status=RUN_DONE, steps=[], final_text="agent says"
+        )
 
     controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
     session = _arm_session(store)
@@ -2801,7 +2876,9 @@ async def test_normal_session_still_uses_agent_when_enabled():
 
     def run_reply(**kwargs):
         bridge_calls.append(kwargs)
-        return RunOutcome(status=RUN_DONE, steps=[], final_text="agent says")
+        return "run-test", RunOutcome(
+            status=RUN_DONE, steps=[], final_text="agent says"
+        )
 
     controller._agent_bridge = SimpleNamespace(run_reply=run_reply)
     session = _arm_session(store)

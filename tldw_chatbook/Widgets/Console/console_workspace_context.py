@@ -18,6 +18,7 @@ from tldw_chatbook.Chat.console_glyphs import (
 )
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     console_conversation_status_detail,
+    CONSOLE_DEFAULT_CONVERSATION_DETAIL,
     ConsoleConversationBrowserGroup,
     ConsoleConversationBrowserRow,
     ConsoleConversationBrowserSection,
@@ -270,6 +271,17 @@ class ConsoleWorkspaceStatusPair(Horizontal):
         )
         value_widget.styles.width = "1fr"
         value_widget.styles.min_width = 0
+        # TASK-384: at narrow rail widths the value column shrinks to a few cells
+        # and a value like "Default" word-wrapped into a "Def / aul / t" letter
+        # stack. Truncate the whole token with an ellipsis on one line instead,
+        # and keep the full value reachable on hover.
+        value_widget.styles.text_wrap = "nowrap"
+        value_widget.styles.text_overflow = "ellipsis"
+        if self.value:
+            # Tooltips render Rich markup (unlike the markup=False value above),
+            # so escape the raw value or bracket tokens in a workspace name would
+            # be interpreted/styled instead of shown literally (Qodo #821).
+            value_widget.tooltip = _escape_markup(self.value)
         yield value_widget
 
 
@@ -776,13 +788,18 @@ class ConsoleWorkspaceContextTray(Vertical):
             )
 
         scope_value = self.state.scope_label or ""
-        yield ConsoleWorkspaceStatusPair(
+        scope_pair = ConsoleWorkspaceStatusPair(
             "Scope",
             scope_value,
             label_id="console-active-scope-label",
             value_id="console-active-scope-value",
             id="console-active-scope",
         )
+        # TASK-373 AC#2: keep the raw conversation identifier available on hover
+        # rather than in the primary row.
+        if self.state.scope_detail:
+            scope_pair.tooltip = f"Conversation id: {self.state.scope_detail}"
+        yield scope_pair
 
         if self.state.recovery_copy:
             yield self._static(
@@ -1036,11 +1053,18 @@ class ConsoleWorkspaceContextTray(Vertical):
                         )
                     continue
                 if section.rows:
+                    # Flat sections have no workspace group header. The Starred
+                    # section pins conversations from multiple workspaces, so the
+                    # workspace is the differentiator that keeps same-titled rows
+                    # distinguishable; the all-global Chats section does not need
+                    # it (Qodo #812).
+                    show_workspace = section.section_id == "starred"
                     for row in section.rows:
                         yield from self._compose_conversation_browser_row(
                             row,
                             row_index,
                             marks_available=browser.marks_available,
+                            show_workspace=show_workspace,
                         )
                         row_index += 1
                 elif section.empty_copy:
@@ -1115,8 +1139,14 @@ class ConsoleWorkspaceContextTray(Vertical):
         index: int,
         *,
         marks_available: bool,
+        show_workspace: bool = False,
     ) -> ComposeResult:
-        """Render one grouped browser row plus its local star control."""
+        """Render one grouped browser row plus its local star control.
+
+        ``show_workspace`` carries the owning workspace into the subtitle for rows
+        rendered without a workspace group header (the cross-workspace Starred
+        section), where it is the disambiguator (Qodo #812).
+        """
 
         with Horizontal(classes="console-conversation-browser-row-line"):
             budget = self._browser_title_budget()
@@ -1124,13 +1154,14 @@ class ConsoleWorkspaceContextTray(Vertical):
             name_lines = wrap_console_conversation_title(row.title, budget)
             status = self._conversation_status(row.status)
             detail = self._conversation_detail_status(row.status)
-            secondary_parts = [
-                part
-                for part in (row.workspace_label, detail, row.updated_label)
-                if str(part or "").strip()
-            ]
             secondary = truncate_console_row_cells(
-                " - ".join(secondary_parts) or "conversation", budget
+                self._conversation_row_secondary(
+                    detail,
+                    row.updated_label,
+                    workspace_label=row.workspace_label if show_workspace else "",
+                )
+                or "conversation",
+                budget,
             )
             status_suffix = f" [{status}]" if status else ""
             row_button = self._conversation_button(
@@ -1152,7 +1183,10 @@ class ConsoleWorkspaceContextTray(Vertical):
 
             star_disabled = not marks_available or not row.star_enabled
             star_button = Button(
-                "*" if row.starred else ".",
+                # TASK-357: a recognizable filled/hollow star pair — the old
+                # one-cell '*'/'.' distinction was nearly invisible and led to
+                # accidental silent toggles.
+                "★" if row.starred else "☆",
                 id=f"console-conversation-star-{index}",
                 classes="console-workspace-action console-conversation-star",
                 compact=True,
@@ -1176,6 +1210,9 @@ class ConsoleWorkspaceContextTray(Vertical):
             star_button.row_key = row.row_key
             star_button.conversation_id = row.conversation_id
             star_button.starred = row.starred
+            # TASK-357: carry the title so the press handler can confirm the
+            # toggle ("Starred <title>") instead of changing state silently.
+            star_button.conversation_title = row.title
             yield star_button
 
     def _workspace_selector_label(self) -> str:
@@ -1220,3 +1257,45 @@ class ConsoleWorkspaceContextTray(Vertical):
         Ctrl+K switcher never disagree on the same conversation's state.
         """
         return console_conversation_status_detail(status)
+
+    @staticmethod
+    def _conversation_row_secondary(
+        detail: str,
+        updated_label: str,
+        *,
+        workspace_label: str = "",
+    ) -> str:
+        """Compress the row's second line to just its differentiator.
+
+        TASK-374: the subtitle used to read ``<workspace> - saved chat - <age>``
+        on every row, so only the age differed and half the section's vertical
+        space carried no information. For a row under a workspace group header the
+        workspace is redundant and ``saved chat`` is the common default -- so keep
+        the age always and the state only when it is a non-default differentiator.
+
+        ``workspace_label`` is supplied only for rows rendered WITHOUT a workspace
+        group header -- the cross-workspace ``Starred`` section -- where the
+        workspace is itself the differentiator that keeps same-titled
+        conversations from different workspaces distinguishable (Qodo #812).
+
+        Args:
+            detail: The friendly state label from ``_conversation_detail_status``.
+            updated_label: The compact relative age (e.g. ``2d``).
+            workspace_label: The owning workspace, included as the leading
+                differentiator only for header-less sections; omitted otherwise.
+
+        Returns:
+            The age alone for a default saved grouped row, ``<workspace> - <age>``
+            for a starred cross-workspace row, ``<state> - <age>`` when the state
+            differentiates, or ``""`` when nothing is present.
+        """
+        parts = [
+            part
+            for part in (
+                workspace_label,
+                detail if detail and detail != CONSOLE_DEFAULT_CONVERSATION_DETAIL else "",
+                updated_label,
+            )
+            if str(part or "").strip()
+        ]
+        return " - ".join(parts)

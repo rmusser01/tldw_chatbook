@@ -73,7 +73,7 @@ ALL_TABS = [
 
 TAB_DISPLAY_LABELS = {
     TAB_CHAT: "Console",
-    TAB_CCP: "Personas",
+    TAB_CCP: "RP&CD",
     TAB_MEDIA: "Media",
     TAB_SEARCH: "Search",
     TAB_INGEST: "Ingest",
@@ -91,7 +91,7 @@ TAB_DISPLAY_LABELS = {
     TAB_HOME: "Home",
     TAB_LIBRARY: "Library",
     TAB_ARTIFACTS: "Artifacts",
-    TAB_PERSONAS: "Personas",
+    TAB_PERSONAS: "RP&CD",
     TAB_WATCHLISTS_COLLECTIONS: "Watchlists",
     TAB_SCHEDULES: "Schedules",
     TAB_WORKFLOWS: "Workflows",

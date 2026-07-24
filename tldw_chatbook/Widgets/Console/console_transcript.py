@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 from time import monotonic
 
@@ -15,6 +16,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content
 from textual.css.query import NoMatches
+from textual.dom import NoScreen
 from textual.events import Click, Key
 from textual.widget import Widget
 from textual.widgets import Button, Static
@@ -37,19 +39,33 @@ from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_QUIET_EMPTY_COPY,
     ConsoleSetupCardState,
 )
+from tldw_chatbook.Widgets.Console.console_generation_card import (
+    ConsoleGenerationCard,
+    ConsoleGenerationCardSpec,
+    generation_card_signature,
+)
 
 
 CONSOLE_TRANSCRIPT_RULE = "─" * 200
 CONSOLE_GENERATING_PLACEHOLDER = "Generating…"
+#: SP2 /rewind: render-derived (never a tree node) one-line banner shown above
+#: the boundary message when "summarize up to here" is in effect.
+CONSOLE_SUMMARY_BANNER_COPY = (
+    "⤵ Earlier turns summarized for context — full history above"
+)
 EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL = "Choose model"
 EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP = (
     "Choose the provider and model for this Console session."
 )
+# TASK-362 AC#2: the guide names the single-key shortcuts (j/k/c/e/r/Esc), which
+# were otherwise undiscoverable anywhere in the app, alongside the icon meanings.
 SELECTED_MESSAGE_ACTION_GUIDE = (
-    "Guide: ♻ Regenerate  ---> Continue  👍/👎 Rate  🗑 Delete"
+    "Guide: j/k select · c Copy · e Edit · r Regenerate ♻ · "
+    "---> Continue · 👍/👎 Rate · 🗑 Delete · Esc clear"
 )
 _ACTION_TOOLTIPS = {
     "copy": "Copy this message to the clipboard.",
+    "speak": "Speak this message aloud using text-to-speech.",
     "edit": "Edit this message before continuing the thread.",
     "save-as": "Choose a destination for this message, such as Chatbook or Note.",
     "toggle-image-view": "Cycle image view: pixels, graphics, hidden.",
@@ -62,6 +78,7 @@ _ACTION_TOOLTIPS = {
     "delete": "Delete this message from the Console transcript.",
     "variant-previous": "Show the previous regenerated variant.",
     "variant-next": "Show the next regenerated variant.",
+    "keep": "Keep the browsed variant as this message's canonical image.",
 }
 
 
@@ -167,6 +184,66 @@ def _message_attachment_chips(message: ConsoleChatMessage) -> list[str]:
     return chips
 
 
+#: Inline markdown handled in-transcript: **bold** and `code`. Matched as closed
+#: pairs only, so an unclosed marker mid-stream stays literal until it closes.
+_INLINE_MD_RE = re.compile(r"\*\*(.+?)\*\*|`([^`]+)`")
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
+
+
+def _inline_markdown_spans(line: str) -> list:
+    """Split one line into Content segments, styling **bold**/`code` inline.
+
+    Text is always emitted literally (styles are applied via ``(text, style)``
+    tuples, never markup parsing), so message text can never inject Rich markup.
+
+    Args:
+        line: A single raw text line.
+
+    Returns:
+        A list of ``str`` / ``(str, style)`` segments for ``Content.assemble``.
+    """
+    out: list = []
+    pos = 0
+    for match in _INLINE_MD_RE.finditer(line):
+        if match.start() > pos:
+            out.append(line[pos : match.start()])
+        if match.group(1) is not None:
+            out.append((match.group(1), "bold"))
+        else:
+            out.append((match.group(2), "italic"))
+        pos = match.end()
+    if pos < len(line):
+        out.append(line[pos:])
+    return out or [line]
+
+
+def _markdown_body_spans(body: str) -> list:
+    """Render a safe subset of markdown (headings, **bold**, `code`) to segments.
+
+    TASK-372: assistant replies arrive as markdown and were shown raw (literal
+    ``###`` / ``**`` / backticks). Headings render as bold underline with the
+    ``#`` markers stripped; inline bold/code render via
+    ``_inline_markdown_spans``. All styling goes through ``(text, style)`` tuples
+    so nothing in the message is markup-parsed.
+
+    Args:
+        body: The raw message body text.
+
+    Returns:
+        A list of ``str`` / ``(str, style)`` segments for ``Content.assemble``.
+    """
+    segments: list = []
+    for index, line in enumerate(body.split("\n")):
+        if index:
+            segments.append("\n")
+        heading = _HEADING_RE.match(line)
+        if heading:
+            segments.append((heading.group(2), "bold underline"))
+        else:
+            segments.extend(_inline_markdown_spans(line))
+    return segments
+
+
 def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Content:
     """Return the compact transcript row renderable for a message.
 
@@ -184,23 +261,34 @@ def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Cont
     ``self.app``.
     """
     role_label = _message_role_label(message)
+    if message.sibling_count > 1:
+        role_label = f"{role_label} ({message.sibling_index + 1}/{message.sibling_count})"
     body = _message_body(message)
     chips = _message_attachment_chips(message)
     if chips:
         chip_lines = "\n".join(chips)
         body = f"{body}\n{chip_lines}" if body else chip_lines
-    body_part: tuple[str, str] | str = body
     if _is_generating_placeholder_body(message, body):
-        body_part = (body, "dim")
-    if not selected and "\n" not in body and len(body) <= 120:
-        return Content.assemble((role_label, "dim"), "  ", body_part)
-    return Content.assemble((role_label, "dim"), "\n", body_part)
+        body_segments: list = [(body, "dim")]
+    elif message.role is ConsoleMessageRole.ASSISTANT:
+        # TASK-372: render assistant markdown (headings/**bold**/`code`) with
+        # terminal emphasis instead of literal marker characters. Only ASSISTANT
+        # replies are markdown -- USER input, SYSTEM diagnostics, and TOOL output
+        # stay verbatim, since their #/**/backtick characters may be literal and
+        # meaningful (Qodo #823).
+        body_segments = _markdown_body_spans(body)
+    else:
+        body_segments = [body]
+    separator = "  " if not selected and "\n" not in body and len(body) <= 120 else "\n"
+    return Content.assemble((role_label, "dim"), separator, *body_segments)
 
 
 @dataclass(frozen=True)
 class _TranscriptRow:
     key: str
-    kind: Literal["rule", "message", "image", "actions", "action-help", "empty"]
+    kind: Literal[
+        "rule", "banner", "message", "image", "generation-card", "actions", "action-help", "empty"
+    ]
     signature: tuple
     message: ConsoleChatMessage | None = None
     selected: bool = False
@@ -209,6 +297,7 @@ class _TranscriptRow:
     action_tooltip: str = EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP
     card_state: ConsoleSetupCardState | None = None
     image_spec: "ConsoleImageRowSpec | None" = None
+    generation_card_spec: "ConsoleGenerationCardSpec | None" = None
 
 
 class ConsoleTranscriptMessage(Static):
@@ -375,6 +464,43 @@ class ConsoleTranscriptEmptyPanel(Vertical):
         self.refresh(recompose=True)
 
 
+#: TASK-371: the "jump to latest" pill copy per run status. Absent statuses
+#: (idle, blocked) show no pill -- there is no streaming context to jump to.
+_JUMP_PILL_STREAMING = "▼ streaming below — jump to latest"
+_JUMP_PILL_STOPPED = "▼ stopped — jump to latest"
+_JUMP_PILL_READY = "▼ reply ready — jump to latest"
+_JUMP_PILL_TEXT: Mapping[str, str] = {
+    "validating": _JUMP_PILL_STREAMING,
+    "retrying": _JUMP_PILL_STREAMING,
+    "streaming": _JUMP_PILL_STREAMING,
+    "stopped": _JUMP_PILL_STOPPED,
+    "failed": _JUMP_PILL_STOPPED,
+    "completed": _JUMP_PILL_READY,
+}
+
+
+class ConsoleTranscriptJumpPill(Static):
+    """Clickable 'jump to latest' pill shown while scrolled up during a run.
+
+    TASK-371: when the reader scrolls off the bottom while a reply streams in,
+    the content grows below the fold with no signal. This pill sits docked at the
+    transcript bottom, states whether the run is streaming / stopped / ready, and
+    on click re-attaches follow and jumps to the newest content.
+    """
+
+    def on_click(self, event: Click) -> None:
+        """Jump the parent transcript to its newest content.
+
+        Args:
+            event: The click event; stopped so it doesn't bubble to the
+                transcript's message-selection handler.
+        """
+        event.stop()
+        transcript = self.parent
+        if isinstance(transcript, ConsoleTranscript):
+            transcript.jump_to_latest()
+
+
 class ConsoleTranscript(VerticalScroll):
     """Focusable native Console transcript with compact rule-separated messages."""
 
@@ -396,6 +522,7 @@ class ConsoleTranscript(VerticalScroll):
         "console-transcript-empty-body",
         "console-transcript-empty-state",
         "console-transcript-rule",
+        "console-transcript-summary-banner",
         # Textual scrollbars carry the generic system-widget class; ignore them
         # defensively if a scrollbar click ever bubbles up to the transcript.
         "-textual-system",
@@ -409,6 +536,12 @@ class ConsoleTranscript(VerticalScroll):
         super().__init__(**kwargs)
         self._messages: list[ConsoleChatMessage] = []
         self.selected_message_id: str | None = None
+        #: SP2 /rewind: native id of the "summarize up to here" boundary message.
+        #: Render-derived only -- a banner row is emitted above this message when
+        #: it is among the rendered messages; ``None`` (or a dangling id) shows
+        #: no banner. Set by the screen sync path from
+        #: ``store.session_context_summary``; never mutates store/tree state.
+        self.summary_boundary_message_id: str | None = None
         self._follow_intent_time = 0.0
         self._user_scroll_time = 0.0
         self._refresh_lock = asyncio.Lock()
@@ -421,6 +554,7 @@ class ConsoleTranscript(VerticalScroll):
         self._row_signatures: dict[str, tuple] = {}
         self._row_build_counts: dict[str, int] = {}
         self._image_specs: dict[str, ConsoleImageRowSpec] = {}
+        self._generation_card_specs: dict[str, ConsoleGenerationCardSpec] = {}
         # TASK-259: per-message render-signature cache. Maps message id ->
         # (cheap change-token, expensive row signature). `_transcript_rows`
         # re-derives the render payload (Content assembly) only when the
@@ -434,6 +568,12 @@ class ConsoleTranscript(VerticalScroll):
         # appends USER + ASSISTANT placeholder together, so the tail
         # alone can miss the send (PR #697 review).
         self._seen_message_ids: set[str] = set()
+        #: TASK-371: last run status seen by `sync_jump_indicator`, so a scroll
+        #: that detaches the reader can refresh the pill without a status source.
+        self._last_run_status = "idle"
+        #: Last-applied (visible, text) pill state; lets the 0.2s streaming sync
+        #: tick skip the query_one + update when nothing changed (Qodo #826).
+        self._jump_pill_state: tuple[bool, str] | None = None
 
     def on_mount(self) -> None:
         """Engage tail-follow: stay scrolled to the newest content.
@@ -454,6 +594,18 @@ class ConsoleTranscript(VerticalScroll):
             self._row_widgets[row.key] = widget
             self._row_signatures[row.key] = row.signature
             yield widget
+        # TASK-371: docked (non-scrolling) jump-to-latest pill; hidden until
+        # `sync_jump_indicator` shows it while the reader is scrolled up.
+        pill = ConsoleTranscriptJumpPill(
+            "",
+            id="console-transcript-jump-pill",
+            classes="console-transcript-jump-pill",
+        )
+        pill.display = False
+        # The fresh pill starts hidden; drop the applied-state cache so the next
+        # sync re-applies to this new widget (recompose creates a new pill).
+        self._jump_pill_state = None
+        yield pill
 
     @property
     def allow_vertical_scroll(self) -> bool:
@@ -474,6 +626,52 @@ class ConsoleTranscript(VerticalScroll):
         if self._messages:
             return True
         return super().allow_vertical_scroll
+
+    def _is_following_tail(self) -> bool:
+        """Return True when the view is pinned to the newest content."""
+        return bool(self.is_anchored and not getattr(self, "_anchor_released", False))
+
+    def sync_jump_indicator(self, run_status: str) -> None:
+        """Show/hide the jump-to-latest pill for the current run + scroll state.
+
+        TASK-371: while the reader is detached from the bottom during (or just
+        after) a run, a docked pill reports whether the reply is streaming,
+        stopped, or ready and offers a one-click jump to the newest content. It
+        stays hidden while following the tail or when no run is in play.
+
+        Args:
+            run_status: The current Console run status value (e.g. ``streaming``).
+        """
+        self._last_run_status = run_status
+        text = _JUMP_PILL_TEXT.get(run_status, "")
+        visible = bool(text and self._messages and not self._is_following_tail())
+        target = (visible, text if visible else "")
+        # Called on every 0.2s streaming sync tick -- skip the query_one + update
+        # when the effective state is unchanged (the common steady-stream case).
+        if target == self._jump_pill_state:
+            return
+        try:
+            pill = self.query_one(
+                "#console-transcript-jump-pill", ConsoleTranscriptJumpPill
+            )
+        except NoMatches:
+            return
+        if visible:
+            pill.update(text)
+        pill.display = visible
+        self._jump_pill_state = target
+
+    def jump_to_latest(self) -> None:
+        """Re-engage tail-follow, scroll to the newest content, and hide the pill."""
+        self.anchor()
+        self.scroll_end(animate=False)
+        try:
+            self.query_one(
+                "#console-transcript-jump-pill", ConsoleTranscriptJumpPill
+            ).display = False
+        except NoMatches:
+            pass
+        self._jump_pill_state = (False, "")
 
     def note_follow_intent(self) -> None:
         """Record a programmatic jump-to-tail intent (send/resume/switch).
@@ -496,6 +694,9 @@ class ConsoleTranscript(VerticalScroll):
         """
         self._user_scroll_time = monotonic()
         super().release_anchor()
+        # TASK-371: surface the jump pill the moment the reader detaches, rather
+        # than waiting for the next 0.2s sync tick.
+        self.sync_jump_indicator(self._last_run_status)
 
     def set_messages(self, messages: Iterable[ConsoleChatMessage]) -> None:
         """Replace transcript messages and refresh mounted rows when possible.
@@ -548,6 +749,32 @@ class ConsoleTranscript(VerticalScroll):
                 hidden mode, unprepared cache, and metadata-only messages).
         """
         self._image_specs = dict(specs)
+
+    def set_generation_card_specs(
+        self, specs: Mapping[str, ConsoleGenerationCardSpec]
+    ) -> None:
+        """Replace the prebuilt image-generation card row payloads keyed by message ID.
+
+        Args:
+            specs: Mapping of message ID to its prepared generation-card
+                payload. A message id present here renders a
+                ``"generation-card"`` row INSTEAD of any ``"image"`` row
+                for that same message (mutually exclusive per message id --
+                see ``_transcript_rows``). Messages absent from the mapping
+                render no card row (covers non-generation messages and a
+                generation message in hidden view mode).
+        """
+        self._generation_card_specs = dict(specs)
+
+    def set_summary_boundary(self, message_id: str | None) -> None:
+        """Set the `/rewind` summary boundary message id for the banner.
+
+        The banner is render-derived: ``_transcript_rows`` emits it above the
+        matching message when it is present. Refresh is driven by the screen's
+        sync path (which folds this id into its refresh key), matching
+        ``set_image_specs``; standalone callers/tests refresh explicitly.
+        """
+        self.summary_boundary_message_id = message_id
 
     def sync_empty_state(
         self,
@@ -652,9 +879,11 @@ class ConsoleTranscript(VerticalScroll):
         rule = "─" * max(1, width)
         lines: list[str] = []
         for message in self._messages:
+            lines.append(rule)
+            if message.id == self.summary_boundary_message_id:
+                lines.append(CONSOLE_SUMMARY_BANNER_COPY)
             lines.extend(
                 [
-                    rule,
                     _message_role_label(message),
                     _message_body(message),
                 ]
@@ -808,6 +1037,15 @@ class ConsoleTranscript(VerticalScroll):
                     renderable=CONSOLE_TRANSCRIPT_RULE,
                 )
             )
+            if message.id == self.summary_boundary_message_id:
+                rows.append(
+                    _TranscriptRow(
+                        key=f"summary-banner:{message.id}",
+                        kind="banner",
+                        signature=("banner", message.id),
+                        renderable=CONSOLE_SUMMARY_BANNER_COPY,
+                    )
+                )
             rows.append(
                 _TranscriptRow(
                     key=f"message:{message.id}",
@@ -819,17 +1057,31 @@ class ConsoleTranscript(VerticalScroll):
                     selected=selected,
                 )
             )
-            image_spec = self._image_specs.get(message.id)
-            if image_spec is not None:
+            card_spec = self._generation_card_specs.get(message.id)
+            if card_spec is not None:
+                # A generation-card message renders the card row INSTEAD of
+                # the plain image row -- mutually exclusive per message id.
                 rows.append(
                     _TranscriptRow(
-                        key=f"image:{message.id}",
-                        kind="image",
-                        signature=("image", message.id, image_spec.mode),
+                        key=f"generation-card:{message.id}",
+                        kind="generation-card",
+                        signature=generation_card_signature(card_spec),
                         message=message,
-                        image_spec=image_spec,
+                        generation_card_spec=card_spec,
                     )
                 )
+            else:
+                image_spec = self._image_specs.get(message.id)
+                if image_spec is not None:
+                    rows.append(
+                        _TranscriptRow(
+                            key=f"image:{message.id}",
+                            kind="image",
+                            signature=("image", message.id, image_spec.mode),
+                            message=message,
+                            image_spec=image_spec,
+                        )
+                    )
             if selected:
                 rows.append(
                     _TranscriptRow(
@@ -953,6 +1205,12 @@ class ConsoleTranscript(VerticalScroll):
                 row.renderable,
                 classes="console-transcript-rule",
             )
+        if row.kind == "banner":
+            # Non-interactive, render-derived summary banner (never a tree node).
+            return Static(
+                row.renderable,
+                classes="console-transcript-summary-banner",
+            )
         if row.kind == "empty":
             assert row.card_state is not None
             return ConsoleTranscriptEmptyPanel(
@@ -970,6 +1228,8 @@ class ConsoleTranscript(VerticalScroll):
             return ConsoleTranscriptMessage(row.message, selected=row.selected)
         if row.kind == "image" and row.image_spec is not None:
             return self._image_row_widget(row.image_spec)
+        if row.kind == "generation-card" and row.generation_card_spec is not None:
+            return ConsoleGenerationCard(row.generation_card_spec)
         if row.kind == "actions" and row.message is not None:
             return self._action_row(row.message)
         raise ValueError(f"Unsupported transcript row: {row}")
@@ -1136,10 +1396,49 @@ class ConsoleTranscript(VerticalScroll):
             variants_signature,
         )
 
-    @staticmethod
-    def _action_row_signature(message: ConsoleChatMessage) -> tuple:
+    def _generation_browsed_index(self, message_id: str, variant_count: int) -> int:
+        """Return the screen's ephemeral browsed-variant index for ``message_id``.
+
+        Reads directly off the owning screen's ``_generation_browse`` map
+        (the same ephemeral, never-persisted state ``ChatScreen`` uses to
+        build ``ConsoleGenerationCardSpec``s) rather than the card-spec map
+        this widget also holds, since a card spec can be absent for a
+        message currently in "hidden" view mode while the action row (and
+        its `<`/`>`/Keep gating) still needs the real browsed index. Falls
+        back to 0 -- the canonical variant -- when unmounted (bare
+        unit-construction in tests) or the screen hasn't created its browse
+        map yet, both of which correctly describe "nothing browsed".
+        """
+        try:
+            browse = getattr(self.screen, "_generation_browse", None)
+        except NoScreen:
+            browse = None
+        browsed_index = (browse or {}).get(message_id, 0)
+        if not (0 <= browsed_index < variant_count):
+            return 0
+        return browsed_index
+
+    def _generation_action_kwargs(self, message: ConsoleChatMessage) -> dict[str, int]:
+        """Return the ``available_actions()`` generation kwargs for ``message``.
+
+        Empty for a non-generation message, so ``available_actions(message)``
+        sees its old, un-keyworded call shape unchanged (regression guard).
+        """
+        variant_count = len(message.generation_metadata)
+        if variant_count == 0:
+            return {}
+        return {
+            "generation_variant_count": variant_count,
+            "generation_browsed_index": self._generation_browsed_index(
+                message.id, variant_count
+            ),
+        }
+
+    def _action_row_signature(self, message: ConsoleChatMessage) -> tuple:
         actions = []
-        for action in ConsoleMessageActionService().available_actions(message):
+        for action in ConsoleMessageActionService().available_actions(
+            message, **self._generation_action_kwargs(message)
+        ):
             if action.action_id == "feedback":
                 actions.append(("feedback-up", "👍", True, ""))
                 actions.append(("feedback-down", "👎", True, ""))
@@ -1156,7 +1455,9 @@ class ConsoleTranscript(VerticalScroll):
 
     def _action_row(self, message: ConsoleChatMessage) -> Horizontal:
         buttons: list[Button] = []
-        for action in ConsoleMessageActionService().available_actions(message):
+        for action in ConsoleMessageActionService().available_actions(
+            message, **self._generation_action_kwargs(message)
+        ):
             if action.action_id == "feedback":
                 buttons.append(
                     self._action_button(

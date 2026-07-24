@@ -1,8 +1,9 @@
 ---
 id: TASK-383
 title: Fix the Model header chip degenerating into an empty select on click
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
 labels: [console, ux]
 dependencies: []
@@ -23,5 +24,22 @@ The header chips look like static status text, but clicking 'Model: local-gemma'
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Either chips are static status (then they should not react at all), or they are controls (then they need a visible affordance and a well-formed popover that doesn't occlude the action strip). Half-interactive chips that open a degenerate one-item dropdown confuse both readings
+- [x] #1 Either chips are static status (then they should not react at all), or they are controls (then they need a visible affordance and a well-formed popover that doesn't occlude the action strip). Half-interactive chips that open a degenerate one-item dropdown confuse both readings
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Served-app-reproduced: clicking the "Model: local-gemma" status chip focused it
+and it rendered as an empty bordered box (row: "Provider: Llama_cpp  ┌──────────┐
+Assistant:") with the label gone. ROOT CAUSE = the global
+`*:focus { outline: solid $ds-focus-accent }` accessibility fallback OVERLAYS a
+box onto the height-1 chip (outline draws over the content area, not reserving
+space), so on a 1-row widget the box glyphs replace the label. The chip's own
+`.console-control-chip:focus` already gives a NON-obscuring cue (high-contrast
+$ds-focus-bg/$ds-focus-fg + bold underline), so the fix adds `outline: none` there
+to suppress the destructive overlay. Served-app-VERIFIED: the focused chip now
+shows "Model: local-gemma" with focus-fg + underline (cell-attr scan) instead of
+an empty box. CSS-source contract test + `test_non_obscuring_focus_contract` (106)
+still green (the chip keeps a compliant non-obscuring focus).
+<!-- SECTION:NOTES:END -->

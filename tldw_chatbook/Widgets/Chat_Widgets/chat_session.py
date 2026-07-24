@@ -241,7 +241,7 @@ class ChatSession(Container):
             "No messages yet. Send a prompt or attach context.\n"
             "Event stream ready. Start with a command or attach sources.\n"
             f"{provider_line}\n"
-            "Context lanes: Library, Search/RAG, Artifacts, Personas, Skills."
+            "Context lanes: Library, Search/RAG, Artifacts, RP&CD, Skills."
         )
 
     async def handle_send_stop_button(self, event):

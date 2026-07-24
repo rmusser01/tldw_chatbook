@@ -41,6 +41,12 @@ _CONSOLE_CONVERSATION_STATUS_DETAIL = {
     "open": "open session",
 }
 
+#: The default state a persisted-but-not-open conversation reports. Rows in this
+#: state are the common case, so the rail suppresses it from the per-row subtitle
+#: (TASK-374) -- only a non-default state ("active session"/"open session") is a
+#: differentiator worth the vertical space.
+CONSOLE_DEFAULT_CONVERSATION_DETAIL = "saved chat"
+
 
 def console_conversation_status_detail(status: str) -> str:
     """Return the shared friendly state label for a conversation row status.

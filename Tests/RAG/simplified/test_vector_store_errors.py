@@ -6,7 +6,7 @@ Tests error handling, dimension mismatches, and recovery scenarios.
 
 import pytest
 import numpy as np
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 import tempfile
 
 from tldw_chatbook.RAG_Search.simplified.vector_store import (
@@ -94,6 +94,19 @@ class TestVectorStoreDimensionErrors:
 
 class TestChromaVectorStoreErrors:
     """Test error handling specific to ChromaVectorStore."""
+
+    def test_close_releases_underlying_chroma_client(self, tmp_path):
+        """Test that closing the store releases Chroma's SQLite resources."""
+        store = ChromaVectorStore(persist_directory=str(tmp_path))
+        client = MagicMock()
+        store._client = client
+        store._collection = MagicMock()
+
+        store.close()
+
+        client.close.assert_called_once_with()
+        assert store._client is None
+        assert store._collection is None
 
     def test_chroma_connection_failure(self):
         """Test handling of ChromaDB connection failures."""

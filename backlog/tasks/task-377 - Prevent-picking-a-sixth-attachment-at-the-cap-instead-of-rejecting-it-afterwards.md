@@ -1,8 +1,9 @@
 ---
 id: TASK-377
 title: Prevent picking a sixth attachment at the cap instead of rejecting it afterwards
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
 labels: [console, ux]
 dependencies: []
@@ -23,5 +24,18 @@ With 5 images staged, the attach button still opened the full file picker; I nav
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Disable or annotate the attach affordance at the cap ('5/5'), or block inside the picker before file selection, so the user never does dead work
+- [x] #1 Disable or annotate the attach affordance at the cap ('5/5'), or block inside the picker before file selection, so the user never does dead work
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Pre-picker cap gate: `_handle_console_attach_context` now checks the active
+session's pending count against `MAX_PENDING_ATTACHMENTS` BEFORE opening the file
+picker. At the cap it notifies "Attachment limit reached (5 per message). Remove
+one to attach another." and returns, so the user never navigates + selects a sixth
+file only to have it rejected by a toast after a full picker round-trip. Uses the
+None-safe `store.active_session_id` so clicking Attach with no session yet still
+opens the picker (count 0). Two harness tests bracket the boundary: at-cap blocks
+(picker not pushed, cap notified) and below-cap still opens.
+<!-- SECTION:NOTES:END -->

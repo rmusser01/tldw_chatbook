@@ -1,8 +1,9 @@
 ---
 id: TASK-380
 title: Keep the Attach affordance labeled after staging instead of morphing to unlabeled icons
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
 labels: [console, ux]
 dependencies: []
@@ -23,5 +24,18 @@ Idle composer shows 'Send  Attach  Save'. Once anything is staged the middle but
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Keep the verb label ('Attach' or 'Attach more (1/5)') and give the clear control an explicit label or count-accurate tooltip
+- [x] #1 Keep the verb label ('Attach' or 'Attach more (1/5)') and give the clear control an explicit label or count-accurate tooltip
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Staging no longer morphs the Attach button into the status glyph "📎✓" (which read
+as "attached OK", not a control). It keeps the action verb ("Attach +") and the
+tooltips are now count-accurate now that staging appends up to 5 (task-217):
+attach tooltip "Attach another file (N of 5 staged)." and the clear (✕) control
+"Clear all N attachments." / "Clear the attachment." `set_pending_attachment_label`
+gained `count`/`total` params (default 0 = generic copy, backward compatible),
+supplied by `_sync_console_composer_action_state` from `len(pendings)` +
+MAX_PENDING_ATTACHMENTS. Harness test asserts the verb survives + count tooltips.
+<!-- SECTION:NOTES:END -->

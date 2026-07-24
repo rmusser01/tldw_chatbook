@@ -18,12 +18,13 @@ chardet
 toml
 tomli
 rich
-textual
+textual>=8.0.0,<9
 psutil
 requests
 pillow
 loguru
 pydantic
+portalocker==3.2.0
 pyyaml
 httpx
 emoji

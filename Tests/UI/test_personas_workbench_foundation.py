@@ -36,36 +36,36 @@ def test_personas_workbench_mode_switch_clears_selection_and_dirty_state():
         status_message="Editing Ada",
     )
 
-    state.switch_mode("personas")
+    state.switch_mode("user_profiles")
 
-    assert state.active_mode == "personas"
+    assert state.active_mode == "user_profiles"
     assert state.selected_entity_kind is None
     assert state.selected_entity_id is None
     assert state.selected_runtime_target is None
     assert state.has_unsaved_changes is False
-    assert state.status_message == "Mode: Personas"
+    assert state.status_message == "Mode: User Profiles"
 
 
 def test_personas_workbench_selection_builds_console_target_metadata():
     state = PersonasWorkbenchState()
 
     state.select_entity(
-        entity_kind="persona_profile",
+        entity_kind="user_profile",
         entity_id="persona.local.researcher",
         entity_name="Researcher",
     )
 
-    assert state.selected_entity_kind == "persona_profile"
+    assert state.selected_entity_kind == "user_profile"
     assert state.selected_entity_id == "persona.local.researcher"
     assert (
         state.selected_runtime_target
-        == "local:persona_profile:persona.local.researcher"
+        == "local:user_profile:persona.local.researcher"
     )
     assert state.selected_metadata() == {
-        "selected_kind": "persona_profile",
+        "selected_kind": "user_profile",
         "selected_record_id": "persona.local.researcher",
         "selected_name": "Researcher",
-        "selected_target_id": "local:persona_profile:persona.local.researcher",
+        "selected_target_id": "local:user_profile:persona.local.researcher",
     }
 
 

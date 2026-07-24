@@ -24,7 +24,7 @@ def _now_iso() -> str:
 class AgentRunsDB(BaseDB):
     """Run records for the agent runtime (vertical-slice spec data model)."""
 
-    _CURRENT_SCHEMA_VERSION = 1
+    _CURRENT_SCHEMA_VERSION = 2
 
     def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
         super().__init__(db_path, client_id)
@@ -84,7 +84,7 @@ class AgentRunsDB(BaseDB):
                 CREATE TABLE IF NOT EXISTS schema_version (
                     version INTEGER PRIMARY KEY NOT NULL
                 );
-                INSERT OR IGNORE INTO schema_version (version) VALUES (1);
+                INSERT OR IGNORE INTO schema_version (version) VALUES (2);
 
                 CREATE TABLE IF NOT EXISTS agent_runs (
                     id TEXT PRIMARY KEY,
@@ -97,7 +97,8 @@ class AgentRunsDB(BaseDB):
                     result TEXT,
                     budget TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    assistant_message_id TEXT
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_agent_runs_conversation
@@ -106,6 +107,19 @@ class AgentRunsDB(BaseDB):
                     ON agent_runs(parent_run_id);
                 """
             )
+            # v1->v2: this DB has no migration framework -- _initialize_schema
+            # only runs CREATE TABLE IF NOT EXISTS, so a file created before
+            # assistant_message_id existed keeps its old 11-column table and
+            # never picks up the new one from the DDL above. Guard against
+            # that with an idempotent ALTER TABLE, run on every open.
+            existing_columns = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(agent_runs)").fetchall()
+            }
+            if "assistant_message_id" not in existing_columns:
+                conn.execute(
+                    "ALTER TABLE agent_runs ADD COLUMN assistant_message_id TEXT"
+                )
 
     @staticmethod
     def _row_to_dict(row: sqlite3.Row) -> dict:
@@ -122,6 +136,7 @@ class AgentRunsDB(BaseDB):
         task: str | None = None,
         parent_run_id: str | None = None,
         budget: dict | None = None,
+        assistant_message_id: str | None = None,
     ) -> str:
         """Create a new run record in ``running`` status.
 
@@ -133,6 +148,11 @@ class AgentRunsDB(BaseDB):
                 for a primary run.
             budget: The run's ``RunBudget`` serialized to a dict, stored
                 as JSON for later inspection; ``None`` if not recorded.
+            assistant_message_id: The persisted id of the assistant reply
+                this run produced, if already known at creation time;
+                ``None`` (the common case) when it will be recorded later
+                via ``set_run_assistant_message_id`` once the reply is
+                persisted.
 
         Returns:
             The newly created run's id (a hex UUID4).
@@ -143,8 +163,9 @@ class AgentRunsDB(BaseDB):
             conn.execute(
                 """INSERT INTO agent_runs
                    (id, conversation_id, parent_run_id, agent_kind, task,
-                    status, steps, result, budget, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?)""",
+                    status, steps, result, budget, created_at, updated_at,
+                    assistant_message_id)
+                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?)""",
                 (
                     run_id,
                     conversation_id,
@@ -154,6 +175,7 @@ class AgentRunsDB(BaseDB):
                     json.dumps(budget) if budget is not None else None,
                     now,
                     now,
+                    assistant_message_id,
                 ),
             )
         return run_id
@@ -199,6 +221,24 @@ class AgentRunsDB(BaseDB):
                 "UPDATE agent_runs SET status = ?, "
                 "result = COALESCE(?, result), updated_at = ? WHERE id = ?",
                 (status, result, _now_iso(), run_id),
+            )
+
+    def set_run_assistant_message_id(
+        self, run_id: str, assistant_message_id: str | None
+    ) -> None:
+        """Record the persisted id of the assistant reply a run produced.
+
+        Args:
+            run_id: The run to update.
+            assistant_message_id: The persisted message id of the
+                assistant reply this run produced; ``None`` clears a
+                previously recorded id.
+        """
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE agent_runs SET assistant_message_id = ?, "
+                "updated_at = ? WHERE id = ?",
+                (assistant_message_id, _now_iso(), run_id),
             )
 
     def get_run(self, run_id: str) -> dict | None:

@@ -1,8 +1,9 @@
 ---
 id: TASK-363
 title: Raise the salience of settings-modal save validation errors
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
 labels: [console, ux]
 dependencies: []
@@ -23,5 +24,21 @@ Clicking Save with an empty Temperature keeps the modal open and prints 'Tempera
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Errors should be visually distinct (color/bold/inverse) and anchored at or near the offending field (or the field marked invalid), so the user understands why Save 'did nothing' in a modal taller than one screenful of attention
+- [x] #1 Errors should be visually distinct (color/bold/inverse) and anchored at or near the offending field (or the field marked invalid), so the user understands why Save 'did nothing' in a modal taller than one screenful of attention
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Three changes to `console_settings_modal.py`. (1) Salience: the validation
+summary was near-body-text ($ds-status-error 10% / primary text) in the bundle;
+added a scoped `ConsoleSettingsModal .console-settings-error` rule to the modal
+DEFAULT_CSS (bold, $text-error colour, $error 25% fill, thick $error border-left)
+— DEFAULT_CSS uses Textual's built-in $error/$text-error (not the bundle-only
+$ds-* tokens) so it resolves in the pilot harness too. (2) Not stale: a broad
+`@on(Input.Changed)`/`@on(Select.Changed)` handler clears the summary the moment
+any field is edited (it previously only refreshed on the next Save). (3) Anchor:
+a failed Save now scrolls the summary into view so it isn't above the fold in a
+taller-than-viewport modal. RED->GREEN tests (clears-on-edit; bold styling); 129
+settings-modal tests green.
+<!-- SECTION:NOTES:END -->

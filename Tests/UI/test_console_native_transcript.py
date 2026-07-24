@@ -11,6 +11,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleVariantSet,
+    GenerationVariantMeta,
     MessageAttachment,
 )
 from tldw_chatbook.Chat.console_message_actions import (
@@ -49,6 +50,65 @@ class EmptyTranscriptHarness(App):
 class MutableTranscriptHarness(App):
     def compose(self) -> ComposeResult:
         yield ConsoleTranscript(id="console-native-transcript")
+
+
+def _generation_message(*, variant_count: int, message_id: str = "gen-1"):
+    """Build a message shaped like ``ConsoleChatStore.append_generation_message``'s output."""
+    attachments = tuple(
+        MessageAttachment(
+            data=f"img{index}".encode(),
+            mime_type="image/png",
+            display_name="",
+            position=index,
+        )
+        for index in range(variant_count)
+    )
+    meta = GenerationVariantMeta(
+        prompt="a red dragon",
+        negative_prompt="blurry",
+        backend="swarmui",
+        model=None,
+        seed=42,
+        style=None,
+        params={},
+    )
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="[image] a red dragon",
+        id=message_id,
+    )
+    message.attachments = attachments
+    message.generation_metadata = tuple(meta for _ in range(variant_count))
+    message.image_data = attachments[0].data
+    message.image_mime_type = attachments[0].mime_type
+    return message
+
+
+class GenerationActionRowHarness(App):
+    """Mount one selected generation message, optionally pre-browsed.
+
+    ``on_mount`` stamps ``_generation_browse`` directly onto ``self.screen``
+    (the App's own default screen here, not a real ``ChatScreen`` -- Task 8's
+    ``ConsoleTranscript._generation_browsed_index`` only ever reads the
+    attribute via ``getattr``, so any screen-like object works) BEFORE
+    selecting the message, so the very first action-row build already sees
+    the browsed index.
+    """
+
+    def __init__(self, message: ConsoleChatMessage, *, browsed_index: int = 0) -> None:
+        super().__init__()
+        self._message = message
+        self._browsed_index = browsed_index
+
+    def compose(self) -> ComposeResult:
+        yield ConsoleTranscript(id="console-native-transcript")
+
+    def on_mount(self) -> None:
+        transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_messages([self._message])
+        if self._browsed_index:
+            self.screen._generation_browse = {self._message.id: self._browsed_index}
+        transcript.select_message(self._message.id)
 
 
 class SaveAsModalHarness(App):
@@ -295,7 +355,7 @@ def test_console_transcript_selected_message_shows_action_row():
 
     plain = transcript.to_plain_text(width=80)
 
-    assert "Copy Edit Save as... ♻ ---> 👍 👎 🗑" in plain
+    assert "Copy 🔊 Edit Save as... ♻ ---> 👍 👎 🗑" in plain
     assert "|" not in plain
 
 
@@ -352,7 +412,7 @@ def test_console_transcript_action_row_stays_within_terminal_width_budget():
         if line.startswith("Copy")
     )
 
-    assert action_row == "Copy Edit Save as... ♻ ---> 👍 👎 🗑"
+    assert action_row == "Copy 🔊 Edit Save as... ♻ ---> 👍 👎 🗑"
     assert len(action_row) <= 48
 
 
@@ -366,13 +426,24 @@ def test_console_transcript_selected_message_explains_icon_actions():
 
     rendered = transcript.to_plain_text(width=80)
 
-    assert "Copy Edit Save as... ♻ ---> 👍 👎 🗑" in rendered
-    assert "Guide: ♻ Regenerate  ---> Continue  👍/👎 Rate  🗑 Delete" in rendered
+    assert "Copy 🔊 Edit Save as... ♻ ---> 👍 👎 🗑" in rendered
+    # TASK-362 AC#2: the guide names the single-key shortcuts, not just icons.
+    assert "Guide:" in rendered
+    assert "c Copy" in rendered and "e Edit" in rendered and "r Regenerate" in rendered
+    assert "j/k select" in rendered
 
 
 def test_console_transcript_variant_navigation_changes_displayed_content():
     message = ConsoleChatMessage(
-        role=ConsoleMessageRole.ASSISTANT, content="first", id="m1"
+        role=ConsoleMessageRole.ASSISTANT,
+        content="first",
+        id="m1",
+        # TASK-7: the `<`/`>` action row is now gated on sibling_count (a
+        # forked-branch read model), not on `.variants` -- this message
+        # still carries a `ConsoleVariantSet` below purely to exercise the
+        # (retired, test-only) in-message content cycling the assertions
+        # check; the action row's own visibility needs sibling_count > 1.
+        sibling_count=2,
     )
     message.variants = ConsoleVariantSet.from_contents(
         turn_id="turn-1",
@@ -395,11 +466,10 @@ def test_console_transcript_variant_navigation_changes_displayed_content():
 
 def test_console_transcript_variant_action_row_stays_within_terminal_width_budget():
     message = ConsoleChatMessage(
-        role=ConsoleMessageRole.ASSISTANT, content="first", id="m1"
-    )
-    message.variants = ConsoleVariantSet.from_contents(
-        turn_id="turn-1",
-        contents=["first", "second"],
+        role=ConsoleMessageRole.ASSISTANT,
+        content="first",
+        id="m1",
+        sibling_count=2,
     )
     transcript = ConsoleTranscript()
     transcript.set_messages([message])
@@ -411,7 +481,7 @@ def test_console_transcript_variant_action_row_stays_within_terminal_width_budge
         if line.startswith("Copy")
     )
 
-    assert action_row == "Copy Edit Save as... < > ♻ ---> 👍 👎 🗑"
+    assert action_row == "Copy 🔊 Edit Save as... < > ♻ ---> 👍 👎 🗑"
     assert len(action_row) <= 52
 
 
@@ -469,7 +539,7 @@ async def test_console_transcript_click_selects_message_and_shows_actions():
     assert "👍" in text
     assert "👎" in text
     assert "🗑" in text
-    assert "Guide: ♻ Regenerate" in text
+    assert "Guide:" in text and "r Regenerate" in text
     assert "|" not in text
 
 
@@ -616,6 +686,70 @@ async def test_console_transcript_action_buttons_have_stable_ids():
     assert "👎" in text
     assert "🗑" in text
     assert "|" not in text
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_generation_message_action_row_hides_keep_at_browsed_zero():
+    """A generation message's mounted action row: `<`/`>` visible+gated by
+    the GENERATION browsed index, "keep" absent while browsed at 0 --
+    proves the transcript's real `self.screen`-sourced wiring, not just the
+    pure action-service gating already covered elsewhere."""
+    message = _generation_message(variant_count=3)
+    app = GenerationActionRowHarness(message, browsed_index=0)
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await _wait_for_selector(
+            app, pilot, f"#console-message-action-variant-previous-{message.id}"
+        )
+        previous_button = app.query_one(
+            f"#console-message-action-variant-previous-{message.id}"
+        )
+        next_button = app.query_one(
+            f"#console-message-action-variant-next-{message.id}"
+        )
+        keep_buttons = app.query(f"#console-message-action-keep-{message.id}")
+
+    assert previous_button.disabled is True  # browsed index 0 -- no "previous"
+    assert next_button.disabled is False
+    assert len(keep_buttons) == 0
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_generation_message_action_row_shows_keep_when_browsed():
+    """Browsed away from the canonical (position 0) variant: "keep" appears,
+    and `<`/`>` enable state reflects the NEW browsed index."""
+    message = _generation_message(variant_count=3)
+    app = GenerationActionRowHarness(message, browsed_index=2)
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await _wait_for_selector(
+            app, pilot, f"#console-message-action-keep-{message.id}"
+        )
+        previous_button = app.query_one(
+            f"#console-message-action-variant-previous-{message.id}"
+        )
+        next_button = app.query_one(
+            f"#console-message-action-variant-next-{message.id}"
+        )
+
+    assert previous_button.disabled is False
+    assert next_button.disabled is True  # browsed index 2 == last of 3
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_single_variant_generation_message_hides_nav_and_keep():
+    message = _generation_message(variant_count=1)
+    app = GenerationActionRowHarness(message, browsed_index=0)
+
+    async with app.run_test(size=(100, 32)) as pilot:
+        await _wait_for_selector(app, pilot, f"#console-message-action-regenerate-{message.id}")
+        nav_buttons = app.query(
+            f"#console-message-action-variant-previous-{message.id}"
+        )
+        keep_buttons = app.query(f"#console-message-action-keep-{message.id}")
+
+    assert len(nav_buttons) == 0
+    assert len(keep_buttons) == 0
 
 
 @pytest.mark.asyncio
@@ -826,6 +960,68 @@ def test_image_only_message_row_renders_chip_without_body():
     )
     rendered = _message_render_text(message, selected=False)
     assert "🖼" in rendered.plain
+
+
+def test_sibling_counter_rendered_for_message_with_siblings():
+    """TASK-7: a message with persisted siblings shows an `(n/m)` counter."""
+    from tldw_chatbook.Widgets.Console.console_transcript import _message_render_text
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="second answer",
+        id="m1",
+        sibling_index=1,
+        sibling_count=2,
+    )
+
+    rendered = _message_render_text(message, selected=False)
+
+    assert "(2/2)" in rendered.plain
+
+
+def test_sibling_counter_rendered_for_first_of_several_siblings():
+    from tldw_chatbook.Widgets.Console.console_transcript import _message_render_text
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="first answer",
+        id="m1",
+        sibling_index=0,
+        sibling_count=3,
+    )
+
+    rendered = _message_render_text(message, selected=False)
+
+    assert "(1/3)" in rendered.plain
+
+
+def test_no_sibling_counter_for_single_child_message():
+    """TASK-7: a linear (unforked) message renders no `(n/m)` counter."""
+    from tldw_chatbook.Widgets.Console.console_transcript import _message_render_text
+
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="only answer", id="m1"
+    )
+
+    rendered = _message_render_text(message, selected=False)
+
+    assert "(1/1)" not in rendered.plain
+    assert "(" not in rendered.plain
+
+
+def test_transcript_message_widget_shows_sibling_counter_via_row_construction():
+    """Counter reaches the actual mounted row (``ConsoleTranscriptMessage``),
+    not just the pure ``_message_render_text`` helper."""
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="second answer",
+        id="m1",
+        sibling_index=1,
+        sibling_count=2,
+    )
+    widget = ConsoleTranscriptMessage(message)
+
+    assert "(2/2)" in widget.renderable.plain
 
 
 def test_save_image_action_only_offered_for_image_messages():
@@ -1236,3 +1432,74 @@ async def test_transcript_signature_cache_miss_on_status_change():
 
         assert "[streaming]" not in str(rendered.renderable)
         assert transcript.message_signature_compute_counts()["m-stream"] == 2
+
+
+# ---------------------------------------------------------------------------
+# SP2 /rewind: render-derived "summarize up to here" boundary banner
+# ---------------------------------------------------------------------------
+
+
+def _boundary_messages():
+    return [
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="q1", id="m1"),
+        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="a1", id="m2"),
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="q3", id="m3"),
+        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="a3", id="m4"),
+    ]
+
+
+def test_console_transcript_summary_banner_renders_above_boundary():
+    from tldw_chatbook.Widgets.Console.console_transcript import (
+        CONSOLE_SUMMARY_BANNER_COPY,
+    )
+
+    transcript = ConsoleTranscript()
+    transcript.set_messages(_boundary_messages())
+    transcript.set_summary_boundary("m3")
+
+    plain = transcript.to_plain_text(width=80)
+    lines = plain.splitlines()
+
+    assert CONSOLE_SUMMARY_BANNER_COPY in plain
+    banner_index = next(
+        i for i, line in enumerate(lines) if CONSOLE_SUMMARY_BANNER_COPY in line
+    )
+    # The banner sits ABOVE the boundary turn (q3) and BELOW the prior turn.
+    q3_index = next(i for i, line in enumerate(lines) if "q3" in line)
+    a1_index = next(i for i, line in enumerate(lines) if "a1" in line)
+    assert a1_index < banner_index < q3_index
+
+
+def test_console_transcript_summary_banner_absent_when_boundary_not_rendered():
+    from tldw_chatbook.Widgets.Console.console_transcript import (
+        CONSOLE_SUMMARY_BANNER_COPY,
+    )
+
+    transcript = ConsoleTranscript()
+    transcript.set_messages(_boundary_messages())
+    # A dangling boundary (not in the rendered messages) shows no banner.
+    transcript.set_summary_boundary("ghost")
+
+    assert CONSOLE_SUMMARY_BANNER_COPY not in transcript.to_plain_text(width=80)
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_summary_banner_mounts_and_clears():
+    from tldw_chatbook.Widgets.Console.console_transcript import (
+        CONSOLE_SUMMARY_BANNER_COPY,
+    )
+
+    app = MutableTranscriptHarness()
+    async with app.run_test(size=(100, 32)):
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_messages(_boundary_messages())
+        transcript.set_summary_boundary("m3")
+        await transcript.refresh_messages()
+        banners = transcript.query(".console-transcript-summary-banner")
+        assert len(banners) == 1
+        assert CONSOLE_SUMMARY_BANNER_COPY in str(list(banners)[0].renderable)
+
+        # Restore to before the boundary -> banner disappears.
+        transcript.set_summary_boundary(None)
+        await transcript.refresh_messages()
+        assert len(transcript.query(".console-transcript-summary-banner")) == 0

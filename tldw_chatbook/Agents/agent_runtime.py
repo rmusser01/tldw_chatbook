@@ -13,11 +13,13 @@ from loguru import logger
 
 from .agent_models import (
     FIND_TOOLS_NAME,
+    INSTALL_SKILL_TOOL_NAME,
     LOAD_TOOLS_NAME,
     LOOP_DETECTION_N,
     RUN_CANCELLED,
     RUN_DONE,
     RUN_STUCK,
+    SKILL_FILE_TOOL_NAME,
     SPAWN_TOOL_NAME,
     STEP_ERROR,
     STEP_MODEL,
@@ -228,6 +230,20 @@ class LoopDeps:
     # closure, not in this generic runtime. ``None`` (the default) is a
     # no-op: every call proceeds, byte-identical to pre-Task-4 behavior.
     review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None
+    # skill_file: the fourth runtime tool (task-3, skills-foundation). Unlike
+    # a ToolProvider entry, its schema is pinned into runtime_schemas by the
+    # service (never disclosure-gated) and its authorization lives on a
+    # per-run SkillFileBindings object -- never config.allowed_tools. `None`
+    # (the default) means the service never wired this run for skill_file at
+    # all, and a call by that name falls through to the same
+    # deps.invoke_tool path any other unrecognized/undisclosed name hits.
+    read_skill_file: Callable[[str, str], ToolResult] | None = None
+    # install_skill: the fifth runtime tool (agent-callable skill install).
+    # Wired ONLY for the top-level agent (agent_kind == primary) by the
+    # service; a spawned subagent never receives it. `None` (the default)
+    # means the run is not wired for install_skill and a call by that name
+    # falls through to the generic deps.invoke_tool path.
+    install_skill: Callable[[str], ToolResult] | None = None
 
 
 def _catalog_lines(entries: list) -> str:
@@ -276,7 +292,9 @@ def run_agent_loop(
     Args:
         config: The agent's model, system prompt, allow-list, and budget
             (step count, wall-clock seconds, and — task-244 —
-            provider-call/model-turn count all independently cap the run).
+            provider-call/model-turn count all independently cap the run;
+            task-326 adds ``max_total_tokens``, a cumulative prompt+
+            completion token spend ceiling — 0 means unlimited).
         initial_messages: The starting conversation history (role/content
             dicts); not mutated in place — the loop works on a copy.
         active_schemas: Tool schemas already disclosed to the model at the
@@ -289,7 +307,9 @@ def run_agent_loop(
     Returns:
         A ``RunOutcome`` capturing the terminal status
         (``done``/``stuck``/``cancelled``), the full step log, the final
-        answer text (when done), and how many sub-agents were spawned.
+        answer text (when done), how many sub-agents were spawned, and
+        (task-326) ``total_tokens`` — the measured cumulative prompt+
+        completion token spend checked against ``max_total_tokens``.
     """
     budget = config.budget
     steps: list[AgentStep] = []
@@ -298,6 +318,7 @@ def run_agent_loop(
     started = deps.clock()
     spawned = 0
     model_turns = 0
+    total_tokens = 0
     last_key: tuple | None = None
     repeat_count = 0
 
@@ -313,21 +334,32 @@ def run_agent_loop(
             pass
         return step
 
+    def _outcome(status: str, **kw) -> RunOutcome:
+        # Reports run spend on every terminal path; reads enclosing steps/
+        # spawned/total_tokens at call time (no nonlocal, like add()).
+        return RunOutcome(
+            status, steps, subagents_spawned=spawned, total_tokens=total_tokens, **kw
+        )
+
     while True:
         if deps.should_cancel():
-            return RunOutcome(RUN_CANCELLED, steps, subagents_spawned=spawned)
+            return _outcome(RUN_CANCELLED)
         if len(steps) >= budget.max_steps:
             add(STEP_ERROR, summary="step budget exhausted")
-            return RunOutcome(RUN_STUCK, steps, subagents_spawned=spawned)
+            return _outcome(RUN_STUCK)
         if model_turns >= budget.max_model_turns:
             add(STEP_ERROR, summary="model-turn budget exhausted")
-            return RunOutcome(RUN_STUCK, steps, subagents_spawned=spawned)
+            return _outcome(RUN_STUCK)
         if deps.clock() - started > budget.max_wall_seconds:
             add(STEP_ERROR, summary="wall-clock budget exhausted")
-            return RunOutcome(RUN_STUCK, steps, subagents_spawned=spawned)
+            return _outcome(RUN_STUCK)
+        if budget.max_total_tokens and total_tokens >= budget.max_total_tokens:
+            add(STEP_ERROR, summary="token budget exhausted")
+            return _outcome(RUN_STUCK)
 
         turn = deps.call_model(messages, tuple(active))
         model_turns += 1
+        total_tokens += turn.tokens
         add(STEP_MODEL, summary=turn.text[:200])
 
         calls = list(turn.tool_calls)
@@ -341,15 +373,8 @@ def run_agent_loop(
                 # this, a cancellation that lands mid-final-answer would be
                 # silently downgraded to a normal completed run.
                 if deps.should_cancel():
-                    return RunOutcome(
-                        RUN_CANCELLED,
-                        steps,
-                        final_text=turn.text,
-                        subagents_spawned=spawned,
-                    )
-                return RunOutcome(
-                    RUN_DONE, steps, final_text=turn.text, subagents_spawned=spawned
-                )
+                    return _outcome(RUN_CANCELLED, final_text=turn.text)
+                return _outcome(RUN_DONE, final_text=turn.text)
             calls = [fenced]
         messages.append(
             turn.assistant_message or {"role": "assistant", "content": turn.text}
@@ -380,7 +405,7 @@ def run_agent_loop(
 
         for call in calls:
             if deps.should_cancel():
-                return RunOutcome(RUN_CANCELLED, steps, subagents_spawned=spawned)
+                return _outcome(RUN_CANCELLED)
             key = (call.name, json.dumps(call.args, sort_keys=True))
             repeat_count = repeat_count + 1 if key == last_key else 1
             last_key = key
@@ -390,7 +415,7 @@ def run_agent_loop(
                     summary=f"loop detected: {call.name} repeated "
                     f"{repeat_count}x with identical args",
                 )
-                return RunOutcome(RUN_STUCK, steps, subagents_spawned=spawned)
+                return _outcome(RUN_STUCK)
 
             # P5 Task 4: a non-"proceed" verdict (an absent name defaults to
             # "proceed" — the hook only reports what it wants to stop)
@@ -507,6 +532,21 @@ def run_agent_loop(
                                 )
                             else:
                                 result = ToolResult(ok=True, content="no room")
+                elif (
+                    call.name == SKILL_FILE_TOOL_NAME
+                    and deps.read_skill_file is not None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    result = deps.read_skill_file(
+                        str(call.args.get("skill_name", "")),
+                        str(call.args.get("path", "")),
+                    )
+                elif (
+                    call.name == INSTALL_SKILL_TOOL_NAME
+                    and deps.install_skill is not None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    result = deps.install_skill(str(call.args.get("url", "")))
                 else:
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     result = deps.invoke_tool(call)

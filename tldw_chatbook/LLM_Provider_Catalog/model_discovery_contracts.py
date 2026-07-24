@@ -13,6 +13,7 @@ CapabilityStatus = Literal["known", "inferred", "unknown"]
 ProviderKeyResolutionStatus = Literal["resolved", "missing", "ambiguous"]
 DiscoveryErrorKind = Literal[
     "unsupported_endpoint",
+    "malformed_endpoint",
     "missing_endpoint",
     "missing_credentials",
     "ambiguous_provider_key",

@@ -295,6 +295,70 @@ def test_console_conversation_status_labels_use_saved_chat_vocabulary() -> None:
     assert status("open") == "open"
 
 
+def test_conversation_row_secondary_drops_boilerplate_keeps_differentiator() -> None:
+    """TASK-374 AC#2: the row subtitle compresses to just the differentiator.
+
+    Every row previously repeated ``<workspace> - saved chat - <age>``, so only
+    the age digits differed and half the section's vertical space carried no
+    information. The subtitle now keeps the age always and the state ONLY when it
+    is not the default ``saved chat``; the section-level workspace label is dropped.
+    """
+    secondary = ConsoleWorkspaceContextTray._conversation_row_secondary
+
+    # Default saved state -> only the differentiating age remains.
+    assert secondary("saved chat", "2d") == "2d"
+    # A non-default state IS the differentiator and is kept alongside the age.
+    assert secondary("active session", "5m") == "active session - 5m"
+    assert secondary("open session", "1h") == "open session - 1h"
+    # Degenerate inputs stay sane.
+    assert secondary("active session", "") == "active session"
+    assert secondary("saved chat", "") == ""
+    # The repeated workspace label is never part of the compressed grouped subtitle.
+    assert "Workspace" not in secondary("saved chat", "3d")
+
+    # Qodo #812: header-less sections (the cross-workspace Starred section) pass
+    # the workspace explicitly, and it leads the subtitle as the differentiator
+    # so same-titled conversations from different workspaces stay distinguishable.
+    assert secondary("saved chat", "3d", workspace_label="Workspace A") == "Workspace A - 3d"
+    assert (
+        secondary("active session", "5m", workspace_label="Workspace B")
+        == "Workspace B - active session - 5m"
+    )
+
+
+@pytest.mark.asyncio
+async def test_starred_row_keeps_workspace_disambiguation() -> None:
+    """Qodo #812: the Starred section pins conversations across workspaces with no
+    workspace group header, so its rows must still show the owning workspace even
+    though grouped rows drop it as redundant."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 50)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+
+        # Row 0 is the starred conversation (Workspace A) in the header-less
+        # Starred section; its subtitle must name the workspace.
+        starred_label = str(
+            console.query_one("#console-workspace-conversation-0", Button).label
+        )
+        assert "Workspace A" in starred_label
+
+        # The same conversation under its Workspaces group header drops it.
+        grouped_labels = [
+            str(button.label)
+            for button in console.query(".console-workspace-conversation-row")
+            if button.display and "\nWorkspace A" not in str(button.label)
+        ]
+        assert grouped_labels, "expected at least one grouped row without a workspace prefix"
+
+
 def test_console_workspace_conversation_section_state_defaults() -> None:
     section = ConsoleWorkspaceConversationSectionState(
         workspace_id="ws-a",
@@ -359,6 +423,114 @@ async def test_console_workspace_context_renders_grouped_conversation_browser() 
         assert star_button.row_key == "conv-starred"
         assert star_button.conversation_id == "conv-starred"
         assert star_button.starred is True
+
+
+@pytest.mark.asyncio
+async def test_rail_title_budget_scales_with_terminal_width() -> None:
+    """TASK-374 AC#1: titles get the available width instead of a fixed cap.
+
+    The review saw 17-char titles on a wide terminal (pre-width-aware code). The
+    grouped-browser title budget is now measured from the real rail width, so it
+    grows as the terminal widens -- a wide terminal yields 25+ char titles. This
+    locks that responsiveness so it cannot regress to a fixed cap.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+        narrow_budget = tray._browser_title_budget()
+
+        await pilot.resize_terminal(260, 60)
+        await pilot.pause()
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+        wide_budget = tray._browser_title_budget()
+
+    assert wide_budget > narrow_budget, (
+        f"title budget must grow with rail width, not stay fixed "
+        f"(narrow={narrow_budget}, wide={wide_budget})"
+    )
+    assert wide_budget >= 25, (
+        f"a wide terminal must give titles the available width (25+ cells), "
+        f"got {wide_budget}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_star_uses_recognizable_star_glyphs():
+    """TASK-357: the star toggle must use a recognizable ★/☆ pair, not the
+    near-invisible one-cell '*'/'.' distinction."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+
+        for star in console.query(".console-conversation-star"):
+            label = str(star.label)
+            assert "*" not in label and label.strip() != "."
+            if getattr(star, "starred", False):
+                assert "★" in label
+            else:
+                assert "☆" in label
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_star_press_confirms_the_toggle():
+    """TASK-357: starring must confirm the change ('Starred "<title>"') rather
+    than toggle state silently (the review saw an accidental star go unnoticed)."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+
+        star = next(
+            s
+            for s in console.query(".console-conversation-star")
+            if not getattr(s, "starred", False)
+        )
+        # A title with Rich markup must be escaped in the toast, not interpreted.
+        star.conversation_title = "[b]Plan[/b]"
+
+        class _Marks:
+            def is_starred(self, conversation_id):
+                return False
+
+            def star_conversation(self, conversation_id):
+                return None
+
+            def unstar_conversation(self, conversation_id):
+                return None
+
+        console.app_instance.conversation_local_marks_service = _Marks()
+        notes: list[str] = []
+        console.app_instance.notify = lambda message, **kwargs: notes.append(message)
+
+        await console.on_button_pressed(Button.Pressed(star))
+
+        assert any("Starred" in note for note in notes)
+        # The markup is escaped (literal backslash-brackets), never interpreted.
+        assert any(r"\[b]Plan\[/b]" in note for note in notes)
 
 
 @pytest.mark.asyncio
@@ -1250,6 +1422,47 @@ async def test_status_label_width_is_twelve() -> None:
 
 
 @pytest.mark.asyncio
+async def test_status_pair_value_truncates_instead_of_letter_stacking() -> None:
+    """TASK-384: at a narrow rail the value column shrinks to a few cells; the
+    value must nowrap+ellipsize (so "Default" reads "De…") rather than word-wrap
+    into a "Def / aul / t" letter stack, with the full value on hover."""
+    from textual.app import App
+    from textual.widgets import Static
+
+    class TestApp(App):
+        def compose(self):
+            yield ConsoleWorkspaceStatusPair(
+                "Workspace", "Default", label_id="l", value_id="v"
+            )
+
+    app = TestApp()
+    async with app.run_test():
+        value = app.query_one("#v", Static)
+        assert value.styles.text_wrap == "nowrap"
+        assert value.styles.text_overflow == "ellipsis"
+        assert value.tooltip == "Default"
+
+
+@pytest.mark.asyncio
+async def test_status_pair_value_tooltip_escapes_markup() -> None:
+    """Qodo #821: the value tooltip renders Rich markup, so a value with bracket
+    tokens must be escaped (shown literally, not interpreted)."""
+    from textual.app import App
+    from textual.widgets import Static
+
+    class TestApp(App):
+        def compose(self):
+            yield ConsoleWorkspaceStatusPair(
+                "Workspace", "[b]danger[/b]", label_id="l", value_id="v"
+            )
+
+    app = TestApp()
+    async with app.run_test():
+        value = app.query_one("#v", Static)
+        assert value.tooltip == r"\[b]danger\[/b]"
+
+
+@pytest.mark.asyncio
 async def test_console_workspace_context_renders_active_workspace() -> None:
     app = _build_test_app()
     service = app.workspace_registry_service
@@ -1453,7 +1666,8 @@ async def test_console_workspace_context_syncs_active_conversation_marker() -> N
             title="Planning thread",
             workspace_id="ws-a",
             persisted_conversation_id="conv-1",
-            messages=(),
+            all_nodes=(),
+            active_leaf_persisted_id=None,
         )
 
         console.sync_shell_bar_from_session_data(

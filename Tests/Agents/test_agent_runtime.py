@@ -549,6 +549,56 @@ def test_fence_history_convention_unchanged():
     assert history[2]["content"].startswith("Tool result for")
 
 
+def test_token_budget_trips_to_stuck():
+    # Tool-calling turns that never finish; each carries 100 tokens so the
+    # cumulative spend crosses max_total_tokens before the (raised) step/turn caps.
+    turns = [
+        ModelTurn(text=fence("calculator", {"expression": str(i)}), tokens=100)
+        for i in range(50)
+    ]
+    cfg = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=("calculator", SPAWN_TOOL_NAME),
+        budget=RunBudget(max_steps=99, max_model_turns=99, max_total_tokens=250),
+    )
+    out = run(turns, config=cfg)
+    assert out.status == RUN_STUCK
+    assert out.steps[-1].summary == "token budget exhausted"
+    assert out.total_tokens >= 250
+
+
+def test_token_budget_sentinel_zero_never_trips():
+    # Huge per-turn tokens but max_total_tokens=0 (default) -> completes normally.
+    turns = [
+        ModelTurn(text=fence("calculator", {"expression": "1"}), tokens=10_000_000),
+        ModelTurn(text="all done", tokens=10_000_000),
+    ]
+    out = run(turns)  # default CFG budget has max_total_tokens=0
+    assert out.status == RUN_DONE
+    assert out.final_text == "all done"
+
+
+def test_token_budget_done_on_crossing_turn_completes():
+    # The final-answer turn itself crosses the budget -> still RUN_DONE
+    # (stop-the-loop, not fail-the-answer), and total_tokens is reported.
+    cfg = AgentConfig(model="m", system_prompt="s", budget=RunBudget(max_total_tokens=50))
+    out = run([ModelTurn(text="the answer", tokens=100)], config=cfg)
+    assert out.status == RUN_DONE
+    assert out.final_text == "the answer"
+    assert out.total_tokens == 100
+
+
+def test_run_outcome_reports_total_tokens_accounting():
+    turns = [
+        ModelTurn(text=fence("calculator", {"expression": "1"}), tokens=30),
+        ModelTurn(text="done", tokens=12),
+    ]
+    out = run(turns)
+    assert out.status == RUN_DONE
+    assert out.total_tokens == 42
+
+
 def test_load_tools_same_batch_duplicate_names_admit_one_into_active():
     """PR #655 review: the loop's own last line of defense must also dedupe
     by name WITHIN one load batch (a caller can hand the same schema back

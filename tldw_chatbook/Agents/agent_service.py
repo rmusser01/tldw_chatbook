@@ -11,12 +11,14 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import time
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Callable, Protocol
 
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Internal_Prompts.catalog import CATALOG
+from tldw_chatbook.Utils.token_counter import count_tokens_messages, estimate_tokens
 
 from .agent_models import (
     AGENT_KIND_PRIMARY,
@@ -29,6 +31,7 @@ from .agent_models import (
     AgentStep,
     ModelTurn,
     RunOutcome,
+    SkillFileBindings,
     ToolCall,
     ToolResult,
     clamp_child_budget,
@@ -42,7 +45,9 @@ from .native_tools import (
 )
 from .tool_catalog import (
     FIND_TOOLS_SCHEMA,
+    INSTALL_SKILL_TOOL_SCHEMA,
     LOAD_TOOLS_SCHEMA,
+    SKILL_FILE_TOOL_SCHEMA,
     SPAWN_TOOL_SCHEMA,
     ToolCatalogRegistry,
     initial_disclosure,
@@ -120,6 +125,41 @@ def _response_message(resp) -> dict:
     return message if isinstance(message, dict) else {}
 
 
+def _usage_total_tokens(resp) -> int | None:
+    """Prompt+completion tokens from a provider's OpenAI-shaped usage block,
+    or None when the provider didn't report usage.
+
+    Args:
+        resp: The provider response (dict when the provider reports usage).
+
+    Returns:
+        The total tokens for the call, or None to signal "estimate instead".
+    """
+    try:
+        usage = resp["usage"]
+    except (KeyError, TypeError):
+        return None
+    if not isinstance(usage, dict):
+        return None
+    # `type(x) is int` (not isinstance) rejects bool, which subclasses int;
+    # require positive/non-negative real ints so a malformed usage block can't
+    # corrupt or shrink the accumulated spend the runtime enforces on.
+    total = usage.get("total_tokens")
+    if type(total) is int and total > 0:
+        return total
+    prompt = usage.get("prompt_tokens")
+    completion = usage.get("completion_tokens")
+    if (
+        type(prompt) is int
+        and type(completion) is int
+        and prompt >= 0
+        and completion >= 0
+        and prompt + completion > 0
+    ):
+        return prompt + completion
+    return None
+
+
 class AgentService:
     """Run one agent turn (primary + any sub-agents) and persist it."""
 
@@ -131,9 +171,11 @@ class AgentService:
         clock: Callable[[], float] = time.monotonic,
         on_step: Callable[[AgentStep, str], None] | None = None,
         skill_runner: SkillRunner | None = None,
+        skill_file_bindings: SkillFileBindings | None = None,
         review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None,
         review_state_scope: Callable[[], "contextlib.AbstractContextManager"]
         | None = None,
+        install_skill_tool: Callable[[str], ToolResult] | None = None,
     ) -> None:
         self.db = db
         self.registry = registry
@@ -141,6 +183,13 @@ class AgentService:
         self.clock = clock
         self._on_step = on_step
         self.skill_runner = skill_runner
+        # task-3 (skills-foundation): per-run authorization + reader for the
+        # skill_file runtime tool. `None` (the default, and every caller
+        # before this task) means the run is never wired for skill_file at
+        # all -- its schema is never pinned into runtime_schemas and a call
+        # by that name falls through to normal unknown-tool handling (see
+        # LoopDeps.read_skill_file's own docstring).
+        self.skill_file_bindings = skill_file_bindings
         # P5 Task 4: generic pre-dispatch batch-review hook, threaded
         # straight into every LoopDeps this service builds (mirrors how
         # should_cancel flows through run_turn/_run_one). MCP-specific
@@ -165,6 +214,12 @@ class AgentService:
         # the concrete MCP-specific context manager wired here by
         # `console_agent_bridge.ConsoleAgentBridge.run_reply`.
         self.review_state_scope = review_state_scope
+        # Agent-callable skill install (5th runtime tool). A ready-built
+        # closure (enforce -> classify -> confirm -> install -> wrap) supplied
+        # by the bridge. Pinned/wired ONLY for the top-level agent
+        # (agent_kind == primary) in _run_one; a spawned subagent never gets
+        # it. `None` (the default) means the run is not wired for install.
+        self._install_skill_tool = install_skill_tool
 
     # -- internals -------------------------------------------------------
 
@@ -210,8 +265,24 @@ class AgentService:
                 **call_kwargs,
             )
             text = _response_text(resp)
+            tokens = _usage_total_tokens(resp)
+            if tokens is None:
+                # Provider reported no usage -> estimate from sent payload +
+                # response text (native tool_calls JSON is not separately
+                # counted here; the prompt term dominates the per-turn total).
+                # Strip a provider prefix ("openai/gpt-4o-mini" -> "gpt-4o-mini")
+                # so the tokenizer's model-family framing detection matches, and
+                # pass the endpoint as the provider hint for the chars ratio.
+                est_model = (
+                    config.model.split("/", 1)[-1]
+                    if "/" in config.model
+                    else config.model
+                )
+                tokens = count_tokens_messages(
+                    payload, est_model, provider=api_endpoint
+                ) + estimate_tokens(text, est_model, provider=api_endpoint)
             if not native:
-                return ModelTurn(text=text)
+                return ModelTurn(text=text, tokens=tokens)
             message = _response_message(resp)
             # Id-less entries get synthesized ids BEFORE parsing, and the
             # SAME normalized list feeds the assistant echo — the echo and
@@ -229,7 +300,10 @@ class AgentService:
                     "tool_calls": raw_calls,
                 }
             return ModelTurn(
-                text=text, tool_calls=tool_calls, assistant_message=assistant_message
+                text=text,
+                tool_calls=tool_calls,
+                assistant_message=assistant_message,
+                tokens=tokens,
             )
 
         return call_model
@@ -266,6 +340,7 @@ class AgentService:
         agent_kind: str,
         task: str | None,
         parent_run_id: str | None,
+        assistant_message_id: str | None = None,
     ) -> tuple[str, RunOutcome]:
         run_id = self.db.create_run(
             conversation_id=conversation_id,
@@ -273,6 +348,7 @@ class AgentService:
             task=task,
             parent_run_id=parent_run_id,
             budget=dataclasses.asdict(config.budget),
+            assistant_message_id=assistant_message_id,
         )
         started = self.clock()
 
@@ -287,6 +363,13 @@ class AgentService:
             runtime_schemas.append(SPAWN_TOOL_SCHEMA)
         if offer_find_load:
             runtime_schemas.extend([FIND_TOOLS_SCHEMA, LOAD_TOOLS_SCHEMA])
+        if (
+            self.skill_file_bindings is not None
+            and self.skill_file_bindings.authorized
+        ):
+            runtime_schemas.append(SKILL_FILE_TOOL_SCHEMA)
+        if agent_kind == AGENT_KIND_PRIMARY and self._install_skill_tool is not None:
+            runtime_schemas.append(INSTALL_SKILL_TOOL_SCHEMA)
 
         def find_tools(query: str):
             # Q7(b): never surface a disallowed tool through find_tools,
@@ -489,6 +572,40 @@ class AgentService:
                 )
             return builtin_invoke_tool(call)
 
+        # task-3 (skills-foundation): reader closure for the skill_file
+        # runtime tool, built beside invoke_tool. Authorization is enforced
+        # HERE (against self.skill_file_bindings.authorized), never in the
+        # loop and never via config.allowed_tools -- see SkillFileBindings'
+        # own docstring. The bindings-None guard below is defensive (the
+        # LoopDeps wiring already gates this closure out entirely when no
+        # bindings were passed to this service at all).
+        def read_skill_file_tool(skill_name: str, path: str) -> ToolResult:
+            bindings = self.skill_file_bindings
+            if bindings is None or skill_name not in bindings.authorized:
+                return ToolResult(
+                    ok=False,
+                    error=f"skill_file: '{skill_name}' is not active in this run",
+                )
+            if bindings.reader is None:
+                return ToolResult(ok=False, error="skill_file: no reader configured")
+            try:
+                out = bindings.reader(skill_name, path)
+                # task-4 (skills-fork-reachability) hardening: a reader is
+                # caller-supplied (the bridge's asyncio.run adapter over
+                # SkillsScopeService.read_skill_file) -- a misbehaving one
+                # returning a non-mapping must fail only THIS call, not
+                # crash the whole run via an uncaught AttributeError from
+                # `.get` on something that isn't dict-like.
+                if not isinstance(out, Mapping):
+                    return ToolResult(
+                        ok=False,
+                        error="skill_file: reader returned invalid result",
+                    )
+                content = out.get("content", "")
+            except Exception as exc:  # SkillTrustBlockedError, ValueError, OSError
+                return ToolResult(ok=False, error=f"skill_file: {exc}")
+            return ToolResult(ok=True, content=str(content))
+
         deps = LoopDeps(
             call_model=self._make_call_model(config, api_endpoint, runtime_schemas),
             invoke_tool=invoke_tool,
@@ -503,6 +620,24 @@ class AgentService:
                 else (lambda s: None)
             ),
             review_tool_calls=self.review_tool_calls,
+            # Qodo/PR#814: wired under the SAME predicate as the schema pin
+            # above (~:356-360) -- bindings with an EMPTY authorized set
+            # must never reach the named-refusal dispatch either; a
+            # hallucinated call for an unpinned tool falls through to the
+            # generic "Tool not permitted" path like any other undisclosed
+            # tool name.
+            read_skill_file=(
+                read_skill_file_tool
+                if self.skill_file_bindings is not None
+                and self.skill_file_bindings.authorized
+                else None
+            ),
+            install_skill=(
+                self._install_skill_tool
+                if agent_kind == AGENT_KIND_PRIMARY
+                and self._install_skill_tool is not None
+                else None
+            ),
         )
         try:
             outcome = run_agent_loop(config, messages, active, deps)
@@ -536,6 +671,7 @@ class AgentService:
         api_endpoint: str,
         should_cancel: Callable[[], bool] = lambda: False,
         supersede_run_id: str | None = None,
+        assistant_message_id: str | None = None,
     ) -> tuple[str, RunOutcome]:
         """Run one primary-agent turn (and any sub-agents it spawns).
 
@@ -559,6 +695,14 @@ class AgentService:
             supersede_run_id: When set, marks that prior run (and its
                 sub-agent tree) ``superseded`` before starting this run —
                 used by retry/regenerate/continue.
+            assistant_message_id: Recorded on the primary run at creation
+                time (only the primary run — never a spawned sub-agent,
+                which produces no transcript reply). At create time this is
+                the reply's NATIVE in-memory id; the assistant node is not
+                persisted yet, so the caller overwrites it with the durable
+                persisted id via ``AgentRunsDB.set_run_assistant_message_id``
+                once the reply completes (that later write is what resume's
+                marker anchoring reads).
 
         Returns:
             A ``(run_id, outcome)`` tuple: the new primary run's id and its
@@ -583,4 +727,5 @@ class AgentService:
             agent_kind=AGENT_KIND_PRIMARY,
             task=None,
             parent_run_id=None,
+            assistant_message_id=assistant_message_id,
         )

@@ -1,9 +1,11 @@
 ---
 id: TASK-365
 title: Give the system-prompt editor a visible affordance in the rail
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
+updated_date: '2026-07-23 07:40'
 labels: [console, ux]
 dependencies: []
 priority: medium
@@ -23,5 +25,28 @@ The rail line 'System: none' is styled identically to the static Provider/Model/
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 An interactive row must look interactive (button styling like the adjacent 'Configure', or a chevron/link treatment), and/or the session settings modal should include or link to the system prompt. Otherwise users conclude the system prompt cannot be changed
+- [x] #1 An interactive row must look interactive (button styling like the adjacent 'Configure', or a chevron/link treatment), and/or the session settings modal should include or link to the system prompt. Otherwise users conclude the system prompt cannot be changed
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Took the chevron/link-treatment branch of the AC. The clickable
+`#console-rail-system-line` (a `Static` with a screen-level `on_click` that opens
+the system-prompt editor) now renders with a trailing `▸` affordance — the same
+glyph the rail already uses for its other interactive controls — so it visibly
+reads as the one actionable row in the Model section instead of inert label text
+like the Provider/Model lines above it. Appended in the screen wrapper
+`_console_rail_system_line_state` (constant `CONSOLE_RAIL_SYSTEM_EDIT_AFFORDANCE`)
+so the pure `build_console_rail_system_line` helper's contract is untouched. The
+line is `height: 1` so the extra glyph clips rather than wrapping to a hidden row.
+
+The affordance lives in the text (not only CSS) because the Console pilot harness
+loads widget DEFAULT_CSS but not the built `tldw_cli_modular.tcss`, so a
+CSS-only treatment would not be regression-testable.
+
+Verified in `Tests/UI/test_console_system_prompt.py`: new
+`test_console_rail_system_line_shows_interactive_affordance` asserts the raw line
+ends with ` ▸`; the existing content assertions stay focused via a
+`_rail_system_line_text` helper that strips the affordance. 24 tests green.
+<!-- SECTION:NOTES:END -->

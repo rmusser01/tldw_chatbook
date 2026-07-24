@@ -33,18 +33,23 @@ from tldw_chatbook.Chat.console_command_grammar import COMMAND_PREFIX
 from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_RESPONSE_RESERVATION,
     bound_messages_to_window,
+    count_console_messages_tokens,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_skill_resolver import (
+    MENTION_SIGIL,
+    SKILL_MENTION_SKIPPED_NOTE,
     SKILL_UNTRUSTED_REFUSE,
     SkillCommandCandidate,
     cap_skill_args,
+    find_embedded_mentions,
     resolve_skill_command,
 )
 from loguru import logger
 
 from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
 from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.Chat.provider_failures import (  # noqa: F401  (re-export: tests and callers import describe_stream_failure from here)
@@ -68,10 +73,23 @@ _DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS = 120.0
 #: the Phase-5 plan) -- also the worst-case slack added on top of a
 #: configured timeout/cancellation before this method observes it.
 _MCP_APPROVAL_POLL_SECONDS = 1.0
+#: Fallback used when no `skill_install_confirm_timeout_seconds` seam is
+#: injected -- mirrors `_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS`'s role for
+#: `request_skill_install_confirm`'s own wait loop.
+_DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS = 120.0
 
 
 MAX_CONSOLE_DRAFT_LENGTH = 100_000
 CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
+
+# Private payload-row key threading a transcript message's native id from the
+# payload builder to the dispatch choke point, where `/rewind`
+# "summarize up to here" compaction anchors the boundary by IDENTITY rather
+# than by content (see `_apply_context_summary_compaction`). It is opt-in
+# (send paths only, `annotate_ids=True`) and ALWAYS stripped from every row
+# before the payload leaves the controller for a provider/agent, so no
+# provider ever sees it.
+NATIVE_MESSAGE_ID_KEY = "_native_message_id"
 
 
 def _normalize_world_info_history(
@@ -210,7 +228,7 @@ def build_mcp_review_hook(
 
 
 def _split_skill_command_word(text: str) -> tuple[str, str]:
-    """Split a ``/word rest`` string into its leading token and the remainder.
+    """Split a ``$word rest`` string into its leading token and the remainder.
 
     Mirrors ``console_command_grammar._split_leading_token``'s single-
     whitespace-character split rule. That helper is module-private (by
@@ -218,12 +236,55 @@ def _split_skill_command_word(text: str) -> tuple[str, str]:
     so this is a deliberate small duplicate rather than an import, the same
     precedent ``chat_screen.ChatScreen._split_console_skill_name_args``
     already follows. ``text`` is assumed to already start with
-    `COMMAND_PREFIX`.
+    `MENTION_SIGIL` (the `$`-mention leading form, not `COMMAND_PREFIX`'s
+    `/` -- its sole caller is `_apply_skill_substitution`'s leading-form
+    branch).
     """
     for index, character in enumerate(text):
         if character.isspace():
             return text[:index], text[index + 1 :]
     return text, ""
+
+
+def _render_skill_bundle_block(results: Iterable[Mapping[str, Any]]) -> str:
+    """Render one combined "Bundled files" block for a turn's bound skills.
+
+    Task 5 (skills-fork-reachability): `_apply_skill_substitution` builds
+    this as pure string work from `execute_skill` results it already holds
+    -- no re-execution, no extra service calls -- for every skill actually
+    bound this turn (leading-resolved, or embedded mentions that spliced).
+    `run_reply` (never here) is the only place that ever appends the
+    returned string to a message, so plain sends and the stored transcript
+    never see it.
+
+    Row format matches `_BridgeSkillRunner.run`'s own bundle-pointer block
+    byte-for-byte (Task 4) -- ``{path} ({size} bytes)`` / ``{path} ({size}
+    bytes, binary)``, comma-joined under one combined header -- so a bound
+    skill's `skill_file` reads look identical whether granted turn-side
+    (this function) or fork-side (a spawned skill reading its own bundle).
+
+    Args:
+        results: `execute_skill` result mappings for the bound skills, in
+            any order; a result missing `reference_files` (absent when a
+            skill has no bundle beyond SKILL.md) or with it empty
+            contributes no rows.
+
+    Returns:
+        The combined block, or ``""`` when no result carries any rows.
+    """
+    rows: list[str] = []
+    for result in results:
+        refs = result.get("reference_files") if isinstance(result, Mapping) else None
+        if not refs:
+            continue
+        rows.extend(
+            f"{ref['path']} ({ref['size']} bytes"
+            f"{'' if ref.get('is_text', True) else ', binary'})"
+            for ref in refs
+        )
+    if not rows:
+        return ""
+    return "Bundled files (readable via skill_file): " + ", ".join(rows)
 
 
 class ConsoleProviderGatewayProtocol(Protocol):
@@ -355,6 +416,16 @@ class ConsoleChatController:
         #: no approval round is in flight.
         self._pending_approval_event: threading.Event | None = None
         self._pending_approval_decisions: dict[str, str] | None = None
+        #: UI-thread callback that pushes/clears the pending skill-install
+        #: confirm payload into the owning screen's task-resume state
+        #: (ChatScreen._set_console_pending_skill_install). Invoked through
+        #: self.app.call_from_thread from request_skill_install_confirm.
+        self.set_pending_skill_install: Callable[[dict | None], None] | None = None
+        #: Optional test override for the confirm timeout.
+        self.skill_install_confirm_timeout_seconds: Callable[[], float] | None = None
+        #: The active confirm round's release Event + shared decision box.
+        self._pending_skill_install_event: threading.Event | None = None
+        self._pending_skill_install_decision: dict[str, bool] | None = None
 
     async def submit_draft(self, draft: str) -> ConsoleSubmitResult:
         """Submit a composer draft through native Console validation and provider resolution."""
@@ -417,12 +488,19 @@ class ConsoleChatController:
             )
             for index, pending in enumerate(attachment_mode_pendings)
         )
+        # TASK-485: the optimistic echo is appended WITHOUT persistence. A send
+        # that is blocked/fails before it reaches the provider must leave no
+        # durable record — otherwise the resume path (which reconstructs every
+        # row as "complete") would silently drop the row's failed state and let a
+        # never-sent message re-enter the next send's context, and the orphan
+        # would render as a lonely user prompt. The row is flushed to storage
+        # only once the turn is confirmed to proceed (below).
         echoed_user = self.store.append_message(
             session.id,
             role=ConsoleMessageRole.USER,
             content=clean_draft,
             attachments=staged_attachments,
-            persist=self.store.persistence is not None,
+            persist=False,
         )
 
         self._set_run_state(
@@ -454,16 +532,28 @@ class ConsoleChatController:
         if pendings:
             self.store.clear_pending_attachments(session.id)
         try:
-            provider_messages = self._provider_messages_for_session(session.id)
-            provider_messages, refuse = await self._apply_skill_substitution(
-                provider_messages
+            provider_messages = self._provider_messages_for_session(
+                session.id, annotate_ids=True
             )
+            (
+                provider_messages,
+                refuse,
+                skill_notes,
+                skill_bindings,
+                skill_bundle_block,
+            ) = await self._apply_skill_substitution(provider_messages)
             if refuse is not None:
                 # A substitution refusal is a block outcome like any other
                 # (provider not ready, probe raise): fail the echoed row so the
                 # refused command never enters the next send's provider context.
                 self.store.mark_message_send_blocked(echoed_user.id)
                 return self._block(session.id, refuse)
+            for note in skill_notes:
+                # An embedded skipped-skill note is never an abort: append the
+                # same system-row copy `_block` would, then let the turn proceed.
+                self.store.append_message(
+                    session.id, role=ConsoleMessageRole.SYSTEM, content=note
+                )
             provider_messages = await self._apply_chat_dictionaries(
                 provider_messages, session.id
             )
@@ -481,18 +571,18 @@ class ConsoleChatController:
         # The accepted-hook fires only once the turn is confirmed to
         # actually proceed (Qodo finding 3, PR #636 bot review): it used to
         # fire right after the USER row was appended, BEFORE this skill
-        # substitution/trust check ran. In the real ChatScreen, this hook
-        # is the sole consume point for a staged resolved-skill "driving
-        # this turn" TOOL marker (see `_on_console_submission_accepted`'s
-        # own docstring) -- firing it before a substitution refusal meant
-        # a refused/untrusted skill submit still consumed and appended
-        # that marker, claiming the skill drove the turn right before the
-        # refuse row that says it never ran. A substitution refusal is a
-        # `_block()` outcome exactly like any other (provider not ready,
-        # policy block, validation failure) and those already never reach
-        # this hook -- this reorder just extends that same rule to cover
-        # it too.
+        # substitution/trust check ran. In the real ChatScreen this hook
+        # clears the composer, so firing it before a substitution refusal
+        # ate the refused draft the user needs to correct. A substitution
+        # refusal is a `_block()` outcome exactly like any other (provider
+        # not ready, policy block, validation failure) and those already
+        # never reach this hook -- this ordering just extends that same
+        # rule to cover it too.
         self._notify_submission_accepted()
+        # TASK-485: the turn is confirmed to proceed — flush the deferred USER
+        # echo to durable storage now (creating the conversation), BEFORE the
+        # assistant row, so a reload shows the user's prompt ahead of its reply.
+        self.store.persist_message_if_needed(echoed_user.id)
         assistant = self.store.append_message(
             session.id,
             role=ConsoleMessageRole.ASSISTANT,
@@ -505,6 +595,8 @@ class ConsoleChatController:
             assistant_message_id=assistant.id,
             prefill=prefill,
             prefill_from_one_shot=prefill_from_one_shot,
+            skill_bindings=skill_bindings,
+            skill_bundle_block=skill_bundle_block,
         )
 
     def new_session(
@@ -629,6 +721,7 @@ class ConsoleChatController:
         # send while one is running), so this is unconditional -- a no-op
         # whenever no round is in flight.
         self._deny_pending_approval_on_context_change()
+        self._deny_pending_skill_install_on_context_change()
         return session
 
     def close_session(self, session_id: str) -> ConsoleChatSession | None:
@@ -1007,6 +1100,96 @@ class ConsoleChatController:
         if approval_event is not None:
             approval_event.set()
 
+    # -- Skill-install confirm bridge (task-5) -------------------------------
+
+    def request_skill_install_confirm(self, url: str) -> bool:
+        """WORKER THREAD: ask the user to confirm a skill install before any fetch.
+
+        Blocks on a fresh threading.Event, surfacing an Allow/Deny card via
+        set_pending_skill_install (marshaled onto the UI thread), then polls
+        re-checking this run's cancel signals and a deadline. Cancel/stop,
+        timeout, context-change, or no wired UI all resolve to DENY
+        (fail-closed). Returns True only on an explicit Allow.
+
+        Args:
+            url: The skill source URL the model wants to install, surfaced
+                verbatim on the confirm card for the user to inspect.
+
+        Returns:
+            True only on an explicit Allow; every other path (deny, cancel,
+            stop, timeout, context change, or no wired UI) returns False.
+        """
+        # No UI bridge wired means the marshal below is a no-op and nothing
+        # can ever set the Event -- fail closed immediately instead of
+        # blocking for the full timeout with no way to be resolved.
+        if self.app is None or self.set_pending_skill_install is None:
+            return False
+
+        event = threading.Event()
+        decision: dict[str, bool] = {}
+        self._pending_skill_install_event = event
+        self._pending_skill_install_decision = decision
+
+        timeout_seconds = (
+            self.skill_install_confirm_timeout_seconds()
+            if self.skill_install_confirm_timeout_seconds is not None
+            else _DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS
+        )
+        deadline = time.monotonic() + timeout_seconds
+        payload = {"url": url, "timeout_seconds": timeout_seconds}
+        try:
+            self._marshal_pending_skill_install(payload)
+            while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
+                if self._stop_requested or (
+                    self._active_cancel_event is not None
+                    and self._active_cancel_event.is_set()
+                ):
+                    break
+                if time.monotonic() >= deadline:
+                    break
+            return bool(decision.get("allow", False))
+        finally:
+            self._pending_skill_install_event = None
+            self._pending_skill_install_decision = None
+            try:
+                self._marshal_pending_skill_install(None)
+            except Exception:  # noqa: BLE001
+                logger.opt(exception=True).debug(
+                    "Failed to clear skill-install confirm during teardown"
+                )
+
+    def _marshal_pending_skill_install(self, payload: dict[str, Any] | None) -> None:
+        """WORKER THREAD: hand a skill-install confirm payload to the UI thread.
+
+        No-op when no UI bridge is wired (``self.app`` or
+        ``set_pending_skill_install`` is None).
+
+        Args:
+            payload: The pending confirm's ``{"url", "timeout_seconds"}``
+                dict to show, or None to clear/hide the card.
+        """
+        if self.app is not None and self.set_pending_skill_install is not None:
+            self.app.call_from_thread(self.set_pending_skill_install, payload)
+
+    def resolve_pending_skill_install(self, allow: bool) -> None:
+        """UI THREAD: apply the user's Allow/Deny, releasing the worker thread.
+
+        Args:
+            allow: True to allow the pending install, False to deny it.
+        """
+        decision = self._pending_skill_install_decision
+        event = self._pending_skill_install_event
+        if decision is None or event is None:
+            return
+        decision["allow"] = bool(allow)
+        event.set()
+
+    def _deny_pending_skill_install_on_context_change(self) -> None:
+        """Force-deny a pending confirm (Event set, decision left False)."""
+        event = self._pending_skill_install_event
+        if event is not None:
+            event.set()
+
     def stop_active_run(self, *, record_user_stop: bool = True) -> bool:
         """Request the active stream to stop at the next safe boundary.
 
@@ -1127,13 +1310,24 @@ class ConsoleChatController:
         provider_messages = self._provider_messages_for_session(
             session_id,
             before_message_id=message_id,
+            annotate_ids=True,
         )
         self._ensure_user_continuation_instruction(provider_messages)
-        provider_messages, refuse = await self._apply_skill_substitution(
-            provider_messages
-        )
+        (
+            provider_messages,
+            refuse,
+            skill_notes,
+            skill_bindings,
+            skill_bundle_block,
+        ) = await self._apply_skill_substitution(provider_messages)
         if refuse is not None:
             return self._block(session_id, refuse)
+        for note in skill_notes:
+            # An embedded skipped-skill note is never an abort: append the
+            # same system-row copy `_block` would, then let the turn proceed.
+            self.store.append_message(
+                session_id, role=ConsoleMessageRole.SYSTEM, content=note
+            )
         provider_messages = await self._apply_chat_dictionaries(
             provider_messages, session_id
         )
@@ -1147,6 +1341,8 @@ class ConsoleChatController:
             assistant_message_id=message_id,
             prepare_retry=True,
             prefill=prefill,
+            skill_bindings=skill_bindings,
+            skill_bundle_block=skill_bundle_block,
         )
 
     async def continue_from_message(self, message_id: str) -> ConsoleSubmitResult:
@@ -1179,7 +1375,7 @@ class ConsoleChatController:
             return self._block(session_id, visible_copy)
 
         provider_messages = self._provider_messages_through_message(
-            session_id, message_id
+            session_id, message_id, annotate_ids=True
         )
         self._ensure_user_continuation_instruction(provider_messages)
         if not self._has_user_turn(provider_messages):
@@ -1187,11 +1383,21 @@ class ConsoleChatController:
                 session_id,
                 "Nothing to continue before the first message.",
             )
-        provider_messages, refuse = await self._apply_skill_substitution(
-            provider_messages
-        )
+        (
+            provider_messages,
+            refuse,
+            skill_notes,
+            skill_bindings,
+            skill_bundle_block,
+        ) = await self._apply_skill_substitution(provider_messages)
         if refuse is not None:
             return self._block(session_id, refuse)
+        for note in skill_notes:
+            # An embedded skipped-skill note is never an abort: append the
+            # same system-row copy `_block` would, then let the turn proceed.
+            self.store.append_message(
+                session_id, role=ConsoleMessageRole.SYSTEM, content=note
+            )
         provider_messages = await self._apply_chat_dictionaries(
             provider_messages, session_id
         )
@@ -1208,10 +1414,40 @@ class ConsoleChatController:
             resolution=resolution,
             provider_messages=provider_messages,
             assistant_message_id=assistant.id,
+            skill_bindings=skill_bindings,
+            skill_bundle_block=skill_bundle_block,
         )
 
     async def regenerate_message(self, message_id: str) -> ConsoleSubmitResult:
-        """Regenerate a selected assistant message into a newly selected variant."""
+        """Regenerate a selected assistant message by forking a sibling branch.
+
+        Unlike the pre-Task-6 behavior (streaming a replacement *variant*
+        into the SAME message via ``variant_mode=True`` /
+        ``begin_variant_stream``/``finalize_variant_stream``), this forks a
+        new assistant node alongside ``message_id`` under its own parent
+        (``store.create_sibling``) and streams into that NEW node normally
+        (``variant_mode=False``). The anchor (and any old tail beneath it,
+        for a mid-conversation regenerate) is left untouched and simply
+        drops off the active path -- still reachable via
+        ``store.set_active_leaf``, never deleted.
+
+        All validation/blocking checks (provider readiness, "nothing to
+        regenerate before the first message", a refusing skill) run BEFORE
+        the sibling is created, mirroring the old mutate-only-once-committed
+        discipline: a blocked regenerate must not leave a stray empty node
+        forked into the tree. Because the fork shares the anchor's own
+        parent, ``provider_messages`` computed with
+        ``before_message_id=message_id`` (while ``message_id`` is still on
+        the active path) is identical to computing it against the new
+        sibling's id afterward -- both yield the anchor's ancestor chain --
+        so it is safe to build once, up front.
+
+        On stream FAILURE, the new sibling node itself becomes a ``failed``
+        node on the active path (retryable via ``retry_message``), rather
+        than restoring the anchor's prior reply in place -- this is the
+        intended node-model behavior, not a regression: the anchor is a
+        completely separate node and was never touched.
+        """
         active_rejection = self._active_run_rejection()
         if active_rejection is not None:
             return active_rejection
@@ -1244,6 +1480,7 @@ class ConsoleChatController:
         provider_messages = self._provider_messages_for_session(
             session_id,
             before_message_id=message_id,
+            annotate_ids=True,
         )
         self._ensure_user_continuation_instruction(provider_messages)
         if not self._has_user_turn(provider_messages):
@@ -1251,11 +1488,21 @@ class ConsoleChatController:
                 session_id,
                 "Nothing to regenerate before the first message.",
             )
-        provider_messages, refuse = await self._apply_skill_substitution(
-            provider_messages
-        )
+        (
+            provider_messages,
+            refuse,
+            skill_notes,
+            skill_bindings,
+            skill_bundle_block,
+        ) = await self._apply_skill_substitution(provider_messages)
         if refuse is not None:
             return self._block(session_id, refuse)
+        for note in skill_notes:
+            # An embedded skipped-skill note is never an abort: append the
+            # same system-row copy `_block` would, then let the turn proceed.
+            self.store.append_message(
+                session_id, role=ConsoleMessageRole.SYSTEM, content=note
+            )
         provider_messages = await self._apply_chat_dictionaries(
             provider_messages, session_id
         )
@@ -1263,12 +1510,383 @@ class ConsoleChatController:
             provider_messages, session_id
         )
         prefill = self._pinned_prefill_for_session(session_id)
+        new_message = self.store.create_sibling(
+            message_id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="",
+            persist=self.store.persistence is not None,
+        )
         return await self._stream_assistant_response(
             resolution=resolution,
             provider_messages=provider_messages,
-            assistant_message_id=message_id,
-            variant_mode=True,
+            assistant_message_id=new_message.id,
+            variant_mode=False,
             prefill=prefill,
+            skill_bindings=skill_bindings,
+            skill_bundle_block=skill_bundle_block,
+        )
+
+    #: Guidance cap for the transcript span fed to the summarizer (Task 3).
+    #: Well above any realistic single-summary span so it never trims in tests
+    #: or normal use; a runaway history drops its OLDEST turns before the call.
+    _SUMMARY_SPAN_TOKEN_BUDGET = 12000
+
+    async def summarize_up_to(self, message_id: str) -> ConsoleSubmitResult:
+        """Summarize the active path up to (excluding) a USER message.
+
+        Console `/rewind` "Summarize up to here" (SP2, Task 3). Runs the
+        session's resolved provider (non-streaming) over the active-path turns
+        before ``message_id`` and stores the result as the session's boundary
+        summary (``store.set_session_context_summary``). The visible transcript
+        is never mutated -- only the provider CONTEXT is later compacted at the
+        dispatch choke point (see ``_apply_context_summary_compaction``).
+
+        Gates run FIRST and NONE of them mutates transcript state (the Phase B
+        discipline): an active run, a missing session, an off-path or non-USER
+        target, a target with nothing before it, and provider-not-ready each
+        return a blocked ``ConsoleSubmitResult`` via ``_summarize_block`` --
+        which only sets the run state, never appends a system row. Rolling
+        re-summarize (a prior boundary already on the path before ``message_id``)
+        prepends the prior summary and only re-sends the turns SINCE that
+        boundary. On an empty reply or a provider error the stored summary is
+        left untouched.
+
+        Args:
+            message_id: Native id of the USER turn to summarize UP TO.
+
+        Returns:
+            ``ConsoleSubmitResult`` -- ``accepted`` True only when a non-empty
+            summary was generated and stored.
+        """
+        active_rejection = self._active_run_rejection()
+        if active_rejection is not None:
+            return active_rejection
+
+        session_id = self.store.active_session_id
+        if session_id is None:
+            return ConsoleSubmitResult(False, False, "No active Console session.")
+
+        if message_id not in self.store.active_path_message_ids(session_id):
+            return self._summarize_block("Switch to that branch before summarizing.")
+        try:
+            target = self.store.get_message(message_id)
+        except KeyError:
+            return self._summarize_block("Switch to that branch before summarizing.")
+        if target.role is not ConsoleMessageRole.USER:
+            return self._summarize_block(
+                "Only your own messages can be summarized up to here."
+            )
+
+        messages = self.store.messages_for_session(session_id)
+        target_index = next(
+            (i for i, m in enumerate(messages) if m.id == message_id), None
+        )
+        if target_index is None:
+            return self._summarize_block("Switch to that branch before summarizing.")
+        before = [
+            m
+            for m in messages[:target_index]
+            if m.role in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}
+        ]
+        if not before:
+            return self._summarize_block("Nothing to summarize before that message.")
+
+        # Rolling compaction: when a prior boundary sits on this path BEFORE the
+        # target, the prior summary already covers everything strictly before
+        # it, so re-summarize only from that boundary (inclusive) forward and
+        # fold the prior summary in.
+        prev_summary, prev_boundary_id = self.store.session_context_summary(session_id)
+        start_index = 0
+        rolling_summary: str | None = None
+        if prev_boundary_id is not None and prev_summary:
+            prev_index = next(
+                (i for i, m in enumerate(messages) if m.id == prev_boundary_id), None
+            )
+            if prev_index is not None and prev_index < target_index:
+                start_index = prev_index
+                rolling_summary = prev_summary
+        span = [
+            m
+            for m in messages[start_index:target_index]
+            if m.role in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}
+        ]
+
+        # "Summarizing..." run state, set the way regenerate sets VALIDATING.
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Summarizing conversation…")
+        )
+        resolution = await self.provider_gateway.resolve_for_send(
+            self._provider_selection()
+        )
+        if not getattr(resolution, "ready", False):
+            return self._summarize_block(
+                self._blocked_visible_copy(getattr(resolution, "visible_copy", ""))
+            )
+
+        span_text = self._build_summary_span_text(
+            span, rolling_summary, model=getattr(resolution, "model", None) or ""
+        )
+        summarize_messages = [
+            {
+                "role": ConsoleMessageRole.SYSTEM.value,
+                "content": get_internal_prompt("console.rewind_summarize"),
+            },
+            {"role": ConsoleMessageRole.USER.value, "content": span_text},
+        ]
+        try:
+            summary_text = await self._collect_summary_completion(
+                resolution, summarize_messages
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:  # noqa: BLE001 -- failure = no-op + honest copy
+            logger.opt(exception=True).warning(
+                "Console summarize-up-to failed", error=str(error)
+            )
+            visible_copy = "Couldn't summarize the conversation. Try again."
+            self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
+            return ConsoleSubmitResult(False, False, visible_copy)
+
+        if not summary_text.strip():
+            return self._summarize_block("The model returned an empty summary.")
+
+        self.store.set_session_context_summary(session_id, summary_text, message_id)
+        turns = sum(1 for m in before if m.role is ConsoleMessageRole.USER)
+        visible_copy = f"Summarized {turns} earlier turn{'s' if turns != 1 else ''}."
+        self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, visible_copy))
+        return ConsoleSubmitResult(True, False, visible_copy)
+
+    def _summarize_block(self, visible_copy: str) -> ConsoleSubmitResult:
+        """Blocked-summarize result that mutates NO transcript state.
+
+        Unlike ``_block`` (which appends a SYSTEM row), a blocked summarize
+        must leave the transcript untouched -- the run-state copy alone carries
+        the reason to the control surfaces (Phase B discipline).
+        """
+        self._set_run_state(ConsoleRunState.blocked(visible_copy))
+        return ConsoleSubmitResult(False, False, visible_copy)
+
+    def _build_summary_span_text(
+        self,
+        span: list[ConsoleChatMessage],
+        prior_summary: str | None,
+        *,
+        model: str,
+    ) -> str:
+        """Build the plain-text transcript span fed to the summarizer.
+
+        Emits ``User: ...`` / ``Assistant: ...`` lines, prepending a
+        ``[Previous summary]`` block when rolling. If the assembled span blows
+        past ``_SUMMARY_SPAN_TOKEN_BUDGET`` (counted with
+        ``count_console_messages_tokens``), the OLDEST turns are dropped until
+        it fits -- the newest detail and the prior summary are always kept.
+        """
+
+        def assemble(rows: list[ConsoleChatMessage]) -> str:
+            lines = [
+                f"{'User' if m.role is ConsoleMessageRole.USER else 'Assistant'}: {m.content}"
+                for m in rows
+            ]
+            transcript_text = "\n".join(lines)
+            if prior_summary:
+                return f"[Previous summary]\n{prior_summary}\n\n{transcript_text}".rstrip()
+            return transcript_text
+
+        rows = list(span)
+        body = assemble(rows)
+        while len(rows) > 1 and count_console_messages_tokens(
+            [{"role": "user", "content": body}], model
+        ) > self._SUMMARY_SPAN_TOKEN_BUDGET:
+            rows = rows[1:]
+            body = assemble(rows)
+        return body
+
+    async def _collect_summary_completion(
+        self, resolution: Any, messages: list[dict[str, Any]]
+    ) -> str:
+        """Collect a NON-streaming completion via the gateway's streaming seam.
+
+        The provider gateway protocol exposes only ``stream_chat``; there is no
+        separate non-streaming completion method on the Console surface, so the
+        summary is accumulated from its chunks WITHOUT appending to any
+        transcript message (summarize never mutates the tree). Non-``str``
+        yields (e.g. tool-call payloads, never requested here) are ignored.
+        """
+        chunks: list[str] = []
+        async for chunk in self.provider_gateway.stream_chat(resolution, messages):
+            if isinstance(chunk, str) and chunk:
+                chunks.append(chunk)
+        return "".join(chunks)
+
+    async def edit_and_resend_message(
+        self, message_id: str, new_content: str
+    ) -> ConsoleSubmitResult:
+        """Edit a USER message and resend it, forking a NEW sibling branch.
+
+        Sibling counterpart to ``regenerate_message``, but the anchor is a
+        USER message rather than an assistant one, and this creates TWO new
+        nodes instead of one: a USER sibling of ``message_id`` (``store.
+        create_sibling``, parented at the anchor's own parent, carrying the
+        edited text) followed by an empty ASSISTANT node appended under it
+        (``store.append_message``, which always parents at the current
+        active leaf -- the freshly created sibling). The anchor
+        (``message_id``) and any old tail beneath it (its prior assistant
+        reply, and anything after it for a mid-conversation edit) are left
+        untouched and simply drop off the active path -- still reachable via
+        ``store.set_active_leaf``, never deleted.
+
+        All validation/blocking checks (active run, message role/session
+        ownership, non-blank content, provider readiness) AND every payload
+        transform (skill substitution, chat dictionaries, world info) run
+        BEFORE either new node is created, mirroring ``regenerate_message``'s
+        "mutate last" discipline: a blocked or refused edit-and-resend must
+        not leave a stray orphan sibling -- or an un-streamed, un-retryable
+        ``"pending"`` assistant node -- forked into the tree. Unlike
+        ``regenerate_message`` (whose anchor is still on the active path, so
+        its payload can be read straight off the store), the edited text
+        does not exist as a stored node yet, so ``provider_messages`` is
+        built from the anchor's ancestors (``_provider_messages_for_session``
+        with ``before_message_id=message_id``, which excludes the anchor and
+        its subtree) plus a synthesized ``{"role": "user", "content":
+        clean_content}`` dict standing in for the not-yet-created sibling.
+        The transform pipeline operates purely on that ``list[dict]``
+        payload and never needs the real nodes to exist, so a
+        skill-substitution refusal aborts the turn via ``_block`` with
+        nothing to clean up. Only once every transform has succeeded are
+        ``new_user`` (``store.create_sibling``) and the empty ``assistant``
+        node (``store.append_message``) actually created, and the stream is
+        started against them.
+
+        On stream FAILURE, the new assistant node becomes a ``failed`` node
+        on the active path (retryable via ``retry_message``), rather than
+        restoring the anchor's prior reply in place -- this is the intended
+        node-model behavior, not a regression: the anchor is a completely
+        separate node and was never touched.
+
+        Args:
+            message_id: Native id of the USER message being edited (the
+                anchor whose ancestor chain -- read with
+                ``before_message_id=message_id``, which excludes the anchor
+                and its own subtree -- becomes the base for the new branch).
+            new_content: The edited text to resend as the new sibling USER
+                message.
+
+        Returns:
+            A ``ConsoleSubmitResult``. ``accepted`` is ``True`` once the new
+            USER/ASSISTANT sibling pair has been created and streaming has
+            started (whether the stream itself later completes or fails);
+            ``False`` if any pre-mutation block gate (active run, message
+            role, session ownership, off-active-path anchor, blank content,
+            provider readiness, skill refusal) rejected the resend before
+            either new node was created. ``visible_copy`` carries the
+            block/refusal copy shown to the user when ``accepted`` is
+            ``False`` (and the streamed/failure copy otherwise).
+        """
+        active_rejection = self._active_run_rejection()
+        if active_rejection is not None:
+            return active_rejection
+
+        session_id = self.store.active_session_id
+        if session_id is None:
+            return ConsoleSubmitResult(False, False, "No active Console session.")
+        message = self.store.get_message(message_id)
+        if message.role is not ConsoleMessageRole.USER:
+            return self._block(
+                session_id, "Only your messages can be edited and re-sent."
+            )
+        if self.store.session_id_for_message(message_id) != session_id:
+            visible_copy = "Open the original session before editing this message."
+            self._set_run_state(ConsoleRunState.blocked(visible_copy))
+            return ConsoleSubmitResult(False, False, visible_copy)
+        if message_id not in self.store.active_path_message_ids(session_id):
+            # Task 2 review fix (Qodo finding 2): `_provider_messages_for_session`
+            # builds the resend payload by scanning the ACTIVE-PATH transcript
+            # until `message_id` is seen. If the anchor is not on the active
+            # path, that scan never breaks and the payload would be built from
+            # the wrong branch entirely. Edit is only exposed on active-path
+            # rows today, so this is currently unreachable from the UI -- but
+            # guard it here too so the method is safe to call directly.
+            return self._block(
+                session_id,
+                "Switch to that branch before editing and re-sending this message.",
+            )
+
+        clean_content, validation_error = self._validated_draft(new_content)
+        if validation_error is not None:
+            return self._block(session_id, validation_error)
+
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
+        )
+        resolution = await self.provider_gateway.resolve_for_send(
+            self._provider_selection()
+        )
+        if not getattr(resolution, "ready", False):
+            visible_copy = self._blocked_visible_copy(
+                getattr(resolution, "visible_copy", "")
+            )
+            return self._block(session_id, visible_copy)
+
+        # Build + transform the payload BEFORE creating either new node
+        # (task-2 review fix): the edited text is synthesized as a plain
+        # dict standing in for the not-yet-created sibling, so a
+        # skill-substitution refusal (or any other transform failure) has
+        # nothing to clean up -- no orphan sibling, no stuck "pending"
+        # assistant node.
+        provider_messages = self._provider_messages_for_session(
+            session_id,
+            before_message_id=message_id,
+            annotate_ids=True,
+        )
+        provider_messages.append(
+            {"role": ConsoleMessageRole.USER.value, "content": clean_content}
+        )
+        self._ensure_user_continuation_instruction(provider_messages)
+        (
+            provider_messages,
+            refuse,
+            skill_notes,
+            skill_bindings,
+            skill_bundle_block,
+        ) = await self._apply_skill_substitution(provider_messages)
+        if refuse is not None:
+            return self._block(session_id, refuse)
+        for note in skill_notes:
+            # An embedded skipped-skill note is never an abort: append the
+            # same system-row copy `_block` would, then let the turn proceed.
+            self.store.append_message(
+                session_id, role=ConsoleMessageRole.SYSTEM, content=note
+            )
+        provider_messages = await self._apply_chat_dictionaries(
+            provider_messages, session_id
+        )
+        provider_messages = await self._apply_world_info(
+            provider_messages, session_id
+        )
+        prefill = self._pinned_prefill_for_session(session_id)
+
+        # Every transform succeeded: now (and only now) fork the edited USER
+        # sibling and append the empty ASSISTANT node to stream into.
+        new_user = self.store.create_sibling(
+            message_id,
+            role=ConsoleMessageRole.USER,
+            content=clean_content,
+            persist=self.store.persistence is not None,
+        )
+        assistant = self.store.append_message(
+            session_id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="",
+            persist=self.store.persistence is not None,
+        )
+        return await self._stream_assistant_response(
+            resolution=resolution,
+            provider_messages=provider_messages,
+            assistant_message_id=assistant.id,
+            variant_mode=False,
+            prefill=prefill,
+            skill_bindings=skill_bindings,
+            skill_bundle_block=skill_bundle_block,
         )
 
     async def build_context_snapshot(
@@ -1478,6 +2096,29 @@ class ConsoleChatController:
         *,
         synthetic_turn_added: bool = True,
     ) -> list[dict[str, Any]]:
+        """Flag a draft that LOOKS like an unresolved leading `$name` skill mention.
+
+        Cheap textual heuristic only (a leading `MENTION_SIGIL`) -- this
+        preview path deliberately never calls `_apply_skill_substitution`
+        (see the caller's comment), so it has no candidate snapshot to
+        actually resolve the word against. Re-sigiled for the `$`-mention
+        migration (Task 5): a leading ``/`` is now a registered slash
+        command (``/skills``, ``/prompt``, ...), not a skill invocation, so
+        it must NOT be annotated here. Embedded ``$name`` mentions
+        elsewhere in the draft are intentionally not flagged -- this only
+        covers the leading form, mirroring `_apply_skill_substitution`'s
+        own "leading form tried first" precedence.
+
+        Only STRING content is ever annotated. A multimodal (list-content)
+        draft -- e.g. a text part plus an image attachment -- is left
+        completely unchanged, even when its text part starts with a
+        `$name` mention: `_apply_skill_substitution` early-returns on
+        non-str content at send time (replacing list content outright would
+        drop the attachments), so this preview never actually substitutes a
+        multimodal draft's skill mention. Annotating it here would promise
+        a substitution the send never performs -- a dishonest preview
+        (Qodo fix 4, PR #801 review).
+        """
         result = copy.deepcopy(messages)
         if not synthetic_turn_added or not result or result[-1].get("role") != "user":
             return result
@@ -1488,28 +2129,9 @@ class ConsoleChatController:
             "actual substitution happens at send time.]"
         )
 
-        if isinstance(content, str) and content.lstrip().startswith("/"):
+        if isinstance(content, str) and content.lstrip().startswith(MENTION_SIGIL):
             result[-1]["content"] = f"{content}\n\n{annotation}"
-            return result
 
-        if isinstance(content, list):
-            new_parts: list[Any] = []
-            annotated = False
-            for part in content:
-                text = part.get("text") if isinstance(part, dict) else None
-                if (
-                    not annotated
-                    and isinstance(part, dict)
-                    and part.get("type") == "text"
-                    and isinstance(text, str)
-                    and text.lstrip().startswith("/")
-                ):
-                    new_parts.append({**part, "text": f"{text}\n\n{annotation}"})
-                    annotated = True
-                else:
-                    new_parts.append(part)
-            if annotated:
-                result[-1]["content"] = new_parts
         return result
 
     def _build_tools_info_for_snapshot(self) -> dict[str, Any]:
@@ -1715,22 +2337,59 @@ class ConsoleChatController:
 
     async def _apply_skill_substitution(
         self, provider_messages: list[dict[str, Any]]
-    ) -> tuple[list[dict[str, Any]], str | None]:
-        """Render-fresh the triggering turn's skill command at payload build time.
+    ) -> tuple[
+        list[dict[str, Any]], str | None, tuple[str, ...], tuple[str, ...], str
+    ]:
+        """Render-fresh the triggering turn's skill mention(s) at payload build time.
 
         Spec: "Invocation semantics" §5 (the substitution rule) -- one rule
         for fresh sends AND retry/regenerate/continue. Only the FINAL
         ``role == "user"`` message in ``provider_messages`` (the turn
         actually driving this send) is ever a substitution candidate; every
-        earlier message -- including an earlier raw skill command sitting
+        earlier message -- including an earlier raw skill mention sitting
         in history -- is left untouched, so the persisted transcript always
-        keeps the literal text the user typed (the raw command is what gets
+        keeps the literal text the user typed (the raw mention is what gets
         submitted and stored; only the ephemeral provider payload for this
         turn is ever rendered). Re-resolves against a FRESH candidate
         snapshot and re-verifies trust through ``execute_skill`` on every
         call (never a cached snapshot), so a retry issued after a skill was
-        edited (now untrusted) refuses instead of silently re-running a
-        stale render.
+        edited (now untrusted) refuses/skips instead of silently re-running
+        a stale render.
+
+        Both forms are DETECTED against trusted candidates UNION
+        user-invocable blocked (needs-review) skills -- a blocked skill must
+        still be found (leading refuses, embedded degrades to literal +
+        note) rather than silently staying plain, sigil-prefixed text with
+        no signal at all. `execute_skill` remains the sole trust authority;
+        detection here never grants execution.
+
+        Two independent forms, tried in order:
+
+        Leading form -- the message, with leading whitespace stripped
+        (mirroring `_annotate_skill_commands`'s own preview `lstrip()`
+        assumption -- a resolved leading mention replaces the whole message
+        either way, so the leading whitespace simply disappears), starts
+        with `MENTION_SIGIL` and the leading word resolves to a known
+        skill: the REST of the (stripped) message is passed as that skill's
+        args (`cap_skill_args`). A resolved leading mention is never also
+        scanned for embedded mentions -- its args are opaque payload, not
+        further mentions to expand.
+
+        Embedded form -- tried whenever the leading form doesn't apply (no
+        leading `MENTION_SIGIL`, or the leading word doesn't resolve):
+        scans the ORIGINAL (unstripped) message. Every `$skill-name`
+        mention anywhere in the message (case-sensitive, code-span-masked,
+        document order -- `find_embedded_mentions`) is looked up ARGLESS
+        (`execute_skill(name, mode="local", args="")`, once per unique
+        name, right-to-left splice so earlier spans stay valid) and spliced
+        in place at the mention's exact span, preserving all surrounding
+        prose. Only an ``execution_mode == "inline"`` result splices;
+        anything else (e.g. ``fork``, which has no "in place" meaning for
+        an embedded mention) silently leaves that mention's literal `$name`
+        text untouched. A trust-blocked mention (`SkillTrustBlockedError`)
+        also leaves the literal text untouched but records a
+        `SKILL_MENTION_SKIPPED_NOTE` for the caller to surface as a
+        non-aborting system row.
 
         Args:
             provider_messages: The fully-built payload about to be sent to
@@ -1738,24 +2397,46 @@ class ConsoleChatController:
                 message and any synthesized continuation instruction).
 
         Returns:
-            ``(provider_messages, None)`` unchanged when there is no skills
-            service configured, substitution is disabled, there is no final
-            user message, or that message's content does not resolve to a
-            known skill command (not a string, doesn't start with
-            `COMMAND_PREFIX`, or `resolve_skill_command` doesn't return
-            ``"resolved"``). ``(new_messages, None)`` when a skill resolves
-            and renders: ``inline`` replaces just the final message in
-            place (history preserved); ``fork`` drops every message before
-            it except a leading ``role == "system"`` message (clean context
-            = session system prompt + rendered turn only). ``(provider_
-            messages, refuse_copy)`` -- the ORIGINAL, unmodified messages,
-            paired with `SKILL_UNTRUSTED_REFUSE` copy -- when the resolved
-            skill is no longer trusted (`SkillTrustBlockedError` at
-            execute-time); the caller must append `refuse_copy` as a system
-            row and abort the turn without sending.
+            A 5-tuple ``(provider_messages, refuse, notes, skill_bindings,
+            skill_bundle_block)`` (Task 5, skills-fork-reachability).
+            ``skill_bindings`` is the leading-RESOLVED skill's name (both
+            ``inline`` and ``fork`` outcomes -- never on refuse) plus every
+            embedded mention name that actually SPLICED (never a
+            trust-blocked-literal or fork-literal mention).
+            ``skill_bundle_block`` is the fully-rendered "Bundled files"
+            block (`_render_skill_bundle_block`) for every bound skill
+            whose `execute_skill` result carried non-empty
+            `reference_files`, built as pure string work from the results
+            already in hand this call (no re-execution, no extra service
+            calls), or ``""`` when nothing bound has any. It is NEVER
+            inserted into ``provider_messages`` here -- only ``run_reply``
+            (bridge-side) ever appends it, so plain sends and the stored
+            transcript never see it.
+
+            ``(provider_messages, None, (), (), "")`` unchanged when there
+            is no skills service configured, substitution is disabled,
+            there is no final user message, that message's content isn't a
+            string, or neither form applies. ``(new_messages, None, notes,
+            skill_bindings, skill_bundle_block)`` when the leading form
+            resolves and renders (``notes`` always empty for the leading
+            form) or when the embedded pass splices one or more mentions
+            (``notes`` carries one `SKILL_MENTION_SKIPPED_NOTE` per unique
+            trust-blocked mention name, in document order); ``inline``
+            replaces just the final message in place (history preserved);
+            leading-form ``fork`` drops every message before it except a
+            leading ``role == "system"`` message (clean context = session
+            system prompt + rendered turn only).
+            ``(provider_messages, refuse_copy, (), (), "")`` -- the
+            ORIGINAL, unmodified messages, paired with
+            `SKILL_UNTRUSTED_REFUSE` copy -- when a LEADING resolved skill
+            is no longer trusted (`SkillTrustBlockedError` at
+            execute-time); the caller must append `refuse_copy` as a
+            system row and abort the turn without sending. An embedded
+            mention never refuses/aborts -- it degrades to a
+            literal-plus-note instead, and the send proceeds.
         """
         if self._skills_service is None or not self._skill_substitution_enabled:
-            return provider_messages, None
+            return provider_messages, None, (), (), ""
 
         final_index: int | None = None
         for index in range(len(provider_messages) - 1, -1, -1):
@@ -1763,53 +2444,174 @@ class ConsoleChatController:
                 final_index = index
                 break
         if final_index is None:
-            return provider_messages, None
+            return provider_messages, None, (), (), ""
 
         content = provider_messages[final_index].get("content")
-        if not isinstance(content, str) or not content.startswith(COMMAND_PREFIX):
-            return provider_messages, None
-
-        word, rest = _split_skill_command_word(content)
-        name = word[len(COMMAND_PREFIX) :]
-        if not name:
-            return provider_messages, None
+        if not isinstance(content, str):
+            return provider_messages, None, (), (), ""
+        if MENTION_SIGIL not in content:
+            # Fast path: no sigil anywhere means neither form can possibly
+            # apply -- plain-text sends never touch the skills service.
+            return provider_messages, None, (), (), ""
 
         context = await self._skills_service.get_context(mode="local")
         candidates = self._skill_candidates_from_context(context)
-        resolution = resolve_skill_command(name, rest, candidates)
-        if resolution.kind != "resolved":
-            return provider_messages, None
-
-        args = cap_skill_args(rest)
-        try:
-            result = await self._skills_service.execute_skill(
-                resolution.name, mode="local", args=args
-            )
-        except SkillTrustBlockedError as exc:
-            refuse = SKILL_UNTRUSTED_REFUSE.format(
-                name=resolution.name, reason=exc.reason_code
-            )
-            return provider_messages, refuse
-
-        rendered = (
-            result.get("rendered_prompt", "") if isinstance(result, Mapping) else ""
+        # DETECTION population = trusted candidates UNION user-invocable
+        # blocked (needs-review) skills. A blocked skill must still be
+        # DETECTED -- leading refuses, embedded degrades to literal + note
+        # -- rather than silently staying plain, sigil-prefixed text with no
+        # signal at all. `execute_skill` (not this resolution step) remains
+        # the sole authority on whether a resolved name may actually run:
+        # a name that resolves here to a blocked skill hits
+        # `SkillTrustBlockedError` at the `execute_skill` call below/in the
+        # embedded loop, which already drives the refuse/skip-with-note
+        # paths.
+        detection_candidates = candidates + self._skill_blocked_candidates_from_context(
+            context
         )
-        rendered_message = {"role": ConsoleMessageRole.USER.value, "content": rendered}
-        execution_mode = (
-            result.get("execution_mode") if isinstance(result, Mapping) else None
-        )
-        if execution_mode == "fork":
-            leading = (
-                [provider_messages[0]]
-                if provider_messages
-                and provider_messages[0].get("role") == ConsoleMessageRole.SYSTEM.value
-                else []
-            )
-            return leading + [rendered_message], None
 
+        # --- Leading form: message starts with a resolvable $skill-name.
+        # Leading whitespace is tolerated (stripped before the sigil check
+        # and the word/rest split) to match `_annotate_skill_commands`'s own
+        # `lstrip()` assumption in the preview -- a resolved leading mention
+        # replaces the ENTIRE message on both the inline-replace and fork
+        # paths, so the leading whitespace simply disappears either way.
+        stripped_content = content.lstrip()
+        if stripped_content.startswith(MENTION_SIGIL):
+            word, rest = _split_skill_command_word(stripped_content)
+            name = word[len(MENTION_SIGIL) :]
+            if name:
+                resolution = resolve_skill_command(name, rest, detection_candidates)
+                if resolution.kind == "resolved":
+                    args = cap_skill_args(rest)
+                    try:
+                        result = await self._skills_service.execute_skill(
+                            resolution.name, mode="local", args=args
+                        )
+                    except SkillTrustBlockedError as exc:
+                        refuse = SKILL_UNTRUSTED_REFUSE.format(
+                            name=resolution.name, reason=exc.reason_code
+                        )
+                        return provider_messages, refuse, (), (), ""
+
+                    rendered = (
+                        result.get("rendered_prompt", "")
+                        if isinstance(result, Mapping)
+                        else ""
+                    )
+                    rendered_message = {
+                        "role": ConsoleMessageRole.USER.value,
+                        "content": rendered,
+                    }
+                    execution_mode = (
+                        result.get("execution_mode")
+                        if isinstance(result, Mapping)
+                        else None
+                    )
+                    # Task 5: a resolved leading mention always binds its
+                    # name (fork AND inline outcomes -- never on refuse,
+                    # which already returned above) and its block is
+                    # rendered from this single execute_skill result.
+                    bindings = (resolution.name,)
+                    block = (
+                        _render_skill_bundle_block([result])
+                        if isinstance(result, Mapping)
+                        else ""
+                    )
+                    if execution_mode == "fork":
+                        leading = (
+                            [provider_messages[0]]
+                            if provider_messages
+                            and provider_messages[0].get("role")
+                            == ConsoleMessageRole.SYSTEM.value
+                            else []
+                        )
+                        return leading + [rendered_message], None, (), bindings, block
+
+                    new_messages = list(provider_messages)
+                    new_messages[final_index] = {
+                        **provider_messages[final_index],
+                        "content": rendered,
+                    }
+                    return new_messages, None, (), bindings, block
+
+        # --- Embedded pass: no leading mention, or the leading word didn't
+        # resolve to a known skill. Scans the ORIGINAL (unstripped) content
+        # -- the leading-whitespace tolerance above only applies to the
+        # leading form. `names` is the same detection population (trusted
+        # UNION user-invocable blocked) so a blocked mention is found and
+        # routed through the trust-blocked-note path below instead of
+        # staying invisible.
+        names = frozenset(candidate.name for candidate in detection_candidates)
+        mentions = find_embedded_mentions(content, names)
+        if not mentions:
+            return provider_messages, None, (), (), ""
+
+        rendered_by_name: dict[str, str | None] = {}
+        # Task 5: results_by_name only keeps a name's execute_skill result
+        # when that mention actually SPLICED (execution_mode == "inline")
+        # -- a blocked-literal or fork-literal mention's result is
+        # discarded here, so it can never leak into skill_bindings or the
+        # rendered bundle block below.
+        results_by_name: dict[str, Mapping[str, Any]] = {}
+        notes: list[str] = []
+        for mention in mentions:
+            if mention.name in rendered_by_name:
+                continue
+            try:
+                result = await self._skills_service.execute_skill(
+                    mention.name, mode="local", args=""
+                )
+            except SkillTrustBlockedError:
+                rendered_by_name[mention.name] = None
+                notes.append(SKILL_MENTION_SKIPPED_NOTE.format(name=mention.name))
+                continue
+            execution_mode = (
+                result.get("execution_mode") if isinstance(result, Mapping) else None
+            )
+            rendered = (
+                result.get("rendered_prompt", "")
+                if isinstance(result, Mapping)
+                else ""
+            )
+            # Fork (or anything non-inline) cannot splice in place: leave
+            # the mention literal, no note (this is not a trust failure).
+            rendered_by_name[mention.name] = (
+                rendered if execution_mode == "inline" else None
+            )
+            if execution_mode == "inline" and isinstance(result, Mapping):
+                results_by_name[mention.name] = result
+
+        new_content = content
+        for mention in reversed(mentions):
+            body = rendered_by_name.get(mention.name)
+            if body is None:
+                continue
+            new_content = (
+                new_content[: mention.start] + body + new_content[mention.end :]
+            )
+        if new_content == content:
+            return provider_messages, None, tuple(notes), (), ""
+
+        # Task 5: bound names are every unique mention that actually
+        # spliced, in first-occurrence document order (`dict.fromkeys` on
+        # `mentions` dedups while preserving order) -- never a
+        # blocked-literal or fork-literal mention, which never reached
+        # `results_by_name`.
+        spliced_names = tuple(
+            name
+            for name in dict.fromkeys(mention.name for mention in mentions)
+            if rendered_by_name.get(name) is not None
+        )
+        block = _render_skill_bundle_block(
+            results_by_name[name] for name in spliced_names if name in results_by_name
+        )
         new_messages = list(provider_messages)
-        new_messages[final_index] = rendered_message
-        return new_messages, None
+        new_messages[final_index] = {
+            **provider_messages[final_index],
+            "content": new_content,
+        }
+        return new_messages, None, tuple(notes), spliced_names, block
 
     async def _apply_world_info(
         self, provider_messages: list[dict[str, Any]], session_id: str
@@ -2009,6 +2811,37 @@ class ConsoleChatController:
         )
 
     @staticmethod
+    def _skill_blocked_candidates_from_context(
+        context: Any,
+    ) -> tuple[SkillCommandCandidate, ...]:
+        """Build the user-invocable, trust-BLOCKED (needs-review) skill
+        candidate population.
+
+        Companion to `_skill_candidates_from_context`: unioned with it in
+        `_apply_skill_substitution` to widen the DETECTION population (never
+        the executable one) so a `$blocked-name` mention resolves a name
+        instead of silently staying literal, sigil-prefixed text with no
+        refusal or note at all. `execute_skill` remains the sole authority
+        on whether a resolved name may actually run -- candidates built here
+        are never executed directly by this method's caller. A blocked
+        skill flagged ``user_invocable: False`` is excluded, mirroring
+        `_skill_candidates_from_context`'s own filter discipline.
+        """
+        blocked = (
+            context.get("blocked_skills") if isinstance(context, Mapping) else None
+        )
+        return tuple(
+            SkillCommandCandidate(
+                name=str(item.get("name")),
+                description=str(item.get("description") or ""),
+            )
+            for item in (blocked or [])
+            if isinstance(item, Mapping)
+            and item.get("name")
+            and item.get("user_invocable", True)
+        )
+
+    @staticmethod
     def _validated_draft(
         draft: str, *, allow_empty: bool = False
     ) -> tuple[str, str | None]:
@@ -2125,6 +2958,8 @@ class ConsoleChatController:
         variant_mode: bool = False,
         prefill: str | None = None,
         prefill_from_one_shot: bool = False,
+        skill_bindings: tuple[str, ...] = (),
+        skill_bundle_block: str = "",
     ) -> ConsoleSubmitResult:
         try:
             owner_id = self.store.session_id_for_message(assistant_message_id)
@@ -2139,6 +2974,16 @@ class ConsoleChatController:
         # not the controller's active session) so a session switch racing
         # this send can't flip which branch a still-in-flight message uses.
         force_plain = owner is not None and owner.character_id is not None
+        # SP2 /rewind "summarize up to here": at the SINGLE dispatch choke point
+        # (agent + direct both flow through here), fold the session's boundary
+        # summary into the payload -- but ONLY when the boundary message is
+        # actually present in it (the leak rule; see
+        # _apply_context_summary_compaction). Runs BEFORE bound_messages_to_
+        # window so the summary lands in the leading system prefix the trimmer
+        # preserves.
+        provider_messages = self._apply_context_summary_compaction(
+            owner_id, provider_messages
+        )
         # task-322: bound the dispatched history by real tokens before the
         # agent-vs-direct branch below, so both paths send a windowed payload.
         # Budget against the captured `resolution` -- the same model/provider/
@@ -2154,6 +2999,18 @@ class ConsoleChatController:
             ),
         )
         provider_messages = bound.messages
+        # Strip the private id-threading key from every row before dispatch:
+        # it existed solely so the compaction above could anchor the boundary
+        # by identity (see NATIVE_MESSAGE_ID_KEY). This is the single latest
+        # point covering BOTH the direct stream path (`stream_chat` below) and
+        # the agent path (`agent_messages = list(provider_messages)` in
+        # `_run_agent_reply`), so no provider/gateway/agent ever sees the key.
+        # Rebuild fresh row dicts rather than mutating in place, since transforms
+        # can leave earlier rows aliased to freshly-built builder dicts.
+        provider_messages = [
+            {k: v for k, v in row.items() if k != NATIVE_MESSAGE_ID_KEY}
+            for row in provider_messages
+        ]
         if bound.dropped_count:
             # Reuse the guarded owner_id resolved above; the note helper
             # swallows a store-close race that happens during the append.
@@ -2170,6 +3027,8 @@ class ConsoleChatController:
                 assistant_message_id=assistant_message_id,
                 prepare_retry=prepare_retry,
                 variant_mode=variant_mode,
+                skill_bindings=skill_bindings,
+                skill_bundle_block=skill_bundle_block,
             )
         one_shot_used = prefill if prefill_from_one_shot else None
         if prefill:
@@ -2324,6 +3183,8 @@ class ConsoleChatController:
         assistant_message_id: str,
         prepare_retry: bool,
         variant_mode: bool,
+        skill_bindings: tuple[str, ...] = (),
+        skill_bundle_block: str = "",
     ) -> ConsoleSubmitResult:
         """Run the agent loop as the reply engine, streaming into the target row."""
         logger.info(
@@ -2401,7 +3262,10 @@ class ConsoleChatController:
         # control returns to a checkpoint the loop actually polls -- it is
         # not a hard timeout on an in-flight, zero-chunk provider call.
         try:
-            outcome = await asyncio.to_thread(
+            # run_reply returns (run_id, outcome): run_id lets us write the
+            # produced reply's PERSISTED id back onto the run after
+            # completion (the load-bearing write for resume marker anchoring).
+            run_id, outcome = await asyncio.to_thread(
                 self._agent_bridge.run_reply,
                 conversation_id=conversation_id,
                 session_id=session_id,
@@ -2414,6 +3278,9 @@ class ConsoleChatController:
                 supersede_previous=bool(prepare_retry or variant_mode),
                 mcp_provider=mcp_provider,
                 review_tool_calls=mcp_review_hook,
+                turn_skill_bindings=skill_bindings,
+                turn_bundle_block=skill_bundle_block,
+                request_skill_install_confirm=self.request_skill_install_confirm,
             )
         except asyncio.CancelledError:
             if self._stop_requested:
@@ -2483,6 +3350,7 @@ class ConsoleChatController:
             outcome,
             variant_mode=variant_mode,
             cancel_event=cancel_event,
+            run_id=run_id,
         )
 
     def _agent_conversation_id(self, session_id: str) -> str:
@@ -2500,6 +3368,7 @@ class ConsoleChatController:
         *,
         variant_mode: bool,
         cancel_event: threading.Event | None = None,
+        run_id: str | None = None,
     ) -> ConsoleSubmitResult:
         from tldw_chatbook.Agents.agent_models import RUN_CANCELLED, RUN_DONE
 
@@ -2531,6 +3400,15 @@ class ConsoleChatController:
             or (cancel_event is not None and cancel_event.is_set())
         )
         if stopped_now:
+            # The stopped message was already persisted by
+            # `mark_message_stopped` (`_persist_existing_message`), so its
+            # durable persisted id is available NOW -- record it onto the run
+            # so resume can anchor markers by it. Without this the run keeps
+            # whatever `create_run` stored (a stale native id pre-fix, NULL
+            # post-fix); a never-persisted stop leaves `current` without a
+            # persisted id and the helper no-ops (row stays NULL -> ordinal
+            # fallback -- correct).
+            self._record_run_assistant_message(run_id, current)
             self._set_run_state(
                 ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped.")
             )
@@ -2538,14 +3416,17 @@ class ConsoleChatController:
 
         if outcome.status == RUN_CANCELLED:
             return self._finalize_agent_cancelled(
-                assistant_message_id, session_id, variant_mode=variant_mode)
+                assistant_message_id, session_id, variant_mode=variant_mode,
+                run_id=run_id)
 
         if outcome.status != RUN_DONE:
             return self._finalize_agent_failure(
-                assistant_message_id, session_id, outcome, variant_mode=variant_mode)
+                assistant_message_id, session_id, outcome, variant_mode=variant_mode,
+                run_id=run_id)
 
         return self._finalize_agent_success(
-            assistant_message_id, session_id, outcome, variant_mode=variant_mode)
+            assistant_message_id, session_id, outcome,
+            variant_mode=variant_mode, run_id=run_id)
 
     def _ensure_assistant_placeholder(
         self, assistant_message_id: str, session_id: str,
@@ -2590,12 +3471,17 @@ class ConsoleChatController:
 
     def _finalize_agent_cancelled(
         self, assistant_message_id: str, session_id: str, *, variant_mode: bool,
+        run_id: str | None = None,
     ) -> ConsoleSubmitResult:
         """Handle a ``RUN_CANCELLED`` outcome: the placeholder becomes ``failed``.
 
         Per the agent turn-control spec, a runtime-reported cancellation is a
         terminal failure, not a user-initiated stop. If the placeholder has
         vanished, append a failed assistant message carrying the visible copy.
+        The terminal message (``mark_message_failed``/``_append_failed_assistant``,
+        both persisted) has its durable id recorded onto the run so resume can
+        anchor markers by it; a never-persisted reply no-ops (row stays NULL ->
+        ordinal fallback -- see ``_record_run_assistant_message``).
         """
         visible_copy = "Response stopped/cancelled."
         placeholder = self._ensure_assistant_placeholder(assistant_message_id, session_id)
@@ -2603,12 +3489,13 @@ class ConsoleChatController:
             failed = self.store.mark_message_failed(assistant_message_id)
         else:
             failed = self._append_failed_assistant(session_id, visible_copy)
+        self._record_run_assistant_message(run_id, failed)
         self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
         return ConsoleSubmitResult(True, True, failed.content)
 
     def _finalize_agent_failure(
         self, assistant_message_id: str, session_id: str, outcome: Any,
-        *, variant_mode: bool,
+        *, variant_mode: bool, run_id: str | None = None,
     ) -> ConsoleSubmitResult:
         """Handle ``RUN_ERROR``, ``RUN_STUCK``, or any unknown non-done outcome.
 
@@ -2617,6 +3504,12 @@ class ConsoleChatController:
         is missing, the runtime may have already written an assistant message
         (e.g. streamed partial content before the error); use it when
         possible, otherwise append a new failed assistant message.
+
+        Whichever terminal message resolves (all persisted via
+        ``mark_message_failed``/``_append_failed_assistant``) has its durable id
+        recorded onto the run so resume can anchor markers by it; a
+        never-persisted reply no-ops (row stays NULL -> ordinal fallback -- see
+        ``_record_run_assistant_message``).
         """
         visible_copy = self._agent_failure_visible_copy(outcome)
         if "provider returned HTTP" in visible_copy and (
@@ -2626,6 +3519,7 @@ class ConsoleChatController:
         placeholder = self._ensure_assistant_placeholder(assistant_message_id, session_id)
         if placeholder is not None:
             failed = self.store.mark_message_failed(assistant_message_id)
+            self._record_run_assistant_message(run_id, failed)
             self._append_failure_system_row(session_id, visible_copy)
             self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
             return ConsoleSubmitResult(True, True, failed.content)
@@ -2636,12 +3530,13 @@ class ConsoleChatController:
             failed = self.store.mark_message_failed(runtime_written.id)
         else:
             failed = self._append_failed_assistant(session_id, visible_copy)
+        self._record_run_assistant_message(run_id, failed)
         self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
         return ConsoleSubmitResult(True, True, failed.content)
 
     def _finalize_agent_success(
         self, assistant_message_id: str, session_id: str, outcome: Any,
-        *, variant_mode: bool,
+        *, variant_mode: bool, run_id: str | None = None,
     ) -> ConsoleSubmitResult:
         """Handle ``RUN_DONE``: complete the placeholder (or a runtime-written one).
 
@@ -2649,24 +3544,57 @@ class ConsoleChatController:
         response was generated.``. If the placeholder is missing, the runtime
         may have streamed content into an assistant row already; complete it
         when possible, otherwise append a new assistant message.
+
+        Once the reply is completed (and its durable ``persisted_message_id``
+        assigned), that persisted id is written back onto the agent run via
+        ``_record_run_assistant_message`` -- the load-bearing correction of
+        the native id ``create_run`` recorded, which resume anchors markers by.
         """
         placeholder = self._ensure_assistant_placeholder(assistant_message_id, session_id)
         if placeholder is not None:
             completed = self._complete_agent_message(assistant_message_id, variant_mode, outcome)
+            self._record_run_assistant_message(run_id, completed)
             self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
             return ConsoleSubmitResult(True, True, completed.content)
 
         runtime_written = self._find_runtime_written_assistant(session_id)
         if runtime_written is not None and runtime_written.status in {"pending", "streaming"}:
             completed = self._complete_agent_message(runtime_written.id, variant_mode=False, outcome=outcome)
+            self._record_run_assistant_message(run_id, completed)
             self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
             return ConsoleSubmitResult(True, True, completed.content)
 
         final_text = getattr(outcome, "final_text", "") or "No response was generated."
         completed = self.store.append_message(
             session_id, role=ConsoleMessageRole.ASSISTANT, content=final_text)
+        self._record_run_assistant_message(run_id, completed)
         self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."))
         return ConsoleSubmitResult(True, True, completed.content)
+
+    def _record_run_assistant_message(
+        self, run_id: str | None, completed: ConsoleChatMessage,
+    ) -> None:
+        """Write the completed reply's PERSISTED id onto the agent run.
+
+        On resume, markers anchor by matching a transcript message's durable
+        ``persisted_message_id``; the id recorded at ``create_run`` time is
+        the native in-memory id (the reply was not persisted yet), so it must
+        be corrected here, once the reply has its persisted id. A no-op when
+        there is no run id, no bridge, or no persistence (the native id would
+        be useless to resume). Never fails the turn -- a marker-anchoring
+        bookkeeping write, wrapped defensively like the file's other seams.
+        """
+        persisted = getattr(completed, "persisted_message_id", None)
+        if not run_id or persisted is None or self._agent_bridge is None:
+            return
+        try:
+            self._agent_bridge.record_run_assistant_message(run_id, persisted)
+        except Exception:  # noqa: BLE001 -- bookkeeping must never fail the turn
+            logger.opt(exception=True).warning(
+                "failed to record persisted assistant id on agent run",
+                run_id=run_id,
+                persisted_message_id=persisted,
+            )
 
     def _append_failed_assistant(
         self, session_id: str, visible_copy: str,
@@ -2724,11 +3652,96 @@ class ConsoleChatController:
             return []
         return [{"role": ConsoleMessageRole.SYSTEM.value, "content": raw_system_prompt}]
 
+    def _apply_context_summary_compaction(
+        self, session_id: str, provider_messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Fold the session's boundary summary into ``provider_messages``.
+
+        THE LEAK RULE (spec-review fix): compaction applies ONLY when the
+        boundary USER message is actually PRESENT in this payload. When present,
+        the payload rows BEFORE it are dropped and the summary is appended to
+        the leading system prefix (which ``bound_messages_to_window`` preserves).
+        When ABSENT -- e.g. regenerating a message that sits BEFORE the boundary,
+        whose ancestors-only payload ends pre-boundary -- the payload is returned
+        untouched: a summary covering LATER turns must never be substituted into
+        an earlier point's context.
+
+        Payload-row -> boundary matching mechanism: match by native message
+        IDENTITY, not by content. Send-path payload builds thread each row's
+        source transcript id onto it (``annotate_ids=True`` ->
+        ``NATIVE_MESSAGE_ID_KEY``); the boundary is the row whose id equals the
+        stored ``boundary_native_id``. The transform pipeline between build and
+        this choke point only ever rewrites/drops the FINAL user turn (skill
+        fork drops leading rows; chat-dictionary/world-info AND skill-
+        substitution's own inline rewrites -- leading-mention replace and
+        embedded-mention splice -- rewrite the last user row via ``{**row}``
+        spreads that PRESERVE the key) and appends a synthesized continuation
+        turn (no key) -- so every earlier row, and thus any strictly-earlier
+        boundary, keeps its id intact.
+
+        This is the genuine fail-safe: if the boundary id is not present on any
+        row -- because the boundary sits after the payload's end
+        (pre-boundary regenerate/retry/continue/edit-resend), or a branch
+        switch/deletion made it dangling, or the payload was built WITHOUT id
+        annotation -- NOTHING matches and the FULL history is sent unchanged.
+        A byte-identical earlier duplicate of the boundary's text (e.g. a repeat
+        "continue"/"yes") can no longer false-fire the way first-occurrence
+        content matching did, so the summary of LATER turns is never injected
+        into an EARLIER point's context.
+
+        Args:
+            session_id: Session owning the payload being dispatched.
+            provider_messages: The fully-built, post-transform payload
+                (id-annotated on the send path).
+
+        Returns:
+            The compacted payload, or ``provider_messages`` unchanged.
+        """
+        summary, boundary_native_id = self.store.session_context_summary(session_id)
+        if not summary or boundary_native_id is None:
+            return provider_messages
+
+        boundary_index: int | None = None
+        for index, row in enumerate(provider_messages):
+            if row.get(NATIVE_MESSAGE_ID_KEY) == boundary_native_id:
+                boundary_index = index
+                break
+        if boundary_index is None:
+            return provider_messages
+
+        sys_end = 0
+        while (
+            sys_end < len(provider_messages)
+            and provider_messages[sys_end].get("role")
+            == ConsoleMessageRole.SYSTEM.value
+        ):
+            sys_end += 1
+        system_prefix = provider_messages[:sys_end]
+        tail = provider_messages[boundary_index:]
+
+        summary_suffix = "\n\n[Summary of earlier conversation]\n" + summary
+        if system_prefix:
+            first = system_prefix[0]
+            merged_first = {
+                **first,
+                "content": (first.get("content") or "") + summary_suffix,
+            }
+            new_system = [merged_first, *system_prefix[1:]]
+        else:
+            new_system = [
+                {
+                    "role": ConsoleMessageRole.SYSTEM.value,
+                    "content": summary_suffix.lstrip(),
+                }
+            ]
+        return new_system + tail
+
     def _provider_messages_for_session(
         self,
         session_id: str,
         *,
         before_message_id: str | None = None,
+        annotate_ids: bool = False,
     ) -> list[dict[str, Any]]:
         collected: list[ConsoleChatMessage] = []
         for message in self.store.messages_for_session(session_id):
@@ -2736,13 +3749,15 @@ class ConsoleChatController:
                 break
             collected.append(message)
         return self._leading_system_message() + self._provider_message_payloads(
-            collected, skip_failed=True
+            collected, skip_failed=True, annotate_ids=annotate_ids
         )
 
     def _provider_messages_through_message(
         self,
         session_id: str,
         message_id: str,
+        *,
+        annotate_ids: bool = False,
     ) -> list[dict[str, Any]]:
         collected: list[ConsoleChatMessage] = []
         for message in self.store.messages_for_session(session_id):
@@ -2750,7 +3765,8 @@ class ConsoleChatController:
             if message.id == message_id:
                 break
         return self._leading_system_message() + self._provider_message_payloads(
-            collected, skip_failed=False, use_variant_content=True
+            collected, skip_failed=False, use_variant_content=True,
+            annotate_ids=annotate_ids,
         )
 
     def _provider_message_payloads(
@@ -2759,6 +3775,7 @@ class ConsoleChatController:
         *,
         skip_failed: bool,
         use_variant_content: bool = False,
+        annotate_ids: bool = False,
     ) -> list[dict[str, Any]]:
         model = self.model or self.configured_model
         vision = bool(model) and is_vision_capable(self.provider, model or "")
@@ -2792,6 +3809,16 @@ class ConsoleChatController:
             budget -= take
 
         payloads: list[dict[str, Any]] = []
+
+        def _emit(content: Any, source: ConsoleChatMessage) -> None:
+            # Optionally thread the source transcript message's native id onto
+            # the row so the dispatch choke point can anchor `/rewind` summary
+            # compaction by identity (stripped before any provider sees it).
+            row: dict[str, Any] = {"role": source.role.value, "content": content}
+            if annotate_ids:
+                row[NATIVE_MESSAGE_ID_KEY] = source.id
+            payloads.append(row)
+
         seen_user = False
         for message in session_messages:
             if message.role not in {
@@ -2842,7 +3869,7 @@ class ConsoleChatController:
                             attachment.data, attachment.mime_type or "image/png"
                         )
                     )
-                payloads.append({"role": message.role.value, "content": parts})
+                _emit(parts, message)
                 continue
             if not text:
                 # An image-only user turn whose images all fell outside the
@@ -2860,11 +3887,9 @@ class ConsoleChatController:
                         if len(omitted) == 1
                         else f"[{len(omitted)} images omitted]"
                     )
-                    payloads.append(
-                        {"role": message.role.value, "content": placeholder}
-                    )
+                    _emit(placeholder, message)
                 continue
-            payloads.append({"role": message.role.value, "content": text})
+            _emit(text, message)
         return payloads
 
     def _mark_stream_stopped(

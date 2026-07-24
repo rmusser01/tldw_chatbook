@@ -1,8 +1,9 @@
 ---
 id: TASK-357
 title: Replace the bare dot-asterisk star toggle with a recognizable affordance
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
 labels: [console, ux]
 dependencies: []
@@ -23,5 +24,19 @@ Every rail conversation row ends in a single '.' character on a button-colored c
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A recognizable glyph pair (☆/★ or [ ]/[*]) plus confirmation feedback ('Starred <title>') when toggled
+- [x] #1 A recognizable glyph pair (☆/★ or [ ]/[*]) plus confirmation feedback ('Starred <title>') when toggled
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Two changes. The rail star toggle now renders a recognizable filled/hollow star
+pair (★ starred / ☆ not) instead of the near-invisible one-cell '*'/'.'
+(`console_workspace_context.py`). And the press handler, which previously
+notified only on failure (a successful star/unstar was silent — the review saw
+an accidental star go unnoticed), now confirms the toggle with `Starred "<title>"`
+/ `Unstarred "<title>"`; the title is carried on the star button as
+`conversation_title` so the handler has it. RED→GREEN tests in
+`test_console_workspace_context_rail.py` (glyph pair; press confirms the toggle);
+44 rail tests green.
+<!-- SECTION:NOTES:END -->

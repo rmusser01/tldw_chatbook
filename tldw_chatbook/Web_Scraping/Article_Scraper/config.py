@@ -61,6 +61,7 @@ class ScraperConfig:
         include_comments: Extract comment sections
         include_tables: Extract table data
         include_images: Extract image information
+        trusted_origins: Hostnames (lowercase) allowed to resolve to private IPs — seed from user-configured origins only.
     """
 
     user_agent: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -74,6 +75,9 @@ class ScraperConfig:
     include_comments: bool = False
     include_tables: bool = False
     include_images: bool = False
+
+    # Egress guard: hostnames allowed to resolve to private IPs
+    trusted_origins: frozenset = frozenset()
 
 
 @dataclass

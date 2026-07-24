@@ -211,6 +211,11 @@ from tldw_chatbook.Utils.log_widget_manager import LogWidgetManager
 from tldw_chatbook.Utils.ui_helpers import UIHelpers
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
+from tldw_chatbook.TTS.adapter_bootstrap import build_default_tts_service
+from tldw_chatbook.TTS.TTS_Generation import (
+    bind_tts_service,
+    close_tts_resources,
+)
 from tldw_chatbook.Event_Handlers.worker_handlers import (
     WorkerHandlerRegistry,
     ChatWorkerHandler,
@@ -343,6 +348,7 @@ INGEST_NAV_BUTTON_IDS: list[str] = []
 INGEST_VIEW_IDS: list[str] = []
 from .UI.Tools_Settings_Window import ToolsSettingsWindow  # noqa: E402
 from .UI.console_command_provider import ConsoleCommandProvider  # noqa: E402
+from .UI.image_gen_command_provider import ImageGenCommandProvider  # noqa: E402
 from tldw_chatbook.Chat_Grammars_Interop import (  # noqa: E402
     ChatGrammarsScopeService,
     LocalChatGrammarsService,
@@ -701,7 +707,7 @@ class TabNavigationProvider(Provider):
         TAB_CHAT: "Open Console for live agent work, approvals, tools, and RAG",
         TAB_LIBRARY: "Open Library for source material, imports, notes, media, conversations, and Search/RAG",
         TAB_ARTIFACTS: "Open Artifacts for generated outputs, reports, datasets, and Chatbooks",
-        TAB_PERSONAS: "Open Personas for characters, prompts, dictionaries, and behavior profiles",
+        TAB_PERSONAS: "Open Roleplay & Chat Dictionaries for characters, personas, dictionaries, and behavior profiles",
         TAB_WATCHLISTS_COLLECTIONS: "Open Watchlists for monitored sources, runs, alerts, and recovery",
         TAB_SCHEDULES: "Open Schedules for run timing, triggers, pauses, retries, and recovery",
         TAB_WORKFLOWS: "Open Workflows for reusable procedures, dry-runs, and outputs",
@@ -709,7 +715,7 @@ class TabNavigationProvider(Provider):
         TAB_ACP: "Open ACP for agents, sessions, runtimes, diffs, and terminals",
         TAB_SKILLS: "Open Skills for Agent Skills discovery, validation, and attachments",
         TAB_SETTINGS: "Open global preferences, appearance, accounts, storage, and app behavior",
-        TAB_CCP: "Switch to Personas for characters, personas, prompts, dictionaries, and world books",
+        TAB_CCP: "Switch to Roleplay & Chat Dictionaries for characters, personas, dictionaries, and world books",
         TAB_MEDIA: "Switch to media library",
         TAB_SEARCH: "Switch to search and RAG",
         TAB_INGEST: "Switch to content ingestion",
@@ -1054,7 +1060,9 @@ class QuickActionsProvider(Provider):
                 )
             elif action_id == "new_character":
                 _navigate_via_screen(
-                    self.app, TAB_PERSONAS, "Opened Personas for character setup"
+                    self.app,
+                    TAB_PERSONAS,
+                    "Opened Roleplay & Chat Dictionaries for character setup",
                 )
             elif action_id == "new_note":
                 _navigate_via_screen(
@@ -1227,14 +1235,22 @@ class CharacterProvider(Provider):
         """Handle character management actions."""
         try:
             if action_id == "open_character_tab":
-                _navigate_via_screen(self.app, TAB_PERSONAS, "Opened Personas")
+                _navigate_via_screen(
+                    self.app,
+                    TAB_PERSONAS,
+                    "Opened Roleplay & Chat Dictionaries",
+                )
             elif action_id == "new_character":
                 _navigate_via_screen(
-                    self.app, TAB_PERSONAS, "Opened Personas to create a character"
+                    self.app,
+                    TAB_PERSONAS,
+                    "Opened Roleplay & Chat Dictionaries to create a character",
                 )
             elif action_id == "list_characters":
                 _navigate_via_screen(
-                    self.app, TAB_PERSONAS, "Opened Personas to list characters"
+                    self.app,
+                    TAB_PERSONAS,
+                    "Opened Roleplay & Chat Dictionaries to list characters",
                 )
         except Exception as e:
             self.app.notify(
@@ -2737,6 +2753,7 @@ class TldwCli(
         LibraryIngestProvider,
         DeveloperProvider,
         ConsoleCommandProvider,
+        ImageGenCommandProvider,
     }
 
     ALL_INGEST_VIEW_IDS = INGEST_VIEW_IDS
@@ -3051,6 +3068,8 @@ class TldwCli(
         phase_start = time.perf_counter()
         self.MediaDatabase = MediaDatabase
         self.app_config = load_settings()
+        self.tts_service = build_default_tts_service(self.app_config)
+        self._tts_binding_active = False
         self.acp_runtime_process_manager = ACPRuntimeProcessManager.from_app_config(
             self.app_config
         )
@@ -3816,7 +3835,7 @@ class TldwCli(
         )
         self.local_character_persona_service = LocalCharacterPersonaService(
             self.chachanotes_db,
-            persona_store_path=get_user_data_dir() / "tldw_chatbook_personas.json",
+            user_profile_store_path=get_user_data_dir() / "tldw_chatbook_personas.json",
         )
         self.character_persona_scope_service = CharacterPersonaScopeService(
             local_service=self.local_character_persona_service,
@@ -5792,6 +5811,7 @@ class TldwCli(
             # Update widget state to ready with audio file
             if event.audio_file and event.audio_file.exists():
                 try:
+                    widget_found = False
                     if event.message_id:
                         # Find the message widget and update state
                         for message_widget in list(self.query(ChatMessage)) + list(
@@ -5801,6 +5821,7 @@ class TldwCli(
                                 getattr(message_widget, "message_id_internal", None)
                                 == event.message_id
                             ):
+                                widget_found = True
                                 # Update TTS state to ready with audio file
                                 if hasattr(message_widget, "update_tts_state"):
                                     message_widget.update_tts_state(
@@ -5815,10 +5836,25 @@ class TldwCli(
                                 except Exception:
                                     pass
                                 break
-                    # Don't automatically play or delete - let user control playback
-                    self.notify(
-                        "TTS audio ready - click play to listen", severity="information"
-                    )
+                    if widget_found:
+                        # A legacy ChatMessage/ChatMessageEnhanced widget owns
+                        # this message and exposes its own play control - let
+                        # the user trigger playback explicitly rather than
+                        # auto-playing underneath them.
+                        self.notify(
+                            "TTS audio ready - click play to listen",
+                            severity="information",
+                        )
+                    else:
+                        # No legacy widget claims this message (e.g. Console,
+                        # which has no per-message playback control), so
+                        # there is nothing for the user to click - play the
+                        # generated audio immediately instead of going silent.
+                        self.post_message(
+                            TTSPlaybackEvent(
+                                action="play", message_id=event.message_id
+                            )
+                        )
                 except Exception as e:
                     self.loguru_logger.error(f"Error playing audio: {e}")
                     self.notify("Failed to play audio", severity="error")
@@ -6833,8 +6869,25 @@ class TldwCli(
             new_value  # Watcher will call _update_model_select
         )
 
+    def _bind_tts_service(self) -> None:
+        """Bind the single TTS service owned by this application."""
+        if self._tts_binding_active:
+            return
+        bind_tts_service(self.tts_service)
+        self._tts_binding_active = True
+
+    async def _close_tts_service(self) -> None:
+        """Close and unbind the application-owned TTS service once."""
+        if not self._tts_binding_active:
+            return
+        try:
+            await close_tts_resources()
+        finally:
+            self._tts_binding_active = False
+
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
+        self._bind_tts_service()
         mount_start = time.perf_counter()
 
         # Restore persisted Library ingest job history (self.library_ingest_jobs
@@ -7759,69 +7812,20 @@ class TldwCli(
                 except Exception as e:
                     self.loguru_logger.error(f"Error cleaning up audio player: {e}")
 
-            # Stop TTS service if initialized
+            # Clean up handler-owned TTS tasks and files if initialized.
             if hasattr(self, "_tts_handler") and self._tts_handler:
                 try:
-                    # Clean up TTS event handler resources (tasks, files)
                     await self._tts_handler.cleanup_tts_resources()
-
-                    # Import and call the global TTS cleanup function
-                    from tldw_chatbook.TTS import close_tts_resources
-
-                    await close_tts_resources()
-
-                    self.loguru_logger.info("TTS service cleaned up properly")
                 except Exception as e:
-                    self.loguru_logger.error(f"Error cleaning up TTS service: {e}")
+                    self.loguru_logger.error(f"Error cleaning up TTS handler: {e}")
 
-            # Stop STTS service if initialized
+            # Clean up handler-owned S/TT/S tasks and files if initialized.
             if hasattr(self, "_stts_handler") and self._stts_handler:
                 try:
-                    # Clean up STTS event handler resources if it has the cleanup method
                     if hasattr(self._stts_handler, "cleanup_tts_resources"):
                         await self._stts_handler.cleanup_tts_resources()
-
-                    # Special handling for Higgs backend cleanup
-                    if self._stts_handler._stts_service:
-                        backend_manager = getattr(
-                            self._stts_handler._stts_service, "backend_manager", None
-                        )
-                        if backend_manager:
-                            # Check if Higgs backend is loaded
-                            higgs_backends = [
-                                backend_id
-                                for backend_id in backend_manager._backends
-                                if "higgs" in backend_id.lower()
-                            ]
-
-                            if higgs_backends:
-                                self.loguru_logger.info(
-                                    f"Found {len(higgs_backends)} Higgs backend(s) to clean up"
-                                )
-
-                                # Give Higgs backends extra time to clean up
-                                for backend_id in higgs_backends:
-                                    backend = backend_manager._backends.get(backend_id)
-                                    if backend and hasattr(backend, "close"):
-                                        try:
-                                            self.loguru_logger.info(
-                                                f"Cleaning up Higgs backend: {backend_id}"
-                                            )
-                                            await asyncio.wait_for(
-                                                backend.close(), timeout=10.0
-                                            )
-                                        except asyncio.TimeoutError:
-                                            self.loguru_logger.warning(
-                                                f"Higgs backend {backend_id} cleanup timed out"
-                                            )
-                                        except Exception as e:
-                                            self.loguru_logger.error(
-                                                f"Error cleaning up Higgs backend {backend_id}: {e}"
-                                            )
-
-                    self.loguru_logger.info("STTS service cleaned up")
                 except Exception as e:
-                    self.loguru_logger.error(f"Error cleaning up STTS service: {e}")
+                    self.loguru_logger.error(f"Error cleaning up STTS handler: {e}")
 
             # Stop subscription scheduler if it exists
             if (
@@ -7889,6 +7893,12 @@ class TldwCli(
 
         except Exception as e:
             self.loguru_logger.error(f"Error during service cleanup: {e}")
+        finally:
+            try:
+                await self._close_tts_service()
+                self.loguru_logger.info("TTS service cleaned up properly")
+            except Exception:
+                self.loguru_logger.exception("Error cleaning up TTS service")
 
         # Original cleanup code
         if self._rich_log_handler:  # Ensure it's removed if it exists
@@ -10006,30 +10016,6 @@ class TldwCli(
                 loguru_logger.info("Audio player stopped and cleaned up")
             except Exception as e:
                 loguru_logger.error(f"Error stopping audio during quit: {e}")
-
-        # Force cleanup Higgs backends immediately
-        if hasattr(self, "_stts_handler") and self._stts_handler:
-            try:
-                if (
-                    hasattr(self._stts_handler, "_stts_service")
-                    and self._stts_handler._stts_service
-                ):
-                    backend_manager = getattr(
-                        self._stts_handler._stts_service, "backend_manager", None
-                    )
-                    if backend_manager and hasattr(backend_manager, "_backends"):
-                        for backend_id, backend in list(
-                            backend_manager._backends.items()
-                        ):
-                            if "higgs" in backend_id.lower():
-                                loguru_logger.info(
-                                    f"Signaling Higgs backend shutdown: {backend_id}"
-                                )
-                                # Set shutdown event if available
-                                if hasattr(backend, "_shutdown_event"):
-                                    backend._shutdown_event.set()
-            except Exception as e:
-                loguru_logger.error(f"Error signaling Higgs shutdown: {e}")
 
         # Cancel media cleanup timer if it exists
         if hasattr(self, "_media_cleanup_timer") and self._media_cleanup_timer:

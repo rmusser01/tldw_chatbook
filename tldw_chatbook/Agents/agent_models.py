@@ -7,6 +7,7 @@ No Textual, app, DB, or I/O imports — see the vertical-slice spec
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Callable
 
 RUN_RUNNING = "running"
 RUN_DONE = "done"
@@ -30,10 +31,33 @@ STEP_ERROR = "error"
 SPAWN_TOOL_NAME = "spawn_subagent"
 FIND_TOOLS_NAME = "find_tools"
 LOAD_TOOLS_NAME = "load_tools"
-RUNTIME_TOOL_NAMES = frozenset({SPAWN_TOOL_NAME, FIND_TOOLS_NAME, LOAD_TOOLS_NAME})
+SKILL_FILE_TOOL_NAME = "skill_file"
+INSTALL_SKILL_TOOL_NAME = "install_skill"
+RUNTIME_TOOL_NAMES = frozenset(
+    {
+        SPAWN_TOOL_NAME,
+        FIND_TOOLS_NAME,
+        LOAD_TOOLS_NAME,
+        SKILL_FILE_TOOL_NAME,
+        INSTALL_SKILL_TOOL_NAME,
+    }
+)
 
 DIRECT_DISCLOSE_THRESHOLD = 8
 LOOP_DETECTION_N = 3
+
+
+@dataclass
+class SkillFileBindings:
+    """Per-run authorization + reader for the skill_file runtime tool.
+
+    Mutable by design: seeded with the turn's $skill names; SkillRunner adds
+    each spawned skill's name before spawn so a skill can always read its own
+    bundle. Authorization lives here, never in config.allowed_tools.
+    """
+
+    authorized: set[str]
+    reader: Callable[[str, str], dict] | None = None
 
 
 @dataclass(frozen=True)
@@ -84,6 +108,7 @@ class ModelTurn:
     text: str = ""
     tool_calls: tuple[ToolCall, ...] = ()
     assistant_message: dict | None = None
+    tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -110,6 +135,10 @@ class RunBudget:
     # (every model turn appends >=1 step, so the step check fires first) —
     # engine-default behavior is byte-identical to the pre-task-244 loop.
     max_model_turns: int = 8
+    # task-326: cumulative prompt+completion token spend ceiling for one run.
+    # 0 = unlimited (default), keeping existing runs byte-identical. This is a
+    # SPEND ceiling (the growing prompt is re-sent each call), not a window size.
+    max_total_tokens: int = 0
 
 
 @dataclass
@@ -138,6 +167,7 @@ class RunOutcome:
     steps: list[AgentStep]
     final_text: str = ""
     subagents_spawned: int = 0
+    total_tokens: int = 0
 
 
 def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> RunBudget:
@@ -156,4 +186,5 @@ def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> Run
         max_active_tools=child.max_active_tools,
         max_subagent_result_chars=child.max_subagent_result_chars,
         max_model_turns=child.max_model_turns,
+        max_total_tokens=child.max_total_tokens,
     )

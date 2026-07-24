@@ -3893,23 +3893,37 @@ class LocalMediaReadingService:
         import tempfile
         from urllib.parse import urlparse
 
-        import requests
+        from tldw_chatbook.Utils.egress import (
+            MAX_FETCH_BYTES_MEDIA,
+            guarded_fetch_requests,
+            origin_set,
+        )
 
         opts = dict(options or {})
         timeout = float(opts.get("timeout") or 30)
-        response = requests.get(url, stream=True, timeout=timeout)
-        response.raise_for_status()
-        suffix = cls._download_suffix_for_url(
-            url,
-            media_type=media_type,
-            content_type=response.headers.get("content-type"),
-        )
-        fd, path = tempfile.mkstemp(prefix="tldw_url_ingest_", suffix=suffix)
+        trusted = origin_set(url)
+        # HEAD-less probe: we need headers before choosing the suffix, so fetch
+        # into a temp file via the guarded helper's sink mode (real streamed cap).
+        fd, path = tempfile.mkstemp(prefix="tldw_url_ingest_", suffix=".part")
         try:
             with os.fdopen(fd, "wb") as handle:
-                for chunk in response.iter_content(chunk_size=1024 * 1024):
-                    if chunk:
-                        handle.write(chunk)
+                response = guarded_fetch_requests(
+                    url,
+                    max_bytes=MAX_FETCH_BYTES_MEDIA,
+                    trusted_origins=trusted,
+                    timeout=timeout,
+                    sink=handle,
+                )
+            response.raise_for_status()
+            suffix = cls._download_suffix_for_url(
+                url,
+                media_type=media_type,
+                content_type=response.headers.get("content-type"),
+            )
+            final_path = path[: -len(".part")] + suffix if suffix else path
+            if final_path != path:
+                os.replace(path, final_path)
+                path = final_path
         except Exception:
             Path(path).unlink(missing_ok=True)
             raise
@@ -4232,13 +4246,31 @@ class LocalMediaReadingService:
     def _clone_git_repository(
         repo_url: str, checkout_path: Path, *, ref: Any = None
     ) -> None:
+        import os
         import subprocess
 
+        from ..Utils.input_validation import (
+            validate_git_repo_url,
+            validate_git_ref,
+        )
+
+        validate_git_repo_url(repo_url)
         command = ["git", "clone", "--depth", "1"]
         if ref:
+            validate_git_ref(str(ref))
             command.extend(["--branch", str(ref)])
-        command.extend([repo_url, str(checkout_path)])
-        completed = subprocess.run(command, capture_output=True, text=True, check=False)
+        # `--` separates options from positionals so a hostile URL/path can
+        # never be parsed as a git option; the env restricts git to https/ssh
+        # transports even across redirects/submodules (blocks ext::/file:: etc.).
+        command.extend(["--", repo_url, str(checkout_path)])
+        clone_env = {
+            **os.environ,
+            "GIT_ALLOW_PROTOCOL": "https:ssh",
+            "GIT_PROTOCOL_FROM_USER": "0",
+        }
+        completed = subprocess.run(
+            command, capture_output=True, text=True, check=False, env=clone_env
+        )
         if completed.returncode != 0:
             message = (
                 completed.stderr.strip()

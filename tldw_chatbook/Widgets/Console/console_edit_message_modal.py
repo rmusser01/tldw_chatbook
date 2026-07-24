@@ -2,11 +2,23 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static, TextArea
+
+
+@dataclass(frozen=True)
+class ConsoleEditResult:
+    """Outcome of the edit modal: the (possibly unchanged) text, and whether
+    the caller asked to fork a new branch (Console branching Phase B) rather
+    than edit the message in place."""
+
+    text: str
+    resend: bool
 
 
 class _EditMessageTextArea(TextArea):
@@ -29,7 +41,7 @@ class _EditMessageTextArea(TextArea):
         await super()._on_key(event)
 
 
-class ConsoleEditMessageModal(ModalScreen[str | None]):
+class ConsoleEditMessageModal(ModalScreen[ConsoleEditResult | None]):
     """Edit an existing Console transcript message without using the composer."""
 
     DEFAULT_CSS = """
@@ -69,25 +81,41 @@ class ConsoleEditMessageModal(ModalScreen[str | None]):
     }
 
     #console-edit-message-cancel,
-    #console-edit-message-save {
+    #console-edit-message-save,
+    #console-edit-message-resend {
         width: 10;
         min-width: 10;
         height: 3;
         min-height: 3;
     }
+
+    #console-edit-message-resend {
+        width: 18;
+        min-width: 18;
+    }
     """
 
     BINDINGS = [("escape", "dismiss", "Cancel")]
 
-    def __init__(self, *, content: str) -> None:
+    def __init__(self, *, content: str, can_resend: bool = False) -> None:
         super().__init__()
         self._content = content
+        self._can_resend = can_resend
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-edit-message-modal"):
             yield Static("Edit Message", classes="console-modal-header")
+            if self._can_resend:
+                context_copy = (
+                    "Editing existing transcript message. Save keeps the edit in "
+                    "place; Edit & resend forks a new branch and gets a fresh reply."
+                )
+            else:
+                context_copy = (
+                    "Editing existing transcript message. This will not create a new prompt."
+                )
             yield Static(
-                "Editing existing transcript message. This will not create a new prompt.",
+                context_copy,
                 id="console-edit-message-context",
                 markup=False,
             )
@@ -95,7 +123,17 @@ class ConsoleEditMessageModal(ModalScreen[str | None]):
             yield Static("", id="console-edit-message-error", markup=False)
             with Horizontal(id="console-edit-message-actions"):
                 yield Button("Cancel", id="console-edit-message-cancel")
-                yield Button("Save", id="console-edit-message-save", variant="primary")
+                yield Button(
+                    "Save",
+                    id="console-edit-message-save",
+                    variant="default" if self._can_resend else "primary",
+                )
+                if self._can_resend:
+                    yield Button(
+                        "Edit & resend",
+                        id="console-edit-message-resend",
+                        variant="primary",
+                    )
 
     def on_mount(self, event: events.Mount) -> None:
         # Event time shares the clock domain of Key.time — the stale-key
@@ -122,4 +160,15 @@ class ConsoleEditMessageModal(ModalScreen[str | None]):
                 "Message content cannot be blank."
             )
             return
-        self.dismiss(edited_content)
+        self.dismiss(ConsoleEditResult(text=edited_content, resend=False))
+
+    @on(Button.Pressed, "#console-edit-message-resend")
+    def _resend(self, event: Button.Pressed) -> None:
+        event.stop()
+        edited_content = self.query_one("#console-edit-message-body", TextArea).text
+        if not edited_content.strip():
+            self.query_one("#console-edit-message-error", Static).update(
+                "Message content cannot be blank."
+            )
+            return
+        self.dismiss(ConsoleEditResult(text=edited_content, resend=True))

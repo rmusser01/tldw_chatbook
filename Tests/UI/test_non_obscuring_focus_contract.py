@@ -91,6 +91,11 @@ NATIVE_CHOICE_HOVER_MARKERS = (
 # test_file_picker_list_highlight_uses_high_contrast_override_contract below.
 NATIVE_CHOICE_HIGH_CONTRAST_OVERRIDES = (
     "#file-list-pane .option-list--option-highlighted",
+    # TASK-368: the discovered-model checkbox CHECKED glyph is a sanctioned
+    # high-contrast override (scoped by id) so selected reads distinctly from the
+    # empty unchecked box — the shared $surface/$text contract erases that.
+    "#settings-discovered-models-list .selection-list--button-selected",
+    "#settings-discovered-models-list .selection-list--button-selected-highlighted",
 )
 
 

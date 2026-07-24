@@ -1,8 +1,9 @@
 ---
 id: TASK-382
 title: Fix the tab-bar tooltip painting borderless text over the Console header
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
 labels: [console, ux]
 dependencies: []
@@ -23,5 +24,17 @@ With the pointer resting over the '1 Home' tab, its tooltip ('Open dashboard, no
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Tooltips need an opaque bordered surface that fully covers (or avoids) underlying text
+- [x] #1 Tooltips need an opaque bordered surface that fully covers (or avoids) underlying text
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Root cause: Textual's default `Tooltip` is borderless and fills with `$panel`,
+so over the Console header the text bled into the widget underneath as
+interleaved fragments. Added a global `Tooltip` rule to utilities/_overrides.tcss
+giving it a `round $primary` border + explicit opaque `$panel` fill + `$text`
+color, so the tooltip is a distinct surface that fully COVERS what it overlaps.
+Verified: computed border_top=('round', cyan), background alpha=1.0. Fixed
+alongside task-386 (same surface). CSS-source contract test + regenerated bundle.
+<!-- SECTION:NOTES:END -->

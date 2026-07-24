@@ -1,9 +1,11 @@
 ---
 id: TASK-366
 title: Fix Test Provider reporting ready and blocked simultaneously while testing the saved URL
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
+updated_date: '2026-07-23 08:20'
 labels: [console, ux]
 dependencies: []
 priority: medium
@@ -23,5 +25,42 @@ With a deliberately dead draft endpoint (http://127.0.0.1:9098) typed into the E
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 One unambiguous verdict about the endpoint currently shown in the form ('Could not reach http://127.0.0.1:9098 — connection refused'), and stale results cleared or marked outdated when inputs change or are saved
+- [x] #1 One unambiguous verdict about the endpoint currently shown in the form ('Could not reach http://127.0.0.1:9098 — connection refused'), and stale results cleared or marked outdated when inputs change or are saved
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Since the review (dev cad9e271d) the readiness/endpoint had already moved to the
+DRAFT config + draft endpoint (bugs b partially resolved). Two things remained:
+
+1. **"ready AND blocked" contradiction removed.** `_build_provider_readiness_findings`
+   led the detail line with `readiness.user_message` ("<provider> is ready …",
+   config-level) while appending `status=blocked` when the model was missing. It
+   now computes `passed` up front and, for the config-ready-but-no-model case,
+   leads with "<provider> is configured, but no default model is set." — one
+   verdict consistent with the status line. A genuine pass still reads
+   "is ready" / `status=ready`.
+2. **Stale results invalidated.** New `_mark_provider_test_result_stale()`
+   replaces a prior verdict with "Provider settings changed since the last test —
+   re-run Test Provider." It is called from `_stage_provider_value` (fires on any
+   provider field edit — endpoint/model/api-key/env-var/provider) and after a
+   successful provider save, so a stale ready/blocked line can no longer linger
+   over a changed or just-saved form (the review saw it persist after save).
+   No-op on the not-run/already-stale sentinels. `_update_provider_test_result`'s
+   guard was widened to `(QueryError, AttributeError)` so the state update is safe
+   before mount.
+
+Not taken here: live-probing an unreachable DRAFT endpoint when the model is
+missing (the "Could not reach …" network verdict). The existing live probe runs
+only after a passing readiness test; reordering it to probe on a blocked test is
+a larger network-flow change and is left for a follow-up — the contradiction and
+staleness (the titular defects) are resolved.
+
+Verified RED→GREEN in `Tests/UI/test_settings_provider_test_draft.py`
+(`test_findings_avoid_ready_claim_when_blocked_on_missing_model`,
+`test_findings_keep_ready_verdict_when_passing`,
+`test_mark_provider_test_result_stale_invalidates_prior_verdict`) + updated the
+footer-shortcuts canary in `test_settings_configuration_hub.py`; 265 settings
+tests green.
+<!-- SECTION:NOTES:END -->

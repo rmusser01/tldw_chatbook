@@ -290,6 +290,10 @@ class DirectoryNavigation(OptionList):
         self._mounted = False
         self.location = MakePath.of(location).expanduser().absolute()
         self._entries: list[DirectoryEntry] = []
+        #: A file to highlight in the list once the next directory load lands.
+        #: Lets a full path typed in the path bar land ON the file instead of
+        #: on ``..`` after navigating to its parent (TASK-378).
+        self._pending_highlight: Path | None = None
 
     @property
     def location(self) -> Path:
@@ -313,6 +317,69 @@ class DirectoryNavigation(OptionList):
         """Settle the highlight somewhere useful if it's not anywhere."""
         if self.highlighted is None:
             self.highlighted = 0
+
+    def show_and_highlight(self, target: Path) -> None:
+        """Navigate to ``target``'s directory and highlight ``target`` in the list.
+
+        The directory load runs in a worker, so the highlight is applied when the
+        display next repopulates (or immediately when the directory is already
+        shown). Lets a full file path typed into the path bar land on the file
+        rather than on ``..`` (TASK-378).
+
+        Args:
+            target: The file to reveal and highlight.
+        """
+        target = MakePath.of(target).expanduser().absolute()
+        parent = target.parent
+        self._pending_highlight = target
+        if self._mounted and parent == self._location:
+            # Already showing the right directory; highlight now.
+            self._apply_pending_highlight()
+        else:
+            # Changing the location triggers the async reload; the highlight is
+            # applied when `_repopulate_display` runs on completion.
+            self.location = parent
+
+    def _apply_pending_highlight(self, *, final: bool = False) -> bool:
+        """Highlight the pending target if it is present in the current listing.
+
+        The pending request is cleared only once it is resolved -- either the
+        entry was found and highlighted, the load has finished with the entry
+        absent (``final``), or the user navigated to a different directory. A
+        not-yet-found target during an in-flight load is KEPT so the post-load
+        ``_repopulate_display`` can still apply it (the immediate same-directory
+        call may run before the options are populated).
+
+        Args:
+            final: ``True`` when called after a completed directory load, so a
+                target still absent is genuinely gone and the request is dropped;
+                ``False`` for the speculative same-directory fast path, which
+                leaves an unmatched target pending for the post-load pass.
+
+        Returns:
+            ``True`` when a matching entry was found and highlighted.
+        """
+        target = self._pending_highlight
+        if target is None:
+            return False
+        if target.parent != self._location:
+            # Navigated elsewhere before the target loaded; abandon it.
+            self._pending_highlight = None
+            return False
+        for index in range(self.option_count):
+            option = self.get_option_at_index(index)
+            if (
+                isinstance(option, DirectoryEntry)
+                and option.location.name == target.name
+            ):
+                self._pending_highlight = None
+                self.highlighted = index
+                return True
+        if final:
+            # The directory has finished loading and the target is not present;
+            # stop retrying so a stale request cannot linger.
+            self._pending_highlight = None
+        return False
 
     @property
     def is_root(self) -> bool:
@@ -388,7 +455,11 @@ class DirectoryNavigation(OptionList):
                     entry for entry in self._entries if not self.hide(entry.location)
                 )
             )
-        self._settle_highlight()
+        # Honor a pending "reveal this file" request from the path bar before
+        # falling back to the default top-of-list highlight (TASK-378). This runs
+        # after a completed load, so an absent target is resolved (final=True).
+        if not self._apply_pending_highlight(final=True):
+            self._settle_highlight()
 
     @work(exclusive=True, thread=True)
     def _load(self) -> None:

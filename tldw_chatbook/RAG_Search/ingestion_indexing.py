@@ -121,6 +121,59 @@ def semantic_indexing_available() -> bool:
 _shared_service: Optional[Any] = None
 _shared_service_lock = threading.Lock()
 
+_first_run_import_attempted = False
+# Dedicated lock guarding ONLY the _first_run_import_attempted check-and-set,
+# so concurrent first callers can't both pass the flag check and both run
+# ensure_imported_profile(). Deliberately NOT _shared_service_lock: this
+# check-and-set runs BEFORE that lock is acquired (see
+# _maybe_run_first_run_import's docstring for the self-deadlock this avoids),
+# and reusing the same non-reentrant lock here would reintroduce it.
+_first_run_lock = threading.Lock()
+
+
+def _maybe_run_first_run_import() -> None:
+    """Best-effort first-run "Imported settings" capture.
+
+    Attempted at most once per process, and always BEFORE
+    ``_shared_service_lock`` is acquired: ``ensure_imported_profile`` can call
+    ``set_active_profile``, whose pointer write triggers
+    ``reset_shared_rag_service`` — which re-acquires this same non-reentrant
+    lock. Calling this helper from inside the lock would self-deadlock.
+
+    The ``_first_run_import_attempted`` check-and-set is itself guarded by a
+    SEPARATE, dedicated ``_first_run_lock`` (not ``_shared_service_lock`` —
+    see above for why reusing that one would self-deadlock). Without it, two
+    threads racing this function concurrently could both observe the flag as
+    False and both proceed to call ``ensure_imported_profile()``. The actual
+    import call happens OUTSIDE the lock (it's a slower, exception-safe
+    operation and does not itself need mutual exclusion beyond the flag),
+    but flipping the flag must be atomic so only one thread ever proceeds
+    past the check.
+
+    No longer skipped under pytest (see task-519): the previous
+    ``PYTEST_CURRENT_TEST`` guard existed only because ``get_user_data_dir()``'s
+    default-dir fallback used to be a module-level ``Path.home()`` constant
+    baked in at import time, predating (and therefore ignoring) any per-test
+    ``HOME``/``XDG_*`` monkeypatch. Now that the fallback resolves at CALL
+    time, ``Tests/conftest.py``'s autouse ``isolate_test_environment`` fixture
+    pre-arms ``_first_run_import_attempted = True`` before each test instead,
+    so this function's once-per-process import path is exercised organically
+    by the real test suite (rather than skipped) while still never touching
+    the real user data dir. Tests that want to exercise the guarded call
+    itself reset the flag directly (see ``Tests/RAG/test_first_run_import.py``).
+    """
+    global _first_run_import_attempted
+    with _first_run_lock:
+        if _first_run_import_attempted:
+            return
+        _first_run_import_attempted = True
+    try:
+        from .simplified.active_config import ensure_imported_profile
+
+        ensure_imported_profile()
+    except Exception as e:
+        logger.debug(f"First-run import skipped: {e}")
+
 
 def _configured_profile() -> str:
     """Resolve the RAG service profile from config ([rag.service].profile)."""
@@ -151,6 +204,7 @@ def get_shared_rag_service(profile_name: Optional[str] = None) -> Optional[Any]:
         The shared RAG service, or None when it cannot be created (e.g.
         embeddings dependencies missing).
     """
+    _maybe_run_first_run_import()
     global _shared_service
     if _shared_service is not None:
         return _shared_service
@@ -158,9 +212,20 @@ def get_shared_rag_service(profile_name: Optional[str] = None) -> Optional[Any]:
         if _shared_service is None:
             try:
                 from .simplified import create_rag_service
+                # Function-level import: active_config is consumed by
+                # ingestion_indexing (Task 4 wires the reverse edge), so a
+                # module-top import here would risk a circular import.
+                from .simplified.active_config import resolve_active_rag_config
 
-                profile = profile_name or _configured_profile()
-                _shared_service = create_rag_service(profile_name=profile)
+                active = _configured_profile()
+                if profile_name is None or profile_name == active:
+                    profile = active
+                    _shared_service = create_rag_service(
+                        profile_name=profile, config=resolve_active_rag_config()
+                    )
+                else:
+                    profile = profile_name
+                    _shared_service = create_rag_service(profile_name=profile_name)
                 logger.info(f"Created shared RAG service (profile={profile})")
             except Exception as e:
                 logger.error(f"Failed to create shared RAG service: {e}")

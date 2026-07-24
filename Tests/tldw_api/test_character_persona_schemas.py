@@ -16,12 +16,17 @@ from tldw_chatbook.tldw_api.character_persona_schemas import (
     PersonaExemplarCreate,
     PersonaInfo,
     PersonaProfileCreate,
+    PersonaProfileResponse,
+    PersonaProfileUpdate,
     PersonaSetupState,
     PersonaSessionRequest,
     PersonaSessionResponse,
     PersonaSessionSummary,
     PersonaVoiceDefaults,
     PresetCreate,
+    UserProfileCreate,
+    UserProfileResponse,
+    UserProfileUpdate,
 )
 
 
@@ -183,3 +188,17 @@ class TestCharacterPersonaSchemas:
                 section_order=["system"],
                 section_templates={"system": "hi"},
             )
+
+
+class TestUserProfileDTOAliases:
+    """task-442 T2: app-side aliases for the PersonaProfile* wire mirror."""
+
+    def test_user_profile_aliases_are_identical_to_the_wire_mirror_classes(self):
+        assert UserProfileCreate is PersonaProfileCreate
+        assert UserProfileUpdate is PersonaProfileUpdate
+        assert UserProfileResponse is PersonaProfileResponse
+
+    def test_user_profile_create_alias_validates_like_the_mirror_class(self):
+        profile = UserProfileCreate(id="p-1", name="Guide")
+        assert isinstance(profile, PersonaProfileCreate)
+        assert profile.id == "p-1"

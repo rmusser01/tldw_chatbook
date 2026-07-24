@@ -527,9 +527,10 @@ class FileSystemPickerScreen(ModalScreen[Union[Path, None]]):
             if path.is_dir():
                 dir_nav.location = path
             else:
-                # If it's a file, navigate to its parent directory
-                dir_nav.location = path.parent
-                # TODO: Ideally, we would also select the file in the list
+                # If it's a file, navigate to its parent directory AND highlight
+                # the file in the list, so a keyboard user who typed a full path
+                # lands on the file instead of on '..' (TASK-378).
+                dir_nav.show_and_highlight(path)
 
             # Hide the path input
             path_container = self.query_one("#path-input-container")

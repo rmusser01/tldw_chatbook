@@ -1,10 +1,10 @@
-from tldw_chatbook.Chat.console_command_grammar import KIND_FALLBACK
 from tldw_chatbook.Chat.console_skill_resolver import (
     SKILLS_EMPTY_LIST_ROW,
     SkillCommandCandidate,
+    SkillMention,
     cap_skill_args,
+    find_embedded_mentions,
     format_skills_list,
-    make_skill_fallback_resolver,
     resolve_skill_command,
 )
 
@@ -71,19 +71,92 @@ def test_format_list_lines_include_name_and_desc():
     assert "summarize" in text and "summarize desc" in text
 
 
-def test_fallback_claims_matching_word_only():
-    resolver = make_skill_fallback_resolver(lambda: _cands("summarize"))
-    claimed = resolver("summ", "the doc")
-    assert (
-        claimed is not None and claimed.kind == KIND_FALLBACK and claimed.name == "summ"
+_NAMES = frozenset({"code-review", "style-guide", "path"})
+
+
+def test_embedded_mention_found_mid_prose():
+    text = "please $style-guide this draft"
+    mentions = find_embedded_mentions(text, _NAMES)
+    assert mentions == (SkillMention(start=7, end=19, name="style-guide"),)
+    assert text[7:19] == "$style-guide"
+
+
+def test_embedded_mention_trailing_punctuation_stays_prose():
+    mentions = find_embedded_mentions("run $style-guide.", _NAMES)
+    assert mentions[0].name == "style-guide"
+    assert mentions[0].end == 16  # the "." is not part of the token
+
+
+def test_case_sensitive_exact_match_only():
+    # $PATH stays literal even though a skill named "path" exists.
+    assert find_embedded_mentions("echo $PATH", _NAMES) == ()
+    assert find_embedded_mentions("echo $path", _NAMES)[0].name == "path"
+    # prefix / unknown / numeric stay literal
+    assert find_embedded_mentions("$style", _NAMES) == ()
+    assert find_embedded_mentions("$5 and $100", _NAMES) == ()
+
+
+def test_multiple_mentions_all_found_in_order():
+    text = "$code-review then $style-guide"
+    names = [m.name for m in find_embedded_mentions(text, _NAMES)]
+    assert names == ["code-review", "style-guide"]
+
+
+def test_code_spans_are_skipped():
+    fenced = "look:\n```sh\necho $path\n```\nand $path here"
+    mentions = find_embedded_mentions(fenced, _NAMES)
+    assert len(mentions) == 1
+    assert fenced[mentions[0].start :].startswith("$path here"[:5])
+    inline = "use `$path` literally but $path expands"
+    inline_mentions = find_embedded_mentions(inline, _NAMES)
+    assert len(inline_mentions) == 1
+    assert inline_mentions[0].start == inline.rindex("$path")
+
+
+def test_skills_list_rows_use_dollar_sigil():
+    listing = format_skills_list(
+        (SkillCommandCandidate(name="code-review", description="d"),)
     )
-    assert resolver("unknownword", "x") is None
+    assert "$code-review" in listing
+    assert "/code-review" not in listing
 
 
-def test_fallback_does_not_claim_a_bare_slash_draft():
-    """A `/` or `/ ` draft (console_command_grammar splits it into an
-    empty word) must fall through to the unknown-command hint, never
-    open a picker or silently resolve to whatever skill happens to exist."""
-    resolver = make_skill_fallback_resolver(lambda: _cands("summarize"))
-    assert resolver("", "") is None
-    assert resolver("", " ") is None
+def test_odd_backtick_line_masks_entirely():
+    """A line with an ODD backtick count is unparseable inline code — no
+    pairing scheme is reliable (greedy pairing would let a stray tick
+    consume a real opening tick and un-mask a user-guarded span). Fail
+    SAFE: mask the whole line, mirroring the unclosed-fence philosophy."""
+    assert find_embedded_mentions("a ` b then `$path` here", frozenset({"path"})) == ()
+    # Well-formed control on the same skill: prose mentions still expand.
+    found = find_embedded_mentions("plain $path here", frozenset({"path"}))
+    assert [m.name for m in found] == ["path"]
+
+
+def test_unclosed_fence_masks_to_eof():
+    """An opening ``` fence with no closer masks everything after it — a
+    $mention on a later line stays literal (pins existing behavior)."""
+    text = "before $code-review\n```\necho $path on a later line"
+    mentions = find_embedded_mentions(text, _NAMES)
+    assert [m.name for m in mentions] == ["code-review"]
+    assert not any(m.name == "path" for m in mentions)
+
+
+def test_multi_backtick_span_masks_correctly():
+    """Qodo fix 3 (PR #801 review, SECURITY): a code span delimited by a
+    multi-backtick run (CommonMark: an opening backtick run pairs with the
+    NEXT run of exactly equal length) must mask its whole span. The old
+    greedy single-tick pairing mispaired the two adjacent backticks of each
+    2-backtick run as its own EMPTY span, leaving the span's contents --
+    including a live $path mention -- unmasked and eligible to expand."""
+    text = "use `` $path `` here"
+    assert find_embedded_mentions(text, frozenset({"path"})) == ()
+
+
+def test_mixed_unmatched_backtick_runs_masks_entire_line():
+    """Backtick runs of unequal length that can never pair up must mask the
+    whole line even when the line's TOTAL backtick count is even (so the
+    old `% 2 == 1` odd-count fail-safe alone would have missed this case).
+    Three runs of length 2, 3, and 1 (six backticks total) share no equal
+    lengths, so every run is unmatched."""
+    text = "before `` x ``` y ` $path after"
+    assert find_embedded_mentions(text, frozenset({"path"})) == ()

@@ -46,6 +46,15 @@ PREFILL_COMMAND_NAME = "prefill"
 PREFILL_COMMAND_ARGUMENT_HINT = "[pin|clear] [text]"
 PREFILL_COMMAND_HANDLER_ID = "prefill"
 
+GENERATE_IMAGE_COMMAND_NAME = "generate-image"
+# Help text: "Generate an image: /generate-image [:backend] <prompt>"
+GENERATE_IMAGE_COMMAND_ARGUMENT_HINT = "[:backend] <prompt>"
+GENERATE_IMAGE_COMMAND_HANDLER_ID = "generate-image"
+
+REWIND_COMMAND_NAME = "rewind"
+REWIND_COMMAND_ARGUMENT_HINT = ""
+REWIND_COMMAND_HANDLER_ID = "rewind"
+
 
 @dataclass(frozen=True)
 class ConsoleCommand:
@@ -164,11 +173,12 @@ class ConsoleCommandRegistry:
 
 
 def default_console_registry() -> ConsoleCommandRegistry:
-    """Build the default registry with built-in ``/prompt``, ``/system``, ``/skills``, and ``/prefill`` commands.
+    """Build the default registry with built-in ``/prompt``, ``/system``, ``/skills``, ``/prefill``, ``/generate-image``, and ``/rewind`` commands.
 
     Returns:
         A new `ConsoleCommandRegistry` with `PROMPT_COMMAND_NAME`, `SYSTEM_COMMAND_NAME`,
-        `SKILLS_COMMAND_NAME`, and `PREFILL_COMMAND_NAME` registered and no fallback resolvers.
+        `SKILLS_COMMAND_NAME`, `PREFILL_COMMAND_NAME`, `GENERATE_IMAGE_COMMAND_NAME`,
+        and `REWIND_COMMAND_NAME` registered and no fallback resolvers.
     """
     registry = ConsoleCommandRegistry()
     registry.register(
@@ -197,6 +207,20 @@ def default_console_registry() -> ConsoleCommandRegistry:
             name=PREFILL_COMMAND_NAME,
             argument_hint=PREFILL_COMMAND_ARGUMENT_HINT,
             handler_id=PREFILL_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=GENERATE_IMAGE_COMMAND_NAME,
+            argument_hint=GENERATE_IMAGE_COMMAND_ARGUMENT_HINT,
+            handler_id=GENERATE_IMAGE_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=REWIND_COMMAND_NAME,
+            argument_hint=REWIND_COMMAND_ARGUMENT_HINT,
+            handler_id=REWIND_COMMAND_HANDLER_ID,
         )
     )
     return registry

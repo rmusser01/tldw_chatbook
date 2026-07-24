@@ -1,5 +1,7 @@
 """AgentRunsDB against a real on-disk SQLite file."""
 
+import sqlite3
+
 import pytest
 
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -189,3 +191,112 @@ def test_list_runs_default_limit_preserves_behavior(db):
         db.create_run(conversation_id="c", agent_kind="primary")
     assert len(db.list_runs("c")) == 3
     assert len(db.list_runs("c", limit=None)) == 3
+
+
+# --- Phase C Task 1: assistant_message_id column (v1->v2) + setter, so a
+# run can record the persisted id of the assistant reply it produced. ---
+
+
+def test_create_run_with_assistant_message_id_round_trips(db):
+    run_id = db.create_run(
+        conversation_id="c", agent_kind="primary", assistant_message_id="m-9"
+    )
+    assert db.get_run(run_id)["assistant_message_id"] == "m-9"
+
+
+def test_create_run_without_assistant_message_id_defaults_to_none(db):
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+    assert db.get_run(run_id)["assistant_message_id"] is None
+
+
+def test_set_run_assistant_message_id_updates_get_and_list(db):
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+    db.set_run_assistant_message_id(run_id, "p-42")
+    assert db.get_run(run_id)["assistant_message_id"] == "p-42"
+    listed = db.list_runs("c")
+    assert listed[0]["assistant_message_id"] == "p-42"
+
+
+def test_set_run_assistant_message_id_can_clear_with_none(db):
+    run_id = db.create_run(
+        conversation_id="c", agent_kind="primary", assistant_message_id="m-1"
+    )
+    db.set_run_assistant_message_id(run_id, None)
+    assert db.get_run(run_id)["assistant_message_id"] is None
+
+
+# There's no migration framework here -- _initialize_schema only runs
+# CREATE TABLE IF NOT EXISTS, so a DB file created before this column
+# existed keeps its old 11-column table until a guarded ALTER TABLE runs.
+# These tests replicate that pre-v2 shape by hand and prove the guarded
+# ALTER migrates it (and is idempotent across re-open).
+
+_LEGACY_V1_AGENT_RUNS_DDL = """
+    PRAGMA foreign_keys = ON;
+
+    CREATE TABLE IF NOT EXISTS schema_version (
+        version INTEGER PRIMARY KEY NOT NULL
+    );
+    INSERT OR IGNORE INTO schema_version (version) VALUES (1);
+
+    CREATE TABLE IF NOT EXISTS agent_runs (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        parent_run_id TEXT,
+        agent_kind TEXT NOT NULL,
+        task TEXT,
+        status TEXT NOT NULL,
+        steps TEXT NOT NULL DEFAULT '[]',
+        result TEXT,
+        budget TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_conversation
+        ON agent_runs(conversation_id);
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_parent
+        ON agent_runs(parent_run_id);
+"""
+
+
+def test_opening_legacy_v1_db_migrates_column_and_create_run_works(tmp_path):
+    legacy_path = tmp_path / "legacy_agent_runs.db"
+    conn = sqlite3.connect(str(legacy_path))
+    try:
+        conn.executescript(_LEGACY_V1_AGENT_RUNS_DDL)
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Sanity: the raw file really is the old 11-column shape before it's
+    # opened through AgentRunsDB.
+    raw = sqlite3.connect(str(legacy_path))
+    try:
+        cols = {row[1] for row in raw.execute("PRAGMA table_info(agent_runs)")}
+    finally:
+        raw.close()
+    assert "assistant_message_id" not in cols
+
+    migrated = AgentRunsDB(legacy_path, client_id="test")
+    run_id = migrated.create_run(
+        conversation_id="c", agent_kind="primary", assistant_message_id="y"
+    )
+    assert migrated.get_run(run_id)["assistant_message_id"] == "y"
+
+
+def test_reopening_same_file_twice_is_idempotent(tmp_path):
+    path = tmp_path / "agent_runs.db"
+    first = AgentRunsDB(path, client_id="test")
+    first.create_run(
+        conversation_id="c", agent_kind="primary", assistant_message_id="a"
+    )
+
+    # Re-opening must not raise (guarded ALTER is a no-op once the column
+    # already exists) and the second instance must still work correctly.
+    second = AgentRunsDB(path, client_id="test")
+    run_id = second.create_run(
+        conversation_id="c", agent_kind="primary", assistant_message_id="b"
+    )
+    assert second.get_run(run_id)["assistant_message_id"] == "b"
+    assert len(second.list_runs("c")) == 2

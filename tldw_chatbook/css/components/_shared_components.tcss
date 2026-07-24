@@ -1,0 +1,78 @@
+/* Shared UI component styles.
+ *
+ * TASK-394: these generic, app-wide component classes (used across settings
+ * forms, previews, eval/dataset/coderepo panels, etc.) previously lived in
+ * `components/_settings_splash_theme.tcss` -- a feature module whose bare
+ * definitions leaked and, worse, disguised their app-wide reach. They are moved
+ * here verbatim, at the SAME bundle position (right after the splash/theme
+ * module), so the effective cascade is unchanged while the splash module stops
+ * owning generic component styles. (Consolidating these with the other bare
+ * duplicate definitions scattered across feature modules is a larger,
+ * out-of-scope cleanup; this move only relocates the splash module's copies.)
+ */
+
+/* Scrollable card / preview lists */
+.card-list {
+    height: 1fr;
+    scrollbar-size: 1 1;
+}
+
+/* Preview panels shared by settings, coderepo, dataset, eval, chunk previews */
+.preview-panel {
+    width: 1fr;
+    height: 100%;
+    border: solid $primary;
+    padding: 1;
+}
+
+.preview-container {
+    width: 1fr;
+    layout: vertical;
+    border: solid $primary;
+    padding: 1;
+}
+
+.preview-content {
+    padding: 1;
+    text-align: center;
+}
+
+/* Settings form components */
+.settings-section {
+    height: auto;
+    padding: 1;
+    margin-top: 1;
+    border-top: solid $primary;
+}
+
+.setting-label {
+    width: 20;
+    text-align: right;
+    margin-right: 1;
+}
+
+.section-header {
+    text-style: bold;
+    color: $primary;
+    padding: 1 0;
+}
+
+.help-text {
+    text-style: italic;
+    color: $text-muted;
+    padding: 0 0 1 0;
+    text-align: center;
+}
+
+/* Action button rows */
+.action-buttons {
+    height: 3;
+    layout: horizontal;
+    align: center middle;
+    padding: 1;
+    margin-top: 1;
+}
+
+.action-buttons Button {
+    margin: 0 1;
+}

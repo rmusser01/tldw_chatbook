@@ -1,9 +1,11 @@
 ---
 id: TASK-364
 title: Show the current model in the quick Change model popover and label its temperature input
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
+updated_date: '2026-07-23 07:20'
 labels: [console, ux]
 dependencies: []
 priority: medium
@@ -23,5 +25,29 @@ The palette command 'Console: Change model… — Quick provider/model/temperatu
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A quick-switch surface must reflect the current model (that's what the user is switching FROM), label its temperature input, and use the same provider display names as the full settings modal. As-is a user cannot confirm the active model and could Apply with 'Select'
+- [x] #1 A quick-switch surface must reflect the current model (that's what the user is switching FROM), label its temperature input, and use the same provider display names as the full settings modal. As-is a user cannot confirm the active model and could Apply with 'Select'
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Three fixes in `console_model_popover.py`:
+1. **Model prefill no longer wiped.** The provider Select fires a mount-time
+   `Select.Changed` for its initial value; `_provider_changed` used to rebuild
+   the model options with `current_model=None` and blank the prefilled model. Now
+   the popover tracks `self._model_options_provider` (init'd to the session
+   provider) and `_provider_changed` early-returns when the value hasn't actually
+   changed — so the mount echo and redundant same-provider events are ignored,
+   while a genuine provider change still resets the (now-stale) model.
+2. **Temperature input labeled** with a `Static("Temperature")` (the placeholder
+   vanished once a value was present, leaving a bare number).
+3. **Provider display names** via a new `_provider_select_options()` that mirrors
+   `ConsoleSettingsModal._provider_select_options` (`provider_display_name`), so
+   the popover shows `llama.cpp` instead of the raw `llama_cpp` key.
+
+Verified RED→GREEN in `Tests/UI/test_console_rail_sections.py`:
+`test_popover_preserves_prefilled_model_after_mount`,
+`test_popover_changing_provider_still_resets_the_model` (guard doesn't over-fire),
+`test_popover_provider_options_use_display_names`,
+`test_popover_labels_temperature_input`; all 12 popover tests green.
+<!-- SECTION:NOTES:END -->

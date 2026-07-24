@@ -414,16 +414,29 @@ async def discover_openai_compatible_models(
     """Manually discover models from one configured OpenAI-compatible endpoint."""
     endpoint_fingerprint = fingerprint_endpoint(endpoint) if endpoint else None
     if not supports_openai_compatible_model_discovery(provider, endpoint):
+        if _parse_endpoint(endpoint) is None:
+            # TASK-367: a malformed URL (invalid scheme / no host, e.g. a dropped
+            # 'h' in 'ttp://…') is a DIFFERENT failure than a valid URL whose
+            # path is not OpenAI-compatible. Report it as its own kind so the UI
+            # stops misdiagnosing a scheme typo as a missing-/v1-path problem.
+            error = _discovery_error(
+                "malformed_endpoint",
+                "This endpoint is not a valid URL.",
+                "Enter a full http:// or https:// address, "
+                "e.g. http://127.0.0.1:9099/v1.",
+            )
+        else:
+            error = _discovery_error(
+                "unsupported_endpoint",
+                "This endpoint is not an OpenAI-compatible models endpoint.",
+                "Configure an explicit /v1 or /v1/models endpoint for discovery.",
+            )
         return ModelDiscoveryResult(
             provider=provider,
             provider_list_key=provider_list_key,
             endpoint_fingerprint=endpoint_fingerprint,
             status="unsupported",
-            error=_discovery_error(
-                "unsupported_endpoint",
-                "This endpoint is not an OpenAI-compatible models endpoint.",
-                "Configure an explicit /v1 or /v1/models endpoint for discovery.",
-            ),
+            error=error,
         )
 
     models_url = build_models_url(endpoint, provider)

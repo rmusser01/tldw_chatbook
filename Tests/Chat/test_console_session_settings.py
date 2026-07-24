@@ -782,7 +782,7 @@ def test_model_section_lines_compact_summary():
         model_row="Model: gpt-4o (Missing key)",
         context_row="Context: 0 / 8,192 tokens; 4,096 response tokens",
         sampling_row="Sampling: T 0.60, P 0.95, min_p 0.05",
-        identity_row="Persona: General",
+        identity_row="As: General",
         provider_row="Provider: openai",
         transport_row="Streaming: off",
     )
@@ -822,7 +822,7 @@ def test_model_section_line_truncates_long_local_model_names():
         model_row="Model: Qwen3.6-27B-Uncensored-HauhauCS-Aggressive-Q8_K_P.gguf",
         context_row="Context: 0 / 4,096 tokens",
         sampling_row="Sampling: T 0.60",
-        identity_row="Persona: General",
+        identity_row="As: General",
         provider_row="Provider: llama_cpp",
         transport_row="Streaming: off",
     )

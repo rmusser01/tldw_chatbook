@@ -143,6 +143,14 @@ class LocalAudioProcessor:
         Raises:
             AudioDownloadError: If download fails
         """
+        from ..Utils.egress import (
+            EgressBlockedError,
+            EgressFetchError,
+            guarded_fetch_requests,
+            origin_set,
+        )
+
+        tmp_path: Optional[Path] = None
         try:
             logger.info(f"Downloading audio from: {url}")
 
@@ -156,32 +164,50 @@ class LocalAudioProcessor:
                     [f"{k}={v}" for k, v in cookie_dict.items()]
                 )
 
-            response = requests.get(url, headers=headers, stream=True, timeout=120)
-            response.raise_for_status()
-
-            # Check file size
-            file_size = int(response.headers.get("content-length", 0))
-            if file_size > self.max_file_size:
-                raise AudioDownloadError(
-                    f"File size ({file_size / (1024 * 1024):.2f} MB) exceeds limit"
-                )
-
-            # Determine filename
-            filename = self._get_filename_from_response(response, url)
-            save_path = Path(target_dir) / filename
-            save_path.parent.mkdir(parents=True, exist_ok=True)
-
-            # Download file
-            with open(save_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
+            trusted = origin_set(url)
+            # Fast-fail on declared size, then enforce the REAL streamed size.
+            save_path = None
+            try:
+                probe_headers = dict(headers)
+                # single guarded fetch; filename needs response headers, so fetch
+                # to a temp .part file then rename
+                tmp_path = Path(target_dir) / (uuid.uuid4().hex + ".part")
+                tmp_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(tmp_path, "wb") as f:
+                    response = guarded_fetch_requests(
+                        url,
+                        max_bytes=self.max_file_size,
+                        trusted_origins=trusted,
+                        timeout=120,
+                        headers=probe_headers,
+                        sink=f,
+                    )
+                response.raise_for_status()
+                declared = int(response.headers.get("content-length", 0))
+                if declared > self.max_file_size:
+                    raise AudioDownloadError(
+                        f"File size ({declared / (1024 * 1024):.2f} MB) exceeds limit"
+                    )
+                filename = self._get_filename_from_response(response, url)
+                save_path = Path(target_dir) / filename
+                save_path.parent.mkdir(parents=True, exist_ok=True)
+                tmp_path.replace(save_path)
+            except (EgressBlockedError, EgressFetchError) as e:
+                if tmp_path is not None and tmp_path.exists():
+                    tmp_path.unlink()
+                raise AudioDownloadError(f"Download blocked or too large: {e}") from e
+            except Exception:
+                if tmp_path is not None and tmp_path.exists():
+                    tmp_path.unlink()
+                raise
 
             logger.info(f"Downloaded audio file: {save_path}")
             return str(save_path)
 
         except requests.RequestException as e:
             raise AudioDownloadError(f"Download failed: {str(e)}") from e
+        except AudioDownloadError:
+            raise
         except Exception as e:
             raise AudioDownloadError(f"Unexpected error: {str(e)}") from e
 

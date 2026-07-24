@@ -178,6 +178,102 @@ async def test_handle_chat_send_applies_staged_search_rag_context_to_provider_me
     assert "[User prompt]\nUser message" in provider_message
 
 
+@patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ccl")
+@patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessageEnhanced")
+@patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage")
+async def test_world_info_indicator_reflects_current_send_not_previous(
+    mock_chat_message_class, mock_chat_message_enhanced_class, mock_ccl, mock_app
+):
+    """Regression test for task-413.
+
+    The [World Info: N entries activated] indicator must reflect the CURRENT
+    send's resolved world-info count, not a stale value carried over from the
+    previous send. Pre-fix, the indicator was mounted BEFORE
+    ``resolve_world_info_injection`` updated ``app.current_world_info_active``/
+    ``current_world_info_count`` for this send, so on send K it displayed send
+    K-1's values (and on the very first send, no indicator at all, since the
+    reactives hadn't been set yet).
+
+    We drive two sends with ``resolve_world_info_injection`` mocked to return
+    different matched-entry counts (3, then 5) and assert the indicator
+    mounted for each send carries that send's own count -- not the other
+    send's.
+    """
+
+    def _new_chat_message(*args, **kwargs):
+        # A fresh, distinguishable mock per ChatMessage(...) construction,
+        # tagging itself with its constructor args so we can identify the
+        # world-info indicator among the other mounted widgets.
+        msg = MagicMock()
+        msg._ctor_args = args
+        msg._ctor_kwargs = kwargs
+        msg.classes = kwargs.get("classes")
+        return msg
+
+    mock_chat_message_class.side_effect = _new_chat_message
+    mock_chat_message_enhanced_class.side_effect = _new_chat_message
+
+    chat_log_mount = mock_app.query_one("#chat-log").mount
+
+    def _indicator_calls():
+        return [
+            c
+            for c in chat_log_mount.call_args_list
+            if getattr(c.args[0], "classes", None) == "-world-info-indicator"
+        ]
+
+    # --- Send 1: world info resolves to 3 matched entries ---
+    with (
+        patch(
+            "tldw_chatbook.Character_Chat.world_info_resolver.resolve_world_info_injection",
+            return_value=("User message", 3),
+        ),
+        patch.dict("os.environ", {"OPENAI_API_KEY": "fake-key"}),
+    ):
+        await handle_chat_send_button_pressed(mock_app, MagicMock())
+
+    ai_placeholder_1 = mock_app.current_ai_message_widget
+    send1_indicator_calls = _indicator_calls()
+    assert len(send1_indicator_calls) == 1, (
+        "Expected exactly one world-info indicator mounted for send 1"
+    )
+    send1_widget = send1_indicator_calls[0].args[0]
+    send1_text = str(send1_widget._ctor_args[0])
+    assert "3 entries activated" in send1_text
+    # Transcript position preserved: inserted before the AI placeholder even
+    # though it was constructed after it.
+    assert send1_indicator_calls[0].kwargs.get("before") is ai_placeholder_1
+
+    # Reset per-send call tracking, but keep the same #chat-log mock (and its
+    # accumulated history distinguishable) for send 2.
+    chat_log_mount.reset_mock()
+    mock_app.chat_wrapper.reset_mock()
+    mock_app.run_worker.reset_mock()
+
+    # --- Send 2: world info resolves to 5 matched entries (different count) ---
+    with (
+        patch(
+            "tldw_chatbook.Character_Chat.world_info_resolver.resolve_world_info_injection",
+            return_value=("User message", 5),
+        ),
+        patch.dict("os.environ", {"OPENAI_API_KEY": "fake-key"}),
+    ):
+        await handle_chat_send_button_pressed(mock_app, MagicMock())
+
+    ai_placeholder_2 = mock_app.current_ai_message_widget
+    send2_indicator_calls = _indicator_calls()
+    assert len(send2_indicator_calls) == 1, (
+        "Expected exactly one world-info indicator mounted for send 2"
+    )
+    send2_widget = send2_indicator_calls[0].args[0]
+    send2_text = str(send2_widget._ctor_args[0])
+    # This is the crux of task-413: send 2's indicator must show send 2's own
+    # count (5), not send 1's stale count (3).
+    assert "5 entries activated" in send2_text
+    assert "3 entries" not in send2_text
+    assert send2_indicator_calls[0].kwargs.get("before") is ai_placeholder_2
+
+
 async def test_handle_new_conversation_button_pressed(mock_app):
     """Test that the new chat button clears state and UI."""
     # Set some state to ensure it's cleared
@@ -627,3 +723,112 @@ async def test_handle_chat_load_character_with_greeting(mock_load_char, mock_app
             message="Hello, adventurer!", role="Greeter", generation_complete=True
         )
         mock_app.query_one("#chat-log").mount.assert_called_once_with(mock_greeting_msg)
+
+
+# ===== task-442 T4: {{user}} renders the active user profile's name in the
+# enhanced-chat display path (display_conversation_in_chat_tab_ui) =====
+
+
+class _T4ProfileService:
+    """Sync ``list_user_profiles`` double matching the T1 resolver contract."""
+
+    def __init__(self, names):
+        self._names = list(names)
+
+    def list_user_profiles(self, **kwargs):
+        return [{"name": name} for name in self._names]
+
+
+def _t4_conversation_fixture(content: str) -> dict:
+    return {
+        "metadata": {"title": "T4", "keywords_display": "", "character_id": None},
+        "messages": [
+            {"content": content, "sender": "User", "id": "m1", "timestamp": "t"}
+        ],
+        "character_name": "Sherlock",
+    }
+
+
+def _t4_route_pointer(monkeypatch, store: dict) -> None:
+    """Point the active-profile config seam at an in-memory store."""
+    import tldw_chatbook.Character_Chat.active_user_profile as active_profile_module
+
+    monkeypatch.setattr(
+        active_profile_module,
+        "get_cli_setting",
+        lambda section, key, default=None: store.get((section, key), default),
+    )
+
+
+async def test_display_conversation_substitutes_active_profile_name(
+    mock_app, monkeypatch
+):
+    """Active profile "Sam": the ccl.replace_placeholders display path renders
+    {{user}} as "Sam"."""
+    import tldw_chatbook.Event_Handlers.Chat_Events.chat_events as chat_events_module
+    from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
+        display_conversation_in_chat_tab_ui,
+    )
+
+    _t4_route_pointer(
+        monkeypatch, {("character_defaults", "active_user_profile"): "Sam"}
+    )
+    mock_app.local_character_persona_service = _T4ProfileService(["Sam"])
+    monkeypatch.setattr(
+        chat_events_module.ccl,
+        "get_conversation_details_and_messages",
+        lambda db, conversation_id: _t4_conversation_fixture(
+            "Hello {{user}}, I am {{char}}."
+        ),
+    )
+    # Force the classic (non-enhanced) widget path deterministically.
+    monkeypatch.setattr(
+        chat_events_module, "get_cli_setting", lambda *a, **k: False
+    )
+
+    with patch(
+        "tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage"
+    ) as mock_chat_msg_class:
+        mock_chat_msg_class.return_value = MagicMock(spec=ChatMessage)
+        await display_conversation_in_chat_tab_ui(mock_app, "conv-t4")
+
+    assert (
+        mock_chat_msg_class.call_args.kwargs["message"]
+        == "Hello Sam, I am Sherlock."
+    )
+
+
+async def test_display_conversation_keeps_users_name_without_active_profile(
+    mock_app, monkeypatch
+):
+    """task-442 T4 twin (AC3): with no active profile the display path stays
+    byte-identical to the pre-T4 USERS_NAME fallback ("Tester" in this
+    fixture's app_config)."""
+    import tldw_chatbook.Event_Handlers.Chat_Events.chat_events as chat_events_module
+    from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
+        display_conversation_in_chat_tab_ui,
+    )
+
+    _t4_route_pointer(monkeypatch, {})  # no pointer set
+    mock_app.local_character_persona_service = _T4ProfileService(["Sam"])
+    monkeypatch.setattr(
+        chat_events_module.ccl,
+        "get_conversation_details_and_messages",
+        lambda db, conversation_id: _t4_conversation_fixture(
+            "Hello {{user}}, I am {{char}}."
+        ),
+    )
+    monkeypatch.setattr(
+        chat_events_module, "get_cli_setting", lambda *a, **k: False
+    )
+
+    with patch(
+        "tldw_chatbook.Event_Handlers.Chat_Events.chat_events.ChatMessage"
+    ) as mock_chat_msg_class:
+        mock_chat_msg_class.return_value = MagicMock(spec=ChatMessage)
+        await display_conversation_in_chat_tab_ui(mock_app, "conv-t4")
+
+    assert (
+        mock_chat_msg_class.call_args.kwargs["message"]
+        == "Hello Tester, I am Sherlock."
+    )

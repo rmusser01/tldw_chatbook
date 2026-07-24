@@ -62,7 +62,7 @@ def _summary_line(state: ConsoleControlState) -> str:
         (
             state.provider_label,
             state.model_label,
-            state.persona_label,
+            state.user_profile_label,
             state.rag_label,
             state.sources_label,
             state.tools_label,
@@ -74,7 +74,7 @@ def _summary_line(state: ConsoleControlState) -> str:
 class ConsoleControlBar(Vertical):
     """Visible Console control strip outside the transcript region.
 
-    The widget renders Console-owned provider, model, persona, RAG, source,
+    The widget renders Console-owned provider, model, user profile, RAG, source,
     tools, and approval labels plus the compact provider/model controls. It
     exposes `sync_state()` so `ChatScreen` can refresh labels after the user
     changes provider/model state through existing sidebar or compact controls.
@@ -148,7 +148,7 @@ class ConsoleControlBar(Vertical):
             "#console-control-status-line": _summary_line(state),
             "#console-provider-label": state.provider_label,
             "#console-model-label": state.model_label,
-            "#console-persona-label": state.persona_label,
+            "#console-persona-label": state.user_profile_label,
             "#console-rag-label": state.rag_label,
             "#console-sources-label": state.sources_label,
             "#console-tools-label": state.tools_label,
@@ -259,7 +259,7 @@ class ConsoleControlBar(Vertical):
         )
         yield self._compatibility_layout_widget(
             Static(
-                self.state.persona_label,
+                self.state.user_profile_label,
                 id="console-persona-label",
                 classes="console-control-label console-hidden-control",
             )

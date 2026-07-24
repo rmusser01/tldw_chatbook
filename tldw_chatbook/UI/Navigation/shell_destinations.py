@@ -78,11 +78,12 @@ SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (
     ),
     ShellDestination(
         "personas",
-        "Personas",
+        "RP&CD",
         "personas",
-        "Characters, personas, dictionaries, and behavior profiles.",
-        "Manage behavior profiles and persona context.",
-        ("ccp", "conversations_characters_prompts", "characters"),
+        "Characters, user profiles, dictionaries, and behavior profiles.",
+        "Manage behavior profiles and user profile context.",
+        ("ccp", "conversations_characters_prompts", "characters", "roleplay"),
+        full_label="Roleplay & Chat Dictionaries",
     ),
     ShellDestination(
         "watchlists_collections",
