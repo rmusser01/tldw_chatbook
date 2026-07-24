@@ -32,13 +32,13 @@ def _record_cleanup_failure(
     cleanup_error: BaseException,
 ) -> None:
     primary_error.add_note(_CLEANUP_FAILURE_NOTE)
+    sanitized_error = RuntimeError("cleanup failure details redacted")
     logger.warning(
-        "TTS cleanup failed while preserving an earlier error: %s: %s",
+        "TTS cleanup failed while preserving an earlier error: %s",
         type(cleanup_error).__name__,
-        cleanup_error,
         exc_info=(
-            type(cleanup_error),
-            cleanup_error,
+            type(sanitized_error),
+            sanitized_error,
             cleanup_error.__traceback__,
         ),
     )

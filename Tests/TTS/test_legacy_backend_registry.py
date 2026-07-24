@@ -106,3 +106,20 @@ def test_missing_builtin_class_does_not_abort_remaining_loads(
         "Legacy TTS backend is unavailable: {}",
         ("openai_official_*",),
     ) in warnings
+
+
+def test_builtin_import_attribute_error_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_module = "tldw_chatbook.TTS.backends.openai"
+    original_import_module = importlib.import_module
+
+    def import_module(module_name: str) -> ModuleType:
+        if module_name == missing_module:
+            raise AttributeError("backend import bug")
+        return original_import_module(module_name)
+
+    monkeypatch.setattr(TTS_Backends.importlib, "import_module", import_module)
+
+    with pytest.raises(AttributeError, match="backend import bug"):
+        BackendRegistry.ensure_builtins()

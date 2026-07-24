@@ -245,7 +245,8 @@ async def test_caller_cancellation_precedes_later_resource_cleanup_failure(
 ) -> None:
     close_started = asyncio.Event()
     allow_close = asyncio.Event()
-    cleanup_error = RuntimeError("resource cleanup failed")
+    secret = "SENSITIVE_CLEANUP_PAYLOAD_9f04e7"
+    cleanup_error = RuntimeError(f"provider cleanup exposed {secret}")
 
     class BlockingFailingCloseAdapter(FakeAdapter):
         async def close(self) -> None:
@@ -282,10 +283,12 @@ async def test_caller_cancellation_precedes_later_resource_cleanup_failure(
             "TTS cleanup failed while preserving an earlier error"
         )
     )
-    assert cleanup_record.getMessage().endswith("RuntimeError: resource cleanup failed")
+    assert "RuntimeError" in cleanup_record.getMessage()
     assert cleanup_record.exc_info is not None
-    assert cleanup_record.exc_info[1] is cleanup_error
-    assert cleanup_record.exc_info[2] is not None
+    assert cleanup_record.exc_info[2] is cleanup_error.__traceback__
+    assert secret not in caplog.text
+    assert str(cleanup_error) not in caplog.text
+    assert cleanup_record.exc_info[1] is not cleanup_error
     replacement_response = await asyncio.wait_for(
         service.synthesize(tts_request()),
         timeout=1,
