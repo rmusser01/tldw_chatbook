@@ -76,6 +76,8 @@ from ...Chat.console_command_grammar import (
     PREFILL_COMMAND_NAME,
     PROMPT_COMMAND_HANDLER_ID,
     PROMPT_COMMAND_NAME,
+    REWIND_COMMAND_HANDLER_ID,
+    REWIND_COMMAND_NAME,
     SKILLS_COMMAND_HANDLER_ID,
     SKILLS_COMMAND_NAME,
     SYSTEM_COMMAND_HANDLER_ID,
@@ -122,6 +124,7 @@ from ...Chat.console_chat_models import (
     ConsoleWorkspaceContext,
     ConsoleStagedSource,
     MessageAttachment,
+    derive_console_session_title,
 )
 from ...Chat.console_session_settings import (
     ConsoleSessionSettings,
@@ -316,6 +319,11 @@ from ...Widgets.Console.console_rail_section import (
 from ...Widgets.Console.console_session_switcher_modal import (
     ConsoleSessionSwitcherModal,
     ConsoleSwitcherChoice,
+)
+from ...Widgets.Console.console_rewind_modal import (
+    ConsoleRewindChoice,
+    ConsoleRewindModal,
+    RewindPromptRow,
 )
 from ...Widgets.Console.console_workspace_details import ConsoleWorkspaceDetailsTray
 from ...Widgets.Console.console_workbench_state import build_console_workbench_state
@@ -10683,6 +10691,17 @@ class ChatScreen(BaseAppScreen):
         messages = self._native_console_messages()
         if transcript is not None:
             transcript.set_messages(messages)
+            # SP2 /rewind: derive the "summarize up to here" banner boundary
+            # from the active session's stored summary state. Render-derived
+            # only -- the banner shows above the boundary message when it is on
+            # the rendered path, and disappears (inert) otherwise.
+            store = self._ensure_console_chat_store()
+            summary_boundary_id: str | None = None
+            if store.active_session_id is not None:
+                _summary, summary_boundary_id = store.session_context_summary(
+                    store.active_session_id
+                )
+            transcript.set_summary_boundary(summary_boundary_id)
             # TASK-371: reflect run state in the jump-to-latest pill when the
             # reader is scrolled up during / just after a streaming reply.
             transcript.sync_jump_indicator(self._current_console_run_status_value())
@@ -10743,6 +10762,10 @@ class ChatScreen(BaseAppScreen):
                 self._native_console_transcript_fingerprint(messages),
                 image_signature,
                 card_signature,
+                # SP2 /rewind: a boundary change alone (summarize / restore
+                # before-boundary) must force a refresh so the banner appears
+                # or clears even when the message set is otherwise unchanged.
+                summary_boundary_id,
             )
             if refresh_key != self._last_native_transcript_refresh_key:
                 await transcript.refresh_messages()
@@ -11271,6 +11294,7 @@ class ChatScreen(BaseAppScreen):
         SKILLS_COMMAND_NAME: SKILLS_COMMAND_HANDLER_ID,
         PREFILL_COMMAND_NAME: PREFILL_COMMAND_HANDLER_ID,
         GENERATE_IMAGE_COMMAND_NAME: GENERATE_IMAGE_COMMAND_HANDLER_ID,
+        REWIND_COMMAND_NAME: REWIND_COMMAND_HANDLER_ID,
     }
 
     def _console_unknown_command_hint(self, name: str) -> str:
@@ -11308,6 +11332,7 @@ class ChatScreen(BaseAppScreen):
             SKILLS_COMMAND_HANDLER_ID: self._console_command_skills,
             PREFILL_COMMAND_HANDLER_ID: self._console_command_prefill,
             GENERATE_IMAGE_COMMAND_HANDLER_ID: self._console_command_generate_image,
+            REWIND_COMMAND_HANDLER_ID: self._console_command_rewind,
         }
         handler = dispatch_map.get(handler_id)
         if handler is None:
@@ -11878,6 +11903,141 @@ class ChatScreen(BaseAppScreen):
             await self._sync_native_console_chat_ui()
         finally:
             inflight.discard(message_id)
+    # Preview length used to build `/rewind` menu rows -- collapses the
+    # prompt to one line and truncates it (with a trailing ellipsis) via the
+    # same helper session titles use.
+    _CONSOLE_REWIND_PREVIEW_MAX_LENGTH = 60
+
+    def _console_rewind_prompt_rows(
+        self, session_id: str
+    ) -> tuple[RewindPromptRow, ...]:
+        """Build newest-first `/rewind` menu rows for a session's USER turns.
+
+        Args:
+            session_id: Native Console session id whose active-path USER
+                messages become rows.
+
+        Returns:
+            One `RewindPromptRow` per USER message in `messages_for_session`
+            (which walks the active path; a message not on the active path
+            never appears here), ordered newest first. `index_label` is the
+            USER turn's 1-based chronological position ("#1", "#2", ...);
+            `preview` is a collapsed, truncated single-line preview of its
+            content.
+        """
+        store = self._ensure_console_chat_store()
+        user_messages = [
+            message
+            for message in store.messages_for_session(session_id)
+            if message.role is ConsoleMessageRole.USER
+        ]
+        rows = [
+            RewindPromptRow(
+                message_id=message.id,
+                index_label=f"#{position}",
+                preview=derive_console_session_title(
+                    message.content,
+                    max_length=self._CONSOLE_REWIND_PREVIEW_MAX_LENGTH,
+                )
+                or "(empty prompt)",
+            )
+            for position, message in enumerate(user_messages, start=1)
+        ]
+        rows.reverse()
+        return tuple(rows)
+
+    async def _console_command_rewind(self, parse: CommandParse) -> None:
+        """Open the `/rewind` menu over the active session's prior USER prompts.
+
+        Collects the active path's USER-turn rows (newest first) and pushes
+        `ConsoleRewindModal`; a session with no USER turns yet (or no active
+        session at all) is a no-op notify rather than an empty modal.
+        """
+        store = self._ensure_console_chat_store()
+        session_id = store.active_session_id
+        rows = self._console_rewind_prompt_rows(session_id) if session_id else ()
+        if not rows:
+            self.app_instance.notify("Nothing to rewind.", severity="warning")
+            return
+
+        async def _apply_choice(choice: "ConsoleRewindChoice | None") -> None:
+            await self._apply_console_rewind_choice(session_id, choice)
+
+        self.app.push_screen(
+            ConsoleRewindModal(prompts=rows),
+            callback=_apply_choice,
+        )
+
+    async def _apply_console_rewind_choice(
+        self, session_id: str, choice: "ConsoleRewindChoice | None"
+    ) -> None:
+        """Apply a `/rewind` modal result.
+
+        `None` (Escape / "Never mind") just returns focus to the composer.
+        `"restore"` is pure tree navigation: gated on
+        `controller.run_state.is_send_allowed` (mirrors regenerate/resend --
+        never mutates while a run is streaming), the new active leaf is the
+        selected prompt's PARENT found by an id lookup in
+        `active_path_message_ids` (never positional -- display-only TOOL rows
+        can pad `messages_for_session`'s view without being tree nodes), with
+        `None` (empty transcript) when the selected prompt was the root. The
+        selected prompt's own text is written back into the composer via the
+        same paste-semantics seam `/prompt` uses.
+        `"summarize-up-to"` runs the boundary-summary flow (SP2 Task 3) on an
+        exclusive `console-run` worker, gated on `is_send_allowed` the same way
+        restore is (never mutates while a run is streaming).
+
+        Args:
+            session_id: Native Console session id the modal was opened for.
+            choice: The modal's result, or `None`.
+        """
+        if choice is None:
+            self._focus_console_composer_if_needed(force=True)
+            return
+        if choice.kind == "summarize-up-to":
+            controller = self._ensure_console_chat_controller()
+            # Gate BEFORE spawning: an exclusive console-run worker cancels any
+            # in-flight run at creation time, before the controller's own
+            # rejection can run -- refuse first, like the regenerate path.
+            if not controller.run_state.is_send_allowed:
+                self.app_instance.notify(
+                    CONSOLE_RUN_ALREADY_RUNNING_COPY, severity="warning"
+                )
+                return
+            self.run_worker(
+                self._summarize_console_up_to(controller, choice.message_id),
+                exclusive=True,
+                group="console-run",
+            )
+            return
+        if choice.kind != "restore":
+            return
+        store = self._ensure_console_chat_store()
+        controller = self._ensure_console_chat_controller()
+        if not controller.run_state.is_send_allowed:
+            self.app_instance.notify(
+                CONSOLE_RUN_ALREADY_RUNNING_COPY, severity="warning"
+            )
+            return
+        try:
+            path = store.active_path_message_ids(session_id)
+            index = path.index(choice.message_id)
+        except (KeyError, ValueError):
+            self.app_instance.notify(
+                "Console message action target no longer exists.",
+                severity="error",
+            )
+            return
+        target = path[index - 1] if index > 0 else None
+        store.set_active_leaf(session_id, target)
+        # The lookup above proves `choice.message_id` is a live message, so
+        # this can't raise -- fetch the FULL text rather than reusing
+        # `choice.prompt_text`, which is only the modal row's truncated
+        # display preview (see `ConsoleRewindChoice`/`RewindPromptRow`).
+        full_text = store.get_message(choice.message_id).content
+        self._insert_prompt_text_into_composer(full_text, replace=True)
+        self._focus_console_composer_if_needed(force=True)
+        await self._sync_native_console_chat_ui()
 
     def _clear_console_composer_draft(self) -> None:
         """Clear the native Console composer's draft text, if mounted.
@@ -13496,6 +13656,26 @@ class ChatScreen(BaseAppScreen):
         result = await controller.regenerate_message(message_id)
         if result.visible_copy and not result.accepted:
             self.app_instance.notify(result.visible_copy, severity="warning")
+        await self._sync_native_console_chat_ui()
+
+    async def _summarize_console_up_to(
+        self,
+        controller: ConsoleChatController,
+        message_id: str,
+    ) -> None:
+        """Run `/rewind` "summarize up to here" and reflect the outcome.
+
+        Mirrors ``_regenerate_console_message`` (sync timer for the "Summarizing
+        conversation…" run state, await, re-sync). Summarize streams nothing
+        into the transcript, so on success the only visible feedback is this
+        notify plus the render-derived banner the resync plumbs -- surface the
+        success copy as information, and any block/failure copy as a warning.
+        """
+        self._start_console_transcript_sync_timer()
+        result = await controller.summarize_up_to(message_id)
+        if result.visible_copy:
+            severity = "information" if result.accepted else "warning"
+            self.app_instance.notify(result.visible_copy, severity=severity)
         await self._sync_native_console_chat_ui()
 
     async def _edit_resend_console_message(

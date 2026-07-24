@@ -33,6 +33,7 @@ from tldw_chatbook.Chat.console_command_grammar import COMMAND_PREFIX
 from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_RESPONSE_RESERVATION,
     bound_messages_to_window,
+    count_console_messages_tokens,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_skill_resolver import (
@@ -48,6 +49,7 @@ from loguru import logger
 
 from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
 from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.Chat.provider_failures import (  # noqa: F401  (re-export: tests and callers import describe_stream_failure from here)
@@ -75,6 +77,15 @@ _MCP_APPROVAL_POLL_SECONDS = 1.0
 
 MAX_CONSOLE_DRAFT_LENGTH = 100_000
 CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
+
+# Private payload-row key threading a transcript message's native id from the
+# payload builder to the dispatch choke point, where `/rewind`
+# "summarize up to here" compaction anchors the boundary by IDENTITY rather
+# than by content (see `_apply_context_summary_compaction`). It is opt-in
+# (send paths only, `annotate_ids=True`) and ALWAYS stripped from every row
+# before the payload leaves the controller for a provider/agent, so no
+# provider ever sees it.
+NATIVE_MESSAGE_ID_KEY = "_native_message_id"
 
 
 def _normalize_world_info_history(
@@ -507,7 +518,9 @@ class ConsoleChatController:
         if pendings:
             self.store.clear_pending_attachments(session.id)
         try:
-            provider_messages = self._provider_messages_for_session(session.id)
+            provider_messages = self._provider_messages_for_session(
+                session.id, annotate_ids=True
+            )
             (
                 provider_messages,
                 refuse,
@@ -1192,6 +1205,7 @@ class ConsoleChatController:
         provider_messages = self._provider_messages_for_session(
             session_id,
             before_message_id=message_id,
+            annotate_ids=True,
         )
         self._ensure_user_continuation_instruction(provider_messages)
         (
@@ -1256,7 +1270,7 @@ class ConsoleChatController:
             return self._block(session_id, visible_copy)
 
         provider_messages = self._provider_messages_through_message(
-            session_id, message_id
+            session_id, message_id, annotate_ids=True
         )
         self._ensure_user_continuation_instruction(provider_messages)
         if not self._has_user_turn(provider_messages):
@@ -1361,6 +1375,7 @@ class ConsoleChatController:
         provider_messages = self._provider_messages_for_session(
             session_id,
             before_message_id=message_id,
+            annotate_ids=True,
         )
         self._ensure_user_continuation_instruction(provider_messages)
         if not self._has_user_turn(provider_messages):
@@ -1405,6 +1420,198 @@ class ConsoleChatController:
             skill_bindings=skill_bindings,
             skill_bundle_block=skill_bundle_block,
         )
+
+    #: Guidance cap for the transcript span fed to the summarizer (Task 3).
+    #: Well above any realistic single-summary span so it never trims in tests
+    #: or normal use; a runaway history drops its OLDEST turns before the call.
+    _SUMMARY_SPAN_TOKEN_BUDGET = 12000
+
+    async def summarize_up_to(self, message_id: str) -> ConsoleSubmitResult:
+        """Summarize the active path up to (excluding) a USER message.
+
+        Console `/rewind` "Summarize up to here" (SP2, Task 3). Runs the
+        session's resolved provider (non-streaming) over the active-path turns
+        before ``message_id`` and stores the result as the session's boundary
+        summary (``store.set_session_context_summary``). The visible transcript
+        is never mutated -- only the provider CONTEXT is later compacted at the
+        dispatch choke point (see ``_apply_context_summary_compaction``).
+
+        Gates run FIRST and NONE of them mutates transcript state (the Phase B
+        discipline): an active run, a missing session, an off-path or non-USER
+        target, a target with nothing before it, and provider-not-ready each
+        return a blocked ``ConsoleSubmitResult`` via ``_summarize_block`` --
+        which only sets the run state, never appends a system row. Rolling
+        re-summarize (a prior boundary already on the path before ``message_id``)
+        prepends the prior summary and only re-sends the turns SINCE that
+        boundary. On an empty reply or a provider error the stored summary is
+        left untouched.
+
+        Args:
+            message_id: Native id of the USER turn to summarize UP TO.
+
+        Returns:
+            ``ConsoleSubmitResult`` -- ``accepted`` True only when a non-empty
+            summary was generated and stored.
+        """
+        active_rejection = self._active_run_rejection()
+        if active_rejection is not None:
+            return active_rejection
+
+        session_id = self.store.active_session_id
+        if session_id is None:
+            return ConsoleSubmitResult(False, False, "No active Console session.")
+
+        if message_id not in self.store.active_path_message_ids(session_id):
+            return self._summarize_block("Switch to that branch before summarizing.")
+        try:
+            target = self.store.get_message(message_id)
+        except KeyError:
+            return self._summarize_block("Switch to that branch before summarizing.")
+        if target.role is not ConsoleMessageRole.USER:
+            return self._summarize_block(
+                "Only your own messages can be summarized up to here."
+            )
+
+        messages = self.store.messages_for_session(session_id)
+        target_index = next(
+            (i for i, m in enumerate(messages) if m.id == message_id), None
+        )
+        if target_index is None:
+            return self._summarize_block("Switch to that branch before summarizing.")
+        before = [
+            m
+            for m in messages[:target_index]
+            if m.role in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}
+        ]
+        if not before:
+            return self._summarize_block("Nothing to summarize before that message.")
+
+        # Rolling compaction: when a prior boundary sits on this path BEFORE the
+        # target, the prior summary already covers everything strictly before
+        # it, so re-summarize only from that boundary (inclusive) forward and
+        # fold the prior summary in.
+        prev_summary, prev_boundary_id = self.store.session_context_summary(session_id)
+        start_index = 0
+        rolling_summary: str | None = None
+        if prev_boundary_id is not None and prev_summary:
+            prev_index = next(
+                (i for i, m in enumerate(messages) if m.id == prev_boundary_id), None
+            )
+            if prev_index is not None and prev_index < target_index:
+                start_index = prev_index
+                rolling_summary = prev_summary
+        span = [
+            m
+            for m in messages[start_index:target_index]
+            if m.role in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}
+        ]
+
+        # "Summarizing..." run state, set the way regenerate sets VALIDATING.
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Summarizing conversation…")
+        )
+        resolution = await self.provider_gateway.resolve_for_send(
+            self._provider_selection()
+        )
+        if not getattr(resolution, "ready", False):
+            return self._summarize_block(
+                self._blocked_visible_copy(getattr(resolution, "visible_copy", ""))
+            )
+
+        span_text = self._build_summary_span_text(
+            span, rolling_summary, model=getattr(resolution, "model", None) or ""
+        )
+        summarize_messages = [
+            {
+                "role": ConsoleMessageRole.SYSTEM.value,
+                "content": get_internal_prompt("console.rewind_summarize"),
+            },
+            {"role": ConsoleMessageRole.USER.value, "content": span_text},
+        ]
+        try:
+            summary_text = await self._collect_summary_completion(
+                resolution, summarize_messages
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:  # noqa: BLE001 -- failure = no-op + honest copy
+            logger.opt(exception=True).warning(
+                "Console summarize-up-to failed", error=str(error)
+            )
+            visible_copy = "Couldn't summarize the conversation. Try again."
+            self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
+            return ConsoleSubmitResult(False, False, visible_copy)
+
+        if not summary_text.strip():
+            return self._summarize_block("The model returned an empty summary.")
+
+        self.store.set_session_context_summary(session_id, summary_text, message_id)
+        turns = sum(1 for m in before if m.role is ConsoleMessageRole.USER)
+        visible_copy = f"Summarized {turns} earlier turn{'s' if turns != 1 else ''}."
+        self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, visible_copy))
+        return ConsoleSubmitResult(True, False, visible_copy)
+
+    def _summarize_block(self, visible_copy: str) -> ConsoleSubmitResult:
+        """Blocked-summarize result that mutates NO transcript state.
+
+        Unlike ``_block`` (which appends a SYSTEM row), a blocked summarize
+        must leave the transcript untouched -- the run-state copy alone carries
+        the reason to the control surfaces (Phase B discipline).
+        """
+        self._set_run_state(ConsoleRunState.blocked(visible_copy))
+        return ConsoleSubmitResult(False, False, visible_copy)
+
+    def _build_summary_span_text(
+        self,
+        span: list[ConsoleChatMessage],
+        prior_summary: str | None,
+        *,
+        model: str,
+    ) -> str:
+        """Build the plain-text transcript span fed to the summarizer.
+
+        Emits ``User: ...`` / ``Assistant: ...`` lines, prepending a
+        ``[Previous summary]`` block when rolling. If the assembled span blows
+        past ``_SUMMARY_SPAN_TOKEN_BUDGET`` (counted with
+        ``count_console_messages_tokens``), the OLDEST turns are dropped until
+        it fits -- the newest detail and the prior summary are always kept.
+        """
+
+        def assemble(rows: list[ConsoleChatMessage]) -> str:
+            lines = [
+                f"{'User' if m.role is ConsoleMessageRole.USER else 'Assistant'}: {m.content}"
+                for m in rows
+            ]
+            transcript_text = "\n".join(lines)
+            if prior_summary:
+                return f"[Previous summary]\n{prior_summary}\n\n{transcript_text}".rstrip()
+            return transcript_text
+
+        rows = list(span)
+        body = assemble(rows)
+        while len(rows) > 1 and count_console_messages_tokens(
+            [{"role": "user", "content": body}], model
+        ) > self._SUMMARY_SPAN_TOKEN_BUDGET:
+            rows = rows[1:]
+            body = assemble(rows)
+        return body
+
+    async def _collect_summary_completion(
+        self, resolution: Any, messages: list[dict[str, Any]]
+    ) -> str:
+        """Collect a NON-streaming completion via the gateway's streaming seam.
+
+        The provider gateway protocol exposes only ``stream_chat``; there is no
+        separate non-streaming completion method on the Console surface, so the
+        summary is accumulated from its chunks WITHOUT appending to any
+        transcript message (summarize never mutates the tree). Non-``str``
+        yields (e.g. tool-call payloads, never requested here) are ignored.
+        """
+        chunks: list[str] = []
+        async for chunk in self.provider_gateway.stream_chat(resolution, messages):
+            if isinstance(chunk, str) and chunk:
+                chunks.append(chunk)
+        return "".join(chunks)
 
     async def edit_and_resend_message(
         self, message_id: str, new_content: str
@@ -1524,6 +1731,7 @@ class ConsoleChatController:
         provider_messages = self._provider_messages_for_session(
             session_id,
             before_message_id=message_id,
+            annotate_ids=True,
         )
         provider_messages.append(
             {"role": ConsoleMessageRole.USER.value, "content": clean_content}
@@ -2216,7 +2424,10 @@ class ConsoleChatController:
                         return leading + [rendered_message], None, (), bindings, block
 
                     new_messages = list(provider_messages)
-                    new_messages[final_index] = rendered_message
+                    new_messages[final_index] = {
+                        **provider_messages[final_index],
+                        "content": rendered,
+                    }
                     return new_messages, None, (), bindings, block
 
         # --- Embedded pass: no leading mention, or the leading word didn't
@@ -2292,7 +2503,7 @@ class ConsoleChatController:
         )
         new_messages = list(provider_messages)
         new_messages[final_index] = {
-            "role": ConsoleMessageRole.USER.value,
+            **provider_messages[final_index],
             "content": new_content,
         }
         return new_messages, None, tuple(notes), spliced_names, block
@@ -2658,6 +2869,16 @@ class ConsoleChatController:
         # not the controller's active session) so a session switch racing
         # this send can't flip which branch a still-in-flight message uses.
         force_plain = owner is not None and owner.character_id is not None
+        # SP2 /rewind "summarize up to here": at the SINGLE dispatch choke point
+        # (agent + direct both flow through here), fold the session's boundary
+        # summary into the payload -- but ONLY when the boundary message is
+        # actually present in it (the leak rule; see
+        # _apply_context_summary_compaction). Runs BEFORE bound_messages_to_
+        # window so the summary lands in the leading system prefix the trimmer
+        # preserves.
+        provider_messages = self._apply_context_summary_compaction(
+            owner_id, provider_messages
+        )
         # task-322: bound the dispatched history by real tokens before the
         # agent-vs-direct branch below, so both paths send a windowed payload.
         # Budget against the captured `resolution` -- the same model/provider/
@@ -2673,6 +2894,18 @@ class ConsoleChatController:
             ),
         )
         provider_messages = bound.messages
+        # Strip the private id-threading key from every row before dispatch:
+        # it existed solely so the compaction above could anchor the boundary
+        # by identity (see NATIVE_MESSAGE_ID_KEY). This is the single latest
+        # point covering BOTH the direct stream path (`stream_chat` below) and
+        # the agent path (`agent_messages = list(provider_messages)` in
+        # `_run_agent_reply`), so no provider/gateway/agent ever sees the key.
+        # Rebuild fresh row dicts rather than mutating in place, since transforms
+        # can leave earlier rows aliased to freshly-built builder dicts.
+        provider_messages = [
+            {k: v for k, v in row.items() if k != NATIVE_MESSAGE_ID_KEY}
+            for row in provider_messages
+        ]
         if bound.dropped_count:
             # Reuse the guarded owner_id resolved above; the note helper
             # swallows a store-close race that happens during the append.
@@ -3313,11 +3546,96 @@ class ConsoleChatController:
             return []
         return [{"role": ConsoleMessageRole.SYSTEM.value, "content": raw_system_prompt}]
 
+    def _apply_context_summary_compaction(
+        self, session_id: str, provider_messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Fold the session's boundary summary into ``provider_messages``.
+
+        THE LEAK RULE (spec-review fix): compaction applies ONLY when the
+        boundary USER message is actually PRESENT in this payload. When present,
+        the payload rows BEFORE it are dropped and the summary is appended to
+        the leading system prefix (which ``bound_messages_to_window`` preserves).
+        When ABSENT -- e.g. regenerating a message that sits BEFORE the boundary,
+        whose ancestors-only payload ends pre-boundary -- the payload is returned
+        untouched: a summary covering LATER turns must never be substituted into
+        an earlier point's context.
+
+        Payload-row -> boundary matching mechanism: match by native message
+        IDENTITY, not by content. Send-path payload builds thread each row's
+        source transcript id onto it (``annotate_ids=True`` ->
+        ``NATIVE_MESSAGE_ID_KEY``); the boundary is the row whose id equals the
+        stored ``boundary_native_id``. The transform pipeline between build and
+        this choke point only ever rewrites/drops the FINAL user turn (skill
+        fork drops leading rows; chat-dictionary/world-info AND skill-
+        substitution's own inline rewrites -- leading-mention replace and
+        embedded-mention splice -- rewrite the last user row via ``{**row}``
+        spreads that PRESERVE the key) and appends a synthesized continuation
+        turn (no key) -- so every earlier row, and thus any strictly-earlier
+        boundary, keeps its id intact.
+
+        This is the genuine fail-safe: if the boundary id is not present on any
+        row -- because the boundary sits after the payload's end
+        (pre-boundary regenerate/retry/continue/edit-resend), or a branch
+        switch/deletion made it dangling, or the payload was built WITHOUT id
+        annotation -- NOTHING matches and the FULL history is sent unchanged.
+        A byte-identical earlier duplicate of the boundary's text (e.g. a repeat
+        "continue"/"yes") can no longer false-fire the way first-occurrence
+        content matching did, so the summary of LATER turns is never injected
+        into an EARLIER point's context.
+
+        Args:
+            session_id: Session owning the payload being dispatched.
+            provider_messages: The fully-built, post-transform payload
+                (id-annotated on the send path).
+
+        Returns:
+            The compacted payload, or ``provider_messages`` unchanged.
+        """
+        summary, boundary_native_id = self.store.session_context_summary(session_id)
+        if not summary or boundary_native_id is None:
+            return provider_messages
+
+        boundary_index: int | None = None
+        for index, row in enumerate(provider_messages):
+            if row.get(NATIVE_MESSAGE_ID_KEY) == boundary_native_id:
+                boundary_index = index
+                break
+        if boundary_index is None:
+            return provider_messages
+
+        sys_end = 0
+        while (
+            sys_end < len(provider_messages)
+            and provider_messages[sys_end].get("role")
+            == ConsoleMessageRole.SYSTEM.value
+        ):
+            sys_end += 1
+        system_prefix = provider_messages[:sys_end]
+        tail = provider_messages[boundary_index:]
+
+        summary_suffix = "\n\n[Summary of earlier conversation]\n" + summary
+        if system_prefix:
+            first = system_prefix[0]
+            merged_first = {
+                **first,
+                "content": (first.get("content") or "") + summary_suffix,
+            }
+            new_system = [merged_first, *system_prefix[1:]]
+        else:
+            new_system = [
+                {
+                    "role": ConsoleMessageRole.SYSTEM.value,
+                    "content": summary_suffix.lstrip(),
+                }
+            ]
+        return new_system + tail
+
     def _provider_messages_for_session(
         self,
         session_id: str,
         *,
         before_message_id: str | None = None,
+        annotate_ids: bool = False,
     ) -> list[dict[str, Any]]:
         collected: list[ConsoleChatMessage] = []
         for message in self.store.messages_for_session(session_id):
@@ -3325,13 +3643,15 @@ class ConsoleChatController:
                 break
             collected.append(message)
         return self._leading_system_message() + self._provider_message_payloads(
-            collected, skip_failed=True
+            collected, skip_failed=True, annotate_ids=annotate_ids
         )
 
     def _provider_messages_through_message(
         self,
         session_id: str,
         message_id: str,
+        *,
+        annotate_ids: bool = False,
     ) -> list[dict[str, Any]]:
         collected: list[ConsoleChatMessage] = []
         for message in self.store.messages_for_session(session_id):
@@ -3339,7 +3659,8 @@ class ConsoleChatController:
             if message.id == message_id:
                 break
         return self._leading_system_message() + self._provider_message_payloads(
-            collected, skip_failed=False, use_variant_content=True
+            collected, skip_failed=False, use_variant_content=True,
+            annotate_ids=annotate_ids,
         )
 
     def _provider_message_payloads(
@@ -3348,6 +3669,7 @@ class ConsoleChatController:
         *,
         skip_failed: bool,
         use_variant_content: bool = False,
+        annotate_ids: bool = False,
     ) -> list[dict[str, Any]]:
         model = self.model or self.configured_model
         vision = bool(model) and is_vision_capable(self.provider, model or "")
@@ -3381,6 +3703,16 @@ class ConsoleChatController:
             budget -= take
 
         payloads: list[dict[str, Any]] = []
+
+        def _emit(content: Any, source: ConsoleChatMessage) -> None:
+            # Optionally thread the source transcript message's native id onto
+            # the row so the dispatch choke point can anchor `/rewind` summary
+            # compaction by identity (stripped before any provider sees it).
+            row: dict[str, Any] = {"role": source.role.value, "content": content}
+            if annotate_ids:
+                row[NATIVE_MESSAGE_ID_KEY] = source.id
+            payloads.append(row)
+
         seen_user = False
         for message in session_messages:
             if message.role not in {
@@ -3431,7 +3763,7 @@ class ConsoleChatController:
                             attachment.data, attachment.mime_type or "image/png"
                         )
                     )
-                payloads.append({"role": message.role.value, "content": parts})
+                _emit(parts, message)
                 continue
             if not text:
                 # An image-only user turn whose images all fell outside the
@@ -3449,11 +3781,9 @@ class ConsoleChatController:
                         if len(omitted) == 1
                         else f"[{len(omitted)} images omitted]"
                     )
-                    payloads.append(
-                        {"role": message.role.value, "content": placeholder}
-                    )
+                    _emit(placeholder, message)
                 continue
-            payloads.append({"role": message.role.value, "content": text})
+            _emit(text, message)
         return payloads
 
     def _mark_stream_stopped(

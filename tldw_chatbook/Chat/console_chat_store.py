@@ -291,6 +291,12 @@ class ConsoleChatStore:
         self._children_by_parent: dict[str, dict[str | None, list[str]]] = {}
         self._native_parent_by_message: dict[str, str | None] = {}
         self._active_leaf_by_session: dict[str, str | None] = {}
+        #: Console `/rewind` "summarize up to here" (SP2): per-session
+        #: ``(summary, boundary_native_id)`` pair. Local-only, mirrors
+        #: ``_active_leaf_by_session`` -- a parallel dict, not tree state, so
+        #: it is untouched by tree mutations (create/delete/sibling). ``(None,
+        #: None)`` = no summary. Write-through is ``_persist_context_summary``.
+        self._context_summary_by_session: dict[str, tuple[str | None, str | None]] = {}
         self._pending_persistence_message_ids: set[str] = set()
         self._stream_chunks_by_message: dict[str, list[str]] = {}
         self._stream_materialized_counts: dict[str, int] = {}
@@ -329,6 +335,7 @@ class ConsoleChatStore:
         self._nodes_by_session[session.id] = {}
         self._children_by_parent[session.id] = {}
         self._active_leaf_by_session[session.id] = None
+        self._context_summary_by_session[session.id] = (None, None)
         self.active_session_id = session.id
         return session
 
@@ -558,6 +565,7 @@ class ConsoleChatStore:
         self._nodes_by_session.pop(session_id, None)
         self._children_by_parent.pop(session_id, None)
         self._active_leaf_by_session.pop(session_id, None)
+        self._context_summary_by_session.pop(session_id, None)
         self._sessions.pop(session_id, None)
 
         if self.active_session_id != session_id:
@@ -748,6 +756,7 @@ class ConsoleChatStore:
         self._children_by_parent.clear()
         self._native_parent_by_message.clear()
         self._active_leaf_by_session.clear()
+        self._context_summary_by_session.clear()
 
         messages_by_session = messages_by_session or {}
         for session in restored_sessions:
@@ -755,6 +764,7 @@ class ConsoleChatStore:
             self._nodes_by_session[session.id] = {}
             self._children_by_parent[session.id] = {}
             self._active_leaf_by_session[session.id] = None
+            self._context_summary_by_session[session.id] = (None, None)
             self._messages_by_session[session.id] = []
             self._ingest_linear_messages(
                 session.id, messages_by_session.get(session.id, ())
@@ -1280,6 +1290,51 @@ class ConsoleChatStore:
         self._active_leaf_by_session[session_id] = message_id
         self._recompute_active_path(session_id)
         self._persist_active_leaf(session_id, message_id)
+
+    def session_context_summary(
+        self, session_id: str
+    ) -> tuple[str | None, str | None]:
+        """Return the session's in-memory ``(summary, boundary_native_id)`` pair.
+
+        Console `/rewind` "summarize up to here" (SP2). ``(None, None)`` when
+        no summary has been set (including a freshly created session).
+        """
+        self._session_or_raise(session_id)
+        return self._context_summary_by_session.get(session_id, (None, None))
+
+    def set_session_context_summary(
+        self,
+        session_id: str,
+        summary: str | None,
+        boundary_native_id: str | None,
+    ) -> None:
+        """Set (or clear, with ``(None, None)``) a session's boundary summary.
+
+        Updates the in-memory ``(summary, boundary_native_id)`` pair, then --
+        when the session owns a persisted conversation and the persistence
+        adapter exposes a raw ``db`` seam -- write-throughs the local-only
+        ``conversations.context_summary`` / ``summary_boundary_message_id``
+        columns (mapped to the boundary node's *persisted* id, or ``None``
+        when the boundary is cleared or not yet persisted). A durable write
+        failure is logged, never raised: the in-memory pair is authoritative
+        and already updated, matching ``set_active_leaf``'s persist-through
+        convention. Unlike ``set_active_leaf``, an unknown
+        ``boundary_native_id`` does not raise -- it write-throughs a ``None``
+        persisted id (treated as "not yet persisted"), matching the design's
+        fail-open handling of a dangling boundary.
+
+        Args:
+            session_id: Native Console session ID.
+            summary: The boundary summary text, or ``None`` to clear it.
+            boundary_native_id: Native id of the message the summary covers
+                up to, or ``None`` to clear it.
+
+        Raises:
+            KeyError: If the session is unknown.
+        """
+        self._session_or_raise(session_id)
+        self._context_summary_by_session[session_id] = (summary, boundary_native_id)
+        self._persist_context_summary(session_id, summary, boundary_native_id)
 
     def active_path_message_ids(self, session_id: str) -> list[str]:
         """Return native ids along the active path, root -> active leaf."""
@@ -2366,6 +2421,10 @@ class ConsoleChatStore:
             # Map the fallback leaf back to its persisted id and write it
             # through (``_persist_active_leaf`` no-ops without a durable seam).
             self._persist_active_leaf(session_id, leaf_native)
+        # Console `/rewind` (SP2): map the persisted context-summary boundary
+        # back to a native id on the newly-loaded tree, fail-open (leave
+        # unset) when the summary is absent or its boundary is dangling.
+        self._resolve_context_summary_on_resume(session_id, persisted_to_native)
 
     def _chain_legacy_flat_roots(self, session_id: str) -> None:
         """Chain multiple root-level threads into one linear spine (C1 repair).
@@ -2566,6 +2625,94 @@ class ConsoleChatStore:
                 "Failed to persist Console active-leaf pointer; the in-memory "
                 "pointer keeps the applied value."
             )
+
+    def _persist_context_summary(
+        self,
+        session_id: str,
+        summary: str | None,
+        boundary_native_id: str | None,
+    ) -> None:
+        """Write-through the local-only context-summary pair for a persisted conv.
+
+        Console `/rewind` "summarize up to here" (SP2). No-op unless the
+        session owns a persisted conversation AND the persistence adapter
+        exposes a raw ``db`` seam (mirrors ``_persist_active_leaf``). Maps
+        the in-memory boundary to its persisted message id (``None`` when
+        cleared or not yet persisted).
+        """
+        session = self._sessions.get(session_id)
+        conversation_id = (
+            session.persisted_conversation_id if session is not None else None
+        )
+        if conversation_id is None:
+            return
+        persistence_db = getattr(self.persistence, "db", None)
+        if persistence_db is None:
+            return
+        boundary_persisted_id: str | None = None
+        if boundary_native_id is not None:
+            node = self._nodes_by_session.get(session_id, {}).get(boundary_native_id)
+            boundary_persisted_id = (
+                node.persisted_message_id if node is not None else None
+            )
+        try:
+            persistence_db.set_conversation_context_summary(
+                conversation_id, summary, boundary_persisted_id
+            )
+        except Exception:
+            logger.bind(
+                session_id=session_id,
+                conversation_id=conversation_id,
+            ).exception(
+                "Failed to persist Console context-summary; the in-memory "
+                "pair keeps the applied value."
+            )
+
+    def _resolve_context_summary_on_resume(
+        self, session_id: str, persisted_to_native: dict[str, str]
+    ) -> None:
+        """Map the persisted context-summary boundary back to a native id.
+
+        Console `/rewind` resume mapping (SP2). Reads
+        ``get_conversation_context_summary`` via the db seam (mirrors
+        ``_persist_active_leaf``'s ``getattr(self.persistence, "db", None)``
+        guard) -- no-op unless the session owns a persisted conversation and
+        the persistence adapter exposes the seam. The stored boundary is a
+        *persisted* message id; when it maps to a node on the just-loaded
+        tree (``persisted_to_native``, built by ``_ingest_full_tree``), the
+        in-memory summary state is set. Absent, unreadable, or dangling (no
+        stored summary, or a boundary id not present on the loaded tree)
+        leaves the in-memory state unset -- fail-open, matching the design's
+        rule that an inert/dangling boundary falls back to full history.
+        """
+        session = self._sessions.get(session_id)
+        conversation_id = (
+            session.persisted_conversation_id if session is not None else None
+        )
+        if conversation_id is None:
+            return
+        persistence_db = getattr(self.persistence, "db", None)
+        if persistence_db is None:
+            return
+        try:
+            summary, boundary_persisted_id = (
+                persistence_db.get_conversation_context_summary(conversation_id)
+            )
+        except Exception:
+            logger.bind(
+                session_id=session_id,
+                conversation_id=conversation_id,
+            ).exception(
+                "Failed to read Console context-summary on resume; leaving unset."
+            )
+            return
+        if summary is None or boundary_persisted_id is None:
+            return
+        boundary_native_id = persisted_to_native.get(boundary_persisted_id)
+        if boundary_native_id is None:
+            # Dangling: the persisted boundary message isn't on the loaded tree.
+            return
+        self._context_summary_by_session[session_id] = (summary, boundary_native_id)
 
     def _materialize_stream_buffer(self, message: ConsoleChatMessage) -> None:
         """Fold buffered stream chunks into ``message.content`` if any are new.

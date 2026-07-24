@@ -157,7 +157,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 25  # Adds message_generation_metadata sidecar (image-gen P2a). NOT sync-integrated (deliberate, v19/v24 precedent); prompts NOT in FTS.
+    _CURRENT_SCHEMA_VERSION = 26  # Adds conversations.context_summary / summary_boundary_message_id (Console /rewind).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -2517,6 +2517,19 @@ UPDATE db_schema_version
 """
 
     # Keep this runner SQL aligned with
+    # tldw_chatbook/DB/migrations/chachanotes_v25_to_v26_conversation_context_summary.sql.
+    # NOTE: no trigger DDL. ``context_summary``/``summary_boundary_message_id``
+    # are LOCAL-ONLY (Console `/rewind` "summarize up to here") and must never
+    # reach sync_log, so the conversations_sync_* triggers are left untouched
+    # and the columns are never added to their payloads.
+    _MIGRATE_V25_TO_V26_SQL = """
+UPDATE db_schema_version
+   SET version = 26
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 25;
+"""
+
+    # Keep this runner SQL aligned with
     # tldw_chatbook/DB/migrations/chachanotes_v18_to_v19_message_attachments.sql.
     _MIGRATE_V18_TO_V19_SQL = """
 CREATE TABLE IF NOT EXISTS message_attachments(
@@ -3928,6 +3941,35 @@ UPDATE db_schema_version
             logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V24→V25] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V24 to V25 for '{self._SCHEMA_NAME}': {e}") from e
 
+    def _migrate_from_v25_to_v26(self, conn: sqlite3.Connection):
+        """Migrate schema V25→V26: add the local-only ``context_summary`` /
+        ``summary_boundary_message_id`` columns to ``conversations`` (Console
+        `/rewind` "summarize up to here"). No triggers change -- the columns
+        are never synced (see ``set_conversation_context_summary``)."""
+        logger.info(f"Migrating schema from V25 to V26 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            existing_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(conversations)").fetchall()
+            }
+            if "context_summary" not in existing_columns:
+                conn.execute("ALTER TABLE conversations ADD COLUMN context_summary TEXT")
+            if "summary_boundary_message_id" not in existing_columns:
+                conn.execute("ALTER TABLE conversations ADD COLUMN summary_boundary_message_id TEXT")
+            conn.executescript(self._MIGRATE_V25_TO_V26_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V25→V26] Migration script executed.")
+            final_version = self._get_db_version(conn)
+            if final_version != 26:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V25→V26] Migration version check failed. Expected 26, got: {final_version}"
+                )
+            logger.info(f"[{self._SCHEMA_NAME} V25→V26] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V25→V26] Migration failed: {e}")
+            raise SchemaError(f"Migration from V25 to V26 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V25→V26] Unexpected error during migration: {e}")
+            raise SchemaError(f"Unexpected error migrating from V25 to V26 for '{self._SCHEMA_NAME}': {e}") from e
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -4083,6 +4125,7 @@ UPDATE db_schema_version
                     22: self._migrate_from_v22_to_v23,
                     23: self._migrate_from_v23_to_v24,
                     24: self._migrate_from_v24_to_v25,
+                    25: self._migrate_from_v25_to_v26,
                 }
 
                 if current_db_version == 0:
@@ -6816,6 +6859,48 @@ UPDATE db_schema_version
                 (conversation_id,),
             ).fetchone()
         return row["active_leaf_message_id"] if row else None
+
+    def set_conversation_context_summary(
+        self,
+        conversation_id: str,
+        summary: str | None,
+        boundary_message_id: str | None,
+    ) -> None:
+        """Set the local-only boundary-summary pair for a conversation.
+
+        Console `/rewind` "summarize up to here": ``summary`` is an LLM-
+        generated recap of the active path before ``boundary_message_id``,
+        used to compact the provider payload while the visible transcript
+        stays full. Deliberately a bare UPDATE that does NOT bump
+        ``version``/``last_modified`` and touches no column named in the
+        ``conversations_sync_update`` trigger WHEN clause, so it never emits
+        a ``sync_log`` row (same local-only pattern as
+        ``set_conversation_active_leaf``). Both fields are written
+        atomically in one statement.
+        """
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE conversations SET context_summary = ?, "
+                "summary_boundary_message_id = ? WHERE id = ? AND deleted = 0",
+                (summary, boundary_message_id, conversation_id),
+            )
+
+    def get_conversation_context_summary(
+        self, conversation_id: str
+    ) -> tuple[str | None, str | None]:
+        """Return the local-only ``(summary, boundary_message_id)`` pair.
+
+        ``(None, None)`` when unset or the conversation is missing/deleted.
+        """
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT context_summary, summary_boundary_message_id "
+                "FROM conversations WHERE id = ? AND deleted = 0",
+                (conversation_id,),
+            ).fetchone()
+        if row is None:
+            return None, None
+        return row["context_summary"], row["summary_boundary_message_id"]
 
     def soft_delete_conversation(
         self, conversation_id: str, expected_version: int

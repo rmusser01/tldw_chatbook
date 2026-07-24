@@ -1432,3 +1432,74 @@ async def test_transcript_signature_cache_miss_on_status_change():
 
         assert "[streaming]" not in str(rendered.renderable)
         assert transcript.message_signature_compute_counts()["m-stream"] == 2
+
+
+# ---------------------------------------------------------------------------
+# SP2 /rewind: render-derived "summarize up to here" boundary banner
+# ---------------------------------------------------------------------------
+
+
+def _boundary_messages():
+    return [
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="q1", id="m1"),
+        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="a1", id="m2"),
+        ConsoleChatMessage(role=ConsoleMessageRole.USER, content="q3", id="m3"),
+        ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="a3", id="m4"),
+    ]
+
+
+def test_console_transcript_summary_banner_renders_above_boundary():
+    from tldw_chatbook.Widgets.Console.console_transcript import (
+        CONSOLE_SUMMARY_BANNER_COPY,
+    )
+
+    transcript = ConsoleTranscript()
+    transcript.set_messages(_boundary_messages())
+    transcript.set_summary_boundary("m3")
+
+    plain = transcript.to_plain_text(width=80)
+    lines = plain.splitlines()
+
+    assert CONSOLE_SUMMARY_BANNER_COPY in plain
+    banner_index = next(
+        i for i, line in enumerate(lines) if CONSOLE_SUMMARY_BANNER_COPY in line
+    )
+    # The banner sits ABOVE the boundary turn (q3) and BELOW the prior turn.
+    q3_index = next(i for i, line in enumerate(lines) if "q3" in line)
+    a1_index = next(i for i, line in enumerate(lines) if "a1" in line)
+    assert a1_index < banner_index < q3_index
+
+
+def test_console_transcript_summary_banner_absent_when_boundary_not_rendered():
+    from tldw_chatbook.Widgets.Console.console_transcript import (
+        CONSOLE_SUMMARY_BANNER_COPY,
+    )
+
+    transcript = ConsoleTranscript()
+    transcript.set_messages(_boundary_messages())
+    # A dangling boundary (not in the rendered messages) shows no banner.
+    transcript.set_summary_boundary("ghost")
+
+    assert CONSOLE_SUMMARY_BANNER_COPY not in transcript.to_plain_text(width=80)
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_summary_banner_mounts_and_clears():
+    from tldw_chatbook.Widgets.Console.console_transcript import (
+        CONSOLE_SUMMARY_BANNER_COPY,
+    )
+
+    app = MutableTranscriptHarness()
+    async with app.run_test(size=(100, 32)):
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.set_messages(_boundary_messages())
+        transcript.set_summary_boundary("m3")
+        await transcript.refresh_messages()
+        banners = transcript.query(".console-transcript-summary-banner")
+        assert len(banners) == 1
+        assert CONSOLE_SUMMARY_BANNER_COPY in str(list(banners)[0].renderable)
+
+        # Restore to before the boundary -> banner disappears.
+        transcript.set_summary_boundary(None)
+        await transcript.refresh_messages()
+        assert len(transcript.query(".console-transcript-summary-banner")) == 0
