@@ -5098,10 +5098,20 @@ class PersonasScreen(BaseAppScreen):
         # The selection changed outside _run_guarded; refresh the footer hints
         # (attach is now available) and the header state.
         self._sync_title_and_console_actions()
+        # task-445: import swaps in the card view and inspector at the same
+        # moment this notification appears, so the default 5s toast reads as
+        # a flash against a screen that just changed everywhere else. Linger
+        # longer, matching the codebase's convention for confirmations that
+        # need a deliberate beat to register (e.g. import-conflict warnings
+        # elsewhere use timeout=6).
         if existed_before:
-            self._notify("Character already existed; selected it.", "information")
+            self._notify(
+                "Character already existed; selected it.",
+                "information",
+                timeout=6.0,
+            )
         else:
-            self._notify("Character imported.", "information")
+            self._notify("Character imported.", "information", timeout=6.0)
 
     async def _open_lore_import_dialog(self) -> None:
         """Continuation for the guarded lore-import action."""
@@ -6289,10 +6299,28 @@ class PersonasScreen(BaseAppScreen):
             )
             return False
 
-    def _notify(self, message: str, severity: str = "warning") -> None:
+    def _notify(
+        self,
+        message: str,
+        severity: str = "warning",
+        *,
+        timeout: float | None = None,
+    ) -> None:
+        """Post an app notification.
+
+        Args:
+            message: Text to show.
+            severity: Textual severity level.
+            timeout: Seconds to linger before dismissing; ``None`` uses the
+                app's default (Textual's ``NOTIFICATION_TIMEOUT``, 5s). Most
+                callers leave this at the default; a few confirmations that
+                land alongside a big simultaneous UI change (e.g. import
+                swapping in the card view) pass a longer value so they don't
+                read as a flash (task-445).
+        """
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
-            notify(message, severity=severity)
+            notify(message, severity=severity, timeout=timeout)
 
     # ===== Key bindings =====
 

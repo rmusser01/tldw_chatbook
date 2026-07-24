@@ -62,6 +62,39 @@ async def test_update_rows_renders_rows_and_count():
         assert "2 characters" in str(count.renderable)
 
 
+async def test_singular_count_uses_singular_noun():
+    """task-445: a total of exactly 1 must read '1 character', not
+    '1 characters' -- the RP UX review flagged the plural-only count line."""
+    app = LibraryPaneApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await pane.update_rows(
+            (LibraryRow(item_id="1", kind="character", name="Detective Sam"),),
+            total=1,
+            noun="characters",
+        )
+        await pilot.pause()
+        count = pilot.app.query_one("#personas-library-count", Static)
+        assert str(count.renderable) == "1 character"
+
+
+async def test_singular_filtered_count_uses_singular_noun():
+    """A filtered total of 1 (e.g. '1 of 1 dictionaries') must also read
+    singular: '1 of 1 dictionary'."""
+    app = LibraryPaneApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await pane.update_rows(
+            (LibraryRow(item_id="1", kind="character", name="Only One"),),
+            total=1,
+            noun="dictionaries",
+            filtered=True,
+        )
+        await pilot.pause()
+        count = pilot.app.query_one("#personas-library-count", Static)
+        assert str(count.renderable) == "1 of 1 dictionary"
+
+
 async def test_filtered_count_shows_n_of_m():
     app = LibraryPaneApp()
     async with app.run_test() as pilot:

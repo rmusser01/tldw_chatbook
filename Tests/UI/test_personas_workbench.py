@@ -356,8 +356,11 @@ class TestWorkbenchShell:
             rendered = context.render()
             assert "new" in rendered.lower()
             assert "search" in rendered.lower()
-            assert "save" in rendered.lower()
-            assert "attach" in rendered.lower()
+            # task-445: unavailable actions (nothing is being edited/selected
+            # at fresh mount) are dropped from the rendered hint entirely
+            # rather than shown with a literal "unavailable" suffix.
+            assert "save" not in rendered.lower()
+            assert "attach" not in rendered.lower()
             assert context.source == "personas"
             # task-264: the registration lands on the SCREEN's own footer,
             # not the harness's default-screen stand-in.
@@ -1193,7 +1196,8 @@ class TestSearch:
             count = str(screen.query_one("#personas-library-count", Static).renderable)
             # Task 4: the library pages from the DB seam, so a search reports the
             # match count as the page total (no separate "of <library>" copy).
-            assert "1 characters" in count
+            # task-445: a total of exactly 1 reads singular ("1 character").
+            assert "1 character" in count
 
     async def test_clearing_search_restores_all_rows(
         self, mock_app_instance, stub_characters
@@ -1250,7 +1254,8 @@ class TestSearch:
             assert [_row_text(r) for r in rows] == ["Navigator"]
             count = str(screen.query_one("#personas-library-count", Static).renderable)
             # Task 4: personas paginate in-memory; the count is the match total.
-            assert "1 persona profiles" in count
+            # task-445: a total of exactly 1 reads singular ("1 persona profile").
+            assert "1 persona profile" in count
 
     async def test_mode_switch_clears_search(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -1377,6 +1382,63 @@ class TestImportExport:
             assert screen.query_one("#personas-library-search").value == ""
             rows = screen.query(".personas-library-row")
             assert "Imported Hero" in [_row_text(r) for r in rows]
+
+    async def test_import_success_notification_lingers_past_the_app_default(
+        self, mock_app_instance, stub_characters, monkeypatch, tmp_path
+    ):
+        """task-445: the review saw the import-success toast flash by --
+        it fired at the same instant the card view/inspector swapped in,
+        against the app's plain 5s default. It must now request an explicit
+        timeout longer than that default so it reads at normal pace."""
+        imported_paths: list[str] = []
+
+        def fake_import(file_path):
+            imported_paths.append(file_path)
+            return 3
+
+        monkeypatch.setattr(
+            character_handler_module, "import_character_card", fake_import
+        )
+
+        def fetch_all_with_imported():
+            characters = [dict(c) for c in CHARACTERS]
+            if imported_paths:
+                characters.append({"id": 3, "name": "Imported Hero", "version": 1})
+            return characters
+
+        monkeypatch.setattr(
+            character_handler_module, "fetch_all_characters", fetch_all_with_imported
+        )
+        monkeypatch.setattr(
+            character_handler_module,
+            "fetch_character_by_id",
+            lambda character_id: next(
+                (
+                    dict(c)
+                    for c in fetch_all_with_imported()
+                    if str(c["id"]) == str(character_id)
+                ),
+                None,
+            ),
+        )
+        app = PersonasTestApp(mock_app_instance)
+        calls: list[tuple[str, str, dict]] = []
+        app.notify = lambda message, severity="information", **kwargs: calls.append(
+            (str(message), severity, kwargs)
+        )
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await screen._import_character_from_path(str(tmp_path / "card.json"))
+            await pilot.pause()
+        matches = [c for c in calls if c[0] == "Character imported."]
+        assert matches, f"no 'Character imported.' notify call in {calls}"
+        message, severity, kwargs = matches[-1]
+        assert severity == "information"
+        timeout = kwargs.get("timeout")
+        assert timeout is not None and timeout > 5, (
+            f"import-success notify must linger past the 5s app default, got {timeout!r}"
+        )
 
     async def test_import_markdown_routes_through_character_import_helper(
         self, mock_app_instance, stub_characters, monkeypatch, tmp_path
@@ -5035,7 +5097,9 @@ class TestKeyboardInteraction:
             assert confirms == []
             assert screen._edit_mode == "view"
             assert _save_action(screen._shortcut_context()).available is False
-            assert "ctrl+s save unavailable" in footer.shortcut_text
+            # task-445: unavailable hints are dropped entirely rather than
+            # rendered with a literal "unavailable" suffix.
+            assert "ctrl+s save" not in footer.shortcut_text
 
     async def test_mode_keys_switch_modes(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -5315,7 +5379,9 @@ class TestDirtyTracking:
             # task-264: the registration lands on the SCREEN's own footer,
             # not the harness's default-screen stand-in.
             footer = screen.query_one(AppFooterStatus)
-            assert "ctrl+enter attach unavailable" in footer.shortcut_text
+            # task-445: unavailable hints are dropped entirely rather than
+            # rendered with a literal "unavailable" suffix.
+            assert "ctrl+enter attach" not in footer.shortcut_text
             await screen._import_character_from_path("/tmp/card.json")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
