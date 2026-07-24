@@ -971,34 +971,74 @@ git commit -m "feat(tts): add sealed adapter registry"
 
 **Interfaces:**
 - Consumes: existing backend classes and `TTSBackendManager`.
-- Produces: bridge-only `BackendRegistry.ensure_builtins()`, `get()`, `list_backends()`, and `_reset_for_tests()`. Public `register()` rejects new runtime registrations.
+- Produces: bridge-only, thread-safe `BackendRegistry.ensure_builtins()`,
+  `get()`, and `list_backends()`. Public `register()` rejects new runtime
+  registrations. Tests reset private class state from a fixture; production
+  exposes no test-only reset hook.
 
-- [ ] **Step 1: Write quarantine and deterministic-reset tests**
+- [ ] **Step 1: Write quarantine, exact-route, manager, and concurrency tests**
 
 ```python
+EXPECTED_LEGACY_IDS = {
+    "openai_official_*",
+    "local_kokoro_*",
+    "elevenlabs_*",
+    "local_chatterbox_*",
+    "alltalk_*",
+    "local_higgs_*",
+}
+
+
+@pytest.fixture(autouse=True)
+def reset_legacy_registry_state():
+    BackendRegistry._registry.clear()
+    BackendRegistry._builtins_loaded = False
+    yield
+    BackendRegistry._registry.clear()
+    BackendRegistry._builtins_loaded = False
+
+
 def test_legacy_registry_is_closed_to_new_providers() -> None:
-    BackendRegistry._reset_for_tests()
     BackendRegistry.ensure_builtins()
 
     with pytest.raises(RuntimeError, match="sealed legacy registry"):
         BackendRegistry.register("new_provider_*", object)  # type: ignore[arg-type]
 
 
-def test_legacy_registry_reset_is_deterministic() -> None:
-    BackendRegistry._reset_for_tests()
+def test_legacy_registry_has_exact_routes_and_manager_lookup() -> None:
+    manager = TTSBackendManager({})
     first = tuple(BackendRegistry.ensure_builtins())
     second = tuple(BackendRegistry.ensure_builtins())
 
     assert first == second
     assert len(first) == len(set(first))
-    assert set(first) <= {
-        "openai_official_*",
-        "local_kokoro_*",
-        "elevenlabs_*",
-        "local_chatterbox_*",
-        "alltalk_*",
-        "local_higgs_*",
-    }
+    assert set(first) == EXPECTED_LEGACY_IDS
+    assert manager is not None
+    assert BackendRegistry.get("openai_official_tts-1") is OpenAITTSBackend
+
+
+def test_concurrent_manager_construction_loads_builtins_once(
+    monkeypatch,
+) -> None:
+    load_calls = 0
+    original = BackendRegistry._load_builtin_classes.__func__
+
+    def counted_load(cls):
+        nonlocal load_calls
+        load_calls += 1
+        original(cls)
+
+    monkeypatch.setattr(
+        BackendRegistry,
+        "_load_builtin_classes",
+        classmethod(counted_load),
+    )
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        managers = list(pool.map(lambda _: TTSBackendManager({}), range(16)))
+
+    assert len(managers) == 16
+    assert load_calls == 1
+    assert set(BackendRegistry.list_backends()) == EXPECTED_LEGACY_IDS
 ```
 
 - [ ] **Step 2: Run the focused tests and observe registration remains open**
@@ -1013,6 +1053,7 @@ Expected: the new-provider test fails because `BackendRegistry.register()` curre
 class BackendRegistry:
     _registry: dict[str, type[TTSBackendBase]] = {}
     _builtins_loaded = False
+    _load_lock = threading.Lock()
     _builtin_ids = frozenset({
         "openai_official_*",
         "local_kokoro_*",
@@ -1043,9 +1084,12 @@ class BackendRegistry:
 
     @classmethod
     def ensure_builtins(cls) -> tuple[str, ...]:
-        if not cls._builtins_loaded:
-            cls._load_builtin_classes()
-            cls._builtins_loaded = True
+        if cls._builtins_loaded:
+            return tuple(cls._registry)
+        with cls._load_lock:
+            if not cls._builtins_loaded:
+                cls._load_builtin_classes()
+                cls._builtins_loaded = True
         return tuple(cls._registry)
 
     @classmethod
@@ -1092,10 +1136,6 @@ class BackendRegistry:
                     "Legacy TTS backend is unavailable: {}", backend_id
                 )
 
-    @classmethod
-    def _reset_for_tests(cls) -> None:
-        cls._registry.clear()
-        cls._builtins_loaded = False
 ```
 
 Make `TTSBackendManager.__init__()` call `BackendRegistry.ensure_builtins()`.
