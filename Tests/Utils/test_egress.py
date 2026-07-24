@@ -530,6 +530,34 @@ async def test_aiohttp_basic_fetch_capped():
         await guarded_fetch_aiohttp("https://example.com/b", session=big, max_bytes=1024)
 
 
+@pytest.mark.asyncio
+async def test_aiohttp_headers_case_insensitive_access():
+    """Regression test: GuardedResponse headers must preserve case-insensitivity.
+
+    When aiohttp returns a response with lowercase "content-type", the caller
+    must be able to access it with capitalized "Content-Type" (or any casing).
+    This mimics real aiohttp behavior (which uses CIMultiDict for headers).
+    """
+    from multidict import CIMultiDict
+
+    # Create a session with lowercase content-type header (mimicking real aiohttp)
+    # We construct the fake response with CIMultiDict to mimic real aiohttp behavior
+    routes = {"https://example.com/": (200, CIMultiDict({"content-type": "text/html; charset=utf-8"}), b"<html>test</html>")}
+    session = _FakeAiohttpSession(routes)
+
+    resp = await guarded_fetch_aiohttp(
+        "https://example.com/page", session=session, max_bytes=1024
+    )
+
+    # Assert that capitalized lookup works (case-insensitive access)
+    assert resp.headers.get("Content-Type") == "text/html; charset=utf-8"
+    # Also verify lowercase access works
+    assert resp.headers.get("content-type") == "text/html; charset=utf-8"
+    # Verify that the charset parsing in GuardedResponse.text uses the header correctly
+    assert "charset=utf-8" in resp.headers.get("content-type", "")
+    assert resp.text == "<html>test</html>"
+
+
 class _FakePlaywrightRequest:
     def __init__(self, url, redirected_from=None):
         self.url = url

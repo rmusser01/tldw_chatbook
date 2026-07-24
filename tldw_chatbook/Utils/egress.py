@@ -460,6 +460,8 @@ async def guarded_fetch_aiohttp(
     timeout=None,
 ):
     """Capped GET via aiohttp.ClientSession with per-hop re-validation."""
+    from multidict import CIMultiDict
+
     first_host = _host_of(url)
     current = url
     for _hop in range(MAX_REDIRECT_HOPS + 1):
@@ -487,7 +489,7 @@ async def guarded_fetch_aiohttp(
                     )
             return GuardedResponse(
                 status_code=response.status,
-                headers=dict(response.headers),
+                headers=CIMultiDict(response.headers),
                 content=bytes(collected),
                 final_url=str(response.url),
                 _response=response,
