@@ -2,8 +2,7 @@
 
 Status: Accepted
 Date: 2026-07-23
-Related Task: N/A — create or select a Backlog epic and atomic child tasks
-before implementation planning
+Related Task: TASK-401 — Canonical RAG citation provenance epic
 Supersedes: N/A
 
 ## Decision
