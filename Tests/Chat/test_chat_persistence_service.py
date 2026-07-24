@@ -3,6 +3,7 @@ import inspect
 import pytest
 
 from Tests.Chat.test_citation_trace_repository import (
+    _exact_governed_payload_write,
     _identity as citation_identity,
     _repository as citation_repository,
     _sealed_write,
@@ -185,6 +186,90 @@ class TestChatPersistenceService:
 
         assert transaction_calls == 0
         assert db_instance.get_message_by_id("invalid-citation-message") is None
+
+    def test_mismatched_run_authority_fails_before_opening_a_transaction(
+        self,
+        db_instance: CharactersRAGDB,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Hostile run authority", "character_id": None}
+        )
+        transaction_calls = 0
+        original_transaction = db_instance.transaction
+
+        def counted_transaction():
+            nonlocal transaction_calls
+            transaction_calls += 1
+            return original_transaction()
+
+        monkeypatch.setattr(db_instance, "transaction", counted_transaction)
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=citation_repository(db_instance),
+        )
+
+        with pytest.raises(
+            CitationPersistenceUnavailable,
+            match="run_authority_mismatch",
+        ):
+            service.create_message(
+                conversation_id=conversation_id,
+                sender="assistant",
+                content="Answer [S1].",
+                message_id="hostile-authority-message",
+                citation_write=_sealed_write(authority_id="hostile-authority"),
+            )
+
+        assert transaction_calls == 0
+        assert db_instance.get_message_by_id("hostile-authority-message") is None
+
+    def test_governed_payload_one_byte_over_limit_fails_before_transaction(
+        self,
+        db_instance: CharactersRAGDB,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Oversized governed payload", "character_id": None}
+        )
+        transaction_calls = 0
+        original_transaction = db_instance.transaction
+
+        def counted_transaction():
+            nonlocal transaction_calls
+            transaction_calls += 1
+            return original_transaction()
+
+        monkeypatch.setattr(db_instance, "transaction", counted_transaction)
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=citation_repository(db_instance),
+        )
+        exact = _exact_governed_payload_write()
+        snapshot = exact.evidence_snapshot_payloads[0]
+        assert snapshot.title is not None
+        oversized = exact.model_copy(
+            update={
+                "evidence_snapshot_payloads": (
+                    snapshot.model_copy(update={"title": snapshot.title + "x"}),
+                )
+            }
+        )
+
+        with pytest.raises(
+            CitationPersistenceUnavailable,
+            match="invalid_sealed_citation_write",
+        ):
+            service.create_message(
+                conversation_id=conversation_id,
+                sender="assistant",
+                content="Answer [S1].",
+                message_id="oversized-citation-message",
+                citation_write=oversized,
+            )
+
+        assert transaction_calls == 0
+        assert db_instance.get_message_by_id("oversized-citation-message") is None
 
     def test_citation_repository_for_another_database_fails_before_transaction(
         self,

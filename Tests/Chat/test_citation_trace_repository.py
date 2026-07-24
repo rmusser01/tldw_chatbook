@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 import json
 import sqlite3
@@ -31,6 +32,7 @@ from tldw_chatbook.Chat.citation_trace_models import (
     EvidenceRunPayload,
     EvidenceSnapshotPayload,
     EvidenceStorageMode,
+    GOVERNED_PAYLOAD_UTF8_BYTES_MAX,
     MarkerNamespace,
     PolicyCapability,
     PromptEvidenceEntry,
@@ -44,7 +46,6 @@ from tldw_chatbook.Chat.citation_trace_repository import (
     CitationHydrationState,
     CitationPersistenceUnavailable,
     CitationTraceRepository,
-    PreparedCitationWrite,
     load_local_citation_identity_context,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -70,7 +71,7 @@ def _identity(db: CharactersRAGDB) -> LocalCitationIdentityContext:
     return context
 
 
-def _sealed_write() -> SealedCitationWrite:
+def _sealed_write(*, authority_id: str | None = None) -> SealedCitationWrite:
     answer = "Answer [S1]."
     run = EvidenceRun(
         run_id="run-1",
@@ -142,7 +143,7 @@ def _sealed_write() -> SealedCitationWrite:
                 run_id=run.run_id,
                 raw_query="private query",
                 query_fingerprint="query-hmac",
-                authority_id="local-authority",
+                authority_id=authority_id,
                 retrieval_metadata={"retriever": "synthetic"},
             ),
         ),
@@ -190,6 +191,24 @@ def _repository(
     )
 
 
+def _exact_governed_payload_write() -> SealedCitationWrite:
+    base = _sealed_write()
+    snapshot = base.evidence_snapshot_payloads[0]
+    remaining = GOVERNED_PAYLOAD_UTF8_BYTES_MAX - base.governed_payload_bytes
+    assert snapshot.title is not None
+    exact_snapshot = snapshot.model_copy(
+        update={"title": snapshot.title + ("x" * remaining)}
+    )
+    exact = SealedCitationWrite(
+        trace=base.trace,
+        evidence_run_payloads=base.evidence_run_payloads,
+        evidence_snapshot_payloads=(exact_snapshot,),
+        answer_attempt_payloads=base.answer_attempt_payloads,
+    )
+    assert exact.governed_payload_bytes == GOVERNED_PAYLOAD_UTF8_BYTES_MAX
+    return exact
+
+
 def _conversation(db: CharactersRAGDB) -> str:
     return db.add_conversation({"title": "Citation test", "character_id": None})
 
@@ -199,8 +218,9 @@ def _persist(
     repository: CitationTraceRepository,
     *,
     message_id: str = "message-1",
+    sealed_write: SealedCitationWrite | None = None,
 ) -> None:
-    prepared = repository.prepare_write(_sealed_write())
+    prepared = repository.prepare_write(sealed_write or _sealed_write())
     with db.transaction() as cursor:
         db.add_message(
             {
@@ -347,6 +367,102 @@ def test_preflight_revalidates_a_hostile_model_copy(
         repository.prepare_write(hostile)
 
 
+def test_preflight_rejects_a_run_from_another_authority(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+
+    with pytest.raises(
+        CitationPersistenceUnavailable,
+        match="run_authority_mismatch",
+    ):
+        repository.prepare_write(_sealed_write(authority_id="hostile-authority"))
+
+
+def test_preflight_accepts_null_or_matching_run_authority(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+
+    repository.prepare_write(_sealed_write())
+    repository.prepare_write(
+        _sealed_write(authority_id=_identity(db).local_authority_id)
+    )
+
+
+def test_prepared_write_is_an_immutable_snapshot_of_nested_governed_values(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    sealed_write = _sealed_write()
+    prepared = repository.prepare_write(sealed_write)
+    mutable_graph = getattr(prepared, "sealed_write", None)
+    if mutable_graph is not None:
+        mutable_graph.evidence_snapshot_payloads[0].source_identity["document_id"] = (
+            "tampered-after-prepare"
+        )
+        mutable_graph.evidence_run_payloads[0].retrieval_metadata["retriever"] = (
+            "tampered-after-prepare"
+        )
+
+    with db.transaction() as cursor:
+        conversation_id = _conversation(db)
+        db.add_message(
+            {
+                "id": "immutable-prepared",
+                "conversation_id": conversation_id,
+                "sender": "assistant",
+                "content": "Answer [S1].",
+                "client_id": db.client_id,
+            }
+        )
+        repository.write_prepared(
+            cursor,
+            prepared,
+            message_id="immutable-prepared",
+            message_revision=1,
+            message_body="Answer [S1].",
+        )
+
+    connection = db.get_connection()
+    source_identity = json.loads(
+        connection.execute(
+            "SELECT source_identity_json FROM rag_evidence_snapshots"
+        ).fetchone()[0]
+    )
+    run_payload = json.loads(
+        connection.execute("SELECT run_payload_json FROM rag_evidence_runs").fetchone()[
+            0
+        ]
+    )
+    assert not hasattr(prepared, "sealed_write")
+    assert source_identity == {"document_id": "private-document"}
+    assert run_payload["retrieval_metadata"] == {"retriever": "synthetic"}
+
+
+def test_prepare_enforces_exact_total_governed_payload_boundary(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    exact = _exact_governed_payload_write()
+    repository.prepare_write(exact)
+
+    exact_snapshot = exact.evidence_snapshot_payloads[0]
+    assert exact_snapshot.title is not None
+    oversized = exact.model_copy(
+        update={
+            "evidence_snapshot_payloads": (
+                exact_snapshot.model_copy(update={"title": exact_snapshot.title + "x"}),
+            )
+        }
+    )
+    with pytest.raises(
+        CitationPersistenceUnavailable,
+        match="invalid_sealed_citation_write",
+    ):
+        repository.prepare_write(oversized)
+
+
 def test_prepared_write_cannot_be_forged_or_reused_across_repositories(
     db: CharactersRAGDB,
 ) -> None:
@@ -371,11 +487,7 @@ def test_prepared_write_cannot_be_forged_or_reused_across_repositories(
             )
             second.write_prepared(
                 cursor,
-                PreparedCitationWrite(
-                    sealed_write=prepared.sealed_write,
-                    identity_context=prepared.identity_context,
-                    repository_token=object(),
-                ),
+                replace(prepared, repository_token=object()),
                 message_id="forged-prepared",
                 message_revision=1,
                 message_body="Answer [S1].",
@@ -554,6 +666,37 @@ def test_hydration_denials_return_only_safe_summary(
     assert "private" not in repr(result)
 
 
+def test_hydration_requires_the_sealed_snapshot_capability(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    write = _sealed_write()
+    trace_without_capability = write.trace.model_copy(
+        update={"policy_capabilities": ()}
+    )
+    _persist(
+        db,
+        repository,
+        sealed_write=SealedCitationWrite(
+            trace=trace_without_capability,
+            evidence_run_payloads=write.evidence_run_payloads,
+            evidence_snapshot_payloads=write.evidence_snapshot_payloads,
+            answer_attempt_payloads=write.answer_attempt_payloads,
+        ),
+    )
+    identity = _identity(db)
+
+    result = repository.hydrate_trace(
+        local_trace_namespace(identity, trace_id="trace-1"),
+        authorization=_authorization(identity, view_snapshot=True),
+    )
+
+    assert result.state is CitationHydrationState.SNAPSHOT_CAPABILITY_DENIED
+    assert result.summary is not None
+    assert result.governed_payloads is None
+    assert "private" not in repr(result)
+
+
 @pytest.mark.parametrize(
     "denial",
     ["snapshot_redacted", "run_purged", "answer_purged", "tombstoned"],
@@ -633,6 +776,7 @@ def test_authorized_hydration_returns_revalidated_governed_payloads(
     assert (
         result.governed_payloads.evidence_run_payloads[0].raw_query == "private query"
     )
+    assert result.governed_payloads.evidence_run_payloads[0].authority_id is None
     assert (
         result.governed_payloads.evidence_snapshot_payloads[0].snapshot_text
         == "private exact submitted evidence"
@@ -661,6 +805,55 @@ def test_hydration_returns_bounded_unavailable_state_for_incomplete_rows(
     assert result.state is CitationHydrationState.PAYLOAD_UNAVAILABLE
     assert result.summary is not None
     assert result.governed_payloads is None
+
+
+@pytest.mark.parametrize(
+    ("hostile_authority", "expected_state"),
+    [
+        ("hostile-authority", CitationHydrationState.AUTHORITY_DENIED),
+        (0, CitationHydrationState.PAYLOAD_UNAVAILABLE),
+    ],
+)
+def test_hydration_denies_a_hostile_persisted_run_authority(
+    db: CharactersRAGDB,
+    hostile_authority: str | int,
+    expected_state: CitationHydrationState,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    identity = _identity(db)
+    connection = db.get_connection()
+    payload = json.loads(
+        connection.execute("SELECT run_payload_json FROM rag_evidence_runs").fetchone()[
+            0
+        ]
+    )
+    payload["authority_id"] = hostile_authority
+    connection.execute(
+        "UPDATE rag_evidence_runs SET run_payload_json = ?",
+        (json.dumps(payload),),
+    )
+    connection.commit()
+
+    authorization = _authorization(identity)
+    if isinstance(hostile_authority, str):
+        authorization = authorization.model_copy(
+            update={
+                "allowlisted_authority_ids": (
+                    identity.local_authority_id,
+                    hostile_authority,
+                )
+            }
+        )
+    result = repository.hydrate_trace(
+        local_trace_namespace(identity, trace_id="trace-1"),
+        authorization=authorization,
+    )
+
+    assert result.state is expected_state
+    assert result.summary is not None
+    assert result.governed_payloads is None
+    assert "private query" not in repr(result)
 
 
 def test_injected_identity_must_match_the_persisted_singleton(

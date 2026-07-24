@@ -33,6 +33,7 @@ from tldw_chatbook.Chat.citation_trace_models import (
     EvidenceRunPayload,
     EvidenceSnapshotPayload,
     EvidenceStorageMode,
+    PolicyCapability,
     SealedCitationWrite,
     TraceOrigin,
 )
@@ -96,11 +97,22 @@ class CitationHydrationResult(_FrozenModel):
     governed_payloads: GovernedCitationPayloads | None = None
 
 
+_SqlValue = str | int | None
+_PreparedRow = tuple[_SqlValue, ...]
+
+
 @dataclass(frozen=True)
 class PreparedCitationWrite:
-    """Revalidated write graph safe to hand to an active transaction."""
+    """Immutable canonical SQL rows safe to hand to an active transaction."""
 
-    sealed_write: SealedCitationWrite
+    profile_id: str
+    trace_id: str
+    sealed_at: str
+    trace_row: _PreparedRow = field(repr=False)
+    run_rows: tuple[_PreparedRow, ...] = field(repr=False)
+    snapshot_rows: tuple[_PreparedRow, ...] = field(repr=False)
+    answer_rows: tuple[_PreparedRow, ...] = field(repr=False)
+    reference_rows: tuple[_PreparedRow, ...] = field(repr=False)
     identity_context: LocalCitationIdentityContext
     repository_token: object = field(repr=False)
 
@@ -246,10 +258,123 @@ class CitationTraceRepository:
             ) from exc
         if validated.trace.origin is not TraceOrigin.LOCAL:
             raise CitationPersistenceUnavailable("unsupported_trace_origin")
+        for payload in validated.evidence_run_payloads:
+            if (
+                payload.authority_id is not None
+                and payload.authority_id != identity.local_authority_id
+            ):
+                raise CitationPersistenceUnavailable("run_authority_mismatch")
+
+        trace = validated.trace
+        profile_id = identity.profile_id
+        sealed_at = trace.sealed_at.isoformat()
+        run_payloads = {
+            payload.payload_id: payload for payload in validated.evidence_run_payloads
+        }
+        run_rows = tuple(
+            (
+                profile_id,
+                trace.trace_id,
+                run.run_id,
+                run.run_ordinal,
+                run.stage,
+                _canonical_json(run_payloads[run.payload_ref].model_dump(mode="json")),
+                run.started_at.isoformat(),
+                run.ended_at.isoformat() if run.ended_at else None,
+            )
+            for run in trace.evidence_runs
+        )
+        snapshot_rows = tuple(
+            (
+                profile_id,
+                payload.payload_id,
+                profile_id,
+                identity.local_authority_id,
+                trace.policy_version,
+                payload.payload_id,
+                payload.server_reference or payload.payload_id,
+                payload.storage_mode.value,
+                (
+                    "redacted"
+                    if payload.storage_mode is EvidenceStorageMode.REDACTED
+                    else "available"
+                ),
+                payload.snapshot_text,
+                payload.title,
+                _canonical_json(payload.source_identity),
+                _canonical_json(payload.locator),
+                _canonical_json(payload.lineage),
+                _canonical_json(payload.transformations),
+                payload.content_hash,
+                payload.comparison_hash,
+                sealed_at,
+            )
+            for payload in validated.evidence_snapshot_payloads
+        )
+        answer_rows = tuple(
+            (
+                profile_id,
+                payload.payload_id,
+                trace.trace_id,
+                payload.attempt_id,
+                (
+                    "available"
+                    if payload.answer_body is not None
+                    and payload.body_integrity_hmac is not None
+                    else "purged"
+                ),
+                payload.answer_body,
+                payload.body_integrity_hmac,
+                sealed_at,
+                (
+                    None
+                    if payload.answer_body is not None
+                    and payload.body_integrity_hmac is not None
+                    else sealed_at
+                ),
+            )
+            for payload in validated.answer_attempt_payloads
+        )
+        reference_rows = tuple(
+            (
+                profile_id,
+                trace.trace_id,
+                prompt_set.prompt_set_id,
+                entry.evidence_ordinal,
+                entry.run_id,
+                entry.snapshot_payload_ref,
+                entry.marker_ordinal,
+                entry.storage_mode.value,
+            )
+            for prompt_set in trace.prompt_evidence_sets
+            for entry in prompt_set.entries
+        )
         return PreparedCitationWrite(
-            validated,
-            identity,
-            self._prepared_write_token,
+            profile_id=profile_id,
+            trace_id=trace.trace_id,
+            sealed_at=sealed_at,
+            trace_row=(
+                profile_id,
+                trace.trace_id,
+                trace.schema_version,
+                trace.request_id,
+                trace.generation_id,
+                profile_id,
+                trace.origin.value,
+                trace.lifecycle.value,
+                trace.completeness_at_seal.value,
+                trace.selected_attempt_id,
+                trace.policy_version,
+                _canonical_json(trace.model_dump(mode="json")),
+                trace.created_at.isoformat(),
+                sealed_at,
+            ),
+            run_rows=run_rows,
+            snapshot_rows=snapshot_rows,
+            answer_rows=answer_rows,
+            reference_rows=reference_rows,
+            identity_context=identity,
+            repository_token=self._prepared_write_token,
         )
 
     def write_prepared(
@@ -274,14 +399,9 @@ class CitationTraceRepository:
             )
         if not cursor.connection.in_transaction:
             raise RuntimeError("citation persistence requires an active transaction")
-        write = prepared.sealed_write
-        identity = prepared.identity_context
         codec = self._fingerprint_codec
         if codec is None:  # guarded by prepare_write
             raise CitationPersistenceUnavailable("fingerprint_key_unavailable")
-        trace = write.trace
-        profile_id = identity.profile_id
-        aggregate_json = _canonical_json(trace.model_dump(mode="json"))
         cursor.execute(
             """
             INSERT INTO rag_citation_traces(
@@ -291,29 +411,11 @@ class CitationTraceRepository:
                 visibility_state, created_at, sealed_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
             """,
-            (
-                profile_id,
-                trace.trace_id,
-                trace.schema_version,
-                trace.request_id,
-                trace.generation_id,
-                profile_id,
-                trace.origin.value,
-                trace.lifecycle.value,
-                trace.completeness_at_seal.value,
-                trace.selected_attempt_id,
-                trace.policy_version,
-                aggregate_json,
-                trace.created_at.isoformat(),
-                trace.sealed_at.isoformat(),
-            ),
+            prepared.trace_row,
         )
         self._fail_after("trace")
 
-        run_payloads = {
-            payload.payload_id: payload for payload in write.evidence_run_payloads
-        }
-        for run in trace.evidence_runs:
+        for row in prepared.run_rows:
             cursor.execute(
                 """
                 INSERT INTO rag_evidence_runs(
@@ -321,28 +423,11 @@ class CitationTraceRepository:
                     redaction_state, run_payload_json, started_at, ended_at, purged_at
                 ) VALUES (?, ?, ?, ?, ?, 'available', ?, ?, ?, NULL)
                 """,
-                (
-                    profile_id,
-                    trace.trace_id,
-                    run.run_id,
-                    run.run_ordinal,
-                    run.stage,
-                    _canonical_json(
-                        run_payloads[run.payload_ref].model_dump(mode="json")
-                    ),
-                    run.started_at.isoformat(),
-                    run.ended_at.isoformat() if run.ended_at else None,
-                ),
+                row,
             )
         self._fail_after("runs")
 
-        for payload in write.evidence_snapshot_payloads:
-            redaction_state = (
-                "redacted"
-                if payload.storage_mode is EvidenceStorageMode.REDACTED
-                else "available"
-            )
-            origin_payload_id = payload.server_reference or payload.payload_id
+        for row in prepared.snapshot_rows:
             cursor.execute(
                 """
                 INSERT INTO rag_evidence_snapshots(
@@ -358,34 +443,11 @@ class CitationTraceRepository:
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL
                 )
                 """,
-                (
-                    profile_id,
-                    payload.payload_id,
-                    profile_id,
-                    identity.local_authority_id,
-                    trace.policy_version,
-                    payload.payload_id,
-                    origin_payload_id,
-                    payload.storage_mode.value,
-                    redaction_state,
-                    payload.snapshot_text,
-                    payload.title,
-                    _canonical_json(payload.source_identity),
-                    _canonical_json(payload.locator),
-                    _canonical_json(payload.lineage),
-                    _canonical_json(payload.transformations),
-                    payload.content_hash,
-                    payload.comparison_hash,
-                    trace.sealed_at.isoformat(),
-                ),
+                row,
             )
         self._fail_after("snapshots")
 
-        for payload in write.answer_attempt_payloads:
-            available = (
-                payload.answer_body is not None
-                and payload.body_integrity_hmac is not None
-            )
+        for row in prepared.answer_rows:
             cursor.execute(
                 """
                 INSERT INTO rag_answer_attempt_payloads(
@@ -394,40 +456,20 @@ class CitationTraceRepository:
                     body_integrity_hmac, created_at, retain_until, purged_at
                 ) VALUES (?, ?, ?, ?, ?, 'default', ?, ?, ?, NULL, ?)
                 """,
-                (
-                    profile_id,
-                    payload.payload_id,
-                    trace.trace_id,
-                    payload.attempt_id,
-                    "available" if available else "purged",
-                    payload.answer_body,
-                    payload.body_integrity_hmac,
-                    trace.sealed_at.isoformat(),
-                    None if available else trace.sealed_at.isoformat(),
-                ),
+                row,
             )
         self._fail_after("attempts")
 
-        for prompt_set in trace.prompt_evidence_sets:
-            for entry in prompt_set.entries:
-                cursor.execute(
-                    """
-                    INSERT INTO rag_trace_evidence_refs(
-                        profile_id, trace_id, prompt_set_id, evidence_ordinal,
-                        run_id, snapshot_payload_id, marker_ordinal, storage_mode
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        profile_id,
-                        trace.trace_id,
-                        prompt_set.prompt_set_id,
-                        entry.evidence_ordinal,
-                        entry.run_id,
-                        entry.snapshot_payload_ref,
-                        entry.marker_ordinal,
-                        entry.storage_mode.value,
-                    ),
-                )
+        for row in prepared.reference_rows:
+            cursor.execute(
+                """
+                INSERT INTO rag_trace_evidence_refs(
+                    profile_id, trace_id, prompt_set_id, evidence_ordinal,
+                    run_id, snapshot_payload_id, marker_ordinal, storage_mode
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                row,
+            )
         self._fail_after("refs")
 
         body_fingerprint = codec.fingerprint(
@@ -436,12 +478,11 @@ class CitationTraceRepository:
         )
         idempotency_key = codec.fingerprint(
             CitationFingerprintDomain.OWNER_OPERATION,
-            profile_id,
+            prepared.profile_id,
             message_id,
             str(message_revision),
-            trace.trace_id,
+            prepared.trace_id,
         )
-        timestamp = trace.sealed_at.isoformat()
         cursor.execute(
             """
             INSERT INTO rag_message_trace_owners(
@@ -450,14 +491,14 @@ class CitationTraceRepository:
             ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)
             """,
             (
-                profile_id,
+                prepared.profile_id,
                 message_id,
                 message_revision,
-                trace.trace_id,
+                prepared.trace_id,
                 body_fingerprint,
                 idempotency_key,
-                timestamp,
-                timestamp,
+                prepared.sealed_at,
+                prepared.sealed_at,
             ),
         )
         self._fail_after("owner")
@@ -515,7 +556,10 @@ class CitationTraceRepository:
                 state=CitationHydrationState.AUTHORITY_DENIED,
                 summary=summary,
             )
-        if not authorization.view_snapshot:
+        if (
+            PolicyCapability.VIEW_SNAPSHOT not in summary.trace.policy_capabilities
+            or not authorization.view_snapshot
+        ):
             return CitationHydrationResult(
                 state=CitationHydrationState.SNAPSHOT_CAPABILITY_DENIED,
                 summary=summary,
@@ -524,6 +568,21 @@ class CitationTraceRepository:
         profile_id = namespace.profile_id
         trace_id = summary.trace.trace_id
         connection = self.db.get_connection()
+        default_run_authority_id = namespace.authority_id
+        required_run_authority_id: str | None = None
+        if namespace.identity_namespace is CitationIdentityNamespace.LOCAL_TRACE:
+            local_identity = load_local_citation_identity_context(self.db)
+            if (
+                local_identity is None
+                or local_identity.profile_id != namespace.profile_id
+                or local_identity.local_authority_id != namespace.authority_id
+            ):
+                return CitationHydrationResult(
+                    state=CitationHydrationState.AUTHORITY_DENIED,
+                    summary=summary,
+                )
+            default_run_authority_id = local_identity.local_authority_id
+            required_run_authority_id = local_identity.local_authority_id
         snapshot_metadata = connection.execute(
             """
             SELECT DISTINCT
@@ -586,7 +645,25 @@ class CitationTraceRepository:
 
         run_metadata = connection.execute(
             """
-            SELECT run_id, redaction_state
+            SELECT
+                run_id,
+                redaction_state,
+                CASE
+                  WHEN json_valid(run_payload_json)
+                   AND json_type(run_payload_json) = 'object'
+                  THEN 1
+                  ELSE 0
+                END AS payload_json_valid,
+                CASE
+                  WHEN json_valid(run_payload_json)
+                  THEN json_extract(run_payload_json, '$.authority_id')
+                  ELSE NULL
+                END AS authority_id,
+                CASE
+                  WHEN json_valid(run_payload_json)
+                  THEN json_type(run_payload_json, '$.authority_id')
+                  ELSE NULL
+                END AS authority_json_type
             FROM rag_evidence_runs
             WHERE profile_id = ? AND trace_id = ?
             """,
@@ -624,6 +701,35 @@ class CitationTraceRepository:
         ):
             return CitationHydrationResult(
                 state=CitationHydrationState.REDACTED,
+                summary=summary,
+            )
+        if any(
+            not row["payload_json_valid"]
+            or row["authority_json_type"] not in (None, "null", "text")
+            for row in run_metadata
+        ):
+            return CitationHydrationResult(
+                state=CitationHydrationState.PAYLOAD_UNAVAILABLE,
+                summary=summary,
+            )
+        run_authority_ids = tuple(
+            (
+                row["authority_id"]
+                if row["authority_id"] is not None
+                else default_run_authority_id
+            )
+            for row in run_metadata
+        )
+        if any(
+            (
+                required_run_authority_id is not None
+                and authority_id != required_run_authority_id
+            )
+            or authority_id not in authorization.allowlisted_authority_ids
+            for authority_id in run_authority_ids
+        ):
+            return CitationHydrationResult(
+                state=CitationHydrationState.AUTHORITY_DENIED,
                 summary=summary,
             )
 

@@ -3,7 +3,7 @@
 -- schema-version update.
 
 CREATE TABLE rag_identity_context(
-  context_name TEXT PRIMARY KEY CHECK(context_name = 'default'),
+  context_name TEXT PRIMARY KEY NOT NULL CHECK(context_name = 'default'),
   profile_id TEXT UNIQUE NOT NULL
     CHECK(length(CAST(profile_id AS BLOB)) BETWEEN 1 AND 256),
   local_authority_id TEXT UNIQUE NOT NULL
@@ -303,7 +303,8 @@ WHERE state = 'active';
 CREATE TABLE rag_source_observations(
   profile_id TEXT NOT NULL,
   trace_id TEXT NOT NULL,
-  prompt_set_id TEXT NOT NULL,
+  prompt_set_id TEXT NOT NULL
+    CHECK(length(CAST(prompt_set_id AS BLOB)) BETWEEN 1 AND 256),
   evidence_ordinal INTEGER NOT NULL CHECK(evidence_ordinal >= 0),
   snapshot_payload_id TEXT NOT NULL,
   resolver_kind TEXT NOT NULL
