@@ -863,15 +863,18 @@ def _build_test_app(configured_default: str | None = None) -> TldwCli:
                                             ):
                                                 with patch(
                                                     "tldw_chatbook.app.get_subscriptions_db_path",
-                                                    return_value=":memory:",
+                                                    return_value=user_data_dir
+                                                    / "subscriptions.sqlite",
                                                 ):
                                                     with patch(
                                                         "tldw_chatbook.app.get_research_db_path",
-                                                        return_value=":memory:",
+                                                        return_value=user_data_dir
+                                                        / "research.sqlite",
                                                     ):
                                                         with patch(
                                                             "tldw_chatbook.app.get_writing_db_path",
-                                                            return_value=":memory:",
+                                                            return_value=user_data_dir
+                                                            / "writing.sqlite",
                                                         ):
                                                             with patch(
                                                                 "tldw_chatbook.app.get_user_data_dir",
@@ -931,6 +934,14 @@ def test_app_uses_screen_navigation_and_wires_media_services():
     assert (
         app.server_auth_account_service.client_provider is app.server_context_provider
     )
+
+
+def test_app_harness_multi_connection_databases_keep_initialized_schemas():
+    app = _build_test_app()
+
+    assert app.scheduling_service.watchlist_projection.list_jobs() == []
+    assert list(app.local_research_service.list_runs()) == []
+    assert app.local_writing_service.list_projects() == []
 
 
 @pytest.mark.asyncio
