@@ -3,6 +3,7 @@
 #
 # Imports
 import importlib
+import threading
 from typing import Optional, Dict, Any, List
 
 #
@@ -34,6 +35,7 @@ class BackendRegistry:
 
     _registry: Dict[str, type[TTSBackendBase]] = {}
     _builtins_loaded = False
+    _load_lock = threading.Lock()
     _builtin_ids = frozenset(
         {
             "openai_official_*",
@@ -64,9 +66,12 @@ class BackendRegistry:
     @classmethod
     def ensure_builtins(cls) -> tuple[str, ...]:
         """Load the enumerated legacy bridge once and return its IDs."""
-        if not cls._builtins_loaded:
-            cls._load_builtin_classes()
-            cls._builtins_loaded = True
+        if cls._builtins_loaded:
+            return tuple(cls._registry)
+        with cls._load_lock:
+            if not cls._builtins_loaded:
+                cls._load_builtin_classes()
+                cls._builtins_loaded = True
         return tuple(cls._registry)
 
     @classmethod
@@ -110,11 +115,6 @@ class BackendRegistry:
                 cls._register_builtin(backend_id, backend_class)
             except ImportError:
                 logger.warning("Legacy TTS backend is unavailable: {}", backend_id)
-
-    @classmethod
-    def _reset_for_tests(cls) -> None:
-        cls._registry.clear()
-        cls._builtins_loaded = False
 
     @classmethod
     def get(cls, backend_id: str) -> Optional[type[TTSBackendBase]]:
