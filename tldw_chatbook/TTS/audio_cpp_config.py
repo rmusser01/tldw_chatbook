@@ -73,6 +73,26 @@ def _validate_hostname(hostname: str) -> None:
         raise _invalid_url()
 
 
+def _validate_raw_port(netloc: str) -> None:
+    if netloc.startswith("["):
+        closing_bracket = netloc.find("]")
+        if closing_bracket < 0:
+            raise _invalid_url()
+        suffix = netloc[closing_bracket + 1 :]
+        if not suffix:
+            return
+        if not suffix.startswith(":"):
+            raise _invalid_url()
+        raw_port = suffix[1:]
+    else:
+        if ":" not in netloc:
+            return
+        raw_port = netloc.rsplit(":", maxsplit=1)[1]
+
+    if not raw_port or not raw_port.isascii() or not raw_port.isdecimal():
+        raise _invalid_url()
+
+
 def _split_http_origin(value: object) -> SplitResult:
     if (
         not isinstance(value, str)
@@ -99,10 +119,10 @@ def _split_http_origin(value: object) -> SplitResult:
         or parsed.path not in {"", "/"}
         or parsed.query
         or parsed.fragment
-        or parsed.netloc.endswith(":")
     ):
         raise _invalid_url()
 
+    _validate_raw_port(parsed.netloc)
     try:
         hostname = parsed.hostname
         port = parsed.port

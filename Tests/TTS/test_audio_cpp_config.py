@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -220,6 +221,46 @@ def test_http_and_https_root_origins_are_accepted(base_url: str) -> None:
     config = AudioCppConfig.from_mapping({"base_url": base_url})
 
     assert config.base_url == base_url
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    (
+        "http://example.com:",
+        "http://example.com:+80",
+        "http://example.com:-80",
+        "http://example.com:1_0",
+        "http://example.com:１２",
+        "http://example.com:\t80",
+    ),
+)
+def test_raw_port_syntax_requires_non_empty_ascii_decimal_digits(
+    base_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tldw_chatbook.TTS.audio_cpp_config as config_module
+
+    AudioCppConfig, _ = _config_api()
+    netloc = base_url.removeprefix("http://")
+    monkeypatch.setattr(
+        config_module,
+        "urlsplit",
+        lambda _value: SimpleNamespace(
+            scheme="http",
+            netloc=netloc,
+            path="",
+            query="",
+            fragment="",
+            hostname="example.com",
+            port=80,
+        ),
+    )
+
+    with pytest.raises(ValueError) as raised:
+        AudioCppConfig.from_mapping({"base_url": base_url})
+
+    assert str(raised.value) == URL_DIAGNOSTIC
+    assert base_url not in str(raised.value)
 
 
 @pytest.mark.parametrize("mode", ("managed", "EXTERNAL", "", None, 1))
