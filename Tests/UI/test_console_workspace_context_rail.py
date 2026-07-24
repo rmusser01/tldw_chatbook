@@ -313,8 +313,50 @@ def test_conversation_row_secondary_drops_boilerplate_keeps_differentiator() -> 
     # Degenerate inputs stay sane.
     assert secondary("active session", "") == "active session"
     assert secondary("saved chat", "") == ""
-    # The repeated workspace label is never part of the compressed subtitle.
+    # The repeated workspace label is never part of the compressed grouped subtitle.
     assert "Workspace" not in secondary("saved chat", "3d")
+
+    # Qodo #812: header-less sections (the cross-workspace Starred section) pass
+    # the workspace explicitly, and it leads the subtitle as the differentiator
+    # so same-titled conversations from different workspaces stay distinguishable.
+    assert secondary("saved chat", "3d", workspace_label="Workspace A") == "Workspace A - 3d"
+    assert (
+        secondary("active session", "5m", workspace_label="Workspace B")
+        == "Workspace B - active session - 5m"
+    )
+
+
+@pytest.mark.asyncio
+async def test_starred_row_keeps_workspace_disambiguation() -> None:
+    """Qodo #812: the Starred section pins conversations across workspaces with no
+    workspace group header, so its rows must still show the owning workspace even
+    though grouped rows drop it as redundant."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 50)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one(
+            "#console-workspace-context", ConsoleWorkspaceContextTray
+        )
+        tray.sync_state(_base_grouped_workspace_state())
+        await pilot.pause()
+
+        # Row 0 is the starred conversation (Workspace A) in the header-less
+        # Starred section; its subtitle must name the workspace.
+        starred_label = str(
+            console.query_one("#console-workspace-conversation-0", Button).label
+        )
+        assert "Workspace A" in starred_label
+
+        # The same conversation under its Workspaces group header drops it.
+        grouped_labels = [
+            str(button.label)
+            for button in console.query(".console-workspace-conversation-row")
+            if button.display and "\nWorkspace A" not in str(button.label)
+        ]
+        assert grouped_labels, "expected at least one grouped row without a workspace prefix"
 
 
 def test_console_workspace_conversation_section_state_defaults() -> None:
