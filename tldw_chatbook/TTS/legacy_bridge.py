@@ -8,10 +8,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from tldw_chatbook.TTS._async_lifecycle import (
-    current_shutdown_deadline,
-    join_retained_task,
-)
+from tldw_chatbook.TTS._async_lifecycle import join_retained_task
 from tldw_chatbook.TTS.adapter_types import (
     ProgressSink,
     TTSAudioResponse,
@@ -512,26 +509,17 @@ class LegacyBackendHost:
         async with self._manager_lock:
             if self._close_task is None:
                 self._closed = True
-                loop = asyncio.get_running_loop()
-                deadline = loop.time() + self._shutdown_timeout_seconds
-                inherited_deadline = current_shutdown_deadline()
-                if inherited_deadline is not None:
-                    deadline = min(deadline, inherited_deadline)
-                self._close_task = asyncio.create_task(
-                    self._close_when_drained(deadline)
-                )
+                self._close_task = asyncio.create_task(self._close_when_drained())
             close_task = self._close_task
         await asyncio.shield(close_task)
 
-    async def _close_when_drained(self, deadline: float) -> None:
+    async def _close_when_drained(self) -> None:
         if not self._operations_drained.is_set():
-            remaining = self._remaining_time(deadline)
             try:
-                if remaining > 0:
-                    await asyncio.wait_for(
-                        self._operations_drained.wait(),
-                        timeout=remaining,
-                    )
+                await asyncio.wait_for(
+                    self._operations_drained.wait(),
+                    timeout=self._shutdown_timeout_seconds,
+                )
             except TimeoutError:
                 pass
 
@@ -541,7 +529,7 @@ class LegacyBackendHost:
             async with self._manager_lock:
                 operations = set(self._active_operation_handles)
             operation_tasks = {operation.start_close() for operation in operations}
-            await self._wait_pending(operation_tasks, deadline)
+            await self._wait_pending(operation_tasks)
 
         async with self._manager_lock:
             manager = self._manager
@@ -550,11 +538,10 @@ class LegacyBackendHost:
         manager_error: BaseException | None = None
         if manager is not None:
             try:
-                await self._close_manager(manager, deadline)
+                await self._close_manager(manager)
             except BaseException as error:
                 manager_error = error
 
-        await asyncio.sleep(0)
         pending_operations: set[asyncio.Task[Any]] = {
             operation_task
             for operation_task in operation_tasks
@@ -578,34 +565,28 @@ class LegacyBackendHost:
     async def _wait_pending(
         self,
         tasks: set[asyncio.Task[Any]],
-        deadline: float,
     ) -> set[asyncio.Task[Any]]:
         if not tasks:
             return set()
         await asyncio.sleep(0)
         pending = {task for task in tasks if not task.done()}
-        remaining = self._remaining_time(deadline)
-        if pending:
+        if pending and self._shutdown_timeout_seconds:
             _, pending = await asyncio.wait(
                 pending,
-                timeout=remaining,
+                timeout=self._shutdown_timeout_seconds,
             )
         return pending
 
-    async def _close_manager(
-        self,
-        manager: TTSBackendManager,
-        deadline: float,
-    ) -> None:
+    async def _close_manager(self, manager: TTSBackendManager) -> None:
         close_task = asyncio.create_task(manager.close_all_backends())
         self._manager_close_task = close_task
-        pending = await self._wait_pending({close_task}, deadline)
+        pending = await self._wait_pending({close_task})
         if not pending:
             close_task.result()
             return
 
         close_task.cancel()
-        pending = await self._wait_pending({close_task}, deadline)
+        pending = await self._wait_pending({close_task})
         if pending:
             close_task.add_done_callback(self._observe_task_result)
         else:
@@ -614,10 +595,6 @@ class LegacyBackendHost:
             except asyncio.CancelledError:
                 pass
         raise TimeoutError("Legacy TTS manager did not close before shutdown")
-
-    @staticmethod
-    def _remaining_time(deadline: float) -> float:
-        return max(0.0, deadline - asyncio.get_running_loop().time())
 
     @staticmethod
     def _observe_task_result(task: asyncio.Task[Any]) -> None:
