@@ -48,6 +48,54 @@ def test_process_attachment_path_inlines_text_files(tmp_path):
     assert attachment.label.startswith("notes.md · ")
 
 
+def test_inline_attachment_label_shows_real_file_size_not_wrapped_size():
+    """TASK-376: an inserted text file's pill shows the file size the user picked,
+    not the larger wrapped-content length ('115 B' for a 60 B file)."""
+    from tldw_chatbook.Chat.attachment_core import PendingAttachment, _format_size
+
+    inline = PendingAttachment(
+        file_path="/x/notes.txt",
+        display_name="notes.txt",
+        file_type="text",
+        insert_mode="inline",
+        text_content="wrapped-and-longer",
+        original_size=60,
+        processed_size=115,
+    )
+    assert _format_size(60) in inline.label
+    assert _format_size(115) not in inline.label
+
+    # Real attachments (images) keep the processed (attached) byte size.
+    attach = PendingAttachment(
+        file_path="/x/photo.png",
+        display_name="photo.png",
+        file_type="image",
+        insert_mode="attachment",
+        data=b"x" * 240,
+        original_size=1000,
+        processed_size=240,
+    )
+    assert _format_size(240) in attach.label
+
+
+def test_inline_attachment_label_reports_zero_for_empty_file():
+    """TASK-376 (Qodo #818): a genuinely empty inline file shows its real 0-byte
+    size, not a fallback to the wrapped-content length."""
+    from tldw_chatbook.Chat.attachment_core import PendingAttachment, _format_size
+
+    empty = PendingAttachment(
+        file_path="/x/empty.txt",
+        display_name="empty.txt",
+        file_type="text",
+        insert_mode="inline",
+        text_content="wrapper-header\n\nwrapper-footer",
+        original_size=0,
+        processed_size=30,
+    )
+    assert empty.label == f"empty.txt · {_format_size(0)}"
+    assert _format_size(30) not in empty.label
+
+
 def test_process_attachment_path_attaches_images(tmp_path):
     image = tmp_path / "photo.png"
     _write_png(image)

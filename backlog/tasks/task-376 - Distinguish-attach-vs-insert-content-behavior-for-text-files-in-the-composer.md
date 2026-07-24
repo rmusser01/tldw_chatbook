@@ -1,8 +1,9 @@
 ---
 id: TASK-376
 title: Distinguish attach vs insert-content behavior for text files in the composer
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
 labels: [console, ux]
 dependencies: []
@@ -23,5 +24,17 @@ Picking test-image.png staged a right-side chip ('test-image.png - 341 B', butto
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 One affordance, one mental model: either stage text files as attachments too, or label the action distinctly at selection time ('Insert as text') and show the real file size
+- [x] #1 One affordance, one mental model: either stage text files as attachments too, or label the action distinctly at selection time ('Insert as text') and show the real file size
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Kept the shipped dual-routing architecture (phase-1 #621) and fixed the confirmed
+mislabels. The `PendingAttachment.label` property now shows the real FILE size
+(`original_size`) for inserted text (`insert_mode == "inline"`) instead of the
+wrapped-content length -- so a 60-byte file no longer reads "115 B". Real
+attachments still show their processed (attached) byte size. The insert toast is
+now distinct at selection time: "<name> inserted as text (not attached)" so the
+user isn't misled into thinking they attached a file. RED->GREEN pure label test.
+<!-- SECTION:NOTES:END -->

@@ -1871,13 +1871,23 @@ class ConsoleComposerBar(Horizontal):
         except NoMatches:
             return
 
-    def set_pending_attachment_label(self, label: str | None) -> None:
+    def set_pending_attachment_label(
+        self,
+        label: str | None,
+        *,
+        count: int = 0,
+        total: int = 0,
+    ) -> None:
         """Show or clear the composer's pending-attachment indicator.
 
         Args:
             label: User-facing attachment label (e.g. ``"photo.png · 184 B"``)
                 to display next to the actions, or None to hide the indicator,
                 the clear button, and restore the Attach button label.
+            count: Number of files currently staged; drives the count-accurate
+                Attach/Clear tooltips (TASK-380). ``0`` falls back to generic copy.
+            total: The per-message attachment cap, for the ``count of total``
+                tooltip; ``0`` omits the cap.
         """
         normalized = label.strip() if label else None
         self._pending_attachment_label = normalized
@@ -1898,8 +1908,20 @@ class ConsoleComposerBar(Horizontal):
             actions.styles.width = 42
             actions.styles.min_width = 42
             actions.styles.max_width = 42
-            attach_button.label = "📎✓"
-            attach_button.tooltip = f"Attached: {escape(normalized)}. Press to replace."
+            # TASK-380: keep the action verb (the old "📎✓" read as a status,
+            # "attached OK", not a control), and make the tooltips count-accurate
+            # now that staging appends up to `total` files (task-217).
+            attach_button.label = "Attach +"
+            if count and total:
+                attach_button.tooltip = (
+                    f"Attach another file ({count} of {total} staged)."
+                )
+            else:
+                attach_button.tooltip = "Attach another file."
+            if count > 1:
+                clear_button.tooltip = f"Clear all {count} attachments."
+            else:
+                clear_button.tooltip = "Clear the attachment."
         else:
             indicator.update("")
             indicator.styles.display = "none"

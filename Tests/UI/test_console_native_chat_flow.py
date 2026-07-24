@@ -7134,6 +7134,35 @@ async def test_attachment_indicator_visibility_follows_label():
 
 
 @pytest.mark.asyncio
+async def test_staged_attach_button_keeps_verb_and_count_accurate_tooltips():
+    """TASK-380: staging must not morph Attach into a status glyph -- the button
+    keeps the action verb and the tooltips reflect the real staged count."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        attach_button = console.query_one("#console-attach-context", Button)
+        clear_button = console.query_one("#console-clear-attachment", Button)
+
+        composer.set_pending_attachment_label("2 files", count=2, total=5)
+        await pilot.pause()
+        # Verb kept, not the "attached OK" status glyph.
+        assert "Attach" in str(attach_button.label)
+        assert "✓" not in str(attach_button.label)
+        # Count-accurate tooltips.
+        assert "2 of 5" in str(attach_button.tooltip)
+        assert "2 attachments" in str(clear_button.tooltip)
+
+        composer.set_pending_attachment_label("photo.png · 240 B", count=1, total=5)
+        await pilot.pause()
+        assert "Attach" in str(attach_button.label)
+        assert str(clear_button.tooltip) == "Clear the attachment."
+
+
+@pytest.mark.asyncio
 async def test_console_attachment_worker_stages_image_and_inlines_text(tmp_path):
     from PIL import Image as PILImage
 
