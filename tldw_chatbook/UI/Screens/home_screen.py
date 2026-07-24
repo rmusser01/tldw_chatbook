@@ -22,7 +22,15 @@ from tldw_chatbook.config import (
     load_settings,
     save_setting_to_cli_config,
 )
-from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_NOTE_ID, TAB_CHAT, TAB_LIBRARY
+from tldw_chatbook.Constants import (
+    LIBRARY_NAV_CONTEXT_NOTE_ID,
+    TAB_CHAT,
+    TAB_LIBRARY,
+    TAB_WATCHLISTS_COLLECTIONS,
+    WATCHLISTS_NAV_CONTEXT_SECTION,
+    WATCHLISTS_SECTION_NOTIFICATIONS,
+    WATCHLISTS_SECTION_RUNS,
+)
 from tldw_chatbook.Home.dashboard_state import (
     HOME_PRIMARY_ACTION_ID,
     HOME_RESUME_KIND_CONVERSATION,
@@ -86,8 +94,21 @@ def _home_runtime_status_label(state: HomeDashboardInput) -> str:
 
 
 def _home_primary_action_context(action: object) -> dict[str, object]:
-    if getattr(action, "action_id", None) == "fix_model_setup":
+    action_id = getattr(action, "action_id", None)
+    if action_id == "fix_model_setup":
         return {"category": SettingsCategoryId.PROVIDERS_MODELS.value}
+    if action_id == "review_notifications" and getattr(
+        action, "target_route", None
+    ) in {
+        "subscriptions",
+        TAB_WATCHLISTS_COLLECTIONS,
+    }:
+        return {WATCHLISTS_NAV_CONTEXT_SECTION: WATCHLISTS_SECTION_NOTIFICATIONS}
+    if action_id == "review_failed_work" and getattr(action, "target_route", None) in {
+        "subscriptions",
+        TAB_WATCHLISTS_COLLECTIONS,
+    }:
+        return {WATCHLISTS_NAV_CONTEXT_SECTION: WATCHLISTS_SECTION_RUNS}
     return {}
 
 
@@ -713,9 +734,6 @@ class HomeScreen(BaseAppScreen):
         dashboard = self._current_dashboard
         if dashboard is None:
             return
-        prepare = getattr(self.app_instance, "prepare_home_primary_action", None)
-        if callable(prepare):
-            prepare(dashboard.next_action)
         self.post_message(
             NavigateToScreen(
                 dashboard.next_action.target_route,

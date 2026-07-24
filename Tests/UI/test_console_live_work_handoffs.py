@@ -630,10 +630,16 @@ def test_app_console_live_work_primary_action_routes_wc_run_details():
     handled = app.open_console_live_work_primary_action(launch)
 
     assert handled is True
-    assert app.pending_watchlists_section == "runs"
-    assert app.pending_watchlists_run_id == "local:watchlist_run:91"
     app.post_message.assert_called_once()
-    assert app.post_message.call_args.args[0].screen_name == "watchlists_collections"
+    navigation = app.post_message.call_args.args[0]
+    assert navigation.screen_name == "watchlists_collections"
+    assert navigation.screen_context == {
+        "section": "runs",
+        "backend": "local",
+        "run_id": "local:watchlist_run:91",
+    }
+    assert not hasattr(app, "pending_watchlists_section")
+    assert not hasattr(app, "pending_watchlists_run_id")
     app.notify.assert_not_called()
 
 
@@ -1764,10 +1770,16 @@ async def test_console_wc_live_work_action_button_routes_run_details():
         button.press()
         await pilot.pause(0.1)
 
-    assert app.pending_watchlists_section == "runs"
-    assert app.pending_watchlists_run_id == "local:watchlist_run:91"
     app.post_message.assert_called_once()
-    assert app.post_message.call_args.args[0].screen_name == "watchlists_collections"
+    navigation = app.post_message.call_args.args[0]
+    assert navigation.screen_name == "watchlists_collections"
+    assert navigation.screen_context == {
+        "section": "runs",
+        "backend": "local",
+        "run_id": "local:watchlist_run:91",
+    }
+    assert not hasattr(app, "pending_watchlists_section")
+    assert not hasattr(app, "pending_watchlists_run_id")
     app.notify.assert_not_called()
 
 

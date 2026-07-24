@@ -51,6 +51,13 @@ LIBRARY_NAV_CONTEXT_NOTES_CREATE = "notes_create"
 LIBRARY_NAV_CONTEXT_INGEST = "ingest_media"
 LIBRARY_MODE_CONVERSATIONS = "conversations"
 
+# Watchlists navigation-context contract keys and values.
+WATCHLISTS_NAV_CONTEXT_SECTION = "section"
+WATCHLISTS_NAV_CONTEXT_BACKEND = "backend"
+WATCHLISTS_NAV_CONTEXT_RUN_ID = "run_id"
+WATCHLISTS_SECTION_NOTIFICATIONS = "notifications"
+WATCHLISTS_SECTION_RUNS = "runs"
+
 ALL_TABS = [
     TAB_CHAT,
     TAB_CCP,
