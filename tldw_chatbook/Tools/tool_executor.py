@@ -86,10 +86,25 @@ class ToolResultCache:
         self.cache: OrderedDict[str, Tuple[Any, float]] = OrderedDict()
         self._lock = asyncio.Lock()
         self._load_task = None
+        self._load_attempted = False
 
-        # Load cache from disk if persist_path is provided
+        # Load cache from disk if persist_path is provided. Started here when a
+        # running event loop exists; otherwise deferred to the first async
+        # get()/set() so constructing the cache from a sync context (e.g.
+        # get_tool_executor()) never raises "no running event loop".
         if self.persist_path:
+            self._maybe_start_load()
+
+    def _maybe_start_load(self) -> None:
+        """Kick off the disk load once, if a running loop is available."""
+        if self._load_attempted or not self.persist_path:
+            return
+        try:
             self._load_task = asyncio.create_task(self._load_from_disk())
+            self._load_attempted = True
+        except RuntimeError:
+            # No running event loop yet; retry lazily on the next async op.
+            pass
 
     def _generate_cache_key(self, tool_name: str, args: dict) -> str:
         """Generate a unique cache key for tool call."""
@@ -110,6 +125,12 @@ class ToolResultCache:
         Returns:
             Cached result or None
         """
+        # Ensure the deferred disk load has started + completed (a running loop
+        # exists here even if the cache was constructed from a sync context).
+        self._maybe_start_load()
+        if self._load_task and not self._load_task.done():
+            await self._load_task
+
         cache_key = self._generate_cache_key(tool_name, args)
 
         async with self._lock:
@@ -144,7 +165,8 @@ class ToolResultCache:
             result: Execution result
             ttl: Time-to-live in seconds (uses default if None)
         """
-        # Wait for initial load if still in progress
+        # Start the deferred disk load if needed, then wait for it to finish.
+        self._maybe_start_load()
         if self._load_task and not self._load_task.done():
             await self._load_task
 

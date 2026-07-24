@@ -72,3 +72,42 @@ def test_get_tool_executor_with_cache_enabled_does_not_importerror(monkeypatch, 
     finally:
         # Don't leak the monkeypatched executor into later tests.
         monkeypatch.setattr(te, "_global_executor", None)
+
+
+def test_cache_construct_from_sync_context_does_not_raise(tmp_path):
+    """Regression: constructing the cache with a persist_path from a SYNC
+    context (no running event loop) must not raise 'no running event loop' --
+    the disk load is deferred and started lazily on the first async get/set.
+    """
+    persist = tmp_path / "tool_results.cache"
+    # No running loop here (plain sync call) -- previously raised RuntimeError.
+    cache = ToolResultCache(persist_path=persist)
+    assert cache._load_task is None  # deferred, not eagerly created
+
+    async def run():
+        # First async op triggers the lazy load and round-trips a value.
+        await cache.set("t", {"x": 1}, {"ok": True}, ttl=3600)
+        return await cache.get("t", {"x": 1})
+
+    assert asyncio.run(run()) == {"ok": True}
+
+
+def test_cache_lazy_load_reads_prewritten_disk_file(tmp_path):
+    """A cache constructed from a sync context still loads an existing on-disk
+    file lazily on first async get()."""
+    persist = tmp_path / "tool_results.cache"
+
+    async def seed():
+        c1 = ToolResultCache(persist_path=persist)
+        await c1.set("seed", {"k": 1}, {"v": 42}, ttl=3600)
+        await c1._save_to_disk()
+
+    asyncio.run(seed())
+
+    cache = ToolResultCache(persist_path=persist)  # sync construction
+    assert cache._load_task is None
+
+    async def run():
+        return await cache.get("seed", {"k": 1})
+
+    assert asyncio.run(run()) == {"v": 42}
