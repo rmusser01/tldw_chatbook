@@ -27,6 +27,7 @@ _ID_SAFE = re.compile(r"[^a-zA-Z0-9_-]")
 _CONSOLE_ACTION_APPLICABLE_KINDS = {"character", "user_profile"}
 _EXPORT_JSON_APPLICABLE_KINDS = {"character", "user_profile"}
 _EXPORT_PNG_APPLICABLE_KINDS = {"character"}
+_SET_MY_NAME_APPLICABLE_KINDS = {"user_profile"}
 
 
 class PersonasInspectorPane(Vertical):
@@ -84,6 +85,8 @@ class PersonasInspectorPane(Vertical):
         self._has_selection = False
         self._is_unsaved = False
         self._selected_kind: str | None = None
+        self._selected_name: str | None = None
+        self._active_profile_name: str | None = None
         self._console_actions_enabled = False
         self._console_action_block_reason = "select an item"
         self._provider_block_reason: str | None = None
@@ -112,12 +115,19 @@ class PersonasInspectorPane(Vertical):
             yield collapse_button
         yield Static("Selected: none", id="personas-selected-name")
         yield Static("Type: -", id="personas-selected-kind")
+        yield Static("", id="personas-active-profile-summary")
         yield Static("Validation: OK", id="personas-validation-summary")
         yield Static("Conversations", classes="destination-section")
         yield ListView(id="personas-conversations-list")
         yield Static("Readiness", classes="destination-section")
         yield Static("Console blocked: select an item", id="personas-readiness-console")
         with Vertical(id="personas-inspector-actions"):
+            yield Button(
+                "Set as my name",
+                id="personas-set-my-name",
+                disabled=True,
+                classes="console-action-secondary",
+            )
             yield Button(
                 "Attach to Console",
                 id="personas-attach-to-console",
@@ -160,6 +170,7 @@ class PersonasInspectorPane(Vertical):
         """
         self._has_selection = True
         self._selected_kind = kind
+        self._selected_name = name
         self.query_one("#personas-selected-name", Static).update(f"Selected: {name}")
         self.query_one("#personas-selected-kind", Static).update(f"Type: {kind}")
         self._apply_action_state()
@@ -168,6 +179,7 @@ class PersonasInspectorPane(Vertical):
         self._has_selection = False
         self._is_unsaved = False
         self._selected_kind = None
+        self._selected_name = None
         self.set_console_actions_enabled(False, reason="select an item")
         self.query_one("#personas-selected-name", Static).update("Selected: none")
         self.query_one("#personas-selected-kind", Static).update("Type: -")
@@ -177,6 +189,23 @@ class PersonasInspectorPane(Vertical):
 
     def set_unsaved(self, is_unsaved: bool) -> None:
         self._is_unsaved = is_unsaved
+        self._apply_action_state()
+
+    def set_active_profile_name(self, name: str | None) -> None:
+        """Reflect the active ("my name") user profile pointer (task-442 T3).
+
+        Independent of the current selection: the "Chatting as: ..." summary
+        line and the Set/Clear button label both key off this value, which
+        the screen pushes after every pointer write (set/clear/delete) or on
+        mount, matching the ``set_console_actions_enabled`` push pattern.
+
+        Args:
+            name: The active profile's name, or ``None`` when no profile is
+                marked as the user's identity.
+        """
+        self._active_profile_name = name
+        summary = self.query_one("#personas-active-profile-summary", Static)
+        summary.update(f"Chatting as: {name}" if name else "")
         self._apply_action_state()
 
     def set_console_actions_enabled(
@@ -315,6 +344,16 @@ class PersonasInspectorPane(Vertical):
         console_applies = kind is None or kind in _CONSOLE_ACTION_APPLICABLE_KINDS
         export_json_applies = kind is None or kind in _EXPORT_JSON_APPLICABLE_KINDS
         export_png_applies = kind is None or kind in _EXPORT_PNG_APPLICABLE_KINDS
+        # task-442 T3: the Set-as-my-name button (user_profile selections
+        # only; label flips against the cached active-profile name).
+        set_my_name_applies = kind is None or kind in _SET_MY_NAME_APPLICABLE_KINDS
+        set_my_name_button = self.query_one("#personas-set-my-name", Button)
+        set_my_name_button.display = set_my_name_applies
+        set_my_name_button.disabled = not selected
+        is_active_selection = bool(
+            selected and self._selected_name and self._selected_name == self._active_profile_name
+        )
+        set_my_name_button.label = "Clear my name" if is_active_selection else "Set as my name"
         # Attach: the selection gate only (staging context defers the reply).
         attach_btn = self.query_one("#personas-attach-to-console", Button)
         attach_btn.display = console_applies

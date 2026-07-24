@@ -13,6 +13,9 @@ from textual.widgets import Button, Input, Static
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 import tldw_chatbook.UI.Persona_Modules.personas_conversations_controller as conversations_controller_module
 import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module
+from tldw_chatbook.Character_Chat.active_user_profile import (
+    get_active_user_profile_pointer,
+)
 from tldw_chatbook.Constants import (
     LIBRARY_MODE_CONVERSATIONS,
     LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
@@ -4859,6 +4862,134 @@ class TestDelete:
             assert any(
                 "not loaded" in message and severity == "warning"
                 for message, severity in notifications
+            )
+
+
+class TestSetAsMyName:
+    """task-442 T3: the "Set as my name" marking UX for user profiles.
+
+    The active-profile pointer (T1's ``active_user_profile`` module) is
+    routed through an in-memory store per test - mirrors the isolation
+    fixture in Tests/Character_Chat/test_active_user_profile.py - so these
+    tests never touch the real config file even though the autouse
+    ``isolate_ui_config_path`` fixture already redirects config I/O to a
+    tmp_path file.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _isolated_active_profile_config(self, monkeypatch):
+        store: dict = {}
+        import tldw_chatbook.Character_Chat.active_user_profile as active_profile_module
+
+        monkeypatch.setattr(
+            active_profile_module,
+            "get_cli_setting",
+            lambda section, key, default=None: store.get((section, key), default),
+        )
+
+        def _save(section, key, value):
+            store[(section, key)] = value
+            return True
+
+        monkeypatch.setattr(active_profile_module, "save_setting_to_cli_config", _save)
+        return store
+
+    async def _select_profile(self, pilot):
+        screen = await _mounted(pilot)
+        await pilot.pause()
+        await pilot.click("#personas-mode-user_profiles")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.click("#personas-library-row-user_profile-p-1")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        return screen
+
+    async def test_set_as_my_name_sets_pointer_and_indicates(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await self._select_profile(pilot)
+            button = screen.query_one("#personas-set-my-name", Button)
+            assert str(button.label) == "Set as my name"
+
+            # Button.press() (not pilot.click's coordinate-based synthetic
+            # click) - the inspector's action stack plus this new button can
+            # push content to the last visible row at the default 80x24 test
+            # terminal, where the screen's docked footer occludes clicks
+            # (TestDelete._press_delete uses the same idiom for #personas-delete).
+            button.press()
+            await pilot.pause()
+
+            assert get_active_user_profile_pointer() == "Archivist"
+            summary = screen.query_one("#personas-active-profile-summary", Static)
+            assert str(summary.renderable) == "Chatting as: Archivist"
+            row = screen.query_one("#personas-library-row-user_profile-p-1")
+            assert "●" in _row_text(row)
+            assert (
+                str(screen.query_one("#personas-set-my-name", Button).label)
+                == "Clear my name"
+            )
+
+    async def test_clear_active_profile(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await self._select_profile(pilot)
+            screen.query_one("#personas-set-my-name", Button).press()
+            await pilot.pause()
+            assert get_active_user_profile_pointer() == "Archivist"
+
+            screen.query_one("#personas-set-my-name", Button).press()
+            await pilot.pause()
+
+            assert get_active_user_profile_pointer() is None
+            summary = screen.query_one("#personas-active-profile-summary", Static)
+            assert str(summary.renderable) == ""
+            row = screen.query_one("#personas-library-row-user_profile-p-1")
+            assert "●" not in _row_text(row)
+            assert (
+                str(screen.query_one("#personas-set-my-name", Button).label)
+                == "Set as my name"
+            )
+
+    async def test_delete_active_profile_clears_pointer(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await self._select_profile(pilot)
+            screen.query_one("#personas-set-my-name", Button).press()
+            await pilot.pause()
+            assert get_active_user_profile_pointer() == "Archivist"
+
+            async def _confirm(name: str) -> bool:
+                return True
+
+            screen._confirm_delete = _confirm
+            screen.query_one("#personas-delete", Button).press()
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            stub_scope_service.delete_user_profile.assert_awaited_once()
+            assert get_active_user_profile_pointer() is None
+
+    async def test_set_my_name_absent_for_characters(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            assert screen.state.selected_entity_kind == "character"
+            assert (
+                screen.query_one("#personas-set-my-name", Button).display is False
             )
 
 
