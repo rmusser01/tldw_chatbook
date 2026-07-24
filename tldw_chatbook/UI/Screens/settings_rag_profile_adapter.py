@@ -185,9 +185,8 @@ def _is_ui_exposed_ragconfig_error(message: str) -> bool:
 
 # Every numeric field `apply_defaults_to_profile` casts with a plain
 # `int()`/`float()` call -- both reject float-like strings ("12.0") that
-# validate_library_rag_defaults's own _strict_int/_strict_float helpers (and
-# load_library_rag_defaults's callers) treat as valid input. See
-# _tolerant_numeric_values below.
+# validate_library_rag_defaults's own _strict_int/_strict_float helpers treat
+# as valid input. See _tolerant_numeric_values below.
 _HARD_ERROR_INT_FIELDS: tuple[str, ...] = (
     "default_top_k",
     "fts_top_k",
