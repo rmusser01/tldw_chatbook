@@ -1,8 +1,8 @@
-# ADR-024: Adopt Parakeet ONNX routing, optional transcribe.cpp, and shared model artifacts
+# ADR-025: Adopt Parakeet ONNX routing, optional transcribe.cpp, and shared model artifacts
 
 Status: Accepted
 Date: 2026-07-23
-Related Task: N/A — create or select Backlog tasks before implementation planning
+Related Tasks: TASK-404 through TASK-417
 Supersedes: N/A
 
 ## Decision
