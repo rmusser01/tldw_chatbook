@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 import json
 import math
@@ -239,8 +239,17 @@ class CitationSourceObservation(_StrictFrozenModel):
 
     @model_validator(mode="after")
     def _validate_observation(self) -> "CitationSourceObservation":
-        if self.observed_at.tzinfo is None:
+        try:
+            offset = self.observed_at.utcoffset()
+        except (OverflowError, TypeError, ValueError):
+            offset = None
+        if offset is None:
             raise ValueError("observed_at must be timezone-aware")
+        try:
+            normalized_observed_at = self.observed_at.astimezone(UTC)
+        except (OverflowError, TypeError, ValueError):
+            raise ValueError("observed_at must be timezone-aware") from None
+        object.__setattr__(self, "observed_at", normalized_observed_at)
         if len(set(self.capabilities)) != len(self.capabilities):
             raise ValueError("source observation capabilities must be unique")
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 import json
 
 import pytest
@@ -46,6 +46,12 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
 NOW = datetime(2026, 7, 24, 15, 0, tzinfo=UTC)
+
+
+class _NoOffsetTimezone(tzinfo):
+    def utcoffset(self, dt: datetime | None) -> None:
+        del dt
+        return None
 
 
 @pytest.fixture
@@ -463,6 +469,72 @@ def test_observation_exact_json_error_and_identifier_bounds() -> None:
         locators.validate_source_observation_json_size(exact_json + "x")
 
 
+def test_observed_at_requires_real_offset_and_normalizes_to_utc() -> None:
+    with pytest.raises(ValidationError, match="timezone-aware"):
+        _observation(observed_at=NOW.replace(tzinfo=_NoOffsetTimezone()))
+
+    offset_time = datetime(
+        2026,
+        7,
+        24,
+        20,
+        30,
+        tzinfo=timezone(timedelta(hours=5, minutes=30)),
+    )
+    observation = _observation(observed_at=offset_time)
+
+    assert observation.observed_at == NOW
+    assert observation.observed_at.tzinfo is UTC
+
+
+def test_repository_serializes_observation_time_in_utc(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository, sealed_write=_observation_write())
+    observation = _observation(
+        observed_at=datetime(
+            2026,
+            7,
+            24,
+            8,
+            0,
+            tzinfo=timezone(timedelta(hours=-7)),
+        )
+    )
+
+    assert _upsert(db, repository, observation).value == "inserted"
+    stored = (
+        db.get_connection()
+        .execute("SELECT observed_at FROM rag_source_observations")
+        .fetchone()[0]
+    )
+
+    assert stored == NOW.isoformat()
+    assert _read(db, repository).observed_at.tzinfo is UTC
+
+
+def test_malformed_stored_observation_time_fails_with_bounded_reason(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository, sealed_write=_observation_write())
+    _upsert(db, repository, _observation())
+    with db.transaction() as cursor:
+        cursor.execute(
+            """
+            UPDATE rag_source_observations
+            SET observed_at = '2026-07-24T15:00:00'
+            """
+        )
+
+    with pytest.raises(
+        CitationPersistenceUnavailable,
+        match="source_observation_invalid",
+    ):
+        _read(db, repository)
+
+
 def test_repository_replaces_only_newer_and_keeps_one_row(
     db: CharactersRAGDB,
 ) -> None:
@@ -729,6 +801,119 @@ def test_observation_capabilities_cannot_exceed_inventory_or_authorization(
         )
 
 
+def test_observation_read_intersects_stored_capabilities_with_current_authorization(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository, sealed_write=_observation_write())
+    observation = _observation()
+    _upsert(db, repository, observation)
+    identity = _identity(db)
+
+    current = _read(
+        db,
+        repository,
+        authorization=_observation_authorization(
+            identity,
+            open_native=False,
+            compare=False,
+        ),
+    )
+
+    assert current is not None
+    assert current.capabilities == (
+        SourceCapability.RESOLVE_CURRENT,
+        SourceCapability.REFRESH_OBSERVATION,
+    )
+
+
+def test_observation_read_does_not_replay_tampered_inventory_or_trace_capability(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository, sealed_write=_observation_write())
+    _upsert(db, repository, _observation())
+    with db.transaction() as cursor:
+        cursor.execute(
+            """
+            UPDATE rag_source_observations
+            SET capabilities_json = ?
+            """,
+            (
+                json.dumps(
+                    {
+                        "capabilities": [
+                            SourceCapability.RESOLVE_CURRENT.value,
+                            SourceCapability.OPEN_EXTERNAL.value,
+                            SourceCapability.REFRESH_OBSERVATION.value,
+                        ],
+                        "request_generation": 1,
+                    }
+                ),
+            ),
+        )
+    identity = _identity(db)
+
+    current = _read(
+        db,
+        repository,
+        authorization=_observation_authorization(
+            identity,
+            open_native=False,
+            open_external=True,
+            compare=False,
+        ),
+    )
+
+    assert current is not None
+    assert current.capabilities == (
+        SourceCapability.RESOLVE_CURRENT,
+        SourceCapability.REFRESH_OBSERVATION,
+    )
+
+
+def test_observation_resolver_must_match_trusted_snapshot_source_kind(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository, sealed_write=_observation_write())
+
+    with pytest.raises(
+        CitationPersistenceUnavailable,
+        match="source_observation_resolver_mismatch",
+    ):
+        _upsert(
+            db,
+            repository,
+            _observation(resolver_kind=CanonicalSourceKind.NOTES),
+        )
+
+
+def test_observation_resolver_version_must_match_trusted_snapshot_locator(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository, sealed_write=_observation_write())
+    with db.transaction() as cursor:
+        cursor.execute(
+            """
+            UPDATE rag_evidence_snapshots
+            SET locator_json = json_set(
+                locator_json,
+                '$.resolver_payload_version',
+                2
+            )
+            WHERE payload_id = 'snapshot-1'
+            """
+        )
+
+    with pytest.raises(
+        CitationPersistenceUnavailable,
+        match="source_observation_resolver_mismatch",
+    ):
+        _upsert(db, repository, _observation())
+
+
 def test_observation_write_does_not_mutate_sealed_or_governed_state(
     db: CharactersRAGDB,
 ) -> None:
@@ -791,6 +976,62 @@ def test_revoked_evidence_accepts_safe_observation_without_hydrating_content(
     assert tuple(snapshot) == (None, None, None, None, None, None)
 
 
+def test_revocation_downgrades_existing_observation_and_rejects_unsafe_refresh(
+    db: CharactersRAGDB,
+) -> None:
+    from Tests.Chat.test_citation_payload_lifecycle import _lifecycle, _tombstone
+
+    repository = _repository(db)
+    _persist(db, repository, sealed_write=_observation_write())
+    original = _observation()
+    _upsert(db, repository, original)
+    identity = _identity(db)
+    _lifecycle(db).revoke(
+        local_trace_namespace(identity, trace_id="trace-1"),
+        snapshot_payload_id="snapshot-1",
+        tombstone=_tombstone(db),
+    )
+
+    current = _read(db, repository)
+
+    assert current is not None
+    assert current == original.model_copy(
+        update={
+            "availability": locators.CitationSourceAvailability.UNKNOWN,
+            "permission": locators.CitationSourcePermission.REVOKED,
+            "content_state": locators.CitationContentState.UNKNOWN,
+            "location_state": locators.CitationLocationState.UNKNOWN,
+            "capabilities": (),
+        }
+    )
+    with pytest.raises(
+        CitationPersistenceUnavailable,
+        match="source_observation_revoked",
+    ):
+        _upsert(
+            db,
+            repository,
+            _observation(
+                observed_at=NOW + timedelta(seconds=1),
+                request_generation=2,
+                request_nonce="unsafe-after-revocation",
+            ),
+        )
+
+    safe = _observation(
+        availability="unknown",
+        permission="revoked",
+        content_state="unknown",
+        location_state="unknown",
+        capabilities=(),
+        observed_at=NOW + timedelta(seconds=2),
+        request_generation=3,
+        request_nonce="safe-after-revocation",
+    )
+    assert _upsert(db, repository, safe).value == "replaced"
+    assert _read(db, repository) == safe
+
+
 def test_safe_observation_read_is_keyless_but_still_authorized(
     db: CharactersRAGDB,
 ) -> None:
@@ -818,6 +1059,66 @@ def test_safe_observation_read_is_keyless_but_still_authorized(
         match="source_observation_authorization_denied",
     ):
         _read(db, reader, authorization=wrong_authorization)
+
+
+def test_observation_upsert_uses_singleton_identity_write_lock(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository, sealed_write=_observation_write())
+    statements: list[str] = []
+    connection = db.get_connection()
+    connection.set_trace_callback(statements.append)
+    try:
+        assert _upsert(db, repository, _observation()).value == "inserted"
+    finally:
+        connection.set_trace_callback(None)
+
+    normalized = tuple(" ".join(statement.split()).upper() for statement in statements)
+    assert any(
+        statement.startswith("UPDATE RAG_IDENTITY_CONTEXT")
+        and "SET PROFILE_ID = PROFILE_ID" in statement
+        for statement in normalized
+    )
+    assert all(
+        "DELETE FROM RAG_SOURCE_OBSERVATIONS WHERE 0" not in statement
+        for statement in normalized
+    )
+
+
+def test_observation_upsert_fails_if_singleton_identity_lock_row_is_missing(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository, sealed_write=_observation_write())
+    identity = _identity(db)
+    namespace = local_trace_namespace(identity, trace_id="trace-1")
+    authorization = _observation_authorization(identity)
+    with db.transaction() as cursor:
+        cursor.execute(
+            "DELETE FROM rag_identity_context WHERE context_name = 'default'"
+        )
+
+    with pytest.raises(
+        CitationPersistenceUnavailable,
+        match="source_observation_identity_lock_failed",
+    ):
+        with db.transaction() as cursor:
+            repository.upsert_source_observation(
+                cursor,
+                namespace,
+                prompt_set_id="prompt-1",
+                evidence_ordinal=1,
+                snapshot_payload_id="snapshot-1",
+                observation=_observation(),
+                authorization=authorization,
+            )
+    assert (
+        db.get_connection()
+        .execute("SELECT count(*) FROM rag_source_observations")
+        .fetchone()[0]
+        == 0
+    )
 
 
 def test_concurrent_equal_time_upserts_converge_to_deterministic_latest(
