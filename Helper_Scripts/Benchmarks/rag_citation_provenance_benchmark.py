@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from datetime import UTC, datetime
 import hashlib
 import io
 import json
@@ -1103,6 +1104,246 @@ def _measure_database_growth(
     }
 
 
+def _sealed_repository_write(
+    sample_index: int,
+    snapshots: Sequence[str],
+    *,
+    authority_id: str,
+) -> Any:
+    """Build one complete sealed repository candidate outside timed writes."""
+
+    from tldw_chatbook.Chat.citation_trace_models import (
+        AnswerAttempt,
+        AnswerAttemptKind,
+        AnswerAttemptPayload,
+        CitationCompleteness,
+        CitationOccurrence,
+        CitationTrace,
+        EvidenceRun,
+        EvidenceRunPayload,
+        EvidenceSnapshotPayload,
+        EvidenceStorageMode,
+        MarkerNamespace,
+        PolicyCapability,
+        PromptEvidenceEntry,
+        PromptEvidenceSet,
+        SealedCitationWrite,
+        StructuralValidationState,
+        TraceLifecycle,
+        TraceOrigin,
+    )
+
+    prefix = f"repository-{sample_index}"
+    timestamp = datetime(2026, 7, 24, 0, 0, tzinfo=UTC)
+    answer = "Synthetic answer [S1]."
+    marker_start = answer.index("[S1]")
+    run = EvidenceRun(
+        run_id=f"{prefix}-run",
+        request_id=f"{prefix}-request",
+        run_ordinal=1,
+        stage="retrieval",
+        payload_ref=f"{prefix}-run-payload",
+        started_at=timestamp,
+        ended_at=timestamp,
+    )
+    entries = tuple(
+        PromptEvidenceEntry(
+            evidence_ordinal=ordinal,
+            marker_ordinal=ordinal,
+            run_id=run.run_id,
+            snapshot_payload_ref=f"{prefix}-snapshot-{ordinal}",
+            storage_mode=EvidenceStorageMode.EMBEDDED,
+        )
+        for ordinal in range(1, len(snapshots) + 1)
+    )
+    prompt_set = PromptEvidenceSet(
+        prompt_set_id=f"{prefix}-prompt",
+        prompt_set_ordinal=1,
+        marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+        entries=entries,
+        created_at=timestamp,
+    )
+    attempt = AnswerAttempt(
+        attempt_id=f"{prefix}-attempt",
+        attempt_ordinal=1,
+        kind=AnswerAttemptKind.INITIAL,
+        prompt_evidence_set_id=prompt_set.prompt_set_id,
+        answer_payload_ref=f"{prefix}-answer-payload",
+        occurrences=(
+            CitationOccurrence(
+                occurrence_id=f"{prefix}-occurrence",
+                occurrence_ordinal=1,
+                raw_marker="[S1]",
+                marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+                evidence_ordinal=1,
+                marker_start=marker_start,
+                marker_end=marker_start + len("[S1]"),
+                claim_start=0,
+                claim_end=marker_start - 1,
+                structural_state=StructuralValidationState.VALID,
+            ),
+        ),
+        created_at=timestamp,
+    )
+    trace = CitationTrace(
+        trace_id=f"{prefix}-trace",
+        request_id=run.request_id,
+        generation_id=f"{prefix}-generation",
+        origin=TraceOrigin.LOCAL,
+        lifecycle=TraceLifecycle.SEALED,
+        completeness_at_seal=CitationCompleteness.COMPLETE,
+        evidence_runs=(run,),
+        prompt_evidence_sets=(prompt_set,),
+        answer_attempts=(attempt,),
+        selected_attempt_id=attempt.attempt_id,
+        policy_capabilities=(PolicyCapability.VIEW_SNAPSHOT,),
+        policy_version="benchmark-policy-v1",
+        created_at=timestamp,
+        sealed_at=timestamp,
+    )
+    return SealedCitationWrite(
+        trace=trace,
+        evidence_run_payloads=(
+            EvidenceRunPayload(
+                payload_id=run.payload_ref,
+                run_id=run.run_id,
+                raw_query="synthetic benchmark query",
+                query_fingerprint=f"{prefix}-query-fingerprint",
+                authority_id=authority_id,
+                retrieval_metadata={"kind": "network-free-benchmark"},
+            ),
+        ),
+        evidence_snapshot_payloads=tuple(
+            EvidenceSnapshotPayload(
+                payload_id=entry.snapshot_payload_ref,
+                storage_mode=EvidenceStorageMode.EMBEDDED,
+                snapshot_text=snapshot,
+                title=f"Synthetic source {entry.evidence_ordinal}",
+                source_identity={"source_id": f"{prefix}-source"},
+                locator={"source_kind": "benchmark"},
+                lineage={"ordinal": entry.evidence_ordinal},
+                content_hash=f"{prefix}-content-{entry.evidence_ordinal}",
+                comparison_hash=f"{prefix}-comparison-{entry.evidence_ordinal}",
+            )
+            for entry, snapshot in zip(entries, snapshots, strict=True)
+        ),
+        answer_attempt_payloads=(
+            AnswerAttemptPayload(
+                payload_id=attempt.answer_payload_ref,
+                attempt_id=attempt.attempt_id,
+                answer_body=answer,
+                body_integrity_hmac=f"{prefix}-answer-integrity",
+            ),
+        ),
+    )
+
+
+def _measure_repository_storage(
+    db_path: Path,
+    *,
+    samples: int,
+    warmups: int,
+    snapshots: Sequence[str],
+) -> dict[str, Any]:
+    """Measure the real sealed repository path beside message-only control."""
+
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.citation_provenance_runtime import (
+        CitationProvenanceRuntimePolicy,
+    )
+    from tldw_chatbook.Chat.citation_trace_identity import (
+        CitationFingerprintCodec,
+        local_trace_namespace,
+    )
+    from tldw_chatbook.Chat.citation_trace_repository import (
+        CitationTraceRepository,
+        load_local_citation_identity_context,
+    )
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(db_path, client_id="ragcp-repository-benchmark")
+    try:
+        identity = load_local_citation_identity_context(db)
+        if identity is None:
+            raise AssertionError("repository benchmark identity is unavailable")
+        repository = CitationTraceRepository(
+            db,
+            policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=True),
+            identity_context=identity,
+            fingerprint_codec=CitationFingerprintCodec(b"b" * 32),
+        )
+        service = ChatPersistenceService(db, citation_repository=repository)
+        conversation_id = db.add_conversation(
+            {"title": "Repository benchmark", "character_id": None}
+        )
+        control_times: list[float] = []
+        write_times: list[float] = []
+        read_times: list[float] = []
+        for index in range(warmups + samples):
+            sealed = _sealed_repository_write(
+                index,
+                snapshots,
+                authority_id=identity.local_authority_id,
+            )
+            started_ns = time.perf_counter_ns()
+            service.create_message(
+                conversation_id=conversation_id,
+                sender="assistant",
+                content="Synthetic answer [S1].",
+                message_id=f"repository-control-{index}",
+            )
+            control_ms = (time.perf_counter_ns() - started_ns) / 1_000_000
+
+            started_ns = time.perf_counter_ns()
+            service.create_message(
+                conversation_id=conversation_id,
+                sender="assistant",
+                content="Synthetic answer [S1].",
+                message_id=f"repository-candidate-{index}",
+                citation_write=sealed,
+            )
+            write_ms = (time.perf_counter_ns() - started_ns) / 1_000_000
+
+            namespace = local_trace_namespace(
+                identity,
+                trace_id=sealed.trace.trace_id,
+            )
+            started_ns = time.perf_counter_ns()
+            summary = repository.get_trace_summary(namespace)
+            read_ms = (time.perf_counter_ns() - started_ns) / 1_000_000
+            if summary is None or summary.trace.trace_id != sealed.trace.trace_id:
+                raise AssertionError("repository summary read returned the wrong trace")
+            if index >= warmups:
+                control_times.append(control_ms)
+                write_times.append(write_ms)
+                read_times.append(read_ms)
+
+        connection = db.get_connection()
+        trace_rows = int(
+            connection.execute("SELECT count(*) FROM rag_citation_traces").fetchone()[0]
+        )
+        owner_rows = int(
+            connection.execute(
+                "SELECT count(*) FROM rag_message_trace_owners"
+            ).fetchone()[0]
+        )
+        return {
+            "message_only_control_ms": summarize(control_times),
+            "sealed_write_ms": summarize(write_times),
+            "summary_read_ms": summarize(read_times),
+            "persisted_trace_rows": trace_rows,
+            "persisted_owner_rows": owner_rows,
+            "control_path": (
+                "ChatPersistenceService.create_message(citation_write=None)"
+            ),
+            "candidate_path": (
+                "ChatPersistenceService.create_message(citation_write=sealed)"
+            ),
+        }
+    finally:
+        db.close_connection()
+
+
 def _init_migration_schema(
     db_path: Path,
     sidecar_path: Path,
@@ -1358,6 +1599,21 @@ def evaluate_budgets(
         },
         "migration": {"pass": migration_pass},
     }
+    repository_storage = metrics.get("repository_storage")
+    if repository_storage is not None:
+        repository_storage_pass = (
+            repository_storage["sealed_write_ms"]["p95"]
+            <= BUDGETS["finalization"]["standard_p95_ms"]
+            and repository_storage["summary_read_ms"]["p95"]
+            <= BUDGETS["inspector_load"]["warm_p95_ms"]
+            and repository_storage["persisted_trace_rows"] == samples + warmups
+            and repository_storage["persisted_owner_rows"] == samples + warmups
+        )
+        checks["repository_storage"] = {
+            "pass": repository_storage_pass,
+            "write_p95_budget_ms": BUDGETS["finalization"]["standard_p95_ms"],
+            "read_p95_budget_ms": BUDGETS["inspector_load"]["warm_p95_ms"],
+        }
     qualification_ineligibility_reasons = []
     if mode == "qualification" and samples < DEFAULT_SAMPLES:
         qualification_ineligibility_reasons.append("insufficient_samples")
@@ -1479,6 +1735,7 @@ async def run_benchmark(
         root = scratch_root
         root.mkdir(parents=True, exist_ok=True)
 
+    repository_storage = None
     try:
         with isolated_benchmark_host_state(root / "host-state"):
             with sample_group_workspace(root, "first-token") as workspace:
@@ -1520,6 +1777,15 @@ async def run_benchmark(
                 answer_body=workload["database_answer"],
                 corpus_input_sha256=workload["finalization_sha256"],
             )
+        if mode == "qualification":
+            with isolated_benchmark_host_state(root / "repository-host-state"):
+                with sample_group_workspace(root, "repository-storage") as workspace:
+                    repository_storage = _measure_repository_storage(
+                        workspace.db_path,
+                        samples=samples,
+                        warmups=warmups,
+                        snapshots=workload["standard_snapshots"],
+                    )
         with sample_group_workspace(root, "migration") as workspace:
             _init_migration_schema(
                 workspace.db_path,
@@ -1551,6 +1817,8 @@ async def run_benchmark(
         "migration": migration,
         "corpus_coverage": workload["coverage"],
     }
+    if repository_storage is not None:
+        metrics["repository_storage"] = repository_storage
     environment = environment_metadata()
     return {
         "environment": environment,

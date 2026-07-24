@@ -157,7 +157,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 24  # Adds conversations.active_leaf_message_id (Console branching Phase A).
+    _CURRENT_SCHEMA_VERSION = 25  # Adds local-only canonical RAG citation provenance.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -3884,6 +3884,86 @@ UPDATE db_schema_version
             logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V23→V24] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V23 to V24 for '{self._SCHEMA_NAME}': {e}") from e
 
+    def _execute_citation_migration_statement(
+        self,
+        cursor: sqlite3.Cursor,
+        statement: str,
+    ) -> None:
+        """Execute one complete v24→v25 DDL statement."""
+
+        cursor.execute(statement)
+
+    def _update_citation_schema_version(self, cursor: sqlite3.Cursor) -> None:
+        """Advance v24→v25 only after all provenance DDL and identity setup."""
+
+        cursor.execute(
+            """
+            UPDATE db_schema_version
+               SET version = 25
+             WHERE schema_name = ?
+               AND version = 24
+            """,
+            (self._SCHEMA_NAME,),
+        )
+        if cursor.rowcount != 1:
+            raise SchemaError("Citation provenance schema version update was not applied")
+
+    def _migrate_from_v24_to_v25(self, conn: sqlite3.Connection) -> None:
+        """Create canonical citation provenance through the active transaction."""
+
+        if self._get_db_version(conn) != 24:
+            raise SchemaError("Citation provenance migration requires schema version 24")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v24_to_v25_citation_provenance.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                pending = ""
+                for line in migration_path.read_text(encoding="utf-8").splitlines(
+                    keepends=True
+                ):
+                    pending += line
+                    if sqlite3.complete_statement(pending):
+                        self._execute_citation_migration_statement(cursor, pending)
+                        pending = ""
+                if pending.strip():
+                    raise SchemaError(
+                        "Citation provenance migration contains incomplete SQL"
+                    )
+                cursor.execute(
+                    """
+                    INSERT INTO rag_identity_context(
+                        context_name,
+                        profile_id,
+                        local_authority_id,
+                        fingerprint_key_id,
+                        created_at
+                    ) VALUES (
+                        'default',
+                        'profile_' || lower(hex(randomblob(16))),
+                        'authority_' || lower(hex(randomblob(16))),
+                        'fpkey_' || lower(hex(randomblob(16))),
+                        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                    )
+                    """
+                )
+                self._update_citation_schema_version(cursor)
+                cursor.execute(
+                    "SELECT version FROM db_schema_version WHERE schema_name = ?",
+                    (self._SCHEMA_NAME,),
+                )
+                row = cursor.fetchone()
+                if row is None or row["version"] != 25:
+                    raise SchemaError(
+                        "Citation provenance schema version verification failed"
+                    )
+        except (OSError, sqlite3.Error, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V24 to V25 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -4038,6 +4118,7 @@ UPDATE db_schema_version
                     21: self._migrate_from_v21_to_v22,
                     22: self._migrate_from_v22_to_v23,
                     23: self._migrate_from_v23_to_v24,
+                    24: self._migrate_from_v24_to_v25,
                 }
 
                 if current_db_version == 0:

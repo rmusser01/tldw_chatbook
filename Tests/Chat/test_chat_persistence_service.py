@@ -2,7 +2,20 @@ import inspect
 
 import pytest
 
-from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from Tests.Chat.test_citation_trace_repository import (
+    _identity as citation_identity,
+    _repository as citation_repository,
+    _sealed_write,
+)
+from tldw_chatbook.Chat.chat_persistence_service import (
+    ChatPersistenceService,
+    CitationPersistenceUnavailable,
+)
+from tldw_chatbook.Chat.citation_provenance_runtime import (
+    CitationProvenanceRuntimePolicy,
+)
+from tldw_chatbook.Chat.citation_trace_identity import CitationFingerprintCodec
+from tldw_chatbook.Chat.citation_trace_repository import CitationTraceRepository
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, MessageAttachment
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -45,6 +58,311 @@ class TestChatPersistenceService:
         )
         conversation = db_instance.get_conversation_by_id(conversation_id)
         assert conversation["assistant_id"] == "char.local.alice"
+
+    def test_citation_write_requires_an_explicit_available_repository_before_transaction(
+        self,
+        db_instance: CharactersRAGDB,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "No repository", "character_id": None}
+        )
+        transaction_calls = 0
+        original_transaction = db_instance.transaction
+
+        def counted_transaction():
+            nonlocal transaction_calls
+            transaction_calls += 1
+            return original_transaction()
+
+        monkeypatch.setattr(db_instance, "transaction", counted_transaction)
+        service = ChatPersistenceService(db_instance)
+
+        with pytest.raises(
+            CitationPersistenceUnavailable,
+            match="citation_repository_unavailable",
+        ):
+            service.create_message(
+                conversation_id=conversation_id,
+                sender="assistant",
+                content="Answer [S1].",
+                message_id="no-repository-message",
+                citation_write=_sealed_write(),
+            )
+
+        assert transaction_calls == 0
+        assert db_instance.get_message_by_id("no-repository-message") is None
+
+    @pytest.mark.parametrize(
+        ("enabled", "identity_present", "codec_present", "reason"),
+        [
+            (False, True, True, "canonical_citation_writes_disabled"),
+            (True, False, True, "citation_identity_context_unavailable"),
+            (True, True, False, "fingerprint_key_unavailable"),
+        ],
+    )
+    def test_citation_preflight_denials_open_no_transaction(
+        self,
+        db_instance: CharactersRAGDB,
+        monkeypatch: pytest.MonkeyPatch,
+        enabled: bool,
+        identity_present: bool,
+        codec_present: bool,
+        reason: str,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Denied citation", "character_id": None}
+        )
+        identity = citation_identity(db_instance)
+        repository = CitationTraceRepository(
+            db_instance,
+            policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=enabled),
+            identity_context=identity if identity_present else None,
+            fingerprint_codec=(
+                CitationFingerprintCodec(b"k" * 32) if codec_present else None
+            ),
+        )
+        transaction_calls = 0
+        original_transaction = db_instance.transaction
+
+        def counted_transaction():
+            nonlocal transaction_calls
+            transaction_calls += 1
+            return original_transaction()
+
+        monkeypatch.setattr(db_instance, "transaction", counted_transaction)
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=repository,
+        )
+
+        with pytest.raises(CitationPersistenceUnavailable, match=reason):
+            service.create_message(
+                conversation_id=conversation_id,
+                sender="assistant",
+                content="Answer [S1].",
+                message_id="denied-message",
+                citation_write=_sealed_write(),
+            )
+
+        assert transaction_calls == 0
+        assert db_instance.get_message_by_id("denied-message") is None
+
+    def test_invalid_sealed_write_fails_before_opening_a_transaction(
+        self,
+        db_instance: CharactersRAGDB,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Invalid citation", "character_id": None}
+        )
+        transaction_calls = 0
+        original_transaction = db_instance.transaction
+
+        def counted_transaction():
+            nonlocal transaction_calls
+            transaction_calls += 1
+            return original_transaction()
+
+        monkeypatch.setattr(db_instance, "transaction", counted_transaction)
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=citation_repository(db_instance),
+        )
+        hostile = _sealed_write().model_copy(update={"evidence_snapshot_payloads": ()})
+
+        with pytest.raises(
+            CitationPersistenceUnavailable,
+            match="invalid_sealed_citation_write",
+        ):
+            service.create_message(
+                conversation_id=conversation_id,
+                sender="assistant",
+                content="Answer [S1].",
+                message_id="invalid-citation-message",
+                citation_write=hostile,
+            )
+
+        assert transaction_calls == 0
+        assert db_instance.get_message_by_id("invalid-citation-message") is None
+
+    def test_citation_repository_for_another_database_fails_before_transaction(
+        self,
+        db_instance: CharactersRAGDB,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Wrong repository database", "character_id": None}
+        )
+        other_db = CharactersRAGDB(
+            tmp_path / "other-citation.sqlite",
+            client_id="other-citation",
+        )
+        transaction_calls = 0
+        original_transaction = db_instance.transaction
+
+        def counted_transaction():
+            nonlocal transaction_calls
+            transaction_calls += 1
+            return original_transaction()
+
+        monkeypatch.setattr(db_instance, "transaction", counted_transaction)
+        try:
+            service = ChatPersistenceService(
+                db_instance,
+                citation_repository=citation_repository(other_db),
+            )
+
+            with pytest.raises(
+                CitationPersistenceUnavailable,
+                match="citation_repository_database_mismatch",
+            ):
+                service.create_message(
+                    conversation_id=conversation_id,
+                    sender="assistant",
+                    content="Answer [S1].",
+                    message_id="wrong-repository-database",
+                    citation_write=_sealed_write(),
+                )
+        finally:
+            other_db.close_connection()
+
+        assert transaction_calls == 0
+        assert db_instance.get_message_by_id("wrong-repository-database") is None
+
+    def test_message_attachments_feedback_and_trace_commit_atomically(
+        self,
+        db_instance: CharactersRAGDB,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Atomic citation", "character_id": None}
+        )
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=citation_repository(db_instance),
+        )
+
+        message_id = service.create_message(
+            conversation_id=conversation_id,
+            sender="assistant",
+            content="Answer [S1].",
+            message_id="atomic-citation-message",
+            feedback="1;grounded",
+            attachments=[
+                {
+                    "position": 0,
+                    "data": b"preview",
+                    "mime_type": "image/png",
+                    "display_name": "preview.png",
+                },
+                {
+                    "position": 1,
+                    "data": b"source",
+                    "mime_type": "text/plain",
+                    "display_name": "source.txt",
+                },
+            ],
+            citation_write=_sealed_write(),
+        )
+
+        message = db_instance.get_message_by_id(message_id)
+        assert message["feedback"] == "1;grounded"
+        assert message["image_data"] == b"preview"
+        assert (
+            db_instance.get_attachments_for_messages([message_id])[message_id][0][
+                "data"
+            ]
+            == b"source"
+        )
+        assert (
+            db_instance.get_connection()
+            .execute(
+                "SELECT count(*) FROM rag_message_trace_owners WHERE message_id = ?",
+                (message_id,),
+            )
+            .fetchone()[0]
+            == 1
+        )
+
+    def test_repository_failure_rolls_back_message_attachments_feedback_and_trace(
+        self,
+        db_instance: CharactersRAGDB,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Rollback citation", "character_id": None}
+        )
+        repository = citation_repository(db_instance, failure_after="owner")
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=repository,
+        )
+
+        with pytest.raises(RuntimeError, match="forced_failure_after_owner"):
+            service.create_message(
+                conversation_id=conversation_id,
+                sender="assistant",
+                content="Answer [S1].",
+                message_id="atomic-rollback-message",
+                feedback="1;grounded",
+                attachments=[
+                    {
+                        "position": 1,
+                        "data": b"source",
+                        "mime_type": "text/plain",
+                        "display_name": "source.txt",
+                    }
+                ],
+                citation_write=_sealed_write(),
+            )
+
+        connection = db_instance.get_connection()
+        assert db_instance.get_message_by_id("atomic-rollback-message") is None
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM message_attachments WHERE message_id = ?",
+                ("atomic-rollback-message",),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute("SELECT count(*) FROM rag_citation_traces").fetchone()[0]
+            == 0
+        )
+
+    def test_caller_can_explicitly_retry_without_citation_as_ungrounded(
+        self,
+        db_instance: CharactersRAGDB,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Ungrounded retry", "character_id": None}
+        )
+        service = ChatPersistenceService(db_instance)
+        with pytest.raises(CitationPersistenceUnavailable):
+            service.create_message(
+                conversation_id=conversation_id,
+                sender="assistant",
+                content="Answer [S1].",
+                message_id="explicit-ungrounded",
+                citation_write=_sealed_write(),
+            )
+
+        assert (
+            service.create_message(
+                conversation_id=conversation_id,
+                sender="assistant",
+                content="Answer [S1].",
+                message_id="explicit-ungrounded",
+            )
+            == "explicit-ungrounded"
+        )
+        assert db_instance.get_message_by_id("explicit-ungrounded") is not None
+        assert (
+            db_instance.get_connection()
+            .execute("SELECT count(*) FROM rag_message_trace_owners")
+            .fetchone()[0]
+            == 0
+        )
 
     def test_update_message_content_preserves_topology_variant_and_feedback(
         self, db_instance: CharactersRAGDB

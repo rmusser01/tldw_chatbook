@@ -3017,6 +3017,9 @@ cache_size_limit_gb = 10.0
 # ==========================================================
 # RAG (Retrieval-Augmented Generation) Configuration
 # ==========================================================
+[rag_citations]
+canonical_writes_enabled = false
+
 [rag]
 # Comprehensive configuration for the RAG system
 
@@ -3992,6 +3995,16 @@ def get_chat_defaults_streaming(default: bool = True) -> bool:
     if "enable_streaming" in chat_defaults:
         return coerce_bool_setting(chat_defaults.get("enable_streaming"), default)
     return default
+
+
+def get_rag_citation_canonical_writes_enabled() -> bool:
+    """Return the typed, fail-closed canonical citation write switch."""
+
+    config = load_cli_config_and_ensure_existence()
+    section = config.get("rag_citations")
+    if not isinstance(section, dict):
+        return False
+    return coerce_bool_setting(section.get("canonical_writes_enabled"), False)
 
 
 def get_media_ingestion_defaults(media_type: str) -> Dict[str, Any]:

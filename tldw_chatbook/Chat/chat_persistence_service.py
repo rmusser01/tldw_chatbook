@@ -5,15 +5,26 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from loguru import logger as _logger
 
 from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
+from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
+from tldw_chatbook.Chat.citation_trace_repository import (
+    CitationPersistenceUnavailable,
+    CitationTraceRepository,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 logger = _logger.bind(module="ChatPersistenceService")
 
 
 class ChatPersistenceService:
-    def __init__(self, db: CharactersRAGDB, workspace_registry: Any | None = None):
+    def __init__(
+        self,
+        db: CharactersRAGDB,
+        workspace_registry: Any | None = None,
+        citation_repository: CitationTraceRepository | None = None,
+    ):
         self.db = db
         self.workspace_registry = workspace_registry
+        self.citation_repository = citation_repository
 
     @staticmethod
     def derive_conversation_title(
@@ -448,6 +459,7 @@ class ChatPersistenceService:
         parent_message_id: Optional[str] = None,
         feedback: Optional[str] = None,
         attachments: Optional[Sequence[Mapping[str, Any]]] = None,
+        citation_write: SealedCitationWrite | None = None,
     ) -> str:
         """Create a new message, optionally with a legacy image or a full attachment list.
 
@@ -491,14 +503,29 @@ class ChatPersistenceService:
                 supplied, this is the sole, authoritative source for both
                 the legacy image columns (position 0) and the
                 ``message_attachments`` table (positions >= 1).
+            citation_write: Optional complete sealed citation aggregate.
+                When present, it is preflighted before the transaction and
+                committed atomically with the message and attachments.
 
         Returns:
             The newly created message's id.
 
         Raises:
+            CitationPersistenceUnavailable: If citation persistence is
+                disabled, misconfigured, invalid, or bound to another DB.
             CharactersRAGDBError: For database integrity errors during the
                 insert or the attachment-table write.
         """
+        prepared_citation = None
+        if citation_write is not None:
+            if self.citation_repository is None:
+                raise CitationPersistenceUnavailable("citation_repository_unavailable")
+            if self.citation_repository.db is not self.db:
+                raise CitationPersistenceUnavailable(
+                    "citation_repository_database_mismatch"
+                )
+            prepared_citation = self.citation_repository.prepare_write(citation_write)
+
         # Split addressing: when ``attachments`` is supplied it covers ALL
         # positions (0..N-1) and is authoritative -- position 0 overrides the
         # scalar ``image_data``/``image_mime_type`` kwargs (even overriding
@@ -540,6 +567,27 @@ class ChatPersistenceService:
             "image_mime_type": effective_image_mime_type,
             "client_id": self.db.client_id,
         }
+        if prepared_citation is not None:
+            with self.db.transaction() as cursor:
+                created_message_id = self.db.add_message(message_payload)
+                if attachments is not None:
+                    self.db.set_message_attachments(created_message_id, extra_rows)
+                if feedback is not None:
+                    created_message = self.db.get_message_by_id(created_message_id)
+                    self.db.update_message(
+                        created_message_id,
+                        {"feedback": feedback},
+                        expected_version=created_message["version"],
+                    )
+                created_message = self.db.get_message_by_id(created_message_id)
+                self.citation_repository.write_prepared(
+                    cursor,
+                    prepared_citation,
+                    message_id=created_message_id,
+                    message_revision=created_message["version"],
+                    message_body=content,
+                )
+            return created_message_id
         if attachments is not None:
             # One atomic unit: inside this outer transaction the nested
             # add_message/set_message_attachments transactions are no-ops, so

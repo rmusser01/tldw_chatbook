@@ -1,9 +1,11 @@
 ---
 id: TASK-401.4
 title: Persist sealed citation aggregates transactionally
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-07-24 00:43'
+updated_date: '2026-07-24 07:00'
 labels:
   - rag
   - citations
@@ -35,3 +37,20 @@ Add a versioned SQLite repository and dormant write seam that can atomically sto
 - [ ] #5 A stable local profile and authority context plus injected fingerprint key are available for writes, and a recovery switch can disable repository writes while preserving authorized aggregate reads.
 - [ ] #6 ChatPersistenceService receives citation persistence explicitly and fails before any write when a sealed citation is supplied without an available repository, policy, identity, or key.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Reserve the next ChaChaNotes schema version and add failing fresh-create, upgrade, exact-schema, origin-coherence, FK/index, inventory-exclusion, and rollback tests.
+2. Add one standalone citation-provenance SQL migration and execute complete statements through the active transaction cursor, creating stable identity context and updating version last.
+3. Add the default-off CitationProvenanceRuntimePolicy and injected identity/key seam with read-without-key and fail-before-transaction write behavior.
+4. Add failing repository tests for complete atomic writes, row-family rollback injection, aggregate governance separation, summary reads, and authorized hydration denials.
+5. Implement CitationTraceRepository over caller-owned ChaChaNotes transactions and the explicit optional ChatPersistenceService sealed-write seam with no silent grounded fallback.
+6. Add config defaults/typed access and prove existing no-citation callers retain current behavior.
+7. Extend qualification benchmarks with sealed repository storage proxies, run focused database/chat/config/performance suites, lint, diff, and independent review gates without rewriting the committed baseline.
+8. Complete acceptance criteria and implementation notes only after both reviews approve.
+
+ADR required: yes
+ADR path: backlog/decisions/024-rag-citation-provenance-and-source-resolution.md
+Reason: This task implements ADR-024’s accepted schema, stable identity, governance, recovery-switch, and atomic persistence boundaries; no new architecture decision is introduced.
+<!-- SECTION:PLAN:END -->

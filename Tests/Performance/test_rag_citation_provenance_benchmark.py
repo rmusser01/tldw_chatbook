@@ -468,6 +468,84 @@ async def test_prefeature_qualification_uses_the_same_no_provenance_control_seri
     assert result["regression_vs_control"]["percent"] == 0.0
 
 
+def test_repository_storage_candidate_uses_real_sealed_write_and_summary_read(
+    tmp_path: Path,
+) -> None:
+    benchmark = _load_benchmark()
+
+    result = benchmark._measure_repository_storage(
+        tmp_path / "repository.sqlite",
+        samples=2,
+        warmups=1,
+        snapshots=("evidence" * 512,),
+    )
+
+    assert set(result["message_only_control_ms"]) == {"median", "p95"}
+    assert set(result["sealed_write_ms"]) == {"median", "p95"}
+    assert set(result["summary_read_ms"]) == {"median", "p95"}
+    assert result["persisted_trace_rows"] == 3
+    assert result["persisted_owner_rows"] == 3
+    assert result["control_path"].endswith("citation_write=None)")
+    assert result["candidate_path"].endswith("citation_write=sealed)")
+
+
+@pytest.mark.asyncio
+async def test_repository_storage_candidate_runs_only_in_qualification_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    benchmark = _load_benchmark()
+    calls: list[Path] = []
+    candidate = {
+        "message_only_control_ms": {"median": 1.0, "p95": 1.0},
+        "sealed_write_ms": {"median": 2.0, "p95": 2.0},
+        "summary_read_ms": {"median": 1.0, "p95": 1.0},
+        "persisted_trace_rows": 1,
+        "persisted_owner_rows": 1,
+        "control_path": "ChatPersistenceService.create_message(citation_write=None)",
+        "candidate_path": "ChatPersistenceService.create_message(citation_write=sealed)",
+    }
+
+    def measured(
+        db_path: Path,
+        *,
+        samples: int,
+        warmups: int,
+        snapshots,
+    ):
+        del samples, warmups, snapshots
+        calls.append(db_path)
+        return candidate
+
+    monkeypatch.setattr(benchmark, "_measure_repository_storage", measured)
+    baseline_result = await benchmark.run_benchmark(
+        mode="baseline",
+        samples=1,
+        warmups=0,
+        scratch_root=tmp_path / "baseline",
+    )
+    assert calls == []
+    assert "repository_storage" not in baseline_result["metrics"]
+
+    environment = benchmark.environment_metadata()
+    baseline = {
+        "fixture_version": benchmark.FIXTURE_VERSION,
+        "environment": environment,
+        "metrics": benchmark.empty_passing_metrics(),
+    }
+    qualification_result = await benchmark.run_benchmark(
+        mode="qualification",
+        samples=1,
+        warmups=0,
+        scratch_root=tmp_path / "qualification",
+        baseline=baseline,
+    )
+
+    assert len(calls) == 1
+    assert qualification_result["metrics"]["repository_storage"] == candidate
+    assert qualification_result["budgets"]["checks"]["repository_storage"]["pass"]
+
+
 def test_budget_schema_covers_all_six_families() -> None:
     benchmark = _load_benchmark()
 
