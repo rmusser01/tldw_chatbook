@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from tldw_chatbook.TTS import audio_cpp_contract
 from tldw_chatbook.TTS.audio_cpp_contract import (
     AudioCppContractError,
     AudioCppHealth,
@@ -236,16 +237,50 @@ def test_pinned_fixtures_capture_reviewed_upstream_contract() -> None:
     )
     assert voices == ("alba", "cosette", "marius")
 
-    busy = json.loads(_fixture_bytes("server_busy.json"))
-    assert busy == {
-        "error": {
-            "message": (
-                "model 'pocket-tts' is busy: timed out after 30000 ms "
-                "waiting for the inference lock"
-            ),
-            "type": "server_busy",
-        }
-    }
+    assert audio_cpp_contract.parse_server_busy_response(
+        _fixture_bytes("server_busy.json"),
+        max_metadata_bytes=MAX_METADATA_BYTES,
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"{}",
+        b'{"error":null}',
+        b'{"error":{"message":1,"type":"server_busy"}}',
+        b'{"error":{"message":"busy","type":"server_error"}}',
+        b'{"error":{"message":"busy","type":"server_busy","type":"server_busy"}}',
+        b'{"error":{"message":"busy","type":"server_busy"},"ignored":'
+        + b"7" * 129
+        + b"}",
+    ],
+)
+def test_server_busy_parser_rejects_malformed_or_extreme_envelopes(
+    body: bytes,
+) -> None:
+    error = _assert_unchained_contract_error(
+        lambda: audio_cpp_contract.parse_server_busy_response(
+            body,
+            max_metadata_bytes=len(body),
+        )
+    )
+
+    assert error.surface == "server_busy"
+
+
+def test_server_busy_parser_enforces_bound_before_decoding() -> None:
+    body = _fixture_bytes("server_busy.json")
+
+    error = _assert_unchained_contract_error(
+        lambda: audio_cpp_contract.parse_server_busy_response(
+            body,
+            max_metadata_bytes=len(body) - 1,
+        )
+    )
+
+    assert error.surface == "server_busy"
+    assert error.category == "size"
 
 
 @pytest.mark.parametrize("surface", ["health", "models", "voices"])

@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import sys
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
+from numbers import Real
+from typing import Literal
+from unicodedata import category
+from uuid import uuid4
 
 import httpx
 
@@ -18,15 +23,23 @@ from tldw_chatbook.TTS.adapter_types import (
     ProviderHealth,
     TTSAudioResponse,
     TTSModelInfo,
+    TTSOperationCode,
+    TTSOperationError,
+    TTSProgress,
     TTSProviderCatalog,
     TTSRequest,
 )
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.audio_cpp_contract import (
     AudioCppContractError,
+    Pcm16WavInfo,
+    TimingMetadata,
     parse_health_response,
     parse_models_response,
+    parse_server_busy_response,
+    parse_timing_headers,
     parse_voices_response,
+    validate_pcm16_wav,
 )
 
 _PROVIDER_ID = "audio_cpp"
@@ -36,6 +49,10 @@ _MAX_CONTENT_LENGTH_DIGITS = len(str(sys.maxsize))
 _MAX_VOICE_CACHE_ENTRIES = 32
 _MAX_VOICE_CACHE_BYTES = 8 * 1024 * 1024
 _VOICE_CACHE_ENTRY_OVERHEAD_BYTES = 256
+_UNSAFE_VOICE_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn"})
+_ACCEPTED_AUDIO_CONTENT_TYPES = frozenset(
+    {"audio/wav", "audio/x-wav", "application/octet-stream"}
+)
 _HTTP_LOGGER_NAMES = (
     "httpx",
     "httpcore",
@@ -50,6 +67,15 @@ _HTTP_LOG_SUPPRESSION_ACTIVE: ContextVar[bool] = ContextVar(
     default=False,
 )
 _VoiceCacheKey = tuple[int, str]
+_SpeechOutcomeKind = Literal[
+    "success",
+    "server_busy",
+    "transient_failure",
+    "contract_failure",
+    "refresh_models",
+    "generation_failure",
+    "invalid_audio",
+]
 
 _INITIAL_HEALTH = ProviderHealth(
     state="unavailable",
@@ -88,9 +114,92 @@ class _HttpContractFailure(Exception):
 
 
 @dataclass(frozen=True, slots=True)
+class _OperationFailure:
+    code: TTSOperationCode
+    message: str
+    retryable: bool
+    recovery_action: str
+
+
+_REQUEST_INVALID = _OperationFailure(
+    code="request_invalid",
+    message="The audio.cpp speech request is invalid",
+    retryable=False,
+    recovery_action="edit_request",
+)
+_CONNECTION_UNAVAILABLE = _OperationFailure(
+    code="connection_unavailable",
+    message="The audio.cpp server is unavailable",
+    retryable=True,
+    recovery_action="retry",
+)
+_CLOSED_UNAVAILABLE = _OperationFailure(
+    code="connection_unavailable",
+    message="The audio.cpp server is unavailable",
+    retryable=False,
+    recovery_action="check_server",
+)
+_CONTRACT_INCOMPATIBLE = _OperationFailure(
+    code="contract_incompatible",
+    message="The audio.cpp server response is incompatible",
+    retryable=False,
+    recovery_action="check_server",
+)
+_NOT_CONFIGURED = _OperationFailure(
+    code="not_configured",
+    message="No audio.cpp TTS models are configured",
+    retryable=False,
+    recovery_action="configure_server",
+)
+_MODEL_INVALID = _OperationFailure(
+    code="model_invalid",
+    message="The requested audio.cpp model is unavailable",
+    retryable=False,
+    recovery_action="refresh_models",
+)
+_SERVER_BUSY = _OperationFailure(
+    code="server_busy",
+    message="The audio.cpp server is busy",
+    retryable=True,
+    recovery_action="retry",
+)
+_GENERATION_FAILED = _OperationFailure(
+    code="generation_failed",
+    message="audio.cpp could not generate speech",
+    retryable=False,
+    recovery_action="check_server",
+)
+_AUDIO_RESPONSE_INVALID = _OperationFailure(
+    code="audio_response_invalid",
+    message="audio.cpp returned invalid audio",
+    retryable=False,
+    recovery_action="check_server",
+)
+_GENERATION_TIMEOUT = _OperationFailure(
+    code="generation_timeout",
+    message="audio.cpp speech generation timed out",
+    retryable=True,
+    recovery_action="retry",
+)
+
+
+@dataclass(frozen=True, slots=True)
 class _VoiceCacheEntry:
     voices: tuple[str, ...]
     estimated_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class _SpeechOutcome:
+    kind: _SpeechOutcomeKind
+    audio: bytes | None = None
+    wav_info: Pcm16WavInfo | None = None
+    timing: TimingMetadata | None = None
+
+
+async def _complete_wav_stream(audio: bytes) -> AsyncIterator[bytes]:
+    """Yield one already validated complete WAV without another body copy."""
+    yield audio
 
 
 def _estimate_voice_cache_entry_bytes(
@@ -118,11 +227,9 @@ class _HttpxPrivacyFilter(logging.Filter):
 
 
 class AudioCppAdapter:
-    """Discover bounded model and voice metadata from one external server.
+    """Discover metadata and synthesize bounded WAVs from one external server.
 
     Construction creates the owned HTTP client but performs no network I/O.
-    Speech synthesis is intentionally deferred to the next implementation
-    slice.
 
     Args:
         config: Validated immutable external audio.cpp configuration.
@@ -246,11 +353,255 @@ class AudioCppAdapter:
         request: TTSRequest,
         progress_sink: ProgressSink | None = None,
     ) -> TTSAudioResponse:
-        """Temporarily reject synthesis until the speech-contract slice."""
-        del request, progress_sink
-        raise NotImplementedError(
-            "audio.cpp synthesis is deferred to the speech-contract slice"
+        """Validate and perform one non-retried complete-WAV speech request."""
+        operation_id = uuid4().hex
+        failure: _OperationFailure | None = None
+        outcome: _SpeechOutcome | None = None
+        payload: dict[str, str] | None = None
+
+        if not self._valid_speech_request(request):
+            failure = _REQUEST_INVALID
+        else:
+            await self.ensure_ready()
+            failure = self._readiness_failure()
+
+        if failure is None and not self._catalog_contains(
+            self._catalog,
+            request.model_id,
+        ):
+            await self._refresh_catalog(force=True)
+            failure = self._readiness_failure()
+            if failure is None and not self._catalog_contains(
+                self._catalog,
+                request.model_id,
+            ):
+                failure = _MODEL_INVALID
+
+        if failure is None:
+            await self._report_progress(
+                progress_sink,
+                TTSProgress(status="Generating", fraction=None),
+            )
+            payload = {
+                "model": request.model_id,
+                "input": request.text,
+                "response_format": "wav",
+            }
+            if request.voice is not None:
+                payload["voice"] = request.voice
+
+            suppression_token = _HTTP_LOG_SUPPRESSION_ACTIVE.set(True)
+            try:
+                try:
+                    async with asyncio.timeout(self._config.synthesis_timeout_seconds):
+                        outcome = await self._post_speech(payload)
+                except asyncio.CancelledError:
+                    raise
+                except TimeoutError:
+                    failure = _GENERATION_TIMEOUT
+                except (httpx.StreamError, httpx.TransportError):
+                    self._mark_catalog_stale(_TRANSIENT_FAILURE_HEALTH)
+                    failure = _CONNECTION_UNAVAILABLE
+            finally:
+                _HTTP_LOG_SUPPRESSION_ACTIVE.reset(suppression_token)
+
+        if failure is None and outcome is not None:
+            if outcome.kind == "transient_failure":
+                self._mark_catalog_stale(_TRANSIENT_FAILURE_HEALTH)
+                failure = _CONNECTION_UNAVAILABLE
+            elif outcome.kind == "contract_failure":
+                self._mark_catalog_stale(_CONTRACT_FAILURE_HEALTH)
+                failure = _CONTRACT_INCOMPATIBLE
+            elif outcome.kind == "server_busy":
+                failure = _SERVER_BUSY
+            elif outcome.kind == "generation_failure":
+                failure = _GENERATION_FAILED
+            elif outcome.kind == "invalid_audio":
+                failure = _AUDIO_RESPONSE_INVALID
+            elif outcome.kind == "refresh_models":
+                await self._refresh_catalog(force=True)
+                failure = self._readiness_failure()
+                if failure is None:
+                    failure = (
+                        _GENERATION_FAILED
+                        if self._catalog_contains(
+                            self._catalog,
+                            request.model_id,
+                        )
+                        else _MODEL_INVALID
+                    )
+
+        if failure is not None:
+            del request, progress_sink, payload, outcome
+            raise self._operation_error(failure, operation_id)
+
+        if (
+            outcome is None
+            or outcome.kind != "success"
+            or outcome.audio is None
+            or outcome.wav_info is None
+        ):
+            del request, progress_sink, payload, outcome
+            raise self._operation_error(_GENERATION_FAILED, operation_id)
+
+        metadata: dict[str, str | int | float | bool | None] = {
+            "adapter": "audio_cpp",
+            "contract": "audio_cpp_http_v1",
+            "delivery": "complete_wav",
+            "channels": outcome.wav_info.channels,
+            "frame_count": outcome.wav_info.frame_count,
+            "data_size": outcome.wav_info.data_size,
+        }
+        if outcome.timing is not None:
+            metadata.update(outcome.timing)
+        response = TTSAudioResponse(
+            provider_id=_PROVIDER_ID,
+            model_id=request.model_id,
+            audio_format="wav",
+            content_type="audio/wav",
+            byte_stream=_complete_wav_stream(outcome.audio),
+            sample_rate=outcome.wav_info.sample_rate,
+            metadata=metadata,
         )
+        await self._report_progress(
+            progress_sink,
+            TTSProgress(status="Complete", fraction=1.0),
+        )
+        return response
+
+    def _valid_speech_request(self, request: TTSRequest) -> bool:
+        text = request.text
+        speed = request.speed
+        voice = request.voice
+        if request.provider_id != _PROVIDER_ID:
+            return False
+        if (
+            not isinstance(text, str)
+            or len(text) > self._config.max_input_characters
+            or not text.strip()
+        ):
+            return False
+        if request.response_format != "wav":
+            return False
+        if (
+            isinstance(speed, bool)
+            or not isinstance(speed, Real)
+            or not math.isfinite(speed)
+            or speed != 1.0
+        ):
+            return False
+        if request.options:
+            return False
+        if voice is None:
+            return True
+        return (
+            isinstance(voice, str)
+            and bool(voice)
+            and len(voice) <= self._config.max_identifier_characters
+            and voice == voice.strip()
+            and not any(
+                category(character) in _UNSAFE_VOICE_CATEGORIES for character in voice
+            )
+        )
+
+    def _readiness_failure(self) -> _OperationFailure | None:
+        health = self._catalog.health
+        if self._closed or health.state == "closed":
+            return _CLOSED_UNAVAILABLE
+        if health.state == "not_configured":
+            return _NOT_CONFIGURED
+        if health.state != "available" or not health.fresh:
+            return (
+                _CONNECTION_UNAVAILABLE if health.retryable else _CONTRACT_INCOMPATIBLE
+            )
+        if not self._catalog.models:
+            return _NOT_CONFIGURED
+        return None
+
+    @staticmethod
+    async def _report_progress(
+        progress_sink: ProgressSink | None,
+        progress: TTSProgress,
+    ) -> None:
+        if progress_sink is None:
+            return
+        try:
+            await progress_sink(progress)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return
+
+    async def _post_speech(
+        self,
+        payload: Mapping[str, str],
+    ) -> _SpeechOutcome:
+        self._client.cookies.clear()
+        try:
+            async with self._client.stream(
+                "POST",
+                "/v1/audio/speech",
+                json=payload,
+            ) as response:
+                self._client.cookies.clear()
+                status = response.status_code
+                if status == 200:
+                    if not self._accepted_audio_content_type(response):
+                        return _SpeechOutcome(kind="invalid_audio")
+                    try:
+                        body = await self._read_bounded_response(
+                            response,
+                            max_bytes=self._config.max_response_bytes,
+                        )
+                        wav_info = validate_pcm16_wav(body)
+                    except (
+                        AudioCppContractError,
+                        _HttpContractFailure,
+                        httpx.StreamError,
+                    ):
+                        return _SpeechOutcome(kind="invalid_audio")
+                    return _SpeechOutcome(
+                        kind="success",
+                        audio=body,
+                        wav_info=wav_info,
+                        timing=parse_timing_headers(response.headers),
+                    )
+
+                if status == 503:
+                    try:
+                        body = await self._read_bounded_response(
+                            response,
+                            max_bytes=self._config.max_metadata_bytes,
+                        )
+                        parse_server_busy_response(
+                            body,
+                            max_metadata_bytes=self._config.max_metadata_bytes,
+                        )
+                    except (
+                        AudioCppContractError,
+                        _HttpContractFailure,
+                        httpx.StreamError,
+                    ):
+                        return _SpeechOutcome(kind="transient_failure")
+                    return _SpeechOutcome(kind="server_busy")
+
+                if status == 500:
+                    return _SpeechOutcome(kind="refresh_models")
+                if status in {408, 429, 502, 504}:
+                    return _SpeechOutcome(kind="transient_failure")
+                if status == 404 or 300 <= status < 400:
+                    return _SpeechOutcome(kind="contract_failure")
+                return _SpeechOutcome(kind="generation_failure")
+        finally:
+            self._client.cookies.clear()
+
+    @staticmethod
+    def _accepted_audio_content_type(response: httpx.Response) -> bool:
+        content_types = response.headers.get_list("content-type")
+        if len(content_types) != 1:
+            return False
+        media_type, _separator, _parameters = content_types[0].partition(";")
+        return media_type.strip().casefold() in _ACCEPTED_AUDIO_CONTENT_TYPES
 
     async def close(self) -> None:
         """Seal admission and join the one retained cleanup task."""
@@ -422,6 +773,17 @@ class AudioCppAdapter:
         self,
         response: httpx.Response,
     ) -> bytes:
+        return await self._read_bounded_response(
+            response,
+            max_bytes=self._config.max_metadata_bytes,
+        )
+
+    async def _read_bounded_response(
+        self,
+        response: httpx.Response,
+        *,
+        max_bytes: int,
+    ) -> bytes:
         content_encodings = response.headers.get_list("content-encoding")
         if len(content_encodings) > 1:
             raise _HttpContractFailure
@@ -442,21 +804,24 @@ class AudioCppAdapter:
             ):
                 raise _HttpContractFailure
             declared_length = int(raw_length)
-            if (
-                declared_length > sys.maxsize
-                or declared_length > self._config.max_metadata_bytes
-            ):
+            if declared_length > sys.maxsize or declared_length > max_bytes:
                 raise _HttpContractFailure
 
-        body = bytearray()
+        chunks: list[bytes] = []
+        body_size = 0
         async for chunk in response.aiter_raw():
-            remaining = self._config.max_metadata_bytes - len(body)
+            remaining = max_bytes - body_size
             if len(chunk) > remaining:
                 raise _HttpContractFailure
-            body.extend(chunk)
-        if declared_length is not None and len(body) != declared_length:
+            chunks.append(chunk)
+            body_size += len(chunk)
+        if declared_length is not None and body_size != declared_length:
             raise _HttpContractFailure
-        return bytes(body)
+        if not chunks:
+            return b""
+        if len(chunks) == 1:
+            return chunks[0]
+        return b"".join(chunks)
 
     def _cached_voice_result(
         self,
@@ -533,6 +898,24 @@ class AudioCppAdapter:
         self._voice_locks.clear()
         self._voice_lock_users.clear()
         self._voice_shared_results.clear()
+
+    def _mark_catalog_stale(self, health: ProviderHealth) -> None:
+        if self._closed:
+            return
+        self._catalog = self._failed_catalog(self._catalog, health)
+
+    @staticmethod
+    def _operation_error(
+        failure: _OperationFailure,
+        operation_id: str,
+    ) -> TTSOperationError:
+        return TTSOperationError(
+            code=failure.code,
+            message=failure.message,
+            retryable=failure.retryable,
+            operation_id=operation_id,
+            recovery_action=failure.recovery_action,
+        )
 
     @staticmethod
     def _failed_catalog(

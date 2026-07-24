@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import struct
 import sys
 from collections.abc import AsyncGenerator, Mapping
 from types import ModuleType
 from typing import Any, cast
 
 import pytest
+import httpx
 
 from Tests.TTS.adapter_fakes import FakeAdapter, FakeAdapterFactory
 from tldw_chatbook.TTS.adapter_bootstrap import (
@@ -29,6 +32,8 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSRegistryClosedError,
 )
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
+from tldw_chatbook.TTS.adapters.audio_cpp import AudioCppAdapter
+from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 from tldw_chatbook.TTS.legacy_bridge import legacy_provider_specs
 from tldw_chatbook.TTS.TTS_Generation import (
     TTSService,
@@ -107,6 +112,144 @@ async def test_synthesize_holds_lease_until_response_close() -> None:
 
     await response.aclose()
     assert adapter.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_real_audio_cpp_response_preserves_complete_wav_and_adapter_lease() -> (
+    None
+):
+    data = b"\x00\x00\x01\x00\x02\x00\x03\x00"
+    fmt = struct.pack(
+        "<4sIHHIIHH",
+        b"fmt ",
+        16,
+        1,
+        2,
+        48_000,
+        192_000,
+        4,
+        16,
+    )
+    data_chunk = struct.pack("<4sI", b"data", len(data)) + data
+    riff_payload = b"WAVE" + fmt + data_chunk
+    wav = b"RIFF" + struct.pack("<I", len(riff_payload)) + riff_payload
+    health = json.dumps(
+        {"status": "ok", "backend": "cpu", "models": 1},
+        separators=(",", ":"),
+    ).encode()
+    models = json.dumps(
+        {
+            "object": "list",
+            "data": [
+                {
+                    "id": "model",
+                    "object": "model",
+                    "owned_by": "engine",
+                    "family": "family",
+                    "task": "tts",
+                    "mode": "offline",
+                }
+            ],
+        },
+        separators=(",", ":"),
+    ).encode()
+    posts = 0
+
+    class BytesStream(httpx.AsyncByteStream):
+        def __init__(self, body: bytes) -> None:
+            self.body = body
+
+        async def __aiter__(self) -> AsyncGenerator[bytes, None]:
+            yield self.body
+
+        async def aclose(self) -> None:
+            return
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal posts
+        if request.url.path == "/health":
+            return httpx.Response(200, stream=BytesStream(health))
+        if request.url.path == "/v1/models":
+            return httpx.Response(200, stream=BytesStream(models))
+        posts += 1
+        return httpx.Response(
+            200,
+            headers={
+                "Content-Type": "audio/wav",
+                "X-AudioCpp-Wall-Ms": "10",
+            },
+            stream=BytesStream(wav),
+        )
+
+    created: list[AudioCppAdapter] = []
+
+    def factory(_config: Mapping[str, Any]) -> AudioCppAdapter:
+        adapter = AudioCppAdapter(
+            AudioCppConfig(),
+            transport=httpx.MockTransport(respond),
+        )
+        created.append(adapter)
+        return adapter
+
+    registry = TTSAdapterRegistry(
+        specs=(
+            TTSProviderSpec(
+                descriptor=TTSProviderDescriptor(
+                    provider_id="audio_cpp",
+                    display_name="audio.cpp",
+                    native=True,
+                ),
+                factory=factory,
+                initial_config={"revision": 1},
+                exclusive_reconfigure=True,
+            ),
+        ),
+        aliases={},
+    )
+    service = TTSService(registry)
+
+    async def broken_progress_sink(_progress: TTSProgress) -> None:
+        raise RuntimeError("REMOTE_PROGRESS_SENTINEL")
+
+    response = await service.synthesize(
+        TTSRequest(
+            provider_id="audio_cpp",
+            model_id="model",
+            text="hello",
+            voice=None,
+            response_format="wav",
+        ),
+        broken_progress_sink,
+    )
+    reconfigure = asyncio.create_task(
+        registry.reconfigure_provider("audio_cpp", {"revision": 2})
+    )
+    await asyncio.sleep(0)
+
+    assert posts == 1
+    assert registry._total_leases() == 1
+    assert not reconfigure.done()
+    assert not created[0]._client.is_closed
+    assert response.sample_rate == 48_000
+    assert response.metadata == {
+        "adapter": "audio_cpp",
+        "contract": "audio_cpp_http_v1",
+        "delivery": "complete_wav",
+        "channels": 2,
+        "frame_count": 2,
+        "data_size": 8,
+        "wall_ms": 10.0,
+    }
+    assert [chunk async for chunk in response.byte_stream] == [wav]
+
+    await response.aclose()
+    assert await reconfigure is ReconfigureResult.CHANGED
+    assert registry._total_leases() == 0
+    assert created[0]._client.is_closed
+    assert len(created) == 1
+
+    await service.close()
+    await service.wait_closed()
 
 
 @pytest.mark.asyncio

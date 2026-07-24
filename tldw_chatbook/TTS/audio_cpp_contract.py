@@ -20,7 +20,7 @@ from types import MappingProxyType
 from typing import Any, Literal, NoReturn, cast
 
 
-ContractSurface = Literal["health", "models", "voices", "wav"]
+ContractSurface = Literal["health", "models", "voices", "server_busy", "wav"]
 TimingMetadata = Mapping[str, float]
 
 _UNSAFE_IDENTIFIER_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn"})
@@ -172,7 +172,7 @@ def _load_json_object(
     body: bytes,
     *,
     max_metadata_bytes: int,
-    surface: Literal["health", "models", "voices"],
+    surface: Literal["health", "models", "voices", "server_busy"],
 ) -> dict[str, Any]:
     if len(body) > max_metadata_bytes:
         _fail(surface, "size")
@@ -341,6 +341,27 @@ def parse_voices_response(
     return tuple(voices)
 
 
+def parse_server_busy_response(
+    body: bytes,
+    max_metadata_bytes: int,
+) -> bool:
+    """Validate the pinned ``server_busy`` error envelope without retaining it."""
+
+    value = _load_json_object(
+        body,
+        max_metadata_bytes=max_metadata_bytes,
+        surface="server_busy",
+    )
+    error = value.get("error")
+    if not isinstance(error, dict):
+        _fail("server_busy", "error")
+    if not isinstance(error.get("message"), str):
+        _fail("server_busy", "message")
+    if error.get("type") != "server_busy":
+        _fail("server_busy", "type")
+    return True
+
+
 def _parse_timing_value(
     value: object,
     *,
@@ -492,6 +513,7 @@ __all__ = [
     "TimingMetadata",
     "parse_health_response",
     "parse_models_response",
+    "parse_server_busy_response",
     "parse_timing_headers",
     "parse_voices_response",
     "validate_pcm16_wav",

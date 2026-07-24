@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
+import struct
+import sys
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from time import monotonic
@@ -13,7 +16,10 @@ import pytest
 
 from tldw_chatbook.TTS.adapter_types import (
     ProviderHealth,
+    TTSAudioResponse,
     TTSModelInfo,
+    TTSOperationError,
+    TTSProgress,
     TTSProviderDescriptor,
     TTSProviderSpec,
     TTSRequest,
@@ -83,6 +89,44 @@ def _models_body(*models: dict[str, str]) -> bytes:
 
 def _voices_body(*voices: str) -> bytes:
     return _json_bytes({"voices": list(voices)})
+
+
+def _wav(
+    *,
+    channels: int = 1,
+    sample_rate: int = 24_000,
+    frames: int = 2,
+) -> bytes:
+    block_align = channels * 2
+    data = b"\x00\x00" * channels * frames
+    fmt = struct.pack(
+        "<4sIHHIIHH",
+        b"fmt ",
+        16,
+        1,
+        channels,
+        sample_rate,
+        sample_rate * block_align,
+        block_align,
+        16,
+    )
+    data_chunk = struct.pack("<4sI", b"data", len(data)) + data
+    payload = b"WAVE" + fmt + data_chunk
+    return b"RIFF" + struct.pack("<I", len(payload)) + payload
+
+
+def _speech_request(**updates: Any) -> TTSRequest:
+    values: dict[str, Any] = {
+        "provider_id": "audio_cpp",
+        "model_id": "model",
+        "text": " Preserve exact whitespace ",
+        "voice": None,
+        "response_format": "wav",
+        "speed": 1.0,
+        "options": {},
+    }
+    values.update(updates)
+    return TTSRequest(**values)
 
 
 def _config(**updates: Any) -> AudioCppConfig:
@@ -188,6 +232,43 @@ class BlockingStream(httpx.AsyncByteStream):
 
     async def aclose(self) -> None:
         self.close_count += 1
+
+
+def _exception_graph(error: BaseException) -> list[BaseException]:
+    pending = [error]
+    seen: set[int] = set()
+    graph: list[BaseException] = []
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        graph.append(current)
+        for linked in (current.__context__, current.__cause__):
+            if linked is not None:
+                pending.append(linked)
+    return graph
+
+
+def _assert_operation_error(
+    error: TTSOperationError,
+    *,
+    code: str,
+    message: str,
+    retryable: bool,
+    recovery_action: str,
+) -> None:
+    assert error.code == code
+    assert error.args == (message,)
+    assert str(error) == message
+    assert error.retryable is retryable
+    assert error.recovery_action == recovery_action
+    assert len(error.operation_id) == 32
+    assert error.operation_id.isascii()
+    assert error.operation_id.isalnum()
+    assert _exception_graph(error) == [error]
+    assert error.__context__ is None
+    assert error.__cause__ is None
 
 
 @pytest.mark.asyncio
@@ -1207,26 +1288,1032 @@ async def test_close_is_idempotent_closes_client_once_and_marks_health_closed() 
 
 
 @pytest.mark.asyncio
-async def test_synthesize_is_explicitly_deferred_and_never_sends_post() -> None:
+@pytest.mark.parametrize(
+    "speech_request",
+    [
+        _speech_request(provider_id="Audio_CPP"),
+        _speech_request(text=""),
+        _speech_request(text=" \t\n"),
+        _speech_request(text="x" * 129),
+        _speech_request(response_format="WAV"),
+        _speech_request(speed=True),
+        _speech_request(speed=0),
+        _speech_request(speed=1.0001),
+        _speech_request(speed=math.inf),
+        _speech_request(speed=math.nan),
+        _speech_request(options={"REMOTE_OPTION_SENTINEL": True}),
+        _speech_request(voice=""),
+        _speech_request(voice=" voice"),
+        _speech_request(voice="voice "),
+        _speech_request(voice="x" * 129),
+        _speech_request(voice="unsafe\u0000voice"),
+        _speech_request(voice="unsafe\u200bvoice"),
+        _speech_request(voice="\ue000"),
+        _speech_request(voice="\ud800"),
+        _speech_request(voice="\u0378"),
+    ],
+)
+async def test_synthesize_rejects_every_local_request_category_before_http(
+    speech_request: TTSRequest,
+) -> None:
     requests: list[httpx.Request] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        raise AssertionError("Synthesis must not make an HTTP request in this slice")
+        raise AssertionError("Local request validation must precede HTTP")
 
-    async with _adapter(respond) as adapter:
-        with pytest.raises(NotImplementedError, match="synthesis"):
-            await adapter.synthesize(
-                TTSRequest(
-                    provider_id="audio_cpp",
-                    model_id="model",
-                    text="text",
-                    voice=None,
-                    response_format="wav",
-                )
-            )
+    async with _adapter(
+        respond,
+        max_input_characters=128,
+        max_identifier_characters=128,
+    ) as adapter:
+        with pytest.raises(TTSOperationError) as captured:
+            await adapter.synthesize(speech_request)
 
     assert requests == []
+    _assert_operation_error(
+        captured.value,
+        code="request_invalid",
+        message="The audio.cpp speech request is invalid",
+        retryable=False,
+        recovery_action="edit_request",
+    )
+
+
+@pytest.mark.asyncio
+async def test_oversized_text_is_rejected_before_whitespace_scanning() -> None:
+    class OversizedText(str):
+        def strip(self, chars: str | None = None) -> str:
+            del chars
+            raise AssertionError("Oversized text must not be scanned")
+
+    async with _adapter(
+        lambda _request: pytest.fail("Oversized text must not use HTTP"),
+        max_input_characters=8,
+    ) as adapter:
+        with pytest.raises(TTSOperationError) as captured:
+            await adapter.synthesize(
+                _speech_request(text=OversizedText("x" * 9)),
+            )
+
+    _assert_operation_error(
+        captured.value,
+        code="request_invalid",
+        message="The audio.cpp speech request is invalid",
+        retryable=False,
+        recovery_action="edit_request",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("voice", [None, "native-cached-voice"])
+async def test_synthesize_posts_exact_payload_and_reports_complete_progress(
+    voice: str | None,
+) -> None:
+    requests: list[httpx.Request] = []
+    progress: list[TTSProgress] = []
+    wav = _wav(channels=2, sample_rate=48_000, frames=3)
+
+    async def report(item: TTSProgress) -> None:
+        progress.append(item)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        assert request.url.path == "/v1/audio/speech"
+        return _streaming_response(
+            wav,
+            headers={
+                "Content-Type": " Audio/WAV ; codec=pcm ",
+                "X-AudioCpp-Wall-Ms": "12.5",
+                "X-AudioCpp-Audio-Duration-Ms": "125",
+                "X-AudioCpp-RTF": "0.1",
+                "X-Remote-Secret": "REMOTE_HEADER_SENTINEL",
+            },
+        )
+
+    async with _adapter(respond) as adapter:
+        response = await adapter.synthesize(
+            _speech_request(voice=voice),
+            report,
+        )
+        chunks = [chunk async for chunk in response.byte_stream]
+
+        assert isinstance(response, TTSAudioResponse)
+        assert response.provider_id == "audio_cpp"
+        assert response.model_id == "model"
+        assert response.audio_format == "wav"
+        assert response.content_type == "audio/wav"
+        assert response.sample_rate == 48_000
+        assert chunks == [wav]
+        assert response.metadata == {
+            "adapter": "audio_cpp",
+            "contract": "audio_cpp_http_v1",
+            "delivery": "complete_wav",
+            "channels": 2,
+            "frame_count": 3,
+            "data_size": 12,
+            "wall_ms": 12.5,
+            "audio_duration_ms": 125.0,
+            "rtf": 0.1,
+        }
+        with pytest.raises(TypeError):
+            response.metadata["adapter"] = "changed"  # type: ignore[index]
+        await response.aclose()
+
+    posts = [request for request in requests if request.url.path == "/v1/audio/speech"]
+    assert len(posts) == 1
+    expected_payload: dict[str, Any] = {
+        "model": "model",
+        "input": " Preserve exact whitespace ",
+        "response_format": "wav",
+    }
+    if voice is not None:
+        expected_payload["voice"] = voice
+    assert json.loads(posts[0].content) == expected_payload
+    assert set(json.loads(posts[0].content)) == set(expected_payload)
+    assert progress == [
+        TTSProgress(status="Generating", fraction=None),
+        TTSProgress(status="Complete", fraction=1.0),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_missing_model_forces_one_refresh_then_returns_model_invalid() -> None:
+    requests: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model("other")))
+        raise AssertionError("An unknown model must never be posted")
+
+    async with _adapter(respond) as adapter:
+        await adapter.ensure_ready()
+        requests.clear()
+        with pytest.raises(TTSOperationError) as captured:
+            await adapter.synthesize(_speech_request())
+
+    assert requests == ["/health", "/v1/models"]
+    _assert_operation_error(
+        captured.value,
+        code="model_invalid",
+        message="The requested audio.cpp model is unavailable",
+        retryable=False,
+        recovery_action="refresh_models",
+    )
+
+
+@pytest.mark.asyncio
+async def test_zero_tts_models_returns_not_configured_without_post() -> None:
+    requests: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        return _streaming_response(_models_body(_model(task="stt")))
+
+    async with _adapter(respond) as adapter:
+        with pytest.raises(TTSOperationError) as captured:
+            await adapter.synthesize(_speech_request())
+
+    assert requests == ["/health", "/v1/models"]
+    _assert_operation_error(
+        captured.value,
+        code="not_configured",
+        message="No audio.cpp TTS models are configured",
+        retryable=False,
+        recovery_action="configure_server",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "content_type",
+    ["audio/wav", "AUDIO/X-WAV; codec=pcm", "application/octet-stream"],
+)
+async def test_synthesize_accepts_only_documented_wav_media_types(
+    content_type: str,
+) -> None:
+    wav = _wav()
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        return _streaming_response(
+            wav,
+            headers={
+                "Content-Type": content_type,
+                "X-AudioCpp-Wall-Ms": "-1",
+                "X-AudioCpp-Audio-Duration-Ms": "not-a-number",
+                "X-AudioCpp-RTF": "1e9",
+            },
+        )
+
+    async with _adapter(respond, max_response_bytes=len(wav)) as adapter:
+        response = await adapter.synthesize(_speech_request())
+        assert [chunk async for chunk in response.byte_stream] == [wav]
+        assert "wall_ms" not in response.metadata
+        assert "audio_duration_ms" not in response.metadata
+        assert "rtf" not in response.metadata
+        await response.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "headers",
+    [
+        [],
+        [("Content-Type", "text/plain")],
+        [("Content-Type", "binary/octet-stream")],
+        [("Content-Type", "audio/wav, application/octet-stream")],
+        [("Content-Type", "audio/wav"), ("Content-Type", "audio/x-wav")],
+    ],
+)
+async def test_synthesize_rejects_missing_multiple_or_other_media_types(
+    headers: list[tuple[str, str]],
+) -> None:
+    progress: list[TTSProgress] = []
+    speech_stream = TrackingStream(_wav())
+
+    async def report(item: TTSProgress) -> None:
+        progress.append(item)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        return httpx.Response(200, headers=headers, stream=speech_stream)
+
+    async with _adapter(respond) as adapter:
+        with pytest.raises(TTSOperationError) as captured:
+            await adapter.synthesize(_speech_request(), report)
+        assert (await adapter.get_catalog()).health == AVAILABLE_HEALTH
+
+    _assert_operation_error(
+        captured.value,
+        code="audio_response_invalid",
+        message="audio.cpp returned invalid audio",
+        retryable=False,
+        recovery_action="check_server",
+    )
+    assert progress == [TTSProgress(status="Generating", fraction=None)]
+    assert speech_stream.read_count == 0
+    assert speech_stream.close_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"",
+        b"not-a-wave",
+        _wav()[:-1],
+        _wav().replace(b"RIFF", b"RIFX", 1),
+        _wav().replace(b"\x01\x00\x01\x00", b"\x03\x00\x01\x00", 1),
+    ],
+)
+async def test_synthesize_rejects_malformed_complete_wav_matrix(body: bytes) -> None:
+    stream = TrackingStream(body)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "audio/wav"},
+            stream=stream,
+        )
+
+    async with _adapter(respond) as adapter:
+        with pytest.raises(TTSOperationError) as captured:
+            await adapter.synthesize(_speech_request())
+        assert (await adapter.get_catalog()).health == AVAILABLE_HEALTH
+
+    _assert_operation_error(
+        captured.value,
+        code="audio_response_invalid",
+        message="audio.cpp returned invalid audio",
+        retryable=False,
+        recovery_action="check_server",
+    )
+    assert stream.close_count == 1
+
+
+@pytest.mark.asyncio
+async def test_preconsumed_http_200_body_is_invalid_audio_not_health_failure() -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "audio/wav"},
+            content=_wav(),
+        )
+
+    async with _adapter(respond) as adapter:
+        with pytest.raises(TTSOperationError) as captured:
+            await adapter.synthesize(_speech_request())
+        catalog = adapter._catalog
+
+    _assert_operation_error(
+        captured.value,
+        code="audio_response_invalid",
+        message="audio.cpp returned invalid audio",
+        retryable=False,
+        recovery_action="check_server",
+    )
+    assert catalog.health == AVAILABLE_HEALTH
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("headers", "chunks", "max_response_bytes", "expected_reads"),
+    [
+        (
+            {"Content-Type": "audio/wav", "Content-Length": "999"},
+            (_wav(),),
+            len(_wav()),
+            0,
+        ),
+        (
+            {
+                "Content-Type": "audio/wav",
+                "Content-Length": "9" * (len(str(sys.maxsize)) + 1),
+            },
+            (_wav(),),
+            len(_wav()),
+            0,
+        ),
+        (
+            {
+                "Content-Type": "audio/wav",
+                "Content-Length": str(len(_wav()) + 1),
+            },
+            (_wav(),),
+            len(_wav()) + 1,
+            1,
+        ),
+        (
+            {"Content-Type": "audio/wav", "Content-Encoding": "gzip"},
+            (_wav(),),
+            len(_wav()),
+            0,
+        ),
+        (
+            {"Content-Type": "audio/wav"},
+            (_wav()[:-1], b"x"),
+            len(_wav()) - 1,
+            2,
+        ),
+        (
+            {"Content-Type": "audio/wav"},
+            (_wav(),),
+            len(_wav()) - 1,
+            1,
+        ),
+    ],
+)
+async def test_synthesize_enforces_audio_headers_and_body_bound_before_copy(
+    headers: dict[str, str],
+    chunks: tuple[bytes, ...],
+    max_response_bytes: int,
+    expected_reads: int,
+) -> None:
+    stream = TrackingStream(*chunks)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        return httpx.Response(200, headers=headers, stream=stream)
+
+    async with _adapter(
+        respond,
+        max_response_bytes=max_response_bytes,
+    ) as adapter:
+        with pytest.raises(TTSOperationError) as captured:
+            await adapter.synthesize(_speech_request())
+        assert (await adapter.get_catalog()).health == AVAILABLE_HEALTH
+
+    _assert_operation_error(
+        captured.value,
+        code="audio_response_invalid",
+        message="audio.cpp returned invalid audio",
+        retryable=False,
+        recovery_action="check_server",
+    )
+    assert stream.read_count == expected_reads
+    assert stream.close_count == 1
+
+
+@pytest.mark.asyncio
+async def test_synthesize_joins_incremental_wav_once_and_returns_one_chunk() -> None:
+    wav = _wav(channels=2, sample_rate=44_100, frames=4)
+    stream = TrackingStream(wav[:13], wav[13:37], wav[37:])
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        return httpx.Response(
+            200,
+            headers={
+                "Content-Type": "audio/x-wav",
+                "Content-Length": str(len(wav)),
+            },
+            stream=stream,
+        )
+
+    async with _adapter(respond, max_response_bytes=len(wav)) as adapter:
+        response = await adapter.synthesize(_speech_request())
+        assert stream.close_count == 1
+        chunks = [chunk async for chunk in response.byte_stream]
+        assert chunks == [wav]
+        assert response.sample_rate == 44_100
+        assert response.metadata["channels"] == 2
+        assert response.metadata["frame_count"] == 4
+        assert response.metadata["data_size"] == 16
+        await response.aclose()
+
+    assert stream.read_count == 3
+    assert stream.close_count == 1
+
+
+@pytest.mark.asyncio
+async def test_structured_server_busy_is_retryable_without_staling_catalog() -> None:
+    remote_message = "REMOTE_BUSY_MESSAGE_SENTINEL"
+    requests: list[str] = []
+    stream = TrackingStream(
+        _json_bytes(
+            {
+                "error": {
+                    "message": remote_message,
+                    "type": "server_busy",
+                }
+            }
+        )
+    )
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        return httpx.Response(503, stream=stream)
+
+    async with _adapter(respond) as adapter:
+        with pytest.raises(TTSOperationError) as captured:
+            await adapter.synthesize(_speech_request())
+        catalog = adapter._catalog
+
+    _assert_operation_error(
+        captured.value,
+        code="server_busy",
+        message="The audio.cpp server is busy",
+        retryable=True,
+        recovery_action="retry",
+    )
+    assert remote_message not in repr(captured.value.args)
+    assert catalog.health == AVAILABLE_HEALTH
+    assert requests.count("/v1/audio/speech") == 1
+    assert stream.close_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body", "headers", "max_metadata_bytes"),
+    [
+        (b"{", {}, MAX_METADATA_BYTES),
+        (
+            _json_bytes(
+                {"error": {"message": "REMOTE_SENTINEL", "type": "server_error"}}
+            ),
+            {},
+            MAX_METADATA_BYTES,
+        ),
+        (
+            b'{"error":{"message":"REMOTE_SENTINEL","type":"server_busy"},'
+            b'"extreme":' + b"7" * 129 + b"}",
+            {},
+            MAX_METADATA_BYTES,
+        ),
+        (b"x" * (MAX_METADATA_BYTES + 1), {}, MAX_METADATA_BYTES),
+        (
+            _json_bytes(
+                {"error": {"message": "REMOTE_SENTINEL", "type": "server_busy"}}
+            ),
+            {"Content-Encoding": "gzip"},
+            MAX_METADATA_BYTES,
+        ),
+    ],
+)
+async def test_invalid_503_envelopes_map_to_transient_unavailable(
+    body: bytes,
+    headers: dict[str, str],
+    max_metadata_bytes: int,
+) -> None:
+    posts = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal posts
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        posts += 1
+        return _streaming_response(body, status=503, headers=headers)
+
+    async with _adapter(
+        respond,
+        max_metadata_bytes=max_metadata_bytes,
+    ) as adapter:
+        with pytest.raises(TTSOperationError) as captured:
+            await adapter.synthesize(_speech_request())
+        catalog = adapter._catalog
+
+    _assert_operation_error(
+        captured.value,
+        code="connection_unavailable",
+        message="The audio.cpp server is unavailable",
+        retryable=True,
+        recovery_action="retry",
+    )
+    assert "REMOTE_SENTINEL" not in repr(captured.value.args)
+    assert catalog.health == TRANSIENT_HEALTH
+    assert catalog.models
+    assert posts == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [408, 429, 502, 504])
+async def test_transient_speech_statuses_stale_health_without_post_retry(
+    status: int,
+) -> None:
+    posts = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal posts
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        posts += 1
+        return _streaming_response(b"REMOTE_STATUS_BODY", status=status)
+
+    async with _adapter(respond) as adapter:
+        with pytest.raises(TTSOperationError) as captured:
+            await adapter.synthesize(_speech_request())
+        catalog = adapter._catalog
+
+    _assert_operation_error(
+        captured.value,
+        code="connection_unavailable",
+        message="The audio.cpp server is unavailable",
+        retryable=True,
+        recovery_action="retry",
+    )
+    assert catalog.health == TRANSIENT_HEALTH
+    assert posts == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [301, 302, 307, 308, 404])
+async def test_missing_or_redirected_speech_endpoint_is_incompatible(
+    status: int,
+) -> None:
+    posts = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal posts
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        posts += 1
+        return httpx.Response(
+            status,
+            headers={"Location": "https://REMOTE_REDIRECT_SENTINEL.invalid/"},
+            content=b"REMOTE_CONTRACT_BODY",
+        )
+
+    async with _adapter(respond) as adapter:
+        with pytest.raises(TTSOperationError) as captured:
+            await adapter.synthesize(_speech_request())
+        catalog = adapter._catalog
+
+    _assert_operation_error(
+        captured.value,
+        code="contract_incompatible",
+        message="The audio.cpp server response is incompatible",
+        retryable=False,
+        recovery_action="check_server",
+    )
+    assert catalog.health == CONTRACT_HEALTH
+    assert posts == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [400, 401, 403, 405, 422, 425, 501])
+async def test_unexpected_speech_errors_are_generation_failures(
+    status: int,
+) -> None:
+    posts = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal posts
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        posts += 1
+        return _streaming_response(b"REMOTE_GENERATION_BODY", status=status)
+
+    async with _adapter(respond) as adapter:
+        with pytest.raises(TTSOperationError) as captured:
+            await adapter.synthesize(_speech_request())
+        catalog = adapter._catalog
+
+    _assert_operation_error(
+        captured.value,
+        code="generation_failed",
+        message="audio.cpp could not generate speech",
+        retryable=False,
+        recovery_action="check_server",
+    )
+    assert catalog.health == AVAILABLE_HEALTH
+    assert posts == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("refresh_result", "expected_code", "expected_message", "expected_recovery"),
+    [
+        (
+            "model_remains",
+            "generation_failed",
+            "audio.cpp could not generate speech",
+            "check_server",
+        ),
+        (
+            "model_vanished",
+            "model_invalid",
+            "The requested audio.cpp model is unavailable",
+            "refresh_models",
+        ),
+        (
+            "no_models",
+            "not_configured",
+            "No audio.cpp TTS models are configured",
+            "configure_server",
+        ),
+        (
+            "unavailable",
+            "connection_unavailable",
+            "The audio.cpp server is unavailable",
+            "retry",
+        ),
+        (
+            "incompatible",
+            "contract_incompatible",
+            "The audio.cpp server response is incompatible",
+            "check_server",
+        ),
+    ],
+)
+async def test_speech_500_refreshes_models_once_without_post_retry(
+    refresh_result: str,
+    expected_code: str,
+    expected_message: str,
+    expected_recovery: str,
+) -> None:
+    posts = 0
+    model_reads = 0
+    post_seen = False
+    paths: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal model_reads, post_seen, posts
+        paths.append(request.url.path)
+        if request.url.path == "/v1/audio/speech":
+            posts += 1
+            post_seen = True
+            return _streaming_response(b"REMOTE_500_BODY", status=500)
+        if request.url.path == "/health":
+            if post_seen and refresh_result == "unavailable":
+                raise httpx.ConnectError("REMOTE_REFRESH_TRANSPORT", request=request)
+            if post_seen and refresh_result == "incompatible":
+                return _streaming_response(b'{"status":"REMOTE_BAD"}')
+            return _streaming_response(_health_body())
+
+        model_reads += 1
+        if not post_seen or refresh_result == "model_remains":
+            return _streaming_response(_models_body(_model()))
+        if refresh_result == "model_vanished":
+            return _streaming_response(_models_body(_model("other")))
+        if refresh_result == "no_models":
+            return _streaming_response(_models_body(_model(task="stt")))
+        raise AssertionError("Failed refresh must not request models")
+
+    async with _adapter(respond) as adapter:
+        with pytest.raises(TTSOperationError) as captured:
+            await adapter.synthesize(_speech_request())
+
+    _assert_operation_error(
+        captured.value,
+        code=expected_code,
+        message=expected_message,
+        retryable=expected_code == "connection_unavailable",
+        recovery_action=expected_recovery,
+    )
+    assert posts == 1
+    assert model_reads == (
+        2 if refresh_result in {"model_remains", "model_vanished", "no_models"} else 1
+    )
+    assert paths.count("/v1/audio/speech") == 1
+
+
+@pytest.mark.asyncio
+async def test_speech_transport_failure_stales_health_without_retry() -> None:
+    posts = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal posts
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        posts += 1
+        raise httpx.ConnectError("REMOTE_TRANSPORT_SENTINEL", request=request)
+
+    async with _adapter(respond) as adapter:
+        with pytest.raises(TTSOperationError) as captured:
+            await adapter.synthesize(_speech_request())
+        catalog = adapter._catalog
+
+    _assert_operation_error(
+        captured.value,
+        code="connection_unavailable",
+        message="The audio.cpp server is unavailable",
+        retryable=True,
+        recovery_action="retry",
+    )
+    assert catalog.health == TRANSIENT_HEALTH
+    assert posts == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["headers", "body"])
+async def test_speech_total_deadline_covers_headers_and_body_without_staling(
+    phase: str,
+) -> None:
+    posts = 0
+    blocked_headers = asyncio.Event()
+    speech_stream = BlockingStream(_wav())
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal posts
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        posts += 1
+        if phase == "headers":
+            blocked_headers.set()
+            await asyncio.Event().wait()
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "audio/wav"},
+            stream=speech_stream,
+        )
+
+    async with _adapter(
+        respond,
+        synthesis_timeout_seconds=0.01,
+    ) as adapter:
+        with pytest.raises(TTSOperationError) as captured:
+            await adapter.synthesize(_speech_request())
+        catalog = adapter._catalog
+
+    _assert_operation_error(
+        captured.value,
+        code="generation_timeout",
+        message="audio.cpp speech generation timed out",
+        retryable=True,
+        recovery_action="retry",
+    )
+    assert catalog.health == AVAILABLE_HEALTH
+    assert posts == 1
+    if phase == "headers":
+        assert blocked_headers.is_set()
+    else:
+        assert speech_stream.started.is_set()
+        assert speech_stream.close_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["headers", "body"])
+async def test_speech_cancellation_propagates_and_closes_without_health_poisoning(
+    phase: str,
+) -> None:
+    posts = 0
+    headers_started = asyncio.Event()
+    release_headers = asyncio.Event()
+    stream = BlockingStream(_wav())
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal posts
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model()))
+        posts += 1
+        if phase == "headers":
+            headers_started.set()
+            await release_headers.wait()
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "audio/wav"},
+            stream=stream,
+        )
+
+    async with _adapter(respond) as adapter:
+        generation = asyncio.create_task(adapter.synthesize(_speech_request()))
+        if phase == "headers":
+            await headers_started.wait()
+        else:
+            await stream.started.wait()
+        generation.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await generation
+        catalog = adapter._catalog
+
+    assert catalog.health == AVAILABLE_HEALTH
+    assert posts == 1
+    if phase == "body":
+        assert stream.close_count == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_readiness_maps_retryability_and_never_posts() -> None:
+    mode = "transient"
+    posts = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal posts
+        if request.url.path == "/v1/audio/speech":
+            posts += 1
+        if mode == "transient":
+            raise httpx.ConnectError("REMOTE_READY_SENTINEL", request=request)
+        return _streaming_response(b"{}")
+
+    async with _adapter(respond) as adapter:
+        with pytest.raises(TTSOperationError) as transient:
+            await adapter.synthesize(_speech_request())
+        mode = "contract"
+        with pytest.raises(TTSOperationError) as contract:
+            await adapter.synthesize(_speech_request())
+
+    _assert_operation_error(
+        transient.value,
+        code="connection_unavailable",
+        message="The audio.cpp server is unavailable",
+        retryable=True,
+        recovery_action="retry",
+    )
+    _assert_operation_error(
+        contract.value,
+        code="contract_incompatible",
+        message="The audio.cpp server response is incompatible",
+        retryable=False,
+        recovery_action="check_server",
+    )
+    assert posts == 0
+
+
+@pytest.mark.asyncio
+async def test_closed_adapter_maps_to_nonretryable_connection_error() -> None:
+    adapter = AudioCppAdapter(
+        _config(),
+        transport=httpx.MockTransport(
+            lambda _request: pytest.fail("Closed synthesis must not use HTTP")
+        ),
+    )
+    await adapter.close()
+
+    with pytest.raises(TTSOperationError) as captured:
+        await adapter.synthesize(_speech_request())
+
+    _assert_operation_error(
+        captured.value,
+        code="connection_unavailable",
+        message="The audio.cpp server is unavailable",
+        retryable=False,
+        recovery_action="check_server",
+    )
+
+
+@pytest.mark.asyncio
+async def test_synthesis_error_and_http_logs_never_retain_request_or_remote_values(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sentinel_url = "http://synthesis-origin-sentinel.invalid:8181"
+    sentinel_text = "SYNTHESIS_TEXT_SENTINEL"
+    sentinel_model = "SYNTHESIS_MODEL_SENTINEL"
+    sentinel_voice = "SYNTHESIS_VOICE_SENTINEL"
+    sentinel_body = "SYNTHESIS_BODY_SENTINEL"
+    sentinel_header = "SYNTHESIS_HEADER_SENTINEL"
+    outside_log = "OUTSIDE_SYNTHESIS_LOG_SENTINEL"
+    request_active = asyncio.Event()
+    release_request = asyncio.Event()
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        if request.url.path == "/v1/models":
+            return _streaming_response(_models_body(_model(sentinel_model)))
+        logging.getLogger("httpx").info(
+            "HTTP Request: POST %s body=%s model=%s voice=%s",
+            sentinel_url,
+            sentinel_body,
+            sentinel_model,
+            sentinel_voice,
+        )
+        logging.getLogger("httpcore.http11").debug(
+            "receive_response_headers.complete headers=%r",
+            ((b"x-private", sentinel_header.encode()),),
+        )
+        request_active.set()
+        await release_request.wait()
+        return _streaming_response(
+            (
+                b'{"error":{"message":"'
+                + sentinel_body.encode()
+                + b'","type":"server_error"}}'
+            ),
+            status=503,
+        )
+
+    caplog.set_level(logging.DEBUG)
+    async with _adapter(respond, base_url=sentinel_url) as adapter:
+        generation = asyncio.create_task(
+            adapter.synthesize(
+                _speech_request(
+                    model_id=sentinel_model,
+                    text=sentinel_text,
+                    voice=sentinel_voice,
+                )
+            )
+        )
+        await request_active.wait()
+        logging.getLogger("httpcore.http11").debug(outside_log)
+        release_request.set()
+        with pytest.raises(TTSOperationError) as captured:
+            await generation
+
+    _assert_operation_error(
+        captured.value,
+        code="connection_unavailable",
+        message="The audio.cpp server is unavailable",
+        retryable=True,
+        recovery_action="retry",
+    )
+    public_output = " ".join(
+        (
+            repr(captured.value.args),
+            str(captured.value),
+            repr(_exception_graph(captured.value)),
+            caplog.text,
+        )
+    )
+    assert all(
+        value not in public_output
+        for value in (
+            sentinel_url,
+            sentinel_text,
+            sentinel_model,
+            sentinel_voice,
+            sentinel_body,
+            sentinel_header,
+        )
+    )
+    assert outside_log in caplog.text
 
 
 @pytest.mark.asyncio
