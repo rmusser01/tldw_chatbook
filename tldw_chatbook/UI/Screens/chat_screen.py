@@ -12003,7 +12003,12 @@ class ChatScreen(BaseAppScreen):
             return
         target = path[index - 1] if index > 0 else None
         store.set_active_leaf(session_id, target)
-        self._insert_prompt_text_into_composer(choice.prompt_text, replace=True)
+        # The lookup above proves `choice.message_id` is a live message, so
+        # this can't raise -- fetch the FULL text rather than reusing
+        # `choice.prompt_text`, which is only the modal row's truncated
+        # display preview (see `ConsoleRewindChoice`/`RewindPromptRow`).
+        full_text = store.get_message(choice.message_id).content
+        self._insert_prompt_text_into_composer(full_text, replace=True)
         self._focus_console_composer_if_needed(force=True)
         await self._sync_native_console_chat_ui()
 

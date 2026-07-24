@@ -28,6 +28,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleRunState,
     ConsoleRunStatus,
+    derive_console_session_title,
 )
 from tldw_chatbook.Chat.console_command_grammar import CommandParse
 from tldw_chatbook.Widgets.Console.console_rewind_modal import (
@@ -209,6 +210,91 @@ async def test_console_command_rewind_notifies_when_no_prompts_yet():
 
         assert len(host.screen_stack) == screens_before
     assert "Nothing to rewind." in notices
+
+
+@pytest.mark.asyncio
+async def test_restore_refills_composer_with_full_prompt_not_truncated_preview():
+    """A restore target longer than the modal's ~60-char preview must refill
+    the composer with the message's FULL text, not the truncated preview
+    that `RewindPromptRow.preview` / `ConsoleRewindChoice.prompt_text` carry
+    for display purposes only. Regression for the bug where restoring to any
+    prompt over the preview's `max_length` silently clipped the re-edit.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    long_prompt = "A" * 120
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        u1 = store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content=long_prompt
+        )
+        await console._sync_native_console_chat_ui()
+
+        # Mirrors how `_console_rewind_prompt_rows` builds the modal row's
+        # `preview`, which is what a real modal selection would put in
+        # `ConsoleRewindChoice.prompt_text`.
+        preview = derive_console_session_title(long_prompt, max_length=60)
+        assert preview != long_prompt  # sanity: the preview really is truncated
+
+        spy_insert = MagicMock(return_value=True)
+        console._insert_prompt_text_into_composer = spy_insert
+
+        await console._apply_console_rewind_choice(
+            session.id,
+            ConsoleRewindChoice(kind="restore", message_id=u1.id, prompt_text=preview),
+        )
+        await pilot.pause()
+
+    spy_insert.assert_called_once_with(long_prompt, replace=True)
+
+
+@pytest.mark.asyncio
+async def test_restore_to_a_stale_message_id_makes_no_mutation_and_notifies():
+    """A restore choice targeting an id no longer on the active path (e.g. the
+    modal was opened, the tree changed underneath it, then a stale row was
+    picked) must not touch the store or the composer -- just notify. The
+    preceding `path.index()` lookup is what guards the full-text fetch this
+    task adds, so this documents that guard still holds.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session, ids = await _seed_u1_a1_u2_a2(console)
+        original_path = store.active_path_message_ids(session.id)
+        original_leaf = store.active_leaf(session.id)
+
+        spy_insert = MagicMock(return_value=True)
+        console._insert_prompt_text_into_composer = spy_insert
+
+        notices: list[tuple[str, str]] = []
+        app.notify = lambda message_text, **kwargs: notices.append(
+            (str(message_text), kwargs.get("severity", ""))
+        )
+
+        await console._apply_console_rewind_choice(
+            session.id,
+            ConsoleRewindChoice(
+                kind="restore", message_id="does-not-exist", prompt_text="x"
+            ),
+        )
+        await pilot.pause()
+
+    assert store.active_path_message_ids(session.id) == original_path
+    assert store.active_leaf(session.id) == original_leaf
+    spy_insert.assert_not_called()
+    assert any(
+        "no longer exists" in text and severity == "error"
+        for text, severity in notices
+    )
 
 
 @pytest.mark.asyncio
