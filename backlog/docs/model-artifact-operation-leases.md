@@ -40,10 +40,17 @@ through `LockFileEx`.
 - Partial set acquisition rolls back every lease already acquired. Release
   continues across cleanup failures and reports the first failure after all
   held leases have been attempted.
+- Every coordinating process must use the same persistent, dedicated lock
+  root. The lock root must not be placed inside an artifact directory that an
+  install, replacement, or deletion operation can remove.
 - The open file handle owns the OS lock. Explicit close, context exit, and
   process death release it.
 - Lock files contain no authoritative state. PID files, timestamps, stale-lock
   detection, and stale-lock cleanup are not part of correctness.
+- Never unlink or recreate a lock path while any coordinating process may
+  still hold it. Doing so can make later openers coordinate on a different
+  filesystem object from existing holders. Lock files may be unlinked only
+  after all coordinating processes have stopped.
 
 All artifact readers and writers must use this API. In particular, the
 long-lived STT worker must hold shared leases for the root model and every
@@ -98,6 +105,8 @@ revisited before artifact-core implementation starts.
   semantics are not claimed. Such storage requires separate qualification.
 - Lock files may remain after release or process death. Their existence does
   not mean a lease is held, and deleting them is not a recovery mechanism.
+  Operational cleanup must stop every coordinating process before unlinking
+  lock files or the dedicated lock root.
 - This primitive coordinates cooperating Chatbook processes; it is not an
   authorization, integrity, or sandbox boundary.
 - The `py3-none-any` wheel tag describes package distribution compatibility,

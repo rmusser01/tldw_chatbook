@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -14,6 +15,30 @@ import portalocker
 
 
 _IDENTITY_SEPARATOR = "\x1f"
+
+
+def _validate_timing(
+    timeout_seconds: float,
+    check_interval_seconds: float,
+) -> None:
+    if not math.isfinite(timeout_seconds) or timeout_seconds < 0:
+        raise ValueError("timeout_seconds must be finite and nonnegative")
+    if not math.isfinite(check_interval_seconds) or check_interval_seconds <= 0:
+        raise ValueError("check_interval_seconds must be finite and positive")
+
+
+def _release_for_context(
+    release: Callable[[], None],
+    body_error: BaseException | None,
+) -> None:
+    try:
+        release()
+    except BaseException as cleanup_error:
+        if body_error is None:
+            raise
+        body_error.add_note(f"lease context cleanup failed: {cleanup_error!r}")
+        for note in getattr(cleanup_error, "__notes__", ()):
+            body_error.add_note(note)
 
 
 class ArtifactLeaseError(RuntimeError):
@@ -33,6 +58,11 @@ class LeaseMode(str, Enum):
 
     SHARED = "shared"
     EXCLUSIVE = "exclusive"
+
+
+def _validate_mode(mode: LeaseMode) -> None:
+    if not isinstance(mode, LeaseMode):
+        raise TypeError("mode must be a LeaseMode")
 
 
 @dataclass(frozen=True, order=True)
@@ -58,9 +88,7 @@ class ArtifactLeaseKey:
     def canonical_identity(self) -> str:
         """Return the unambiguous identity used only as hash input."""
 
-        return _IDENTITY_SEPARATOR.join(
-            (self.artifact_id, self.revision, self.variant)
-        )
+        return _IDENTITY_SEPARATOR.join((self.artifact_id, self.revision, self.variant))
 
 
 class ArtifactOperationLease:
@@ -76,10 +104,8 @@ class ArtifactOperationLease:
         check_interval_seconds: float = 0.05,
         cancelled: Callable[[], bool] | None = None,
     ) -> None:
-        if timeout_seconds < 0:
-            raise ValueError("timeout_seconds must be nonnegative")
-        if check_interval_seconds <= 0:
-            raise ValueError("check_interval_seconds must be positive")
+        _validate_mode(mode)
+        _validate_timing(timeout_seconds, check_interval_seconds)
         self._lock_root = Path(lock_root)
         self.key = key
         self.mode = mode
@@ -125,7 +151,7 @@ class ArtifactOperationLease:
                     )
                 try:
                     portalocker.lock(handle, flags)
-                except portalocker.exceptions.LockException as exc:
+                except portalocker.exceptions.AlreadyLocked as exc:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         raise ArtifactLeaseTimeoutError(
@@ -134,6 +160,11 @@ class ArtifactOperationLease:
                         ) from exc
                     time.sleep(min(self.check_interval_seconds, remaining))
                     continue
+                except portalocker.exceptions.LockException as exc:
+                    raise ArtifactLeaseError(
+                        f"failed acquiring {self.mode.value} lease "
+                        f"for {self.key.artifact_id}"
+                    ) from exc
                 self._handle = handle
                 return self
         except BaseException:
@@ -155,8 +186,13 @@ class ArtifactOperationLease:
     def __enter__(self) -> ArtifactOperationLease:
         return self.acquire()
 
-    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
-        self.release()
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object,
+    ) -> None:
+        _release_for_context(self.release, exc)
 
 
 class ArtifactOperationLeaseSet:
@@ -172,11 +208,11 @@ class ArtifactOperationLeaseSet:
         check_interval_seconds: float = 0.05,
         cancelled: Callable[[], bool] | None = None,
     ) -> None:
+        _validate_mode(mode)
         ordered_keys = tuple(sorted(set(keys)))
         if not ordered_keys:
             raise ValueError("lease set requires at least one artifact key")
-        if timeout_seconds < 0:
-            raise ValueError("timeout_seconds must be nonnegative")
+        _validate_timing(timeout_seconds, check_interval_seconds)
         self._lock_root = Path(lock_root)
         self.keys = ordered_keys
         self.mode = mode
@@ -233,14 +269,17 @@ class ArtifactOperationLeaseSet:
                 if first_error is None:
                     first_error = error
                 else:
-                    first_error.add_note(
-                        f"additional lease release failure: {error!r}"
-                    )
+                    first_error.add_note(f"additional lease release failure: {error!r}")
         if first_error is not None:
             raise first_error
 
     def __enter__(self) -> ArtifactOperationLeaseSet:
         return self.acquire()
 
-    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
-        self.release()
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object,
+    ) -> None:
+        _release_for_context(self.release, exc)
