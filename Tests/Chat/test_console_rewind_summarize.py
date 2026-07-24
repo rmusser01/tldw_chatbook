@@ -431,6 +431,92 @@ async def test_compaction_anchors_on_boundary_id_not_duplicate_text():
     assert "S" in compacted[0]["content"]
 
 
+class _SkillsFake:
+    """Minimal fake skills service: resolves `$do-it` to a fixed inline
+    render. Mirrors the shape of `test_console_skill_substitution.py`'s
+    `_Skills` fake, trimmed to only what this regression needs.
+    """
+
+    async def get_context(self, *, mode="local"):
+        return {
+            "available_skills": [
+                {
+                    "name": "do-it",
+                    "description": "d",
+                    "user_invocable": True,
+                    "trust_blocked": False,
+                }
+            ],
+            "blocked_skills": [],
+        }
+
+    async def execute_skill(self, name, *, mode="local", args=None):
+        return {
+            "skill_name": name,
+            "rendered_prompt": f"RENDERED[{args}]",
+            "allowed_tools": None,
+            "execution_mode": "inline",
+            "fork_output": None,
+        }
+
+
+@pytest.mark.asyncio
+async def test_compaction_anchors_after_skill_substitution_inline_rewrite():
+    """Regression (review finding): `_apply_skill_substitution`'s non-fork
+    rewrite paths must preserve the original row's private keys (via a
+    ``{**row, ...}`` spread), exactly like chat-dictionary/world-info do --
+    otherwise, when the compaction boundary IS the final user row AND its
+    content also resolves to a skill, the inline rewrite silently drops
+    ``NATIVE_MESSAGE_ID_KEY`` and the choke point's id match misses (fails
+    SAFE to full history, but compaction never applies).
+    """
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=SummaryGateway(),
+        provider="llama_cpp",
+        model="test-model",
+        skills_service=_SkillsFake(),
+    )
+    session = store.ensure_session()
+    u1 = store.append_message(session.id, role=ConsoleMessageRole.USER, content="q1")
+    a1 = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="a1"
+    )
+    u2 = store.append_message(session.id, role=ConsoleMessageRole.USER, content="q2")
+    a2 = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="a2"
+    )
+    # The boundary is the final user row, and its content resolves to a
+    # skill -- the exact overlap the review finding calls out.
+    u3 = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="$do-it go"
+    )
+    store.set_session_context_summary(session.id, "S", u3.id)
+
+    payload = controller._provider_messages_for_session(
+        session.id, annotate_ids=True
+    )
+    substituted, refuse, notes, bindings, block = (
+        await controller._apply_skill_substitution(payload)
+    )
+    assert refuse is None
+    assert bindings == ("do-it",)
+    assert substituted[-1]["content"] == "RENDERED[go]"
+
+    compacted = controller._apply_context_summary_compaction(session.id, substituted)
+
+    texts = _payload_texts(compacted)
+    # Compaction anchored on the (id-preserved) boundary row: pre-boundary
+    # turns are dropped and the summary is folded in.
+    assert "q1" not in texts and "a1" not in texts
+    assert "q2" not in texts and "a2" not in texts
+    assert "RENDERED[go]" in texts
+    assert compacted[0]["role"] == "system"
+    assert "[Summary of earlier conversation]" in compacted[0]["content"]
+    assert "S" in compacted[0]["content"]
+
+
 @pytest.mark.asyncio
 async def test_native_message_id_key_stripped_before_provider():
     """The private id-threading key must never reach the provider: after a

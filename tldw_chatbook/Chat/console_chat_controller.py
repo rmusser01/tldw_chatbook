@@ -2424,7 +2424,10 @@ class ConsoleChatController:
                         return leading + [rendered_message], None, (), bindings, block
 
                     new_messages = list(provider_messages)
-                    new_messages[final_index] = rendered_message
+                    new_messages[final_index] = {
+                        **provider_messages[final_index],
+                        "content": rendered,
+                    }
                     return new_messages, None, (), bindings, block
 
         # --- Embedded pass: no leading mention, or the leading word didn't
@@ -2500,7 +2503,7 @@ class ConsoleChatController:
         )
         new_messages = list(provider_messages)
         new_messages[final_index] = {
-            "role": ConsoleMessageRole.USER.value,
+            **provider_messages[final_index],
             "content": new_content,
         }
         return new_messages, None, tuple(notes), spliced_names, block
@@ -3563,10 +3566,12 @@ class ConsoleChatController:
         ``NATIVE_MESSAGE_ID_KEY``); the boundary is the row whose id equals the
         stored ``boundary_native_id``. The transform pipeline between build and
         this choke point only ever rewrites/drops the FINAL user turn (skill
-        fork drops leading rows; chat-dictionary/world-info rewrite the last
-        user row via ``{**row}`` spreads that PRESERVE the key) and appends a
-        synthesized continuation turn (no key) -- so every earlier row, and thus
-        any strictly-earlier boundary, keeps its id intact.
+        fork drops leading rows; chat-dictionary/world-info AND skill-
+        substitution's own inline rewrites -- leading-mention replace and
+        embedded-mention splice -- rewrite the last user row via ``{**row}``
+        spreads that PRESERVE the key) and appends a synthesized continuation
+        turn (no key) -- so every earlier row, and thus any strictly-earlier
+        boundary, keeps its id intact.
 
         This is the genuine fail-safe: if the boundary id is not present on any
         row -- because the boundary sits after the payload's end
