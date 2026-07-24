@@ -79,3 +79,39 @@ async def test_handle_character_loaded_does_not_relabel_on_preserve():
     # Reload refreshed the reset seed but did NOT relabel (no mixed prefixes).
     pane.refresh_greeting_seed.assert_called_once()
     pane.set_speakers.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_restore_then_reload_keeps_chosen_greeting():
+    # task-438 review: a navigation restore of a chosen ALTERNATE greeting must
+    # survive the async same-character reload. restore_conversation restores the
+    # chosen index so handle_character_loaded's preserve path keeps it, instead
+    # of reverting the reset seed to the primary (which would break Reset/AC#2).
+    ctrl, _ = _controller_with_mock_pane()
+    pane = ctrl.screen.query_one.return_value
+    pane.transcript_text = MagicMock(return_value="Char: An alternate opener.")
+    pane.refresh_greeting_seed = MagicMock()
+    ctrl.refresh_provider_readout = MagicMock()
+    ctrl.screen.state = MagicMock(
+        active_mode="characters",
+        selected_entity_kind="character",
+        selected_entity_id="1",
+        selected_entity_name="Char",
+    )
+    # Restore a preview that had alternate greeting index 1 chosen.
+    await ctrl.restore_conversation(
+        greeting="An alternate opener.", history=[], seeded_for="1", greeting_index=1
+    )
+    assert ctrl._current_greeting_index == 1
+    # The async character-load worker then fires for the same character (preserve).
+    await ctrl.handle_character_loaded(
+        character_id="1",
+        card_data={
+            "name": "Char",
+            "first_message": "Primary greeting.",
+            "alternate_greetings": ["An alternate opener.", "A third opener."],
+        },
+    )
+    # The chosen index is kept and the reset seed stays the ALTERNATE, not primary.
+    assert ctrl._current_greeting_index == 1
+    pane.refresh_greeting_seed.assert_called_once_with("An alternate opener.")

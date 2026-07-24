@@ -147,7 +147,12 @@ class PersonasPreviewController:
         await self.reset(greeting, seeded_for=character_id)
 
     async def restore_conversation(
-        self, *, greeting: str, history: list[dict], seeded_for: str | None
+        self,
+        *,
+        greeting: str,
+        history: list[dict],
+        seeded_for: str | None,
+        greeting_index: int = 0,
     ) -> None:
         """Rebuild the preview (greeting + turns) from saved state (task-434).
 
@@ -161,12 +166,16 @@ class PersonasPreviewController:
             history: Saved user/assistant turns to replay into the pane.
             seeded_for: Entity id the saved preview was seeded for, normalized
                 to ``str(seeded_for)`` (or ``None`` if falsy).
+            greeting_index: The chosen greeting index at save time (task-438), so
+                the async ``handle_character_loaded`` preserve path keeps the
+                restored greeting instead of overwriting it with the primary.
 
         Returns:
             None.
         """
         self.invalidate()
         self.seeded_for = str(seeded_for) if seeded_for else None
+        self._current_greeting_index = greeting_index if greeting_index >= 0 else 0
         try:
             pane = self.screen.query_one(PersonasPreviewPane)
         except QueryError:
@@ -385,7 +394,12 @@ class PersonasPreviewController:
         self.invalidate()
 
     async def handle_greeting_selected(self, index: int) -> None:
-        """Re-seed the preview from the chosen greeting (AC#1); Reset then returns to it (AC#2)."""
+        """Re-seed the preview from the chosen greeting (AC#1); Reset then returns to it (AC#2).
+
+        Args:
+            index: Index into the greetings list to seed from; a no-op when it
+                equals the current index or is out of range.
+        """
         if index == self._current_greeting_index or not (
             0 <= index < len(self._greetings)
         ):

@@ -229,6 +229,8 @@ class PersonasPreviewPane(Vertical):
         Args:
             greetings: Processed greetings, ``greetings[0]`` the primary
                 ``first_message`` and the rest alternates.
+            selected_index: Index to point the Select at (bounds-checked); used
+                to keep a chosen alternate on a same-character reload.
         """
         row = self.query_one("#personas-preview-greeting-row")
         if len(greetings) > 1:
