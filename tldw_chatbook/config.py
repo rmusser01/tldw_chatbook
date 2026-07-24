@@ -4360,15 +4360,24 @@ BASE_DATA_DIR_CLI = Path.home() / ".local" / "share" / "tldw_cli"  # Renamed for
 # (kept for backward compatibility -- some callers reference it directly).
 # get_user_data_dir()'s fallback below does NOT use it; it resolves the
 # default at CALL time via _default_base_data_dir() instead, so per-test
-# HOME/XDG_DATA_HOME monkeypatches (applied well after this module is first
-# imported) are actually honored. See task-519.
+# HOME monkeypatches (applied well after this module is first imported) are
+# actually honored. See task-519. (XDG_DATA_HOME is deliberately NOT
+# consulted -- see _default_base_data_dir()'s docstring.)
 
 
 def _default_base_data_dir() -> Path:
-    """Resolve the default data dir at CALL time (honors post-import HOME/XDG_DATA_HOME — required for test isolation; see task-519)."""
-    xdg = os.environ.get("XDG_DATA_HOME")
-    base = Path(xdg).expanduser() if xdg else Path.home() / ".local" / "share"
-    return base / "tldw_cli"
+    """Default data dir resolved at CALL time (honors post-import HOME changes
+    for test isolation; task-519). Deliberately does NOT honor XDG_DATA_HOME:
+    the pre-existing default never did, and adding it would silently relocate
+    an XDG user's data dir on upgrade with no migration (task-519 review).
+
+    Uses os.environ["HOME"] explicitly (falling back to Path.home()) because
+    Path.home() is not guaranteed to re-read a post-import HOME monkeypatch
+    on every platform/Python version, whereas os.environ is always read live.
+    """
+    home = os.environ.get("HOME")
+    base = Path(home).expanduser() if home else Path.home()
+    return base / ".local" / "share" / "tldw_cli"
 
 
 def get_api_key(api_name: str) -> Optional[str]:

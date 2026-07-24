@@ -1,13 +1,22 @@
 """Regression tests for task-519: get_user_data_dir()'s default-dir fallback
-must resolve HOME/XDG_DATA_HOME at CALL time, not at module-import time.
+must resolve HOME at CALL time, not at module-import time.
 
 Background: `tldw_chatbook.config.BASE_DATA_DIR_CLI` used to be a module-level
 `Path.home()` constant, frozen the first time `config.py` was imported into
-the process (i.e. before any per-test HOME/XDG_DATA_HOME monkeypatch could
-possibly run). Any test that exercised the *default* data-dir fallback (no
-`paths.data_dir` configured) therefore silently read/wrote the real
-developer/CI-runner home directory -- this bit the RAG settings+profiles
-program three separate times. See backlog task-519 for the full history.
+the process (i.e. before any per-test HOME monkeypatch could possibly run).
+Any test that exercised the *default* data-dir fallback (no `paths.data_dir`
+configured) therefore silently read/wrote the real developer/CI-runner home
+directory -- this bit the RAG settings+profiles program three separate
+times. See backlog task-519 for the full history.
+
+Note on XDG_DATA_HOME: an earlier version of this fix also made the default
+fallback honor XDG_DATA_HOME (taking precedence over HOME). That was reverted
+after review: the pre-existing default NEVER consulted XDG_DATA_HOME, so
+honoring it would silently relocate a real XDG-configured user's data dir on
+upgrade -- their entire existing data tree under ~/.local/share/tldw_cli
+would appear to have vanished, with no migration and no warning. The default
+is therefore deliberately HOME-only; the tests below assert XDG_DATA_HOME is
+ignored.
 """
 
 import pytest
@@ -66,17 +75,30 @@ def test_get_user_data_dir_honors_home_set_after_import(monkeypatch, tmp_path):
     )
 
 
-def test_get_user_data_dir_honors_xdg_data_home_precedence(monkeypatch, tmp_path):
-    """XDG_DATA_HOME, when set, must take precedence over HOME/.local/share."""
-    xdg_dir = tmp_path / "xdg_data"
-    xdg_dir.mkdir(parents=True, exist_ok=True)
-    _isolate(monkeypatch, tmp_path, xdg_data=xdg_dir)
+def test_get_user_data_dir_ignores_xdg_data_home(monkeypatch, tmp_path):
+    """XDG_DATA_HOME must NOT override the default data dir, even when set.
+
+    The pre-task-519 default fallback (BASE_DATA_DIR_CLI) never consulted
+    XDG_DATA_HOME -- it was always ~/.local/share/tldw_cli. A real user who
+    has XDG_DATA_HOME exported (common on Linux desktops) already has their
+    entire tldw_cli data tree under ~/.local/share/tldw_cli from every prior
+    run. If the default fallback started honoring XDG_DATA_HOME, that user's
+    very next launch would silently resolve to a brand-new, empty
+    $XDG_DATA_HOME/tldw_cli directory -- with no migration and no warning,
+    their conversations/notes/media would appear to have vanished. So this
+    default is deliberately HOME-only; see task-519 review notes.
+    """
+    home_dir = _isolate(
+        monkeypatch, tmp_path, xdg_data=tmp_path / "xdg_data_should_be_ignored"
+    )
 
     user_dir = config.get_user_data_dir()
 
-    assert str(user_dir).startswith(str(xdg_dir)), (
-        f"get_user_data_dir() returned {user_dir!r}, expected a path under "
-        f"XDG_DATA_HOME {xdg_dir!r}."
+    assert str(user_dir).startswith(str(home_dir)), (
+        f"get_user_data_dir() returned {user_dir!r}, expected it to stay "
+        f"under HOME {home_dir!r} -- XDG_DATA_HOME must be ignored by the "
+        f"default fallback to avoid orphaning an existing XDG user's data "
+        f"on upgrade (task-519 review)."
     )
     assert "tldw_cli" in user_dir.parts
 
@@ -92,7 +114,10 @@ def test_default_base_data_dir_helper_uses_home_when_no_xdg(monkeypatch, tmp_pat
     assert resolved == home_dir / ".local" / "share" / "tldw_cli"
 
 
-def test_default_base_data_dir_helper_prefers_xdg(monkeypatch, tmp_path):
+def test_default_base_data_dir_helper_ignores_xdg(monkeypatch, tmp_path):
+    """XDG_DATA_HOME must be ignored even when it points somewhere real and
+    HOME is also set -- honoring it here would silently relocate an existing
+    XDG user's data dir on upgrade with no migration (task-519 review)."""
     home_dir = tmp_path / "plain_home"
     home_dir.mkdir(parents=True, exist_ok=True)
     xdg_dir = tmp_path / "xdg_data"
@@ -102,4 +127,4 @@ def test_default_base_data_dir_helper_prefers_xdg(monkeypatch, tmp_path):
 
     resolved = config._default_base_data_dir()
 
-    assert resolved == xdg_dir / "tldw_cli"
+    assert resolved == home_dir / ".local" / "share" / "tldw_cli"
