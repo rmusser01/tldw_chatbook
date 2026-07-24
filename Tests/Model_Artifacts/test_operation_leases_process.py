@@ -31,7 +31,9 @@ def holding_process(
     process = context.Process(target=target, args=(*args, ready, release))
     process.start()
     try:
-        assert ready.wait(10.0), f"child failed to acquire lease, exit={process.exitcode}"
+        assert ready.wait(10.0), (
+            f"child failed to acquire lease, exit={process.exitcode}"
+        )
         yield process
     finally:
         release.set()

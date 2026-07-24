@@ -122,8 +122,7 @@ def test_ci_exercises_mcp_against_minimum_textual() -> None:
     assert "Tests/UI/test_mcp_tools_mode.py" in textual_minimum
     assert (
         "needs: [unit-tests, integration-tests, ui-tests, textual-minimum, "
-        "artifact-lease-gate]"
-        in test_summary
+        "artifact-lease-gate]" in test_summary
     )
 
 
