@@ -131,13 +131,65 @@ def test_delete_user_profile_refuses_builtin_without_raising(wired):
 def test_delete_user_profile_removes_a_user_profile(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import delete_user_profile
     mgr, state = wired
-    user = _user_profile(mgr, state)
+    user = _user_profile(mgr, state)  # _user_profile also sets it active
+    # Not the case under test here (that's covered by the two I1 tests
+    # below) -- make this a plain non-active delete so it stays a check on
+    # basic removal only.
+    state["active"] = "hybrid_basic"
 
     ok, reason = delete_user_profile(user.id)
 
     assert ok is True
     assert reason == ""
     assert mgr.get_profile(user.id) is None
+
+
+# --- I1 (SP3 final review): deleting the ACTIVE profile must fall back to
+# a builtin, never leave the active-profile pointer dangling at a deleted
+# id. Both seams monkeypatched (module-seam convention: see the file's top
+# comment and test_activate_profile_flips_the_pointer_on_a_valid_user_id
+# above), so the fallback activation never touches a real config file. ---
+
+
+def test_delete_user_profile_of_the_active_profile_falls_back_to_hybrid_basic(
+    wired, monkeypatch
+):
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import delete_user_profile
+    import tldw_chatbook.UI.Screens.settings_rag_profile_adapter as ad
+    mgr, state = wired
+    user = _user_profile(mgr, state)  # clones + sets active = user.id
+    monkeypatch.setattr(
+        ad, "set_active_profile", lambda pid: state.__setitem__("active", pid)
+    )
+
+    ok, message = delete_user_profile(user.id)
+
+    assert ok is True
+    assert state["active"] == "hybrid_basic"
+    assert "Hybrid Basic" in message
+
+
+def test_delete_user_profile_of_a_non_active_profile_leaves_the_pointer_untouched(
+    wired, monkeypatch
+):
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import delete_user_profile
+    import tldw_chatbook.UI.Screens.settings_rag_profile_adapter as ad
+    mgr, state = wired
+    user = _user_profile(mgr, state)
+    other = mgr.clone_profile("hybrid_basic", "Other RAG")
+    mgr.save_profile(other)
+    state["active"] = user.id  # user profile stays active throughout
+    set_active_calls: list[str] = []
+    monkeypatch.setattr(
+        ad, "set_active_profile", lambda pid: set_active_calls.append(pid)
+    )
+
+    ok, message = delete_user_profile(other.id)
+
+    assert ok is True
+    assert message == ""
+    assert set_active_calls == []
+    assert state["active"] == user.id
 
 
 def test_clone_profile_as_creates_a_new_writable_profile(wired):
