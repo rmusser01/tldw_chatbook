@@ -477,10 +477,16 @@ Append:
 
 ```python
 # Tests/Model_Artifacts/test_operation_leases.py
-from tldw_chatbook.Model_Artifacts.leases import ArtifactOperationLeaseSet
+def lease_set_type():
+    """Resolve the wished-for type inside a test so RED is a test failure."""
+
+    from tldw_chatbook.Model_Artifacts import leases
+
+    return leases.ArtifactOperationLeaseSet
 
 
 def test_lease_set_sorts_and_deduplicates_keys(tmp_path: Path) -> None:
+    ArtifactOperationLeaseSet = lease_set_type()
     keys = [
         ArtifactLeaseKey("vad", "rev-b", "fp32"),
         ArtifactLeaseKey("parakeet", "rev-a", "int8"),
@@ -499,6 +505,7 @@ def test_lease_set_sorts_and_deduplicates_keys(tmp_path: Path) -> None:
 
 
 def test_partial_set_failure_releases_already_acquired_keys(tmp_path: Path) -> None:
+    ArtifactOperationLeaseSet = lease_set_type()
     first = ArtifactLeaseKey("a-root", "rev", "int8")
     blocked = ArtifactLeaseKey("z-vad", "rev", "fp32")
 
@@ -522,6 +529,7 @@ def test_partial_set_failure_releases_already_acquired_keys(tmp_path: Path) -> N
 
 
 def test_empty_lease_set_is_rejected(tmp_path: Path) -> None:
+    ArtifactOperationLeaseSet = lease_set_type()
     with pytest.raises(ValueError, match="at least one"):
         ArtifactOperationLeaseSet(tmp_path, [], LeaseMode.SHARED)
 ```
@@ -534,7 +542,8 @@ Run:
 pytest Tests/Model_Artifacts/test_operation_leases.py -v
 ```
 
-Expected: collection fails because `ArtifactOperationLeaseSet` is not exported.
+Expected: all three new tests collect and fail at runtime with
+`AttributeError` because `ArtifactOperationLeaseSet` does not exist.
 
 - [ ] **Step 3: Implement ordered set acquisition and reverse rollback**
 
@@ -614,6 +623,9 @@ Add `ArtifactOperationLeaseSet` to the import and `__all__` lists in
 `tldw_chatbook/Model_Artifacts/__init__.py`.
 
 - [ ] **Step 4: Run the complete unit file**
+
+After GREEN, replace `lease_set_type()` with a direct
+`ArtifactOperationLeaseSet` import and remove the three local assignments.
 
 Run:
 
