@@ -4,9 +4,10 @@
 
 **Date:** 2026-07-23
 
-**Related task:** N/A — a Backlog task must be created or selected before implementation planning
+**Related tasks:** TASK-404 through TASK-417; see the
+[delivery map](../plans/2026-07-23-stt-artifact-runtime-delivery-map.md)
 
-**Canonical ADR:** [ADR-024](../../../backlog/decisions/024-shared-stt-artifacts-and-runtime-routing.md)
+**Canonical ADR:** [ADR-025](../../../backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md)
 
 **Primary upstreams reviewed:** `onnx-asr` 0.12.0 and `transcribe.cpp` 0.1.3
 
@@ -1310,7 +1311,7 @@ record are simpler and safer.
 Before implementation planning:
 
 1. Create or select atomic Backlog tasks in dependency order.
-2. Link [ADR-024](../../../backlog/decisions/024-shared-stt-artifacts-and-runtime-routing.md)
+2. Link [ADR-025](../../../backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md)
    from each affected task and plan.
 3. Create one independently reviewable task/PR for each dependency-ordered
    delivery slice:
