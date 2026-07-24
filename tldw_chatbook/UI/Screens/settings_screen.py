@@ -8036,7 +8036,7 @@ class SettingsScreen(BaseAppScreen):
                 )
                 with Horizontal(classes="settings-input-row"):
                     yield Static(
-                        "Embedding model ⚠ re-index", classes="settings-input-label"
+                        "Embedding model ⚠", classes="settings-input-label"
                     )
                     yield Input(
                         value=str(values["embedding_model"]),
@@ -8066,7 +8066,7 @@ class SettingsScreen(BaseAppScreen):
                     )
                 with Horizontal(classes="settings-input-row"):
                     yield Static(
-                        "Max length ⚠ re-index", classes="settings-input-label"
+                        "Max length ⚠", classes="settings-input-label"
                     )
                     yield Input(
                         value=str(values["embedding_max_length"]),
@@ -8088,7 +8088,7 @@ class SettingsScreen(BaseAppScreen):
                 )
                 with Horizontal(classes="settings-input-row"):
                     yield Static(
-                        "Chunk size ⚠ re-index", classes="settings-input-label"
+                        "Chunk size ⚠", classes="settings-input-label"
                     )
                     yield Input(
                         value=str(values["chunk_size"]),
@@ -8100,7 +8100,7 @@ class SettingsScreen(BaseAppScreen):
                     )
                 with Horizontal(classes="settings-input-row"):
                     yield Static(
-                        "Chunk overlap ⚠ re-index", classes="settings-input-label"
+                        "Chunk overlap ⚠", classes="settings-input-label"
                     )
                     yield Input(
                         value=str(values["chunk_overlap"]),
@@ -8112,7 +8112,7 @@ class SettingsScreen(BaseAppScreen):
                     )
                 with Horizontal(classes="settings-input-row settings-select-row"):
                     yield Static(
-                        "Method ⚠ re-index", classes="settings-input-label"
+                        "Method ⚠", classes="settings-input-label"
                     )
                     yield Select(
                         [
@@ -8139,7 +8139,7 @@ class SettingsScreen(BaseAppScreen):
                 )
                 with Horizontal(classes="settings-input-row settings-select-row"):
                     yield Static(
-                        "Distance metric ⚠ re-index",
+                        "Distance metric ⚠",
                         classes="settings-input-label",
                     )
                     yield Select(
