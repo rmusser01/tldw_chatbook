@@ -153,7 +153,7 @@ def test_action_labels_fit_compact_terminal_width_budget():
     labels = service.plain_action_labels(message)
 
     assert " ".join(labels) == "Copy 🔊 Edit Save as... ♻ ---> 👍 👎 🗑"
-    assert len(" ".join(labels)) <= 50
+    assert len(" ".join(labels)) <= 48
 
 
 def test_variant_action_labels_use_symbolic_navigation():
@@ -242,7 +242,7 @@ def test_variant_action_labels_fit_compact_terminal_width_budget():
     labels = service.plain_action_labels(message)
 
     assert " ".join(labels) == "Copy 🔊 Edit Save as... < > ♻ ---> 👍 👎 🗑"
-    assert len(" ".join(labels)) <= 54
+    assert len(" ".join(labels)) <= 52
 
 
 def test_failed_action_labels_include_retry_inside_terminal_width_budget():

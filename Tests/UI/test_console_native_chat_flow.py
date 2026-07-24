@@ -2507,11 +2507,17 @@ async def test_console_message_action_keyboard_focus_stays_inside_action_row():
     host = ConsoleHarness(app)
 
     # TASK-1: the row now carries a 9th always-visible action button (speak,
-    # right after copy) -- at this project's per-button min-width of 16 that
-    # no longer fits inside the previous 160-col reference width without the
-    # trailing buttons (delete included) landing off the right edge of the
-    # terminal, so this widened just enough to keep every button in-bounds
-    # and genuinely clickable.
+    # right after copy). ConsoleHarness is a bare App (not TldwCli), so it
+    # never loads the app's built CSS bundle -- only widget DEFAULT_CSS (see
+    # the note at chat_screen.py:726-728) -- so the bundle's
+    # `.console-transcript-action-button { min-width: 5 }` override never
+    # applies in this harness and every button falls back to Textual's
+    # built-in Button min-width of 16. That no longer fits inside the
+    # previous 160-col reference width without the trailing buttons (delete
+    # included) landing off the right edge of the terminal, so this widened
+    # just enough to keep every button in-bounds and genuinely clickable
+    # here. This is a test-harness gap, not a CSS bug: the real app loads
+    # the bundle and renders the row far narrower.
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
@@ -2942,9 +2948,11 @@ async def test_console_selected_message_delete_action_removes_message_from_trans
     host = ConsoleHarness(app)
 
     # TASK-1: widened per the comment on test_console_message_action_
-    # keyboard_focus_stays_inside_action_row -- the row's now-9 buttons no
-    # longer fit inside 160 cols, which put the coordinate-clicked delete
-    # button off the right edge of the terminal.
+    # keyboard_focus_stays_inside_action_row -- ConsoleHarness's missing CSS
+    # bundle (not a CSS bug) forces the row's now-9 buttons to Textual's
+    # default min-width of 16, no longer fitting inside 160 cols, which put
+    # the coordinate-clicked delete button off the right edge of the
+    # terminal.
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
@@ -2993,7 +3001,9 @@ async def test_console_delete_confirmation_resets_when_selection_changes():
     host = ConsoleHarness(app)
 
     # TASK-1: widened for the same reason as the other two tests above --
-    # the row's now-9 buttons no longer fit inside 160 cols.
+    # ConsoleHarness's missing CSS bundle (not a CSS bug) forces the row's
+    # now-9 buttons to Textual's default min-width of 16, no longer fitting
+    # inside 160 cols.
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
