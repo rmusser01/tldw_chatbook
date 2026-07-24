@@ -1254,8 +1254,8 @@ class TestSearch:
             assert [_row_text(r) for r in rows] == ["Navigator"]
             count = str(screen.query_one("#personas-library-count", Static).renderable)
             # Task 4: personas paginate in-memory; the count is the match total.
-            # task-445: a total of exactly 1 reads singular ("1 persona profile").
-            assert "1 persona profile" in count
+            # task-445: a total of exactly 1 reads singular ("1 user profile").
+            assert "1 user profile" in count
 
     async def test_mode_switch_clears_search(
         self, mock_app_instance, stub_characters, stub_scope_service

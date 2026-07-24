@@ -1239,7 +1239,7 @@ class PersonasScreen(BaseAppScreen):
             await library.update_rows(
                 rows,
                 total=total,
-                noun="persona profiles",
+                noun="user profiles",
                 recovery_copy=(
                     recovery_state.visible_copy if recovery_state is not None else None
                 ),
@@ -4071,7 +4071,7 @@ class PersonasScreen(BaseAppScreen):
         message.stop()
         if str(message.persona_id) != (self.state.selected_entity_id or ""):
             self._notify(
-                "Selection out of sync; reselect the persona profile.", "warning"
+                "Selection out of sync; reselect the user profile.", "warning"
             )
             return
         record = await self._fetch_profile_record(str(message.persona_id))
@@ -5755,7 +5755,7 @@ class PersonasScreen(BaseAppScreen):
             )
             if service is None or not hasattr(service, "delete_user_profile"):
                 self._notify(
-                    "Delete failed: persona profiles are unavailable.", "error"
+                    "Delete failed: user profiles are unavailable.", "error"
                 )
                 return
             try:
@@ -5772,7 +5772,7 @@ class PersonasScreen(BaseAppScreen):
                 # `..._version_conflict:` ValueError marker; map it onto the
                 # same recovery copy the character path uses.
                 if "version_conflict" in str(exc):
-                    self._notify(conflict_copy.format(noun="persona profile"), "error")
+                    self._notify(conflict_copy.format(noun="user profile"), "error")
                 else:
                     self._notify(f"Delete failed: {exc}", "error")
                 return
@@ -6013,7 +6013,7 @@ class PersonasScreen(BaseAppScreen):
         self.query_one(PersonasInspectorPane).show_validation_editing()
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         if service is None:
-            self._notify("Save failed: persona profiles are unavailable.", "error")
+            self._notify("Save failed: user profiles are unavailable.", "error")
             return
         self._profile_save_inflight = True
         # mode/persona_id are read INSIDE the try (rather than before it) so
