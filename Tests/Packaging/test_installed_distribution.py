@@ -130,6 +130,24 @@ def _wheel_members(path: Path) -> set[str]:
         return {name for name in archive.namelist() if not name.endswith("/")}
 
 
+def _run_manifest_checker(
+    built: BuiltDistributions,
+    dist_dir: Path,
+    cwd: Path,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            str(built.source_root / "Packaging" / "check_manifest.py"),
+            str(dist_dir),
+        ],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
 def test_built_artifacts_match_distribution_contract(
     built_distributions: BuiltDistributions,
 ) -> None:
@@ -224,3 +242,75 @@ def test_built_artifacts_match_distribution_contract(
         "tldw-cli": "tldw_chatbook.cli:main_cli_runner",
         "tldw-serve": "tldw_chatbook.Web_Server.serve:main",
     }
+
+
+def test_release_checker_accepts_fresh_artifacts(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+) -> None:
+    result = _run_manifest_checker(
+        built_distributions,
+        built_distributions.dist_dir,
+        tmp_path,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_release_checker_rejects_multiple_wheels(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    shutil.copy2(
+        built_distributions.wheel,
+        dist_dir / f"duplicate-{built_distributions.wheel.name}",
+    )
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+
+    assert result.returncode == 1
+    assert "exactly one wheel" in (result.stdout + result.stderr).lower()
+
+
+def test_release_checker_rejects_sdist_only_css_in_wheel(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    wheel = next(dist_dir.glob("*.whl"))
+    with zipfile.ZipFile(wheel, "a") as archive:
+        archive.writestr(
+            "tldw_chatbook/css/components/stats_screen.css",
+            "forbidden",
+        )
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+
+    assert result.returncode == 1
+    assert "stats_screen.css" in result.stdout + result.stderr
+
+
+def test_release_checker_rejects_missing_runtime_data(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    wheel = next(dist_dir.glob("*.whl"))
+    rewritten = wheel.with_suffix(".rewritten")
+    missing = "tldw_chatbook/Evals/config/eval_config.yaml"
+    with (
+        zipfile.ZipFile(wheel) as source,
+        zipfile.ZipFile(rewritten, "w") as destination,
+    ):
+        for member in source.infolist():
+            if member.filename != missing:
+                destination.writestr(member, source.read(member.filename))
+    rewritten.replace(wheel)
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+
+    assert result.returncode == 1
+    assert missing in result.stdout + result.stderr
