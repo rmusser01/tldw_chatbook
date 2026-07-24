@@ -462,12 +462,46 @@ def rename_user_profile(profile_id: str, new_name: str) -> tuple[bool, str]:
 
 
 def delete_user_profile(profile_id: str) -> tuple[bool, str]:
-    """Delete a user profile. (False, reason) for a builtin id or on failure."""
+    """Delete a user profile. (False, reason) for a builtin id or on failure.
+
+    Deleting the currently ACTIVE profile must never leave the active-profile
+    pointer dangling at a now-deleted id -- unlike ``resolve_active_rag_config``
+    (which silently falls back to ``hybrid_basic`` when the pointer names a
+    missing profile), this module's own ``_active_profile()``/
+    ``active_profile_info()`` do NOT fall back, so the editor would render
+    read-only "(missing)" with defaults until something else fixed the
+    pointer. So: when this deletes the active profile, the active-profile
+    pointer is explicitly flipped to the "hybrid_basic" builtin (SP3 spec:
+    "deleting the active profile falls back to a builtin") before returning.
+
+    Returns:
+        ``(True, "")`` on an ordinary (non-active) delete; ``(True, note)``
+        where ``note`` describes the hybrid_basic fallback when this deleted
+        the active profile; ``(False, reason)`` for a builtin id or a
+        failure.
+    """
+    was_active = profile_id == _active_profile_id()
     try:
         deleted = _manager().delete_profile(profile_id)
-        return (True, "") if deleted else (False, "not-found")
     except ValueError as e:
         return False, str(e)
     except Exception as e:  # see clone_profile_as: raw file I/O, thread @work
         logger.error(f"delete_user_profile({profile_id!r}) failed: {e}")
         return False, str(e)
+    if not deleted:
+        return False, "not-found"
+    if not was_active:
+        return True, ""
+    ok, reason = activate_profile("hybrid_basic")
+    if not ok:
+        # The delete itself already succeeded -- a failed fallback-activation
+        # must not be reported as a delete failure, just logged. The pointer
+        # is left dangling exactly like the pre-fix behaviour, which
+        # resolve_active_rag_config() already tolerates at resolution time
+        # even though this module's own active_profile_info() does not.
+        logger.error(
+            f"delete_user_profile({profile_id!r}): deleted the active profile "
+            f"but the hybrid_basic fallback activation failed: {reason}"
+        )
+        return True, ""
+    return True, f"Active profile is now {active_profile_info()['name']}."
