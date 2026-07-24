@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-07-24 01:01'
-updated_date: '2026-07-24 01:13'
+updated_date: '2026-07-24 16:52'
 labels:
   - stt
   - artifacts
@@ -16,6 +16,7 @@ references:
 documentation:
   - Docs/superpowers/specs/2026-07-23-stt-parakeet-onnx-transcribe-cpp-design.md
   - Docs/superpowers/plans/2026-07-23-model-artifact-operation-leases.md
+  - backlog/docs/model-artifact-operation-leases.md
 priority: high
 ---
 

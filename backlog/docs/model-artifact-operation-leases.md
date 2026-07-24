@@ -86,9 +86,23 @@ set deadline.
 
 ### Current status
 
-Local macOS verification passes. Native qualification is still pending until
-the Ubuntu, macOS, and Windows matrix entries all pass for one final commit.
-Do not treat local success, the presence of the workflow, or a subset of the
+The following local macOS qualification evidence was collected on 2026-07-24:
+
+| Field | Evidence |
+| --- | --- |
+| Tested commit | `b7ceaa2bf684c70e38119ca07ada49cd6b3368b7` |
+| Merged by | PR #825 merge commit `756c56cabca5f92176058452a31f508dacdb4b03` |
+| Operating system | macOS 15.6 (`24G84`) |
+| Architecture | Apple arm64 |
+| Python | CPython 3.11.13 |
+| Lease package | Portalocker 3.2.0, BSD-3-Clause, Python >=3.9 |
+| Command | `pytest Tests/Model_Artifacts/test_operation_leases.py Tests/Model_Artifacts/test_operation_leases_process.py -q` |
+| Result | 53 passed |
+
+This matches the Python version and exact test targets in the hosted
+`macos-latest` matrix entry. Native qualification is still pending until the
+Ubuntu, macOS, and Windows matrix entries all pass for one final commit. Do not
+treat this local success, the presence of the workflow, or a subset of the
 matrix as cross-platform proof.
 
 TASK-507 remains blocked while that native result is pending. Any native
