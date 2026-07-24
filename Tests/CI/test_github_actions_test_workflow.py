@@ -32,6 +32,18 @@ def _textual_minimum_job_block() -> str:
 def _artifact_lease_job_block() -> str:
     workflow = _workflow_text()
     start = workflow.index("  artifact-lease-spike:")
+    shape_start = workflow.find("  artifact-lease-shape:", start)
+    end = (
+        shape_start
+        if shape_start != -1
+        else workflow.index("  artifact-lease-gate:", start)
+    )
+    return workflow[start:end]
+
+
+def _artifact_lease_shape_job_block() -> str:
+    workflow = _workflow_text()
+    start = workflow.index("  artifact-lease-shape:")
     end = workflow.index("  artifact-lease-gate:", start)
     return workflow[start:end]
 
@@ -49,7 +61,7 @@ def _test_summary_job_block() -> str:
     return workflow[start:]
 
 
-def _assert_artifact_lease_test_targets(block: str) -> None:
+def _pytest_invocations(block: str) -> list[list[str]]:
     lines = iter(block.splitlines())
     pytest_invocations: list[list[str]] = []
 
@@ -61,6 +73,12 @@ def _assert_artifact_lease_test_targets(block: str) -> None:
         while command.endswith("\\"):
             command = f"{command[:-1].rstrip()} {next(lines).strip()}"
         pytest_invocations.append(shlex.split(command))
+
+    return pytest_invocations
+
+
+def _assert_artifact_lease_test_targets(block: str) -> None:
+    pytest_invocations = _pytest_invocations(block)
 
     assert len(pytest_invocations) == 1
     test_targets = tuple(
@@ -134,15 +152,43 @@ def test_artifact_lease_target_check_rejects_unrelated_explicit_test() -> None:
         _assert_artifact_lease_test_targets(mutated)
 
 
+def test_ci_shape_regression_runs_in_dedicated_pull_request_job() -> None:
+    workflow = _workflow_text()
+
+    assert "  artifact-lease-shape:" in workflow
+    shape = _artifact_lease_shape_job_block()
+    install_commands = [
+        line.strip()
+        for line in shape.splitlines()
+        if line.strip().startswith(("pip install ", "python -m pip install "))
+    ]
+
+    assert "runs-on: ubuntu-latest" in shape
+    assert "if:" not in shape
+    assert "uses: actions/checkout@v4" in shape
+    assert "uses: actions/setup-python@v5" in shape
+    assert 'python-version: "3.11"' in shape
+    assert install_commands == ["python -m pip install pytest pytest-timeout"]
+    assert _pytest_invocations(shape) == [
+        [
+            "pytest",
+            "Tests/CI/test_github_actions_test_workflow.py",
+            "--confcutdir=Tests/CI",
+        ]
+    ]
+
+
 def test_artifact_lease_gate_exposes_stable_required_context() -> None:
     gate = _artifact_lease_gate_job_block()
     test_summary = _test_summary_job_block()
 
     assert "name: Artifact Lease Gate" in gate
     assert "runs-on: ubuntu-latest" in gate
-    assert "needs: [artifact-lease-spike]" in gate
+    assert "needs: [artifact-lease-spike, artifact-lease-shape]" in gate
     assert "if: always()" in gate
-    assert "needs.artifact-lease-spike.result" in gate
-    assert '!= "success"' in gate
+    assert (
+        'if [ "${{ needs.artifact-lease-spike.result }}" != "success" ] || '
+        '[ "${{ needs.artifact-lease-shape.result }}" != "success" ]; then' in gate
+    )
     assert "exit 1" in gate
     assert "artifact-lease-gate" in test_summary
