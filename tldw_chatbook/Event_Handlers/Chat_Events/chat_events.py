@@ -1411,6 +1411,12 @@ async def handle_chat_send_button_pressed(
             classes="-world-info-indicator",
         )
         await chat_container.mount(world_info_widget, before=ai_placeholder_widget)
+        # Re-scroll after inserting above the placeholder: both step-8/step-10
+        # scroll_end calls ran BEFORE this mount, so without this the added
+        # content height would leave the placeholder (and this indicator)
+        # below the viewport until the first streamed chunk re-scrolls
+        # (task-413 review).
+        chat_container.scroll_end(animate=False)
         loguru_logger.debug(f"Added world info indicator: {world_info_count} entries")
 
     # --- 11. Prepare and Dispatch API Call via Worker ---
