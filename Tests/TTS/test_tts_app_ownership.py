@@ -165,23 +165,30 @@ def test_existing_mount_binds_before_screen_work() -> None:
     assert bind_calls[0].lineno < restore_calls[0].lineno
 
 
-def test_unmount_closes_owned_service_without_handler_guard() -> None:
+def test_unmount_closes_owned_service_from_outer_finally() -> None:
     method = _method_node(REPO_ROOT / "tldw_chatbook/app.py", "TldwCli", "on_unmount")
     close_calls = _self_method_calls(method, "_close_tts_service")
-    parent_by_node = {
-        child: parent
-        for parent in ast.walk(method)
-        for child in ast.iter_child_nodes(parent)
-    }
 
     assert len(close_calls) == 1
-    parent = parent_by_node[close_calls[0]]
-    try_ancestors = 0
-    while parent is not method:
-        assert not isinstance(parent, ast.If)
-        try_ancestors += isinstance(parent, ast.Try)
-        parent = parent_by_node[parent]
-    assert try_ancestors == 1
+    enclosing_cleanup = next(
+        statement
+        for statement in method.body
+        if isinstance(statement, ast.Try)
+        and any(
+            close_calls[0] in ast.walk(finally_statement)
+            for finally_statement in statement.finalbody
+        )
+    )
+    assert any(
+        _self_method_calls(statement, "_disconnect_local_mcp_client")
+        for statement in enclosing_cleanup.body
+    )
+    assert not any(
+        isinstance(node, ast.If)
+        for finally_statement in enclosing_cleanup.finalbody
+        for node in ast.walk(finally_statement)
+        if close_calls[0] in ast.walk(finally_statement)
+    )
 
 
 def test_application_and_stts_do_not_reach_through_to_backend_manager() -> None:
@@ -380,6 +387,180 @@ async def test_stts_cleanup_cancels_and_joins_tracked_event_tasks(
             if not task.done():
                 task.cancel()
         await asyncio.gather(*created_tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_stts_conversion_cancellation_tracks_and_deletes_partial_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class OneChunkService:
+        async def generate_audio_stream(
+            self,
+            request: object,
+            internal_model_id: str,
+            progress_sink: ProgressSink | None = None,
+        ) -> AsyncIterator[bytes]:
+            del request, internal_model_id, progress_sink
+            yield b"RIFF"
+
+    conversion_started = asyncio.Event()
+    process_terminated = asyncio.Event()
+    process_waited = asyncio.Event()
+    output_path: Path | None = None
+
+    class FakeProcess:
+        returncode: int | None = None
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            assert output_path is not None
+            output_path.write_bytes(b"partial")
+            conversion_started.set()
+            await asyncio.Event().wait()
+            return b"", b""
+
+        def terminate(self) -> None:
+            self.returncode = 0
+            process_terminated.set()
+            raise ProcessLookupError
+
+        async def wait(self) -> int:
+            process_waited.set()
+            return self.returncode or 0
+
+    async def create_process(*command: object, **kwargs: object) -> FakeProcess:
+        del kwargs
+        nonlocal output_path
+        output_path = Path(str(command[-1]))
+        return FakeProcess()
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.STTS_Events.stts_events.asyncio.create_subprocess_exec",
+        create_process,
+    )
+    handler = STTSEventHandler(app=SimpleNamespace(notify=Mock()))
+    handler._stts_service = OneChunkService()
+    event = STTSPlaygroundGenerateEvent(
+        text="hello",
+        provider="openai",
+        voice="alloy",
+        model="tts-1",
+        speed=1.0,
+        format="mp3",
+    )
+    generation = asyncio.create_task(handler._generate_tts_worker(event))
+
+    try:
+        await conversion_started.wait()
+        assert output_path is not None
+        owned_before_cancellation = output_path in handler._playground_audio_files
+        generation.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await generation
+
+        await handler.cleanup_tts_resources()
+
+        assert owned_before_cancellation
+        assert process_terminated.is_set()
+        assert process_waited.is_set()
+        assert not output_path.exists()
+    finally:
+        if not generation.done():
+            generation.cancel()
+            await asyncio.gather(generation, return_exceptions=True)
+        if output_path is not None:
+            output_path.unlink(missing_ok=True)
+        for path in handler._playground_audio_files:
+            path.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_stts_cleanup_finishes_deleting_owned_audio(
+    tmp_path: Path,
+) -> None:
+    handler = STTSEventHandler(app=SimpleNamespace(notify=Mock()))
+    owned_audio = tmp_path / "playground.wav"
+    owned_audio.write_bytes(b"temporary")
+    handler._playground_audio_files.add(owned_audio)
+    task_started = asyncio.Event()
+    task_cancelling = asyncio.Event()
+    release_task = asyncio.Event()
+
+    async def active_handler_task() -> None:
+        task_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            task_cancelling.set()
+            await release_task.wait()
+
+    handler._start_event_task(active_handler_task())
+    await task_started.wait()
+    cleanup = asyncio.create_task(handler.cleanup_tts_resources())
+
+    try:
+        await task_cancelling.wait()
+        cleanup.cancel()
+        await asyncio.sleep(0)
+        release_task.set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await cleanup
+
+        assert not owned_audio.exists()
+        assert handler._playground_audio_files == set()
+        assert handler._active_tasks == set()
+    finally:
+        release_task.set()
+        if not cleanup.done():
+            cleanup.cancel()
+            await asyncio.gather(cleanup, return_exceptions=True)
+        for task in tuple(handler._active_tasks):
+            task.cancel()
+        await asyncio.gather(*handler._active_tasks, return_exceptions=True)
+        owned_audio.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
+async def test_stts_cleanup_does_not_wait_for_its_calling_event_task() -> None:
+    handler = STTSEventHandler(app=SimpleNamespace(notify=Mock()))
+    cleanup_returned = asyncio.Event()
+
+    async def cleanup_from_event_task() -> None:
+        await handler.cleanup_tts_resources()
+        cleanup_returned.set()
+
+    handler._start_event_task(cleanup_from_event_task())
+
+    await asyncio.wait_for(cleanup_returned.wait(), timeout=1)
+    await asyncio.sleep(0)
+
+    assert handler._cleanup_task is not None
+    assert handler._cleanup_task.done()
+    assert handler._active_tasks == set()
+
+
+@pytest.mark.asyncio
+async def test_stts_cleanup_seals_handler_against_late_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handler = STTSEventHandler(app=SimpleNamespace(notify=Mock()))
+    handler._stts_service = object()
+    generate = AsyncMock()
+    monkeypatch.setattr(handler, "_generate_tts_worker", generate)
+    event = STTSPlaygroundGenerateEvent(
+        text="hello",
+        provider="openai",
+        voice="alloy",
+        model="tts-1",
+        speed=1.0,
+        format="wav",
+    )
+
+    await handler.cleanup_tts_resources()
+    await handler.handle_playground_generate(event)
+
+    generate.assert_not_awaited()
+    assert handler._active_tasks == set()
 
 
 @pytest.mark.asyncio

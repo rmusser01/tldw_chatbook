@@ -18,6 +18,7 @@ from textual.widgets import Button, Select, RichLog, Static, ProgressBar
 # Local imports
 from tldw_chatbook.TTS import get_tts_service, OpenAISpeechRequest
 from tldw_chatbook.TTS.adapter_types import TTSProgress
+from tldw_chatbook.TTS.TTS_Generation import _join_retained_task
 from tldw_chatbook.Utils.secure_temp_files import secure_delete_file
 from tldw_chatbook.config import get_cli_setting
 #
@@ -91,6 +92,7 @@ class STTSEventHandler:
         self._is_generating = False
         self._active_tasks: set[asyncio.Task[Any]] = set()
         self._playground_audio_files: set[Path] = set()
+        self._cleanup_task: asyncio.Task[None] | None = None
 
     async def initialize_stts(self) -> None:
         """Initialize S/TT/S service"""
@@ -137,6 +139,9 @@ class STTSEventHandler:
         self, event: STTSPlaygroundGenerateEvent
     ) -> None:
         """Handle TTS generation from playground"""
+        if self._cleanup_task is not None:
+            logger.debug("Ignoring TTS generation after STTS cleanup started")
+            return
         if self._is_generating:
             self.app.notify("TTS generation already in progress", severity="warning")
             return
@@ -468,6 +473,8 @@ class STTSEventHandler:
                         update_converting()
 
                 # Convert audio format
+                conversion_destination = wav_file.with_suffix(f".{requested_format}")
+                self._playground_audio_files.add(conversion_destination)
                 converted_file = await self._convert_audio_format(
                     wav_file, requested_format
                 )
@@ -478,9 +485,13 @@ class STTSEventHandler:
                         logger.warning(
                             f"Failed to delete temporary WAV file: {wav_file}"
                         )
-                    self._playground_audio_files.add(converted_file)
                     self._current_audio_file = converted_file
                 else:
+                    if (
+                        secure_delete_file(conversion_destination)
+                        or not conversion_destination.exists()
+                    ):
+                        self._playground_audio_files.discard(conversion_destination)
                     # Conversion failed, use WAV file
                     logger.warning(
                         f"Failed to convert to {requested_format}, using WAV"
@@ -569,6 +580,9 @@ class STTSEventHandler:
 
     async def handle_settings_save(self, event: STTSSettingsSaveEvent) -> None:
         """Handle settings save"""
+        if self._cleanup_task is not None:
+            logger.debug("Ignoring STTS settings after cleanup started")
+            return
         try:
             from tldw_chatbook.config import save_setting_to_cli_config
 
@@ -664,6 +678,7 @@ class STTSEventHandler:
         self, input_file: Path, output_format: str
     ) -> Optional[Path]:
         """Convert audio file to a different format using ffmpeg"""
+        process: asyncio.subprocess.Process | None = None
         try:
             # Create output file with requested format
             output_file = input_file.with_suffix(f".{output_format}")
@@ -707,6 +722,14 @@ class STTSEventHandler:
                 logger.error(f"ffmpeg conversion failed: {stderr_text}")
                 return None
 
+        except asyncio.CancelledError:
+            if process is not None:
+                terminate_task = asyncio.create_task(
+                    self._terminate_conversion_process(process),
+                    name="stts_ffmpeg_terminate",
+                )
+                await _join_retained_task(terminate_task)
+            raise
         except FileNotFoundError:
             logger.error(
                 "ffmpeg not found. Please install ffmpeg for audio format conversion."
@@ -716,10 +739,33 @@ class STTSEventHandler:
             logger.error(f"Audio conversion failed: {e}")
             return None
 
+    @staticmethod
+    async def _terminate_conversion_process(
+        process: asyncio.subprocess.Process,
+    ) -> None:
+        """Terminate ffmpeg, escalating to kill if it does not exit promptly."""
+        if process.returncode is None:
+            try:
+                process.terminate()
+            except ProcessLookupError:
+                pass
+        try:
+            await asyncio.wait_for(process.wait(), timeout=2)
+        except TimeoutError:
+            if process.returncode is None:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+            await process.wait()
+
     async def handle_audiobook_generate(
         self, event: STTSAudioBookGenerateEvent
     ) -> None:
         """Handle audiobook generation"""
+        if self._cleanup_task is not None:
+            logger.debug("Ignoring audiobook generation after STTS cleanup started")
+            return
         try:
             from tldw_chatbook.TTS.audiobook_generator import (
                 AudioBookGenerator,
@@ -949,13 +995,30 @@ class STTSEventHandler:
 
     def _start_event_task(self, coroutine: Coroutine[Any, Any, None]) -> None:
         """Start and retain an event task until it finishes."""
+        if self._cleanup_task is not None:
+            coroutine.close()
+            logger.debug("Ignoring STTS event after cleanup started")
+            return
         task = asyncio.create_task(coroutine)
         self._active_tasks.add(task)
         task.add_done_callback(self._active_tasks.discard)
 
     async def cleanup_tts_resources(self) -> None:
+        """Join retained cleanup before propagating caller cancellation."""
+        if self._cleanup_task is None:
+            caller = asyncio.current_task()
+            self._cleanup_task = asyncio.create_task(
+                self._cleanup_owned_resources(caller),
+                name="stts_handler_cleanup",
+            )
+        await _join_retained_task(self._cleanup_task)
+
+    async def _cleanup_owned_resources(
+        self,
+        caller: asyncio.Task[Any] | None,
+    ) -> None:
         """Cancel handler work and delete only playground-owned temporary audio."""
-        tasks = tuple(self._active_tasks)
+        tasks = tuple(task for task in self._active_tasks if task is not caller)
         for task in tasks:
             if not task.done():
                 task.cancel()

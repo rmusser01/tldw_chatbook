@@ -7876,12 +7876,12 @@ class TldwCli(
 
         except Exception as e:
             self.loguru_logger.error(f"Error during service cleanup: {e}")
-
-        try:
-            await self._close_tts_service()
-            self.loguru_logger.info("TTS service cleaned up properly")
-        except Exception:
-            self.loguru_logger.exception("Error cleaning up TTS service")
+        finally:
+            try:
+                await self._close_tts_service()
+                self.loguru_logger.info("TTS service cleaned up properly")
+            except Exception:
+                self.loguru_logger.exception("Error cleaning up TTS service")
 
         # Original cleanup code
         if self._rich_log_handler:  # Ensure it's removed if it exists
