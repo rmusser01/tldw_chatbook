@@ -709,20 +709,74 @@ async def test_progress_sink_failure_does_not_fail_synthesis() -> None:
 
 
 @pytest.mark.asyncio
-async def test_catalog_and_reconfigure_delegate_to_registry() -> None:
+async def test_catalog_voice_and_reconfigure_delegate_to_registry() -> None:
     adapter = FakeAdapter("openai")
     service = service_for_adapter(adapter)
 
     catalog = await service.get_catalog("openai", refresh=True)
+    voices = await service.get_voices("openai", "model", refresh=True)
     result = await service.reconfigure_provider(
         "openai",
         {"revision": 2},
     )
 
     assert catalog.provider_id == "openai"
-    assert adapter.ensure_ready_calls == 1
+    assert voices == ("default",)
+    assert adapter.ensure_ready_calls == 2
+    assert adapter.get_voices_requests == [("model", True)]
     assert result is ReconfigureResult.CHANGED
     assert adapter.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_managed_response_preserves_immutable_metadata_and_lease() -> None:
+    source = {"operation_id": "op-test", "generation_ms": 12.5}
+    adapter = FakeAdapter("openai", response_metadata=source)
+    registry = registry_for_adapter(adapter)
+    service = TTSService(registry)
+
+    response = await service.synthesize(tts_request())
+    source["operation_id"] = "changed"
+    await registry.reconfigure_provider("openai", {"revision": 2})
+
+    assert response.metadata == {
+        "operation_id": "op-test",
+        "generation_ms": 12.5,
+    }
+    with pytest.raises(TypeError):
+        response.metadata["operation_id"] = "changed"  # type: ignore[index]
+    assert adapter.close_calls == 0
+
+    await response.aclose()
+    assert adapter.response_close_calls == 1
+    assert adapter.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_legacy_voice_discovery_uses_static_catalog_without_manager() -> None:
+    manager_calls = 0
+
+    def manager_factory(_provider_id: str, _config: dict[str, Any]) -> Any:
+        nonlocal manager_calls
+        manager_calls += 1
+        raise AssertionError("voice discovery must not materialize the legacy manager")
+
+    service = TTSService(
+        TTSAdapterRegistry(
+            specs=legacy_provider_specs({}, manager_factory=manager_factory),
+            aliases={},
+        )
+    )
+
+    catalog = await service.get_catalog("openai")
+    voices = await service.get_voices("openai", "tts-1", refresh=True)
+    unknown = await service.get_voices("openai", "missing")
+
+    assert voices == catalog.models[0].voices
+    assert unknown == ()
+    assert manager_calls == 0
+    await service.close()
+    await service.wait_closed()
 
 
 def test_bootstrap_preserves_nested_raw_provider_configuration() -> None:

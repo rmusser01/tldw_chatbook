@@ -656,6 +656,21 @@ class LegacyTTSAdapter:
         del refresh
         return self._catalog
 
+    async def get_voices(
+        self,
+        model_id: str,
+        refresh: bool = False,
+    ) -> tuple[str, ...]:
+        del refresh
+        return next(
+            (
+                model.voices
+                for model in self._catalog.models
+                if model.model_id == model_id
+            ),
+            (),
+        )
+
     async def synthesize(
         self,
         request: TTSRequest,

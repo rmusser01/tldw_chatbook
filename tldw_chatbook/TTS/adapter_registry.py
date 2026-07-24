@@ -158,6 +158,19 @@ class TTSAdapterRegistry:
         finally:
             await lease.release()
 
+    async def get_voices(
+        self,
+        provider_id: str,
+        model_id: str,
+        refresh: bool = False,
+    ) -> tuple[str, ...]:
+        lease = await self.acquire(provider_id)
+        try:
+            await lease.adapter.ensure_ready()
+            return await lease.adapter.get_voices(model_id, refresh=refresh)
+        finally:
+            await lease.release()
+
     async def reconfigure_provider(
         self, provider_id: str, config: Mapping[str, Any]
     ) -> ReconfigureResult:

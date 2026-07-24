@@ -12,6 +12,18 @@ ProviderFactory = Callable[[Mapping[str, Any]], "TTSAdapter"]
 ProviderState = Literal[
     "available", "unavailable", "not_configured", "reconfiguring", "closed"
 ]
+TTSOperationCode = Literal[
+    "configuration_invalid",
+    "connection_unavailable",
+    "contract_incompatible",
+    "not_configured",
+    "request_invalid",
+    "model_invalid",
+    "server_busy",
+    "generation_failed",
+    "audio_response_invalid",
+    "generation_timeout",
+]
 
 
 class UnknownTTSProviderError(LookupError):
@@ -24,6 +36,20 @@ class TTSRegistryClosedError(RuntimeError):
 
 class TTSProviderReconfiguringError(RuntimeError):
     """Raised when an exclusive provider handoff blocks new operations."""
+
+
+@dataclass(frozen=True, slots=True)
+class TTSOperationError(RuntimeError):
+    """A provider-neutral operation failure with safe, stable details."""
+
+    code: TTSOperationCode
+    message: str
+    retryable: bool
+    operation_id: str
+    recovery_action: str | None = None
+
+    def __post_init__(self) -> None:
+        RuntimeError.__init__(self, self.message)
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +124,7 @@ class TTSAudioResponse:
         byte_stream: AsyncIterator[bytes],
         sample_rate: int | None = None,
         cleanup: CleanupCallback | None = None,
+        metadata: Mapping[str, Any] | None = None,
     ) -> None:
         self.provider_id = provider_id
         self.model_id = model_id
@@ -105,6 +132,7 @@ class TTSAudioResponse:
         self.content_type = content_type
         self.byte_stream = byte_stream
         self.sample_rate = sample_rate
+        self.metadata = MappingProxyType({} if metadata is None else dict(metadata))
         self._cleanup_callbacks = [cleanup] if cleanup is not None else []
         self._close_lock = asyncio.Lock()
         self._closed = False
@@ -146,6 +174,13 @@ class TTSAdapter(Protocol):
         raise NotImplementedError
 
     async def get_catalog(self, refresh: bool = False) -> TTSProviderCatalog:
+        raise NotImplementedError
+
+    async def get_voices(
+        self,
+        model_id: str,
+        refresh: bool = False,
+    ) -> tuple[str, ...]:
         raise NotImplementedError
 
     async def synthesize(

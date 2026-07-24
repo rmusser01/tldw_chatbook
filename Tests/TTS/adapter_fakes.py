@@ -22,11 +22,15 @@ class FakeAdapter:
         *,
         chunks: tuple[bytes, ...] = (b"audio",),
         close_order: list[str] | None = None,
+        response_metadata: Mapping[str, Any] | None = None,
     ) -> None:
         self.provider_id = provider_id
         self.chunks = chunks
         self.close_order = close_order
+        self.response_metadata = response_metadata or {}
         self.ensure_ready_calls = 0
+        self.get_voices_calls = 0
+        self.get_voices_requests: list[tuple[str, bool]] = []
         self.synthesize_calls = 0
         self.close_calls = 0
         self.response_close_calls = 0
@@ -52,6 +56,15 @@ class FakeAdapter:
                 ),
             ),
         )
+
+    async def get_voices(
+        self,
+        model_id: str,
+        refresh: bool = False,
+    ) -> tuple[str, ...]:
+        self.get_voices_calls += 1
+        self.get_voices_requests.append((model_id, refresh))
+        return ("default",) if model_id == "model" else ()
 
     async def synthesize(
         self,
@@ -79,6 +92,7 @@ class FakeAdapter:
             content_type="audio/wav",
             byte_stream=stream(),
             cleanup=cleanup,
+            metadata=self.response_metadata,
         )
 
     async def close(self) -> None:

@@ -26,6 +26,8 @@ def test_tts_package_exports_only_stable_adapter_service_api() -> None:
         "ProviderHealth",
         "TTSAudioResponse",
         "TTSModelInfo",
+        "TTSOperationCode",
+        "TTSOperationError",
         "TTSProgress",
         "TTSProviderCatalog",
         "TTSProviderDescriptor",
