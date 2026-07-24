@@ -9,7 +9,7 @@ import hashlib
 import hmac
 import json
 import sqlite3
-from typing import Any
+from typing import TYPE_CHECKING, Any
 import weakref
 
 from pydantic import BaseModel, ConfigDict
@@ -45,6 +45,9 @@ from tldw_chatbook.Chat.citation_trace_models import (
     TraceOrigin,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.citation_payload_lifecycle import SnapshotDedupeScope
 
 
 _ROW_FAMILIES = frozenset({"trace", "runs", "snapshots", "attempts", "refs", "owner"})
@@ -542,6 +545,14 @@ class CitationTraceRepository:
             raise CitationPersistenceUnavailable("fingerprint_key_unavailable")
         if message_body != prepared.selected_answer_body:
             raise CitationPersistenceUnavailable("selected_answer_message_mismatch")
+        for snapshot_row in prepared.snapshot_rows:
+            self.assert_payload_origin_writable(
+                cursor,
+                profile_id=prepared.profile_id,
+                origin_namespace="local_payload_v1",
+                origin_payload_id=str(snapshot_row[6]),
+                seam="write",
+            )
         body_fingerprint = codec.fingerprint(
             CitationFingerprintDomain.MESSAGE_BODY,
             message_body,
@@ -838,6 +849,24 @@ class CitationTraceRepository:
         )
         if namespace != expected_namespace:
             raise CitationPersistenceUnavailable("cache_namespace_identity_conflict")
+        revoked = cursor.execute(
+            """
+            SELECT 1
+            FROM rag_trace_evidence_refs AS reference
+            JOIN rag_evidence_snapshots AS snapshot
+              ON snapshot.profile_id = reference.profile_id
+             AND snapshot.payload_id = reference.snapshot_payload_id
+            JOIN rag_payload_tombstones AS tombstone
+              ON tombstone.profile_id = snapshot.profile_id
+             AND tombstone.origin_namespace = snapshot.origin_namespace
+             AND tombstone.origin_payload_id = snapshot.origin_payload_id
+            WHERE reference.profile_id = ? AND reference.trace_id = ?
+            LIMIT 1
+            """,
+            (identity.profile_id, namespace.trace_id),
+        ).fetchone()
+        if revoked is not None:
+            raise CitationPersistenceUnavailable("payload_origin_revoked")
         message = cursor.execute(
             """
             SELECT version, content
@@ -1011,7 +1040,14 @@ class CitationTraceRepository:
         summary = self.get_trace_summary(
             local_trace_namespace(identity, trace_id=row["trace_id"])
         )
-        if summary is None or summary.visibility_state != "active":
+        if (
+            summary is None
+            or summary.visibility_state != "active"
+            or not self._trace_payloads_available(
+                identity.profile_id,
+                row["trace_id"],
+            )
+        ):
             return ActiveCitationTraceResult(state=ActiveCitationTraceState.NOT_FOUND)
         return self._issue_active_trace_result(
             summary,
@@ -1091,6 +1127,10 @@ class CitationTraceRepository:
             or row["origin_scope_id"] != proof.identity_context.profile_id
             or row["local_authority_id"] != proof.identity_context.local_authority_id
             or row["fingerprint_key_id"] != proof.identity_context.fingerprint_key_id
+            or not self._trace_payloads_available(
+                proof.identity_context.profile_id,
+                proof.trace_id,
+            )
         ):
             return self._invalidate_active_trace_result(result)
         current_fingerprint = codec.fingerprint(
@@ -1225,6 +1265,174 @@ class CitationTraceRepository:
             expected.fingerprint(CitationFingerprintDomain.EXACT_PAYLOAD, sentinel),
             codec.fingerprint(CitationFingerprintDomain.EXACT_PAYLOAD, sentinel),
         )
+
+    def find_reusable_snapshot_payload_id(
+        self,
+        scope: "SnapshotDedupeScope",
+    ) -> str | None:
+        """Return one available exact-scope match without exposing its content."""
+
+        from tldw_chatbook.Chat.citation_payload_lifecycle import SnapshotDedupeScope
+
+        validated = SnapshotDedupeScope.model_validate(
+            scope.model_dump(mode="python"),
+            strict=True,
+        )
+        row = (
+            self.db.get_connection()
+            .execute(
+                """
+                SELECT snapshot.payload_id
+                FROM rag_evidence_snapshots AS snapshot
+                WHERE snapshot.governance_scope_id = ?
+                  AND snapshot.authority_id = ?
+                  AND snapshot.confidentiality_policy_id = ?
+                  AND snapshot.revocation_scope_id = ?
+                  AND snapshot.content_hash = ?
+                  AND snapshot.redaction_state = 'available'
+                  AND snapshot.purged_at IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM rag_payload_tombstones AS tombstone
+                      WHERE tombstone.profile_id = snapshot.profile_id
+                        AND tombstone.origin_namespace =
+                              snapshot.origin_namespace
+                        AND tombstone.origin_payload_id =
+                              snapshot.origin_payload_id
+                  )
+                ORDER BY snapshot.profile_id, snapshot.payload_id
+                LIMIT 1
+                """,
+                (
+                    validated.governance_scope_id,
+                    validated.authority_id,
+                    validated.confidentiality_policy_id,
+                    validated.revocation_scope_id,
+                    validated.exact_content_identity,
+                ),
+            )
+            .fetchone()
+        )
+        return None if row is None else str(row["payload_id"])
+
+    def assert_payload_origin_writable(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        profile_id: str,
+        origin_namespace: str,
+        origin_payload_id: str,
+        seam: str,
+    ) -> None:
+        """Fail closed before any write/import/Sync replay can restore content."""
+
+        identity = self._require_active_write_cursor(cursor)
+        if (
+            profile_id != identity.profile_id
+            or not origin_namespace
+            or not origin_payload_id
+            or not seam
+            or any(
+                len(value.encode("utf-8")) > 256
+                for value in (
+                    profile_id,
+                    origin_namespace,
+                    origin_payload_id,
+                    seam,
+                )
+            )
+        ):
+            raise CitationPersistenceUnavailable("payload_origin_identity_invalid")
+        tombstone = cursor.execute(
+            """
+            SELECT 1
+            FROM rag_payload_tombstones
+            WHERE profile_id = ?
+              AND origin_namespace = ?
+              AND origin_payload_id = ?
+            """,
+            (profile_id, origin_namespace, origin_payload_id),
+        ).fetchone()
+        if tombstone is not None:
+            raise CitationPersistenceUnavailable("payload_origin_revoked")
+
+    def invalidate_trace_capabilities(
+        self,
+        profile_id: str,
+        trace_id: str,
+    ) -> None:
+        """Invalidate every issued active capability for one trace identity."""
+
+        stale_ids = [
+            result_id
+            for result_id, issued in self._issued_active_results.items()
+            if issued[2].identity_context.profile_id == profile_id
+            and issued[2].trace_id == trace_id
+        ]
+        for result_id in stale_ids:
+            self._issued_active_results.pop(result_id, None)
+
+    def _trace_payloads_available(
+        self,
+        profile_id: str,
+        trace_id: str,
+    ) -> bool:
+        """Recheck current governed access before issuing or verifying trust."""
+
+        row = (
+            self.db.get_connection()
+            .execute(
+                """
+                SELECT 1
+                FROM rag_citation_traces AS trace
+                JOIN rag_answer_attempt_payloads AS selected
+                  ON selected.profile_id = trace.profile_id
+                 AND selected.trace_id = trace.trace_id
+                 AND selected.attempt_id = trace.selected_attempt_id
+                WHERE trace.profile_id = ? AND trace.trace_id = ?
+                  AND selected.redaction_state = 'available'
+                  AND selected.answer_body IS NOT NULL
+                  AND selected.body_integrity_hmac IS NOT NULL
+                  AND selected.purged_at IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM rag_evidence_runs AS run
+                      WHERE run.profile_id = trace.profile_id
+                        AND run.trace_id = trace.trace_id
+                        AND (
+                            run.redaction_state != 'available'
+                            OR run.run_payload_json IS NULL
+                            OR run.purged_at IS NOT NULL
+                        )
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM rag_trace_evidence_refs AS reference
+                      JOIN rag_evidence_snapshots AS snapshot
+                        ON snapshot.profile_id = reference.profile_id
+                       AND snapshot.payload_id = reference.snapshot_payload_id
+                      WHERE reference.profile_id = trace.profile_id
+                        AND reference.trace_id = trace.trace_id
+                        AND (
+                            snapshot.redaction_state != 'available'
+                            OR snapshot.purged_at IS NOT NULL
+                            OR EXISTS (
+                                SELECT 1
+                                FROM rag_payload_tombstones AS tombstone
+                                WHERE tombstone.profile_id = snapshot.profile_id
+                                  AND tombstone.origin_namespace =
+                                        snapshot.origin_namespace
+                                  AND tombstone.origin_payload_id =
+                                        snapshot.origin_payload_id
+                            )
+                        )
+                  )
+                """,
+                (profile_id, trace_id),
+            )
+            .fetchone()
+        )
+        return row is not None
 
     def _require_repository_cursor(
         self,
@@ -1465,11 +1673,6 @@ class CitationTraceRepository:
                     state=CitationHydrationState.AUTHORITY_DENIED,
                     summary=summary,
                 )
-            if row["redaction_state"] != "available":
-                return CitationHydrationResult(
-                    state=CitationHydrationState.REDACTED,
-                    summary=summary,
-                )
             tombstone = connection.execute(
                 """
                 SELECT 1
@@ -1487,6 +1690,11 @@ class CitationTraceRepository:
             if tombstone is not None:
                 return CitationHydrationResult(
                     state=CitationHydrationState.REVOKED,
+                    summary=summary,
+                )
+            if row["redaction_state"] != "available":
+                return CitationHydrationResult(
+                    state=CitationHydrationState.REDACTED,
                     summary=summary,
                 )
 

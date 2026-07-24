@@ -1299,6 +1299,48 @@ def test_hydration_checks_redaction_and_tombstone_before_governed_select(
     assert result.governed_payloads is None
 
 
+def test_hydration_reports_revoked_when_tombstoned_payload_is_also_purged(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    identity = _identity(db)
+    with db.transaction() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO rag_payload_tombstones VALUES (
+                ?, 'local_payload_v1', 'snapshot-1', 'snapshot-1',
+                'revoked', 'policy-1',
+                '2026-07-24T00:00:00+00:00', '2027-07-24T00:00:00+00:00'
+            )
+            """,
+            (identity.profile_id,),
+        )
+        cursor.execute(
+            """
+            UPDATE rag_evidence_snapshots
+            SET redaction_state = 'purged',
+                snapshot_text = NULL,
+                title = NULL,
+                source_identity_json = NULL,
+                locator_json = NULL,
+                lineage_json = NULL,
+                transformations_json = NULL,
+                content_hash = NULL,
+                comparison_fingerprint = NULL,
+                purged_at = '2026-07-24T00:00:00+00:00'
+            """
+        )
+
+    result = repository.hydrate_trace(
+        local_trace_namespace(identity, trace_id="trace-1"),
+        authorization=_authorization(identity),
+    )
+
+    assert result.state is CitationHydrationState.REVOKED
+    assert result.governed_payloads is None
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
