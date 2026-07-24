@@ -28,6 +28,10 @@ from dataclasses import dataclass
 from typing import Any, Callable, Sequence
 
 from tldw_chatbook.Chat.console_chat_models import GenerationVariantMeta
+from tldw_chatbook.Chat.console_command_grammar import (
+    COMMAND_PREFIX,
+    GENERATE_IMAGE_COMMAND_NAME,
+)
 from tldw_chatbook.Media_Creation.generation_templates import (
     BUILTIN_TEMPLATES,
     GenerationTemplate,
@@ -120,6 +124,86 @@ def parse_generate_image_args(args: str) -> GenerateImageArgs:
             continue
         break
     return GenerateImageArgs(backend=backend, prompt=remaining.strip(), style=style)
+
+
+GENERATE_IMAGE_COMMAND_WORD = COMMAND_PREFIX + GENERATE_IMAGE_COMMAND_NAME
+"""The full leading command word (``"/generate-image"``), as registered."""
+
+
+def _starts_with_command_word(draft: str) -> bool:
+    """Whether `draft` opens with `GENERATE_IMAGE_COMMAND_WORD`, case-sensitive.
+
+    Matches the bare command word, or the command word followed by
+    whitespace -- never a string that merely has it as a prefix (e.g.
+    ``"/generate-imagex"`` does NOT match).
+    """
+    word = GENERATE_IMAGE_COMMAND_WORD
+    if not draft.startswith(word):
+        return False
+    return len(draft) == len(word) or draft[len(word)].isspace()
+
+
+def insert_style_token_into_draft(draft: str, style_id: str) -> str:
+    """Compose a valid ``/generate-image`` draft carrying an ``@<style_id>`` token.
+
+    This is the sole grammar-aware seam the Console style picker's "insert"
+    callback goes through -- it exists so that callback never has to
+    reimplement (or drift from) `parse_generate_image_args`'s leading-token
+    rules. Two shapes, both always producing a draft that
+    `parse_generate_image_args` resolves with `style` set to `style_id`:
+
+    1. `draft` already opens with `GENERATE_IMAGE_COMMAND_WORD` (the bare
+       word, or the word followed by whitespace): the leading `:backend`/
+       `@style` tokens are walked the same way `parse_generate_image_args`
+       walks them. A leading `:backend` token is kept exactly where it is;
+       an existing leading `@style` token is REPLACED (never stacked --
+       applying this twice yields exactly one style token, the newest);
+       when no style token was present one is inserted immediately before
+       the prompt remainder, after any `:backend` token.
+    2. Any other `draft`, including the empty string, is treated as plain
+       prompt text with no command word yet: the whole thing is prefixed
+       with the command word and the new style token.
+
+    Args:
+        draft: The current composer draft text, verbatim.
+        style_id: The resolved style template's `id` (e.g. ``"style_anime"``),
+            without the leading ``@``.
+
+    Returns:
+        The new draft text, always opening with `GENERATE_IMAGE_COMMAND_WORD`
+        and carrying exactly one ``@<style_id>`` token ahead of the prompt.
+    """
+    style_token = f"@{style_id}"
+    if not _starts_with_command_word(draft):
+        prompt = draft.strip()
+        if prompt:
+            return f"{GENERATE_IMAGE_COMMAND_WORD} {style_token} {draft}"
+        return f"{GENERATE_IMAGE_COMMAND_WORD} {style_token} "
+
+    remaining = draft[len(GENERATE_IMAGE_COMMAND_WORD) :].strip()
+    leading_tokens: list[str] = []
+    style_replaced = False
+    while remaining:
+        parts = remaining.split(None, 1)
+        token = parts[0]
+        rest = parts[1] if len(parts) > 1 else ""
+        if token.startswith(":") and token != ":":
+            leading_tokens.append(token)
+            remaining = rest
+            continue
+        if token.startswith("@") and token != "@":
+            leading_tokens.append(style_token)
+            style_replaced = True
+            remaining = rest
+            continue
+        break
+    if not style_replaced:
+        leading_tokens.append(style_token)
+
+    header = " ".join([GENERATE_IMAGE_COMMAND_WORD, *leading_tokens])
+    if remaining:
+        return f"{header} {remaining}"
+    return f"{header} "
 
 
 def generation_content_marker(

@@ -101,6 +101,7 @@ from ...Chat.console_generate_image import (
     PreparedGeneration,
     clamp_initial_batch,
     generation_content_marker,
+    insert_style_token_into_draft,
     parse_generate_image_args,
     prepare_generation_request,
     run_generation_batch,
@@ -11506,19 +11507,25 @@ class ChatScreen(BaseAppScreen):
         self.app.push_screen(ConsoleStylePickerModal(), callback=_apply_picker_choice)
 
     def _insert_console_style_token_into_composer(self, style_id: str) -> bool:
-        """Prepend an ``@<style_id> `` token to the Console composer draft.
+        """Compose an ``@<style_id>`` token into a valid `/generate-image` draft.
 
-        Always inserted at the START of the draft, never at whatever the
-        caret happens to be. `/generate-image`'s parser only recognizes
-        `@style`/`:backend` tokens as LEADING tokens, stopping token
-        consumption at the first unprefixed word (Task 2's
-        `parse_generate_image_args`) -- inserting the token anywhere else
-        would silently fail to parse as a style token and just become part
-        of the free-text prompt instead. Uses the same paste-semantics
-        idiom `_insert_prompt_text_into_composer` uses
-        (`insert_text_as_paste`), but only ever prepends -- unlike that
-        helper (suited to a full prompt BODY), this never clears or
-        replaces the rest of the draft.
+        Delegates the actual composition to `insert_style_token_into_draft`
+        (the pure grammar-aware helper `/generate-image`'s own parser is
+        built from) rather than blindly prepending the token: a bare
+        prepend would land the token BEFORE the command word on an
+        unedited draft like ``/generate-image a dragon``, producing
+        ``@style_anime /generate-image a dragon`` -- text `parse_generate_
+        image_args` never sees as a command at all (`ConsoleCommandRegistry
+        .parse` only recognizes drafts that START with `/`), so the whole
+        thing would ship to the LLM as plain chat text instead of
+        generating anything.
+
+        The whole draft is replaced wholesale with the composed result --
+        same clear-then-paste idiom `_insert_prompt_text_into_composer`
+        uses for `replace=True` -- since the composed draft may reorder or
+        drop text relative to the original (e.g. replacing an existing
+        leading `@style` token), so a plain in-place insert cannot express
+        it.
 
         Args:
             style_id: The resolved style template's `id` (e.g. "style_anime").
@@ -11531,8 +11538,9 @@ class ChatScreen(BaseAppScreen):
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
             return False
-        composer.move_cursor_home()
-        composer.insert_text_as_paste(f"@{style_id} ")
+        new_draft = insert_style_token_into_draft(composer.draft_text(), style_id)
+        composer.clear_draft()
+        composer.insert_text_as_paste(new_draft)
         return True
 
     def _insert_prompt_text_into_composer(self, text: str, *, replace: bool) -> bool:

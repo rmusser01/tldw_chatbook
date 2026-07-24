@@ -11,6 +11,7 @@ from tldw_chatbook.Chat.console_generate_image import (
     build_context_prompt,
     clamp_initial_batch,
     compose_styled_request,
+    insert_style_token_into_draft,
     parse_generate_image_args,
     generation_content_marker,
     prepare_generation_request,
@@ -450,3 +451,75 @@ def test_prepare_empty_prompt_with_content_and_style_uses_that_style():
     template = get_template("style_anime")
     assert result.style_name == template.name
     assert "a quiet lakeside cabin at dawn" in result.prompt
+
+
+# ---------------------------------------------------------------------------
+# insert_style_token_into_draft (Task 4 style-picker insert, Major review fix)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "draft,style_id,expected",
+    [
+        # Draft already starts with the command word: insert @style right
+        # after the command word, in front of the prompt remainder.
+        ("/generate-image a dragon", "style_anime", "/generate-image @style_anime a dragon"),
+        # A leading :backend token stays exactly where it was; the new
+        # style token is inserted right after it.
+        (
+            "/generate-image :swarmui a dragon",
+            "style_anime",
+            "/generate-image :swarmui @style_anime a dragon",
+        ),
+        # An existing leading @style token is REPLACED, not stacked --
+        # closes the undisclosed last-wins double-style edge.
+        (
+            "/generate-image :swarmui @old a dragon",
+            "style_anime",
+            "/generate-image :swarmui @style_anime a dragon",
+        ),
+        (
+            "/generate-image @old a dragon",
+            "style_anime",
+            "/generate-image @style_anime a dragon",
+        ),
+        # Bare command word, no args at all.
+        ("/generate-image", "style_anime", "/generate-image @style_anime "),
+        # Bare command word with only trailing whitespace.
+        ("/generate-image   ", "style_anime", "/generate-image @style_anime "),
+        # Any other draft (including empty) is prefixed as the whole prompt.
+        ("", "style_anime", "/generate-image @style_anime "),
+        ("a dragon", "style_anime", "/generate-image @style_anime a dragon"),
+        # A different command word is not recognized -- treated as plain
+        # prompt text and prefixed like any other draft.
+        (
+            "/other-command a dragon",
+            "style_anime",
+            "/generate-image @style_anime /other-command a dragon",
+        ),
+        # Command word prefix must be followed by whitespace or end, not
+        # just be a string prefix of a longer word.
+        (
+            "/generate-imagex a dragon",
+            "style_anime",
+            "/generate-image @style_anime /generate-imagex a dragon",
+        ),
+    ],
+)
+def test_insert_style_token_into_draft_table(draft, style_id, expected):
+    assert insert_style_token_into_draft(draft, style_id) == expected
+
+
+def test_insert_style_token_into_draft_applying_twice_yields_one_token():
+    """Idempotent-ish: a second insert with a different id replaces, not stacks."""
+    once = insert_style_token_into_draft("", "style_anime")
+    twice = insert_style_token_into_draft(once, "style_watercolor")
+    assert twice == "/generate-image @style_watercolor "
+    assert twice.count("@style_") == 1
+
+
+def test_insert_style_token_into_draft_applying_twice_with_prompt_text():
+    once = insert_style_token_into_draft("a dragon", "style_anime")
+    twice = insert_style_token_into_draft(once, "style_watercolor")
+    assert twice == "/generate-image @style_watercolor a dragon"
+    assert twice.count("@style_") == 1

@@ -28,6 +28,11 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Chat.console_command_grammar import (
+    KIND_COMMAND,
+    default_console_registry,
+)
+from tldw_chatbook.Chat.console_generate_image import parse_generate_image_args
 from tldw_chatbook.Media_Creation.generation_templates import BUILTIN_TEMPLATES
 from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
@@ -102,16 +107,21 @@ async def test_modal_renders_all_thirteen_templates_unfiltered():
 
 @pytest.mark.asyncio
 async def test_modal_row_shows_name_category_and_id():
+    """Uses `chat_scene_visual` deliberately: its category ("Chat") is NOT a
+    substring of its name ("Scene Visualization"), unlike `style_anime`
+    (name "Anime Style" already contains "Style", the same string as its
+    own category) -- that overlap let a prior version of this assertion
+    pass even if the category were silently missing from the label."""
     app = ModalHarness()
     async with app.run_test(size=(100, 40)) as pilot:
         await app.push_screen(ConsoleStylePickerModal(), callback=app.capture)
         await pilot.pause()
 
-        row = app.screen.query_one(f"#{ROW_ID_PREFIX}style_anime", Button)
+        row = app.screen.query_one(f"#{ROW_ID_PREFIX}chat_scene_visual", Button)
         label = row.label.plain
-        assert "Anime Style" in label
-        assert "Style" in label
-        assert "style_anime" in label
+        assert "Scene Visualization" in label
+        assert "Chat" in label
+        assert "chat_scene_visual" in label
 
 
 @pytest.mark.asyncio
@@ -275,6 +285,10 @@ async def test_action_open_console_style_insert_opens_picker():
 
 @pytest.mark.asyncio
 async def test_style_picker_selection_inserts_style_token_into_draft():
+    """An empty draft is prefixed with the command word AND the style token
+    (Major review fix): the old behavior of inserting a bare `@style_anime `
+    with no command word ahead of it was never a valid `/generate-image`
+    invocation -- it would ship to the LLM as plain chat text."""
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -293,16 +307,17 @@ async def test_style_picker_selection_inserts_style_token_into_draft():
         await pilot.pause(0.2)
 
         assert len(host.screen_stack) == baseline_depth, "the picker must have dismissed"
-        assert composer.draft_text() == "@style_anime "
+        assert composer.draft_text() == "/generate-image @style_anime "
 
 
 @pytest.mark.asyncio
-async def test_style_picker_insert_prepends_leading_token_without_clobbering_draft():
-    """The insert must always PREPEND (never clobber the rest of the draft,
-    never land mid-string): `/generate-image`'s parser only recognizes
-    `@style`/`:backend` as LEADING tokens (Task 2's
-    `parse_generate_image_args` stops consuming at the first unprefixed
-    word), so this is also a correctness requirement, not just cosmetic."""
+async def test_style_picker_insert_composes_valid_command_after_command_word():
+    """The insert must land the `@style` token right AFTER the command word,
+    never before it: `ConsoleCommandRegistry.parse` only recognizes drafts
+    that START with `/`, so prepending the token ahead of an already-typed
+    `/generate-image ...` draft would silently stop it from parsing as a
+    command at all (Major review fix -- this test replaces a prior version
+    that pinned exactly that broken composition)."""
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -319,7 +334,69 @@ async def test_style_picker_insert_prepends_leading_token_without_clobbering_dra
         await pilot.click(f"#{ROW_ID_PREFIX}style_anime")
         await pilot.pause(0.2)
 
-        assert composer.draft_text() == "@style_anime /generate-image a red dragon"
+        assert composer.draft_text() == "/generate-image @style_anime a red dragon"
+
+
+@pytest.mark.asyncio
+async def test_style_picker_insert_replaces_existing_leading_style_token():
+    """A draft that already carries a leading `@style` token gets that token
+    REPLACED, not stacked -- closes the undisclosed last-wins double-style
+    edge the reviewer flagged (both tokens surviving into the parsed args
+    would silently pick whichever `parse_generate_image_args` sees last)."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("/generate-image :swarmui @old a red dragon")
+
+        console.action_open_console_style_insert()
+        await pilot.pause(0.2)
+
+        await pilot.click(f"#{ROW_ID_PREFIX}style_anime")
+        await pilot.pause(0.2)
+
+        assert (
+            composer.draft_text()
+            == "/generate-image :swarmui @style_anime a red dragon"
+        )
+
+
+@pytest.mark.asyncio
+async def test_style_picker_insert_result_parses_as_generate_image_command():
+    """Closes the insert-to-send gap at the actual choke point: the
+    post-insert draft must round-trip through `ConsoleCommandRegistry.parse`
+    (exactly what dispatch runs on Send) as a `generate-image` command, and
+    `parse_generate_image_args` must recover the chosen style AND the
+    original prompt text -- not just "look right" as a string."""
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("/generate-image a red dragon")
+
+        console.action_open_console_style_insert()
+        await pilot.pause(0.2)
+
+        await pilot.click(f"#{ROW_ID_PREFIX}style_anime")
+        await pilot.pause(0.2)
+
+        draft = composer.draft_text()
+        registry = default_console_registry()
+        parse = registry.parse(draft)
+        assert parse.kind == KIND_COMMAND
+        assert parse.name == "generate-image"
+
+        args = parse_generate_image_args(parse.args)
+        assert args.style == "style_anime"
+        assert args.prompt == "a red dragon"
 
 
 @pytest.mark.asyncio
