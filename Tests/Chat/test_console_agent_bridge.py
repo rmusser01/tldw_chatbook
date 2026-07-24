@@ -1770,9 +1770,14 @@ def test_run_reply_returns_runoutcome_error():
     assert result.status == RUN_ERROR
 
 
-def test_run_reply_returns_run_id_and_threads_assistant_message_id():
-    """run_reply exposes the primary run id to its caller and threads the
-    native assistant_message_id into run_turn (so create_run can record it)."""
+def test_run_reply_returns_run_id_and_does_not_store_native_assistant_id():
+    """run_reply exposes the primary run id to its caller but must NOT forward
+    the native in-memory assistant_message_id into run_turn: create_run would
+    store it, and that native id can never match any persisted_message_id, so an
+    unfinished/crashed run would be left holding a stale non-null id. The run
+    row therefore starts NULL (assistant_message_id omitted / None); the
+    controller writes the durable persisted id onto the run on every terminal
+    path later, via record_run_assistant_message."""
     bridge = _make_bridge()
     outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="done")
 
@@ -1792,7 +1797,9 @@ def test_run_reply_returns_run_id_and_threads_assistant_message_id():
 
     assert run_id == "run-xyz"
     assert result is outcome
-    assert run_turn.call_args.kwargs["assistant_message_id"] == "native-a1"
+    # The native id is NOT forwarded -- the kwarg is omitted (or None), so
+    # create_run leaves the run's assistant_message_id NULL at create time.
+    assert run_turn.call_args.kwargs.get("assistant_message_id") is None
 
 
 def test_native_tool_schemas_returns_builtin_tool_schemas():

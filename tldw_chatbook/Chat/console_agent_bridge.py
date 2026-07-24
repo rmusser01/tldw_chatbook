@@ -868,6 +868,15 @@ class ConsoleAgentBridge:
     ) -> tuple[str, RunOutcome]:
         """Run the agent loop as the Console reply engine.
 
+        The primary run row is created with a NULL ``assistant_message_id``
+        (the native ``assistant_message_id`` argument is used only for
+        streaming into the placeholder, never forwarded to ``run_turn`` --
+        see the ``run_turn`` call below for why a native id must never be
+        stored on the run). The caller records the reply's durable persisted
+        id onto the run on every terminal path via
+        ``record_run_assistant_message`` once the reply is persisted; an
+        unfinished/crashed run stays NULL for resume's null->ordinal fallback.
+
         Returns:
             A ``(run_id, outcome)`` tuple: the primary run's id (so the
             caller can record the produced reply's persisted id onto the run
@@ -1098,11 +1107,18 @@ class ConsoleAgentBridge:
                 conversation_id=conversation_id,
                 messages=run_messages,
                 config=config,
-                # The reply's NATIVE in-memory id at create_run time (the
-                # assistant node isn't persisted yet); the controller
-                # overwrites it with the durable persisted id once the reply
-                # completes -- that later write is what resume anchoring reads.
-                assistant_message_id=assistant_message_id,
+                # Intentionally NOT forwarding the native in-memory id here.
+                # create_run would store it, but the native id can never match
+                # any persisted_message_id -- so a run left unfinished (stopped
+                # mid-run, cancelled, failed, or crashed) would hold a stale,
+                # non-null id that resume anchoring can never match (and Task 3
+                # would drop as "off-path", silently hiding its markers). By
+                # omitting it the run row starts NULL; the controller writes the
+                # durable PERSISTED id onto the run on EVERY terminal path once
+                # the reply is persisted (see record_run_assistant_message), and
+                # any still-unfinished run stays NULL for resume's null->ordinal
+                # fallback. run_turn's assistant_message_id threading stays a
+                # generic service capability (its own tests call it directly).
                 # execution_key-first (Task 5): the service's capability
                 # check keys off api_endpoint, and execution_key is by
                 # definition "Provider key passed to chat_api_call" — the

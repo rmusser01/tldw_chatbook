@@ -3061,6 +3061,15 @@ class ConsoleChatController:
             or (cancel_event is not None and cancel_event.is_set())
         )
         if stopped_now:
+            # The stopped message was already persisted by
+            # `mark_message_stopped` (`_persist_existing_message`), so its
+            # durable persisted id is available NOW -- record it onto the run
+            # so resume can anchor markers by it. Without this the run keeps
+            # whatever `create_run` stored (a stale native id pre-fix, NULL
+            # post-fix); a never-persisted stop leaves `current` without a
+            # persisted id and the helper no-ops (row stays NULL -> ordinal
+            # fallback -- correct).
+            self._record_run_assistant_message(run_id, current)
             self._set_run_state(
                 ConsoleRunState(ConsoleRunStatus.STOPPED, "Response stopped.")
             )
@@ -3068,11 +3077,13 @@ class ConsoleChatController:
 
         if outcome.status == RUN_CANCELLED:
             return self._finalize_agent_cancelled(
-                assistant_message_id, session_id, variant_mode=variant_mode)
+                assistant_message_id, session_id, variant_mode=variant_mode,
+                run_id=run_id)
 
         if outcome.status != RUN_DONE:
             return self._finalize_agent_failure(
-                assistant_message_id, session_id, outcome, variant_mode=variant_mode)
+                assistant_message_id, session_id, outcome, variant_mode=variant_mode,
+                run_id=run_id)
 
         return self._finalize_agent_success(
             assistant_message_id, session_id, outcome,
@@ -3121,12 +3132,17 @@ class ConsoleChatController:
 
     def _finalize_agent_cancelled(
         self, assistant_message_id: str, session_id: str, *, variant_mode: bool,
+        run_id: str | None = None,
     ) -> ConsoleSubmitResult:
         """Handle a ``RUN_CANCELLED`` outcome: the placeholder becomes ``failed``.
 
         Per the agent turn-control spec, a runtime-reported cancellation is a
         terminal failure, not a user-initiated stop. If the placeholder has
         vanished, append a failed assistant message carrying the visible copy.
+        The terminal message (``mark_message_failed``/``_append_failed_assistant``,
+        both persisted) has its durable id recorded onto the run so resume can
+        anchor markers by it; a never-persisted reply no-ops (row stays NULL ->
+        ordinal fallback -- see ``_record_run_assistant_message``).
         """
         visible_copy = "Response stopped/cancelled."
         placeholder = self._ensure_assistant_placeholder(assistant_message_id, session_id)
@@ -3134,12 +3150,13 @@ class ConsoleChatController:
             failed = self.store.mark_message_failed(assistant_message_id)
         else:
             failed = self._append_failed_assistant(session_id, visible_copy)
+        self._record_run_assistant_message(run_id, failed)
         self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
         return ConsoleSubmitResult(True, True, failed.content)
 
     def _finalize_agent_failure(
         self, assistant_message_id: str, session_id: str, outcome: Any,
-        *, variant_mode: bool,
+        *, variant_mode: bool, run_id: str | None = None,
     ) -> ConsoleSubmitResult:
         """Handle ``RUN_ERROR``, ``RUN_STUCK``, or any unknown non-done outcome.
 
@@ -3148,6 +3165,12 @@ class ConsoleChatController:
         is missing, the runtime may have already written an assistant message
         (e.g. streamed partial content before the error); use it when
         possible, otherwise append a new failed assistant message.
+
+        Whichever terminal message resolves (all persisted via
+        ``mark_message_failed``/``_append_failed_assistant``) has its durable id
+        recorded onto the run so resume can anchor markers by it; a
+        never-persisted reply no-ops (row stays NULL -> ordinal fallback -- see
+        ``_record_run_assistant_message``).
         """
         visible_copy = self._agent_failure_visible_copy(outcome)
         if "provider returned HTTP" in visible_copy and (
@@ -3157,6 +3180,7 @@ class ConsoleChatController:
         placeholder = self._ensure_assistant_placeholder(assistant_message_id, session_id)
         if placeholder is not None:
             failed = self.store.mark_message_failed(assistant_message_id)
+            self._record_run_assistant_message(run_id, failed)
             self._append_failure_system_row(session_id, visible_copy)
             self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
             return ConsoleSubmitResult(True, True, failed.content)
@@ -3167,6 +3191,7 @@ class ConsoleChatController:
             failed = self.store.mark_message_failed(runtime_written.id)
         else:
             failed = self._append_failed_assistant(session_id, visible_copy)
+        self._record_run_assistant_message(run_id, failed)
         self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
         return ConsoleSubmitResult(True, True, failed.content)
 
