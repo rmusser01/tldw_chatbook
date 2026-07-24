@@ -271,6 +271,17 @@ class ConsoleWorkspaceStatusPair(Horizontal):
         )
         value_widget.styles.width = "1fr"
         value_widget.styles.min_width = 0
+        # TASK-384: at narrow rail widths the value column shrinks to a few cells
+        # and a value like "Default" word-wrapped into a "Def / aul / t" letter
+        # stack. Truncate the whole token with an ellipsis on one line instead,
+        # and keep the full value reachable on hover.
+        value_widget.styles.text_wrap = "nowrap"
+        value_widget.styles.text_overflow = "ellipsis"
+        if self.value:
+            # Tooltips render Rich markup (unlike the markup=False value above),
+            # so escape the raw value or bracket tokens in a workspace name would
+            # be interpreted/styled instead of shown literally (Qodo #821).
+            value_widget.tooltip = _escape_markup(self.value)
         yield value_widget
 
 

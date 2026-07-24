@@ -1422,6 +1422,47 @@ async def test_status_label_width_is_twelve() -> None:
 
 
 @pytest.mark.asyncio
+async def test_status_pair_value_truncates_instead_of_letter_stacking() -> None:
+    """TASK-384: at a narrow rail the value column shrinks to a few cells; the
+    value must nowrap+ellipsize (so "Default" reads "De…") rather than word-wrap
+    into a "Def / aul / t" letter stack, with the full value on hover."""
+    from textual.app import App
+    from textual.widgets import Static
+
+    class TestApp(App):
+        def compose(self):
+            yield ConsoleWorkspaceStatusPair(
+                "Workspace", "Default", label_id="l", value_id="v"
+            )
+
+    app = TestApp()
+    async with app.run_test():
+        value = app.query_one("#v", Static)
+        assert value.styles.text_wrap == "nowrap"
+        assert value.styles.text_overflow == "ellipsis"
+        assert value.tooltip == "Default"
+
+
+@pytest.mark.asyncio
+async def test_status_pair_value_tooltip_escapes_markup() -> None:
+    """Qodo #821: the value tooltip renders Rich markup, so a value with bracket
+    tokens must be escaped (shown literally, not interpreted)."""
+    from textual.app import App
+    from textual.widgets import Static
+
+    class TestApp(App):
+        def compose(self):
+            yield ConsoleWorkspaceStatusPair(
+                "Workspace", "[b]danger[/b]", label_id="l", value_id="v"
+            )
+
+    app = TestApp()
+    async with app.run_test():
+        value = app.query_one("#v", Static)
+        assert value.tooltip == r"\[b]danger\[/b]"
+
+
+@pytest.mark.asyncio
 async def test_console_workspace_context_renders_active_workspace() -> None:
     app = _build_test_app()
     service = app.workspace_registry_service
