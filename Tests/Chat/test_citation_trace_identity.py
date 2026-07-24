@@ -17,6 +17,7 @@ from tldw_chatbook.Chat.citation_trace_identity import (
     CitationIdentityNamespace,
     KeyringCitationFingerprintKeyProvider,
     LocalCitationIdentityContext,
+    TraceNamespace,
     imported_trace_namespace,
     load_fingerprint_codec,
     local_trace_namespace,
@@ -50,6 +51,16 @@ class FakeKeyring:
         return self.value
 
 
+class SecureFakeKeyring(FakeKeyring):
+    __module__ = "keyring.backends.macOS"
+    priority = 5
+
+
+class InsecureFakeKeyring(FakeKeyring):
+    __module__ = "keyring.backends.file"
+    priority = 1
+
+
 def test_opaque_ids_use_128_random_bits_with_stable_bounded_prefixes() -> None:
     first = new_opaque_id("trace")
     second = new_opaque_id("trace")
@@ -72,25 +83,36 @@ def test_local_server_and_imported_namespaces_separate_authority_scopes() -> Non
         fingerprint_key_id="key-a",
     )
     context_b = context_a.model_copy(update={"profile_id": "profile-b"})
-    local_a = local_trace_namespace(context_a)
-    local_b = local_trace_namespace(context_b)
+    local_a = local_trace_namespace(context_a, trace_id="trace-a")
+    local_a_other_trace = local_trace_namespace(context_a, trace_id="trace-b")
+    local_b = local_trace_namespace(context_b, trace_id="trace-a")
     server_a = server_trace_namespace(
         profile_id="profile-a",
         connection_authority_id="server-authority",
         authenticated_tenant_id="tenant-a",
         wire_schema_version="grounding_trace/v1",
+        server_trace_id="server-trace-a",
     )
     server_b = server_trace_namespace(
         profile_id="profile-a",
         connection_authority_id="server-authority",
         authenticated_tenant_id="tenant-b",
         wire_schema_version="grounding_trace/v1",
+        server_trace_id="server-trace-a",
     )
     server_v2 = server_trace_namespace(
         profile_id="profile-a",
         connection_authority_id="server-authority",
         authenticated_tenant_id="tenant-a",
         wire_schema_version="grounding_trace/v2",
+        server_trace_id="server-trace-a",
+    )
+    server_other_trace = server_trace_namespace(
+        profile_id="profile-a",
+        connection_authority_id="server-authority",
+        authenticated_tenant_id="tenant-a",
+        wire_schema_version="grounding_trace/v1",
+        server_trace_id="server-trace-b",
     )
     imported = imported_trace_namespace(
         profile_id="profile-a",
@@ -98,9 +120,24 @@ def test_local_server_and_imported_namespaces_separate_authority_scopes() -> Non
         import_package_fingerprint="package-fingerprint",
         external_trace_id="external-trace",
         wire_schema_version="portable/v1",
+        trace_id="imported-local-trace",
     )
 
-    assert len({local_a, local_b, server_a, server_b, server_v2, imported}) == 6
+    assert (
+        len(
+            {
+                local_a,
+                local_a_other_trace,
+                local_b,
+                server_a,
+                server_b,
+                server_v2,
+                server_other_trace,
+                imported,
+            }
+        )
+        == 8
+    )
     assert local_a.identity_namespace is CitationIdentityNamespace.LOCAL_TRACE
     assert server_a.identity_namespace is CitationIdentityNamespace.SERVER_TRACE
     assert imported.identity_namespace is CitationIdentityNamespace.IMPORTED_TRACE
@@ -113,7 +150,46 @@ def test_local_server_and_imported_namespaces_separate_authority_scopes() -> Non
             connection_authority_id="é" * 129,
             authenticated_tenant_id="tenant",
             wire_schema_version="v1",
+            server_trace_id="server-trace",
         )
+
+
+def test_hostile_direct_namespace_construction_rejects_incoherent_origin_fields() -> (
+    None
+):
+    context = LocalCitationIdentityContext(
+        profile_id="profile",
+        local_authority_id="local-authority",
+        fingerprint_key_id="key",
+    )
+    local = local_trace_namespace(context, trace_id="trace")
+    server = server_trace_namespace(
+        profile_id="profile",
+        connection_authority_id="server-authority",
+        authenticated_tenant_id="tenant",
+        wire_schema_version="grounding_trace/v1",
+        server_trace_id="server-trace",
+    )
+    imported = imported_trace_namespace(
+        profile_id="profile",
+        import_authority_id="import-authority",
+        import_package_fingerprint="package",
+        external_trace_id="external",
+        wire_schema_version="portable/v1",
+        trace_id="local-import-trace",
+    )
+
+    hostile_updates = (
+        (local, {"server_trace_id": "server-trace"}),
+        (server, {"trace_id": "local-trace"}),
+        (server, {"external_trace_id": "external"}),
+        (imported, {"server_trace_id": "server-trace"}),
+        (imported, {"trace_id": None}),
+        (imported, {"origin_scope_id": "another-package"}),
+    )
+    for namespace, update in hostile_updates:
+        with pytest.raises(ValidationError):
+            TraceNamespace(**{**namespace.model_dump(), **update})
 
 
 def test_fingerprint_framing_prevents_delimiter_ambiguity_and_separates_domains() -> (
@@ -136,10 +212,12 @@ def test_fingerprint_codec_rejects_weak_secrets_and_never_exposes_sensitive_data
 ) -> None:
     raw = "private answer text"
     secret = b"s" * MINIMUM_FINGERPRINT_SECRET_BYTES
-    with pytest.raises(ValueError, match="at least"):
+    with pytest.raises(ValueError, match="exactly"):
         CitationFingerprintCodec(b"")
-    with pytest.raises(ValueError, match="at least"):
+    with pytest.raises(ValueError, match="exactly"):
         CitationFingerprintCodec(secret[:-1])
+    with pytest.raises(ValueError, match="exactly"):
+        CitationFingerprintCodec(secret + b"x")
 
     codec = CitationFingerprintCodec(secret)
     with caplog.at_level(logging.DEBUG):
@@ -172,7 +250,7 @@ def test_injected_key_provider_loads_lazily_and_fails_closed() -> None:
 
 def test_keyring_adapter_uses_fixed_service_and_never_touches_real_keyring() -> None:
     secret = b"k" * MINIMUM_FINGERPRINT_SECRET_BYTES
-    backend = FakeKeyring(base64.b64encode(secret).decode("ascii"))
+    backend = SecureFakeKeyring(base64.b64encode(secret).decode("ascii"))
     provider = KeyringCitationFingerprintKeyProvider(keyring_backend=backend)
 
     assert backend.calls == []
@@ -184,9 +262,12 @@ def test_keyring_adapter_uses_fixed_service_and_never_touches_real_keyring() -> 
 @pytest.mark.parametrize(
     "backend",
     (
-        FakeKeyring(None),
-        FakeKeyring("not-base64"),
-        FakeKeyring(error=RuntimeError("keyring unavailable")),
+        SecureFakeKeyring(None),
+        SecureFakeKeyring("not-base64"),
+        SecureFakeKeyring(error=RuntimeError("keyring unavailable")),
+        InsecureFakeKeyring(base64.b64encode(b"k" * 32).decode("ascii")),
+        SecureFakeKeyring(base64.b64encode(b"k" * 31).decode("ascii")),
+        SecureFakeKeyring(base64.b64encode(b"k" * 33).decode("ascii")),
     ),
 )
 def test_keyring_missing_invalid_or_unavailable_fails_closed(

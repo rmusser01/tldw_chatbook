@@ -13,6 +13,9 @@ from typing import Annotated, Any, Literal, Protocol
 from pydantic import AfterValidator, BaseModel, ConfigDict, model_validator
 
 from .citation_trace_models import EXTERNAL_OPAQUE_ID_UTF8_BYTES_MAX
+from tldw_chatbook.runtime_policy.server_credentials import (
+    is_secure_keyring_backend,
+)
 
 
 CITATION_FINGERPRINT_KEYRING_SERVICE = "tldw_chatbook.citation-provenance.v1"
@@ -80,6 +83,8 @@ class TraceNamespace(BaseModel):
     authority_id: BoundedIdentifier
     authenticated_tenant_id: BoundedIdentifier | None = None
     wire_schema_version: BoundedIdentifier
+    trace_id: BoundedIdentifier | None = None
+    server_trace_id: BoundedIdentifier | None = None
     import_package_fingerprint: BoundedIdentifier | None = None
     external_trace_id: BoundedIdentifier | None = None
 
@@ -88,10 +93,13 @@ class TraceNamespace(BaseModel):
         if self.identity_namespace is CitationIdentityNamespace.LOCAL_TRACE:
             if self.origin_scope_id != self.profile_id:
                 raise ValueError("local origin scope must equal profile_id")
+            if self.trace_id is None:
+                raise ValueError("local namespace requires trace_id")
             if any(
                 value is not None
                 for value in (
                     self.authenticated_tenant_id,
+                    self.server_trace_id,
                     self.import_package_fingerprint,
                     self.external_trace_id,
                 )
@@ -103,17 +111,33 @@ class TraceNamespace(BaseModel):
                 raise ValueError(
                     "server origin scope must match authenticated tenant scope"
                 )
+            if self.server_trace_id is None:
+                raise ValueError("server namespace requires server_trace_id")
             if (
-                self.import_package_fingerprint is not None
+                self.trace_id is not None
+                or self.import_package_fingerprint is not None
                 or self.external_trace_id is not None
             ):
-                raise ValueError("server namespace cannot carry import identity")
+                raise ValueError("server namespace cannot carry local/import identity")
         elif self.identity_namespace is CitationIdentityNamespace.IMPORTED_TRACE:
+            if self.trace_id is None:
+                raise ValueError("imported namespace requires local trace_id")
+            if self.authenticated_tenant_id is not None:
+                raise ValueError("imported namespace cannot carry server tenant scope")
+            if self.server_trace_id is not None:
+                raise ValueError(
+                    "imported namespace cannot carry server trace identity"
+                )
+            if self.origin_scope_id != self.import_package_fingerprint:
+                raise ValueError("imported origin scope must match package fingerprint")
             if (
-                self.import_package_fingerprint is None
-                or self.external_trace_id is None
+                self.import_package_fingerprint is not None
+                and self.external_trace_id is not None
             ):
-                raise ValueError("imported namespace requires package and trace IDs")
+                return self
+            raise ValueError(
+                "imported namespace requires package and external trace IDs"
+            )
         else:
             raise ValueError("TraceNamespace requires a trace identity namespace")
         return self
@@ -132,6 +156,7 @@ def new_opaque_id(prefix: str) -> str:
 def local_trace_namespace(
     context: LocalCitationIdentityContext,
     *,
+    trace_id: str,
     wire_schema_version: str = "citation_trace/v1",
 ) -> TraceNamespace:
     """Construct the local authority namespace without persistence access."""
@@ -142,6 +167,7 @@ def local_trace_namespace(
         origin_scope_id=context.profile_id,
         authority_id=context.local_authority_id,
         wire_schema_version=wire_schema_version,
+        trace_id=trace_id,
     )
 
 
@@ -151,6 +177,7 @@ def server_trace_namespace(
     connection_authority_id: str,
     authenticated_tenant_id: str | None,
     wire_schema_version: str,
+    server_trace_id: str,
 ) -> TraceNamespace:
     """Construct an authenticated server namespace without transport access."""
 
@@ -161,6 +188,7 @@ def server_trace_namespace(
         authority_id=connection_authority_id,
         authenticated_tenant_id=authenticated_tenant_id,
         wire_schema_version=wire_schema_version,
+        server_trace_id=server_trace_id,
     )
 
 
@@ -171,6 +199,7 @@ def imported_trace_namespace(
     import_package_fingerprint: str,
     external_trace_id: str,
     wire_schema_version: str,
+    trace_id: str,
 ) -> TraceNamespace:
     """Construct an inert imported namespace without rebinding its authority."""
 
@@ -180,6 +209,7 @@ def imported_trace_namespace(
         origin_scope_id=import_package_fingerprint,
         authority_id=import_authority_id,
         wire_schema_version=wire_schema_version,
+        trace_id=trace_id,
         import_package_fingerprint=import_package_fingerprint,
         external_trace_id=external_trace_id,
     )
@@ -193,9 +223,9 @@ class CitationFingerprintCodec:
     def __init__(self, secret: bytes) -> None:
         if not isinstance(secret, bytes):
             raise TypeError("fingerprint secret must be bytes")
-        if len(secret) < MINIMUM_FINGERPRINT_SECRET_BYTES:
+        if len(secret) != MINIMUM_FINGERPRINT_SECRET_BYTES:
             raise ValueError(
-                "fingerprint secret must be at least "
+                "fingerprint secret must be exactly "
                 f"{MINIMUM_FINGERPRINT_SECRET_BYTES} bytes"
             )
         self._secret = secret
@@ -254,7 +284,14 @@ class KeyringCitationFingerprintKeyProvider:
             if backend is None:
                 import keyring
 
-                backend = keyring
+                backend = keyring.get_keyring()
+            get_keyring = getattr(backend, "get_keyring", None)
+            if callable(get_keyring):
+                backend = get_keyring()
+            if not is_secure_keyring_backend(backend):
+                raise CitationFingerprintKeyUnavailable(
+                    "fingerprint_key_unavailable: insecure keyring backend"
+                )
             encoded = backend.get_password(
                 CITATION_FINGERPRINT_KEYRING_SERVICE,
                 key_id,
@@ -270,7 +307,7 @@ class KeyringCitationFingerprintKeyProvider:
             raise CitationFingerprintKeyUnavailable(
                 "fingerprint_key_unavailable: keyring read failed"
             ) from exc
-        if len(secret) < MINIMUM_FINGERPRINT_SECRET_BYTES:
+        if len(secret) != MINIMUM_FINGERPRINT_SECRET_BYTES:
             raise CitationFingerprintKeyUnavailable(
                 "fingerprint_key_unavailable: key is invalid"
             )

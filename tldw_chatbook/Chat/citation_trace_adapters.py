@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any
@@ -25,15 +24,17 @@ from .citation_trace_models import (
     PromptEvidenceEntry,
     PromptEvidenceSet,
     RetrievalCandidatePayload,
+    RetrievalScoreKind,
+    RetrievalScoreScale,
     SealedCitationWrite,
     StructuralTrustSummary,
     StructuralValidationState,
     TraceLifecycle,
     TraceOrigin,
+    eligible_citation_marker_spans,
 )
 
 
-_LEGACY_MARKER = re.compile(r"\[(S)?([1-9][0-9]*)\]")
 _UNKNOWN_AUTHORITIES = frozenset({"unknown", "unavailable", "none", "n/a"})
 
 
@@ -244,14 +245,10 @@ def _synthesize(
 
 
 def _marker_namespace(answer_body: str) -> MarkerNamespace:
-    matches = tuple(_LEGACY_MARKER.finditer(answer_body))
     namespaces = {
-        (
-            MarkerNamespace.CHATBOOK_S_V1
-            if match.group(1)
-            else MarkerNamespace.LEGACY_NUMERIC_V1
-        )
-        for match in matches
+        namespace
+        for namespace in MarkerNamespace
+        if eligible_citation_marker_spans(answer_body, namespace)
     }
     if len(namespaces) > 1:
         raise ValueError("mixed legacy marker namespaces are not synthesized")
@@ -336,25 +333,17 @@ def _legacy_occurrences(
     evidence_by_marker: Mapping[int, int],
 ) -> tuple[CitationOccurrence, ...]:
     occurrences: list[CitationOccurrence] = []
-    for match in _LEGACY_MARKER.finditer(answer_body):
-        current_namespace = (
-            MarkerNamespace.CHATBOOK_S_V1
-            if match.group(1)
-            else MarkerNamespace.LEGACY_NUMERIC_V1
-        )
-        if current_namespace is not namespace:
-            raise ValueError("mixed legacy marker namespaces are not synthesized")
-        marker_ordinal = int(match.group(2))
-        evidence_ordinal = evidence_by_marker.get(marker_ordinal)
+    for span in eligible_citation_marker_spans(answer_body, namespace):
+        evidence_ordinal = evidence_by_marker.get(span.marker_ordinal)
         occurrences.append(
             CitationOccurrence(
                 occurrence_id=new_opaque_id("legacy-occurrence"),
                 occurrence_ordinal=len(occurrences) + 1,
-                raw_marker=match.group(0),
+                raw_marker=span.raw_marker,
                 marker_namespace=namespace,
                 evidence_ordinal=evidence_ordinal,
-                marker_start=match.start(),
-                marker_end=match.end(),
+                marker_start=span.marker_start,
+                marker_end=span.marker_end,
                 offset_basis=OffsetBasis.UNICODE_CODEPOINT_V1,
                 structural_state=(
                     StructuralValidationState.VALID
@@ -384,7 +373,10 @@ def _legacy_candidate(
             if reference.content_ref is not None
             else {}
         ),
-        score_kind="legacy_score" if reference.score is not None else None,
+        score_kind=(RetrievalScoreKind.LEGACY if reference.score is not None else None),
+        score_scale=(
+            RetrievalScoreScale.ZERO_TO_ONE if reference.score is not None else None
+        ),
         score=reference.score,
     )
 

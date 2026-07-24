@@ -91,6 +91,20 @@ def test_evidence_bundle_adapter_is_partial_legacy_and_preserves_numeric_markers
         assert governed not in aggregate
 
 
+def test_legacy_adapter_ignores_escaped_inline_and_fenced_code_markers() -> None:
+    answer = "Real [1]. Escaped \\[1]. Inline `[2]`.\n```\n[2]\n```\n~~~text\n[9]\n~~~"
+    write = synthesize_legacy_evidence_bundle(
+        _bundle(),
+        answer_body=answer,
+        created_at=NOW,
+    )
+
+    assert [
+        (occurrence.raw_marker, occurrence.marker_start)
+        for occurrence in write.trace.answer_attempts[0].occurrences
+    ] == [("[1]", answer.index("[1]"))]
+
+
 def test_unknown_legacy_authority_and_missing_prompt_evidence_are_unavailable() -> None:
     unknown_authority = synthesize_legacy_evidence_bundle(
         _bundle(authority="unknown"),

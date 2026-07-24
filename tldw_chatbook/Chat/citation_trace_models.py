@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
+import math
 import re
 from datetime import datetime
 from enum import Enum
-from typing import Annotated, Any, Literal, Mapping, TypeVar
+from typing import Annotated, Any, Literal, Mapping, TypeVar, cast
+import unicodedata
 
 from pydantic import (
     AfterValidator,
@@ -32,13 +35,14 @@ EXTERNAL_OPAQUE_ID_UTF8_BYTES_MAX = 256
 ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX = 1024 * 1024
 
 TIMING_SUMMARIES_MAX = 16
-POLICY_CAPABILITIES_MAX = 16
+POLICY_CAPABILITIES_MAX = 7
 SHORT_CODE_CHARACTERS_MAX = 256
 MARKER_CHARACTERS_MAX = 32
 GOVERNED_DESCRIPTOR_JSON_BYTES_MAX = 16 * 1024
 
-_CHATBOOK_MARKER = re.compile(r"\[S([1-9][0-9]*)\]\Z")
-_LEGACY_NUMERIC_MARKER = re.compile(r"\[([1-9][0-9]*)\]\Z")
+_CHATBOOK_MARKER = re.compile(r"\[S([1-9][0-9]*)\]")
+_LEGACY_NUMERIC_MARKER = re.compile(r"\[([1-9][0-9]*)\]")
+_FENCE_START = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})")
 
 
 def _bounded_utf8(value: str, *, field_name: str, limit: int) -> str:
@@ -60,15 +64,22 @@ def _opaque_identifier(value: str) -> str:
     )
 
 
+def _control_safe_short_code(value: str) -> str:
+    if any(unicodedata.category(character).startswith("C") for character in value):
+        raise ValueError("short code must not contain control characters")
+    return value
+
+
 OpaqueIdentifier = Annotated[str, AfterValidator(_opaque_identifier)]
 ShortCode = Annotated[
     str,
     StringConstraints(
         strict=True,
-        strip_whitespace=True,
+        strip_whitespace=False,
         min_length=1,
         max_length=SHORT_CODE_CHARACTERS_MAX,
     ),
+    AfterValidator(_control_safe_short_code),
 ]
 MarkerText = Annotated[
     str,
@@ -149,6 +160,25 @@ class AnswerAttemptKind(str, Enum):
     LEGACY_INFERRED = "legacy_inferred"
 
 
+class RetrievalScoreKind(str, Enum):
+    """Typed retrieval score semantics."""
+
+    BM25 = "bm25"
+    VECTOR_SIMILARITY = "vector_similarity"
+    VECTOR_DISTANCE = "vector_distance"
+    RRF = "rrf"
+    RERANKER = "reranker"
+    LEGACY = "legacy"
+
+
+class RetrievalScoreScale(str, Enum):
+    """Numeric scale retained with a typed retrieval score."""
+
+    UNBOUNDED = "unbounded"
+    NON_NEGATIVE = "non_negative"
+    ZERO_TO_ONE = "zero_to_one"
+
+
 class PolicyCapability(str, Enum):
     """Seal-time policy capability retained in the immutable trace."""
 
@@ -161,8 +191,24 @@ class PolicyCapability(str, Enum):
     EXPORT_SNAPSHOT = "export_snapshot"
 
 
+@dataclass(frozen=True)
+class CitationMarkerSpan:
+    """One Markdown-eligible marker span in exact Unicode codepoint offsets."""
+
+    raw_marker: str
+    marker_ordinal: int
+    marker_start: int
+    marker_end: int
+
+
 class _StrictFrozenModel(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+    model_config = ConfigDict(
+        allow_inf_nan=False,
+        frozen=True,
+        extra="forbid",
+        revalidate_instances="always",
+        strict=True,
+    )
 
 
 class TimingSummary(_StrictFrozenModel):
@@ -349,6 +395,16 @@ class AnswerAttempt(_StrictFrozenModel):
             lambda item: (item.marker_start, item.marker_end),
             "marker span",
         )
+        object.__setattr__(
+            self,
+            "structural_summary",
+            _structural_summary_for_occurrences(self.occurrences),
+        )
+        object.__setattr__(
+            self,
+            "semantic_summary",
+            _semantic_summary_for_occurrences(self.occurrences),
+        )
         return self
 
 
@@ -426,6 +482,7 @@ class CitationTrace(_StrictFrozenModel):
         attempts = {attempt.attempt_id: attempt for attempt in self.answer_attempts}
         if self.selected_attempt_id not in attempts:
             raise ValueError("selected_attempt_id must identify one answer attempt")
+        selected_attempt = attempts[self.selected_attempt_id]
 
         for prompt_set in self.prompt_evidence_sets:
             for entry in prompt_set.entries:
@@ -441,12 +498,19 @@ class CitationTrace(_StrictFrozenModel):
                     f"{attempt.prompt_evidence_set_id!r}"
                 )
             entries = {entry.evidence_ordinal: entry for entry in prompt_set.entries}
+            known_marker_ordinals = {
+                entry.marker_ordinal for entry in prompt_set.entries
+            }
             for occurrence in attempt.occurrences:
                 if occurrence.marker_namespace is not prompt_set.marker_namespace:
                     raise ValueError(
                         "citation occurrence marker namespace differs from prompt set"
                     )
                 if occurrence.evidence_ordinal is None:
+                    if occurrence.marker_ordinal in known_marker_ordinals:
+                        raise ValueError(
+                            "known marker cannot be recorded as unknown evidence"
+                        )
                     continue
                 entry = entries.get(occurrence.evidence_ordinal)
                 if entry is None:
@@ -458,6 +522,16 @@ class CitationTrace(_StrictFrozenModel):
                         "citation occurrence marker does not resolve to evidence"
                     )
 
+        object.__setattr__(
+            self,
+            "structural_trust",
+            selected_attempt.structural_summary,
+        )
+        object.__setattr__(
+            self,
+            "semantic_trust",
+            selected_attempt.semantic_summary,
+        )
         validate_aggregate_json_bytes(_canonical_json_bytes(self))
         return self
 
@@ -472,7 +546,8 @@ class RetrievalCandidatePayload(_StrictFrozenModel):
     title: str | None = None
     locator: dict[str, JsonValue] = Field(default_factory=dict)
     lineage: dict[str, JsonValue] = Field(default_factory=dict)
-    score_kind: ShortCode | None = None
+    score_kind: RetrievalScoreKind | None = None
+    score_scale: RetrievalScoreScale | None = None
     score: float | None = None
 
     @model_validator(mode="after")
@@ -482,6 +557,20 @@ class RetrievalCandidatePayload(_StrictFrozenModel):
             self.locator,
             self.lineage,
         )
+        score_parts = (self.score_kind, self.score_scale, self.score)
+        if any(part is not None for part in score_parts) and any(
+            part is None for part in score_parts
+        ):
+            raise ValueError("score requires kind, scale, and value together")
+        if self.score is not None:
+            if not math.isfinite(self.score):
+                raise ValueError("score must be finite")
+            if self.score_scale is RetrievalScoreScale.NON_NEGATIVE and self.score < 0:
+                raise ValueError("non_negative score cannot be negative")
+            if self.score_scale is RetrievalScoreScale.ZERO_TO_ONE and not (
+                0 <= self.score <= 1
+            ):
+                raise ValueError("zero_to_one score must be between 0 and 1")
         return self
 
 
@@ -611,6 +700,27 @@ class SealedCitationWrite(_StrictFrozenModel):
 
     @model_validator(mode="after")
     def _validate_complete_graph(self) -> "SealedCitationWrite":
+        object.__setattr__(self, "trace", _revalidate_model(self.trace))
+        object.__setattr__(
+            self,
+            "evidence_run_payloads",
+            tuple(_revalidate_model(payload) for payload in self.evidence_run_payloads),
+        )
+        object.__setattr__(
+            self,
+            "evidence_snapshot_payloads",
+            tuple(
+                _revalidate_model(payload)
+                for payload in self.evidence_snapshot_payloads
+            ),
+        )
+        object.__setattr__(
+            self,
+            "answer_attempt_payloads",
+            tuple(
+                _revalidate_model(payload) for payload in self.answer_attempt_payloads
+            ),
+        )
         if self.trace.lifecycle is not TraceLifecycle.SEALED:
             raise ValueError("SealedCitationWrite requires a sealed trace")
 
@@ -683,7 +793,16 @@ class SealedCitationWrite(_StrictFrozenModel):
             payload = answer_payloads[attempt.answer_payload_ref]
             if payload.attempt_id != attempt.attempt_id:
                 raise ValueError("governed answer payload belongs to another attempt")
-            _validate_answer_offsets(attempt, payload)
+            prompt_set = next(
+                prompt_set
+                for prompt_set in self.trace.prompt_evidence_sets
+                if prompt_set.prompt_set_id == attempt.prompt_evidence_set_id
+            )
+            _validate_answer_offsets(
+                attempt,
+                payload,
+                prompt_set.marker_namespace,
+            )
 
         reduced = reduce_selected_attempt_completeness(self.trace, snapshot_payloads)
         if self.trace.completeness_at_seal is not reduced:
@@ -743,7 +862,46 @@ def reduce_selected_attempt_completeness(
         }[entry.storage_mode]
         if precedence[current] > precedence[worst]:
             worst = current
+    if worst is CitationCompleteness.COMPLETE and (
+        trace.origin is TraceOrigin.LEGACY_INFERRED
+        or prompt_set.marker_namespace is not MarkerNamespace.CHATBOOK_S_V1
+    ):
+        return CitationCompleteness.PARTIAL
     return worst
+
+
+def eligible_citation_marker_spans(
+    answer_text: str,
+    marker_namespace: MarkerNamespace,
+) -> tuple[CitationMarkerSpan, ...]:
+    """Return markers outside Markdown code and escaped literal regions."""
+
+    matcher = (
+        _CHATBOOK_MARKER
+        if marker_namespace is MarkerNamespace.CHATBOOK_S_V1
+        else _LEGACY_NUMERIC_MARKER
+    )
+    excluded = _markdown_code_intervals(answer_text)
+    spans: list[CitationMarkerSpan] = []
+    for match in matcher.finditer(answer_text):
+        if _point_in_intervals(match.start(), excluded):
+            continue
+        preceding_backslashes = 0
+        cursor = match.start() - 1
+        while cursor >= 0 and answer_text[cursor] == "\\":
+            preceding_backslashes += 1
+            cursor -= 1
+        if preceding_backslashes % 2:
+            continue
+        spans.append(
+            CitationMarkerSpan(
+                raw_marker=match.group(0),
+                marker_ordinal=int(match.group(1)),
+                marker_start=match.start(),
+                marker_end=match.end(),
+            )
+        )
+    return tuple(spans)
 
 
 def validate_aggregate_json_bytes(payload: bytes | str) -> int:
@@ -770,6 +928,90 @@ def _canonical_json_bytes(value: BaseModel | Mapping[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
+ModelT = TypeVar("ModelT", bound=BaseModel)
+
+
+def _revalidate_model(model: ModelT) -> ModelT:
+    return cast(
+        ModelT,
+        type(model).model_validate(model.model_dump(mode="python", round_trip=True)),
+    )
+
+
+def _markdown_code_intervals(answer_text: str) -> tuple[tuple[int, int], ...]:
+    fenced = _fenced_code_intervals(answer_text)
+    inline = _inline_code_intervals(answer_text, fenced)
+    return tuple(sorted((*fenced, *inline)))
+
+
+def _fenced_code_intervals(answer_text: str) -> tuple[tuple[int, int], ...]:
+    intervals: list[tuple[int, int]] = []
+    opening: tuple[int, str, int] | None = None
+    offset = 0
+    for line in answer_text.splitlines(keepends=True):
+        content = line.rstrip("\r\n")
+        if opening is None:
+            match = _FENCE_START.match(content)
+            if match is not None:
+                token = match.group(1)
+                opening = (offset, token[0], len(token))
+        else:
+            start, character, minimum_length = opening
+            closing = re.fullmatch(
+                rf"[ ]{{0,3}}{re.escape(character)}{{{minimum_length},}}[ \t]*",
+                content,
+            )
+            if closing is not None:
+                intervals.append((start, offset + len(line)))
+                opening = None
+        offset += len(line)
+    if opening is not None:
+        intervals.append((opening[0], len(answer_text)))
+    return tuple(intervals)
+
+
+def _inline_code_intervals(
+    answer_text: str,
+    fenced: tuple[tuple[int, int], ...],
+) -> tuple[tuple[int, int], ...]:
+    intervals: list[tuple[int, int]] = []
+    cursor = 0
+    while cursor < len(answer_text):
+        if _point_in_intervals(cursor, fenced):
+            cursor = next(end for start, end in fenced if start <= cursor < end)
+            continue
+        if answer_text[cursor] != "`":
+            cursor += 1
+            continue
+        run_end = cursor + 1
+        while run_end < len(answer_text) and answer_text[run_end] == "`":
+            run_end += 1
+        token = answer_text[cursor:run_end]
+        closing = answer_text.find(token, run_end)
+        while closing >= 0 and (
+            _point_in_intervals(closing, fenced)
+            or (closing > 0 and answer_text[closing - 1] == "`")
+            or (
+                closing + len(token) < len(answer_text)
+                and answer_text[closing + len(token)] == "`"
+            )
+        ):
+            closing = answer_text.find(token, closing + 1)
+        if closing < 0:
+            cursor = run_end
+            continue
+        intervals.append((cursor, closing + len(token)))
+        cursor = closing + len(token)
+    return tuple(intervals)
+
+
+def _point_in_intervals(
+    point: int,
+    intervals: tuple[tuple[int, int], ...],
+) -> bool:
+    return any(start <= point < end for start, end in intervals)
+
+
 def _validate_governed_descriptors(*values: Mapping[str, JsonValue]) -> None:
     for value in values:
         if len(_canonical_json_bytes(value)) > GOVERNED_DESCRIPTOR_JSON_BYTES_MAX:
@@ -782,6 +1024,41 @@ def _validate_governed_descriptors(*values: Mapping[str, JsonValue]) -> None:
 def _require_aware_datetime(value: datetime, field_name: str) -> None:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(f"{field_name} must be timezone-aware")
+
+
+def _structural_summary_for_occurrences(
+    occurrences: tuple[CitationOccurrence, ...],
+) -> StructuralTrustSummary:
+    return StructuralTrustSummary(
+        valid_occurrences=sum(
+            occurrence.structural_state is StructuralValidationState.VALID
+            for occurrence in occurrences
+        ),
+        unknown_occurrences=sum(
+            occurrence.structural_state is StructuralValidationState.UNKNOWN_MARKER
+            for occurrence in occurrences
+        ),
+        invalid_spans=sum(
+            occurrence.structural_state is StructuralValidationState.INVALID_SPAN
+            for occurrence in occurrences
+        ),
+    )
+
+
+def _semantic_summary_for_occurrences(
+    occurrences: tuple[CitationOccurrence, ...],
+) -> SemanticTrustSummary:
+    counts = {
+        support: sum(occurrence.claim_support is support for occurrence in occurrences)
+        for support in ClaimSupport
+    }
+    return SemanticTrustSummary(
+        supported_claims=counts[ClaimSupport.SUPPORTED],
+        unsupported_claims=counts[ClaimSupport.UNSUPPORTED],
+        insufficient_claims=counts[ClaimSupport.INSUFFICIENT],
+        unknown_claims=counts[ClaimSupport.UNKNOWN],
+        not_checked_claims=counts[ClaimSupport.NOT_CHECKED],
+    )
 
 
 ItemT = TypeVar("ItemT")
@@ -825,12 +1102,38 @@ def _require_exact_payload_refs(
 def _validate_answer_offsets(
     attempt: AnswerAttempt,
     payload: AnswerAttemptPayload,
+    marker_namespace: MarkerNamespace,
 ) -> None:
     body = payload.answer_body
     if body is None and attempt.occurrences:
         raise ValueError("answer offsets require a retained answer body")
     if body is None:
         return
+    expected_spans = eligible_citation_marker_spans(body, marker_namespace)
+    actual_spans = tuple(
+        (
+            occurrence.raw_marker,
+            occurrence.marker_ordinal,
+            occurrence.marker_start,
+            occurrence.marker_end,
+        )
+        for occurrence in sorted(
+            attempt.occurrences,
+            key=lambda item: item.occurrence_ordinal,
+        )
+    )
+    if actual_spans != tuple(
+        (
+            span.raw_marker,
+            span.marker_ordinal,
+            span.marker_start,
+            span.marker_end,
+        )
+        for span in expected_spans
+    ):
+        raise ValueError(
+            "citation occurrences must exactly match eligible marker spans"
+        )
     for occurrence in attempt.occurrences:
         if (
             occurrence.marker_end > len(body)
@@ -848,15 +1151,19 @@ __all__ = [
     "CITATION_OCCURRENCES_MAX",
     "EVIDENCE_ENTRIES_PER_PROMPT_MAX",
     "EXTERNAL_OPAQUE_ID_UTF8_BYTES_MAX",
+    "GOVERNED_DESCRIPTOR_JSON_BYTES_MAX",
     "GOVERNED_PAYLOAD_UTF8_BYTES_MAX",
     "IMMUTABLE_AGGREGATE_JSON_BYTES_MAX",
+    "POLICY_CAPABILITIES_MAX",
     "PROMPT_EVIDENCE_SETS_MAX",
     "RETRIEVAL_CANDIDATES_PER_RUN_MAX",
     "SNAPSHOT_TEXT_UTF8_BYTES_MAX",
+    "TIMING_SUMMARIES_MAX",
     "AnswerAttempt",
     "AnswerAttemptKind",
     "AnswerAttemptPayload",
     "CitationCompleteness",
+    "CitationMarkerSpan",
     "CitationOccurrence",
     "CitationTrace",
     "ClaimSupport",
@@ -870,6 +1177,8 @@ __all__ = [
     "PromptEvidenceEntry",
     "PromptEvidenceSet",
     "RetrievalCandidatePayload",
+    "RetrievalScoreKind",
+    "RetrievalScoreScale",
     "SealedCitationWrite",
     "SemanticTrustSummary",
     "StructuralTrustSummary",
@@ -877,6 +1186,7 @@ __all__ = [
     "TimingSummary",
     "TraceLifecycle",
     "TraceOrigin",
+    "eligible_citation_marker_spans",
     "reduce_selected_attempt_completeness",
     "validate_aggregate_json_bytes",
 ]

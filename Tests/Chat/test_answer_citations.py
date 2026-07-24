@@ -97,6 +97,14 @@ def test_extract_citation_markers_preserves_first_seen_order_without_duplicates(
     assert markers == ("S2", "S1")
 
 
+def test_extract_citation_markers_ignores_escaped_inline_and_fenced_code() -> None:
+    markers = extract_citation_markers(
+        "Escaped \\[S1]. Inline `[S2]`.\n```\n[S3]\n```\n~~~text\n[S4]\n~~~\nReal [S5]."
+    )
+
+    assert markers == ("S5",)
+
+
 def test_answer_citation_validation_marks_valid_unknown_and_uncited_refs() -> None:
     result = build_answer_citation_validation(
         "The credential expired [S1]. A made-up source was also cited [S9].",

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import re
 from typing import Any, Mapping
 
 from tldw_chatbook.Chat.citation_evidence_models import (
@@ -11,9 +10,12 @@ from tldw_chatbook.Chat.citation_evidence_models import (
     EvidenceBundle,
     EvidenceReference,
 )
+from tldw_chatbook.Chat.citation_trace_models import (
+    MarkerNamespace,
+    eligible_citation_marker_spans,
+)
 
 
-CITATION_MARKER_PATTERN = re.compile(r"\[(S[0-9][A-Za-z0-9_-]*)\]")
 QUOTE_BOUNDARY_CHARS = (".", "?", "!", "\n")
 MAX_CITATION_ARTIFACT_SUMMARY_TEXT_CHARS = 256
 MAX_CITATION_ARTIFACT_SUMMARY_IDS = 20
@@ -208,8 +210,11 @@ def extract_citation_markers(answer_text: Any) -> tuple[str, ...]:
     """
     seen: set[str] = set()
     markers: list[str] = []
-    for match in CITATION_MARKER_PATTERN.finditer(str(answer_text or "")):
-        marker = match.group(1)
+    for span in eligible_citation_marker_spans(
+        str(answer_text or ""),
+        MarkerNamespace.CHATBOOK_S_V1,
+    ):
+        marker = span.raw_marker[1:-1]
         if marker not in seen:
             markers.append(marker)
             seen.add(marker)

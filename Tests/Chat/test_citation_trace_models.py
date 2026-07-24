@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from itertools import permutations
+import json
+import math
 
 import pytest
 from hypothesis import given, strategies as st
@@ -13,11 +15,14 @@ from tldw_chatbook.Chat.citation_trace_models import (
     CITATION_OCCURRENCES_MAX,
     EVIDENCE_ENTRIES_PER_PROMPT_MAX,
     EXTERNAL_OPAQUE_ID_UTF8_BYTES_MAX,
+    GOVERNED_DESCRIPTOR_JSON_BYTES_MAX,
     GOVERNED_PAYLOAD_UTF8_BYTES_MAX,
     IMMUTABLE_AGGREGATE_JSON_BYTES_MAX,
+    POLICY_CAPABILITIES_MAX,
     PROMPT_EVIDENCE_SETS_MAX,
     RETRIEVAL_CANDIDATES_PER_RUN_MAX,
     SNAPSHOT_TEXT_UTF8_BYTES_MAX,
+    TIMING_SUMMARIES_MAX,
     AnswerAttempt,
     AnswerAttemptKind,
     AnswerAttemptPayload,
@@ -33,9 +38,15 @@ from tldw_chatbook.Chat.citation_trace_models import (
     OffsetBasis,
     PromptEvidenceEntry,
     PromptEvidenceSet,
+    PolicyCapability,
     RetrievalCandidatePayload,
+    RetrievalScoreKind,
+    RetrievalScoreScale,
     SealedCitationWrite,
+    SemanticTrustSummary,
+    StructuralTrustSummary,
     StructuralValidationState,
+    TimingSummary,
     TraceLifecycle,
     TraceOrigin,
     reduce_selected_attempt_completeness,
@@ -44,6 +55,21 @@ from tldw_chatbook.Chat.citation_trace_models import (
 
 
 NOW = datetime(2026, 7, 23, 12, 0, tzinfo=UTC)
+
+
+def _exact_json_object(size: int) -> dict[str, str]:
+    overhead = len(b'{"value":""}')
+    assert size >= overhead
+    value = {"value": "x" * (size - overhead)}
+    assert (
+        len(
+            json.dumps(
+                value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+            ).encode("utf-8")
+        )
+        == size
+    )
+    return value
 
 
 def _snapshot_payload(
@@ -329,7 +355,7 @@ def test_marker_grammar_and_exact_answer_offsets_are_enforced() -> None:
         marker_end=5,
         structural_state=StructuralValidationState.VALID,
     )
-    with pytest.raises(ValidationError, match="answer offsets"):
+    with pytest.raises(ValidationError, match="eligible marker spans"):
         _write_for_modes(
             (EvidenceStorageMode.EMBEDDED,),
             answer_body="[S1]",
@@ -359,6 +385,69 @@ def test_marker_grammar_and_exact_answer_offsets_are_enforced() -> None:
         )
 
 
+def test_known_marker_cannot_be_recorded_as_unknown() -> None:
+    write = _write_for_modes((EvidenceStorageMode.EMBEDDED,))
+    unknown = CitationOccurrence(
+        occurrence_id="occurrence-known-as-unknown",
+        occurrence_ordinal=1,
+        raw_marker="[S1]",
+        marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+        evidence_ordinal=None,
+        marker_start=0,
+        marker_end=4,
+        structural_state=StructuralValidationState.UNKNOWN_MARKER,
+    )
+    attempt = write.trace.answer_attempts[0].model_copy(
+        update={"occurrences": (unknown,)}
+    )
+
+    with pytest.raises(ValidationError, match="known marker"):
+        CitationTrace(
+            **{
+                **write.trace.model_dump(),
+                "answer_attempts": (attempt,),
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "answer",
+    (
+        r"\[S1]",
+        "`[S1]`",
+        "```\n[S1]\n```",
+        "~~~text\n[S1]\n~~~",
+    ),
+)
+def test_sealed_write_rejects_ineligible_or_unmapped_marker_spans(
+    answer: str,
+) -> None:
+    start = answer.index("[S1]")
+    occurrence = CitationOccurrence(
+        occurrence_id="occurrence",
+        occurrence_ordinal=1,
+        raw_marker="[S1]",
+        marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+        evidence_ordinal=1,
+        marker_start=start,
+        marker_end=start + 4,
+        structural_state=StructuralValidationState.VALID,
+    )
+    with pytest.raises(ValidationError, match="eligible marker spans"):
+        _write_for_modes(
+            (EvidenceStorageMode.EMBEDDED,),
+            answer_body=answer,
+            occurrences=(occurrence,),
+        )
+
+    with pytest.raises(ValidationError, match="eligible marker spans"):
+        _write_for_modes(
+            (EvidenceStorageMode.EMBEDDED,),
+            answer_body="Eligible [S1].",
+            occurrences=(),
+        )
+
+
 def test_selected_attempt_only_completeness_uses_worst_state_precedence() -> None:
     cases = (
         ((EvidenceStorageMode.EMBEDDED,), CitationCompleteness.COMPLETE),
@@ -377,6 +466,139 @@ def test_selected_attempt_only_completeness_uses_worst_state_precedence() -> Non
             payload.payload_id: payload for payload in write.evidence_snapshot_payloads
         }
         assert reduce_selected_attempt_completeness(write.trace, index) is expected
+
+
+def test_legacy_origin_and_marker_namespace_can_never_reduce_complete() -> None:
+    write = _write_for_modes((EvidenceStorageMode.EMBEDDED,))
+    payload_index = {
+        payload.payload_id: payload for payload in write.evidence_snapshot_payloads
+    }
+    legacy_trace = write.trace.model_copy(
+        update={"origin": TraceOrigin.LEGACY_INFERRED}
+    )
+    legacy_prompt = write.trace.prompt_evidence_sets[0].model_copy(
+        update={"marker_namespace": MarkerNamespace.LEGACY_NUMERIC_V1}
+    )
+    legacy_marker_trace = CitationTrace(
+        **{
+            **write.trace.model_dump(),
+            "prompt_evidence_sets": (legacy_prompt,),
+        }
+    )
+
+    assert (
+        reduce_selected_attempt_completeness(legacy_trace, payload_index)
+        is CitationCompleteness.PARTIAL
+    )
+    assert (
+        reduce_selected_attempt_completeness(legacy_marker_trace, payload_index)
+        is CitationCompleteness.PARTIAL
+    )
+    for invalid_complete in (legacy_trace, legacy_marker_trace):
+        with pytest.raises(ValidationError, match="completeness_at_seal"):
+            SealedCitationWrite(
+                trace=invalid_complete,
+                evidence_run_payloads=write.evidence_run_payloads,
+                evidence_snapshot_payloads=write.evidence_snapshot_payloads,
+                answer_attempt_payloads=write.answer_attempt_payloads,
+            )
+
+
+def test_occurrence_and_trace_trust_summaries_are_selected_attempt_derived() -> None:
+    answer = "Selected [S1]."
+    selected_start = answer.index("[S1]")
+    diagnostic_start = 0
+    selected_occurrence = CitationOccurrence(
+        occurrence_id="selected-occurrence",
+        occurrence_ordinal=1,
+        raw_marker="[S1]",
+        marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+        evidence_ordinal=1,
+        marker_start=selected_start,
+        marker_end=selected_start + 4,
+        structural_state=StructuralValidationState.VALID,
+        claim_support=ClaimSupport.SUPPORTED,
+    )
+    selected_write = _write_for_modes(
+        (EvidenceStorageMode.EMBEDDED,),
+        answer_body=answer,
+        occurrences=(selected_occurrence,),
+    )
+    selected_attempt = selected_write.trace.answer_attempts[0]
+    diagnostic_prompt = selected_write.trace.prompt_evidence_sets[0].model_copy(
+        update={"prompt_set_id": "diagnostic-prompt", "prompt_set_ordinal": 2}
+    )
+    diagnostic_occurrence = CitationOccurrence(
+        occurrence_id="diagnostic-occurrence",
+        occurrence_ordinal=1,
+        raw_marker="[S9]",
+        marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
+        evidence_ordinal=None,
+        marker_start=diagnostic_start,
+        marker_end=diagnostic_start + 4,
+        structural_state=StructuralValidationState.UNKNOWN_MARKER,
+        claim_support=ClaimSupport.UNSUPPORTED,
+    )
+    diagnostic_attempt = AnswerAttempt(
+        attempt_id="diagnostic-attempt",
+        attempt_ordinal=2,
+        kind=AnswerAttemptKind.PIPELINE_RERUN,
+        prompt_evidence_set_id="diagnostic-prompt",
+        occurrences=(diagnostic_occurrence,),
+        structural_summary=StructuralTrustSummary(valid_occurrences=1),
+        semantic_summary=SemanticTrustSummary(supported_claims=1),
+        created_at=NOW,
+    )
+    trace = CitationTrace(
+        **{
+            **selected_write.trace.model_dump(),
+            "prompt_evidence_sets": (
+                selected_write.trace.prompt_evidence_sets[0],
+                diagnostic_prompt,
+            ),
+            "answer_attempts": (diagnostic_attempt, selected_attempt),
+            "structural_trust": StructuralTrustSummary(unknown_occurrences=1),
+            "semantic_trust": SemanticTrustSummary(unsupported_claims=1),
+        }
+    )
+
+    assert selected_attempt.structural_summary == StructuralTrustSummary(
+        valid_occurrences=1
+    )
+    assert selected_attempt.semantic_summary == SemanticTrustSummary(supported_claims=1)
+    assert diagnostic_attempt.structural_summary == StructuralTrustSummary(
+        unknown_occurrences=1
+    )
+    assert diagnostic_attempt.semantic_summary == SemanticTrustSummary(
+        unsupported_claims=1
+    )
+    assert trace.structural_trust == selected_attempt.structural_summary
+    assert trace.semantic_trust == selected_attempt.semantic_summary
+
+    forged_selected = selected_attempt.model_copy(
+        update={
+            "structural_summary": StructuralTrustSummary(unknown_occurrences=1),
+            "semantic_summary": SemanticTrustSummary(unsupported_claims=1),
+        }
+    )
+    revalidated_trace = CitationTrace(
+        **{
+            **selected_write.trace.model_dump(),
+            "answer_attempts": (forged_selected,),
+            "structural_trust": StructuralTrustSummary(unknown_occurrences=1),
+            "semantic_trust": SemanticTrustSummary(unsupported_claims=1),
+        }
+    )
+    assert revalidated_trace.answer_attempts[0].structural_summary == (
+        StructuralTrustSummary(valid_occurrences=1)
+    )
+    assert revalidated_trace.answer_attempts[0].semantic_summary == (
+        SemanticTrustSummary(supported_claims=1)
+    )
+    assert revalidated_trace.structural_trust == StructuralTrustSummary(
+        valid_occurrences=1
+    )
+    assert revalidated_trace.semantic_trust == SemanticTrustSummary(supported_claims=1)
 
     selected = _write_for_modes((EvidenceStorageMode.EMBEDDED,))
     diagnostic = _write_for_modes(
@@ -757,6 +979,114 @@ def test_exact_and_over_count_bounds() -> None:
         )
 
 
+def test_exact_and_over_small_summary_descriptor_and_capability_bounds() -> None:
+    write = _write_for_modes((EvidenceStorageMode.EMBEDDED,))
+    run = write.trace.evidence_runs[0]
+    timings = tuple(
+        TimingSummary(name=f"timing-{index}", milliseconds=float(index))
+        for index in range(TIMING_SUMMARIES_MAX)
+    )
+    EvidenceRun(**{**run.model_dump(), "timings": timings})
+    with pytest.raises(ValidationError):
+        EvidenceRun(
+            **{
+                **run.model_dump(),
+                "timings": timings
+                + (
+                    TimingSummary(
+                        name="timing-over",
+                        milliseconds=1,
+                    ),
+                ),
+            }
+        )
+
+    exact_descriptor = _exact_json_object(GOVERNED_DESCRIPTOR_JSON_BYTES_MAX)
+    RetrievalCandidatePayload(
+        candidate_id="candidate",
+        rank=1,
+        source_identity=exact_descriptor,
+    )
+    with pytest.raises(ValidationError, match="governed descriptor"):
+        RetrievalCandidatePayload(
+            candidate_id="candidate",
+            rank=1,
+            source_identity=_exact_json_object(GOVERNED_DESCRIPTOR_JSON_BYTES_MAX + 1),
+        )
+
+    capabilities = tuple(PolicyCapability)
+    assert len(capabilities) == POLICY_CAPABILITIES_MAX
+    CitationTrace(
+        **{
+            **write.trace.model_dump(),
+            "policy_capabilities": capabilities,
+        }
+    )
+    with pytest.raises(ValidationError):
+        CitationTrace(
+            **{
+                **write.trace.model_dump(),
+                "policy_capabilities": capabilities + (capabilities[0],),
+            }
+        )
+
+    attempt = write.trace.answer_attempts[0]
+    exact_reason = "r" * 256
+    AnswerAttempt(**{**attempt.model_dump(), "repair_reason_code": exact_reason})
+    with pytest.raises(ValidationError):
+        AnswerAttempt(
+            **{
+                **attempt.model_dump(),
+                "repair_reason_code": exact_reason + "r",
+            }
+        )
+    for unsafe in (
+        "line\nbreak",
+        "\ntrimmed-control",
+        "escape\x1b[31m",
+        "control\x00code",
+    ):
+        with pytest.raises(ValidationError, match="control"):
+            AnswerAttempt(
+                **{
+                    **attempt.model_dump(),
+                    "repair_reason_code": unsafe,
+                }
+            )
+
+
+@pytest.mark.parametrize(
+    ("missing_field", "value"),
+    (
+        ("score_kind", None),
+        ("score_scale", None),
+        ("score", None),
+    ),
+)
+def test_retrieval_score_requires_finite_kind_scale_and_value(
+    missing_field: str,
+    value: None,
+) -> None:
+    valid = {
+        "candidate_id": "candidate",
+        "rank": 1,
+        "score_kind": RetrievalScoreKind.BM25,
+        "score_scale": RetrievalScoreScale.UNBOUNDED,
+        "score": 12.5,
+    }
+    candidate = RetrievalCandidatePayload(**valid)
+    assert (
+        RetrievalCandidatePayload.model_validate_json(candidate.model_dump_json())
+        == candidate
+    )
+
+    with pytest.raises(ValidationError, match="score"):
+        RetrievalCandidatePayload(**{**valid, missing_field: value})
+    for non_finite in (math.nan, math.inf, -math.inf):
+        with pytest.raises(ValidationError):
+            RetrievalCandidatePayload(**{**valid, "score": non_finite})
+
+
 def test_exact_and_over_occurrence_candidate_external_id_and_answer_body_bounds() -> (
     None
 ):
@@ -860,6 +1190,41 @@ def test_sealed_write_requires_complete_non_extraneous_payload_graph() -> None:
             trace=write.trace,
             evidence_run_payloads=write.evidence_run_payloads,
             evidence_snapshot_payloads=(),
+            answer_attempt_payloads=write.answer_attempt_payloads,
+        )
+
+
+def test_sealed_write_revalidates_forged_nested_model_copies() -> None:
+    write = _write_for_modes((EvidenceStorageMode.EMBEDDED,))
+    forged_snapshot = write.evidence_snapshot_payloads[0].model_copy(
+        update={"snapshot_text": "x" * (SNAPSHOT_TEXT_UTF8_BYTES_MAX + 1)}
+    )
+    forged_answer = write.answer_attempt_payloads[0].model_copy(
+        update={"answer_body": "x" * (ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX + 1)}
+    )
+    forged_trace = write.trace.model_copy(
+        update={"trace_id": "x" * (EXTERNAL_OPAQUE_ID_UTF8_BYTES_MAX + 1)}
+    )
+
+    with pytest.raises(ValidationError, match="snapshot_text"):
+        SealedCitationWrite(
+            trace=write.trace,
+            evidence_run_payloads=write.evidence_run_payloads,
+            evidence_snapshot_payloads=(forged_snapshot,),
+            answer_attempt_payloads=write.answer_attempt_payloads,
+        )
+    with pytest.raises(ValidationError, match="answer_body"):
+        SealedCitationWrite(
+            trace=write.trace,
+            evidence_run_payloads=write.evidence_run_payloads,
+            evidence_snapshot_payloads=write.evidence_snapshot_payloads,
+            answer_attempt_payloads=(forged_answer,),
+        )
+    with pytest.raises(ValidationError, match="UTF-8 bytes"):
+        SealedCitationWrite(
+            trace=forged_trace,
+            evidence_run_payloads=write.evidence_run_payloads,
+            evidence_snapshot_payloads=write.evidence_snapshot_payloads,
             answer_attempt_payloads=write.answer_attempt_payloads,
         )
     with pytest.raises(ValidationError, match="extraneous governed snapshot payload"):
