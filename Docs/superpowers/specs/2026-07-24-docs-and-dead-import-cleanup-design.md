@@ -29,6 +29,10 @@ content = (resp or {}).get("choices", [{}])[0].get("message", {}).get("content")
 
 `provider=` → `api_endpoint=` (first positional) · `messages=` → `messages_payload=` · `temperature=` → `temp=` · `model=`/`max_tokens=`/`api_key=` unchanged · `timeout=` **dropped** (no such param). `chat_api_call` is synchronous — compatible with all four sites (they call it via `asyncio.to_thread` or a threaded `run_worker`).
 
+**Pass `streaming=False` explicitly at every repointed call.** `streaming` maps through `PROVIDER_PARAM_MAP` to each provider handler; leaving it `None` makes the return shape (dict vs. streaming generator) depend on each handler's default, which would break the `resp["choices"][0]...` extraction. The old `chat_with_provider` calls were effectively non-streaming (all consumers expected a string), so `streaming=False` both preserves behavior and makes the full-dict return contract explicit.
+
+**Preserve each site's existing message assembly.** E.g. `MCP/server.py` prepends the system prompt as a `{"role":"system",...}` entry in `messages`; keep that. `chat_api_call` also exposes a separate `system_message=` param, but the repoint's job is to fix dispatch, not re-architect message construction — do not move the system prompt out of the list (the handlers normalize it), or behavior changes.
+
 ### The four sites (line numbers re-verified at implementation time)
 
 | Site | Current breakage | Repoint |
@@ -48,7 +52,7 @@ Notes:
 
 ### Testing
 
-- **Repo-wide guard (strongest, covers the whole ImportError class):** a test asserting **zero** `chat_with_provider` imports remain anywhere under `tldw_chatbook/` (a `from ... import chat_with_provider` / `import chat_with_provider` grep returning empty). If the stub is removed, also assert no `def chat_with_provider` remains; if the fold-in is deferred, exclude the `MCP/tools.py` stub definition explicitly.
+- **Repo-wide guard (strongest, covers the whole ImportError class):** a test asserting **zero** occurrences of the dead import pattern `from ...LLM_Calls.LLM_API_Calls import chat_with_provider` (and any bare `import chat_with_provider`) anywhere under `tldw_chatbook/`. Target the IMPORT specifically, so the local `def chat_with_provider` stub in `MCP/tools.py` is naturally excluded (a def is not an import). If the fold-in removes the stub, additionally assert no `def chat_with_provider` remains.
 - **Import-resolution:** importing each touched module (`MCP.server`, `Tools.code_audit_tool`, `UI.Tools_Settings_Window`) raises no ImportError.
 - **Functional (plain-function sites):** with `chat_api_call` mocked to return a canned OpenAI-shaped dict — (a) constructing `TldwMCPServer()` no longer raises, and the `chat_with_llm` tool calls `chat_api_call` with the mapped kwargs and returns the extracted content string; (b) `code_audit_tool._request_llm_analysis` builds the `messages_payload` from the prompt, calls `chat_api_call`, returns the extracted analysis, and no longer swallows an ImportError.
 - **UI sites:** covered by the repo-grep + import-resolution guards (Textual `run_worker(thread=True)` methods aren't cleanly unit-testable through the worker; the content-extraction logic is identical to the tested sites). If a site's call is extractable into a plain helper without disrupting the file, prefer that + a direct functional test; do not restructure the UI purely for testability.
