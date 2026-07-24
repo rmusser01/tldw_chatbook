@@ -130,6 +130,113 @@ async def test_persona_selection_disables_png_export():
         assert pilot.app.query_one("#personas-export-png", Button).disabled is True
 
 
+async def test_character_selection_renders_all_actions():
+    """Task-443: character is the applicable kind for every action button."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Detective Sam", kind="character", authority="Local")
+        await pilot.pause()
+        for button_id in (
+            "#personas-attach-to-console",
+            "#personas-start-chat",
+            "#personas-export-json",
+            "#personas-export-png",
+            "#personas-delete",
+        ):
+            assert (
+                pilot.app.query_one(button_id, Button).display is True
+            ), button_id
+
+
+async def test_persona_selection_hides_only_export_png():
+    """Task-443 AC1: personas have no PNG card, so Export PNG does not
+    render for a persona_profile selection - Attach/Start Chat/Export JSON
+    still apply (the readiness gate, not kind, controls their disabled
+    state)."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Archivist", kind="persona_profile", authority="Local")
+        await pilot.pause()
+        for button_id in (
+            "#personas-attach-to-console",
+            "#personas-start-chat",
+            "#personas-export-json",
+            "#personas-delete",
+        ):
+            assert (
+                pilot.app.query_one(button_id, Button).display is True
+            ), button_id
+        assert pilot.app.query_one("#personas-export-png", Button).display is False
+
+
+async def test_dictionary_selection_hides_console_and_export_actions():
+    """Task-443 AC1: dictionaries can never Attach/Start Chat/export a card -
+    those buttons must not render at all (not merely stay disabled), while
+    Delete (which does apply) stays visible."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Combat Slang", kind="dictionary", authority="Local")
+        await pilot.pause()
+        for button_id in (
+            "#personas-attach-to-console",
+            "#personas-start-chat",
+            "#personas-export-json",
+            "#personas-export-png",
+        ):
+            assert (
+                pilot.app.query_one(button_id, Button).display is False
+            ), button_id
+        assert pilot.app.query_one("#personas-delete", Button).display is True
+
+
+async def test_lore_selection_hides_console_and_export_actions():
+    """Task-443 AC1: same as dictionaries - lore books never Attach/Start
+    Chat/export a card."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Frontier World", kind="lore", authority="Local")
+        await pilot.pause()
+        for button_id in (
+            "#personas-attach-to-console",
+            "#personas-start-chat",
+            "#personas-export-json",
+            "#personas-export-png",
+        ):
+            assert (
+                pilot.app.query_one(button_id, Button).display is False
+            ), button_id
+        assert pilot.app.query_one("#personas-delete", Button).display is True
+
+
+async def test_clear_selection_restores_action_visibility():
+    """Task-443: leaving a dictionary/lore selection (kind -> None) must not
+    leave the never-applies buttons permanently hidden - the pre-selection
+    baseline shows every action (disabled, with the "select an item"
+    reason), same as before any selection was ever made."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Combat Slang", kind="dictionary", authority="Local")
+        await pilot.pause()
+        assert pilot.app.query_one("#personas-start-chat", Button).display is False
+        await pane.clear_selection()
+        await pilot.pause()
+        for button_id in (
+            "#personas-attach-to-console",
+            "#personas-start-chat",
+            "#personas-export-json",
+            "#personas-export-png",
+            "#personas-delete",
+        ):
+            assert (
+                pilot.app.query_one(button_id, Button).display is True
+            ), button_id
+
+
 async def test_console_action_enablement_is_explicitly_screen_owned():
     app = InspectorApp()
     async with app.run_test() as pilot:

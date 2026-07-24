@@ -15,6 +15,19 @@ _UNSAVED_TOOLTIP = "Save before using this action; the selection has unsaved edi
 
 _ID_SAFE = re.compile(r"[^a-zA-Z0-9_-]")
 
+# Kind-applicability for actions that can never apply to some selections
+# (task-443): dictionaries/lore have no Console handoff and no card export,
+# and personas have no PNG card. "Never applies" is a rendering decision
+# (this button does not belong on this selection at all) and is kept
+# separate from "applies but is currently blocked" (unsaved edits, provider
+# readiness, no selection yet), which stays owned by
+# set_console_actions_enabled/_apply_action_state's disabled+tooltip logic
+# below. Before a kind is known (no selection) every action still renders,
+# matching the pre-selection "select an item" baseline.
+_CONSOLE_ACTION_APPLICABLE_KINDS = {"character", "persona_profile"}
+_EXPORT_JSON_APPLICABLE_KINDS = {"character", "persona_profile"}
+_EXPORT_PNG_APPLICABLE_KINDS = {"character"}
+
 
 class PersonasInspectorPane(Vertical):
     """Identity, validation, conversations, readiness, and actions."""
@@ -275,6 +288,7 @@ class PersonasInspectorPane(Vertical):
     def _apply_action_state(self) -> None:
         selected = self._has_selection
         unsaved = self._is_unsaved
+        kind = self._selected_kind
         readiness = self.query_one("#personas-readiness-console", Static)
         if self._console_actions_enabled and self._provider_block_reason:
             readiness.update(f"Console blocked: {self._provider_block_reason}")
@@ -294,18 +308,23 @@ class PersonasInspectorPane(Vertical):
             )
         elif self._provider_block_reason:
             console_tooltip = f"Reply may fail: {self._provider_block_reason}"
+        # Kind gates rendering; readiness/unsaved gate the disabled+tooltip
+        # state of whatever is rendered (see the module-level constants).
+        console_applies = kind is None or kind in _CONSOLE_ACTION_APPLICABLE_KINDS
+        export_json_applies = kind is None or kind in _EXPORT_JSON_APPLICABLE_KINDS
+        export_png_applies = kind is None or kind in _EXPORT_PNG_APPLICABLE_KINDS
         for button_id in ("#personas-attach-to-console", "#personas-start-chat"):
             button = self.query_one(button_id, Button)
+            button.display = console_applies
             button.disabled = not self._console_actions_enabled
             button.tooltip = console_tooltip
-        for button_id in ("#personas-export-json",):
-            button = self.query_one(button_id, Button)
-            button.disabled = not export_enabled
-            button.tooltip = export_tooltip
+        json_button = self.query_one("#personas-export-json", Button)
+        json_button.display = export_json_applies
+        json_button.disabled = not export_enabled
+        json_button.tooltip = export_tooltip
         png_button = self.query_one("#personas-export-png", Button)
-        png_button.disabled = not (
-            export_enabled and self._selected_kind == "character"
-        )
+        png_button.display = export_png_applies
+        png_button.disabled = not (export_enabled and kind == "character")
         png_button.tooltip = export_tooltip
         self.query_one("#personas-delete", Button).disabled = not selected
 

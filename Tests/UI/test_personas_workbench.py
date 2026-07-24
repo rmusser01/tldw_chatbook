@@ -1528,6 +1528,97 @@ class TestImportExport:
             )
             assert screen.state.selected_entity_id == "1"
 
+    async def test_duplicate_copies_character_under_disambiguated_name(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        """Task-443 AC2: characters gained a Duplicate seam (the library-rail
+        button now shows in Characters mode too), reusing the same
+        ``create_character`` seam a normal Save-as-new already calls -
+        mirrors ``test_duplicate_copies_entries_and_strategy`` (dictionaries)
+        and the lore equivalent."""
+        created_payloads: list[dict] = []
+        characters = [dict(c) for c in CHARACTERS]
+
+        def fake_create(data):
+            record = dict(data)
+            record["id"] = 99
+            record["version"] = 1
+            characters.append(record)
+            created_payloads.append(data)
+            return 99
+
+        monkeypatch.setattr(character_handler_module, "create_character", fake_create)
+        monkeypatch.setattr(
+            character_handler_module, "fetch_all_characters", lambda: list(characters)
+        )
+        monkeypatch.setattr(
+            character_handler_module,
+            "fetch_character_by_id",
+            lambda character_id: next(
+                (dict(c) for c in characters if str(c["id"]) == str(character_id)),
+                None,
+            ),
+        )
+        app = PersonasTestApp(mock_app_instance)
+        # Button-press tests need a real-terminal-sized layout: at the
+        # default 80x24 the center panels overlap the library toolbar's
+        # coordinates, so a Duplicate click silently lands on the
+        # character-dictionaries panel instead (same reason
+        # TestConsoleActions runs at 160x50).
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            # Duplicate now applies to characters (task-443) - the library
+            # rail button must be visible in the default characters mode.
+            assert screen.query_one("#personas-library-duplicate", Button).display
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            await pilot.click("#personas-library-duplicate")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert len(created_payloads) == 1
+            payload = created_payloads[0]
+            assert payload["name"] == "Detective Sam (copy)"
+            assert payload["description"] == "Noir detective"
+            assert payload["first_message"] == "The name's {{char}}. Who's asking?"
+            assert payload["alternate_greetings"] == [
+                "An alternate opener.",
+                "A third opener.",
+            ]
+            assert screen.state.selected_entity_id == "99"
+            rows = screen.query(".personas-library-row")
+            assert "Detective Sam (copy)" in [_row_text(r) for r in rows]
+
+    async def test_duplicate_name_conflict_notifies_error(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError
+
+        def fake_create(data):
+            raise ConflictError(
+                "already exists", entity="character_cards", entity_id=data["name"]
+            )
+
+        monkeypatch.setattr(character_handler_module, "create_character", fake_create)
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        # 200x60: see test_duplicate_copies_character_under_disambiguated_name.
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            await pilot.click("#personas-library-duplicate")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.state.selected_entity_id == "1"
+            assert any(
+                "already exists" in message and severity == "error"
+                for message, severity in notifications
+            )
+
     async def test_stage_character_avatar_from_path_updates_editor_and_dirty_state(
         self, mock_app_instance, stub_characters, tmp_path
     ):

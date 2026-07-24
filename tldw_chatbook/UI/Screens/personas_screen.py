@@ -3688,7 +3688,9 @@ class PersonasScreen(BaseAppScreen):
             elif self.state.active_mode == "lore":
                 await self._run_guarded(self._open_lore_import_dialog)
         elif message.action == "duplicate":
-            if self.state.active_mode == "dictionaries":
+            if self.state.active_mode == "characters":
+                await self._run_guarded(self._duplicate_selected_character)
+            elif self.state.active_mode == "dictionaries":
                 await self._run_guarded(self._duplicate_selected_dictionary)
             elif self.state.active_mode == "lore":
                 await self._run_guarded(self._duplicate_selected_lore)
@@ -3782,6 +3784,80 @@ class PersonasScreen(BaseAppScreen):
             self.query_one("#personas-dict-name", Input).focus()
         except QueryError:
             pass
+
+    async def _duplicate_selected_character(self) -> None:
+        """Copy the selected character card under a disambiguated name.
+
+        Task-443 AC2: characters had no Duplicate seam (only dictionaries and
+        lore did). Mirrors ``_duplicate_selected_dictionary``/
+        ``_duplicate_selected_lore``: read the full source record off the UI
+        thread, disambiguate the name against the cached list, and reuse the
+        existing create seam (``ccp_character_handler.create_character`` -
+        the same helper Save-as-new-character already calls) rather than a
+        new duplication engine.
+        """
+        entity_id = self.state.selected_entity_id
+        if self.state.selected_entity_kind != "character" or not entity_id:
+            self._notify("Select a character to duplicate.", "warning")
+            return
+        try:
+            source = await asyncio.to_thread(
+                ccp_character_handler.fetch_character_by_id, entity_id
+            )
+        except Exception as exc:
+            logger.opt(exception=True).warning(
+                f"Could not load character {entity_id} to duplicate."
+            )
+            self._notify(f"Duplicate failed: {exc}", "error")
+            return
+        if not source:
+            self._notify(
+                f"Could not load character {entity_id} to duplicate.", "error"
+            )
+            return
+        base_name = str(source.get("name") or "Character")
+        base = f"{base_name} (copy)"
+        existing = {
+            str(c.get("name") or "") for c in self.character_handler.character_list
+        }
+        name = base
+        suffix = 2
+        while name in existing:
+            name = f"{base_name} (copy {suffix})"
+            suffix += 1
+        payload = {
+            "name": name,
+            "description": source.get("description"),
+            "personality": source.get("personality"),
+            "scenario": source.get("scenario"),
+            "image": source.get("image"),
+            "post_history_instructions": source.get("post_history_instructions"),
+            "first_message": source.get("first_message"),
+            "message_example": source.get("message_example"),
+            "creator_notes": source.get("creator_notes"),
+            "system_prompt": source.get("system_prompt"),
+            "alternate_greetings": source.get("alternate_greetings"),
+            "tags": source.get("tags"),
+            "creator": source.get("creator"),
+            "character_version": source.get("character_version"),
+            "extensions": source.get("extensions"),
+        }
+        try:
+            new_id = await asyncio.to_thread(
+                ccp_character_handler.create_character, payload
+            )
+        except ConflictError:
+            self._notify("A character with that name already exists.", "error")
+            return
+        except Exception as exc:
+            logger.opt(exception=True).warning("Could not duplicate the character.")
+            self._notify(f"Duplicate failed: {exc}", "error")
+            return
+        if not new_id:
+            self._notify("Duplicate failed: character creation returned no id.", "error")
+            return
+        await self.character_handler.refresh_character_list()
+        await self._select_character(str(new_id), name)
 
     async def _duplicate_selected_dictionary(self) -> None:
         service = self._dictionary_scope_service()

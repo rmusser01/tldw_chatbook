@@ -1479,14 +1479,20 @@ class TestDictionaryNewDuplicate:
             ):
                 assert dup.get(field) == src.get(field), field
 
-    async def test_duplicate_button_hidden_outside_dictionaries(
+    async def test_duplicate_button_hidden_only_for_personas(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
+        """Task-443: Duplicate now also applies to characters (parity fix) -
+        only the Personas mode (profiles have no duplicate seam yet) hides
+        it."""
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _mounted(pilot)
             dup = screen.query_one("#personas-library-duplicate", Button)
-            assert dup.display is False  # characters mode
+            assert dup.display is True  # characters mode (task-443)
+            await pilot.click("#personas-mode-personas")
+            await pilot.pause()
+            assert dup.display is False
             await pilot.click("#personas-mode-dictionaries")
             await pilot.pause()
             assert dup.display is True

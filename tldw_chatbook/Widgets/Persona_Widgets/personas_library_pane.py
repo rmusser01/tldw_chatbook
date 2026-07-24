@@ -113,8 +113,13 @@ class PersonasLibraryPane(Vertical):
         self._import_visible: bool = True
 
     def on_mount(self) -> None:
-        """Initialize control visibility for default characters mode."""
-        self.query_one("#personas-library-duplicate", Button).display = False
+        """Initialize control visibility for default characters mode.
+
+        ``PersonasScreen.on_mount`` calls ``set_mode`` immediately after this
+        pane mounts, so this only sets the very first paint; Duplicate
+        applies to characters (task-443), so it starts visible here too.
+        """
+        self.query_one("#personas-library-duplicate", Button).display = True
         self.query_one("#personas-library-pagebar").display = False
 
     def compose(self) -> ComposeResult:
@@ -191,7 +196,7 @@ class PersonasLibraryPane(Vertical):
         yield Static("", id="personas-library-count", classes="destination-purpose")
 
     def set_mode(self, mode: str) -> None:
-        """Gate the toolbar per mode: Import for characters+dictionaries+lore, Duplicate for dictionaries+lore."""
+        """Gate the toolbar per mode: Import for characters+dictionaries+lore, Duplicate for characters+dictionaries+lore (task-443)."""
         self._import_visible = mode in ("characters", "dictionaries", "lore")
         import_button = self.query_one("#personas-library-import", Button)
         import_button.display = self._import_visible
@@ -202,6 +207,7 @@ class PersonasLibraryPane(Vertical):
         else:
             import_button.tooltip = "Import a character card (PNG or JSON)."
         self.query_one("#personas-library-duplicate", Button).display = mode in (
+            "characters",
             "dictionaries",
             "lore",
         )
