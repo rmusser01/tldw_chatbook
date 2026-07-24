@@ -3510,6 +3510,16 @@ class PersonasScreen(BaseAppScreen):
             else a short actionable reason suitable for the inspector/header
             readiness copy.
         """
+        # Precedence (Qodo #824-2): the provider question is only OPERATIVE
+        # when the Console action gate itself passes — otherwise the header
+        # would claim provider-"Blocked" while the inspector says
+        # "Console blocked: unsaved edits/select an item" (two conflicting
+        # readiness stories for one staged intent). With the gate closed the
+        # inspector carries the action reason and the header keeps its
+        # pre-task-440 semantics; provider readiness surfaces the moment the
+        # action gate opens.
+        if not self._console_action_allowed():
+            return None
         if self.state.selected_entity_kind not in ("character", "persona_profile"):
             return None
         ready, reason = self.preview.console_handoff_readiness()

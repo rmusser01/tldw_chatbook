@@ -2541,7 +2541,7 @@ class TestConsoleActions:
         mock_app_instance.app_config = {
             "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
             "chat_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
-            "api_settings": {"anthropic": {"api_key": "sk-configured-test-key"}},
+            "api_settings": {"anthropic": {"api_key": "unit-test-placeholder-key"}},
         }
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
@@ -2584,7 +2584,7 @@ class TestConsoleActions:
         mock_app_instance.app_config = {
             "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
             "chat_defaults": {"provider": "openai", "model": "gpt-4o"},
-            "api_settings": {"anthropic": {"api_key": "sk-configured-test-key"}},
+            "api_settings": {"anthropic": {"api_key": "unit-test-placeholder-key"}},
         }
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
@@ -2616,7 +2616,7 @@ class TestConsoleActions:
         mock_app_instance.app_config = {
             "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
             "chat_defaults": {"provider": "openai", "model": "gpt-4o"},
-            "api_settings": {"openai": {"api_key": "sk-configured-test-key"}},
+            "api_settings": {"openai": {"api_key": "unit-test-placeholder-key"}},
         }
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
@@ -2633,6 +2633,38 @@ class TestConsoleActions:
                 )
                 == "Ready"
             )
+
+    async def test_action_gate_precedes_provider_readiness_on_both_surfaces(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Qodo #824-2: with the action gate closed (unsaved edits), the
+        provider axis is NOT operative -- the inspector shows the ACTION
+        reason (never provider copy) and the header keeps its pre-task-440
+        semantics rather than claiming a conflicting provider-"Blocked".
+        One precedence rule on both surfaces: action gate first, provider
+        readiness only once the gate opens."""
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "openai", "model": "gpt-4o"},
+        }
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen.state.has_unsaved_changes = True
+            screen._sync_title_and_console_actions()
+            await pilot.pause()
+
+            readiness_text = str(
+                screen.query_one("#personas-readiness-console", Static).renderable
+            )
+            assert readiness_text == "Console blocked: unsaved edits"
+            assert "openai" not in readiness_text.lower()  # no provider copy
+            header_status = str(
+                screen.query_one(
+                    "#personas-header #workbench-header-status", Static
+                ).renderable
+            )
+            assert header_status == "Ready"  # pre-task-440 header semantics
 
     async def test_selection_pushes_console_gate_before_async_followup(
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
