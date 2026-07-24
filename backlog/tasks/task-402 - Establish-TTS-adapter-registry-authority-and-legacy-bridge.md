@@ -1,11 +1,11 @@
 ---
 id: TASK-402
 title: Establish TTS adapter registry authority and legacy bridge
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-24 00:42'
-updated_date: '2026-07-24 01:05'
+updated_date: '2026-07-24 07:03'
 labels:
   - tts
   - architecture
@@ -26,14 +26,14 @@ Replace direct access to the wildcard TTS backend manager with one application-o
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Application code owns one TTSService and one sealed TTSAdapterRegistry; the compatibility accessor returns only the bound service and can be explicitly reset.
-- [ ] #2 The registry uses exact canonical provider IDs with an empty initial alias map, lazily materializes at most one adapter per provider under concurrency, and rejects duplicate or post-seal registration.
-- [ ] #3 Operation leases keep adapter resources alive through complete or partial response consumption; identical configuration is a no-op, changed configuration retires only the selected provider, and shutdown is ordered, bounded, and idempotent.
-- [ ] #4 OpenAI, ElevenLabs, Kokoro, Chatterbox, Higgs, and AllTalk remain available through isolated provider-scoped legacy hosts without exposing TTSBackendManager or concrete backends outside the bridge.
-- [ ] #5 The enumerated legacy resolver covers every internal-model form used by current callers, and the existing generate_audio_stream signature routes through the registry and closes its response on success, failure, cancellation, and partial consumption.
-- [ ] #6 Per-internal-backend legacy locks serialize construction, initialization, progress callback installation, stream consumption, and callback clearing; progress-sink failures do not fail synthesis while different providers may operate concurrently.
-- [ ] #7 Focused registry, bridge, application-binding, lifecycle, concurrency, and compatibility tests pass without changing visible STTS behavior.
-- [ ] #8 New registry and bridge diagnostics log neither configuration values nor synthesis text, and regression coverage removes the existing OpenAI API-key-prefix disclosure.
+- [x] #1 Application code owns one TTSService and one sealed TTSAdapterRegistry; the compatibility accessor returns only the bound service and can be explicitly reset.
+- [x] #2 The registry uses exact canonical provider IDs with an empty initial alias map, lazily materializes at most one adapter per provider under concurrency, and rejects duplicate or post-seal registration.
+- [x] #3 Operation leases keep adapter resources alive through complete or partial response consumption; identical configuration is a no-op, changed configuration retires only the selected provider, and shutdown is ordered, bounded, and idempotent.
+- [x] #4 OpenAI, ElevenLabs, Kokoro, Chatterbox, Higgs, and AllTalk remain available through isolated provider-scoped legacy hosts without exposing TTSBackendManager or concrete backends outside the bridge.
+- [x] #5 The enumerated legacy resolver covers every internal-model form used by current callers, and the existing generate_audio_stream signature routes through the registry and closes its response on success, failure, cancellation, and partial consumption.
+- [x] #6 Per-internal-backend legacy locks serialize construction, initialization, progress callback installation, stream consumption, and callback clearing; progress-sink failures do not fail synthesis while different providers may operate concurrently.
+- [x] #7 Focused registry, bridge, application-binding, lifecycle, concurrency, and compatibility tests pass without changing visible STTS behavior.
+- [x] #8 New registry and bridge diagnostics log neither configuration values nor synthesis text, and regression coverage removes the existing OpenAI API-key-prefix disclosure.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -51,11 +51,17 @@ ADR path: backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-bound
 Reason: ADR-023 governs the provider boundary, lifecycle, compatibility bridge, and ordered native-adapter migration.
 <!-- SECTION:PLAN:END -->
 
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented the app-owned sealed TTSAdapterRegistry and TTSService binding, with exact canonical provider IDs, operation leases, targeted provider retirement, and bounded close plus definitive wait_closed shutdown. Added six provider-scoped legacy adapters with enumerated routing, isolated legacy hosts, per-backend locking, and operation-scoped progress delivery; STTS now uses the owned service and owns its task and temporary-audio cleanup. Published the provider-neutral package boundary, updated the TTS module guide, and removed the OpenAI API-key-prefix diagnostic. Primary changes cover tldw_chatbook/TTS adapter contracts, registry, bridge, catalogs, bootstrap, generation service, package exports, app/STTS lifecycle wiring, focused Tests/TTS coverage, and the TTS guide. Verification: 118 focused tests passed; 230 regression tests passed with 14 optional skips; compileall, scoped mypy, boundary grep, diff hygiene, and feature-scoped Ruff checks passed. ADR-023 is the governing decision; native audio.cpp transport and supervision remain deferred to later ordered tasks.
+<!-- SECTION:NOTES:END -->
+
 ## Definition of Done
 <!-- DOD:BEGIN -->
-- [ ] #1 Automated unit and compatibility tests cover all new registry, bridge, lifecycle, concurrency, cancellation, and privacy behavior.
-- [ ] #2 Focused static analysis, compilation, and diff hygiene checks pass.
-- [ ] #3 The TTS module guide, accepted design, implementation plan, and ADR-023 are linked and consistent.
-- [ ] #4 A self-review confirms no concrete backend or manager access remains outside the legacy bridge.
-- [ ] #5 All acceptance criteria are checked and implementation notes summarize the completed change before status moves to Done.
+- [x] #1 Automated unit and compatibility tests cover all new registry, bridge, lifecycle, concurrency, cancellation, and privacy behavior.
+- [x] #2 Focused static analysis, compilation, and diff hygiene checks pass.
+- [x] #3 The TTS module guide, accepted design, implementation plan, and ADR-023 are linked and consistent.
+- [x] #4 A self-review confirms no concrete backend or manager access remains outside the legacy bridge.
+- [x] #5 All acceptance criteria are checked and implementation notes summarize the completed change before status moves to Done.
 <!-- DOD:END -->
