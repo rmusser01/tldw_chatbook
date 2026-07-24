@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import ast
+import builtins
 from collections.abc import AsyncIterator, Iterator, Mapping
 from pathlib import Path
 from types import SimpleNamespace
@@ -112,7 +113,7 @@ def test_app_constructs_one_tts_service(
     builder.assert_called_once_with(app.app_config)
 
 
-def test_app_construction_does_not_materialize_an_adapter(
+def test_app_construction_keeps_audio_cpp_import_and_all_adapters_lazy(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -128,11 +129,29 @@ def test_app_construction_does_not_materialize_an_adapter(
         "tldw_chatbook.TTS.adapter_bootstrap.legacy_provider_specs",
         provider_specs,
     )
+    real_import = builtins.__import__
+
+    def guarded_import(
+        name: str,
+        globals: Mapping[str, Any] | None = None,
+        locals: Mapping[str, Any] | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> Any:
+        if name == "tldw_chatbook.TTS.adapters.audio_cpp":
+            raise AssertionError(
+                "app construction must not import the audio.cpp adapter"
+            )
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
     _isolate_constructor_paths(monkeypatch, tmp_path)
 
     app = _build_test_app()
 
-    assert app.tts_service.registry.descriptors()[0].provider_id == "openai"
+    assert tuple(
+        descriptor.provider_id for descriptor in app.tts_service.registry.descriptors()
+    ) == ("audio_cpp", "openai")
     assert factory.calls == 0
 
 

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from collections.abc import AsyncGenerator, Mapping
+from types import ModuleType
 from typing import Any, cast
 
 import pytest
@@ -895,10 +897,10 @@ def test_bootstrap_falls_back_to_normalized_tts_configuration() -> None:
     assert snapshot["app_tts"] == {"default_format": "mp3"}
 
 
-def test_default_bootstrap_has_six_exact_ids_no_aliases_and_is_lazy(
+def test_default_bootstrap_prepends_audio_cpp_without_changing_legacy_specs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    provider_ids = (
+    legacy_provider_ids = (
         "openai",
         "elevenlabs",
         "kokoro",
@@ -907,7 +909,8 @@ def test_default_bootstrap_has_six_exact_ids_no_aliases_and_is_lazy(
         "alltalk",
     )
     factories = {
-        provider_id: FakeAdapterFactory(provider_id) for provider_id in provider_ids
+        provider_id: FakeAdapterFactory(provider_id)
+        for provider_id in legacy_provider_ids
     }
 
     def provider_specs(
@@ -924,7 +927,7 @@ def test_default_bootstrap_has_six_exact_ids_no_aliases_and_is_lazy(
                 factory=factories[provider_id],
                 initial_config={},
             )
-            for provider_id in provider_ids
+            for provider_id in legacy_provider_ids
         )
 
     monkeypatch.setattr(
@@ -933,13 +936,79 @@ def test_default_bootstrap_has_six_exact_ids_no_aliases_and_is_lazy(
     )
 
     service = build_default_tts_service({})
+    descriptors = service.registry.descriptors()
 
-    assert (
-        tuple(item.provider_id for item in service.registry.descriptors())
-        == provider_ids
+    assert tuple(item.provider_id for item in descriptors) == (
+        "audio_cpp",
+        *legacy_provider_ids,
+    )
+    assert descriptors[0] == TTSProviderDescriptor(
+        provider_id="audio_cpp",
+        display_name="audio.cpp",
+        native=True,
     )
     assert service.registry.aliases() == {}
+    assert service.registry._slots["audio_cpp"].spec.exclusive_reconfigure is True
     assert all(factory.calls == 0 for factory in factories.values())
+
+
+def test_audio_cpp_provider_spec_owns_its_effective_configuration() -> None:
+    from tldw_chatbook.TTS.adapter_bootstrap import audio_cpp_provider_spec
+
+    raw_config = {
+        "base_url": "https://snapshot.example.test",
+        "max_input_characters": 123,
+    }
+    source = {"COMPREHENSIVE_CONFIG_RAW": {"app_tts": {"audio_cpp": raw_config}}}
+
+    spec = audio_cpp_provider_spec(source)
+    raw_config["base_url"] = "https://mutated.example.test"
+    raw_config["max_input_characters"] = 999
+
+    assert spec.initial_config["base_url"] == "https://snapshot.example.test"
+    assert spec.initial_config["max_input_characters"] == 123
+
+
+def test_audio_cpp_factory_reconstructs_and_validates_immutable_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.TTS.adapter_bootstrap import audio_cpp_provider_spec
+
+    captured: list[Any] = []
+
+    class FakeAudioCppAdapter:
+        def __init__(self, config: object) -> None:
+            captured.append(config)
+
+    adapters_package = ModuleType("tldw_chatbook.TTS.adapters")
+    adapters_package.__path__ = []  # type: ignore[attr-defined]
+    adapter_module = ModuleType("tldw_chatbook.TTS.adapters.audio_cpp")
+    adapter_module.AudioCppAdapter = FakeAudioCppAdapter  # type: ignore[attr-defined]
+    monkeypatch.setitem(
+        sys.modules,
+        "tldw_chatbook.TTS.adapters",
+        adapters_package,
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "tldw_chatbook.TTS.adapters.audio_cpp",
+        adapter_module,
+    )
+    spec = audio_cpp_provider_spec({})
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"^audio\.cpp max_response_bytes "
+            r"must be a positive integer$"
+        ),
+    ):
+        spec.factory({**spec.initial_config, "max_response_bytes": True})
+    adapter = spec.factory(spec.initial_config)
+
+    assert isinstance(adapter, FakeAudioCppAdapter)
+    assert len(captured) == 1
+    assert captured[0].to_mapping() == dict(spec.initial_config)
 
 
 @pytest.mark.asyncio
