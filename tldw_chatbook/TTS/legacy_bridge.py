@@ -111,21 +111,26 @@ def _legacy_progress_callback(
             )
             if isinstance(value, (str, int, float, bool))
         }
-        await progress_sink(
-            TTSProgress(
-                status=str(info.get("status") or "Generating"),
-                fraction=fraction,
-                processed=(
-                    int(info["processed"])
-                    if isinstance(info.get("processed"), int)
-                    else None
-                ),
-                total=(
-                    int(info["total"]) if isinstance(info.get("total"), int) else None
-                ),
-                metrics=metrics,
+        try:
+            await progress_sink(
+                TTSProgress(
+                    status=str(info.get("status") or "Generating"),
+                    fraction=fraction,
+                    processed=(
+                        int(info["processed"])
+                        if isinstance(info.get("processed"), int)
+                        else None
+                    ),
+                    total=(
+                        int(info["total"])
+                        if isinstance(info.get("total"), int)
+                        else None
+                    ),
+                    metrics=metrics,
+                )
             )
-        )
+        except Exception:
+            return
 
     return report
 
@@ -222,6 +227,8 @@ class LegacyTTSAdapter:
         request: TTSRequest,
         progress_sink: ProgressSink | None = None,
     ) -> TTSAudioResponse:
+        if request.provider_id != self.provider_id:
+            raise ValueError("TTS request does not match provider")
         if set(request.options) != self._allowed_options:
             raise ValueError("Invalid legacy adapter options")
         legacy_request = request.options["_legacy_openai_request"]

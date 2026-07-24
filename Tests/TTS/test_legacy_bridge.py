@@ -587,6 +587,31 @@ async def test_adapter_maps_progress_and_partial_response_close_releases_backend
 
 
 @pytest.mark.asyncio
+async def test_progress_sink_failure_does_not_fail_stream_or_leave_callback() -> None:
+    backend = FakeLegacyBackend()
+    adapter = LegacyTTSAdapter(
+        "kokoro",
+        LegacyBackendHost(
+            provider_id="kokoro",
+            app_config={},
+            manager_factory=lambda _: FakeLegacyManager(backend),
+        ),
+        legacy_catalog("kokoro"),
+    )
+
+    async def fail(_: TTSProgress) -> None:
+        raise RuntimeError("progress sink failed")
+
+    response = await adapter.synthesize(
+        adapter_request("kokoro", "local_kokoro_default_onnx"),
+        fail,
+    )
+
+    assert await collect(response.byte_stream) == b"audio"
+    assert backend.progress_callback is None
+
+
+@pytest.mark.asyncio
 async def test_adapter_rejects_invalid_or_cross_provider_routes_before_host_use() -> (
     None
 ):
@@ -627,6 +652,31 @@ async def test_adapter_rejects_invalid_or_cross_provider_routes_before_host_use(
         await adapter.synthesize(adapter_request("kokoro", "openai_official_tts-1"))
     with pytest.raises(UnknownLegacyModelError):
         await adapter.synthesize(adapter_request("kokoro", "local_kokoro_unlisted"))
+
+    assert manager_factory_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_adapter_rejects_mismatched_request_provider_before_host_use() -> None:
+    manager_factory_calls = 0
+
+    def create_manager(_: dict[str, Any]) -> FakeLegacyManager:
+        nonlocal manager_factory_calls
+        manager_factory_calls += 1
+        return FakeLegacyManager(FakeLegacyBackend())
+
+    adapter = LegacyTTSAdapter(
+        "kokoro",
+        LegacyBackendHost(
+            provider_id="kokoro",
+            app_config={},
+            manager_factory=create_manager,
+        ),
+        legacy_catalog("kokoro"),
+    )
+
+    with pytest.raises(ValueError, match="request does not match provider"):
+        await adapter.synthesize(adapter_request("openai", "local_kokoro_default_onnx"))
 
     assert manager_factory_calls == 0
 
