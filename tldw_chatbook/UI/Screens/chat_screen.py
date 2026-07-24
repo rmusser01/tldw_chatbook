@@ -10691,6 +10691,17 @@ class ChatScreen(BaseAppScreen):
         messages = self._native_console_messages()
         if transcript is not None:
             transcript.set_messages(messages)
+            # SP2 /rewind: derive the "summarize up to here" banner boundary
+            # from the active session's stored summary state. Render-derived
+            # only -- the banner shows above the boundary message when it is on
+            # the rendered path, and disappears (inert) otherwise.
+            store = self._ensure_console_chat_store()
+            summary_boundary_id: str | None = None
+            if store.active_session_id is not None:
+                _summary, summary_boundary_id = store.session_context_summary(
+                    store.active_session_id
+                )
+            transcript.set_summary_boundary(summary_boundary_id)
             # TASK-371: reflect run state in the jump-to-latest pill when the
             # reader is scrolled up during / just after a streaming reply.
             transcript.sync_jump_indicator(self._current_console_run_status_value())
@@ -10751,6 +10762,10 @@ class ChatScreen(BaseAppScreen):
                 self._native_console_transcript_fingerprint(messages),
                 image_signature,
                 card_signature,
+                # SP2 /rewind: a boundary change alone (summarize / restore
+                # before-boundary) must force a refresh so the banner appears
+                # or clears even when the message set is otherwise unchanged.
+                summary_boundary_id,
             )
             if refresh_key != self._last_native_transcript_refresh_key:
                 await transcript.refresh_messages()
@@ -11968,8 +11983,9 @@ class ChatScreen(BaseAppScreen):
         `None` (empty transcript) when the selected prompt was the root. The
         selected prompt's own text is written back into the composer via the
         same paste-semantics seam `/prompt` uses.
-        `"summarize-up-to"` is wired in a later task (SP2 Task 3); it dismisses
-        correctly here but only notifies for now.
+        `"summarize-up-to"` runs the boundary-summary flow (SP2 Task 3) on an
+        exclusive `console-run` worker, gated on `is_send_allowed` the same way
+        restore is (never mutates while a run is streaming).
 
         Args:
             session_id: Native Console session id the modal was opened for.
@@ -11979,8 +11995,19 @@ class ChatScreen(BaseAppScreen):
             self._focus_console_composer_if_needed(force=True)
             return
         if choice.kind == "summarize-up-to":
-            self.app_instance.notify(
-                "Summarize is coming in the next task.", severity="information"
+            controller = self._ensure_console_chat_controller()
+            # Gate BEFORE spawning: an exclusive console-run worker cancels any
+            # in-flight run at creation time, before the controller's own
+            # rejection can run -- refuse first, like the regenerate path.
+            if not controller.run_state.is_send_allowed:
+                self.app_instance.notify(
+                    CONSOLE_RUN_ALREADY_RUNNING_COPY, severity="warning"
+                )
+                return
+            self.run_worker(
+                self._summarize_console_up_to(controller, choice.message_id),
+                exclusive=True,
+                group="console-run",
             )
             return
         if choice.kind != "restore":
@@ -13629,6 +13656,26 @@ class ChatScreen(BaseAppScreen):
         result = await controller.regenerate_message(message_id)
         if result.visible_copy and not result.accepted:
             self.app_instance.notify(result.visible_copy, severity="warning")
+        await self._sync_native_console_chat_ui()
+
+    async def _summarize_console_up_to(
+        self,
+        controller: ConsoleChatController,
+        message_id: str,
+    ) -> None:
+        """Run `/rewind` "summarize up to here" and reflect the outcome.
+
+        Mirrors ``_regenerate_console_message`` (sync timer for the "Summarizing
+        conversation…" run state, await, re-sync). Summarize streams nothing
+        into the transcript, so on success the only visible feedback is this
+        notify plus the render-derived banner the resync plumbs -- surface the
+        success copy as information, and any block/failure copy as a warning.
+        """
+        self._start_console_transcript_sync_timer()
+        result = await controller.summarize_up_to(message_id)
+        if result.visible_copy:
+            severity = "information" if result.accepted else "warning"
+            self.app_instance.notify(result.visible_copy, severity=severity)
         await self._sync_native_console_chat_ui()
 
     async def _edit_resend_console_message(

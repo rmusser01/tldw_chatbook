@@ -48,6 +48,11 @@ from tldw_chatbook.Widgets.Console.console_generation_card import (
 
 CONSOLE_TRANSCRIPT_RULE = "─" * 200
 CONSOLE_GENERATING_PLACEHOLDER = "Generating…"
+#: SP2 /rewind: render-derived (never a tree node) one-line banner shown above
+#: the boundary message when "summarize up to here" is in effect.
+CONSOLE_SUMMARY_BANNER_COPY = (
+    "⤵ Earlier turns summarized for context — full history above"
+)
 EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL = "Choose model"
 EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP = (
     "Choose the provider and model for this Console session."
@@ -281,7 +286,7 @@ def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Cont
 class _TranscriptRow:
     key: str
     kind: Literal[
-        "rule", "message", "image", "generation-card", "actions", "action-help", "empty"
+        "rule", "banner", "message", "image", "generation-card", "actions", "action-help", "empty"
     ]
     signature: tuple
     message: ConsoleChatMessage | None = None
@@ -516,6 +521,7 @@ class ConsoleTranscript(VerticalScroll):
         "console-transcript-empty-body",
         "console-transcript-empty-state",
         "console-transcript-rule",
+        "console-transcript-summary-banner",
         # Textual scrollbars carry the generic system-widget class; ignore them
         # defensively if a scrollbar click ever bubbles up to the transcript.
         "-textual-system",
@@ -529,6 +535,12 @@ class ConsoleTranscript(VerticalScroll):
         super().__init__(**kwargs)
         self._messages: list[ConsoleChatMessage] = []
         self.selected_message_id: str | None = None
+        #: SP2 /rewind: native id of the "summarize up to here" boundary message.
+        #: Render-derived only -- a banner row is emitted above this message when
+        #: it is among the rendered messages; ``None`` (or a dangling id) shows
+        #: no banner. Set by the screen sync path from
+        #: ``store.session_context_summary``; never mutates store/tree state.
+        self.summary_boundary_message_id: str | None = None
         self._follow_intent_time = 0.0
         self._user_scroll_time = 0.0
         self._refresh_lock = asyncio.Lock()
@@ -753,6 +765,16 @@ class ConsoleTranscript(VerticalScroll):
         """
         self._generation_card_specs = dict(specs)
 
+    def set_summary_boundary(self, message_id: str | None) -> None:
+        """Set the `/rewind` summary boundary message id for the banner.
+
+        The banner is render-derived: ``_transcript_rows`` emits it above the
+        matching message when it is present. Refresh is driven by the screen's
+        sync path (which folds this id into its refresh key), matching
+        ``set_image_specs``; standalone callers/tests refresh explicitly.
+        """
+        self.summary_boundary_message_id = message_id
+
     def sync_empty_state(
         self,
         card_state: ConsoleSetupCardState,
@@ -856,9 +878,11 @@ class ConsoleTranscript(VerticalScroll):
         rule = "─" * max(1, width)
         lines: list[str] = []
         for message in self._messages:
+            lines.append(rule)
+            if message.id == self.summary_boundary_message_id:
+                lines.append(CONSOLE_SUMMARY_BANNER_COPY)
             lines.extend(
                 [
-                    rule,
                     _message_role_label(message),
                     _message_body(message),
                 ]
@@ -1012,6 +1036,15 @@ class ConsoleTranscript(VerticalScroll):
                     renderable=CONSOLE_TRANSCRIPT_RULE,
                 )
             )
+            if message.id == self.summary_boundary_message_id:
+                rows.append(
+                    _TranscriptRow(
+                        key=f"summary-banner:{message.id}",
+                        kind="banner",
+                        signature=("banner", message.id),
+                        renderable=CONSOLE_SUMMARY_BANNER_COPY,
+                    )
+                )
             rows.append(
                 _TranscriptRow(
                     key=f"message:{message.id}",
@@ -1170,6 +1203,12 @@ class ConsoleTranscript(VerticalScroll):
             return Static(
                 row.renderable,
                 classes="console-transcript-rule",
+            )
+        if row.kind == "banner":
+            # Non-interactive, render-derived summary banner (never a tree node).
+            return Static(
+                row.renderable,
+                classes="console-transcript-summary-banner",
             )
         if row.kind == "empty":
             assert row.card_state is not None

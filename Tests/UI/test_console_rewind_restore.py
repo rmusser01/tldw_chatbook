@@ -165,7 +165,9 @@ async def test_none_choice_just_refocuses_composer_without_mutation():
 
 
 @pytest.mark.asyncio
-async def test_summarize_up_to_choice_notifies_task_3_placeholder_without_mutation():
+async def test_summarize_up_to_choice_dispatches_console_run_worker_without_mutation():
+    """SP2 Task 3: the summarize-up-to choice runs the boundary-summary flow on
+    the exclusive ``console-run`` worker group and never does tree surgery."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -176,8 +178,10 @@ async def test_summarize_up_to_choice_notifies_task_3_placeholder_without_mutati
         session, ids = await _seed_u1_a1_u2_a2(console)
         original_path = store.active_path_message_ids(session.id)
 
-        notices: list[str] = []
-        app.notify = lambda message_text, **kwargs: notices.append(str(message_text))
+        # Capture the dispatched worker without running it -- the provider
+        # outcome is irrelevant to the screen's dispatch contract.
+        spy_worker = MagicMock(side_effect=lambda coro, **kwargs: coro.close())
+        console.run_worker = spy_worker
 
         await console._apply_console_rewind_choice(
             session.id,
@@ -187,8 +191,51 @@ async def test_summarize_up_to_choice_notifies_task_3_placeholder_without_mutati
         )
         await pilot.pause()
 
+    assert spy_worker.call_count == 1
+    assert spy_worker.call_args.kwargs.get("group") == "console-run"
+    # Summarize never mutates the transcript tree, and nothing is stored until
+    # the (unrun) worker succeeds.
     assert store.active_path_message_ids(session.id) == original_path
-    assert any("next task" in note for note in notices)
+    assert store.session_context_summary(session.id) == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_summarize_up_to_choice_blocked_while_a_run_is_streaming():
+    """A summarize refuses (no worker) while a run streams, like restore does."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session, ids = await _seed_u1_a1_u2_a2(console)
+        original_path = store.active_path_message_ids(session.id)
+
+        controller = console._ensure_console_chat_controller()
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response.")
+        )
+        spy_worker = MagicMock(side_effect=lambda coro, **kwargs: coro.close())
+        console.run_worker = spy_worker
+
+        notices: list[tuple[str, str]] = []
+        app.notify = lambda message_text, **kwargs: notices.append(
+            (str(message_text), kwargs.get("severity", ""))
+        )
+
+        await console._apply_console_rewind_choice(
+            session.id,
+            ConsoleRewindChoice(
+                kind="summarize-up-to", message_id=ids["u2"].id, prompt_text="U2"
+            ),
+        )
+        await pilot.pause()
+
+    assert spy_worker.call_count == 0
+    assert (CONSOLE_RUN_ALREADY_RUNNING_COPY, "warning") in notices
+    assert store.active_path_message_ids(session.id) == original_path
+    assert store.session_context_summary(session.id) == (None, None)
 
 
 @pytest.mark.asyncio

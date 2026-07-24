@@ -33,6 +33,7 @@ from tldw_chatbook.Chat.console_command_grammar import COMMAND_PREFIX
 from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_RESPONSE_RESERVATION,
     bound_messages_to_window,
+    count_console_messages_tokens,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_skill_resolver import (
@@ -48,6 +49,7 @@ from loguru import logger
 
 from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
 from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.Chat.provider_failures import (  # noqa: F401  (re-export: tests and callers import describe_stream_failure from here)
@@ -1406,6 +1408,198 @@ class ConsoleChatController:
             skill_bundle_block=skill_bundle_block,
         )
 
+    #: Guidance cap for the transcript span fed to the summarizer (Task 3).
+    #: Well above any realistic single-summary span so it never trims in tests
+    #: or normal use; a runaway history drops its OLDEST turns before the call.
+    _SUMMARY_SPAN_TOKEN_BUDGET = 12000
+
+    async def summarize_up_to(self, message_id: str) -> ConsoleSubmitResult:
+        """Summarize the active path up to (excluding) a USER message.
+
+        Console `/rewind` "Summarize up to here" (SP2, Task 3). Runs the
+        session's resolved provider (non-streaming) over the active-path turns
+        before ``message_id`` and stores the result as the session's boundary
+        summary (``store.set_session_context_summary``). The visible transcript
+        is never mutated -- only the provider CONTEXT is later compacted at the
+        dispatch choke point (see ``_apply_context_summary_compaction``).
+
+        Gates run FIRST and NONE of them mutates transcript state (the Phase B
+        discipline): an active run, a missing session, an off-path or non-USER
+        target, a target with nothing before it, and provider-not-ready each
+        return a blocked ``ConsoleSubmitResult`` via ``_summarize_block`` --
+        which only sets the run state, never appends a system row. Rolling
+        re-summarize (a prior boundary already on the path before ``message_id``)
+        prepends the prior summary and only re-sends the turns SINCE that
+        boundary. On an empty reply or a provider error the stored summary is
+        left untouched.
+
+        Args:
+            message_id: Native id of the USER turn to summarize UP TO.
+
+        Returns:
+            ``ConsoleSubmitResult`` -- ``accepted`` True only when a non-empty
+            summary was generated and stored.
+        """
+        active_rejection = self._active_run_rejection()
+        if active_rejection is not None:
+            return active_rejection
+
+        session_id = self.store.active_session_id
+        if session_id is None:
+            return ConsoleSubmitResult(False, False, "No active Console session.")
+
+        if message_id not in self.store.active_path_message_ids(session_id):
+            return self._summarize_block("Switch to that branch before summarizing.")
+        try:
+            target = self.store.get_message(message_id)
+        except KeyError:
+            return self._summarize_block("Switch to that branch before summarizing.")
+        if target.role is not ConsoleMessageRole.USER:
+            return self._summarize_block(
+                "Only your own messages can be summarized up to here."
+            )
+
+        messages = self.store.messages_for_session(session_id)
+        target_index = next(
+            (i for i, m in enumerate(messages) if m.id == message_id), None
+        )
+        if target_index is None:
+            return self._summarize_block("Switch to that branch before summarizing.")
+        before = [
+            m
+            for m in messages[:target_index]
+            if m.role in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}
+        ]
+        if not before:
+            return self._summarize_block("Nothing to summarize before that message.")
+
+        # Rolling compaction: when a prior boundary sits on this path BEFORE the
+        # target, the prior summary already covers everything strictly before
+        # it, so re-summarize only from that boundary (inclusive) forward and
+        # fold the prior summary in.
+        prev_summary, prev_boundary_id = self.store.session_context_summary(session_id)
+        start_index = 0
+        rolling_summary: str | None = None
+        if prev_boundary_id is not None and prev_summary:
+            prev_index = next(
+                (i for i, m in enumerate(messages) if m.id == prev_boundary_id), None
+            )
+            if prev_index is not None and prev_index < target_index:
+                start_index = prev_index
+                rolling_summary = prev_summary
+        span = [
+            m
+            for m in messages[start_index:target_index]
+            if m.role in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}
+        ]
+
+        # "Summarizing..." run state, set the way regenerate sets VALIDATING.
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Summarizing conversation…")
+        )
+        resolution = await self.provider_gateway.resolve_for_send(
+            self._provider_selection()
+        )
+        if not getattr(resolution, "ready", False):
+            return self._summarize_block(
+                self._blocked_visible_copy(getattr(resolution, "visible_copy", ""))
+            )
+
+        span_text = self._build_summary_span_text(
+            span, rolling_summary, model=getattr(resolution, "model", None) or ""
+        )
+        summarize_messages = [
+            {
+                "role": ConsoleMessageRole.SYSTEM.value,
+                "content": get_internal_prompt("console.rewind_summarize"),
+            },
+            {"role": ConsoleMessageRole.USER.value, "content": span_text},
+        ]
+        try:
+            summary_text = await self._collect_summary_completion(
+                resolution, summarize_messages
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:  # noqa: BLE001 -- failure = no-op + honest copy
+            logger.opt(exception=True).warning(
+                "Console summarize-up-to failed", error=str(error)
+            )
+            visible_copy = "Couldn't summarize the conversation. Try again."
+            self._set_run_state(ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy))
+            return ConsoleSubmitResult(False, False, visible_copy)
+
+        if not summary_text.strip():
+            return self._summarize_block("The model returned an empty summary.")
+
+        self.store.set_session_context_summary(session_id, summary_text, message_id)
+        turns = sum(1 for m in before if m.role is ConsoleMessageRole.USER)
+        visible_copy = f"Summarized {turns} earlier turn{'s' if turns != 1 else ''}."
+        self._set_run_state(ConsoleRunState(ConsoleRunStatus.COMPLETED, visible_copy))
+        return ConsoleSubmitResult(True, False, visible_copy)
+
+    def _summarize_block(self, visible_copy: str) -> ConsoleSubmitResult:
+        """Blocked-summarize result that mutates NO transcript state.
+
+        Unlike ``_block`` (which appends a SYSTEM row), a blocked summarize
+        must leave the transcript untouched -- the run-state copy alone carries
+        the reason to the control surfaces (Phase B discipline).
+        """
+        self._set_run_state(ConsoleRunState.blocked(visible_copy))
+        return ConsoleSubmitResult(False, False, visible_copy)
+
+    def _build_summary_span_text(
+        self,
+        span: list[ConsoleChatMessage],
+        prior_summary: str | None,
+        *,
+        model: str,
+    ) -> str:
+        """Build the plain-text transcript span fed to the summarizer.
+
+        Emits ``User: ...`` / ``Assistant: ...`` lines, prepending a
+        ``[Previous summary]`` block when rolling. If the assembled span blows
+        past ``_SUMMARY_SPAN_TOKEN_BUDGET`` (counted with
+        ``count_console_messages_tokens``), the OLDEST turns are dropped until
+        it fits -- the newest detail and the prior summary are always kept.
+        """
+
+        def assemble(rows: list[ConsoleChatMessage]) -> str:
+            lines = [
+                f"{'User' if m.role is ConsoleMessageRole.USER else 'Assistant'}: {m.content}"
+                for m in rows
+            ]
+            transcript_text = "\n".join(lines)
+            if prior_summary:
+                return f"[Previous summary]\n{prior_summary}\n\n{transcript_text}".rstrip()
+            return transcript_text
+
+        rows = list(span)
+        body = assemble(rows)
+        while len(rows) > 1 and count_console_messages_tokens(
+            [{"role": "user", "content": body}], model
+        ) > self._SUMMARY_SPAN_TOKEN_BUDGET:
+            rows = rows[1:]
+            body = assemble(rows)
+        return body
+
+    async def _collect_summary_completion(
+        self, resolution: Any, messages: list[dict[str, Any]]
+    ) -> str:
+        """Collect a NON-streaming completion via the gateway's streaming seam.
+
+        The provider gateway protocol exposes only ``stream_chat``; there is no
+        separate non-streaming completion method on the Console surface, so the
+        summary is accumulated from its chunks WITHOUT appending to any
+        transcript message (summarize never mutates the tree). Non-``str``
+        yields (e.g. tool-call payloads, never requested here) are ignored.
+        """
+        chunks: list[str] = []
+        async for chunk in self.provider_gateway.stream_chat(resolution, messages):
+            if isinstance(chunk, str) and chunk:
+                chunks.append(chunk)
+        return "".join(chunks)
+
     async def edit_and_resend_message(
         self, message_id: str, new_content: str
     ) -> ConsoleSubmitResult:
@@ -2658,6 +2852,16 @@ class ConsoleChatController:
         # not the controller's active session) so a session switch racing
         # this send can't flip which branch a still-in-flight message uses.
         force_plain = owner is not None and owner.character_id is not None
+        # SP2 /rewind "summarize up to here": at the SINGLE dispatch choke point
+        # (agent + direct both flow through here), fold the session's boundary
+        # summary into the payload -- but ONLY when the boundary message is
+        # actually present in it (the leak rule; see
+        # _apply_context_summary_compaction). Runs BEFORE bound_messages_to_
+        # window so the summary lands in the leading system prefix the trimmer
+        # preserves.
+        provider_messages = self._apply_context_summary_compaction(
+            owner_id, provider_messages
+        )
         # task-322: bound the dispatched history by real tokens before the
         # agent-vs-direct branch below, so both paths send a windowed payload.
         # Budget against the captured `resolution` -- the same model/provider/
@@ -3312,6 +3516,110 @@ class ConsoleChatController:
         if not isinstance(raw_system_prompt, str) or not raw_system_prompt.strip():
             return []
         return [{"role": ConsoleMessageRole.SYSTEM.value, "content": raw_system_prompt}]
+
+    @staticmethod
+    def _payload_row_text(row: dict[str, Any]) -> str:
+        """Return the text content of a provider payload row.
+
+        Flattens a multimodal ``content`` list (``{type:text}`` /
+        ``{type:image_url}`` parts) to its concatenated text so a boundary USER
+        turn that carried an image still matches its stored text.
+        """
+        content = row.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "".join(
+                part.get("text", "")
+                for part in content
+                if isinstance(part, dict) and part.get("type") == "text"
+            )
+        return ""
+
+    def _apply_context_summary_compaction(
+        self, session_id: str, provider_messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Fold the session's boundary summary into ``provider_messages``.
+
+        THE LEAK RULE (spec-review fix): compaction applies ONLY when the
+        boundary USER message is actually PRESENT in this payload. When present,
+        the payload rows BEFORE it are dropped and the summary is appended to
+        the leading system prefix (which ``bound_messages_to_window`` preserves).
+        When ABSENT -- e.g. regenerating a message that sits BEFORE the boundary,
+        whose ancestors-only payload ends pre-boundary -- the payload is returned
+        untouched: a summary covering LATER turns must never be substituted into
+        an earlier point's context. A dangling/deleted boundary also fails open
+        to full history.
+
+        Payload-row -> boundary matching mechanism: match by ``(role == USER,
+        text)`` on the FIRST occurrence, rather than threading native ids
+        alongside the payload. Rationale: the payload dict shape reaches the
+        provider verbatim, and the transform pipeline between build and this
+        choke point (continuation-instruction insert, skill-fork leading-row
+        drop, chat-dictionary/world-info rewrites of the FINAL user turn) would
+        each have to carry -- and never desync -- a parallel id list. Content
+        matching stays localised to this one seam with ZERO payload-shape change,
+        and BOTH of its failure modes fail SAFE toward full history: a boundary
+        whose content a transform rewrote (only ever the final user turn) simply
+        misses and sends full history; a byte-identical earlier duplicate matches
+        first, dropping FEWER rows (redundant, never a leak). The boundary is
+        always a strictly-earlier user turn in the common case, so neither
+        pathology arises there.
+
+        Args:
+            session_id: Session owning the payload being dispatched.
+            provider_messages: The fully-built, post-transform payload.
+
+        Returns:
+            The compacted payload, or ``provider_messages`` unchanged.
+        """
+        summary, boundary_native_id = self.store.session_context_summary(session_id)
+        if not summary or boundary_native_id is None:
+            return provider_messages
+        try:
+            boundary = self.store.get_message(boundary_native_id)
+        except KeyError:
+            return provider_messages
+        if boundary.role is not ConsoleMessageRole.USER:
+            return provider_messages
+        boundary_text = boundary.content
+
+        boundary_index: int | None = None
+        for index, row in enumerate(provider_messages):
+            if row.get("role") != ConsoleMessageRole.USER.value:
+                continue
+            if self._payload_row_text(row) == boundary_text:
+                boundary_index = index
+                break
+        if boundary_index is None:
+            return provider_messages
+
+        sys_end = 0
+        while (
+            sys_end < len(provider_messages)
+            and provider_messages[sys_end].get("role")
+            == ConsoleMessageRole.SYSTEM.value
+        ):
+            sys_end += 1
+        system_prefix = provider_messages[:sys_end]
+        tail = provider_messages[boundary_index:]
+
+        summary_suffix = "\n\n[Summary of earlier conversation]\n" + summary
+        if system_prefix:
+            first = system_prefix[0]
+            merged_first = {
+                **first,
+                "content": (first.get("content") or "") + summary_suffix,
+            }
+            new_system = [merged_first, *system_prefix[1:]]
+        else:
+            new_system = [
+                {
+                    "role": ConsoleMessageRole.SYSTEM.value,
+                    "content": summary_suffix.lstrip(),
+                }
+            ]
+        return new_system + tail
 
     def _provider_messages_for_session(
         self,

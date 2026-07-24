@@ -8,6 +8,7 @@ from .catalog import CATALOG, PromptSpec, register
 from . import websearch_prompts  # noqa: F401  (registers specs on import)
 from . import rag_reranker_prompts  # noqa: F401  (registers specs on import)
 from . import agents_prompts  # noqa: F401  (registers specs on import)
+from . import console_prompts  # noqa: F401  (registers specs on import)
 from . import summarization_prompts  # noqa: F401  (registers specs on import)
 from . import document_generation_prompts  # noqa: F401  (registers specs on import)
 from . import subscriptions_prompts  # noqa: F401  (registers specs on import)
