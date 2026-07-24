@@ -15,6 +15,10 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,
 )
 from tldw_chatbook.TTS.adapter_registry import TTSAdapterRegistry
+from tldw_chatbook.TTS.legacy_bridge import (
+    legacy_provider_config,
+    legacy_provider_specs,
+)
 from tldw_chatbook.TTS.TTS_Generation import TTSService
 
 
@@ -98,12 +102,12 @@ async def test_provider_setting_reconfigures_only_current_materialized_adapter(
             provider_spec(
                 "openai",
                 openai_factory,
-                {"app_config": initial_snapshot},
+                legacy_provider_config("openai", initial_snapshot),
             ),
             provider_spec(
                 "kokoro",
                 kokoro_factory,
-                {"app_config": initial_snapshot},
+                legacy_provider_config("kokoro", initial_snapshot),
             ),
         ),
         aliases={},
@@ -155,13 +159,94 @@ async def test_provider_setting_reconfigures_only_current_materialized_adapter(
     assert registry.configuration_revision("kokoro") == 1
     replacement = await registry.acquire("openai")
     await replacement.release()
-    assert openai_factory.configs[-1] == {
-        "app_config": effective_settings["COMPREHENSIVE_CONFIG_RAW"]
-    }
+    assert openai_factory.configs[-1] == legacy_provider_config(
+        "openai",
+        effective_settings,
+    )
     assert openai_factory.calls == 2
     assert kokoro_factory.calls == 1
     initialize_stts.assert_not_awaited()
     get_bound_service.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_mixed_provider_save_retires_only_effectively_changed_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "environment-elevenlabs-key")
+    initial_raw = {
+        "API": {
+            "openai_api_key": "stable-openai-key",
+            "elevenlabs_api_key": "stored-elevenlabs-key-before",
+        },
+        "app_tts": {
+            "ELEVENLABS_DEFAULT_MODEL": "eleven_multilingual_v2",
+            "KOKORO_DEVICE_DEFAULT": "cpu",
+        },
+        "HiggsSettings": {"device": "cpu"},
+    }
+    effective_raw = deepcopy(initial_raw)
+    effective_raw["API"]["elevenlabs_api_key"] = "stored-elevenlabs-key-after"
+    effective_raw["app_tts"]["KOKORO_DEVICE_DEFAULT"] = "mps"
+
+    def normalized(raw: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "COMPREHENSIVE_CONFIG_RAW": raw,
+            "APP_TTS_CONFIG": raw["app_tts"],
+            "openai_api": {"api_key": "stable-openai-key"},
+            "elevenlabs_api": {"api_key": "environment-elevenlabs-key"},
+        }
+
+    registry = TTSAdapterRegistry(
+        specs=legacy_provider_specs(
+            normalized(initial_raw),
+            manager_factory=Mock(side_effect=AssertionError("manager constructed")),
+        ),
+        aliases={},
+    )
+    materialized: dict[str, Any] = {}
+    for provider_id in ("elevenlabs", "kokoro", "higgs"):
+        lease = await registry.acquire(provider_id)
+        materialized[provider_id] = lease.adapter
+        await lease.release()
+
+    service = TTSService(registry)
+    handler = STTSEventHandler(RecordingApp())
+    handler._stts_service = service
+    monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config",
+        Mock(return_value=True),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.config.load_settings",
+        Mock(return_value=normalized(effective_raw)),
+    )
+    event_settings = {
+        key: "unchanged" for keys in PROVIDER_SETTING_KEYS.values() for key in keys
+    }
+    event_settings.update(
+        {
+            "openai_api_key": "stable-openai-key",
+            "elevenlabs_api_key": "stored-elevenlabs-key-after",
+            "ELEVENLABS_DEFAULT_MODEL": "eleven_multilingual_v2",
+            "KOKORO_DEVICE_DEFAULT": "mps",
+            "HIGGS_DEVICE": "cpu",
+        }
+    )
+
+    await handler.handle_settings_save(STTSSettingsSaveEvent(event_settings))
+
+    assert registry.configuration_revision("openai") == 1
+    assert registry.configuration_revision("elevenlabs") == 1
+    assert registry.configuration_revision("kokoro") == 2
+    assert registry.configuration_revision("higgs") == 1
+    assert registry._slots["openai"].active is None
+    assert materialized["elevenlabs"].host._closed is False
+    assert materialized["kokoro"].host._closed is True
+    assert materialized["higgs"].host._closed is False
+
+    await service.close()
+    await service.wait_closed()
 
 
 @pytest.mark.asyncio
@@ -251,9 +336,14 @@ async def test_recognized_keys_reconfigure_each_candidate_once_in_provider_order
         }
     ]
     assert load_calls == [False]
-    normalized_snapshot = {**snapshot, "app_tts": {}}
     assert reconfigure_provider.await_args_list == [
-        call(provider_id, {"app_config": normalized_snapshot})
+        call(
+            provider_id,
+            legacy_provider_config(
+                provider_id,
+                {"COMPREHENSIVE_CONFIG_RAW": snapshot},
+            ),
+        )
         for provider_id in PROVIDER_SETTING_KEYS
     ]
 

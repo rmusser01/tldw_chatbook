@@ -17,8 +17,8 @@ from textual.widgets import Button, Select, RichLog, Static, ProgressBar
 #
 # Local imports
 from tldw_chatbook.TTS import get_tts_service, OpenAISpeechRequest
-from tldw_chatbook.TTS.adapter_bootstrap import _legacy_config_snapshot
 from tldw_chatbook.TTS.adapter_types import TTSProgress
+from tldw_chatbook.TTS.legacy_bridge import legacy_provider_config
 from tldw_chatbook.TTS.TTS_Generation import _join_retained_task
 from tldw_chatbook.Utils.secure_temp_files import secure_delete_file
 from tldw_chatbook.config import get_cli_setting
@@ -645,7 +645,10 @@ class STTSEventHandler:
             )
 
             # Save each setting to the appropriate section
-            settings_map = {
+            settings_map: dict[
+                str,
+                tuple[str, str] | list[tuple[str, str]],
+            ] = {
                 # Default settings - save to both sections for compatibility
                 "default_provider": [
                     ("app_tts", "default_provider"),
@@ -754,7 +757,6 @@ class STTSEventHandler:
                 logger.info(f"Saved {key} to [{section}].{setting_name}")
 
             effective_settings = load_settings()
-            snapshot = _legacy_config_snapshot(effective_settings)
             candidate_providers = [
                 provider_id
                 for provider_id, setting_keys in _STTS_PROVIDER_SETTING_KEYS
@@ -769,7 +771,7 @@ class STTSEventHandler:
                     *(
                         service.reconfigure_provider(
                             provider_id,
-                            {"app_config": snapshot},
+                            legacy_provider_config(provider_id, effective_settings),
                         )
                         for provider_id in candidate_providers
                     ),

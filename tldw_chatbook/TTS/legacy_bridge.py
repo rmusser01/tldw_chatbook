@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
@@ -24,6 +26,11 @@ from tldw_chatbook.TTS.legacy_catalogs import (
 
 if TYPE_CHECKING:
     from tldw_chatbook.TTS.TTS_Backends import TTSBackendManager
+
+logger = logging.getLogger(__name__)
+_DELEGATED_CLEANUP_FAILURE_NOTE = (
+    "Legacy TTS cleanup also failed during caller cancellation"
+)
 
 
 class UnknownLegacyModelError(LookupError):
@@ -81,6 +88,160 @@ _CONTENT_TYPES = {
     "wav": "audio/wav",
     "pcm": "application/octet-stream",
 }
+_APP_TTS_PREFIXES = {
+    "openai": "OPENAI_",
+    "elevenlabs": "ELEVENLABS_",
+    "kokoro": "KOKORO_",
+    "chatterbox": "CHATTERBOX_",
+    "higgs": "HIGGS_",
+    "alltalk": "ALLTALK_",
+}
+_BACKEND_PREFIXES = {
+    "openai": "openai_official",
+    "elevenlabs": "elevenlabs_",
+    "kokoro": "local_kokoro_",
+    "chatterbox": "local_chatterbox_",
+    "higgs": "local_higgs_",
+    "alltalk": "alltalk_",
+}
+
+
+def _legacy_config_snapshot(
+    app_config: Mapping[str, Any],
+) -> dict[str, Any]:
+    nested_raw = app_config.get("COMPREHENSIVE_CONFIG_RAW")
+    source = nested_raw if isinstance(nested_raw, Mapping) else app_config
+    snapshot = deepcopy(dict(source))
+    if "app_tts" not in snapshot:
+        normalized_tts = app_config.get("APP_TTS_CONFIG", {})
+        snapshot["app_tts"] = (
+            deepcopy(dict(normalized_tts))
+            if isinstance(normalized_tts, Mapping)
+            else {}
+        )
+    return snapshot
+
+
+def _first_mapping_value(
+    configurations: tuple[Mapping[str, Any], ...],
+    section: str,
+    key: str,
+) -> Any:
+    for configuration in configurations:
+        values = configuration.get(section)
+        if isinstance(values, Mapping):
+            value = values.get(key)
+            if value:
+                return value
+    return None
+
+
+def legacy_provider_config(
+    provider_id: str,
+    app_config: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Return the effective legacy-manager input for one provider.
+
+    Args:
+        provider_id: Exact legacy provider identifier.
+        app_config: Normalized settings with an optional raw configuration.
+
+    Returns:
+        Provider-scoped registry configuration for the legacy adapter factory.
+
+    Raises:
+        ValueError: If the provider identifier is not registered by the bridge.
+    """
+    if provider_id not in LEGACY_PROVIDER_IDS:
+        raise ValueError(f"Unknown legacy TTS provider: {provider_id}")
+
+    raw = _legacy_config_snapshot(app_config)
+    normalized_tts = app_config.get("APP_TTS_CONFIG")
+    raw_tts = raw.get("app_tts")
+    effective_tts = dict(raw_tts) if isinstance(raw_tts, Mapping) else {}
+    if isinstance(normalized_tts, Mapping):
+        effective_tts.update(normalized_tts)
+
+    prefix = _APP_TTS_PREFIXES[provider_id]
+    projected: dict[str, Any] = {
+        "app_tts": {
+            key: deepcopy(value)
+            for key, value in effective_tts.items()
+            if str(key).startswith(prefix)
+        }
+    }
+    global_settings = raw.get("global_tts_settings")
+    if isinstance(global_settings, Mapping):
+        projected["global_tts_settings"] = deepcopy(dict(global_settings))
+
+    backend_prefix = _BACKEND_PREFIXES[provider_id]
+    projected.update(
+        {
+            str(key): deepcopy(dict(value))
+            for key, value in raw.items()
+            if str(key).startswith(backend_prefix) and isinstance(value, Mapping)
+        }
+    )
+
+    configurations = (app_config, raw)
+    if provider_id == "openai":
+        api_key = os.getenv("OPENAI_API_KEY") or _first_mapping_value(
+            configurations,
+            "api_settings.openai",
+            "api_key",
+        )
+        api_key = api_key or _first_mapping_value(
+            configurations,
+            "openai_api",
+            "api_key",
+        )
+        api_key = api_key or _first_mapping_value(
+            configurations,
+            "API",
+            "openai_api_key",
+        )
+        if api_key:
+            projected["openai_api"] = {"api_key": api_key}
+    elif provider_id == "elevenlabs":
+        api_key = os.getenv("ELEVENLABS_API_KEY") or _first_mapping_value(
+            configurations,
+            "API",
+            "elevenlabs_api_key",
+        )
+        api_key = api_key or _first_mapping_value(
+            configurations,
+            "elevenlabs_api",
+            "api_key",
+        )
+        if api_key:
+            projected["elevenlabs_api"] = {"api_key": api_key}
+    elif provider_id == "kokoro":
+        model_path = os.getenv("KOKORO_MODEL_PATH")
+        if model_path:
+            projected["app_tts"]["KOKORO_ONNX_MODEL_PATH_DEFAULT"] = model_path
+            projected["app_tts"]["KOKORO_PT_MODEL_PATH_DEFAULT"] = model_path
+        voices_path = os.getenv("KOKORO_VOICES_PATH")
+        if voices_path:
+            projected["app_tts"]["KOKORO_ONNX_VOICES_JSON_DEFAULT"] = voices_path
+    elif provider_id == "higgs":
+        higgs_settings = raw.get("HiggsSettings")
+        effective_higgs = (
+            deepcopy(dict(higgs_settings))
+            if isinstance(higgs_settings, Mapping)
+            else {}
+        )
+        for key, value in raw.items():
+            if str(key).startswith("HIGGS_"):
+                effective_higgs[str(key).removeprefix("HIGGS_").lower()] = deepcopy(
+                    value
+                )
+        model_path = os.getenv("HIGGS_MODEL_PATH")
+        if model_path:
+            effective_higgs["model_path"] = model_path
+        projected["HiggsSettings"] = effective_higgs
+        projected["app_tts"] = {}
+
+    return {"app_config": projected}
 
 
 def resolve_legacy_route(internal_model_id: str) -> LegacyRoute:
@@ -146,9 +307,33 @@ async def _close_delegated_stream(
             await asyncio.shield(close_task)
         except asyncio.CancelledError as error:
             cancellation = cancellation or error
-    close_task.result()
+        except BaseException:
+            break
+    close_error: BaseException | None = None
+    try:
+        close_task.result()
+    except BaseException as error:
+        close_error = error
     if cancellation is not None:
+        if close_error is not None and not isinstance(
+            close_error,
+            asyncio.CancelledError,
+        ):
+            _record_delegated_cleanup_failure(cancellation, close_error)
         raise cancellation
+    if close_error is not None:
+        raise close_error
+
+
+def _record_delegated_cleanup_failure(
+    cancellation: asyncio.CancelledError,
+    cleanup_error: BaseException,
+) -> None:
+    cancellation.add_note(_DELEGATED_CLEANUP_FAILURE_NOTE)
+    logger.warning(
+        "Legacy TTS delegated cleanup failed during cancellation: %s",
+        type(cleanup_error).__name__,
+    )
 
 
 class _LegacyOperation(AsyncIterator[bytes]):
@@ -179,11 +364,35 @@ class _LegacyOperation(AsyncIterator[bytes]):
         async with self._drive_lock:
             if self._closing:
                 raise StopAsyncIteration
-            self._driver_task = asyncio.current_task()
+            driver_task = asyncio.current_task()
+            cancellation_requests = (
+                driver_task.cancelling() if driver_task is not None else 0
+            )
+            self._driver_task = driver_task
+            delegated_error: BaseException | None = None
             try:
-                return await anext(self._iterator)
+                chunk = await anext(self._iterator)
+            except BaseException as error:
+                delegated_error = error
             finally:
                 self._driver_task = None
+            if (
+                driver_task is not None
+                and driver_task.cancelling() > cancellation_requests
+            ):
+                cancellation = asyncio.CancelledError()
+                if delegated_error is not None and not isinstance(
+                    delegated_error,
+                    asyncio.CancelledError,
+                ):
+                    _record_delegated_cleanup_failure(
+                        cancellation,
+                        delegated_error,
+                    )
+                raise cancellation
+            if delegated_error is not None:
+                raise delegated_error
+            return chunk
 
     async def aclose(self) -> None:
         await join_retained_task(self.start_close())
@@ -482,7 +691,6 @@ def legacy_provider_specs(
         return TTSBackendManager(app_config=config)
 
     create_manager = manager_factory or default_manager_factory
-    config_snapshot = deepcopy(dict(app_config))
     specs: list[TTSProviderSpec] = []
     for provider_id in LEGACY_PROVIDER_IDS:
 
@@ -514,7 +722,7 @@ def legacy_provider_specs(
                     native=False,
                 ),
                 factory=create_adapter,
-                initial_config={"app_config": deepcopy(config_snapshot)},
+                initial_config=legacy_provider_config(provider_id, app_config),
             )
         )
     return tuple(specs)

@@ -107,8 +107,10 @@ policy, and a cross-module interface.
   configuration.
 - Service shutdown seals admission before waiting on adapter cleanup, wakes
   concurrency waiters, uses the registry timeout as its single drain deadline,
-  and closes every abandoned service-wrapped response after the bounded drain
-  so no synthesis task remains blocked after definitive shutdown.
+  initiates close on every abandoned service-wrapped response after the bounded
+  drain, and independently releases service-owned leases and concurrency slots.
+  Definitive service shutdown leaves no admission waiter blocked and does not
+  wait indefinitely for a provider finalizer that ignores cancellation.
 - audio.cpp reconfiguration is an exclusive handoff: new operations are blocked
   while active leases drain, the old adapter and owned child close before the
   new configuration becomes active, and the replacement remains lazy.

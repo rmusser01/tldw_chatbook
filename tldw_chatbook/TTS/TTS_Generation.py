@@ -84,9 +84,12 @@ class _OperationResources:
         self._cleanup_task: asyncio.Task[None] | None = None
 
     async def close(self) -> None:
+        await _join_retained_task(self.start_close())
+
+    def start_close(self) -> asyncio.Task[None]:
         if self._cleanup_task is None:
             self._cleanup_task = asyncio.create_task(self._release())
-        await _join_retained_task(self._cleanup_task)
+        return self._cleanup_task
 
     async def _release(self) -> None:
         try:
@@ -99,6 +102,7 @@ class _ManagedAudioResponse(TTSAudioResponse):
     def __init__(
         self,
         response: TTSAudioResponse,
+        resources: _OperationResources,
         on_closed: Callable[["_ManagedAudioResponse"], None],
     ) -> None:
         super().__init__(
@@ -110,6 +114,7 @@ class _ManagedAudioResponse(TTSAudioResponse):
             sample_rate=response.sample_rate,
         )
         self._response = response
+        self._resources = resources
         self._on_closed = on_closed
         self._response_close_task: asyncio.Task[None] | None = None
 
@@ -121,12 +126,21 @@ class _ManagedAudioResponse(TTSAudioResponse):
             self._response_close_task = asyncio.create_task(self._close())
         return self._response_close_task
 
+    def start_resource_release(self) -> asyncio.Task[None]:
+        return self._resources.start_close()
+
     async def aclose(self) -> None:
         await _join_retained_task(self.start_close())
 
     async def _close(self) -> None:
         try:
-            await self._response.aclose()
+            try:
+                await self._response.aclose()
+            except BaseException as error:
+                await _cleanup_preserving_primary(self._resources.close, error)
+                raise
+            else:
+                await self._resources.close()
         finally:
             self._on_closed(self)
 
@@ -184,18 +198,17 @@ class TTSService:
             await _cleanup_preserving_primary(resources.close, error)
             raise
 
-        try:
-            response.add_cleanup(resources.close)
-        except BaseException as error:
-            await _cleanup_preserving_primary(resources.close, error)
-            raise
-
+        managed_response = _ManagedAudioResponse(
+            response,
+            resources,
+            self._responses.discard,
+        )
+        self._responses.add(managed_response)
         if self._close_signal.is_set():
             closed_error = TTSRegistryClosedError("The TTS service is closed")
-            await _cleanup_preserving_primary(response.aclose, closed_error)
+            managed_response.start_close()
+            managed_response.start_resource_release()
             raise closed_error
-        managed_response = _ManagedAudioResponse(response, self._responses.discard)
-        self._responses.add(managed_response)
         return managed_response
 
     async def generate_audio_stream(
@@ -296,7 +309,7 @@ class TTSService:
             raise sanitized_error from None
 
     async def wait_closed(self) -> None:
-        """Join response and provider cleanup and report sanitized failures."""
+        """Join service-owned cleanup and report sanitized shutdown failures."""
         _, shutdown_task = self._start_close()
         await _join_retained_task(shutdown_task)
 
@@ -362,16 +375,27 @@ class TTSService:
         except BaseException as error:
             failures.append(error)
 
-        response_tasks = [response.start_close() for response in tuple(self._responses)]
+        responses = tuple(self._responses)
+        response_tasks = [response.start_close() for response in responses]
+        resource_tasks = [response.start_resource_release() for response in responses]
         registry_wait_task = asyncio.create_task(self.registry.wait_closed())
         results = await asyncio.gather(
             registry_wait_task,
-            *response_tasks,
+            *resource_tasks,
             return_exceptions=True,
         )
         failures.extend(
             result for result in results if isinstance(result, BaseException)
         )
+        await asyncio.sleep(0)
+        for response_task in response_tasks:
+            if not response_task.done():
+                response_task.add_done_callback(self._observe_shutdown_result)
+                continue
+            try:
+                response_task.result()
+            except BaseException as error:
+                failures.append(error)
         if failures:
             raise _sanitized_shutdown_error(*failures) from None
 

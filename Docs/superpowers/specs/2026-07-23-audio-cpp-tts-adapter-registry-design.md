@@ -112,9 +112,12 @@ IDs without including configuration values or raw exception text.
 
 `default_provider`, `default_voice`, `default_model`, `default_format`, and
 `default_speed` are selection defaults and never add a provider to the
-candidate set. The replacement configuration uses the same legacy snapshot
-normalization as initial bootstrap, and the compatibility accessor remains
-configuration-blind.
+candidate set. Initial bootstrap and replacement both use the same
+provider-scoped effective projection. That projection contains only legacy
+manager inputs relevant to the selected provider and resolves environment
+overrides before registry comparison, so an unrelated setting or a persisted
+value shadowed by the environment remains an `UNCHANGED` no-op. The
+compatibility accessor remains configuration-blind.
 
 The service owns an instance-scoped, configurable concurrency semaphore. The
 initial default remains four concurrent TTS operations for compatibility with
@@ -593,18 +596,23 @@ single drain deadline:
    idempotent `aclose()` on every still-tracked service-wrapped response.
    Response cleanup may overlap adapter cleanup after the deadline.
 5. Every response-close attempt runs even if another fails. Each wrapper
-   releases its lease and service concurrency slot in cleanup even when its
-   underlying response close raises.
-6. `TTSService.wait_closed()` joins the tracked response cleanup and the
+   independently releases its service-owned lease and concurrency slot after
+   the registry deadline, even when its underlying response close raises or
+   its provider finalizer ignores cancellation.
+6. `TTSService.wait_closed()` joins those service-owned releases and the
    registry's definitive adapter cleanup, which closes external HTTP clients,
    terminates only owned managed children, and joins supervisor monitor and
-   log-drain tasks.
+   log-drain tasks. It reports response-close failures already available at
+   that terminal boundary, but does not add a second timeout or wait
+   indefinitely for a still-pending provider finalizer. A later finalizer
+   result is observed without exposing raw provider detail.
 7. Application teardown clears the compatibility service binding.
 
 A “service-wrapped response” means every `_ManagedAudioResponse` returned by
 `TTSService.synthesize()`, across native audio.cpp, legacy, and external
 providers; it does not mean only a managed-mode audio.cpp response. The service
-tracks each wrapper until its idempotent `aclose()` completes.
+tracks each wrapper until its idempotent `aclose()` completes, including after
+`wait_closed()` has returned from the terminal service-owned cleanup boundary.
 
 A service-level close signal races concurrency admission. If shutdown wins,
 the semaphore acquire task is cancelled; if both finish concurrently, the

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any, Protocol
 
@@ -18,6 +19,8 @@ from tldw_chatbook.TTS.legacy_bridge import (
     LegacyBackendHost,
     LegacyTTSAdapter,
     UnknownLegacyModelError,
+    _close_delegated_stream,
+    legacy_provider_config,
     legacy_provider_specs,
     resolve_legacy_route,
 )
@@ -62,6 +65,51 @@ EXPECTED_ROUTES = {
     "alltalk_default": "alltalk",
     "alltalk_alltalk": "alltalk",
 }
+
+
+@pytest.mark.asyncio
+async def test_delegated_close_preserves_caller_cancellation_over_finalizer_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    close_started = asyncio.Event()
+    allow_close = asyncio.Event()
+    secret = "SENSITIVE_DELEGATED_CLOSE_19c61b"
+
+    async def stream() -> AsyncIterator[bytes]:
+        try:
+            yield b"audio"
+        finally:
+            close_started.set()
+            await allow_close.wait()
+            raise RuntimeError(f"provider exposed {secret}")
+
+    delegated = stream()
+    assert await anext(delegated) == b"audio"
+    caplog.set_level(logging.WARNING, logger="tldw_chatbook.TTS.legacy_bridge")
+
+    async def close_and_capture_cancellation() -> asyncio.CancelledError:
+        try:
+            await _close_delegated_stream(delegated)
+        except asyncio.CancelledError as error:
+            return error
+        raise AssertionError("delegated close did not preserve cancellation")
+
+    close = asyncio.create_task(close_and_capture_cancellation())
+    await close_started.wait()
+    close.cancel()
+    await asyncio.sleep(0)
+    assert close.done() is False
+
+    allow_close.set()
+    error = await close
+
+    assert error.__context__ is None
+    assert error.__cause__ is None
+    assert any("cleanup" in note.lower() for note in error.__notes__)
+    assert secret not in " ".join(error.__notes__)
+    assert secret not in caplog.text
+
+
 REPRESENTATIVE_ROUTES = {
     "openai": "openai_official_tts-1",
     "elevenlabs": "elevenlabs_eleven_multilingual_v2",
@@ -475,19 +523,24 @@ def test_provider_specs_and_catalogs_preserve_compatibility_values() -> None:
 
 
 def test_each_provider_spec_owns_a_deep_config_snapshot() -> None:
-    source_config = {"app_tts": {"default_format": "wav"}}
+    source_config = {
+        "global_tts_settings": {"shared": {"format": "wav"}},
+        "app_tts": {"default_format": "wav"},
+    }
     specs = legacy_provider_specs(source_config)
     snapshots = [spec.initial_config["app_config"] for spec in specs]
 
     assert len({id(snapshot) for snapshot in snapshots}) == 6
     assert len({id(snapshot["app_tts"]) for snapshot in snapshots}) == 6
 
-    snapshots[0]["app_tts"]["default_format"] = "mp3"
+    snapshots[0]["global_tts_settings"]["shared"]["format"] = "mp3"
 
     assert all(
-        snapshot["app_tts"]["default_format"] == "wav" for snapshot in snapshots[1:]
+        snapshot["global_tts_settings"]["shared"]["format"] == "wav"
+        for snapshot in snapshots[1:]
     )
-    assert source_config["app_tts"]["default_format"] == "wav"
+    assert source_config["global_tts_settings"]["shared"]["format"] == "wav"
+    assert all("default_format" not in snapshot["app_tts"] for snapshot in snapshots)
 
 
 @pytest.mark.asyncio
@@ -544,7 +597,14 @@ async def test_provider_hosts_copy_config_and_close_materialized_managers_once()
         managers[provider_id] = manager
         return manager
 
-    source_config = {"app_tts": {"default_format": "wav"}}
+    source_config = {
+        "global_tts_settings": {"shared": "stable"},
+        "app_tts": {"default_format": "wav"},
+    }
+    expected_configs = {
+        provider_id: legacy_provider_config(provider_id, source_config)["app_config"]
+        for provider_id in LEGACY_PROVIDER_IDS
+    }
     specs = legacy_provider_specs(
         source_config,
         manager_factory=create_manager,
@@ -564,10 +624,9 @@ async def test_provider_hosts_copy_config_and_close_materialized_managers_once()
     assert set(managers) == set(LEGACY_PROVIDER_IDS)
     assert len({id(manager) for manager in managers.values()}) == 6
     assert len({id(manager.config) for manager in managers.values()}) == 6
-    assert all(
-        manager.config == {"app_tts": {"default_format": "wav"}}
-        for manager in managers.values()
-    )
+    assert {
+        provider_id: manager.config for provider_id, manager in managers.items()
+    } == expected_configs
 
     for adapter in adapters.values():
         await adapter.close()
