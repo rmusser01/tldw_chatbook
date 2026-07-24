@@ -66,6 +66,8 @@ from ...Chat.scope_picker_listers import (
     build_notes_source_lister,
 )
 from ...Chat.console_command_grammar import (
+    GENERATE_IMAGE_COMMAND_HANDLER_ID,
+    GENERATE_IMAGE_COMMAND_NAME,
     KIND_COMMAND,
     KIND_FALLBACK,
     KIND_NOT_COMMAND,
@@ -92,6 +94,13 @@ from ...Chat.console_prefill import (
     parse_prefill_args,
     pinned_prefill_from_conversation_metadata,
 )
+from ...Chat.console_generate_image import (
+    generation_content_marker,
+    parse_generate_image_args,
+    run_generation_batch,
+)
+from ...Image_Generation.config import get_image_generation_config
+from ...Image_Generation.listing import list_image_models_for_catalog
 from ...Chat.console_skill_resolver import (
     SKILL_UNTRUSTED_REFUSE,
     SkillCommandCandidate,
@@ -11138,6 +11147,7 @@ class ChatScreen(BaseAppScreen):
         SYSTEM_COMMAND_NAME: SYSTEM_COMMAND_HANDLER_ID,
         SKILLS_COMMAND_NAME: SKILLS_COMMAND_HANDLER_ID,
         PREFILL_COMMAND_NAME: PREFILL_COMMAND_HANDLER_ID,
+        GENERATE_IMAGE_COMMAND_NAME: GENERATE_IMAGE_COMMAND_HANDLER_ID,
     }
 
     def _console_unknown_command_hint(self, name: str) -> str:
@@ -11174,6 +11184,7 @@ class ChatScreen(BaseAppScreen):
             "apply-system": self._console_command_apply_system,
             SKILLS_COMMAND_HANDLER_ID: self._console_command_skills,
             PREFILL_COMMAND_HANDLER_ID: self._console_command_prefill,
+            GENERATE_IMAGE_COMMAND_HANDLER_ID: self._console_command_generate_image,
         }
         handler = dispatch_map.get(handler_id)
         if handler is None:
@@ -11535,6 +11546,111 @@ class ChatScreen(BaseAppScreen):
                 "prefilled sends."
             )
         return
+
+    def _console_imagegen_inflight_sessions(self) -> set[str]:
+        """Return the lazily-created set of sessions with a batch in flight.
+
+        Not initialized in ``__init__`` — mirrors the getattr/setdefault
+        pattern the composer/store use for other screen-owned, purely
+        in-memory bookkeeping — so `/generate-image` never assumes it ran
+        during construction.
+        """
+        sessions = getattr(self, "_imagegen_inflight_sessions", None)
+        if sessions is None:
+            sessions = set()
+            self._imagegen_inflight_sessions = sessions
+        return sessions
+
+    async def _console_command_generate_image(self, parse: CommandParse) -> None:
+        """Resolve and run one `/generate-image` batch (`[:backend] <prompt>`).
+
+        Refusals (empty prompt, no resolvable/configured backend, or a
+        batch already running for this session) leave the composer draft
+        untouched, mirroring `/system`'s no-system-part behavior, and never
+        touch the store. Once a batch is actually going to run the draft is
+        cleared up front (this IS the "successful dispatch" point — not
+        "successful generation"): the blocking batch loop
+        (`run_generation_batch`) then runs off the UI loop via
+        `asyncio.to_thread`, exactly like `_prep_console_images`. Zero
+        successful variants append no message (only an error status line);
+        one or more successes append a single generation message via
+        `ConsoleChatStore.append_generation_message` with a trailing partial
+        status line when some variants failed. The in-flight guard is
+        always cleared in a `finally`, so a crashed/cancelled batch never
+        wedges the session against further `/generate-image` commands.
+        """
+        args = parse_generate_image_args(parse.args)
+        store = self._ensure_console_chat_store()
+        session = store.ensure_session(
+            workspace_id=store.workspace_context.active_workspace_id,
+            settings=self._default_console_session_settings(),
+        )
+        if not args.prompt:
+            await self._append_native_console_system_message(
+                "Usage: /generate-image [:backend] <prompt>"
+            )
+            return
+        cfg = get_image_generation_config()
+        backend = args.backend or cfg.default_backend
+        if not backend:
+            await self._append_native_console_system_message(
+                "No image generation backend configured. Set "
+                "[image_generation].default_backend, or use "
+                "/generate-image :backend <prompt>."
+            )
+            return
+        catalog = list_image_models_for_catalog()
+        entry = next(
+            (item for item in catalog if item.get("name") == backend), None
+        )
+        if entry is None or not entry.get("is_configured"):
+            await self._append_native_console_system_message(
+                f"Image backend '{backend}' is not enabled/configured. "
+                "Check [image_generation] settings."
+            )
+            return
+        inflight = self._console_imagegen_inflight_sessions()
+        if session.id in inflight:
+            await self._append_native_console_system_message(
+                "An image generation is already running for this session."
+            )
+            return
+        inflight.add(session.id)
+        self._clear_console_composer_draft()
+        try:
+            count = cfg.default_batch
+            batch = await asyncio.to_thread(
+                run_generation_batch,
+                backend=backend,
+                prompt=args.prompt,
+                negative_prompt=None,
+                seed=None,
+                count=count,
+            )
+            if not batch.successes:
+                detail = "; ".join(batch.errors) or "unknown error"
+                await self._append_native_console_system_message(
+                    f"Image generation failed: {detail}"
+                )
+                return
+            store.append_generation_message(
+                session.id,
+                content=generation_content_marker(args.prompt),
+                variants=batch.successes,
+                persist=True,
+            )
+            if len(batch.successes) < count:
+                store.append_message(
+                    session.id,
+                    role=ConsoleMessageRole.SYSTEM,
+                    content=(
+                        f"{len(batch.successes)}/{count} generated "
+                        f"({'; '.join(batch.errors)})"
+                    ),
+                )
+            await self._sync_native_console_chat_ui()
+        finally:
+            inflight.discard(session.id)
 
     def _clear_console_composer_draft(self) -> None:
         """Clear the native Console composer's draft text, if mounted.

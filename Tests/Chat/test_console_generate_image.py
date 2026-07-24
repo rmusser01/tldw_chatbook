@@ -4,6 +4,7 @@ import pytest
 from tldw_chatbook.Chat.console_generate_image import (
     parse_generate_image_args,
     generation_content_marker,
+    run_generation_batch,
 )
 
 
@@ -59,3 +60,59 @@ def test_content_marker_whitespace_normalize():
     prompt = "a\n\nb\n\nc"
     marker = generation_content_marker(prompt)
     assert marker == "[image] a b c"
+
+
+class _Res:
+    """Minimal ImageGenResult-shaped fake for run_generation_batch tests."""
+
+    def __init__(self, b):
+        self.content = b
+        self.content_type = "image/png"
+        self.bytes_len = len(b)
+
+
+def test_batch_all_succeed():
+    """All variants generate successfully -> no errors, N successes."""
+    calls = []
+
+    def gen(req):
+        calls.append(req)
+        return _Res(b"img")
+
+    out = run_generation_batch(
+        backend="swarmui", prompt="p", negative_prompt=None,
+        seed=None, count=2, generate=gen,
+    )
+    assert len(out.successes) == 2 and out.errors == []
+
+
+def test_batch_partial_failure_keeps_successes():
+    """One variant raises -> the rest still succeed and are kept."""
+    n = {"i": 0}
+
+    def gen(req):
+        n["i"] += 1
+        if n["i"] == 2:
+            raise RuntimeError("boom")
+        return _Res(b"img")
+
+    out = run_generation_batch(
+        backend="swarmui", prompt="p", negative_prompt=None,
+        seed=None, count=3, generate=gen,
+    )
+    assert len(out.successes) == 2 and len(out.errors) == 1
+
+
+def test_batch_explicit_seed_only_first_variant():
+    """An explicit seed only applies to variant 0; later variants force -1."""
+    seeds = []
+
+    def gen(req):
+        seeds.append(req.seed)
+        return _Res(b"img")
+
+    run_generation_batch(
+        backend="swarmui", prompt="p", negative_prompt=None,
+        seed=1234, count=3, generate=gen,
+    )
+    assert seeds == [1234, -1, -1]  # identical-image guard
