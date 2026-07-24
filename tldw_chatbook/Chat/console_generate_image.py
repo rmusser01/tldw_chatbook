@@ -12,10 +12,14 @@ is the one deliberate exception: it drives the blocking, network-calling
 inside the function rather than at module scope, so importing this module
 for its pure helpers never eagerly pulls in the Image_Generation package.
 
-Grammar: an optional leading ``:backend`` token selects a non-default
-backend (``/generate-image :swarmui a dragon``). A bare ``:`` is NOT a
-backend token — it stays part of the prompt. ``:backend`` with no
-trailing text parses to an empty prompt, which the caller refuses.
+Grammar: optional leading ``:backend`` and ``@style`` tokens, in any order,
+select a non-default backend (``/generate-image :swarmui a dragon``) and/or
+a generation-template style (``/generate-image @anime a dragon``). Token
+consumption stops at the first token that isn't prefixed with ``:`` or
+``@``; everything from there on is the prompt. A bare ``:`` or ``@`` (the
+prefix alone, nothing after it) is NOT a token — it stays part of the
+prompt. A leading token with no trailing text parses to an empty prompt,
+which the caller refuses.
 """
 
 from __future__ import annotations
@@ -24,6 +28,11 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from tldw_chatbook.Chat.console_chat_models import GenerationVariantMeta
+from tldw_chatbook.Media_Creation.generation_templates import (
+    BUILTIN_TEMPLATES,
+    GenerationTemplate,
+    apply_template_to_prompt,
+)
 
 GENERATION_MARKER_PREFIX = "[image] "
 """Prefix identifying a generation card's content marker in a message row."""
@@ -53,35 +62,53 @@ class GenerateImageArgs:
             when the command should use the configured default.
         prompt: Generation prompt text (stripped). Empty when the user
             supplied no prompt — the caller refuses to dispatch then.
+        style: Raw text of a leading ``@style`` token (without the ``@``),
+            unresolved against the template catalog — the caller passes it
+            to `resolve_style_token`. ``None`` when no ``@style`` token was
+            present.
     """
 
     backend: str | None
     prompt: str
+    style: str | None = None
 
 
 def parse_generate_image_args(args: str) -> GenerateImageArgs:
     """Split the args string of one ``/generate-image`` invocation.
 
-    A leading ``:backend`` token (first whitespace-delimited token starting
-    with ``:`` and longer than the bare colon) selects a backend override;
-    everything after it is the prompt. Without such a token the whole
-    stripped string is the prompt and ``backend`` is ``None``.
+    Consumes leading whitespace-delimited tokens in any order/combination:
+    a token starting with ``:`` (longer than the bare colon) sets the
+    backend override; a token starting with ``@`` (longer than the bare
+    ``@``) sets the raw style token. Consumption stops at the first token
+    that matches neither shape — that token and everything after it is the
+    prompt. Without any leading tokens the whole stripped string is the
+    prompt.
 
     Args:
         args: Raw text after the ``/generate-image`` command word.
 
     Returns:
-        A `GenerateImageArgs` with the optional backend override and the
-        stripped prompt (empty string when no usable prompt was given).
+        A `GenerateImageArgs` with the optional backend/style overrides and
+        the remaining prompt (empty string when no usable prompt was
+        given).
     """
-    stripped = args.strip()
-    if not stripped:
-        return GenerateImageArgs(backend=None, prompt="")
-    first, *rest = stripped.split(None, 1)
-    if first.startswith(":") and first != ":":
-        remainder = rest[0].strip() if rest else ""
-        return GenerateImageArgs(backend=first[1:], prompt=remainder)
-    return GenerateImageArgs(backend=None, prompt=stripped)
+    remaining = args.strip()
+    backend: str | None = None
+    style: str | None = None
+    while remaining:
+        parts = remaining.split(None, 1)
+        token = parts[0]
+        rest = parts[1] if len(parts) > 1 else ""
+        if token.startswith(":") and token != ":":
+            backend = token[1:]
+            remaining = rest
+            continue
+        if token.startswith("@") and token != "@":
+            style = token[1:]
+            remaining = rest
+            continue
+        break
+    return GenerateImageArgs(backend=backend, prompt=remaining.strip(), style=style)
 
 
 def generation_content_marker(
@@ -102,6 +129,123 @@ def generation_content_marker(
     if len(flattened) > limit:
         flattened = flattened[: limit - 1] + "…"
     return GENERATION_MARKER_PREFIX + flattened
+
+
+def _normalize_style_text(text: str) -> str:
+    """Casefold and collapse underscore/whitespace variance for style matching.
+
+    Underscores and whitespace runs are both treated as word separators and
+    reduced to single spaces, so ``"anime_style"``, ``"anime  style"`` and
+    ``"Anime Style"`` all normalize identically.
+
+    Args:
+        text: Raw text (a token or a template name).
+
+    Returns:
+        The normalized, casefolded text.
+    """
+    return " ".join(text.replace("_", " ").split()).casefold()
+
+
+@dataclass(frozen=True)
+class StyleResolution:
+    """Outcome of resolving a raw ``@style`` token against the template catalog.
+
+    Args:
+        template: The uniquely resolved template, or ``None`` when the
+            token matched nothing or matched more than one candidate.
+        ambiguous: Sorted ids of every template a prefix query matched,
+            when more than one did. Empty otherwise (including the
+            no-match case).
+    """
+
+    template: GenerationTemplate | None
+    ambiguous: tuple[str, ...] = ()
+
+
+def resolve_style_token(token: str) -> StyleResolution:
+    """Resolve a raw ``@style`` token to a builtin generation template.
+
+    Matching is case-insensitive and tried in order, first hit wins:
+
+    1. Exact template id (e.g. ``style_anime``).
+    2. Exact template name, with spaces and underscores interchangeable in
+       either direction (e.g. ``anime_style`` or ``anime style`` both match
+       the template named ``"Anime Style"``).
+    3. A unique prefix over every template id and (normalized) name. When
+       the prefix matches more than one template, the result carries every
+       matched id (sorted) instead of a template.
+
+    Args:
+        token: Raw token text, already stripped of the leading ``@``.
+
+    Returns:
+        A `StyleResolution`. Both `StyleResolution.template` and
+        `StyleResolution.ambiguous` are empty/``None`` when the token
+        matched nothing.
+    """
+    cleaned = token.strip()
+    if not cleaned:
+        return StyleResolution(template=None)
+    cleaned_cf = cleaned.casefold()
+    normalized_token = _normalize_style_text(cleaned)
+
+    for template in BUILTIN_TEMPLATES.values():
+        if template.id.casefold() == cleaned_cf:
+            return StyleResolution(template=template)
+
+    for template in BUILTIN_TEMPLATES.values():
+        if _normalize_style_text(template.name) == normalized_token:
+            return StyleResolution(template=template)
+
+    matched: dict[str, GenerationTemplate] = {}
+    for template in BUILTIN_TEMPLATES.values():
+        if template.id.casefold().startswith(cleaned_cf) or _normalize_style_text(
+            template.name
+        ).startswith(normalized_token):
+            matched[template.id] = template
+
+    if len(matched) == 1:
+        return StyleResolution(template=next(iter(matched.values())))
+    if len(matched) > 1:
+        return StyleResolution(template=None, ambiguous=tuple(sorted(matched)))
+    return StyleResolution(template=None)
+
+
+def compose_styled_request(
+    user_prompt: str, template: GenerationTemplate
+) -> tuple[str, str, dict[str, Any]]:
+    """Compose a styled generation request from a resolved template.
+
+    Builds the template's substitution context by mapping every one of its
+    ``context_mappings`` target keys to ``user_prompt`` — so every
+    ``{{placeholder}}`` the template's ``base_prompt`` references gets
+    filled with the user's own text — then renders it via
+    ``apply_template_to_prompt``.
+
+    Invariant: the user's prompt text must appear in the composed prompt.
+    A template with no (or effectively unconsumed) context mappings would
+    otherwise silently drop what the user typed; when the rendered prompt
+    doesn't contain ``user_prompt`` verbatim, this falls back to appending
+    it onto whatever the template rendered (stripping stray leading/
+    trailing comma-space artifacts left behind by the dropped placeholder).
+
+    Args:
+        user_prompt: The user's raw prompt text.
+        template: The resolved style template (see `resolve_style_token`).
+
+    Returns:
+        A ``(prompt, negative_prompt, params)`` tuple. ``params`` is a copy
+        of the template's `GenerationTemplate.default_params`, safe for the
+        caller to mutate.
+    """
+    context = {target: user_prompt for target in template.context_mappings.values()}
+    composed, negative, params = apply_template_to_prompt(template.id, context)
+    if user_prompt in composed:
+        return composed, negative, params
+    base = composed.strip(" ,")
+    combined = f"{base}, {user_prompt}" if base else user_prompt
+    return combined, negative, params
 
 
 @dataclass(frozen=True)
@@ -128,6 +272,11 @@ def run_generation_batch(
     negative_prompt: str | None,
     seed: int | None,
     count: int,
+    style_name: str | None = None,
+    width: int | None = None,
+    height: int | None = None,
+    steps: int | None = None,
+    cfg_scale: float | None = None,
     generate: Callable[[Any], Any] | None = None,
     build: Callable[..., Any] | None = None,
 ) -> BatchResult:
@@ -157,6 +306,13 @@ def run_generation_batch(
         seed: Optional explicit seed for variant 0; ``None`` for no
             explicit seed (every variant generates with ``seed=None``).
         count: Number of variants to generate (``>= 1``).
+        style_name: Style label to record on each variant's
+            `GenerationVariantMeta.style` (typically a resolved template's
+            display name). ``None`` for an unstyled/custom request.
+        width: Optional image width, threaded into every `build` call.
+        height: Optional image height, threaded into every `build` call.
+        steps: Optional sampling steps, threaded into every `build` call.
+        cfg_scale: Optional CFG scale, threaded into every `build` call.
         generate: Blocking single-request entry point. Defaults to
             ``Image_Generation.worker.run_generation``, imported lazily.
         build: Request builder. Defaults to
@@ -184,6 +340,10 @@ def run_generation_batch(
                 prompt=prompt,
                 negative_prompt=negative_prompt,
                 seed=variant_seed,
+                width=width,
+                height=height,
+                steps=steps,
+                cfg_scale=cfg_scale,
             )
             result = generate(request)
         except Exception as exc:  # noqa: BLE001 - collected per-variant, never aborts the batch
@@ -195,7 +355,7 @@ def run_generation_batch(
             backend=backend,
             model=None,
             seed=variant_seed,
-            style=None,
+            style=style_name,
             params={},
         )
         successes.append((result.content, result.content_type, meta))
