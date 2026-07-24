@@ -96,6 +96,54 @@ def _mark_owner_deleted(
         )
 
 
+def _insert_same_origin_snapshot(
+    db: CharactersRAGDB,
+    *,
+    payload_id: str = "snapshot-2",
+    changed_field: str | None = None,
+    changed_value: str | None = None,
+) -> None:
+    with db.transaction() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO rag_evidence_snapshots(
+                profile_id, payload_id, governance_scope_id, authority_id,
+                confidentiality_policy_id, revocation_scope_id,
+                origin_namespace, origin_payload_id, storage_mode,
+                redaction_state, retention_class, snapshot_text, title,
+                source_identity_json, locator_json, lineage_json,
+                transformations_json, content_hash, comparison_fingerprint,
+                created_at, retain_until, purged_at
+            )
+            SELECT
+                profile_id, ?, governance_scope_id, authority_id,
+                confidentiality_policy_id, revocation_scope_id,
+                origin_namespace, origin_payload_id, storage_mode,
+                redaction_state, retention_class, snapshot_text, title,
+                source_identity_json, locator_json, lineage_json,
+                transformations_json, ?, ?, created_at, retain_until, purged_at
+            FROM rag_evidence_snapshots
+            WHERE payload_id = 'snapshot-1'
+            """,
+            (payload_id, f"content-hmac-{payload_id}", f"comparison-{payload_id}"),
+        )
+        if changed_field is not None:
+            assert changed_field in {
+                "governance_scope_id",
+                "authority_id",
+                "confidentiality_policy_id",
+                "revocation_scope_id",
+            }
+            cursor.execute(
+                f"""
+                UPDATE rag_evidence_snapshots
+                SET {changed_field} = ?
+                WHERE payload_id = ?
+                """,
+                (changed_value, payload_id),
+            )
+
+
 def test_lifecycle_contracts_are_strict_frozen_bounded_and_utc() -> None:
     scope = SnapshotDedupeScope(
         governance_scope_id="profile-a",
@@ -413,6 +461,16 @@ def test_revoke_purges_run_and_attempt_payloads_for_every_shared_snapshot_refere
         )
         cursor.execute(
             """
+            INSERT INTO rag_answer_attempt_payloads VALUES (
+                ?, 'answer-payload-2-diagnostic', 'trace-2',
+                'attempt-2-diagnostic', 'available', 'default',
+                'Diagnostic answer', 'diagnostic-integrity', ?, NULL, NULL
+            )
+            """,
+            (identity.profile_id, NOW.isoformat()),
+        )
+        cursor.execute(
+            """
             INSERT INTO rag_trace_evidence_refs VALUES (
                 ?, 'trace-2', 'prompt-2', 1, 'run-2',
                 'snapshot-1', 1, 'embedded'
@@ -446,13 +504,21 @@ def test_revoke_purges_run_and_attempt_payloads_for_every_shared_snapshot_refere
         tuple(row)
         for row in connection.execute(
             """
-            SELECT trace_id, redaction_state, answer_body, body_integrity_hmac
+            SELECT payload_id, trace_id, redaction_state,
+                   answer_body, body_integrity_hmac
             FROM rag_answer_attempt_payloads
             """
         ).fetchall()
     } == {
-        ("trace-1", "purged", None, None),
-        ("trace-2", "purged", None, None),
+        ("answer-payload-1", "trace-1", "purged", None, None),
+        ("answer-payload-2", "trace-2", "purged", None, None),
+        (
+            "answer-payload-2-diagnostic",
+            "trace-2",
+            "purged",
+            None,
+            None,
+        ),
     }
     assert (
         connection.execute(
@@ -464,6 +530,231 @@ def test_revoke_purges_run_and_attempt_payloads_for_every_shared_snapshot_refere
         ).fetchone()[0]
         == "complete"
     )
+
+
+def test_revoke_purges_every_payload_id_and_trace_for_one_coherent_origin(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    identity = _identity(db)
+    _insert_same_origin_snapshot(db)
+    connection = db.get_connection()
+    with db.transaction() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO rag_citation_traces(
+                profile_id, trace_id, schema_version, request_id, generation_id,
+                origin_scope_id, origin, lifecycle, completeness_at_seal,
+                selected_attempt_id, policy_version, aggregate_json,
+                visibility_state, created_at, sealed_at
+            ) VALUES (?, 'trace-2', 1, 'request-2', 'generation-2', ?,
+                      'local', 'sealed', 'complete', 'attempt-2', 'policy-1',
+                      '{}', 'active', ?, ?)
+            """,
+            (
+                identity.profile_id,
+                identity.profile_id,
+                NOW.isoformat(),
+                NOW.isoformat(),
+            ),
+        )
+        cursor.execute(
+            """
+            INSERT INTO rag_evidence_runs VALUES (
+                ?, 'trace-2', 'run-2', 1, 'retrieval', 'available',
+                '{"payload_id":"run-payload-2"}', ?, ?, NULL
+            )
+            """,
+            (identity.profile_id, NOW.isoformat(), NOW.isoformat()),
+        )
+        cursor.execute(
+            """
+            INSERT INTO rag_answer_attempt_payloads VALUES (
+                ?, 'answer-payload-2', 'trace-2', 'attempt-2',
+                'available', 'default', 'Other answer', 'integrity',
+                ?, NULL, NULL
+            )
+            """,
+            (identity.profile_id, NOW.isoformat()),
+        )
+        cursor.execute(
+            """
+            INSERT INTO rag_trace_evidence_refs VALUES (
+                ?, 'trace-2', 'prompt-2', 1, 'run-2',
+                'snapshot-2', 1, 'embedded'
+            )
+            """,
+            (identity.profile_id,),
+        )
+        cursor.execute(
+            """
+            INSERT INTO rag_answer_attempt_payloads VALUES (
+                ?, 'answer-payload-2-diagnostic', 'trace-2',
+                'attempt-2-diagnostic', 'available', 'default',
+                'Diagnostic answer', 'diagnostic-integrity', ?, NULL, NULL
+            )
+            """,
+            (identity.profile_id, NOW.isoformat()),
+        )
+
+    CitationPayloadLifecycle(
+        repository,
+        retention_policy=_policy(),
+    ).revoke(
+        local_trace_namespace(identity, trace_id="trace-1"),
+        snapshot_payload_id="snapshot-1",
+        tombstone=_tombstone(db),
+    )
+
+    assert {
+        tuple(row)
+        for row in connection.execute(
+            """
+            SELECT payload_id, redaction_state, snapshot_text
+            FROM rag_evidence_snapshots
+            ORDER BY payload_id
+            """
+        ).fetchall()
+    } == {
+        ("snapshot-1", "purged", None),
+        ("snapshot-2", "purged", None),
+    }
+    assert {
+        tuple(row)
+        for row in connection.execute(
+            """
+            SELECT trace_id, redaction_state, run_payload_json
+            FROM rag_evidence_runs
+            """
+        ).fetchall()
+    } == {
+        ("trace-1", "purged", None),
+        ("trace-2", "purged", None),
+    }
+    assert {
+        tuple(row)
+        for row in connection.execute(
+            """
+            SELECT payload_id, trace_id, redaction_state, answer_body
+            FROM rag_answer_attempt_payloads
+            """
+        ).fetchall()
+    } == {
+        ("answer-payload-1", "trace-1", "purged", None),
+        ("answer-payload-2", "trace-2", "purged", None),
+        ("answer-payload-2-diagnostic", "trace-2", "purged", None),
+    }
+    origin_rows = [
+        (row["origin_namespace"], row["origin_payload_id"])
+        for row in connection.execute(
+            """
+            SELECT origin_namespace, origin_payload_id
+            FROM rag_evidence_snapshots
+            ORDER BY payload_id
+            """
+        ).fetchall()
+    ]
+    assert origin_rows == [
+        ("local_payload_v1", "snapshot-1"),
+        ("local_payload_v1", "snapshot-1"),
+    ]
+    for origin_namespace, origin_payload_id in origin_rows:
+        with pytest.raises(
+            CitationPersistenceUnavailable,
+            match="payload_origin_revoked",
+        ):
+            with db.transaction() as cursor:
+                repository.assert_payload_origin_writable(
+                    cursor,
+                    profile_id=identity.profile_id,
+                    origin_namespace=origin_namespace,
+                    origin_payload_id=origin_payload_id,
+                    seam="sync",
+                )
+
+
+@pytest.mark.parametrize(
+    "changed_field",
+    [
+        "governance_scope_id",
+        "authority_id",
+        "confidentiality_policy_id",
+        "revocation_scope_id",
+    ],
+)
+def test_revoke_rejects_origin_key_policy_collisions_without_writes(
+    db: CharactersRAGDB,
+    changed_field: str,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    _insert_same_origin_snapshot(
+        db,
+        changed_field=changed_field,
+        changed_value=f"collision-{changed_field}",
+    )
+
+    with pytest.raises(
+        CitationPersistenceUnavailable,
+        match="revoke_origin_policy_collision",
+    ):
+        CitationPayloadLifecycle(
+            repository,
+            retention_policy=_policy(),
+        ).revoke(
+            local_trace_namespace(_identity(db), trace_id="trace-1"),
+            snapshot_payload_id="snapshot-1",
+            tombstone=_tombstone(db),
+        )
+
+    connection = db.get_connection()
+    assert (
+        connection.execute("SELECT count(*) FROM rag_payload_tombstones").fetchone()[0]
+        == 0
+    )
+    assert {
+        tuple(row)
+        for row in connection.execute(
+            """
+            SELECT payload_id, redaction_state, snapshot_text, purged_at
+            FROM rag_evidence_snapshots
+            ORDER BY payload_id
+            """
+        ).fetchall()
+    } == {
+        (
+            "snapshot-1",
+            "available",
+            "private exact submitted evidence",
+            None,
+        ),
+        (
+            "snapshot-2",
+            "available",
+            "private exact submitted evidence",
+            None,
+        ),
+    }
+    assert {
+        tuple(row)
+        for row in connection.execute(
+            """
+            SELECT redaction_state, run_payload_json IS NOT NULL
+            FROM rag_evidence_runs
+            """
+        ).fetchall()
+    } == {("available", 1)}
+    assert {
+        tuple(row)
+        for row in connection.execute(
+            """
+            SELECT redaction_state, answer_body IS NOT NULL,
+                   body_integrity_hmac IS NOT NULL
+            FROM rag_answer_attempt_payloads
+            """
+        ).fetchall()
+    } == {("available", 1, 1)}
 
 
 def test_revoke_rejects_mismatched_trace_origin_scope_policy_and_database(
@@ -728,6 +1019,274 @@ def test_collect_preserves_live_and_soft_deleted_owners_until_policy_expiry(
         db.get_connection()
         .execute("SELECT count(*) FROM rag_citation_traces")
         .fetchone()[0]
+        == 0
+    )
+
+
+def test_collect_scans_past_oldest_barriered_traces_across_repeated_batches(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    identity = _identity(db)
+    with db.transaction() as cursor:
+        for ordinal in (2, 3):
+            cursor.execute(
+                """
+                INSERT INTO rag_citation_traces(
+                    profile_id, trace_id, schema_version, request_id,
+                    generation_id, origin_scope_id, origin, lifecycle,
+                    completeness_at_seal, selected_attempt_id, policy_version,
+                    aggregate_json, visibility_state, created_at, sealed_at
+                ) VALUES (?, ?, 1, ?, ?, ?, 'local', 'sealed', 'complete',
+                          'attempt-empty', 'policy-1', '{}', 'active', ?, ?)
+                """,
+                (
+                    identity.profile_id,
+                    f"trace-{ordinal}",
+                    f"request-{ordinal}",
+                    f"generation-{ordinal}",
+                    identity.profile_id,
+                    (NOW + timedelta(seconds=ordinal)).isoformat(),
+                    (NOW + timedelta(seconds=ordinal)).isoformat(),
+                ),
+            )
+    lifecycle = CitationPayloadLifecycle(repository, retention_policy=_policy())
+
+    first = lifecycle.collect(now=NOW + timedelta(days=1), limit=1)
+    assert first.traces_collected == 1
+    assert first.traces_examined == 2
+    assert {
+        row["trace_id"]
+        for row in db.get_connection()
+        .execute("SELECT trace_id FROM rag_citation_traces ORDER BY trace_id")
+        .fetchall()
+    } == {"trace-1", "trace-3"}
+
+    second = lifecycle.collect(
+        now=NOW + timedelta(days=1),
+        limit=1,
+        continuation_cursor=first.continuation_cursor,
+    )
+    assert second.traces_collected == 1
+    assert second.traces_examined == 1
+    assert {
+        row["trace_id"]
+        for row in db.get_connection()
+        .execute("SELECT trace_id FROM rag_citation_traces ORDER BY trace_id")
+        .fetchall()
+    } == {"trace-1"}
+
+
+def test_collect_scans_past_oldest_barriered_tombstones_across_repeated_batches(
+    db: CharactersRAGDB,
+) -> None:
+    identity = _identity(db)
+    with db.transaction() as cursor:
+        for ordinal in (1, 2, 3):
+            cursor.execute(
+                """
+                INSERT INTO rag_payload_tombstones VALUES (
+                    ?, 'local_payload_v1', ?, ?, 'source_revoked',
+                    'policy-1', ?, ?
+                )
+                """,
+                (
+                    identity.profile_id,
+                    f"expired-{ordinal}",
+                    f"scope-{ordinal}",
+                    (NOW - timedelta(days=ordinal + 1)).isoformat(),
+                    (NOW - timedelta(days=4 - ordinal)).isoformat(),
+                ),
+            )
+    lifecycle = _lifecycle(db)
+    barriers = CitationCollectionBarriers(
+        payload_origins=(("local_payload_v1", "expired-1"),)
+    )
+
+    first = lifecycle.collect(now=NOW, barriers=barriers, limit=1)
+    assert first.tombstones_collected == 1
+    assert {
+        row["origin_payload_id"]
+        for row in db.get_connection()
+        .execute(
+            """
+            SELECT origin_payload_id
+            FROM rag_payload_tombstones
+            ORDER BY retain_until, origin_payload_id
+            """
+        )
+        .fetchall()
+    } == {"expired-1", "expired-3"}
+
+    second = lifecycle.collect(
+        now=NOW,
+        barriers=barriers,
+        limit=1,
+        continuation_cursor=first.continuation_cursor,
+    )
+    assert second.tombstones_collected == 1
+    assert {
+        row["origin_payload_id"]
+        for row in db.get_connection()
+        .execute(
+            """
+            SELECT origin_payload_id
+            FROM rag_payload_tombstones
+            ORDER BY retain_until, origin_payload_id
+            """
+        )
+        .fetchall()
+    } == {"expired-1"}
+
+
+def test_collect_cursor_progresses_beyond_scan_page_and_wraps_to_newly_eligible_rows(
+    db: CharactersRAGDB,
+) -> None:
+    identity = _identity(db)
+    with db.transaction() as cursor:
+        for ordinal in range(1, 35):
+            cursor.execute(
+                """
+                INSERT INTO rag_citation_traces(
+                    profile_id, trace_id, schema_version, request_id,
+                    generation_id, origin_scope_id, origin, lifecycle,
+                    completeness_at_seal, selected_attempt_id, policy_version,
+                    aggregate_json, visibility_state, created_at, sealed_at
+                ) VALUES (?, ?, 1, ?, ?, ?, 'local', 'sealed', 'complete',
+                          'attempt-empty', 'policy-1', '{}', 'active', ?, ?)
+                """,
+                (
+                    identity.profile_id,
+                    f"trace-{ordinal:02}",
+                    f"request-{ordinal:02}",
+                    f"generation-{ordinal:02}",
+                    identity.profile_id,
+                    (NOW + timedelta(seconds=ordinal)).isoformat(),
+                    (NOW + timedelta(seconds=ordinal)).isoformat(),
+                ),
+            )
+            cursor.execute(
+                """
+                INSERT INTO rag_payload_tombstones VALUES (
+                    ?, 'local_payload_v1', ?, ?, 'source_revoked',
+                    'policy-1', ?, ?
+                )
+                """,
+                (
+                    identity.profile_id,
+                    f"expired-{ordinal:02}",
+                    f"scope-{ordinal:02}",
+                    (NOW - timedelta(days=2)).isoformat(),
+                    (NOW - timedelta(days=1) + timedelta(seconds=ordinal)).isoformat(),
+                ),
+            )
+    trace_barriers = tuple(f"trace-{ordinal:02}" for ordinal in range(1, 34))
+    origin_barriers = tuple(
+        ("local_payload_v1", f"expired-{ordinal:02}") for ordinal in range(1, 34)
+    )
+    lifecycle = _lifecycle(db)
+
+    first = lifecycle.collect(
+        now=NOW,
+        barriers=CitationCollectionBarriers(
+            trace_ids=trace_barriers,
+            payload_origins=origin_barriers,
+        ),
+        limit=1,
+    )
+    assert first.traces_examined == 32
+    assert first.traces_collected == 0
+    assert first.tombstones_collected == 0
+    assert isinstance(first.continuation_cursor, str)
+
+    second = lifecycle.collect(
+        now=NOW,
+        barriers=CitationCollectionBarriers(
+            trace_ids=trace_barriers,
+            payload_origins=origin_barriers,
+        ),
+        limit=1,
+        continuation_cursor=first.continuation_cursor,
+    )
+    assert second.traces_examined == 2
+    assert second.traces_collected == 1
+    assert second.tombstones_collected == 1
+    assert isinstance(second.continuation_cursor, str)
+    connection = db.get_connection()
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM rag_citation_traces WHERE trace_id = 'trace-34'"
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute(
+            """
+        SELECT count(*) FROM rag_payload_tombstones
+        WHERE origin_payload_id = 'expired-34'
+        """
+        ).fetchone()[0]
+        == 0
+    )
+    with db.transaction() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO rag_citation_traces(
+                profile_id, trace_id, schema_version, request_id,
+                generation_id, origin_scope_id, origin, lifecycle,
+                completeness_at_seal, selected_attempt_id, policy_version,
+                aggregate_json, visibility_state, created_at, sealed_at
+            ) VALUES (?, 'trace-35', 1, 'request-35', 'generation-35', ?,
+                      'local', 'sealed', 'complete', 'attempt-empty',
+                      'policy-1', '{}', 'active', ?, ?)
+            """,
+            (
+                identity.profile_id,
+                identity.profile_id,
+                (NOW + timedelta(seconds=35)).isoformat(),
+                (NOW + timedelta(seconds=35)).isoformat(),
+            ),
+        )
+        cursor.execute(
+            """
+            INSERT INTO rag_payload_tombstones VALUES (
+                ?, 'local_payload_v1', 'expired-35', 'scope-35',
+                'source_revoked', 'policy-1', ?, ?
+            )
+            """,
+            (
+                identity.profile_id,
+                (NOW - timedelta(days=2)).isoformat(),
+                (NOW - timedelta(days=1) + timedelta(seconds=35)).isoformat(),
+            ),
+        )
+
+    wrapped = lifecycle.collect(
+        now=NOW,
+        barriers=CitationCollectionBarriers(
+            trace_ids=trace_barriers[1:],
+            payload_origins=origin_barriers[1:],
+        ),
+        limit=1,
+        continuation_cursor=second.continuation_cursor,
+    )
+    assert wrapped.traces_examined == 1
+    assert wrapped.traces_collected == 1
+    assert wrapped.tombstones_collected == 1
+    assert (
+        connection.execute(
+            "SELECT count(*) FROM rag_citation_traces WHERE trace_id = 'trace-01'"
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute(
+            """
+        SELECT count(*) FROM rag_payload_tombstones
+        WHERE origin_payload_id = 'expired-01'
+        """
+        ).fetchone()[0]
         == 0
     )
 
