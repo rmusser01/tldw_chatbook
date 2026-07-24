@@ -1116,6 +1116,137 @@ def test_run_reply_wires_one_skill_file_bindings_to_both_service_and_runner(
     assert captured["runner_bindings"] is captured["service_bindings"]
 
 
+def test_run_reply_seeds_turn_bindings_into_shared_object(tmp_path):
+    """Task 5: the turn's already-resolved `$skill` binding names (splice
+    output the CONTROLLER computed for the triggering turn) must be seeded
+    into THIS run's SkillFileBindings.authorized -- the SAME shared object
+    handed to both AgentService and the _BridgeSkillRunner (Task 4) -- so
+    the primary agent's very first turn can already read that skill's own
+    bundle via skill_file. Reuses the sibling wiring test's spy idiom to
+    prove the seed lands on the one shared object, not a second copy."""
+    captured = {}
+    real_runner_init = _BridgeSkillRunner.__init__
+    real_service_init = AgentService.__init__
+
+    def spy_runner_init(self, **kwargs):
+        captured["runner_bindings"] = kwargs.get("skill_file_bindings")
+        real_runner_init(self, **kwargs)
+
+    def spy_service_init(self, *args, **kwargs):
+        captured["service_bindings"] = kwargs.get("skill_file_bindings")
+        real_service_init(self, *args, **kwargs)
+
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    skills_service = _FakeSkillsService()
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=_ChunkGateway([["Tokyo."]]),
+        skills_service=skills_service,
+    )
+
+    with patch.object(_BridgeSkillRunner, "__init__", spy_runner_init), patch.object(
+        AgentService, "__init__", spy_service_init
+    ):
+        outcome = _run(
+            bridge,
+            store,
+            session,
+            assistant.id,
+            conversation_id="conv-turn-bindings",
+            turn_skill_bindings=("code-review",),
+        )
+
+    assert outcome.status == "done"
+    assert captured["runner_bindings"] is not None
+    assert "code-review" in captured["runner_bindings"].authorized
+    # Seeded onto the ONE shared object -- never two independently-seeded
+    # copies (Task 4's invariant, re-verified here under a non-empty seed).
+    assert captured["runner_bindings"] is captured["service_bindings"]
+
+
+def test_run_reply_appends_bundle_block_copy_safely(tmp_path):
+    """Task 5: the turn's pre-rendered "Bundled files" block is appended to
+    a NEW list + NEW dict for the last role=="user" entry -- the caller's
+    own `agent_messages` list and its message dict are never mutated. A
+    future refactor that switches to in-place `message["content"] += ...`
+    must fail assertions (b) below."""
+    real_run_turn = AgentService.run_turn
+
+    def _spy(captured):
+        def spy_run_turn(self, **kwargs):
+            captured["messages"] = kwargs.get("messages")
+            return real_run_turn(self, **kwargs)
+
+        return spy_run_turn
+
+    block = "Bundled files (readable via skill_file): notes.md (1 bytes)"
+
+    # -- (a) + (b): a non-empty block is appended copy-safely -------------
+    bridge, _db, store, session, aid = _bridge(tmp_path, [["Tokyo."]])
+    original_user_message = {"role": "user", "content": "hi"}
+    agent_messages = [original_user_message]
+    captured = {}
+
+    with patch.object(AgentService, "run_turn", _spy(captured)):
+        outcome = _run(
+            bridge,
+            store,
+            session,
+            aid,
+            conversation_id="conv-bundle-block",
+            agent_messages=agent_messages,
+            turn_bundle_block=block,
+        )
+
+    assert outcome.status == "done"
+    run_messages = captured["messages"]
+    assert run_messages is not None
+    # (a) the run actually received the block appended after "\n\n" on the
+    # last user entry.
+    assert run_messages[-1]["content"] == f"hi\n\n{block}"
+    assert run_messages[-1]["role"] == "user"
+    # (b) non-mutation contract: the caller's own list length and the dict
+    # identity at that index are unchanged, and the original dict's content
+    # carries no trace of the block. This is exactly what would break if
+    # the append were switched to in-place `message["content"] += ...`.
+    assert len(agent_messages) == 1
+    assert agent_messages[0] is original_user_message
+    assert original_user_message["content"] == "hi"
+    assert "Bundled files" not in original_user_message["content"]
+    # A new list AND a new dict were built for the run -- not the caller's.
+    assert run_messages is not agent_messages
+    assert run_messages[-1] is not original_user_message
+
+    # -- (c) sibling case: an empty block appends nothing, no-op path -----
+    bridge2, _db2, store2, session2, aid2 = _bridge(tmp_path, [["Tokyo."]])
+    agent_messages2 = [{"role": "user", "content": "hi"}]
+    captured2 = {}
+
+    with patch.object(AgentService, "run_turn", _spy(captured2)):
+        outcome2 = _run(
+            bridge2,
+            store2,
+            session2,
+            aid2,
+            conversation_id="conv-bundle-block-empty",
+            agent_messages=agent_messages2,
+            turn_bundle_block="",
+        )
+
+    assert outcome2.status == "done"
+    assert captured2["messages"][-1]["content"] == "hi"
+    # No block to append: the original list is used unchanged (not merely
+    # equal -- the very same object), matching the documented no-op path.
+    assert captured2["messages"] is agent_messages2
+
+
 def test_no_skills_service_leaves_shared_registry_path_untouched(tmp_path):
     """The no-skills-service path (skills_service=None, the default) must
     stay byte-identical to the pre-Task-12 behavior: no get_context call, no
