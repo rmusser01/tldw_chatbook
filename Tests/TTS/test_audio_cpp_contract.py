@@ -78,6 +78,16 @@ def _parse_surface(surface: str, body: bytes, max_bytes: int) -> object:
     )
 
 
+def _surface_body_with_extra_number(surface: str, number: bytes) -> bytes:
+    if surface == "health":
+        prefix = b'{"status":"ok","backend":"cuda","models":0,"ignored":'
+    elif surface == "models":
+        prefix = b'{"object":"list","data":[],"ignored":'
+    else:
+        prefix = b'{"voices":[],"ignored":'
+    return prefix + number + b"}"
+
+
 def _chunk(
     chunk_id: bytes,
     payload: bytes,
@@ -161,6 +171,7 @@ def test_pinned_fixtures_capture_reviewed_upstream_contract() -> None:
             "app/server/README.md",
             "app/server/runtime.cpp",
             "app/server/http.cpp",
+            "app/server/busy_guard.h",
         ],
     }
 
@@ -198,7 +209,10 @@ def test_pinned_fixtures_capture_reviewed_upstream_contract() -> None:
     busy = json.loads(_fixture_bytes("server_busy.json"))
     assert busy == {
         "error": {
-            "message": "model is busy; retry later",
+            "message": (
+                "model 'pocket-tts' is busy: timed out after 30000 ms "
+                "waiting for the inference lock"
+            ),
             "type": "server_busy",
         }
     }
@@ -237,6 +251,59 @@ def test_json_surfaces_enforce_byte_limit_before_decoding(surface: str) -> None:
     assert error.value.category == "size"
 
 
+@pytest.mark.parametrize("surface", ["health", "models", "voices"])
+def test_json_surfaces_wrap_huge_integer_errors_with_stable_diagnostics(
+    surface: str,
+) -> None:
+    diagnostics: list[str] = []
+
+    for digit_count in (4_501, 5_003):
+        body = _surface_body_with_extra_number(surface, b"7" * digit_count)
+        with pytest.raises(AudioCppContractError) as error:
+            _parse_surface(surface, body, len(body))
+        assert error.value.category == "json"
+        diagnostics.append(str(error.value))
+
+    assert diagnostics[0] == diagnostics[1]
+    assert "4300" not in diagnostics[0]
+    assert "4501" not in diagnostics[0]
+    assert "5003" not in diagnostics[0]
+
+
+@pytest.mark.parametrize("surface", ["health", "models", "voices"])
+@pytest.mark.parametrize(
+    "number",
+    [
+        b"9" * 129,
+        b"1." + b"9" * 129,
+        b"1e309",
+        b"1e-309",
+        b"0e9999",
+    ],
+)
+def test_json_surfaces_reject_bounded_or_nonfinite_numeric_tokens(
+    surface: str,
+    number: bytes,
+) -> None:
+    body = _surface_body_with_extra_number(surface, number)
+
+    with pytest.raises(AudioCppContractError) as error:
+        _parse_surface(surface, body, len(body))
+
+    assert error.value.category == "json"
+
+
+@pytest.mark.parametrize("surface", ["health", "models", "voices"])
+@pytest.mark.parametrize("number", [b"0", b"-1", b"1.25", b"1e3", b"1e308"])
+def test_json_surfaces_accept_reasonable_finite_numbers_in_extra_fields(
+    surface: str,
+    number: bytes,
+) -> None:
+    body = _surface_body_with_extra_number(surface, number)
+
+    _parse_surface(surface, body, len(body))
+
+
 def test_health_accepts_extra_fields_and_boundary_values() -> None:
     body = _json_bytes(
         {
@@ -259,10 +326,23 @@ def test_health_accepts_extra_fields_and_boundary_values() -> None:
         result.backend = "cpu"  # type: ignore[misc]
 
 
+@pytest.mark.parametrize("missing", ["status", "backend", "models"])
+def test_health_requires_each_pinned_field(missing: str) -> None:
+    value: dict[str, Any] = {"status": "ok", "backend": "cuda", "models": 2}
+    del value[missing]
+
+    with pytest.raises(AudioCppContractError):
+        parse_health_response(
+            _json_bytes(value),
+            max_metadata_bytes=MAX_METADATA_BYTES,
+            max_identifier_characters=MAX_IDENTIFIER_CHARACTERS,
+            max_models=2,
+        )
+
+
 @pytest.mark.parametrize(
     "updates",
     [
-        {},
         {"status": "ready"},
         {"status": True},
         {"backend": 3},
@@ -273,14 +353,11 @@ def test_health_accepts_extra_fields_and_boundary_values() -> None:
         {"models": 3},
     ],
 )
-def test_health_rejects_missing_wrong_or_out_of_range_fields(
+def test_health_rejects_wrong_or_out_of_range_fields(
     updates: dict[str, Any],
 ) -> None:
     value: dict[str, Any] = {"status": "ok", "backend": "cuda", "models": 2}
-    if not updates:
-        value.pop("status")
-    else:
-        value.update(updates)
+    value.update(updates)
 
     with pytest.raises(AudioCppContractError):
         parse_health_response(

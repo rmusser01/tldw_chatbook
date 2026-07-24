@@ -11,6 +11,7 @@
   "source_paths": [
     "app/server/README.md",
     "app/server/runtime.cpp",
-    "app/server/http.cpp"
+    "app/server/http.cpp",
+    "app/server/busy_guard.h"
   ]
 }

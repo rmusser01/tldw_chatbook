@@ -31,6 +31,8 @@ _TIMING_HEADERS = {
 }
 _DECIMAL_PATTERN = re.compile(r"(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)\Z")
 _DEFAULT_MAX_TIMING_VALUE_CHARACTERS = 64
+_MAX_JSON_NUMBER_CHARACTERS = 128
+_MAX_JSON_FLOAT_EXPONENT = 308
 
 
 class AudioCppContractError(ValueError):
@@ -81,7 +83,39 @@ class _InvalidJsonTokenError(ValueError):
 
 
 def _reject_json_constant(_: str) -> NoReturn:
-    raise _InvalidJsonTokenError
+    raise _InvalidJsonTokenError from None
+
+
+def _parse_json_integer(value: str) -> int:
+    if len(value) > _MAX_JSON_NUMBER_CHARACTERS:
+        raise _InvalidJsonTokenError from None
+    try:
+        return int(value)
+    except (ValueError, OverflowError):
+        raise _InvalidJsonTokenError from None
+
+
+def _parse_json_float(value: str) -> float:
+    if len(value) > _MAX_JSON_NUMBER_CHARACTERS:
+        raise _InvalidJsonTokenError from None
+    try:
+        decimal_value = Decimal(value)
+        exponent = decimal_value.as_tuple().exponent
+        if (
+            not decimal_value.is_finite()
+            or not isinstance(exponent, int)
+            or abs(exponent) > _MAX_JSON_FLOAT_EXPONENT
+            or abs(decimal_value.adjusted()) > _MAX_JSON_FLOAT_EXPONENT
+        ):
+            raise _InvalidJsonTokenError from None
+        parsed = float(decimal_value)
+    except _InvalidJsonTokenError:
+        raise
+    except (InvalidOperation, ValueError, OverflowError):
+        raise _InvalidJsonTokenError from None
+    if not math.isfinite(parsed):
+        raise _InvalidJsonTokenError from None
+    return parsed
 
 
 def _object_without_duplicate_keys(
@@ -118,8 +152,12 @@ def _load_json_object(
             text,
             object_pairs_hook=_object_without_duplicate_keys,
             parse_constant=_reject_json_constant,
+            parse_float=_parse_json_float,
+            parse_int=_parse_json_integer,
         )
-    except (json.JSONDecodeError, _InvalidJsonTokenError, RecursionError):
+    except AudioCppContractError:
+        raise
+    except (ValueError, OverflowError, RecursionError):
         _fail(surface, "json")
 
     if not isinstance(value, dict):
