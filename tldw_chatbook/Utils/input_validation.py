@@ -187,7 +187,7 @@ def validate_url(url: str) -> bool:
 
 
 _GIT_ALLOWED_SCHEMES = frozenset({"https", "ssh"})
-_GIT_REF_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
+_GIT_REF_RE = re.compile(r"^[A-Za-z0-9._/-]+\Z")
 
 
 def validate_git_repo_url(url: str) -> None:
@@ -213,6 +213,8 @@ def validate_git_repo_url(url: str) -> None:
         raise ValidationError("repo_url must not contain whitespace")
     if "\\" in url or any(ord(c) < 0x20 for c in url):
         raise ValidationError("repo_url must not contain backslashes or control characters")
+    if not url.isprintable():
+        raise ValidationError("repo_url must not contain non-printable/zero-width characters")
     if url.startswith("-"):
         raise ValidationError("repo_url must not start with '-' (git-option injection)")
     try:
@@ -226,6 +228,8 @@ def validate_git_repo_url(url: str) -> None:
         )
     if not parsed.hostname:
         raise ValidationError("repo_url must include a host")
+    if (parsed.hostname or "").startswith("-") or (parsed.username or "").startswith("-"):
+        raise ValidationError("repo_url host/user must not start with '-' (ssh option injection)")
 
 
 def validate_git_ref(ref: str) -> None:

@@ -56,3 +56,21 @@ def test_valid_refs_pass(ref):
 def test_malicious_or_invalid_refs_raise(ref):
     with pytest.raises(ValidationError):
         validate_git_ref(ref)
+
+
+@pytest.mark.parametrize("url", [
+    "ssh://-oProxyCommand=touch$IFS/tmp/pwn/repo",
+    "ssh://user@-oProxyCommand=x/repo",
+    "ssh://-flag/repo",
+    "https://x/y​",              # zero-width space (U+200B)
+    "https://x/y‎",              # LTR mark (format char, U+200E)
+])
+def test_ssh_host_dash_and_zerowidth_rejected(url):
+    with pytest.raises(ValidationError):
+        validate_git_repo_url(url)
+
+
+@pytest.mark.parametrize("ref", ["main\n", "feature/x\n", "v1\r"])
+def test_ref_trailing_control_char_rejected(ref):
+    with pytest.raises(ValidationError):
+        validate_git_ref(ref)
