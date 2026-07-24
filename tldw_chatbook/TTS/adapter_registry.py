@@ -282,7 +282,7 @@ class TTSAdapterRegistry:
             if record.leases == 0:
                 slot.lease_changed.set()
                 self._lease_changed.set()
-                close_record = record.retired
+                close_record = record.retired and record in slot.retired
 
         if close_record:
             await self._close_record(record)

@@ -176,13 +176,17 @@ class TTSService:
                 raise TTSRegistryClosedError("The TTS service is closing") from None
             raise
 
-        async with self._lifecycle_lock:
+        try:
+            async with self._lifecycle_lock:
+                self._admission_waiters.discard(waiter)
+                if self._closing:
+                    raise TTSRegistryClosedError("The TTS service is closing")
+                self._syntheses_in_progress += 1
+                self._synthesis_idle.clear()
+        except BaseException:
             self._admission_waiters.discard(waiter)
-            if self._closing:
-                self._operation_limit.release()
-                raise TTSRegistryClosedError("The TTS service is closing")
-            self._syntheses_in_progress += 1
-            self._synthesis_idle.clear()
+            self._operation_limit.release()
+            raise
 
     async def _finish_synthesis_creation(self) -> None:
         async with self._lifecycle_lock:

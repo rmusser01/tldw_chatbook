@@ -1034,6 +1034,38 @@ async def test_close_resources_is_idempotent_and_clears_binding() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancel_after_slot_acquisition_releases_admission_state() -> None:
+    adapter = FakeAdapter("openai")
+    service = TTSService(
+        registry_for_adapter(adapter),
+        max_concurrent_operations=1,
+    )
+    first_response = await service.synthesize(tts_request())
+    blocked = asyncio.create_task(service.synthesize(tts_request()))
+
+    while not service._admission_waiters:
+        await asyncio.sleep(0)
+    waiter = next(iter(service._admission_waiters))
+
+    await service._lifecycle_lock.acquire()
+    try:
+        await first_response.aclose()
+        await asyncio.wait_for(asyncio.shield(waiter), timeout=0.2)
+        blocked.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(blocked, timeout=0.2)
+    finally:
+        service._lifecycle_lock.release()
+
+    assert not service._admission_waiters
+    replacement = await asyncio.wait_for(
+        service.synthesize(tts_request()),
+        timeout=0.2,
+    )
+    await replacement.aclose()
+
+
+@pytest.mark.asyncio
 async def test_service_close_wakes_synthesis_blocked_on_operation_limit() -> None:
     adapter = FakeAdapter("openai")
     service = TTSService(
@@ -1113,6 +1145,41 @@ async def test_service_close_releases_response_resources_before_stream_close_fin
     allow_stream_close.set()
     await asyncio.wait_for(definitive, timeout=0.2)
     assert adapter.response_close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_service_close_stays_bounded_while_retired_adapter_close_continues() -> (
+    None
+):
+    adapter_close_started = asyncio.Event()
+    allow_adapter_close = asyncio.Event()
+
+    class BlockingCloseAdapter(FakeAdapter):
+        async def close(self) -> None:
+            self.close_calls += 1
+            adapter_close_started.set()
+            await allow_adapter_close.wait()
+
+    adapter = BlockingCloseAdapter("openai")
+    service = TTSService(
+        registry_for_adapter(adapter, shutdown_timeout_seconds=0.01),
+        max_concurrent_operations=1,
+    )
+    await service.synthesize(tts_request())
+    await service.registry.reconfigure_provider("openai", {"revision": 2})
+    closing = asyncio.create_task(service.close())
+
+    try:
+        await asyncio.wait_for(adapter_close_started.wait(), timeout=0.2)
+        await asyncio.wait_for(asyncio.shield(closing), timeout=0.1)
+        definitive = asyncio.create_task(service.wait_closed())
+        await asyncio.sleep(0)
+        assert definitive.done() is False
+    finally:
+        allow_adapter_close.set()
+        await asyncio.gather(closing, return_exceptions=True)
+
+    await asyncio.wait_for(definitive, timeout=0.2)
 
 
 @pytest.mark.asyncio

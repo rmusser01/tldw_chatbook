@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-24 00:42'
-updated_date: '2026-07-24 15:07'
+updated_date: '2026-07-24 15:38'
 labels:
   - tts
   - architecture
@@ -58,7 +58,7 @@ Reason: ADR-023 governs the provider boundary, lifecycle, compatibility bridge, 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented the application-owned sealed TTSAdapterRegistry and TTSService with exact provider IDs, lazy provider-scoped legacy adapters, cancellation-safe operation leases, targeted retirement, and bounded/definitive shutdown. Final review amendments correct Textual display/value ordering, classify every real settings payload key through one atomic binding table, serialize save/compare/refresh transactions, provide truthful partial-refresh outcomes, and support safe OpenAI endpoint reset plus organization clearing. Live refresh now reaches nested Higgs settings and OpenAI endpoint/organization configuration without logging submitted values. Service shutdown seals every public operation, wakes semaphore admissions, owns late responses, releases leases independently from blocking stream close, attempts abandoned-response cleanup despite registry failures, and reports response failures deterministically in creation order. Verification: 68 changed-path regressions passed; the full TTS/STTS/audio-service/media-reading gate passed 268 tests with 14 optional skips; Ruff check/format, compileall, scoped mypy, boundary grep, ADR/scope audit, and git diff hygiene passed. ADR-023 remains governing; native audio.cpp transport and supervision remain deferred to later ordered tasks.
+Implemented the application-owned sealed TTSAdapterRegistry and TTSService with exact provider IDs, lazy provider-scoped legacy adapters, cancellation-safe operation leases, targeted retirement, and bounded/definitive shutdown. Final review amendments correct Textual display/value ordering, classify every real settings payload key through one atomic binding table, serialize save/compare/refresh transactions, provide truthful partial-refresh outcomes, and support safe OpenAI endpoint reset plus organization clearing. Live refresh now reaches nested Higgs, Kokoro, and OpenAI endpoint/organization configuration without logging submitted values. Service shutdown seals every public operation, wakes semaphore admissions, owns late responses, releases leases independently from blocking stream close, avoids joining already-collected retired adapters during bounded shutdown, cleans cancellation during the post-semaphore lifecycle handoff without leaking permits, attempts abandoned-response cleanup despite registry failures, and reports response failures deterministically in creation order. Verification: 91 changed-path regressions passed; the full TTS/STTS/audio-service/media-reading gate passed 272 tests with 14 optional skips; Ruff check/format, compileall, scoped mypy, boundary grep, ADR/scope audit, and git diff hygiene passed. ADR-023 remains governing; native audio.cpp transport and supervision remain deferred to later ordered tasks.
 <!-- SECTION:NOTES:END -->
 
 ## Definition of Done

@@ -216,28 +216,29 @@ class TTSBackendManager:
 
             # Determine if this is PyTorch or ONNX variant
             use_onnx = not backend_id.endswith("_pytorch")
+            kokoro_settings = {**self.app_config, **config}
 
             kokoro_defaults = {
                 "KOKORO_USE_ONNX": use_onnx,
                 "KOKORO_MODEL_PATH": os.getenv(
                     "KOKORO_MODEL_PATH",
-                    self.app_config.get(
+                    kokoro_settings.get(
                         "KOKORO_ONNX_MODEL_PATH_DEFAULT", "models/kokoro-v0_19.onnx"
                     )
                     if use_onnx
-                    else self.app_config.get(
+                    else kokoro_settings.get(
                         "KOKORO_PT_MODEL_PATH_DEFAULT", "models/kokoro-v0_19.pth"
                     ),
                 ),
                 "KOKORO_VOICES_JSON_PATH": os.getenv(
                     "KOKORO_VOICES_PATH",
-                    self.app_config.get(
+                    kokoro_settings.get(
                         "KOKORO_ONNX_VOICES_JSON_DEFAULT", "models/voices.json"
                     ),
                 ),
-                "KOKORO_DEVICE": self.app_config.get("KOKORO_DEVICE_DEFAULT", "cpu"),
-                "KOKORO_MAX_TOKENS": self.app_config.get("KOKORO_MAX_TOKENS", 500),
-                "KOKORO_ENABLE_VOICE_MIXING": self.app_config.get(
+                "KOKORO_DEVICE": kokoro_settings.get("KOKORO_DEVICE_DEFAULT", "cpu"),
+                "KOKORO_MAX_TOKENS": kokoro_settings.get("KOKORO_MAX_TOKENS", 500),
+                "KOKORO_ENABLE_VOICE_MIXING": kokoro_settings.get(
                     "KOKORO_ENABLE_VOICE_MIXING", False
                 ),
             }

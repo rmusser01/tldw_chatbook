@@ -124,6 +124,34 @@ def test_higgs_backend_config_consumes_nested_settings(
     assert config["HIGGS_REPETITION_PENALTY"] == 1.3
 
 
+def test_kokoro_backend_config_consumes_app_tts_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("KOKORO_MODEL_PATH", raising=False)
+    monkeypatch.delenv("KOKORO_VOICES_PATH", raising=False)
+    manager = TTSBackendManager(
+        {
+            "app_tts": {
+                "KOKORO_ONNX_MODEL_PATH_DEFAULT": "custom/kokoro.onnx",
+                "KOKORO_ONNX_VOICES_JSON_DEFAULT": "custom/voices.json",
+                "KOKORO_DEVICE_DEFAULT": "cuda",
+                "KOKORO_MAX_TOKENS": 999,
+                "KOKORO_ENABLE_VOICE_MIXING": True,
+                "KOKORO_TRACK_PERFORMANCE": False,
+            }
+        }
+    )
+
+    config = manager._prepare_backend_config("local_kokoro_default_onnx")
+
+    assert config["KOKORO_MODEL_PATH"] == "custom/kokoro.onnx"
+    assert config["KOKORO_VOICES_JSON_PATH"] == "custom/voices.json"
+    assert config["KOKORO_DEVICE"] == "cuda"
+    assert config["KOKORO_MAX_TOKENS"] == 999
+    assert config["KOKORO_ENABLE_VOICE_MIXING"] is True
+    assert config["KOKORO_TRACK_PERFORMANCE"] is False
+
+
 @pytest.mark.asyncio
 async def test_openai_backend_uses_configured_endpoint_and_organization_header(
     monkeypatch: pytest.MonkeyPatch,
