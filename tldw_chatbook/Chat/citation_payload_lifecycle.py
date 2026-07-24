@@ -574,12 +574,16 @@ class CitationPayloadLifecycle:
             tombstone_until = cursor_state.tombstone_until
             cursor.execute(
                 """
-                UPDATE rag_citation_traces
-                SET visibility_state = visibility_state
-                WHERE profile_id = ?
+                UPDATE rag_identity_context
+                SET profile_id = profile_id
+                WHERE context_name = 'default' AND profile_id = ?
                 """,
                 (identity.profile_id,),
             )
+            if cursor.rowcount != 1:
+                raise CitationPersistenceUnavailable(
+                    "citation_collection_identity_lock_failed"
+                )
             scan_limit = max(batch_limit, _COLLECTION_SCAN_PAGE_SIZE)
             candidates, trace_after, trace_until = _trace_scan_page(
                 cursor,
@@ -769,6 +773,16 @@ class CitationPayloadLifecycle:
                       AND origin_namespace = ?
                       AND origin_payload_id = ?
                       AND retain_until <= ?
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM rag_evidence_snapshots AS snapshot
+                          WHERE snapshot.profile_id =
+                                rag_payload_tombstones.profile_id
+                            AND snapshot.origin_namespace =
+                                rag_payload_tombstones.origin_namespace
+                            AND snapshot.origin_payload_id =
+                                rag_payload_tombstones.origin_payload_id
+                      )
                     """,
                     (
                         identity.profile_id,

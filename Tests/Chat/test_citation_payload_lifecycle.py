@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 import json
 import logging
+import sqlite3
 
 import pytest
 from pydantic import ValidationError
@@ -403,15 +404,89 @@ def test_revoke_invalidates_capabilities_issued_by_every_repository_instance(
     )
 
     assert reading_repository.verify_active_trace_result(active) is False
-    assert (
-        reading_repository.get_active_trace_for_message(
-            "message-1",
-            1,
-            "Answer [S1].",
-            TEST_FINGERPRINT_CODEC,
-        ).state.value
-        != "active"
+    refreshed = reading_repository.get_active_trace_for_message(
+        "message-1",
+        1,
+        "Answer [S1].",
+        TEST_FINGERPRINT_CODEC,
     )
+    assert refreshed.state.value == "active"
+    assert refreshed.availability_warning.value == "evidence_revoked"
+    assert reading_repository.verify_active_trace_result(refreshed) is True
+    assert refreshed.summary is not None
+    safe_summary = json.dumps(refreshed.summary.model_dump(mode="json"))
+    for secret in (
+        "private query",
+        "private exact submitted evidence",
+        "private source title",
+        "private-document",
+        "Answer [S1].",
+        "content-hmac",
+    ):
+        assert secret not in safe_summary
+    hydration = reading_repository.hydrate_trace(
+        local_trace_namespace(_identity(db), trace_id="trace-1"),
+        authorization=_authorization(_identity(db)),
+    )
+    assert hydration.state is CitationHydrationState.REVOKED
+    assert hydration.governed_payloads is None
+    mismatch = reading_repository.get_active_trace_for_message(
+        "message-1",
+        1,
+        "Different answer [S1].",
+        TEST_FINGERPRINT_CODEC,
+    )
+    assert mismatch.state.value != "active"
+    object.__setattr__(refreshed, "availability_warning", None)
+    assert reading_repository.verify_active_trace_result(refreshed) is False
+
+
+@pytest.mark.parametrize("completeness", ["partial", "redacted", "unavailable"])
+def test_revoke_never_upgrades_noncomplete_seals_to_grounded_warning_capabilities(
+    db: CharactersRAGDB,
+    completeness: str,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    with db.transaction() as cursor:
+        row = cursor.execute(
+            """
+            SELECT aggregate_json
+            FROM rag_citation_traces
+            WHERE trace_id = 'trace-1'
+            """
+        ).fetchone()
+        aggregate = json.loads(row["aggregate_json"])
+        aggregate["completeness_at_seal"] = completeness
+        cursor.execute(
+            """
+            UPDATE rag_citation_traces
+            SET completeness_at_seal = ?, aggregate_json = ?
+            WHERE trace_id = 'trace-1'
+            """,
+            (
+                completeness,
+                json.dumps(aggregate, separators=(",", ":"), sort_keys=True),
+            ),
+        )
+    CitationPayloadLifecycle(
+        repository,
+        retention_policy=_policy(),
+    ).revoke(
+        local_trace_namespace(_identity(db), trace_id="trace-1"),
+        snapshot_payload_id="snapshot-1",
+        tombstone=_tombstone(db),
+    )
+
+    refreshed = repository.get_active_trace_for_message(
+        "message-1",
+        1,
+        "Answer [S1].",
+        TEST_FINGERPRINT_CODEC,
+    )
+
+    assert refreshed.state.value != "active"
+    assert refreshed.summary is None
 
 
 def test_revoke_purges_run_and_attempt_payloads_for_every_shared_snapshot_reference(
@@ -1021,6 +1096,115 @@ def test_collect_preserves_live_and_soft_deleted_owners_until_policy_expiry(
         .fetchone()[0]
         == 0
     )
+
+
+def test_collect_retains_expired_tombstone_until_every_shared_origin_row_is_gone(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    _insert_same_origin_snapshot(db)
+    identity = _identity(db)
+    with db.transaction() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO rag_trace_evidence_refs VALUES (
+                ?, 'trace-1', 'prompt-1', 2, 'run-1',
+                'snapshot-2', 2, 'embedded'
+            )
+            """,
+            (identity.profile_id,),
+        )
+    lifecycle = CitationPayloadLifecycle(repository, retention_policy=_policy())
+    lifecycle.revoke(
+        local_trace_namespace(identity, trace_id="trace-1"),
+        snapshot_payload_id="snapshot-1",
+        tombstone=_tombstone(db, retain_until=NOW),
+    )
+
+    blocked = lifecycle.collect(now=NOW, limit=1)
+
+    assert blocked.traces_collected == 0
+    assert blocked.tombstones_collected == 0
+    connection = db.get_connection()
+    assert (
+        connection.execute("SELECT count(*) FROM rag_payload_tombstones").fetchone()[0]
+        == 1
+    )
+    assert (
+        connection.execute("SELECT count(*) FROM rag_evidence_snapshots").fetchone()[0]
+        == 2
+    )
+    for seam in ("write", "import", "sync"):
+        with pytest.raises(
+            CitationPersistenceUnavailable,
+            match="payload_origin_revoked",
+        ):
+            with db.transaction() as cursor:
+                repository.assert_payload_origin_writable(
+                    cursor,
+                    profile_id=identity.profile_id,
+                    origin_namespace="local_payload_v1",
+                    origin_payload_id="snapshot-1",
+                    seam=seam,
+                )
+
+    _mark_owner_deleted(db)
+    collected = lifecycle.collect(
+        now=NOW,
+        limit=1,
+        continuation_cursor=blocked.continuation_cursor,
+    )
+
+    assert collected.traces_collected == 1
+    assert collected.snapshots_collected == 2
+    assert collected.tombstones_collected == 1
+    assert (
+        connection.execute("SELECT count(*) FROM rag_payload_tombstones").fetchone()[0]
+        == 0
+    )
+    with db.transaction() as cursor:
+        repository.assert_payload_origin_writable(
+            cursor,
+            profile_id=identity.profile_id,
+            origin_namespace="local_payload_v1",
+            origin_payload_id="snapshot-1",
+            seam="write",
+        )
+
+
+def test_collect_acquires_writer_lock_through_singleton_identity_row(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    connection = db.get_connection()
+    updated_tables: list[tuple[str | None, str | None]] = []
+
+    def authorize(
+        action: int,
+        table: str | None,
+        column: str | None,
+        database: str | None,
+        trigger: str | None,
+    ) -> int:
+        del database, trigger
+        if action == sqlite3.SQLITE_UPDATE:
+            updated_tables.append((table, column))
+        return sqlite3.SQLITE_OK
+
+    connection.set_authorizer(authorize)
+    try:
+        result = CitationPayloadLifecycle(
+            repository,
+            retention_policy=_policy(),
+        ).collect(now=NOW)
+    finally:
+        connection.set_authorizer(None)
+
+    assert result.traces_collected == 0
+    assert ("rag_identity_context", "profile_id") in updated_tables
+    assert not any(table == "rag_citation_traces" for table, _ in updated_tables)
 
 
 def test_collect_scans_past_oldest_barriered_traces_across_repeated_batches(

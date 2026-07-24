@@ -36,6 +36,7 @@ from tldw_chatbook.Chat.citation_trace_identity import (
 )
 from tldw_chatbook.Chat.citation_trace_models import (
     AnswerAttemptPayload,
+    CitationCompleteness,
     CitationTrace,
     EvidenceRunPayload,
     EvidenceSnapshotPayload,
@@ -89,6 +90,12 @@ class ActiveCitationTraceState(str, Enum):
     NOT_FOUND = "not_found"
 
 
+class CitationAvailabilityWarning(str, Enum):
+    """Safe active-presentation warning without governed payload content."""
+
+    EVIDENCE_REVOKED = "evidence_revoked"
+
+
 class _FrozenModel(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
@@ -123,19 +130,26 @@ class ActiveCitationTraceResult:
 
     state: ActiveCitationTraceState
     summary: CitationTraceSummary | None
+    availability_warning: CitationAvailabilityWarning | None
 
     def __init__(
         self,
         *,
         state: ActiveCitationTraceState,
         summary: CitationTraceSummary | None = None,
+        availability_warning: CitationAvailabilityWarning | None = None,
     ) -> None:
         if not isinstance(state, ActiveCitationTraceState):
             raise TypeError("state must be an ActiveCitationTraceState")
-        if state is ActiveCitationTraceState.ACTIVE or summary is not None:
+        if (
+            state is ActiveCitationTraceState.ACTIVE
+            or summary is not None
+            or availability_warning is not None
+        ):
             raise ValueError("active summary results are repository-issued only")
         object.__setattr__(self, "state", state)
         object.__setattr__(self, "summary", None)
+        object.__setattr__(self, "availability_warning", None)
 
     def __copy__(self) -> "ActiveCitationTraceResult":
         raise TypeError("active citation results cannot be copied")
@@ -223,6 +237,11 @@ def _active_result_digest(result: ActiveCitationTraceResult) -> bytes:
         (
             result.state.value,
             result.summary.model_dump(mode="json"),
+            (
+                None
+                if result.availability_warning is None
+                else result.availability_warning.value
+            ),
         )
     )
     return hashlib.sha256(canonical.encode("utf-8")).digest()
@@ -1040,17 +1059,18 @@ class CitationTraceRepository:
         summary = self.get_trace_summary(
             local_trace_namespace(identity, trace_id=row["trace_id"])
         )
-        if (
-            summary is None
-            or summary.visibility_state != "active"
-            or not self._trace_payloads_available(
-                identity.profile_id,
-                row["trace_id"],
-            )
-        ):
+        if summary is None or summary.visibility_state != "active":
+            return ActiveCitationTraceResult(state=ActiveCitationTraceState.NOT_FOUND)
+        presentation_allowed, availability_warning = self._active_presentation_warning(
+            summary,
+            profile_id=identity.profile_id,
+            trace_id=row["trace_id"],
+        )
+        if not presentation_allowed:
             return ActiveCitationTraceResult(state=ActiveCitationTraceState.NOT_FOUND)
         return self._issue_active_trace_result(
             summary,
+            availability_warning=availability_warning,
             proof=_ActiveTraceProof(
                 identity_context=identity,
                 message_id=message_id,
@@ -1127,10 +1147,16 @@ class CitationTraceRepository:
             or row["origin_scope_id"] != proof.identity_context.profile_id
             or row["local_authority_id"] != proof.identity_context.local_authority_id
             or row["fingerprint_key_id"] != proof.identity_context.fingerprint_key_id
-            or not self._trace_payloads_available(
-                proof.identity_context.profile_id,
-                proof.trace_id,
-            )
+        ):
+            return self._invalidate_active_trace_result(result)
+        presentation_allowed, availability_warning = self._active_presentation_warning(
+            result.summary,
+            profile_id=proof.identity_context.profile_id,
+            trace_id=proof.trace_id,
+        )
+        if (
+            not presentation_allowed
+            or availability_warning is not result.availability_warning
         ):
             return self._invalidate_active_trace_result(result)
         current_fingerprint = codec.fingerprint(
@@ -1434,6 +1460,92 @@ class CitationTraceRepository:
         )
         return row is not None
 
+    def _active_presentation_warning(
+        self,
+        summary: CitationTraceSummary,
+        *,
+        profile_id: str,
+        trace_id: str,
+    ) -> tuple[bool, CitationAvailabilityWarning | None]:
+        """Return whether a sealed summary is safe and its non-content warning."""
+
+        if self._trace_payloads_available(profile_id, trace_id):
+            return True, None
+        if (
+            summary.trace.completeness_at_seal is CitationCompleteness.COMPLETE
+            and self._trace_evidence_revoked(profile_id, trace_id)
+        ):
+            return True, CitationAvailabilityWarning.EVIDENCE_REVOKED
+        return False, None
+
+    def _trace_evidence_revoked(
+        self,
+        profile_id: str,
+        trace_id: str,
+    ) -> bool:
+        """Recheck durable non-content revocation metadata for a complete seal."""
+
+        row = (
+            self.db.get_connection()
+            .execute(
+                """
+                SELECT 1
+                FROM rag_citation_traces AS trace
+                WHERE trace.profile_id = ? AND trace.trace_id = ?
+                  AND trace.completeness_at_seal = 'complete'
+                  AND (
+                      EXISTS (
+                          SELECT 1
+                          FROM rag_evidence_runs AS run
+                          WHERE run.profile_id = trace.profile_id
+                            AND run.trace_id = trace.trace_id
+                            AND (
+                                run.redaction_state = 'purged'
+                                OR run.purged_at IS NOT NULL
+                            )
+                      )
+                      OR EXISTS (
+                          SELECT 1
+                          FROM rag_answer_attempt_payloads AS attempt
+                          WHERE attempt.profile_id = trace.profile_id
+                            AND attempt.trace_id = trace.trace_id
+                            AND (
+                                attempt.redaction_state = 'purged'
+                                OR attempt.purged_at IS NOT NULL
+                            )
+                      )
+                      OR EXISTS (
+                          SELECT 1
+                          FROM rag_trace_evidence_refs AS reference
+                          JOIN rag_evidence_snapshots AS snapshot
+                            ON snapshot.profile_id = reference.profile_id
+                           AND snapshot.payload_id =
+                               reference.snapshot_payload_id
+                          WHERE reference.profile_id = trace.profile_id
+                            AND reference.trace_id = trace.trace_id
+                            AND (
+                                snapshot.redaction_state = 'purged'
+                                OR snapshot.purged_at IS NOT NULL
+                                OR EXISTS (
+                                    SELECT 1
+                                    FROM rag_payload_tombstones AS tombstone
+                                    WHERE tombstone.profile_id =
+                                          snapshot.profile_id
+                                      AND tombstone.origin_namespace =
+                                          snapshot.origin_namespace
+                                      AND tombstone.origin_payload_id =
+                                          snapshot.origin_payload_id
+                                )
+                            )
+                      )
+                  )
+                """,
+                (profile_id, trace_id),
+            )
+            .fetchone()
+        )
+        return row is not None
+
     def _require_repository_cursor(
         self,
         cursor: sqlite3.Cursor,
@@ -1493,6 +1605,7 @@ class CitationTraceRepository:
         self,
         summary: CitationTraceSummary,
         *,
+        availability_warning: CitationAvailabilityWarning | None,
         proof: _ActiveTraceProof,
     ) -> ActiveCitationTraceResult:
         """Issue and register one exact active-result capability."""
@@ -1500,6 +1613,7 @@ class CitationTraceRepository:
         result = object.__new__(ActiveCitationTraceResult)
         object.__setattr__(result, "state", ActiveCitationTraceState.ACTIVE)
         object.__setattr__(result, "summary", summary)
+        object.__setattr__(result, "availability_warning", availability_warning)
         result_id = id(result)
         repository_ref = weakref.ref(self)
 
@@ -2247,6 +2361,7 @@ class CitationTraceRepository:
 __all__ = [
     "ActiveCitationTraceResult",
     "ActiveCitationTraceState",
+    "CitationAvailabilityWarning",
     "CitationHydrationResult",
     "CitationHydrationState",
     "CitationPersistenceUnavailable",
