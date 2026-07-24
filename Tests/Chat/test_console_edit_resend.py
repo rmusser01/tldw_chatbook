@@ -297,7 +297,9 @@ async def test_edit_and_resend_skill_refusal_leaves_no_pending_node():
     u1 = store.append_message(session.id, role=ConsoleMessageRole.USER, content="original")
 
     async def _refuse(provider_messages):
-        return provider_messages, "Skill refused for testing.", ()
+        # 5-tuple contract: (messages, refuse, notes, skill_bindings,
+        # skill_bundle_block) — widened by the skill_file reachability work.
+        return provider_messages, "Skill refused for testing.", (), (), ""
 
     controller._apply_skill_substitution = _refuse
 

@@ -1529,9 +1529,13 @@ class ConsoleChatController:
             {"role": ConsoleMessageRole.USER.value, "content": clean_content}
         )
         self._ensure_user_continuation_instruction(provider_messages)
-        provider_messages, refuse, skill_notes = await self._apply_skill_substitution(
-            provider_messages
-        )
+        (
+            provider_messages,
+            refuse,
+            skill_notes,
+            skill_bindings,
+            skill_bundle_block,
+        ) = await self._apply_skill_substitution(provider_messages)
         if refuse is not None:
             return self._block(session_id, refuse)
         for note in skill_notes:
@@ -1568,6 +1572,8 @@ class ConsoleChatController:
             assistant_message_id=assistant.id,
             variant_mode=False,
             prefill=prefill,
+            skill_bindings=skill_bindings,
+            skill_bundle_block=skill_bundle_block,
         )
 
     async def build_context_snapshot(
