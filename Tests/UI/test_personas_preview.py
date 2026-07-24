@@ -556,6 +556,7 @@ async def test_choosing_greeting_posts_message():
         select = app.query_one("#personas-preview-greeting-select", Select)
         select.value = 1
         await pilot.pause()
-        # The programmatic set_options/value=0 from set_greetings may also
-        # post index 0 asynchronously - assert membership, not exact equality.
-        assert 1 in posted
+        # set_greetings populates the Select under prevent(Select.Changed), so the
+        # only PreviewGreetingSelected is this genuine user pick (index 1) - no
+        # spurious programmatic index-0 post (task-438 review).
+        assert posted == [1]
