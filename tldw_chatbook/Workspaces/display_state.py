@@ -213,6 +213,9 @@ class ConsoleWorkspaceContextState:
     recovery_copy: str
     workspace_name: str = ""
     scope_label: str = ""
+    #: TASK-373: raw conversation identifier kept out of the primary Scope row,
+    #: surfaced only as a hover detail.
+    scope_detail: str = ""
     new_workspace_enabled: bool = False
     #: Whether the workspace-level RAG retrieval-scope affordance (task-13)
     #: should be enabled. ``True`` only when the active workspace is a real
@@ -293,7 +296,11 @@ def build_console_workspace_state(
         Renderable Console workspace context state.
     """
 
-    scope_label = str(current_conversation or "")
+    # TASK-373/387: the rail Scope row showed the raw conversation UUID (no user
+    # meaning, wrapped mid-token across two lines). Show a human-readable label
+    # and keep the identifier as a hover detail (below), not in the primary row.
+    scope_label = "This conversation" if current_conversation else ""
+    scope_detail = str(current_conversation or "")
     if registry_service is None:
         acp_state = _acp_handoff_state(acp_handoff_state)
         return ConsoleWorkspaceContextState(
@@ -301,6 +308,7 @@ def build_console_workspace_state(
             workspace_label="No workspace selected",
             workspace_name="",
             scope_label=scope_label,
+            scope_detail=scope_detail,
             new_workspace_enabled=False,
             authority_label="Authority: unavailable",
             sync_label="Sync: unavailable",
@@ -336,6 +344,7 @@ def build_console_workspace_state(
             workspace_label="No workspace selected",
             workspace_name="",
             scope_label=scope_label,
+            scope_detail=scope_detail,
             new_workspace_enabled=False,
             authority_label="Authority: unavailable",
             sync_label="Sync: unavailable",
@@ -368,6 +377,7 @@ def build_console_workspace_state(
             workspace_label="Workspace: Local Default",
             workspace_name="Local Default",
             scope_label=scope_label,
+            scope_detail=scope_detail,
             new_workspace_enabled=True,
             authority_label="Authority: local registry ready",
             sync_label="Sync: not configured",
@@ -413,6 +423,7 @@ def build_console_workspace_state(
         workspace_label=f"Workspace: {active_workspace.name}",
         workspace_name=active_workspace.name,
         scope_label=scope_label,
+            scope_detail=scope_detail,
         new_workspace_enabled=True,
         rag_scope_enabled=True,
         authority_label=f"Authority: {active_workspace.authority.value}",

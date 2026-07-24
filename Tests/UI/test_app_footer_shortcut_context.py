@@ -75,3 +75,28 @@ async def test_footer_renders_workbench_shortcuts():
 
         assert "F6 next pane" in rendered
         assert "F1 help" in rendered
+
+
+@pytest.mark.asyncio
+async def test_footer_db_size_stats_expose_decode_legend_tooltip():
+    """The cryptic P:/C/N:/M: DB-size stats must be decodable on hover."""
+
+    class TestApp(App):
+        def compose(self):
+            yield AppFooterStatus(id="footer")
+
+    app = TestApp()
+
+    async with app.run_test(size=(100, 12)) as pilot:
+        await pilot.pause(0.1)
+        footer = app.query_one("#footer", AppFooterStatus)
+
+        db_display = footer.query_one("#internal-db-size-indicator", Static)
+        tooltip = str(db_display.tooltip or "")
+
+        # Every abbreviation shown in the footer must be spelled out.
+        assert "Prompts" in tooltip
+        assert "Conversations" in tooltip or "Notes" in tooltip
+        assert "Media" in tooltip
+        # And the legend should say these are database file sizes.
+        assert "size" in tooltip.lower()

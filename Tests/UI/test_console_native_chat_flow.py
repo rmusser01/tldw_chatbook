@@ -6587,9 +6587,38 @@ async def test_console_native_tab_title_has_stable_visible_label_region():
             "Active Console tab: Planning session with a long descriptive name. "
             "Click again to rename."
         )
-        assert str(tab.label) == "Planning session..."
+        # TASK-375: middle-truncated with a single-cell ellipsis (visible mark),
+        # preserving the distinguishing words at both ends.
+        assert str(tab.label) == "Planning…tive name"
         assert tab.region.width >= 18
-        assert "Planning session" in _visible_text(console)
+        assert "Planning" in _visible_text(console)
+        assert "…" in _visible_text(console)
+
+
+def test_console_tab_label_middle_truncates_with_visible_ellipsis():
+    """TASK-375: long tab titles middle-truncate with a single-cell ellipsis,
+    always showing the truncation mark and keeping distinguishing words at both
+    ends (so two titles sharing a first word are not the same fragment)."""
+    from tldw_chatbook.Widgets.Console.console_session_surface import (
+        CONSOLE_SESSION_TAB_DISPLAY_CHARS,
+        ConsoleSessionSurface,
+    )
+
+    display = ConsoleSessionSurface._display_title
+
+    short = display("Chat 1")
+    assert short == "Chat 1"  # short titles are untouched
+
+    a = display("Long conversation about embeddings and vector stores in local RAG")
+    b = display("Long conversation about Terraform state migration and remote backends")
+    for label in (a, b):
+        assert "…" in label
+        assert "..." not in label
+        assert len(label) <= CONSOLE_SESSION_TAB_DISPLAY_CHARS
+        assert label.startswith("Long")  # head preserved
+    # The distinguishing END survives, so the two aren't the same fragment.
+    assert a.endswith("RAG")
+    assert a != b
 
 
 @pytest.mark.asyncio

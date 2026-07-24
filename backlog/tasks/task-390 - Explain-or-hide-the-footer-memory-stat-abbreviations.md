@@ -1,8 +1,9 @@
 ---
 id: TASK-390
 title: Explain or hide the footer memory-stat abbreviations
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-20 14:21'
 labels: [console, ux]
 dependencies: []
@@ -23,5 +24,17 @@ The status bar of the very first screen shows single-letter memory/storage stats
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Spell out or tooltip the abbreviations, or hide diagnostics behind a debug toggle on first-run
+- [x] #1 Spell out or tooltip the abbreviations, or hide diagnostics behind a debug toggle on first-run
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Kept the compact footer stats (they compete with key hints, so widening them is
+the wrong trade) and made them decodable on hover: the DB-size Static now carries
+a static legend tooltip -- 'Local database file sizes / P: Prompts   C/N:
+Conversations & Notes   M: Media'. The abbreviations were never wrong, only
+undocumented; a hover legend spells every letter out without stealing footer
+width. RED->GREEN test asserts the tooltip contains the spelled-out terms and the
+word 'size'. AppFooterStatus.py only.
+<!-- SECTION:NOTES:END -->
