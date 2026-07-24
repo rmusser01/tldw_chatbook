@@ -18,8 +18,16 @@ from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig, get_profile_
 # the same pattern already used for `_active_profile_id` below.
 from tldw_chatbook.RAG_Search.simplified.active_config import (
     _active_profile_id,
+    resolve_active_rag_config,
     set_active_profile,
 )
+from tldw_chatbook.RAG_Search.simplified.collection_fingerprint import (
+    fingerprint_collection,
+)
+# Imported as a module seam (like `set_active_profile` above): tests
+# monkeypatch `ad.index_status` directly to simulate a broken/unavailable
+# vector store without touching a real Chroma instance.
+from tldw_chatbook.RAG_Search.simplified.collection_indexes import index_status
 from .settings_library_rag_defaults import (
     SettingsLibraryRagDefaults,
     _strict_float,
@@ -309,6 +317,58 @@ def soft_config_warnings(values: SettingsLibraryRagDefaults) -> list[str]:
             f"({default_top_k}); reranking will not see all requested results."
         ]
     return []
+
+
+def index_change_pending(values: SettingsLibraryRagDefaults) -> bool:
+    """Whether saving ``values`` right now would re-point the active profile
+    at a different (not-yet-built) vector collection.
+
+    Pure: applies ``values`` onto a deep-copied SCRATCH clone of the active
+    profile via ``apply_defaults_to_profile`` and compares
+    ``fingerprint_collection`` (SP1) before/after -- the live cached profile
+    the manager hands to every other caller is never mutated. Never raises:
+    a missing active profile, an unparseable numeric field, or any other
+    failure is treated as "no pending change" (logged) rather than raising
+    -- a broken fingerprint must never block the editor.
+
+    Args:
+        values: Candidate Library/RAG defaults to check.
+
+    Returns:
+        True when saving ``values`` would change the fingerprinted
+        collection name; False otherwise (including on any internal error).
+    """
+    try:
+        profile = _active_profile()
+        if profile is None:
+            return False
+        before_fp = fingerprint_collection(profile.rag_config)
+        scratch = copy.deepcopy(profile)
+        apply_defaults_to_profile(scratch, _tolerant_numeric_values(values))
+        after_fp = fingerprint_collection(scratch.rag_config)
+        return before_fp != after_fp
+    except Exception as e:  # a broken fingerprint must never block the editor
+        logger.error(f"index_change_pending failed: {e}")
+        return False
+
+
+def fetch_index_status() -> dict:
+    """Resolved vector-index state for the active profile: absent | empty | built.
+
+    Wraps ``index_status(resolve_active_rag_config())`` (SP1) -- reads the
+    on-disk Chroma collection list, so callers must run this off the UI
+    thread. Any failure (a broken/unavailable store, a missing active
+    profile) returns an "unknown" state rather than raising.
+
+    Returns:
+        ``{"state": "absent"|"empty"|"built"|"unknown", "count": int,
+        "provenance": dict}``.
+    """
+    try:
+        return index_status(resolve_active_rag_config())
+    except Exception as e:
+        logger.error(f"fetch_index_status failed: {e}")
+        return {"state": "unknown", "count": 0, "provenance": {}}
 
 
 def save_rag_defaults_to_active_profile(
