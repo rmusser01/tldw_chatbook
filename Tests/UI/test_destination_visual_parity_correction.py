@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -46,6 +47,26 @@ from tldw_chatbook.Widgets.destination_workbench import (
     DestinationWorkbench,
     WorkbenchPane,
 )
+
+
+class WatchlistsVisualHarness(DestinationHarness):
+    """Mount Watchlists with the production stylesheet for geometry checks."""
+
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
+    )
+
+
+def _visual_destination_harness(app, route: str) -> DestinationHarness:
+    harness_type = (
+        WatchlistsVisualHarness
+        if route == "watchlists_collections"
+        else DestinationHarness
+    )
+    return harness_type(app, route)
 
 
 @pytest.fixture(autouse=True)
@@ -809,19 +830,22 @@ SOURCE_PREP_WORKBENCHES = {
     },
     "watchlists_collections": {
         "workbench": "#watchlists-workbench",
-        "strip": "#watchlists-filter-strip",
+        "strip": "#watchlists-header-bar",
+        "strip_max_height": 3,
         "panes": (
             "#watchlists-list-pane",
             "#watchlists-detail-pane",
             "#watchlists-inspector-pane",
         ),
         "actions": (
+            "#nav-overview",
+            "#wc-empty-create-source",
             "#wc-open-watchlists",
             "#wc-attach-to-console",
             "#watchlists-follow-in-console",
         ),
         "markers": ("#wc-empty-state", "#wc-service-error", "#wc-loading-state"),
-        "marker_container": "#watchlists-detail-pane",
+        "marker_container": "#watchlists-list-pane",
     },
     "skills": {
         "workbench": "#skills-workbench",
@@ -844,7 +868,7 @@ async def test_source_prep_destinations_use_list_detail_inspector_workbench(
     route, contract
 ):
     app = _build_test_app()
-    host = DestinationHarness(app, route)
+    host = _visual_destination_harness(app, route)
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, contract["workbench"])
@@ -852,6 +876,7 @@ async def test_source_prep_destinations_use_list_detail_inspector_workbench(
             screen,
             workbench=contract["workbench"],
             strip=contract["strip"],
+            strip_max_height=contract.get("strip_max_height", 2),
             panes=contract["panes"],
             actions=contract["actions"],
             height=42,
@@ -870,7 +895,7 @@ async def test_source_prep_default_empty_or_unavailable_states_preserve_workbenc
     route, contract
 ):
     app = _build_test_app()
-    host = DestinationHarness(app, route)
+    host = _visual_destination_harness(app, route)
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, contract["workbench"])
@@ -878,6 +903,7 @@ async def test_source_prep_default_empty_or_unavailable_states_preserve_workbenc
             screen,
             workbench=contract["workbench"],
             strip=contract["strip"],
+            strip_max_height=contract.get("strip_max_height", 2),
             panes=contract["panes"],
             actions=contract["actions"],
             height=42,
@@ -888,7 +914,7 @@ async def test_source_prep_default_empty_or_unavailable_states_preserve_workbenc
 async def test_watchlists_screen_matches_approved_control_plane_columns():
     app = _build_test_app()
     app.watchlist_scope_service = StaticWatchlistsScopeService([])
-    host = DestinationHarness(app, "watchlists_collections")
+    host = _visual_destination_harness(app, "watchlists_collections")
 
     async with host.run_test(size=(160, 42)) as pilot:
         screen = _active_destination_screen(host)
@@ -901,15 +927,21 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
             >= 0
         )
         visible_text = _visible_static_text(screen)
-        assert "Filters: Running Failed Recent Alerts Sources Feeds" in visible_text
-        assert "Column 1: Watchlist List" in visible_text
-        assert "Column 2: Detail / Items / Runs" in visible_text
-        assert "Column 3: Status Inspector" in visible_text
-        assert "State:" in visible_text
-        assert "Retry/backoff:" in visible_text
+        assert screen.query_one("#watchlists-header-bar").region.height == 3
+        assert "Backend: local" in visible_text
+        assert "Sources" in visible_text
+        assert "Overview" in visible_text
+        assert "Inspector" in visible_text
+        assert "State: ready" in visible_text
+        assert "Alert rules active:" in visible_text
+        assert "Latest run status:" in visible_text
         assert "Collections" not in visible_text
+        assert "Column 1:" not in visible_text
+        assert "Column 2:" not in visible_text
+        assert "Column 3:" not in visible_text
 
         for selector in (
+            "#watchlists-nav-list-divider",
             "#watchlists-list-detail-divider",
             "#watchlists-detail-inspector-divider",
         ):
@@ -968,7 +1000,7 @@ async def test_destination_pane_titles_are_user_facing_not_ordinal(
     route, workbench, expected_titles
 ):
     app = _build_test_app()
-    host = DestinationHarness(app, route)
+    host = _visual_destination_harness(app, route)
 
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
@@ -1214,7 +1246,7 @@ SOURCE_PREP_LOADING_CONTRACTS = [
         "_refresh_local_wc_snapshot",
         "#wc-loading-state",
         SOURCE_PREP_WORKBENCHES["watchlists_collections"],
-        "#watchlists-detail-pane",
+        "#watchlists-list-pane",
     ),
     (
         "skills",
@@ -1243,7 +1275,7 @@ async def test_source_prep_loading_states_preserve_workbench_geometry(
 ):
     monkeypatch.setattr(screen_cls, refresh_method, lambda self: None)
     app = _build_test_app()
-    host = DestinationHarness(app, route)
+    host = _visual_destination_harness(app, route)
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, loading_marker)
@@ -1251,6 +1283,7 @@ async def test_source_prep_loading_states_preserve_workbench_geometry(
             screen,
             workbench=contract["workbench"],
             strip=contract["strip"],
+            strip_max_height=contract.get("strip_max_height", 2),
             panes=contract["panes"],
             actions=contract["actions"],
             height=42,
@@ -1811,7 +1844,12 @@ COMPACT_DESTINATION_CONTRACTS = {
         "workbench": "#watchlists-workbench",
         "object": "#watchlists-list-pane",
         "detail": "#watchlists-detail-pane",
-        "actions": ("#wc-open-watchlists", "#watchlists-follow-in-console"),
+        "actions": (
+            "#nav-overview",
+            "#wc-empty-create-source",
+            "#wc-open-watchlists",
+            "#watchlists-follow-in-console",
+        ),
     },
     "schedules": {
         "identity": "#schedules-title",
@@ -1892,7 +1930,7 @@ async def test_top_level_destinations_keep_primary_workbench_visible_at_compact_
     elif route == "chat":
         host = ConsoleHarness(app)
     else:
-        host = DestinationHarness(app, route)
+        host = _visual_destination_harness(app, route)
     async with host.run_test(size=(100, 32)) as pilot:
         screen = host.screen_stack[-1]
         await _wait_for_selector(screen, pilot, contract["workbench"])
@@ -1985,7 +2023,7 @@ async def test_tab_order_reaches_visible_primary_action(route, targets):
         _mark_console_onboarding_complete(app)
         host = ConsoleHarness(app)
     else:
-        host = DestinationHarness(app, route)
+        host = _visual_destination_harness(app, route)
     async with host.run_test(size=(140, 42)) as pilot:
         screen = host.screen_stack[-1]
         workbench = TOP_LEVEL_WORKBENCH_SELECTORS[route]
