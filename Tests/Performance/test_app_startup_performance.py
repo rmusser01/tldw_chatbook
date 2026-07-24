@@ -566,6 +566,78 @@ async def test_deferred_migration_backs_off_running_guard_failures(
 
 
 @pytest.mark.asyncio
+async def test_deferred_migration_isolates_terminal_failures_and_drains_later_work(
+    monkeypatch,
+) -> None:
+    """Malformed conversations do not consume the retry budget for later work."""
+
+    import tldw_chatbook.app as app_module
+    from tldw_chatbook.Chat.citation_legacy_migration import (
+        LegacyMigrationBatchResult,
+        LegacyMigrationState,
+    )
+
+    results = iter(
+        (
+            LegacyMigrationBatchResult(
+                state=LegacyMigrationState.RUNNING,
+                reason_code="legacy_cutover_guard_failed",
+            ),
+            LegacyMigrationBatchResult(
+                state=LegacyMigrationState.RUNNING,
+                reason_code="legacy_batch_invalid",
+            ),
+            LegacyMigrationBatchResult(
+                state=LegacyMigrationState.RUNNING,
+                reason_code="legacy_field_too_large",
+            ),
+            LegacyMigrationBatchResult(
+                state=LegacyMigrationState.RUNNING,
+                reason_code="legacy_source_unavailable",
+            ),
+            LegacyMigrationBatchResult(
+                state=LegacyMigrationState.COMPLETE,
+                processed_messages=1,
+            ),
+        )
+    )
+    calls = 0
+    delays: list[float] = []
+
+    def migrate_idle_unit():
+        nonlocal calls
+        calls += 1
+        return next(results)
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    logger = Mock()
+    fake_app = SimpleNamespace(
+        citation_legacy_migration_service=SimpleNamespace(
+            ready=True,
+            migrate_idle_unit=migrate_idle_unit,
+        ),
+        loguru_logger=logger,
+    )
+    monkeypatch.setattr(app_module.asyncio, "sleep", record_sleep)
+
+    await app_module.TldwCli._migrate_legacy_citations_idle_unit(fake_app)
+
+    assert calls == 5
+    assert delays == [1, 0, 0, 0]
+    assert [call.args[0] for call in logger.warning.call_args_list] == [
+        f"Legacy citation migration retained retry state: reason_code={reason_code!r}"
+        for reason_code in (
+            "legacy_cutover_guard_failed",
+            "legacy_batch_invalid",
+            "legacy_field_too_large",
+            "legacy_source_unavailable",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_deferred_migration_rechecks_disabled_policy_between_units() -> None:
     """Turning off canonical writes stops the driver before another batch."""
 

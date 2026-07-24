@@ -7678,7 +7678,10 @@ class TldwCli(
                         "Legacy citation migration retained retry state: "
                         f"reason_code={result.reason_code!r}"
                     )
-                    if state == "running":
+                    if (
+                        state == "running"
+                        and result.reason_code == "legacy_cutover_guard_failed"
+                    ):
                         retry_count += 1
                         if retry_count >= 3:
                             return
