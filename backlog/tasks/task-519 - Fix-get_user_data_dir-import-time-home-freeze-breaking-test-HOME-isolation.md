@@ -23,7 +23,7 @@ Fix at the root: make `get_user_data_dir()` resolve the home/XDG env at CALL tim
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 `get_user_data_dir()` (and any sibling data-dir accessor) honors `HOME`/`XDG_DATA_HOME` changes made after module import (call-time resolution), or the conftest isolation fixture patches a real seam that achieves the same.
+- [x] #1 `get_user_data_dir()` honors `HOME` changes made after module import (call-time resolution; `XDG_DATA_HOME` deliberately NOT honored — the pre-existing default never consulted it, and adding it would silently relocate an XDG user's data dir on upgrade with no migration; see Notes), and the conftest isolation fixture patches real seams.
 - [x] #2 Running the full test suite with `HOME` pointed at a scratch dir creates NO files under the real user data dir (spot-proof with the rag_profiles consumers that leaked before).
 - [x] #3 The `PYTEST_CURRENT_TEST` guard in `_maybe_run_first_run_import` is replaced by (or demoted behind) a conftest-level fixture, so the production wiring is exercised by the organic suite.
 <!-- AC:END -->
