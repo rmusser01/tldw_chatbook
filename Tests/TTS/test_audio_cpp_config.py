@@ -215,9 +215,14 @@ def test_invalid_url_categories_are_rejected_with_one_safe_diagnostic(
         ("http://example.com:80/", "http://example.com"),
         ("https://EXAMPLE.COM:443/", "https://example.com"),
         ("https://EXAMPLE.COM:444/", "https://example.com:444"),
+        ("http://example.com.", "http://example.com."),
         (
             "http://bücher.example/",
             "http://xn--bcher-kva.example",
+        ),
+        (
+            "HTTP://BÜCHER.EXAMPLE.",
+            "http://xn--bcher-kva.example.",
         ),
         (
             "HTTP://[2001:0DB8:0:0:0:0:0:1]:80/",
@@ -253,6 +258,16 @@ def test_semantically_equivalent_origins_produce_equal_configurations() -> None:
     assert configurations[0].base_url == "http://example.com"
 
 
+def test_rooted_and_dotless_dns_origins_remain_distinct() -> None:
+    AudioCppConfig, _ = _config_api()
+
+    rooted = AudioCppConfig.from_mapping({"base_url": "HTTP://EXAMPLE.COM."})
+    dotless = AudioCppConfig.from_mapping({"base_url": "http://example.com"})
+
+    assert rooted.base_url == "http://example.com."
+    assert rooted != dotless
+
+
 @pytest.mark.parametrize(
     "base_url",
     (
@@ -264,6 +279,8 @@ def test_semantically_equivalent_origins_produce_equal_configurations() -> None:
         "http://0127.0.0.1",
         "http://999.1.1.1",
         "http://[v1.fe80]",
+        "http://example.com..",
+        "http://example..com",
     ),
 )
 def test_client_incompatible_host_forms_are_rejected_safely(

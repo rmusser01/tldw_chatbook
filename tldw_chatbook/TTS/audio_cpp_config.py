@@ -76,7 +76,7 @@ def _canonicalize_hostname(netloc: str, hostname: str) -> str:
             raise _invalid_url() from None
         return f"[{address.compressed}]"
 
-    candidate = hostname[:-1] if hostname.endswith(".") else hostname
+    candidate = hostname
     numeric_labels = candidate.split(".")
     if len(numeric_labels) == 4 and all(
         label
