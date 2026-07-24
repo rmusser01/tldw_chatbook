@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-07-23
-Related Task: [backlog/tasks/task-400 - Fix-MCP-navigation-crash-by-requiring-Textual-8.md](../tasks/task-400%20-%20Fix-MCP-navigation-crash-by-requiring-Textual-8.md)
+Related Task: [backlog/tasks/task-503 - Fix-MCP-navigation-crash-by-requiring-Textual-8.md](../tasks/task-503%20-%20Fix-MCP-navigation-crash-by-requiring-Textual-8.md)
 Supersedes: N/A
 
 ## Decision

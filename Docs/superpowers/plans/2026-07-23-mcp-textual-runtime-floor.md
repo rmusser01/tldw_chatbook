@@ -302,10 +302,10 @@ git add .github/workflows/test.yml Tests/CI/test_github_actions_test_workflow.py
 git commit -m "ci: test MCP on minimum Textual"
 ```
 
-### Task 4: Verify the supported runtime and close TASK-400
+### Task 4: Verify the supported runtime and close TASK-503
 
 **Files:**
-- Modify: `backlog/tasks/task-400 - Fix-MCP-navigation-crash-by-requiring-Textual-8.md` through the Backlog CLI
+- Modify: `backlog/tasks/task-503 - Fix-MCP-navigation-crash-by-requiring-Textual-8.md` through the Backlog CLI
 - Verify: `Docs/superpowers/specs/2026-07-23-mcp-textual-runtime-floor-design.md`
 - Verify: `backlog/decisions/022-textual-8-runtime-floor.md`
 
@@ -357,9 +357,9 @@ git diff --check
 
 Expected: no output and exit code 0.
 
-- [x] **Step 4: Update TASK-400 acceptance criteria and notes**
+- [x] **Step 4: Update TASK-503 acceptance criteria and notes**
 
-Use `backlog task edit 400 --check-ac` for all five acceptance criteria, set
+Use `backlog task edit 503 --check-ac` for all five acceptance criteria, set
 implementation notes summarizing the bounded Textual range, semantic
 dual-manifest test, minimum-version CI lane, changelog, ADR-022, and exact-floor
 test evidence, then set the task to `Done`.
@@ -372,7 +372,7 @@ git add \
   Docs/superpowers/plans/2026-07-23-mcp-textual-runtime-floor.md \
   backlog/decisions/022-textual-8-runtime-floor.md \
   backlog/decisions/README.md \
-  "backlog/tasks/task-400 - Fix-MCP-navigation-crash-by-requiring-Textual-8.md"
+  "backlog/tasks/task-503 - Fix-MCP-navigation-crash-by-requiring-Textual-8.md"
 git commit -m "docs: record Textual runtime decision"
 ```
 
