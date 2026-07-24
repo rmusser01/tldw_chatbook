@@ -668,6 +668,31 @@ FIXME: The mappings should be validated for correctness and completeness for eac
 """
 
 
+def extract_response_content(resp: Any) -> str:
+    """Extract the assistant text from a non-streaming ``chat_api_call`` result.
+
+    ``chat_api_call`` returns the provider handler's full response. For the
+    common OpenAI-shaped dict that is ``resp["choices"][0]["message"]["content"]``;
+    some paths return a flat ``{"content": ...}``. Returns "" for any missing/
+    malformed/None content. Never raises.
+
+    Args:
+        resp: A ``chat_api_call`` non-streaming return value (dict), or any value.
+
+    Returns:
+        The assistant text, or "" when it cannot be found.
+    """
+    if not isinstance(resp, dict):
+        return resp if isinstance(resp, str) else ""
+    choices = resp.get("choices") or []
+    if choices:
+        message = (choices[0] or {}).get("message") or {}
+        content = message.get("content")
+        if content:
+            return content
+    return resp.get("content") or ""
+
+
 def chat_api_call(
     api_endpoint: str,
     messages_payload: List[Dict[str, Any]],  # CHANGED from input_data, prompt
