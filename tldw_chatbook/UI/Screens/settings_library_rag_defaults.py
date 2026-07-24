@@ -14,8 +14,12 @@ from .settings_config_models import SettingsValidationResult
 
 SEARCH_MODES = frozenset({"plain", "semantic", "hybrid"})
 CITATION_STYLES = frozenset({"inline", "footnote", "none"})
+CHUNKING_METHODS = frozenset({"words", "sentences", "paragraphs"})
+DISTANCE_METRICS = frozenset({"cosine", "l2", "ip"})
 DEFAULT_SEARCH_MODE = "semantic"
 DEFAULT_CITATION_STYLE = "inline"
+DEFAULT_CHUNKING_METHOD = "words"
+DEFAULT_DISTANCE_METRIC = "cosine"
 MIN_RAG_RESULT_COUNT = 1
 MAX_RAG_RESULT_COUNT = 100
 MIN_RAG_BALANCE = 0.0
@@ -40,6 +44,23 @@ class SettingsLibraryRagDefaults:
     citation_style: str = DEFAULT_CITATION_STYLE
     snippet_max_chars: int = 240
     max_context_size: int = 16000
+    # Embedding (task-3/SP3: extended profile editor)
+    embedding_model: str = "mxbai-embed-large-v1"
+    embedding_device: str = "auto"
+    embedding_batch_size: int = 16
+    embedding_max_length: int = 512
+    # Chunking
+    chunk_size: int = 400
+    chunk_overlap: int = 100
+    chunking_method: str = DEFAULT_CHUNKING_METHOD
+    # Vector store
+    distance_metric: str = DEFAULT_DISTANCE_METRIC
+    # Reranking -- `enable_reranking` controls the PRESENCE of the active
+    # profile's `reranking_config` (see settings_rag_profile_adapter.py); a
+    # blank `reranker_model` means "use the reranker's own default".
+    enable_reranking: bool = False
+    reranker_model: str = ""
+    reranker_top_k: int = 5
 
 
 def _coerce_bool(value: Any, default: bool) -> bool:
@@ -136,6 +157,32 @@ def normalise_library_rag_citation_style(value: Any) -> str:
     """
     text = str(value).strip()
     return text if text in CITATION_STYLES else DEFAULT_CITATION_STYLE
+
+
+def normalise_library_rag_chunking_method(value: Any) -> str:
+    """Return a safe Library/RAG chunking method for widgets.
+
+    Args:
+        value: Raw config or draft value.
+
+    Returns:
+        A supported chunking method, falling back to the words default.
+    """
+    text = str(value).strip()
+    return text if text in CHUNKING_METHODS else DEFAULT_CHUNKING_METHOD
+
+
+def normalise_library_rag_distance_metric(value: Any) -> str:
+    """Return a safe Library/RAG vector-store distance metric for widgets.
+
+    Args:
+        value: Raw config or draft value.
+
+    Returns:
+        A supported distance metric, falling back to the cosine default.
+    """
+    text = str(value).strip()
+    return text if text in DISTANCE_METRICS else DEFAULT_DISTANCE_METRIC
 
 
 def load_library_rag_defaults(
@@ -281,6 +328,41 @@ def validate_library_rag_defaults(
             False,
             "Context budget must be between "
             f"{MIN_RAG_CONTEXT_CHARS} and {MAX_RAG_CONTEXT_CHARS} characters.",
+        )
+    if not str(values.embedding_model).strip():
+        return SettingsValidationResult(
+            False, "Embedding model must not be empty."
+        )
+    embedding_batch_size = _strict_int(values.embedding_batch_size)
+    if embedding_batch_size is None or embedding_batch_size <= 0:
+        return SettingsValidationResult(
+            False, "Embedding batch size must be positive."
+        )
+    embedding_max_length = _strict_int(values.embedding_max_length)
+    if embedding_max_length is None or embedding_max_length <= 0:
+        return SettingsValidationResult(
+            False, "Embedding max length must be positive."
+        )
+    chunk_size = _strict_int(values.chunk_size)
+    if chunk_size is None or chunk_size <= 0:
+        return SettingsValidationResult(False, "Chunk size must be positive.")
+    chunk_overlap = _strict_int(values.chunk_overlap)
+    if chunk_overlap is None or chunk_overlap < 0 or chunk_overlap >= chunk_size:
+        return SettingsValidationResult(
+            False, "Chunk overlap must be at least 0 and less than chunk size."
+        )
+    if values.chunking_method not in CHUNKING_METHODS:
+        return SettingsValidationResult(
+            False, "Chunking method must be words, sentences, or paragraphs."
+        )
+    if values.distance_metric not in DISTANCE_METRICS:
+        return SettingsValidationResult(
+            False, "Distance metric must be cosine, l2, or ip."
+        )
+    reranker_top_k = _strict_int(values.reranker_top_k)
+    if reranker_top_k is None or reranker_top_k < 1:
+        return SettingsValidationResult(
+            False, "Reranker top-k must be at least 1."
         )
     return SettingsValidationResult(True, "Library/RAG defaults are valid.")
 
