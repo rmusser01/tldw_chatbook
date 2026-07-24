@@ -899,6 +899,7 @@ class ConsoleAgentBridge:
         review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
+        request_skill_install_confirm: Callable[[str], bool] | None = None,
     ) -> tuple[str, RunOutcome]:
         """Run the agent loop as the Console reply engine.
 
@@ -983,6 +984,61 @@ class ConsoleAgentBridge:
         # gated substitution ran) has nothing to seed.
         if skill_file_bindings is not None:
             skill_file_bindings.authorized.update(turn_skill_bindings)
+        # Agent-callable skill install (5th runtime tool). Built only when a
+        # skills service exists; wired to AgentService, which pins/dispatches
+        # it for the top-level agent only. Order (load-bearing): enforce
+        # policy (no prompt on denial) -> classify URL (no prompt on a bad
+        # URL) -> in-chat confirm (plain blocking call, OUTSIDE asyncio.run)
+        # -> asyncio.run(install) -> broad-catch wrap. import_skill_file
+        # raises a bare ValueError("local_skill_exists:...") on collision, so
+        # the install catch is broad.
+        install_skill_tool = None
+        if self._skills_service is not None:
+            scope = self._skills_service
+
+            def install_skill_tool(url: str) -> ToolResult:
+                from tldw_chatbook.Skills_Interop.skill_remote_fetch import (
+                    classify_skill_source_url,
+                    install_skill_from_url,
+                )
+                from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+
+                try:
+                    scope.enforce_install_remote()
+                except PolicyDeniedError as exc:
+                    return ToolResult(ok=False, error=exc.user_message)
+                except Exception as exc:  # noqa: BLE001
+                    return ToolResult(ok=False, error=str(exc))
+                try:
+                    classify_skill_source_url(url)
+                except Exception as exc:  # noqa: BLE001 (RemoteSkillError etc.)
+                    return ToolResult(ok=False, error=str(exc))
+                try:
+                    allowed = bool(
+                        request_skill_install_confirm(url)
+                        if request_skill_install_confirm is not None
+                        else False
+                    )
+                except Exception:  # noqa: BLE001 — a UI error fails closed
+                    allowed = False
+                if not allowed:
+                    return ToolResult(
+                        ok=False, error="The user declined to install this skill."
+                    )
+                try:
+                    result = asyncio.run(
+                        install_skill_from_url(url, scope_service=scope)
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    return ToolResult(ok=False, error=str(exc))
+                name = result.get("name", "") if isinstance(result, dict) else ""
+                return ToolResult(
+                    ok=True,
+                    content=(
+                        f'Installed "{name}" — it is pending your review and '
+                        "cannot run until you approve it in Library > Skills."
+                    ),
+                )
         # [console] native_tool_calls kill-switch (Task 5): a caller-supplied
         # predicate (chat_screen.py's _console_native_tool_calls_enabled)
         # gates whether this run may use native provider tool-calls at all;
@@ -1103,6 +1159,7 @@ class ConsoleAgentBridge:
             skill_file_bindings=skill_file_bindings,
             review_tool_calls=review_tool_calls,
             review_state_scope=review_state_scope,
+            install_skill_tool=install_skill_tool,
         )
 
         supersede_run_id = (
