@@ -748,6 +748,98 @@ async def test_close_waits_for_active_stream_before_closing_manager() -> None:
 
 
 @pytest.mark.asyncio
+async def test_shutdown_drain_allows_admitted_operation_to_materialize() -> None:
+    manager = FakeLegacyManager(FakeLegacyBackend())
+    host = LegacyBackendHost(
+        provider_id="kokoro",
+        app_config={},
+        manager_factory=lambda _: manager,
+        shutdown_timeout_seconds=1,
+    )
+    operation_lock = host._operation_locks.setdefault(
+        "local_kokoro_default_onnx",
+        asyncio.Lock(),
+    )
+    await operation_lock.acquire()
+    generation = asyncio.create_task(
+        collect(
+            host.generate(
+                "local_kokoro_default_onnx",
+                speech_request(),
+                None,
+            )
+        )
+    )
+    await asyncio.sleep(0)
+    close = asyncio.create_task(host.close())
+    await asyncio.sleep(0)
+
+    operation_lock.release()
+
+    assert await generation == b"audio"
+    await close
+    assert manager.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_shutdown_surfaces_uncooperative_stream_cleanup_timeout() -> None:
+    backend = AsyncFinalizingLegacyBackend()
+    manager = FakeLegacyManager(backend)
+    host = LegacyBackendHost(
+        provider_id="kokoro",
+        app_config={},
+        manager_factory=lambda _: manager,
+        shutdown_timeout_seconds=0.01,
+    )
+    adapter = LegacyTTSAdapter(
+        "kokoro",
+        host,
+        legacy_catalog("kokoro"),
+    )
+    response = await adapter.synthesize(
+        adapter_request("kokoro", "local_kokoro_default_onnx"),
+        None,
+    )
+    assert await anext(response.byte_stream) == b"first"
+    stream_close = asyncio.create_task(response.byte_stream.aclose())
+    await backend.cleanup_started.wait()
+
+    with pytest.raises(TimeoutError, match="operations did not stop"):
+        await asyncio.wait_for(host.close(), timeout=0.2)
+
+    assert manager.close_calls == 1
+    backend.allow_cleanup.set()
+    with pytest.raises(asyncio.CancelledError):
+        await stream_close
+
+
+@pytest.mark.asyncio
+async def test_shutdown_bounds_manager_cleanup() -> None:
+    manager = BlockingCloseLegacyManager(FakeLegacyBackend())
+    host = LegacyBackendHost(
+        provider_id="kokoro",
+        app_config={},
+        manager_factory=lambda _: manager,
+        shutdown_timeout_seconds=0.01,
+    )
+    assert (
+        await collect(
+            host.generate(
+                "local_kokoro_default_onnx",
+                speech_request(),
+                None,
+            )
+        )
+        == b"audio"
+    )
+
+    with pytest.raises(TimeoutError, match="manager did not close"):
+        await asyncio.wait_for(host.close(), timeout=0.2)
+
+    assert manager.close_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_cancelled_close_waiter_rejoins_shared_cleanup() -> None:
     manager = BlockingCloseLegacyManager(FakeLegacyBackend())
     host = LegacyBackendHost(

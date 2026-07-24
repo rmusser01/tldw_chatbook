@@ -24,6 +24,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSRequest,
 )
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
+from tldw_chatbook.TTS.legacy_bridge import legacy_provider_specs
 from tldw_chatbook.TTS.TTS_Generation import (
     TTSService,
     bind_tts_service,
@@ -850,6 +851,80 @@ async def test_service_wait_closed_joins_bounded_registry_shutdown() -> None:
     await wait_for_close
     await service.wait_closed()
     assert adapter.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_service_shutdown_cancels_legacy_stream_after_drain_deadline() -> None:
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    class BlockingBackend:
+        def set_progress_callback(self, callback: object) -> None:
+            del callback
+
+        async def generate_speech_stream(
+            self,
+            request: OpenAISpeechRequest,
+        ) -> AsyncGenerator[bytes, None]:
+            del request
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            yield b"unreachable"
+
+    class Manager:
+        def __init__(self) -> None:
+            self.backend = BlockingBackend()
+            self.close_calls = 0
+
+        async def get_backend(self, internal_model_id: str) -> BlockingBackend:
+            del internal_model_id
+            return self.backend
+
+        async def close_all_backends(self) -> None:
+            self.close_calls += 1
+
+    async def consume_legacy_stream(service: TTSService) -> bytes:
+        return b"".join(
+            [
+                chunk
+                async for chunk in service.generate_audio_stream(
+                    speech_request(),
+                    "local_kokoro_default_onnx",
+                )
+            ]
+        )
+
+    manager = Manager()
+    specs = legacy_provider_specs(
+        {},
+        manager_factory=lambda _provider_id, _config: manager,
+        shutdown_timeout_seconds=0.01,
+    )
+    service = TTSService(
+        TTSAdapterRegistry(
+            specs=specs,
+            aliases={},
+            shutdown_timeout_seconds=0.01,
+        )
+    )
+    generation = asyncio.create_task(consume_legacy_stream(service))
+    await started.wait()
+
+    await service.close()
+    try:
+        await asyncio.wait_for(service.wait_closed(), timeout=0.2)
+    finally:
+        if not generation.done():
+            generation.cancel()
+        await asyncio.gather(generation, return_exceptions=True)
+        await asyncio.wait_for(service.wait_closed(), timeout=0.2)
+
+    assert cancelled.is_set()
+    assert manager.close_calls == 1
 
 
 @pytest.mark.asyncio

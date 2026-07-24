@@ -5,6 +5,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any
 
+from tldw_chatbook.TTS._async_lifecycle import join_retained_task
 from tldw_chatbook.TTS.adapter_registry import (
     ReconfigureResult,
     TTSAdapterLease,
@@ -32,36 +33,10 @@ def _record_cleanup_failure(primary_error: BaseException) -> None:
 
 
 async def _join_retained_task(task: asyncio.Task[None]) -> None:
-    cancellation: asyncio.CancelledError | None = None
-    waiter = asyncio.current_task()
-    cancellation_requests = waiter.cancelling() if waiter is not None else 0
-    while not task.done():
-        try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError as error:
-            next_cancellation_requests = (
-                waiter.cancelling() if waiter is not None else 0
-            )
-            if next_cancellation_requests > cancellation_requests:
-                cancellation = cancellation or error
-                cancellation_requests = next_cancellation_requests
-        except BaseException:
-            if not task.done():
-                raise
-            break
-
-    task_error: BaseException | None = None
-    try:
-        task.result()
-    except BaseException as error:
-        task_error = error
-
-    if cancellation is not None:
-        if task_error is not None:
-            _record_cleanup_failure(cancellation)
-        raise cancellation
-    if task_error is not None:
-        raise task_error
+    await join_retained_task(
+        task,
+        on_failure_after_cancellation=_record_cleanup_failure,
+    )
 
 
 async def _cleanup_preserving_primary(

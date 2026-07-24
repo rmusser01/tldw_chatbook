@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from tldw_chatbook.TTS._async_lifecycle import join_retained_task
 from tldw_chatbook.TTS.adapter_types import (
     TTSAdapter,
     TTSProviderCatalog,
@@ -56,15 +57,12 @@ class TTSAdapterLease:
         self.provider_id = provider_id
         self.adapter = adapter
         self._release_callback = release_callback
-        self._released = False
-        self._release_lock = asyncio.Lock()
+        self._release_task: asyncio.Future[None] | None = None
 
     async def release(self) -> None:
-        async with self._release_lock:
-            if self._released:
-                return
-            self._released = True
-            await self._release_callback()
+        if self._release_task is None:
+            self._release_task = asyncio.ensure_future(self._release_callback())
+        await join_retained_task(self._release_task)
 
     async def __aenter__(self) -> TTSAdapterLease:
         return self

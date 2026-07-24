@@ -157,37 +157,76 @@ class LegacyBackendHost:
         provider_id: str,
         app_config: Mapping[str, Any],
         manager_factory: Callable[[dict[str, Any]], TTSBackendManager],
+        shutdown_timeout_seconds: float = 10.0,
     ) -> None:
+        if shutdown_timeout_seconds < 0:
+            raise ValueError("shutdown_timeout_seconds cannot be negative")
+
         self.provider_id = provider_id
         self._app_config = deepcopy(dict(app_config))
         self._manager_factory = manager_factory
+        self._shutdown_timeout_seconds = shutdown_timeout_seconds
         self._manager: TTSBackendManager | None = None
         self._manager_lock = asyncio.Lock()
         self._operation_locks: dict[str, asyncio.Lock] = {}
         self._active_operations = 0
+        self._active_operation_tasks: dict[asyncio.Task[Any], int] = {}
         self._operations_drained = asyncio.Event()
         self._operations_drained.set()
         self._closed = False
+        self._manager_detached = False
         self._close_task: asyncio.Task[None] | None = None
+        self._manager_close_task: asyncio.Task[None] | None = None
 
     async def _get_manager(self) -> TTSBackendManager:
         async with self._manager_lock:
             if self._manager is None:
+                if self._manager_detached:
+                    raise RuntimeError("Legacy TTS host is closed")
                 self._manager = self._manager_factory(deepcopy(self._app_config))
             return self._manager
 
-    async def _admit_operation(self) -> None:
+    async def _admit_operation(self) -> asyncio.Task[Any]:
+        operation_task = asyncio.current_task()
+        if operation_task is None:
+            raise RuntimeError("Legacy TTS operation requires an asyncio task")
         async with self._manager_lock:
             if self._closed:
                 raise RuntimeError("Legacy TTS host is closed")
             self._active_operations += 1
+            self._active_operation_tasks[operation_task] = (
+                self._active_operation_tasks.get(operation_task, 0) + 1
+            )
             self._operations_drained.clear()
+        return operation_task
 
-    async def _release_operation(self) -> None:
+    async def _release_operation(self, operation_task: asyncio.Task[Any]) -> None:
         async with self._manager_lock:
             self._active_operations -= 1
+            self._remove_operation_task(operation_task)
             if self._active_operations == 0:
                 self._operations_drained.set()
+
+    async def _transfer_operation(
+        self,
+        operation_task: asyncio.Task[Any],
+    ) -> asyncio.Task[Any]:
+        current_task = asyncio.current_task()
+        if current_task is None or current_task is operation_task:
+            return operation_task
+        async with self._manager_lock:
+            self._remove_operation_task(operation_task)
+            self._active_operation_tasks[current_task] = (
+                self._active_operation_tasks.get(current_task, 0) + 1
+            )
+        return current_task
+
+    def _remove_operation_task(self, operation_task: asyncio.Task[Any]) -> None:
+        task_operations = self._active_operation_tasks[operation_task] - 1
+        if task_operations:
+            self._active_operation_tasks[operation_task] = task_operations
+        else:
+            del self._active_operation_tasks[operation_task]
 
     async def generate(
         self,
@@ -195,7 +234,7 @@ class LegacyBackendHost:
         request: OpenAISpeechRequest,
         progress_sink: ProgressSink | None,
     ) -> AsyncIterator[bytes]:
-        await self._admit_operation()
+        operation_task = await self._admit_operation()
         try:
             lock = self._operation_locks.setdefault(
                 internal_model_id,
@@ -216,12 +255,16 @@ class LegacyBackendHost:
                     try:
                         async for chunk in stream:
                             yield bytes(chunk)
+                            operation_task = await self._transfer_operation(
+                                operation_task
+                            )
                     finally:
+                        operation_task = await self._transfer_operation(operation_task)
                         await _close_delegated_stream(stream)
                 finally:
                     backend.set_progress_callback(None)
         finally:
-            await self._release_operation()
+            await self._release_operation(operation_task)
 
     async def close(self) -> None:
         async with self._manager_lock:
@@ -232,12 +275,72 @@ class LegacyBackendHost:
         await asyncio.shield(close_task)
 
     async def _close_when_drained(self) -> None:
-        await self._operations_drained.wait()
+        if not self._operations_drained.is_set():
+            try:
+                await asyncio.wait_for(
+                    self._operations_drained.wait(),
+                    timeout=self._shutdown_timeout_seconds,
+                )
+            except TimeoutError:
+                pass
+
+        pending_operations: set[asyncio.Task[Any]] = set()
+        if not self._operations_drained.is_set():
+            async with self._manager_lock:
+                operation_tasks = set(self._active_operation_tasks)
+            for operation_task in operation_tasks:
+                operation_task.cancel()
+            pending_operations = await self._wait_pending(operation_tasks)
+
         async with self._manager_lock:
             manager = self._manager
             self._manager = None
+            self._manager_detached = True
         if manager is not None:
-            await manager.close_all_backends()
+            await self._close_manager(manager)
+        if pending_operations:
+            raise TimeoutError("Legacy TTS operations did not stop before shutdown")
+
+    async def _wait_pending(
+        self,
+        tasks: set[asyncio.Task[Any]],
+    ) -> set[asyncio.Task[Any]]:
+        if not tasks:
+            return set()
+        await asyncio.sleep(0)
+        pending = {task for task in tasks if not task.done()}
+        if pending and self._shutdown_timeout_seconds:
+            _, pending = await asyncio.wait(
+                pending,
+                timeout=self._shutdown_timeout_seconds,
+            )
+        return pending
+
+    async def _close_manager(self, manager: TTSBackendManager) -> None:
+        close_task = asyncio.create_task(manager.close_all_backends())
+        self._manager_close_task = close_task
+        pending = await self._wait_pending({close_task})
+        if not pending:
+            close_task.result()
+            return
+
+        close_task.cancel()
+        pending = await self._wait_pending({close_task})
+        if pending:
+            close_task.add_done_callback(self._observe_task_result)
+        else:
+            try:
+                close_task.result()
+            except asyncio.CancelledError:
+                pass
+        raise TimeoutError("Legacy TTS manager did not close before shutdown")
+
+    @staticmethod
+    def _observe_task_result(task: asyncio.Task[Any]) -> None:
+        try:
+            task.exception()
+        except BaseException:
+            pass
 
 
 class LegacyTTSAdapter:
@@ -308,7 +411,11 @@ def legacy_provider_specs(
         TTSBackendManager,
     ]
     | None = None,
+    shutdown_timeout_seconds: float = 10.0,
 ) -> tuple[TTSProviderSpec, ...]:
+    if shutdown_timeout_seconds < 0:
+        raise ValueError("shutdown_timeout_seconds cannot be negative")
+
     def default_manager_factory(
         _provider_id: str,
         config: dict[str, Any],
@@ -334,6 +441,7 @@ def legacy_provider_specs(
                     selected_provider,
                     current_config,
                 ),
+                shutdown_timeout_seconds=shutdown_timeout_seconds,
             )
             return LegacyTTSAdapter(
                 selected_provider,

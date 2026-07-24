@@ -119,6 +119,38 @@ async def test_changed_config_retires_only_selected_adapter_after_lease() -> Non
 
 
 @pytest.mark.asyncio
+async def test_cancelled_release_finishes_retired_adapter_cleanup() -> None:
+    factory = FakeAdapterFactory("openai")
+    registry = TTSAdapterRegistry(
+        specs=(provider_spec("openai", factory, {"revision": 1}),),
+        aliases={},
+        shutdown_timeout_seconds=0,
+    )
+    lease = await registry.acquire("openai")
+    old_adapter = lease.adapter
+    await registry.reconfigure_provider("openai", {"revision": 2})
+    slot = registry._slots["openai"]
+    await slot.lock.acquire()
+    release = asyncio.create_task(lease.release())
+    try:
+        await asyncio.sleep(0)
+        release.cancel()
+        await asyncio.sleep(0)
+        returned_while_registry_release_was_blocked = release.done()
+    finally:
+        slot.lock.release()
+
+    with pytest.raises(asyncio.CancelledError):
+        await release
+    await lease.release()
+
+    assert returned_while_registry_release_was_blocked is False
+    assert old_adapter.close_calls == 1
+    await registry.close()
+    await registry.wait_closed()
+
+
+@pytest.mark.asyncio
 async def test_identical_config_is_a_no_op() -> None:
     factory = FakeAdapterFactory("openai")
     registry = TTSAdapterRegistry(
