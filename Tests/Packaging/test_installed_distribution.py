@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import configparser
 from email.parser import Parser
+import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -32,6 +34,40 @@ TEMPLATE_NAMES = {
     "words",
     "xml",
 }
+
+INSTALLED_PROBE = r"""
+from pathlib import Path
+import json
+import os
+import tomllib
+
+import tldw_chatbook
+from tldw_chatbook.Chunking.chunking_templates import ChunkingTemplateManager
+from tldw_chatbook.Evals.config_loader import EvalConfigLoader
+from tldw_chatbook.RAG_Search.pipeline_loader import PipelineLoader
+from tldw_chatbook.app import TldwCli, get_app
+
+package_root = Path(tldw_chatbook.__file__).resolve().parent
+expected_target = Path(os.environ["EXPECTED_TARGET"]).resolve()
+expected_templates = set(json.loads(os.environ["EXPECTED_TEMPLATES"]))
+assert package_root.is_relative_to(expected_target)
+assert (package_root / "css" / "tldw_cli_modular.tcss").is_file()
+
+with (package_root / "Config_Files" / "rag_pipelines.toml").open("rb") as stream:
+    assert "plain" in tomllib.load(stream)["pipelines"]
+
+loader = PipelineLoader(config_dir=package_root / "Config_Files")
+loader.load_pipeline_config()
+assert "plain" in loader.pipelines
+assert set(ChunkingTemplateManager().get_available_templates()) == expected_templates
+assert "code_execution" in EvalConfigLoader().get_task_types()
+assert (package_root / "Third_Party" / "aider" / "LICENSE.txt").is_file()
+assert (
+    package_root / "Third_Party" / "textual_fspicker" / "LICENSE"
+).is_file()
+assert isinstance(get_app(), TldwCli)
+print(package_root)
+"""
 
 
 class BuiltDistributions(NamedTuple):
@@ -146,6 +182,95 @@ def _run_manifest_checker(
         text=True,
         timeout=60,
     )
+
+
+def _install_wheel(
+    built: BuiltDistributions,
+    target: Path,
+) -> None:
+    command = [
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "--no-deps",
+        "--target",
+        str(target),
+        str(built.wheel),
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=target.parent,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert completed.returncode == 0, (
+        f"command: {command}\nstdout:\n{completed.stdout}\n"
+        f"stderr:\n{completed.stderr}"
+    )
+
+
+def _target_hashes(target: Path) -> dict[str, str]:
+    return {
+        path.relative_to(target).as_posix(): hashlib.sha256(
+            path.read_bytes()
+        ).hexdigest()
+        for path in sorted(target.rglob("*"))
+        if path.is_file()
+    }
+
+
+def _private_child_env(state_root: Path, target: Path) -> dict[str, str]:
+    state_root = state_root.resolve(strict=True)
+    config_root = state_root / "config"
+    data_root = state_root / "data"
+    temp_root = state_root / "tmp"
+    for path in (config_root, data_root, temp_root):
+        path.mkdir(parents=True, mode=0o700, exist_ok=True)
+
+    env = os.environ.copy()
+    for name in ("TLDW_TEST_CONFIG_ROOT", "TLDW_TEST_CONFIG_ROOT_OWNER"):
+        env.pop(name, None)
+    env.update(
+        {
+            "HOME": str(state_root),
+            "USERPROFILE": str(state_root),
+            "APPDATA": str(data_root),
+            "LOCALAPPDATA": str(data_root),
+            "XDG_CONFIG_HOME": str(config_root),
+            "XDG_DATA_HOME": str(data_root),
+            "TLDW_CONFIG_PATH": str(config_root / "config.toml"),
+            "TMPDIR": str(temp_root),
+            "TEMP": str(temp_root),
+            "TMP": str(temp_root),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONPATH": str(target.resolve(strict=True)),
+            "EXPECTED_TARGET": str(target.resolve(strict=True)),
+            "EXPECTED_TEMPLATES": json.dumps(sorted(TEMPLATE_NAMES)),
+        }
+    )
+    return env
+
+
+def _run_child(
+    command: list[str],
+    cwd: Path,
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    completed = subprocess.run(
+        command,
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert completed.returncode == 0, (
+        f"command: {command}\nstdout:\n{completed.stdout}\n"
+        f"stderr:\n{completed.stderr}"
+    )
+    return completed
 
 
 def test_built_artifacts_match_distribution_contract(
@@ -314,3 +439,49 @@ def test_release_checker_rejects_missing_runtime_data(
 
     assert result.returncode == 1
     assert missing in result.stdout + result.stderr
+
+
+def test_installed_wheel_loaders_entry_points_and_assets_are_immutable(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "target"
+    state_root = tmp_path / "state"
+    run_root = tmp_path / "run"
+    state_root.mkdir(mode=0o700)
+    run_root.mkdir()
+    _install_wheel(built_distributions, target)
+    env = _private_child_env(state_root, target)
+    before = _target_hashes(target)
+    results = [
+        _run_child([sys.executable, "-c", INSTALLED_PROBE], run_root, env)
+    ]
+
+    script_path = os.pathsep.join(
+        str(path) for path in (target / "bin", target / "Scripts")
+    )
+    for name in ("tldw-cli", "tldw-serve"):
+        script = shutil.which(name, path=script_path)
+        assert script is not None, (
+            f"missing installed script {name!r}; "
+            f"target files: {sorted(_target_hashes(target))}"
+        )
+        results.append(_run_child([script, "--help"], run_root, env))
+
+    after = _target_hashes(target)
+    process_text = "\n".join(
+        result.stdout + "\n" + result.stderr for result in results
+    )
+    log_text = "\n".join(
+        path.read_text(encoding="utf-8", errors="replace")
+        for path in state_root.rglob("*.log*")
+        if path.is_file()
+    )
+    observed_text = process_text + "\n" + log_text
+    for forbidden in (
+        "Building modular CSS",
+        "Failed to build modular CSS",
+        "Error handling CSS file",
+    ):
+        assert forbidden not in observed_text
+    assert after == before

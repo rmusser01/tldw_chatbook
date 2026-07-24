@@ -138,10 +138,8 @@ from tldw_chatbook.Constants import (
     TAB_STUDY,
     TAB_WRITING,
     TAB_RESEARCH,
-    TAB_SUBSCRIPTIONS,
     TAB_CHATBOOKS,
     LIBRARY_NAV_CONTEXT_MODE,
-    LIBRARY_NAV_CONTEXT_NOTE_ID,
     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
     LIBRARY_NAV_CONTEXT_INGEST,
     get_tab_display_label,
@@ -517,6 +515,9 @@ from tldw_chatbook.Audio_Services_Interop import (  # noqa: E402
 from .Evals.eval_orchestrator import EvaluationOrchestrator  # noqa: E402
 
 if TYPE_CHECKING:
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_disk_cache import (
+        ModelCatalogDiskStore,
+    )
     from tldw_chatbook.tldw_api import MCPUnifiedClient
 
 API_IMPORTS_SUCCESSFUL = True
@@ -719,7 +720,6 @@ class TabNavigationProvider(Provider):
         TAB_STUDY: "Switch to flashcards and quizzes",
         TAB_WRITING: "Switch to writing tools",
         TAB_RESEARCH: "Switch to research workflows",
-        TAB_WATCHLISTS_COLLECTIONS: "Switch to watchlists",
         TAB_CHATBOOKS: "Switch to portable Chatbook context packs",
         TAB_TOOLS_SETTINGS: "Open MCP for legacy tools and settings",
         TAB_LOGS: "Switch to application logs",
@@ -10092,6 +10092,12 @@ def initialize_early_logging():
     return early_app
 
 
+def _is_source_tree(package_root: Path) -> bool:
+    """Return whether package files are inside a build-capable source tree."""
+
+    return (package_root.parent / "pyproject.toml").is_file()
+
+
 # --- Main execution block ---
 if __name__ == "__main__":
     # Initialize logging first
@@ -10135,53 +10141,61 @@ if __name__ == "__main__":
     loguru_logger.info("-" * 30)
 
     # --- CSS File Handling ---
-    try:
-        css_dir = Path(__file__).parent / "css"
-        css_dir.mkdir(exist_ok=True)
+    package_root = Path(__file__).parent
+    if _is_source_tree(package_root):
+        try:
+            css_dir = package_root / "css"
+            css_dir.mkdir(exist_ok=True)
 
-        # Check if modular CSS needs to be built
-        modular_css_path = css_dir / "tldw_cli_modular.tcss"
-        build_script_path = css_dir / "build_css.py"
+            # Check if modular CSS needs to be built
+            modular_css_path = css_dir / "tldw_cli_modular.tcss"
+            build_script_path = css_dir / "build_css.py"
 
-        # Check if any module is newer than the built file
-        should_rebuild = False
-        if not modular_css_path.exists():
-            should_rebuild = True
-            logging.info("Modular CSS file not found, will build it")
-        elif build_script_path.exists():
-            # Check if any module file is newer than the built file
-            modular_mtime = modular_css_path.stat().st_mtime
-            for subdir in ["core", "layout", "components", "features", "utilities"]:
-                subdir_path = css_dir / subdir
-                if subdir_path.exists():
-                    for css_file in subdir_path.glob("*.tcss"):
-                        if css_file.stat().st_mtime > modular_mtime:
-                            should_rebuild = True
-                            logging.info(
-                                f"Module {css_file.name} is newer than built CSS, rebuilding"
-                            )
-                            break
-                if should_rebuild:
-                    break
+            # Check if any module is newer than the built file
+            should_rebuild = False
+            if not modular_css_path.exists():
+                should_rebuild = True
+                logging.info("Modular CSS file not found, will build it")
+            elif build_script_path.exists():
+                # Check if any module file is newer than the built file
+                modular_mtime = modular_css_path.stat().st_mtime
+                for subdir in [
+                    "core",
+                    "layout",
+                    "components",
+                    "features",
+                    "utilities",
+                ]:
+                    subdir_path = css_dir / subdir
+                    if subdir_path.exists():
+                        for css_file in subdir_path.glob("*.tcss"):
+                            if css_file.stat().st_mtime > modular_mtime:
+                                should_rebuild = True
+                                logging.info(
+                                    f"Module {css_file.name} is newer than built CSS, rebuilding"
+                                )
+                                break
+                    if should_rebuild:
+                        break
 
-        if should_rebuild and build_script_path.exists():
-            logging.info("Building modular CSS...")
-            import subprocess
+            if should_rebuild and build_script_path.exists():
+                logging.info("Building modular CSS...")
+                import subprocess
 
-            # Build CSS synchronously before starting the app
-            result = subprocess.run(
-                [sys.executable, str(build_script_path)],
-                cwd=str(css_dir),
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode == 0:
-                logging.info("Successfully built modular CSS")
-            else:
-                logging.error(f"Failed to build modular CSS: {result.stderr}")
+                # Build CSS synchronously before starting the app
+                result = subprocess.run(
+                    [sys.executable, str(build_script_path)],
+                    cwd=str(css_dir),
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode == 0:
+                    logging.info("Successfully built modular CSS")
+                else:
+                    logging.error(f"Failed to build modular CSS: {result.stderr}")
 
-    except Exception as e_css_main:
-        logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
+        except Exception as e_css_main:
+            logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
 
     # --- Check for encrypted config (config will be created if it doesn't exist) ---
     try:
@@ -10317,18 +10331,17 @@ def get_app():
     from pathlib import Path
     import sys
 
-    # Check if we need to build CSS
-    # Get the directory where app.py is located
-    app_dir = Path(__file__).parent
-    css_dir = app_dir / "css"
-    modular_css_path = css_dir / "tldw_cli_modular.tcss"
-    build_script_path = css_dir / "build_css.py"
+    package_root = Path(__file__).parent
+    if _is_source_tree(package_root):
+        css_dir = package_root / "css"
+        modular_css_path = css_dir / "tldw_cli_modular.tcss"
+        build_script_path = css_dir / "build_css.py"
 
-    if not modular_css_path.exists() and build_script_path.exists():
-        print("Building modular CSS...")
-        import subprocess
+        if not modular_css_path.exists() and build_script_path.exists():
+            print("Building modular CSS...")
+            import subprocess
 
-        subprocess.run([sys.executable, str(build_script_path)], check=True)
+            subprocess.run([sys.executable, str(build_script_path)], check=True)
 
     return TldwCli()
 
@@ -10442,53 +10455,61 @@ def main_cli_runner():
     loguru_logger.info("-" * 30)
 
     # --- CSS File Handling ---
-    try:
-        css_dir = Path(__file__).parent / "css"
-        css_dir.mkdir(exist_ok=True)
+    package_root = Path(__file__).parent
+    if _is_source_tree(package_root):
+        try:
+            css_dir = package_root / "css"
+            css_dir.mkdir(exist_ok=True)
 
-        # Check if modular CSS needs to be built
-        modular_css_path = css_dir / "tldw_cli_modular.tcss"
-        build_script_path = css_dir / "build_css.py"
+            # Check if modular CSS needs to be built
+            modular_css_path = css_dir / "tldw_cli_modular.tcss"
+            build_script_path = css_dir / "build_css.py"
 
-        # Check if any module is newer than the built file
-        should_rebuild = False
-        if not modular_css_path.exists():
-            should_rebuild = True
-            logging.info("Modular CSS file not found, will build it")
-        elif build_script_path.exists():
-            # Check if any module file is newer than the built file
-            modular_mtime = modular_css_path.stat().st_mtime
-            for subdir in ["core", "layout", "components", "features", "utilities"]:
-                subdir_path = css_dir / subdir
-                if subdir_path.exists():
-                    for css_file in subdir_path.glob("*.tcss"):
-                        if css_file.stat().st_mtime > modular_mtime:
-                            should_rebuild = True
-                            logging.info(
-                                f"Module {css_file.name} is newer than built CSS, rebuilding"
-                            )
-                            break
-                if should_rebuild:
-                    break
+            # Check if any module is newer than the built file
+            should_rebuild = False
+            if not modular_css_path.exists():
+                should_rebuild = True
+                logging.info("Modular CSS file not found, will build it")
+            elif build_script_path.exists():
+                # Check if any module file is newer than the built file
+                modular_mtime = modular_css_path.stat().st_mtime
+                for subdir in [
+                    "core",
+                    "layout",
+                    "components",
+                    "features",
+                    "utilities",
+                ]:
+                    subdir_path = css_dir / subdir
+                    if subdir_path.exists():
+                        for css_file in subdir_path.glob("*.tcss"):
+                            if css_file.stat().st_mtime > modular_mtime:
+                                should_rebuild = True
+                                logging.info(
+                                    f"Module {css_file.name} is newer than built CSS, rebuilding"
+                                )
+                                break
+                    if should_rebuild:
+                        break
 
-        if should_rebuild and build_script_path.exists():
-            logging.info("Building modular CSS...")
-            import subprocess
+            if should_rebuild and build_script_path.exists():
+                logging.info("Building modular CSS...")
+                import subprocess
 
-            # Build CSS synchronously before starting the app
-            result = subprocess.run(
-                [sys.executable, str(build_script_path)],
-                cwd=str(css_dir),
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode == 0:
-                logging.info("Successfully built modular CSS")
-            else:
-                logging.error(f"Failed to build modular CSS: {result.stderr}")
+                # Build CSS synchronously before starting the app
+                result = subprocess.run(
+                    [sys.executable, str(build_script_path)],
+                    cwd=str(css_dir),
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode == 0:
+                    logging.info("Successfully built modular CSS")
+                else:
+                    logging.error(f"Failed to build modular CSS: {result.stderr}")
 
-    except Exception as e_css_main:
-        logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
+        except Exception as e_css_main:
+            logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
 
     # Parse command line arguments
     import argparse
