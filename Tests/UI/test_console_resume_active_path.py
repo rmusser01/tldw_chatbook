@@ -158,6 +158,71 @@ def _persist_mixed_legacy_then_branched_conversation(db: CharactersRAGDB):
     return conversation_id
 
 
+def _persist_genuine_multi_root_conversation(db: CharactersRAGDB):
+    """Persist a genuine root-level fork: two independent USER-rooted threads.
+
+    Mirrors editing-and-resending the conversation's very FIRST user message
+    (Phase B ``edit_and_resend_message``): ``create_sibling`` parents the fork
+    at the anchor's own parent, which is ``None`` for a root message, so the
+    edit becomes a SECOND root-level USER sibling with its own subtree. Both
+    roots are USER (role-homogeneous), the signal
+    ``ConsoleChatStore._chain_legacy_flat_roots`` uses to distinguish a
+    genuine multi-root fork (left un-chained, both roots independently
+    navigable) from legacy flat data (mixed USER/ASSISTANT roots, chained
+    into one spine) -- see that method's docstring.
+    """
+    service = ChatConversationService(db)
+    conversation_id = service.create_conversation(
+        id="multi-root-conv-1",
+        title="Multi-root",
+        scope_type="global",
+        state="in-progress",
+    )
+    u1 = db.add_message(
+        {
+            "id": "m-u1",
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "role": "user",
+            "content": "u1",
+            "timestamp": "2026-01-01T00:00:00.000000+00:00",
+        }
+    )
+    a1 = db.add_message(
+        {
+            "id": "m-a1",
+            "conversation_id": conversation_id,
+            "parent_message_id": u1,
+            "sender": "assistant",
+            "role": "assistant",
+            "content": "a1",
+            "timestamp": "2026-01-01T00:00:01.000000+00:00",
+        }
+    )
+    u1_prime = db.add_message(
+        {
+            "id": "m-u1-prime",
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "role": "user",
+            "content": "u1-prime",
+            "timestamp": "2026-01-01T00:00:02.000000+00:00",
+        }
+    )
+    a1_prime = db.add_message(
+        {
+            "id": "m-a1-prime",
+            "conversation_id": conversation_id,
+            "parent_message_id": u1_prime,
+            "sender": "assistant",
+            "role": "assistant",
+            "content": "a1-prime",
+            "timestamp": "2026-01-01T00:00:03.000000+00:00",
+        }
+    )
+    return conversation_id, u1, a1, u1_prime, a1_prime
+
+
 def _resume_into_store(db: CharactersRAGDB, conversation_id: str):
     """Mirror the production resume plumbing end to end.
 
@@ -336,5 +401,83 @@ def test_resume_falls_back_when_pointer_dangles():
         view = [m.content for m in store.messages_for_session(session.id)]
         assert view == ["u1", "a1-prime"]
         assert db.get_conversation_active_leaf(conversation_id) == a1_prime
+    finally:
+        db.close_connection()
+
+
+def test_resume_second_root_loads_off_path_but_is_not_shown():
+    """Genuine multi-root resume: active leaf under the first root shows only
+    that root's branch; the second root loads too (navigable via
+    ``siblings_at``) but is not part of the visible transcript.
+
+    Unlike the legacy-flat-roots cases above (mixed USER/ASSISTANT roots,
+    chained into one spine), two role-homogeneous all-USER roots are the
+    genuine Phase-B root-level fork shape and are correctly left un-chained.
+    """
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        conversation_id, _u1, a1, _u1_prime, _a1_prime = (
+            _persist_genuine_multi_root_conversation(db)
+        )
+        db.set_conversation_active_leaf(conversation_id, a1)
+
+        store, session = _resume_into_store(db, conversation_id)
+
+        view = [m.content for m in store.messages_for_session(session.id)]
+        assert view == ["u1", "a1"]
+
+        root_message = store.messages_for_session(session.id)[0]
+        assert root_message.persisted_message_id == "m-u1"
+        snapshots, index, count = store.siblings_at(root_message.id)
+        assert count == 2
+        assert index == 0
+        other_root = next(s for s in snapshots if s.id != root_message.id)
+        assert other_root.content == "u1-prime"
+        assert other_root.persisted_message_id == "m-u1-prime"
+    finally:
+        db.close_connection()
+
+
+def test_resume_clears_stale_persisted_summary_with_dangling_boundary():
+    """TASK-550: a persisted `/rewind` summary whose boundary id maps to no
+    message on the just-loaded tree (e.g. the boundary message's branch was
+    hard-deleted, or a foreign client rewrote history) is permanently
+    orphaned. Resume leaves the in-memory summary unset (fail-open, as
+    before Task-550) AND best-effort clears the stale persisted pair so it
+    doesn't linger in the DB row indefinitely.
+    """
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        conversation_id, _u1, _a1, _a1_prime = _persist_branched_conversation(db)
+        db.set_conversation_context_summary(
+            conversation_id, "stale recap", "deleted-boundary-id"
+        )
+
+        store, session = _resume_into_store(db, conversation_id)
+
+        assert store.session_context_summary(session.id) == (None, None)
+        assert db.get_conversation_context_summary(conversation_id) == (None, None)
+    finally:
+        db.close_connection()
+
+
+def test_resume_leaves_valid_persisted_summary_boundary_untouched():
+    """A persisted summary whose boundary DOES resolve on the loaded tree
+    restores unchanged, and the DB row is left exactly as persisted (only
+    the dangling case in the test above clears it)."""
+    db = CharactersRAGDB(":memory:", "test_client")
+    try:
+        conversation_id, u1, _a1, _a1_prime = _persist_branched_conversation(db)
+        db.set_conversation_context_summary(conversation_id, "earlier recap", u1)
+
+        store, session = _resume_into_store(db, conversation_id)
+
+        summary, boundary_native_id = store.session_context_summary(session.id)
+        assert summary == "earlier recap"
+        assert boundary_native_id is not None
+        assert db.get_conversation_context_summary(conversation_id) == (
+            "earlier recap",
+            u1,
+        )
     finally:
         db.close_connection()

@@ -1,7 +1,7 @@
 ---
 id: TASK-550
 title: 'Console /rewind: clear the stale persisted summary when its boundary is permanently gone'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-24'
 labels:
@@ -18,7 +18,11 @@ dependencies: []
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Resuming a conversation whose persisted summary boundary maps to no loaded message clears the persisted summary pair (best-effort, non-fatal)
-- [ ] #2 A valid boundary continues to restore the in-memory state unchanged
-- [ ] #3 Covered by a real-DB resume test
+- [x] #1 Resuming a conversation whose persisted summary boundary maps to no loaded message clears the persisted summary pair (best-effort, non-fatal)
+- [x] #2 A valid boundary continues to restore the in-memory state unchanged
+- [x] #3 Covered by a real-DB resume test
 <!-- AC:END -->
+
+## Implementation Notes
+
+On resume, `_resolve_context_summary_on_resume` now best-effort clears the persisted summary pair (`set_conversation_context_summary(conv_id, None, None)`) when the stored boundary maps to no loaded node (dangling), guarded + exception-swallowed like the other write-throughs; a valid boundary restores unchanged. Real-DB tests cover both paths.
