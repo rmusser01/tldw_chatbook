@@ -496,3 +496,141 @@ async def test_handle_console_message_action_routes_speak_for_generation_message
     assert len(posted) == 1
     assert posted[0].text == "[image] a red dragon"
     assert posted[0].message_id == message.id
+
+
+# --- Task 3: handler-level wiring test for /generate-image style threading ----
+
+
+@pytest.mark.asyncio
+async def test_generate_image_handler_threads_prepared_fields_into_batch(monkeypatch):
+    """Handler-level test of _console_command_generate_image: verifies that
+    parse -> PreparedGeneration -> run_generation_batch receives the correct
+    kwargs with prompt properly composed from style template, and that the
+    appended message contains the expected content marker.
+
+    Assembles a bare ChatScreen with minimum stubs following the precedent
+    from test_console_generation_actions.py, invokes the handler with a
+    /generate-image @anime "a dragon" parse, monkeypatches run_generation_batch
+    to capture its kwargs, and asserts the captured call plus the store's
+    appended message.
+    """
+    from types import SimpleNamespace
+    from tldw_chatbook.Chat.console_command_grammar import CommandParse
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+    from tldw_chatbook.Media_Creation.generation_templates import get_template
+
+    store = ConsoleChatStore()
+    screen = _bare_generation_screen(store)
+
+    # Stub session creation and settings
+    def _mock_default_settings():
+        return ConsoleSessionSettings(provider="openai")
+
+    screen._default_console_session_settings = _mock_default_settings
+
+    # Stub conversation pairs helper to return a simple test pair
+    def _mock_conversation_pairs(store, session_id):
+        return [("user", "a red dragon by a lake")]
+
+    screen._console_generate_image_conversation_pairs = _mock_conversation_pairs
+
+    # Stub status line and composer helpers
+    def _mock_composer_or_none():
+        return None  # No composer draft to save/restore
+
+    def _mock_clear_draft():
+        pass
+
+    screen._console_composer_or_none = _mock_composer_or_none
+    screen._clear_console_composer_draft = _mock_clear_draft
+
+    # Stub in-flight tracking
+    def _mock_inflight_sessions():
+        return set()
+
+    screen._console_imagegen_inflight_sessions = _mock_inflight_sessions
+
+    # Capture the batch call and store appends
+    captured_kwargs = []
+    appended_messages: list = []
+
+    def _mock_batch(**kwargs):
+        captured_kwargs.append(kwargs)
+        # Return successful batch with one image
+        meta = GenerationVariantMeta(
+            prompt=kwargs["prompt"],
+            negative_prompt=kwargs.get("negative_prompt") or "",
+            backend=kwargs["backend"],
+            model=None,
+            seed=None,
+            style=kwargs.get("style_name"),
+            params={},
+        )
+        return BatchResult(
+            successes=[(b"generated_img", "image/png", meta)], errors=[]
+        )
+
+    original_append = store.append_generation_message
+
+    def _capture_append(session_id, **kwargs):
+        appended_messages.append(kwargs)
+        return original_append(session_id, **kwargs)
+
+    store.append_generation_message = _capture_append
+
+    # Monkeypatch run_generation_batch and config
+    monkeypatch.setattr(
+        chat_screen_module, "run_generation_batch", _mock_batch
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "get_image_generation_config",
+        lambda: SimpleNamespace(
+            default_backend="swarmui",
+            default_batch=1,
+            max_variants_per_message=8,
+        ),
+    )
+    monkeypatch.setattr(
+        chat_screen_module,
+        "list_image_models_for_catalog",
+        lambda: [
+            {"name": "swarmui", "is_configured": True},
+        ],
+    )
+
+    # Build the command parse: /generate-image @anime a dragon
+    parse = CommandParse(kind="command", name="generate-image", args="@anime a dragon")
+
+    # Invoke the handler
+    await screen._console_command_generate_image(parse)
+
+    # Verify run_generation_batch was called once with correct kwargs
+    assert len(captured_kwargs) == 1
+    kwargs = captured_kwargs[0]
+    template = get_template("style_anime")
+
+    # Prompt should be composed from template + user prompt "a dragon"
+    assert "a dragon" in kwargs["prompt"]
+    assert "anime style" in kwargs["prompt"]
+
+    # Style name should be "Anime Style"
+    assert kwargs["style_name"] == "Anime Style"
+
+    # Width/height/steps/cfg_scale should come from template defaults
+    assert kwargs["width"] == template.default_params["width"]  # 768
+    assert kwargs["height"] == template.default_params["height"]  # 1024
+    assert kwargs["steps"] == template.default_params["steps"]  # 25
+    assert kwargs["cfg_scale"] == template.default_params["cfg_scale"]  # 9.0
+
+    # Backend should be the default
+    assert kwargs["backend"] == "swarmui"
+
+    # Count should be clamped
+    assert kwargs["count"] == 1
+
+    # Verify that append_generation_message was called with correct content marker
+    assert len(appended_messages) == 1
+    append_kwargs = appended_messages[0]
+    assert append_kwargs["content"].startswith("[image] ")
+    assert "a dragon" in append_kwargs["content"]
