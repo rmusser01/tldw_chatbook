@@ -8,6 +8,7 @@ The install path for "paste a GitHub link": classify -> fetch (SSRF-hardened)
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import socket
 import zipfile as _zipfile
@@ -114,8 +115,13 @@ async def resolve_ref_and_subdir(
 
     Single-segment tails are the ref outright. Multi-segment tails try a
     longest-prefix match against the repo's branch list (possibly capped at
-    100 — a missing match degrades to the first-segment heuristic, never a
-    wrong silent match). Branch-list failures degrade the same way.
+    100 — a missing match degrades to the first-segment heuristic). Branch-list
+    failures degrade the same way. This is not airtight: a truncated branch
+    list combined with a branch-name collision at a ``/`` boundary (e.g.
+    branches ``docs`` and ``docs/skill``, with the list capped before
+    ``docs/skill`` appears) can still yield a plausible-but-wrong split — the
+    caller surfaces that downstream as a 404 at fetch time rather than a
+    silently-wrong install.
 
     Args:
         source: The classified GitHub source (``tree_tail`` may be empty).
@@ -146,6 +152,7 @@ async def resolve_ref_and_subdir(
 
 REMOTE_FETCH_MAX_BYTES = 30 * 1024 * 1024
 REMOTE_FETCH_MAX_HOPS = 3
+REMOTE_FETCH_TOTAL_DEADLINE_SECONDS = 60.0
 _FETCH_CHUNK = 65536
 GITHUB_AUTH_HOSTS = frozenset(
     {"github.com", "api.github.com", "codeload.github.com",
@@ -178,7 +185,12 @@ def _assert_host_allowed(host: str, resolver) -> None:
 
 
 async def fetch_zip_bytes(
-    url: str, *, token: str | None = None, transport=None, resolver=None
+    url: str,
+    *,
+    token: str | None = None,
+    transport=None,
+    resolver=None,
+    total_deadline: float = REMOTE_FETCH_TOTAL_DEADLINE_SECONDS,
 ) -> bytes:
     """Download a zip with SSRF hardening, manual redirects, and a size cap.
 
@@ -188,60 +200,81 @@ async def fetch_zip_bytes(
         transport: httpx transport override (tests).
         resolver: ``(host) -> list[str]`` override (tests); defaults to
             ``socket.getaddrinfo``.
+        total_deadline: Wall-clock ceiling (seconds) for the ENTIRE download —
+            every redirect hop plus the streamed read of the final response.
+            The per-hop ``httpx.Timeout`` below only bounds a single connect
+            or a single socket read/write, so a server that keeps the
+            connection alive by dripping a chunk just under that per-read
+            window (e.g. one chunk every 50s) would otherwise stall forever;
+            this deadline is the backstop that still aborts it.
 
     Returns:
         The raw (compressed) zip bytes, at most ``REMOTE_FETCH_MAX_BYTES``.
 
     Raises:
         RemoteSkillError: On every rejection class (scheme, host, hops, cap,
-            HTTP status, timeouts).
+            HTTP status, per-hop timeouts, and the overall ``total_deadline``
+            being exceeded across all hops).
     """
     from ..Utils.input_validation import validate_url
 
     resolver = resolver or _default_resolver
     timeout = httpx.Timeout(60.0, connect=10.0)
     current = url
-    async with httpx.AsyncClient(
-        transport=transport, timeout=timeout, follow_redirects=False
-    ) as client:
-        for _hop in range(REMOTE_FETCH_MAX_HOPS + 1):
-            if not validate_url(current):
-                raise RemoteSkillError("Invalid URL after redirect.")
-            parsed = httpx.URL(current)
-            if parsed.scheme != "https":
-                raise RemoteSkillError("Only https:// is allowed (redirect downgraded).")
-            host = (parsed.host or "").lower()
-            _assert_host_allowed(host, resolver)
-            headers = {}
-            if token and host in GITHUB_AUTH_HOSTS:
-                headers["Authorization"] = f"token {token}"
-            try:
-                async with client.stream("GET", current, headers=headers) as response:
-                    if response.status_code in (301, 302, 303, 307, 308):
-                        location = response.headers.get("location")
-                        if not location:
-                            raise RemoteSkillError("Redirect without a location.")
-                        current = str(parsed.join(location))
-                        continue
-                    if response.status_code != 200:
+    try:
+        async with asyncio.timeout(total_deadline):
+            async with httpx.AsyncClient(
+                transport=transport, timeout=timeout, follow_redirects=False
+            ) as client:
+                for _hop in range(REMOTE_FETCH_MAX_HOPS + 1):
+                    if not validate_url(current):
+                        raise RemoteSkillError("Invalid URL after redirect.")
+                    parsed = httpx.URL(current)
+                    if parsed.scheme != "https":
                         raise RemoteSkillError(
-                            f"Download failed (HTTP {response.status_code})."
+                            "Only https:// is allowed (redirect downgraded)."
                         )
-                    chunks: list[bytes] = []
-                    received = 0
-                    async for chunk in response.aiter_bytes(_FETCH_CHUNK):
-                        received += len(chunk)
-                        if received > REMOTE_FETCH_MAX_BYTES:
-                            raise RemoteSkillError(
-                                "Download too large (over 30 MB compressed)."
-                            )
-                        chunks.append(chunk)
-                    return b"".join(chunks)
-            except httpx.TimeoutException as exc:
-                raise RemoteSkillError("Download timed out.") from exc
-            except httpx.HTTPError as exc:
-                raise RemoteSkillError(f"Download failed: {exc}") from exc
-        raise RemoteSkillError("Too many redirects.")
+                    host = (parsed.host or "").lower()
+                    _assert_host_allowed(host, resolver)
+                    headers = {}
+                    if token and host in GITHUB_AUTH_HOSTS:
+                        headers["Authorization"] = f"token {token}"
+                    try:
+                        async with client.stream(
+                            "GET", current, headers=headers
+                        ) as response:
+                            if response.status_code in (301, 302, 303, 307, 308):
+                                location = response.headers.get("location")
+                                if not location:
+                                    raise RemoteSkillError(
+                                        "Redirect without a location."
+                                    )
+                                current = str(parsed.join(location))
+                                continue
+                            if response.status_code != 200:
+                                raise RemoteSkillError(
+                                    f"Download failed (HTTP {response.status_code})."
+                                )
+                            chunks: list[bytes] = []
+                            received = 0
+                            async for chunk in response.aiter_bytes(_FETCH_CHUNK):
+                                received += len(chunk)
+                                if received > REMOTE_FETCH_MAX_BYTES:
+                                    raise RemoteSkillError(
+                                        "Download too large (over 30 MB compressed)."
+                                    )
+                                chunks.append(chunk)
+                            return b"".join(chunks)
+                    except httpx.TimeoutException as exc:
+                        raise RemoteSkillError("Download timed out.") from exc
+                    except httpx.HTTPError as exc:
+                        raise RemoteSkillError(f"Download failed: {exc}") from exc
+                raise RemoteSkillError("Too many redirects.")
+    except TimeoutError as exc:
+        # Builtin TimeoutError (raised by asyncio.timeout on expiry) is NOT
+        # an httpx.TimeoutException, so it needs its own clause here — the
+        # inner except above only catches per-hop httpx timeouts.
+        raise RemoteSkillError("Download timed out.") from exc
 
 
 _CANDIDATE_SCAN_DEPTH = 3
@@ -443,9 +476,23 @@ async def install_skill_from_url(
                 f"https://api.github.com/repos/{source.owner}/{source.repo}"
                 f"/zipball/{ref}"
             )
-            zip_bytes = await fetch_zip_bytes(
-                zip_url, token=api.token, transport=transport, resolver=resolver
-            )
+            try:
+                zip_bytes = await fetch_zip_bytes(
+                    zip_url, token=api.token, transport=transport, resolver=resolver
+                )
+            except RemoteSkillError as exc:
+                # A 404 on a multi-segment /tree/ tail is ambiguous: it may be
+                # a genuinely missing ref, OR resolve_ref_and_subdir's branch
+                # split guessed wrong (see its docstring) because the branch
+                # name itself contains a slash. Only hint in that ambiguous
+                # case -- single-segment tails have no split to get wrong.
+                if "HTTP 404" in str(exc) and len(source.tree_tail) > 1:
+                    raise RemoteSkillError(
+                        f"{exc} If the branch name contains a slash, GitHub "
+                        "URLs are ambiguous — try installing from the plain "
+                        "repository URL instead (without the /tree/ path)."
+                    ) from exc
+                raise
         else:
             subdir = ""
             token = api.token if source.github_auth else None

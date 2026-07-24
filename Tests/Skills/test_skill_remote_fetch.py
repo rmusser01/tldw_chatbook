@@ -6,6 +6,7 @@ public policy-enforcement passthrough on ``SkillsScopeService``, and the
 defaults to 30 results/page -- installers need the full branch list).
 """
 
+import asyncio
 import io
 import zipfile
 
@@ -247,6 +248,39 @@ async def test_stream_cap_aborts():
     with pytest.raises(RemoteSkillError, match="too large"):
         await fetch_zip_bytes("https://example.com/x.zip",
                               transport=_transport(handler), resolver=_PUB)
+
+
+@pytest.mark.asyncio
+async def test_fetch_total_deadline_aborts_slow_drip():
+    # A server that never trips the per-hop httpx.Timeout (each individual
+    # read completes well inside it) but keeps the whole exchange alive
+    # longer than the TOTAL budget must still be aborted -- this is the
+    # must-fix: the old code only bounded a single connect/read, not the
+    # whole hop loop.
+    async def handler(request):
+        await asyncio.sleep(0.3)
+        return httpx.Response(200, content=b"PK\x03\x04zipbytes")
+    with pytest.raises(RemoteSkillError, match="timed out"):
+        await fetch_zip_bytes(
+            "https://api.github.com/repos/o/r/zipball/HEAD",
+            transport=_transport(handler), resolver=_PUB,
+            total_deadline=0.05,
+        )
+
+
+@pytest.mark.asyncio
+async def test_fetch_accepts_explicit_total_deadline():
+    # Pins the `total_deadline` keyword's existence/signature independent of
+    # the abort behavior covered above -- a generous explicit deadline must
+    # not change the happy path.
+    def handler(request):
+        return httpx.Response(200, content=b"PK\x03\x04zipbytes")
+    out = await fetch_zip_bytes(
+        "https://api.github.com/repos/o/r/zipball/HEAD",
+        transport=_transport(handler), resolver=_PUB,
+        total_deadline=5.0,
+    )
+    assert out.startswith(b"PK")
 
 
 def _zipball(entries, wrapper="repo-abc123/"):
@@ -545,6 +579,55 @@ async def test_install_seam_overwrite_flag_passed_through():
     assert scope.import_kwargs["overwrite"] is True
 
 
+@pytest.mark.asyncio
+async def test_install_seam_404_slash_branch_gets_hint(monkeypatch):
+    # A /tree/ tail of >1 segment is ambiguous: resolve_ref_and_subdir's
+    # branch split may have guessed wrong when the real branch name itself
+    # contains a slash (see its docstring). A 404 in that shape should carry
+    # the "try the plain repo URL" hint.
+    from tldw_chatbook.Skills_Interop.skill_remote_fetch import install_skill_from_url
+    from tldw_chatbook.Utils.github_api_client import GitHubAPIClient
+
+    async def _fake_get_branches(self, owner, repo):
+        return ["main", "feature/foo"]
+    monkeypatch.setattr(GitHubAPIClient, "get_branches", _fake_get_branches)
+
+    scope = _RecordingScopeService()
+
+    def handler(request):
+        return httpx.Response(404)
+
+    with pytest.raises(RemoteSkillError, match="branch name contains a slash"):
+        await install_skill_from_url(
+            "https://github.com/o/r/tree/feature/foo/skills/x",
+            scope_service=scope,
+            transport=_transport(handler),
+            resolver=_PUB,
+        )
+
+
+@pytest.mark.asyncio
+async def test_install_seam_404_single_segment_ref_no_hint():
+    # A single-segment /tree/<ref> tail has no ref/subdir split to get
+    # wrong -- the ambiguity the hint addresses doesn't apply, so a 404
+    # here must NOT carry it.
+    from tldw_chatbook.Skills_Interop.skill_remote_fetch import install_skill_from_url
+
+    scope = _RecordingScopeService()
+
+    def handler(request):
+        return httpx.Response(404)
+
+    with pytest.raises(RemoteSkillError) as exc_info:
+        await install_skill_from_url(
+            "https://github.com/o/r/tree/v1.2",
+            scope_service=scope,
+            transport=_transport(handler),
+            resolver=_PUB,
+        )
+    assert "branch name contains a slash" not in str(exc_info.value)
+
+
 # ---------------------------------------------------------------------------
 # Task 6: end-to-end -- REAL LocalSkillsService/SkillsScopeService/
 # SkillTrustService behind the public install seam, mocked transport only.
@@ -557,9 +640,12 @@ async def test_e2e_install_skill_from_github_tree_url_real_services(tmp_path, mo
     real 302 hop (api.github.com -> codeload.github.com) -> bounded re-root
     -> the real hardened ``import_skill_file`` seam, against REAL
     ``LocalSkillsService``/``SkillsScopeService``/``SkillTrustService``
-    instances (no fakes for the service layer). Only the two network-facing
+    instances (no fakes for the service layer). Only three network-facing
     seams are mocked: the httpx transport (``fetch_zip_bytes``'s own
-    ``AsyncClient``) and DNS resolution (SSRF host-allow check).
+    ``AsyncClient``), DNS resolution (SSRF host-allow check), and
+    ``GitHubAPIClient.get_branches`` (it owns its own internal
+    ``httpx.AsyncClient``, so it is monkeypatched on the class rather than
+    reachable through the ``transport=`` override -- see below).
 
     ``GitHubAPIClient.get_branches`` is monkeypatched directly on the class
     (it owns its own internal ``httpx.AsyncClient``, not the ``transport=``
