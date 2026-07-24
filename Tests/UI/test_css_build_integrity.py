@@ -95,17 +95,23 @@ def test_settings_splash_theme_rules_have_source_and_bundle_integrity() -> None:
 
 
 def test_splash_theme_module_has_no_bare_or_generic_component_selectors() -> None:
-    """TASK-394: the splash/theme module must not define app-wide component
-    styles -- no bare type selectors, and none of the generic class names that
-    were leaking (moved to _shared_components / core)."""
-    source = _SETTINGS_SOURCE.read_text(encoding="utf-8")
-    source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
-    # No bare type selectors (a rule whose selector starts with an uppercase
-    # widget name, e.g. VerticalScroll).
-    assert not re.search(r"(?m)^[A-Z][A-Za-z]+\s*\{", source), (
+    """The splash/theme module defines no app-wide component styles.
+
+    TASK-394 regression lock: no bare type selectors and none of the relocated
+    generic class names, in ANY selector position -- bare, compound (``.cls
+    Button``), or grouped (``.cls, .x``) -- so a leak can't slip back as a
+    compound selector.
+    """
+    source = re.sub(
+        r"/\*.*?\*/", "", _SETTINGS_SOURCE.read_text(encoding="utf-8"), flags=re.DOTALL
+    )
+    # No bare type selectors (a rule/group whose token is an uppercase widget
+    # name, e.g. VerticalScroll), including as the head of a grouped selector.
+    assert not re.search(r"(?m)^[A-Z][A-Za-z]+\s*[\{,]", source), (
         "splash/theme module reintroduced a bare type selector"
     )
-    # None of the relocated generic component classes.
+    # None of the relocated generic component classes -- matched as a selector
+    # token anywhere (not as the prefix of a longer name like `.preview-panel-demo`).
     for cls in (
         "setting-label",
         "section-header",
@@ -117,7 +123,7 @@ def test_splash_theme_module_has_no_bare_or_generic_component_selectors() -> Non
         "preview-container",
         "preview-content",
     ):
-        assert not re.search(rf"(?m)^\.{cls}\s*\{{", source), (
+        assert not re.search(rf"\.{re.escape(cls)}(?![\w-])", source), (
             f".{cls} must live in the shared component module, not splash/theme"
         )
 
