@@ -2,7 +2,7 @@
 id: TASK-503
 title: >-
   RAG settings + profiles SP3: RAG settings screen (profile manager + full editor)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-23 21:00'
 updated_date: '2026-07-23 21:00'
