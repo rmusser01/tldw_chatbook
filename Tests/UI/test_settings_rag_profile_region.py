@@ -248,6 +248,78 @@ def test_pending_activate_survives_into_worker_dispatch_on_valid_save(
     assert len(worker_calls) == 1
 
 
+# --- M3 (SP3 final review): `_library_rag_invalid_field_key` must match
+# RAGConfig.validate()'s ACTUAL wording (routed through the adapter's
+# hard_config_errors()), not a Title Case prefix that message never uses. ---
+
+
+def test_invalid_field_key_matches_chunk_overlap_wording(monkeypatch, tmp_path):
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    draft = SettingsDraft(category=SettingsCategoryId.LIBRARY_RAG)
+    # Stage chunk_overlap >= chunk_size (RAGConfig.validate() message:
+    # "chunk_overlap must be less than chunk_size") -- must resolve to
+    # chunk_overlap, not chunk_size (both substrings appear in that message).
+    overlap_over_size = profile.rag_config.chunking.chunk_size
+    draft.set_value(
+        "chunk_overlap", profile.rag_config.chunking.chunk_overlap, overlap_over_size
+    )
+    screen._settings_drafts[SettingsCategoryId.LIBRARY_RAG] = draft
+
+    assert screen._library_rag_invalid_field_key() == "chunk_overlap"
+
+
+def test_invalid_field_key_matches_embedding_batch_size_wording(monkeypatch, tmp_path):
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    draft = SettingsDraft(category=SettingsCategoryId.LIBRARY_RAG)
+    # RAGConfig.validate() message: "embedding batch_size must be positive".
+    draft.set_value(
+        "embedding_batch_size", profile.rag_config.embedding.batch_size, 0
+    )
+    screen._settings_drafts[SettingsCategoryId.LIBRARY_RAG] = draft
+
+    assert screen._library_rag_invalid_field_key() == "embedding_batch_size"
+
+
+def test_invalid_field_key_matches_distance_metric_wording(monkeypatch, tmp_path):
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    draft = SettingsDraft(category=SettingsCategoryId.LIBRARY_RAG)
+    # RAGConfig.validate() message: "Unknown distance metric: bogus".
+    # normalise_library_rag_distance_metric only runs at load time, and the
+    # draft layer stages the raw staged value straight through -- "bogus"
+    # reaches RAGConfig.validate() unmodified via apply_defaults_to_profile.
+    draft.set_value(
+        "distance_metric", profile.rag_config.vector_store.distance_metric, "bogus"
+    )
+    screen._settings_drafts[SettingsCategoryId.LIBRARY_RAG] = draft
+
+    assert screen._library_rag_invalid_field_key() == "distance_metric"
+
+
+def test_invalid_field_key_matches_chunk_size_wording(monkeypatch, tmp_path):
+    mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    draft = SettingsDraft(category=SettingsCategoryId.LIBRARY_RAG)
+    # RAGConfig.validate() message: "chunk_size must be positive". Also stage
+    # chunk_overlap down to 0 so it doesn't independently gate on its own
+    # "cannot be negative"/"less than chunk_size" rule ahead of this one.
+    draft.set_value("chunk_size", profile.rag_config.chunking.chunk_size, 0)
+    draft.set_value("chunk_overlap", profile.rag_config.chunking.chunk_overlap, 0)
+    screen._settings_drafts[SettingsCategoryId.LIBRARY_RAG] = draft
+
+    assert screen._library_rag_invalid_field_key() == "chunk_size"
+
+
 # --- Worker completion path: `_rag_after_set_active` ---
 
 
@@ -283,6 +355,52 @@ def test_after_set_active_failure_syncs_profile_widgets_and_notifies_error(
         "Couldn't switch active profile: disk full",
         "error",
     )
+
+
+# --- I1 (SP3 final review): `_rag_after_profile_action`'s delete branch
+# must surface the adapter's hybrid_basic-fallback note and still resync the
+# profile widgets (the Select may now be showing a deleted id / the picker
+# needs the new active id highlighted). ---
+
+
+def test_after_profile_action_delete_with_fallback_note_resyncs_and_notifies(
+    monkeypatch, tmp_path, fake_app
+):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+    sync_widgets_calls: list[bool] = []
+    sync_profile_calls: list[bool] = []
+    screen._sync_library_rag_widgets = lambda: sync_widgets_calls.append(True)
+    screen._sync_library_rag_profile_widgets = lambda: sync_profile_calls.append(True)
+
+    screen._rag_after_profile_action(
+        "delete", True, "Active profile is now Hybrid Basic."
+    )
+
+    assert sync_widgets_calls == [True]
+    assert sync_profile_calls == [True]
+    message, severity = fake_app.notifications[-1]
+    assert message == "Profile deleted. Active profile is now Hybrid Basic."
+    assert severity == "information"
+
+
+def test_after_profile_action_delete_without_fallback_note_omits_it(
+    monkeypatch, tmp_path, fake_app
+):
+    """Non-active delete: the adapter's `result` is "" -- the notify text
+    must stay the plain "Profile deleted." (no trailing space/empty note)."""
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    app = _build_test_app()
+    screen = SettingsScreen(app)
+    screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
+
+    screen._rag_after_profile_action("delete", True, "")
+
+    message, severity = fake_app.notifications[-1]
+    assert message == "Profile deleted."
+    assert severity == "information"
 
 
 # --- First-paint read-only rendering (pilot: real compose/mount) ---
@@ -506,8 +624,13 @@ def test_rag_backfill_worker_failure_notifies_and_clears_in_flight_without_raisi
     monkeypatch.setattr(
         settings_screen_module, "semantic_indexing_available", lambda: True
     )
+    # M5's pre-resolve call must never be the real (potentially heavy/
+    # network-touching) service construction in a unit test.
+    monkeypatch.setattr(
+        settings_screen_module, "get_shared_rag_service", lambda: None
+    )
 
-    def _boom(*, media_db, chachanotes_db):
+    def _boom(*, media_db, chachanotes_db, rag_service=None):
         raise RuntimeError("kaboom")
 
     monkeypatch.setattr(settings_screen_module, "backfill_semantic_index", _boom)
@@ -527,6 +650,53 @@ def test_rag_backfill_worker_failure_notifies_and_clears_in_flight_without_raisi
     assert severity == "error"
     assert "Backfill failed" in message
     assert "kaboom" in message
+
+
+# --- M5 (SP3 final review): the shared RAG service must be resolved OUTSIDE
+# the transient asyncio.run loop and threaded through as the `rag_service`
+# kwarg -- mirrors SearchRAGWindow._run_index_backfill's PR #700-hardened
+# pattern (keeps first-time service construction from ever happening inside
+# a loop that closes the instant this run finishes). ---
+
+
+def test_rag_backfill_worker_pre_resolves_the_shared_service_outside_the_loop(
+    monkeypatch, tmp_path, fake_app
+):
+    _wire_rag_profile_adapter(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        settings_screen_module, "semantic_indexing_available", lambda: True
+    )
+    sentinel_service = object()
+    resolve_calls: list[bool] = []
+
+    def _fake_get_shared_rag_service():
+        resolve_calls.append(True)
+        return sentinel_service
+
+    monkeypatch.setattr(
+        settings_screen_module, "get_shared_rag_service", _fake_get_shared_rag_service
+    )
+    captured_kwargs: dict = {}
+
+    async def _fake_backfill(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {"status": "ok", "indexed": 0, "skipped": 0, "failed": 0, "errors": []}
+
+    monkeypatch.setattr(
+        settings_screen_module, "backfill_semantic_index", _fake_backfill
+    )
+
+    app_instance = SimpleNamespace(
+        app_config={}, media_db=object(), chachanotes_db=None
+    )
+    screen = SettingsScreen(app_instance)
+
+    worker = SettingsScreen.__dict__["_rag_backfill_worker"]
+    wrapped = getattr(worker, "__wrapped__", worker)
+    wrapped(screen)  # invoke the thread-body directly, bypassing @work dispatch
+
+    assert resolve_calls == [True]
+    assert captured_kwargs.get("rag_service") is sentinel_service
 
 
 # --- Task 4 review Finding 2: _rag_after_set_active must not misreport a

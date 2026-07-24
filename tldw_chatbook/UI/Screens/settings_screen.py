@@ -146,6 +146,7 @@ from .settings_rag_profile_adapter import (
 )
 from ...RAG_Search.ingestion_indexing import (
     backfill_semantic_index,
+    get_shared_rag_service,
     semantic_indexing_available,
 )
 from .settings_privacy_security import (
@@ -2966,20 +2967,38 @@ class SettingsScreen(BaseAppScreen):
             return "citation_style"
         if message.startswith("Embedding model"):
             return "embedding_model"
-        if message.startswith("Embedding batch size"):
-            return "embedding_batch_size"
         if message.startswith("Embedding max length"):
             return "embedding_max_length"
-        if message.startswith("Chunk size"):
-            return "chunk_size"
-        if message.startswith("Chunk overlap"):
-            return "chunk_overlap"
         if message.startswith("Chunking method"):
             return "chunking_method"
-        if message.startswith("Distance metric"):
-            return "distance_metric"
         if message.startswith("Reranker top-k"):
             return "reranker_top_k"
+        # M3 (SP3 final review): chunk_size, chunk_overlap, distance_metric,
+        # and embedding_batch_size are validated by RAGConfig.validate()
+        # (simplified/config.py), routed through the adapter's
+        # hard_config_errors() (see settings_library_rag_defaults.py's
+        # validate_library_rag_defaults) -- so `message` here is RAGConfig's
+        # own literal, lowercase/snake_case prose ("chunk_overlap must be
+        # less than chunk_size", "embedding batch_size must be positive",
+        # "Unknown distance metric: ..."), NOT this function's Title Case
+        # field-label convention. The four startswith() checks this replaced
+        # (`"Chunk size"`, `"Chunk overlap"`, `"Distance metric"`, `"Embedding
+        # batch size"`) never matched that wording, so a hard error on any of
+        # these fields blocked Save without ever highlighting the field red.
+        # Matched by case-insensitive substring against RAGConfig's actual
+        # wording instead, since that message can't be reworded here without
+        # drifting from the single source of truth. Order matters: "chunk_overlap
+        # must be less than chunk_size" contains BOTH substrings, so
+        # chunk_overlap must be checked first.
+        lowered = message.lower()
+        if "chunk_overlap" in lowered:
+            return "chunk_overlap"
+        if "chunk_size" in lowered:
+            return "chunk_size"
+        if "batch_size" in lowered:
+            return "embedding_batch_size"
+        if "distance metric" in lowered:
+            return "distance_metric"
         return None
 
     def _library_rag_field_selector(self, key: str) -> str | None:
@@ -7701,9 +7720,19 @@ class SettingsScreen(BaseAppScreen):
                     severity="error",
                 )
                 return
+            # M5 (SP3 final review): pre-resolve the shared RAG service
+            # OUTSIDE the transient asyncio.run loop below -- mirrors
+            # SearchRAGWindow._run_index_backfill's PR #700-hardened pattern.
+            # backfill_semantic_index's own default (`rag_service or
+            # get_shared_rag_service()`) would otherwise construct it for the
+            # FIRST time from inside that loop, and the loop closes the
+            # instant this run finishes.
+            rag_service = get_shared_rag_service()
             summary = asyncio.run(
                 backfill_semantic_index(
-                    media_db=media_db, chachanotes_db=chachanotes_db
+                    media_db=media_db,
+                    chachanotes_db=chachanotes_db,
+                    rag_service=rag_service,
                 )
             )
         except Exception as e:
@@ -10200,6 +10229,16 @@ class SettingsScreen(BaseAppScreen):
                 "delete": "Profile deleted.",
             }
             message = messages.get(action, "Done.")
+            # I1 (SP3 final review): delete_user_profile's success `result` is
+            # normally "" (nothing to add), but carries a human-readable note
+            # when the delete just fell back the active-profile pointer to
+            # the hybrid_basic builtin (it deleted the profile that WAS
+            # active) -- surface that alongside the plain "Profile deleted."
+            # so the user knows their active profile changed too. `result`
+            # means something different for clone/rename on success (the new
+            # profile id / nothing), so this is delete-only.
+            if action == "delete" and result:
+                message = f"{message} {result}"
             self._library_rag_profile_result = message
             self._set_static_text("#settings-library-rag-profile-result", message)
             self._sync_library_rag_widgets()
