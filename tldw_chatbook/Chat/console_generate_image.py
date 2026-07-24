@@ -25,19 +25,30 @@ which the caller refuses.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from tldw_chatbook.Chat.console_chat_models import GenerationVariantMeta
 from tldw_chatbook.Media_Creation.generation_templates import (
     BUILTIN_TEMPLATES,
     GenerationTemplate,
     apply_template_to_prompt,
+    get_template,
+)
+from tldw_chatbook.Media_Creation.image_generation_service import (
+    ImageGenerationService,
 )
 
 GENERATION_MARKER_PREFIX = "[image] "
 """Prefix identifying a generation card's content marker in a message row."""
 
 _MARKER_PROMPT_MAX_CHARS = 80
+
+GENERATE_IMAGE_USAGE_TEXT = "Usage: /generate-image [:backend] <prompt>"
+"""Status text for a ``/generate-image`` invocation with nothing to work with:
+
+no prompt, no style-resolved template default, and no conversation content
+to fall back on.
+"""
 
 
 def clamp_initial_batch(default_batch: int, max_variants: int) -> int:
@@ -246,6 +257,204 @@ def compose_styled_request(
     base = composed.strip(" ,")
     combined = f"{base}, {user_prompt}" if base else user_prompt
     return combined, negative, params
+
+
+def build_context_prompt(
+    messages: Sequence[tuple[str, str]], template: GenerationTemplate
+) -> tuple[str, str, dict[str, Any]] | None:
+    """Compose a generation request from conversation context (no user prompt).
+
+    Used by the ``/generate-image`` handler's "generate from conversation"
+    path: shapes ``messages`` (chronological ``(role, content)`` pairs) into
+    the ``[{"role": ..., "content": ...}]`` form
+    ``ImageGenerationService.extract_context_from_messages`` expects,
+    extracts context (most recent user message, mood, visual-hint
+    fragments), then renders ``template`` against it via
+    ``apply_template_to_prompt`` — the same engine `compose_styled_request`
+    uses for an explicit ``@style`` token.
+
+    ``extract_context_from_messages`` is called as
+    ``ImageGenerationService.extract_context_from_messages(None, shaped)``
+    rather than on a constructed instance: the method never reads ``self``
+    (verified by inspection), while constructing an instance would run
+    `ImageGenerationService.__init__`'s side effects (creating the
+    generated-images output directory tree, logging). Calling it unbound is
+    the honest cheap invocation.
+
+    Invariant (mirroring `compose_styled_request`): when the extracted
+    ``last_message`` anchor is non-empty and doesn't appear verbatim in the
+    composed prompt (e.g. the template has no context mapping consuming
+    it), it is comma-appended so conversation content is never silently
+    dropped.
+
+    Args:
+        messages: Chronological ``(role, content)`` pairs from the session.
+        template: The style template to render — an explicit ``@style``
+            resolution, or the ``chat_scene_visual`` default.
+
+    Returns:
+        A ``(prompt, negative_prompt, params)`` tuple, or ``None`` when
+        every message's content is empty/whitespace-only (nothing usable to
+        build a prompt from).
+    """
+    shaped = [
+        {"role": role, "content": content}
+        for role, content in messages
+        if content and content.strip()
+    ]
+    if not shaped:
+        return None
+    context = ImageGenerationService.extract_context_from_messages(None, shaped)
+    composed, negative, params = apply_template_to_prompt(template.id, context)
+    anchor = context.get("last_message", "")
+    if anchor and anchor not in composed:
+        base = composed.strip(" ,")
+        composed = f"{base}, {anchor}" if base else anchor
+    return composed, negative, params
+
+
+@dataclass(frozen=True)
+class PreparedGeneration:
+    """A validated, ready-to-dispatch ``/generate-image`` request.
+
+    Args:
+        prompt: Final prompt text to generate with — already composed with
+            any resolved style template or conversation context. This is
+            what both `run_generation_batch` and `generation_content_marker`
+            must use.
+        negative_prompt: Negative prompt from the applied template, or
+            ``None`` for an unstyled, prompt-only request (the command
+            grammar has no user-supplied negative-prompt syntax today).
+        style_name: Display name of the style template applied
+            (`GenerationTemplate.name`), or ``None`` for an unstyled
+            request.
+        width: Template-provided width override, or ``None``.
+        height: Template-provided height override, or ``None``.
+        steps: Template-provided sampling steps override, or ``None``.
+        cfg_scale: Template-provided CFG scale override, or ``None``.
+    """
+
+    prompt: str
+    negative_prompt: str | None
+    style_name: str | None
+    width: int | None
+    height: int | None
+    steps: int | None
+    cfg_scale: float | None
+
+
+@dataclass(frozen=True)
+class GenerationRefusal:
+    """A ``/generate-image`` invocation that must not dispatch a batch.
+
+    Args:
+        reason: Ready-to-display status text — the caller posts it verbatim
+            as the Console system message and must leave the composer draft
+            untouched.
+    """
+
+    reason: str
+
+
+def prepare_generation_request(
+    args: GenerateImageArgs,
+    conversation_pairs: Sequence[tuple[str, str]],
+) -> PreparedGeneration | GenerationRefusal:
+    """Decide what one ``/generate-image`` invocation should generate.
+
+    Pure decision logic extracted from the Console command handler so it is
+    independently unit-testable — the handler itself just executes the
+    result. Order of operations:
+
+    1. An ``@style`` token (``args.style``), if present, is resolved first
+       via `resolve_style_token` regardless of whether a prompt was also
+       given. An ambiguous or unknown token refuses immediately — this
+       never falls through to generation with no style applied.
+    2. A non-empty prompt is composed against the resolved template via
+       `compose_styled_request` (styled) or passed through unchanged
+       (unstyled).
+    3. An empty prompt falls back to the conversation: pairs with
+       non-whitespace content are handed to `build_context_prompt` using
+       the resolved style template, or ``chat_scene_visual`` when no
+       ``@style`` was given. No usable conversation content — or no
+       messages at all — refuses with the command's usage text.
+
+    Args:
+        args: The parsed ``/generate-image`` invocation.
+        conversation_pairs: The session's ``(role, content)`` pairs in
+            chronological order. Only consulted on the no-prompt path.
+
+    Returns:
+        A `PreparedGeneration` ready to hand to `run_generation_batch`, or a
+        `GenerationRefusal` carrying the status text to display — in which
+        case the caller must not dispatch a batch or touch the composer
+        draft.
+    """
+    style_template: GenerationTemplate | None = None
+    if args.style:
+        resolution = resolve_style_token(args.style)
+        if resolution.ambiguous:
+            ids = ", ".join(resolution.ambiguous)
+            return GenerationRefusal(
+                reason=(
+                    f"Ambiguous style '@{args.style}' matches: {ids}. "
+                    "Use one of these style ids."
+                )
+            )
+        if resolution.template is None:
+            valid_ids = ", ".join(sorted(BUILTIN_TEMPLATES))
+            return GenerationRefusal(
+                reason=f"Unknown style '@{args.style}'. Valid styles: {valid_ids}"
+            )
+        style_template = resolution.template
+
+    prompt = args.prompt.strip()
+    if prompt:
+        if style_template is not None:
+            composed, negative, params = compose_styled_request(
+                prompt, style_template
+            )
+            return PreparedGeneration(
+                prompt=composed,
+                negative_prompt=negative,
+                style_name=style_template.name,
+                width=params.get("width"),
+                height=params.get("height"),
+                steps=params.get("steps"),
+                cfg_scale=params.get("cfg_scale"),
+            )
+        return PreparedGeneration(
+            prompt=prompt,
+            negative_prompt=None,
+            style_name=None,
+            width=None,
+            height=None,
+            steps=None,
+            cfg_scale=None,
+        )
+
+    usable_pairs = [
+        (role, content)
+        for role, content in conversation_pairs
+        if content and content.strip()
+    ]
+    if not usable_pairs:
+        return GenerationRefusal(reason=GENERATE_IMAGE_USAGE_TEXT)
+
+    template = style_template or get_template("chat_scene_visual")
+    built = build_context_prompt(usable_pairs, template)
+    if built is None:
+        return GenerationRefusal(reason=GENERATE_IMAGE_USAGE_TEXT)
+    composed, negative, params = built
+    return PreparedGeneration(
+        prompt=composed,
+        negative_prompt=negative,
+        style_name=template.name,
+        width=params.get("width"),
+        height=params.get("height"),
+        steps=params.get("steps"),
+        cfg_scale=params.get("cfg_scale"),
+    )
 
 
 @dataclass(frozen=True)

@@ -97,9 +97,12 @@ from ...Chat.console_prefill import (
     pinned_prefill_from_conversation_metadata,
 )
 from ...Chat.console_generate_image import (
+    GenerationRefusal,
+    PreparedGeneration,
     clamp_initial_batch,
     generation_content_marker,
     parse_generate_image_args,
+    prepare_generation_request,
     run_generation_batch,
 )
 from ...Image_Generation.config import get_image_generation_config
@@ -11729,23 +11732,54 @@ class ChatScreen(BaseAppScreen):
             self._imagegen_inflight_message_ids = message_ids
         return message_ids
 
-    async def _console_command_generate_image(self, parse: CommandParse) -> None:
-        """Resolve and run one `/generate-image` batch (`[:backend] <prompt>`).
+    def _console_generate_image_conversation_pairs(
+        self, store: Any, session_id: str
+    ) -> list[tuple[str, str]]:
+        """Return the session's completed, non-empty messages as ``(role, content)``.
 
-        Refusals (empty prompt, no resolvable/configured backend, or a
-        batch already running for this session) leave the composer draft
-        untouched, mirroring `/system`'s no-system-part behavior, and never
-        touch the store. Once a batch is actually going to run the draft is
-        cleared up front (this IS the "successful dispatch" point — not
-        "successful generation"): the blocking batch loop
-        (`run_generation_batch`) then runs off the UI loop via
-        `asyncio.to_thread`, exactly like `_prep_console_images`. On the
-        zero-success path the original draft is restored so the user can
-        edit and retry. One or more successes append a single generation
-        message via `ConsoleChatStore.append_generation_message` with a
-        trailing partial status line when some variants failed. The in-flight
-        guard is always cleared in a `finally`, so a crashed/cancelled batch
-        never wedges the session against further `/generate-image` commands.
+        Feeds `prepare_generation_request`'s no-prompt "generate from
+        conversation" path. The just-typed ``/generate-image`` invocation
+        itself is never in this list -- command dispatch intercepts before
+        the composer draft is ever appended to the store as a message.
+        """
+        return [
+            (
+                message.role.value
+                if hasattr(message.role, "value")
+                else str(message.role),
+                message.content,
+            )
+            for message in store.messages_for_session(session_id)
+            if message.status == "complete" and message.content and message.content.strip()
+        ]
+
+    async def _console_command_generate_image(self, parse: CommandParse) -> None:
+        """Resolve and run one `/generate-image` batch.
+
+        Grammar: ``[:backend] [@style] <prompt>`` (tokens in any order), or
+        no prompt at all to generate from the session's conversation
+        context. `prepare_generation_request` (`Chat/console_generate_image.py`)
+        owns all of that decision logic -- style-token resolution, prompt
+        composition against a template, and the conversation-context
+        fallback -- so it stays independently unit-testable; this handler
+        just executes its result.
+
+        Refusals (a `GenerationRefusal` from `prepare_generation_request`,
+        no resolvable/configured backend, or a batch already running for
+        this session) leave the composer draft untouched, mirroring
+        `/system`'s no-system-part behavior, and never touch the store.
+        Once a batch is actually going to run the draft is cleared up front
+        (this IS the "successful dispatch" point — not "successful
+        generation"): the blocking batch loop (`run_generation_batch`) then
+        runs off the UI loop via `asyncio.to_thread`, exactly like
+        `_prep_console_images`. On the zero-success path the original draft
+        is restored so the user can edit and retry. One or more successes
+        append a single generation message via
+        `ConsoleChatStore.append_generation_message` with a trailing
+        partial status line when some variants failed. The in-flight guard
+        is always cleared in a `finally`, so a crashed/cancelled batch
+        never wedges the session against further `/generate-image`
+        commands.
         """
         args = parse_generate_image_args(parse.args)
         store = self._ensure_console_chat_store()
@@ -11753,10 +11787,14 @@ class ChatScreen(BaseAppScreen):
             workspace_id=store.workspace_context.active_workspace_id,
             settings=self._default_console_session_settings(),
         )
-        if not args.prompt:
-            await self._append_native_console_system_message(
-                "Usage: /generate-image [:backend] <prompt>"
-            )
+        conversation_pairs = self._console_generate_image_conversation_pairs(
+            store, session.id
+        )
+        prepared: PreparedGeneration | GenerationRefusal = prepare_generation_request(
+            args, conversation_pairs
+        )
+        if isinstance(prepared, GenerationRefusal):
+            await self._append_native_console_system_message(prepared.reason)
             return
         cfg = get_image_generation_config()
         backend = args.backend or cfg.default_backend
@@ -11793,10 +11831,15 @@ class ChatScreen(BaseAppScreen):
             batch = await asyncio.to_thread(
                 run_generation_batch,
                 backend=backend,
-                prompt=args.prompt,
-                negative_prompt=None,
+                prompt=prepared.prompt,
+                negative_prompt=prepared.negative_prompt,
                 seed=None,
                 count=count,
+                style_name=prepared.style_name,
+                width=prepared.width,
+                height=prepared.height,
+                steps=prepared.steps,
+                cfg_scale=prepared.cfg_scale,
             )
             if not batch.successes:
                 # Restore the saved draft so the user can edit and retry.
@@ -11810,7 +11853,7 @@ class ChatScreen(BaseAppScreen):
                 return
             store.append_generation_message(
                 session.id,
-                content=generation_content_marker(args.prompt),
+                content=generation_content_marker(prepared.prompt),
                 variants=batch.successes,
                 persist=True,
             )
