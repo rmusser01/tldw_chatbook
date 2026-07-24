@@ -16,6 +16,7 @@ from textual.widgets import Button, Select, RichLog, Static, ProgressBar
 #
 # Local imports
 from tldw_chatbook.TTS import get_tts_service, OpenAISpeechRequest
+from tldw_chatbook.TTS.adapter_types import TTSProgress
 from tldw_chatbook.config import get_cli_setting
 #
 #######################################################################################################################
@@ -327,7 +328,7 @@ class STTSEventHandler:
                         )
 
             # Define progress callback
-            async def progress_callback(info: Dict[str, Any]) -> None:
+            async def progress_callback(info: TTSProgress) -> None:
                 """Update UI with generation progress"""
                 if playground:
 
@@ -337,26 +338,30 @@ class STTSEventHandler:
                             status_text = playground.query_one(
                                 "#generation-status-text", Static
                             )
-                            status_text.update(info.get("status", "Generating..."))
+                            status_text.update(info.status or "Generating...")
 
                             # Update progress bar
                             progress_bar = playground.query_one(
                                 "#generation-progress", ProgressBar
                             )
-                            progress = info.get("progress", 0) * 100
-                            progress_bar.update(progress=progress)
+                            if info.fraction is not None:
+                                progress_bar.update(progress=info.fraction * 100)
 
                             # Log additional details
                             log = playground.query_one("#tts-generation-log", RichLog)
-                            if "metrics" in info:
-                                metrics = info["metrics"]
-                                if "audio_duration" in metrics:
+                            audio_duration = info.metrics.get("audio_duration")
+                            if isinstance(audio_duration, (int, float)):
+                                log.write(
+                                    f"[dim]Generated {audio_duration:.1f}s of audio[/dim]"
+                                )
+                            elif info.processed is not None:
+                                if info.total is None:
                                     log.write(
-                                        f"[dim]Generated {metrics['audio_duration']:.1f}s of audio[/dim]"
+                                        f"[dim]Processed {info.processed} item(s)[/dim]"
                                     )
-                                elif "current_chunk" in info:
+                                else:
                                     log.write(
-                                        f"[dim]Processing chunk {info.get('current_chunk')}/{info.get('total_chunks', '?')}[/dim]"
+                                        f"[dim]Processed {info.processed}/{info.total} item(s)[/dim]"
                                     )
                         except Exception as e:
                             logger.debug(f"Progress update error: {e}")
@@ -365,17 +370,6 @@ class STTSEventHandler:
                         playground.call_from_thread(update_progress)
                     else:
                         update_progress()
-
-            # Set progress callback on the backend if supported
-            try:
-                backend = await self._stts_service.backend_manager.get_backend(
-                    internal_model_id
-                )
-                if backend and hasattr(backend, "set_progress_callback"):
-                    backend.set_progress_callback(progress_callback)
-                    logger.debug(f"Set progress callback for {internal_model_id}")
-            except Exception as e:
-                logger.debug(f"Could not set progress callback: {e}")
 
             # Generate audio with provider-specific settings
             audio_data = b""
@@ -417,7 +411,9 @@ class STTSEventHandler:
 
             try:
                 async for chunk in self._stts_service.generate_audio_stream(
-                    request, internal_model_id
+                    request,
+                    internal_model_id,
+                    progress_sink=progress_callback,
                 ):
                     audio_data += chunk
                     chunk_count += 1
