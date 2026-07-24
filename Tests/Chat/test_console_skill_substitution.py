@@ -24,12 +24,20 @@ class _Skills:
         raise_trust_for=(),
         extra_skills=(),
         blocked_skills=(),
+        reference_files=None,
+        reference_files_for=None,
     ):
         self._mode = mode
         self._raise = raise_trust
         self._raise_for = frozenset(raise_trust_for)
         self._extra_skills = tuple(extra_skills)
         self._blocked_skills = tuple(blocked_skills)
+        # Task 5: `reference_files` is a default applied to every
+        # execute_skill result; `reference_files_for` overrides it per skill
+        # name (both mirror Task 2's contract -- the key is ABSENT from the
+        # result entirely when a skill has no bundle beyond SKILL.md).
+        self._reference_files = reference_files
+        self._reference_files_for = dict(reference_files_for or {})
         self.executions = []
         self.get_context_calls = 0
 
@@ -56,13 +64,17 @@ class _Skills:
                 reason_code="skill_modified",
                 trust_status="quarantined_modified",
             )
-        return {
+        result = {
             "skill_name": name,
             "rendered_prompt": f"RENDERED[{args}]",
             "allowed_tools": None,
             "execution_mode": self._mode,
             "fork_output": None,
         }
+        refs = self._reference_files_for.get(name, self._reference_files)
+        if refs is not None:
+            result["reference_files"] = refs
+        return result
 
 
 class _ReadyResolution:
@@ -109,7 +121,9 @@ async def test_inline_substitutes_final_user_message_only():
         {"role": "assistant", "content": "ok"},
         {"role": "user", "content": "$code-review fix it"},
     ]
-    out, refuse, notes = await controller._apply_skill_substitution(msgs)
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        msgs
+    )
     assert refuse is None
     assert out[-1] == {"role": "user", "content": "RENDERED[fix it]"}
     assert out[1] == {"role": "user", "content": "earlier"}  # history preserved
@@ -123,7 +137,9 @@ async def test_fork_drops_history_keeps_system():
         {"role": "user", "content": "earlier"},
         {"role": "user", "content": "$code-review go"},
     ]
-    out, refuse, notes = await controller._apply_skill_substitution(msgs)
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        msgs
+    )
     assert refuse is None
     assert out == [
         {"role": "system", "content": "sys"},
@@ -135,7 +151,9 @@ async def test_fork_drops_history_keeps_system():
 async def test_non_skill_final_message_unchanged():
     controller, _store = _controller(_Skills("inline"))
     msgs = [{"role": "user", "content": "just a question"}]
-    out, refuse, notes = await controller._apply_skill_substitution(msgs)
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        msgs
+    )
     assert out == msgs and refuse is None
 
 
@@ -143,7 +161,9 @@ async def test_non_skill_final_message_unchanged():
 async def test_edited_skill_refuses_at_build():
     controller, _store = _controller(_Skills(raise_trust=True))
     msgs = [{"role": "user", "content": "$code-review go"}]
-    out, refuse, notes = await controller._apply_skill_substitution(msgs)
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        msgs
+    )
     assert out == msgs
     assert refuse == (
         'Skill "code-review" isn\'t trusted (skill_modified) — '
@@ -158,7 +178,9 @@ async def test_no_skills_service_is_a_noop():
         store=store, provider_gateway=object(), provider="llama_cpp", model="m"
     )
     msgs = [{"role": "user", "content": "$code-review go"}]
-    out, refuse, notes = await controller._apply_skill_substitution(msgs)
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        msgs
+    )
     assert out == msgs and refuse is None
 
 
@@ -357,7 +379,9 @@ async def test_leading_slash_no_longer_invokes():
     skills = _Skills("inline")
     controller, _store = _controller(skills)
     messages = [{"role": "user", "content": "/code-review look at this"}]
-    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        messages
+    )
     assert out == messages
     assert refuse is None
     assert skills.executions == []
@@ -374,7 +398,9 @@ async def test_embedded_mention_splices_preserving_prose():
     skills = _Skills("inline")
     controller, _store = _controller(skills)
     messages = [{"role": "user", "content": "summarize, $code-review it, then list"}]
-    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        messages
+    )
     assert refuse is None and notes == ()
     content = out[0]["content"]
     assert content.startswith("summarize, RENDERED[")
@@ -389,7 +415,9 @@ async def test_embedded_fork_mention_left_literal():
     skills = _Skills("fork")
     controller, _store = _controller(skills)
     messages = [{"role": "user", "content": "please $code-review this"}]
-    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        messages
+    )
     assert out == messages          # untouched
     assert refuse is None and notes == ()
 
@@ -399,7 +427,9 @@ async def test_embedded_untrusted_left_literal_with_note():
     skills = _Skills(raise_trust=True)
     controller, _store = _controller(skills)
     messages = [{"role": "user", "content": "please $code-review this"}]
-    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        messages
+    )
     assert out == messages          # prose never lost
     assert refuse is None           # embedded never aborts
     assert len(notes) == 1 and "code-review" in notes[0]
@@ -410,7 +440,9 @@ async def test_leading_resolved_mention_does_not_scan_args():
     skills = _Skills("inline")
     controller, _store = _controller(skills)
     messages = [{"role": "user", "content": "$code-review also $code-review"}]
-    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        messages
+    )
     # Leading form: ONE execution with the rest as args; no embedded pass.
     assert skills.executions == [("code-review", "also $code-review")]
 
@@ -420,7 +452,9 @@ async def test_leading_unresolved_falls_through_to_embedded():
     skills = _Skills("inline")
     controller, _store = _controller(skills)
     messages = [{"role": "user", "content": "$notaskill but $code-review works"}]
-    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        messages
+    )
     content = out[0]["content"]
     assert content.startswith("$notaskill but RENDERED[")
     assert skills.executions == [("code-review", "")]
@@ -434,7 +468,9 @@ async def test_plain_text_send_never_touches_skills_service():
     skills = _Skills("inline")
     controller, _store = _controller(skills)
     messages = [{"role": "user", "content": "just a plain question, no sigil"}]
-    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        messages
+    )
     assert out == messages
     assert refuse is None
     assert notes == ()
@@ -449,7 +485,9 @@ async def test_same_skill_mentioned_twice_embedded_splices_both():
     messages = [
         {"role": "user", "content": "start $code-review mid $code-review end"}
     ]
-    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        messages
+    )
     assert refuse is None and notes == ()
     content = out[0]["content"]
     # BOTH occurrences spliced, prose preserved.
@@ -470,7 +508,9 @@ async def test_mixed_spliced_and_blocked_mentions():
     messages = [
         {"role": "user", "content": "run $code-review then $danger-zone please"}
     ]
-    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        messages
+    )
     assert refuse is None  # embedded never aborts
     content = out[0]["content"]
     assert content == "run RENDERED[] then $danger-zone please"
@@ -496,7 +536,9 @@ async def test_leading_blocked_skill_mention_refuses():
     )
     controller, _store = _controller(skills)
     messages = [{"role": "user", "content": "$blocked-name args here"}]
-    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        messages
+    )
     assert out == messages
     assert refuse == (
         'Skill "blocked-name" isn\'t trusted (skill_modified) — '
@@ -514,7 +556,9 @@ async def test_embedded_blocked_skill_mention_literal_with_note():
     )
     controller, _store = _controller(skills)
     messages = [{"role": "user", "content": "please $blocked-name this"}]
-    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        messages
+    )
     assert out == messages  # literal text untouched
     assert refuse is None  # embedded never aborts
     assert len(notes) == 1 and "blocked-name" in notes[0]
@@ -532,7 +576,9 @@ async def test_non_user_invocable_blocked_skill_never_detected():
     )
     controller, _store = _controller(skills)
     messages = [{"role": "user", "content": "please $blocked-name this"}]
-    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        messages
+    )
     assert out == messages
     assert refuse is None
     assert notes == ()
@@ -553,8 +599,164 @@ async def test_leading_form_tolerates_leading_whitespace():
     skills = _Skills("inline")
     controller, _store = _controller(skills)
     messages = [{"role": "user", "content": "  $code-review fix it"}]
-    out, refuse, notes = await controller._apply_skill_substitution(messages)
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        messages
+    )
     assert refuse is None
     # Leading form (args-bearing), not embedded-ARGLESS.
     assert skills.executions == [("code-review", "fix it")]
     assert out[-1] == {"role": "user", "content": "RENDERED[fix it]"}
+
+
+# ---------------------------------------------------------------------------
+# Task 5 (skills-fork-reachability): the substitution return widens to a
+# 5-tuple -- `skill_bindings` (names authorized for THIS turn's skill_file
+# reads) and `skill_bundle_block` (the pre-rendered "Bundled files" block,
+# built purely from the execute results already in hand). The block is
+# NEVER inserted into `messages` here -- only `run_reply` appends it
+# (bridge-side), so plain sends and the stored transcript never see it.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_leading_mention_returns_binding_and_block():
+    skills = _Skills(
+        "inline",
+        reference_files=[{"path": "references/api.md", "size": 120, "is_text": True}],
+    )
+    controller, _store = _controller(skills)
+    messages = [{"role": "user", "content": "$code-review look"}]
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        messages
+    )
+    assert refuse is None
+    assert bindings == ("code-review",)
+    assert block == (
+        "Bundled files (readable via skill_file): references/api.md (120 bytes)"
+    )
+    assert "Bundled files (readable via skill_file):" in block
+    # NEVER inserted into messages here -- only run_reply appends it.
+    assert all("Bundled files" not in m.get("content", "") for m in out)
+
+
+@pytest.mark.asyncio
+async def test_leading_fork_mention_also_binds_and_blocks():
+    skills = _Skills(
+        "fork",
+        reference_files=[
+            {"path": "assets/logo.png", "size": 2048, "is_text": False},
+        ],
+    )
+    controller, _store = _controller(skills)
+    messages = [{"role": "user", "content": "$code-review go"}]
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        messages
+    )
+    assert refuse is None
+    assert bindings == ("code-review",)
+    assert block == (
+        "Bundled files (readable via skill_file): "
+        "assets/logo.png (2048 bytes, binary)"
+    )
+    assert all("Bundled files" not in m.get("content", "") for m in out)
+
+
+@pytest.mark.asyncio
+async def test_leading_refuse_has_no_bindings_or_block():
+    skills = _Skills(
+        raise_trust=True,
+        reference_files=[{"path": "notes.md", "size": 1, "is_text": True}],
+    )
+    controller, _store = _controller(skills)
+    messages = [{"role": "user", "content": "$code-review go"}]
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        messages
+    )
+    assert refuse is not None
+    assert bindings == ()
+    assert block == ""
+
+
+@pytest.mark.asyncio
+async def test_embedded_spliced_binds_but_blocked_does_not():
+    skills = _Skills(
+        "inline",
+        raise_trust_for={"danger-zone"},
+        extra_skills=("danger-zone",),
+        reference_files_for={
+            "code-review": [{"path": "notes.md", "size": 42, "is_text": True}],
+        },
+    )
+    controller, _store = _controller(skills)
+    messages = [
+        {"role": "user", "content": "run $code-review then $danger-zone please"}
+    ]
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        messages
+    )
+    assert refuse is None
+    assert bindings == ("code-review",)
+    assert block == "Bundled files (readable via skill_file): notes.md (42 bytes)"
+    assert "danger-zone" not in block
+    assert all("Bundled files" not in m.get("content", "") for m in out)
+
+
+@pytest.mark.asyncio
+async def test_embedded_fork_literal_mention_does_not_bind():
+    """An embedded mention resolving to a `fork` skill stays literal text
+    (no "in place" splice meaning) -- it must never be counted as bound,
+    and its reference_files must never leak into the block."""
+    skills = _Skills(
+        "fork",
+        reference_files=[{"path": "notes.md", "size": 42, "is_text": True}],
+    )
+    controller, _store = _controller(skills)
+    messages = [{"role": "user", "content": "please $code-review this"}]
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        messages
+    )
+    assert refuse is None
+    assert out == messages
+    assert bindings == ()
+    assert block == ""
+
+
+@pytest.mark.asyncio
+async def test_plain_text_no_bindings():
+    skills = _Skills("inline")
+    controller, _store = _controller(skills)
+    messages = [{"role": "user", "content": "just a plain question, no sigil"}]
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        messages
+    )
+    assert bindings == ()
+    assert block == ""
+
+
+@pytest.mark.asyncio
+async def test_no_embedded_mentions_no_bindings():
+    skills = _Skills("inline")
+    controller, _store = _controller(skills)
+    messages = [{"role": "user", "content": "$notaskill has no known mentions"}]
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        messages
+    )
+    assert bindings == ()
+    assert block == ""
+
+
+@pytest.mark.asyncio
+async def test_skill_with_no_reference_files_binds_with_empty_block():
+    """`reference_files` absent from the execute result (the common case --
+    a skill with no bundle beyond SKILL.md) still authorizes the name; the
+    block is simply empty, matching Task 2's "key ABSENT when none"
+    contract."""
+    skills = _Skills("inline")  # no reference_files configured at all
+    controller, _store = _controller(skills)
+    messages = [{"role": "user", "content": "$code-review look"}]
+    out, refuse, notes, bindings, block = await controller._apply_skill_substitution(
+        messages
+    )
+    assert refuse is None
+    assert bindings == ("code-review",)
+    assert block == ""

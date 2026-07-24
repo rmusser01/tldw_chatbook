@@ -18,6 +18,7 @@ from .agent_models import (
     RUN_CANCELLED,
     RUN_DONE,
     RUN_STUCK,
+    SKILL_FILE_TOOL_NAME,
     SPAWN_TOOL_NAME,
     STEP_ERROR,
     STEP_MODEL,
@@ -228,6 +229,14 @@ class LoopDeps:
     # closure, not in this generic runtime. ``None`` (the default) is a
     # no-op: every call proceeds, byte-identical to pre-Task-4 behavior.
     review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None
+    # skill_file: the fourth runtime tool (task-3, skills-foundation). Unlike
+    # a ToolProvider entry, its schema is pinned into runtime_schemas by the
+    # service (never disclosure-gated) and its authorization lives on a
+    # per-run SkillFileBindings object -- never config.allowed_tools. `None`
+    # (the default) means the service never wired this run for skill_file at
+    # all, and a call by that name falls through to the same
+    # deps.invoke_tool path any other unrecognized/undisclosed name hits.
+    read_skill_file: Callable[[str, str], ToolResult] | None = None
 
 
 def _catalog_lines(entries: list) -> str:
@@ -516,6 +525,15 @@ def run_agent_loop(
                                 )
                             else:
                                 result = ToolResult(ok=True, content="no room")
+                elif (
+                    call.name == SKILL_FILE_TOOL_NAME
+                    and deps.read_skill_file is not None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    result = deps.read_skill_file(
+                        str(call.args.get("skill_name", "")),
+                        str(call.args.get("path", "")),
+                    )
                 else:
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     result = deps.invoke_tool(call)

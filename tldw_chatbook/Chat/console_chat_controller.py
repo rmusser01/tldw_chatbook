@@ -231,6 +231,47 @@ def _split_skill_command_word(text: str) -> tuple[str, str]:
     return text, ""
 
 
+def _render_skill_bundle_block(results: Iterable[Mapping[str, Any]]) -> str:
+    """Render one combined "Bundled files" block for a turn's bound skills.
+
+    Task 5 (skills-fork-reachability): `_apply_skill_substitution` builds
+    this as pure string work from `execute_skill` results it already holds
+    -- no re-execution, no extra service calls -- for every skill actually
+    bound this turn (leading-resolved, or embedded mentions that spliced).
+    `run_reply` (never here) is the only place that ever appends the
+    returned string to a message, so plain sends and the stored transcript
+    never see it.
+
+    Row format matches `_BridgeSkillRunner.run`'s own bundle-pointer block
+    byte-for-byte (Task 4) -- ``{path} ({size} bytes)`` / ``{path} ({size}
+    bytes, binary)``, comma-joined under one combined header -- so a bound
+    skill's `skill_file` reads look identical whether granted turn-side
+    (this function) or fork-side (a spawned skill reading its own bundle).
+
+    Args:
+        results: `execute_skill` result mappings for the bound skills, in
+            any order; a result missing `reference_files` (absent when a
+            skill has no bundle beyond SKILL.md) or with it empty
+            contributes no rows.
+
+    Returns:
+        The combined block, or ``""`` when no result carries any rows.
+    """
+    rows: list[str] = []
+    for result in results:
+        refs = result.get("reference_files") if isinstance(result, Mapping) else None
+        if not refs:
+            continue
+        rows.extend(
+            f"{ref['path']} ({ref['size']} bytes"
+            f"{'' if ref.get('is_text', True) else ', binary'})"
+            for ref in refs
+        )
+    if not rows:
+        return ""
+    return "Bundled files (readable via skill_file): " + ", ".join(rows)
+
+
 class ConsoleProviderGatewayProtocol(Protocol):
     """Provider gateway surface required by the Console controller."""
 
@@ -467,9 +508,13 @@ class ConsoleChatController:
             self.store.clear_pending_attachments(session.id)
         try:
             provider_messages = self._provider_messages_for_session(session.id)
-            provider_messages, refuse, skill_notes = await self._apply_skill_substitution(
-                provider_messages
-            )
+            (
+                provider_messages,
+                refuse,
+                skill_notes,
+                skill_bindings,
+                skill_bundle_block,
+            ) = await self._apply_skill_substitution(provider_messages)
             if refuse is not None:
                 # A substitution refusal is a block outcome like any other
                 # (provider not ready, probe raise): fail the echoed row so the
@@ -523,6 +568,8 @@ class ConsoleChatController:
             assistant_message_id=assistant.id,
             prefill=prefill,
             prefill_from_one_shot=prefill_from_one_shot,
+            skill_bindings=skill_bindings,
+            skill_bundle_block=skill_bundle_block,
         )
 
     def new_session(
@@ -1147,9 +1194,13 @@ class ConsoleChatController:
             before_message_id=message_id,
         )
         self._ensure_user_continuation_instruction(provider_messages)
-        provider_messages, refuse, skill_notes = await self._apply_skill_substitution(
-            provider_messages
-        )
+        (
+            provider_messages,
+            refuse,
+            skill_notes,
+            skill_bindings,
+            skill_bundle_block,
+        ) = await self._apply_skill_substitution(provider_messages)
         if refuse is not None:
             return self._block(session_id, refuse)
         for note in skill_notes:
@@ -1171,6 +1222,8 @@ class ConsoleChatController:
             assistant_message_id=message_id,
             prepare_retry=True,
             prefill=prefill,
+            skill_bindings=skill_bindings,
+            skill_bundle_block=skill_bundle_block,
         )
 
     async def continue_from_message(self, message_id: str) -> ConsoleSubmitResult:
@@ -1211,9 +1264,13 @@ class ConsoleChatController:
                 session_id,
                 "Nothing to continue before the first message.",
             )
-        provider_messages, refuse, skill_notes = await self._apply_skill_substitution(
-            provider_messages
-        )
+        (
+            provider_messages,
+            refuse,
+            skill_notes,
+            skill_bindings,
+            skill_bundle_block,
+        ) = await self._apply_skill_substitution(provider_messages)
         if refuse is not None:
             return self._block(session_id, refuse)
         for note in skill_notes:
@@ -1238,6 +1295,8 @@ class ConsoleChatController:
             resolution=resolution,
             provider_messages=provider_messages,
             assistant_message_id=assistant.id,
+            skill_bindings=skill_bindings,
+            skill_bundle_block=skill_bundle_block,
         )
 
     async def regenerate_message(self, message_id: str) -> ConsoleSubmitResult:
@@ -1309,9 +1368,13 @@ class ConsoleChatController:
                 session_id,
                 "Nothing to regenerate before the first message.",
             )
-        provider_messages, refuse, skill_notes = await self._apply_skill_substitution(
-            provider_messages
-        )
+        (
+            provider_messages,
+            refuse,
+            skill_notes,
+            skill_bindings,
+            skill_bundle_block,
+        ) = await self._apply_skill_substitution(provider_messages)
         if refuse is not None:
             return self._block(session_id, refuse)
         for note in skill_notes:
@@ -1339,6 +1402,8 @@ class ConsoleChatController:
             assistant_message_id=new_message.id,
             variant_mode=False,
             prefill=prefill,
+            skill_bindings=skill_bindings,
+            skill_bundle_block=skill_bundle_block,
         )
 
     async def edit_and_resend_message(
@@ -1464,9 +1529,13 @@ class ConsoleChatController:
             {"role": ConsoleMessageRole.USER.value, "content": clean_content}
         )
         self._ensure_user_continuation_instruction(provider_messages)
-        provider_messages, refuse, skill_notes = await self._apply_skill_substitution(
-            provider_messages
-        )
+        (
+            provider_messages,
+            refuse,
+            skill_notes,
+            skill_bindings,
+            skill_bundle_block,
+        ) = await self._apply_skill_substitution(provider_messages)
         if refuse is not None:
             return self._block(session_id, refuse)
         for note in skill_notes:
@@ -1503,6 +1572,8 @@ class ConsoleChatController:
             assistant_message_id=assistant.id,
             variant_mode=False,
             prefill=prefill,
+            skill_bindings=skill_bindings,
+            skill_bundle_block=skill_bundle_block,
         )
 
     async def build_context_snapshot(
@@ -1953,7 +2024,9 @@ class ConsoleChatController:
 
     async def _apply_skill_substitution(
         self, provider_messages: list[dict[str, Any]]
-    ) -> tuple[list[dict[str, Any]], str | None, tuple[str, ...]]:
+    ) -> tuple[
+        list[dict[str, Any]], str | None, tuple[str, ...], tuple[str, ...], str
+    ]:
         """Render-fresh the triggering turn's skill mention(s) at payload build time.
 
         Spec: "Invocation semantics" §5 (the substitution rule) -- one rule
@@ -2011,28 +2084,46 @@ class ConsoleChatController:
                 message and any synthesized continuation instruction).
 
         Returns:
-            ``(provider_messages, None, ())`` unchanged when there is no
-            skills service configured, substitution is disabled, there is
-            no final user message, that message's content isn't a string,
-            or neither form applies. ``(new_messages, None, notes)`` when
-            the leading form resolves and renders (``notes`` always empty
-            for the leading form) or when the embedded pass splices one or
-            more mentions (``notes`` carries one `SKILL_MENTION_SKIPPED_
-            NOTE` per unique trust-blocked mention name, in document
-            order); ``inline`` replaces just the final message in place
-            (history preserved); leading-form ``fork`` drops every message
-            before it except a leading ``role == "system"`` message (clean
-            context = session system prompt + rendered turn only).
-            ``(provider_messages, refuse_copy, ())`` -- the ORIGINAL,
-            unmodified messages, paired with `SKILL_UNTRUSTED_REFUSE` copy
-            -- when a LEADING resolved skill is no longer trusted
-            (`SkillTrustBlockedError` at execute-time); the caller must
-            append `refuse_copy` as a system row and abort the turn without
-            sending. An embedded mention never refuses/aborts -- it
-            degrades to a literal-plus-note instead, and the send proceeds.
+            A 5-tuple ``(provider_messages, refuse, notes, skill_bindings,
+            skill_bundle_block)`` (Task 5, skills-fork-reachability).
+            ``skill_bindings`` is the leading-RESOLVED skill's name (both
+            ``inline`` and ``fork`` outcomes -- never on refuse) plus every
+            embedded mention name that actually SPLICED (never a
+            trust-blocked-literal or fork-literal mention).
+            ``skill_bundle_block`` is the fully-rendered "Bundled files"
+            block (`_render_skill_bundle_block`) for every bound skill
+            whose `execute_skill` result carried non-empty
+            `reference_files`, built as pure string work from the results
+            already in hand this call (no re-execution, no extra service
+            calls), or ``""`` when nothing bound has any. It is NEVER
+            inserted into ``provider_messages`` here -- only ``run_reply``
+            (bridge-side) ever appends it, so plain sends and the stored
+            transcript never see it.
+
+            ``(provider_messages, None, (), (), "")`` unchanged when there
+            is no skills service configured, substitution is disabled,
+            there is no final user message, that message's content isn't a
+            string, or neither form applies. ``(new_messages, None, notes,
+            skill_bindings, skill_bundle_block)`` when the leading form
+            resolves and renders (``notes`` always empty for the leading
+            form) or when the embedded pass splices one or more mentions
+            (``notes`` carries one `SKILL_MENTION_SKIPPED_NOTE` per unique
+            trust-blocked mention name, in document order); ``inline``
+            replaces just the final message in place (history preserved);
+            leading-form ``fork`` drops every message before it except a
+            leading ``role == "system"`` message (clean context = session
+            system prompt + rendered turn only).
+            ``(provider_messages, refuse_copy, (), (), "")`` -- the
+            ORIGINAL, unmodified messages, paired with
+            `SKILL_UNTRUSTED_REFUSE` copy -- when a LEADING resolved skill
+            is no longer trusted (`SkillTrustBlockedError` at
+            execute-time); the caller must append `refuse_copy` as a
+            system row and abort the turn without sending. An embedded
+            mention never refuses/aborts -- it degrades to a
+            literal-plus-note instead, and the send proceeds.
         """
         if self._skills_service is None or not self._skill_substitution_enabled:
-            return provider_messages, None, ()
+            return provider_messages, None, (), (), ""
 
         final_index: int | None = None
         for index in range(len(provider_messages) - 1, -1, -1):
@@ -2040,15 +2131,15 @@ class ConsoleChatController:
                 final_index = index
                 break
         if final_index is None:
-            return provider_messages, None, ()
+            return provider_messages, None, (), (), ""
 
         content = provider_messages[final_index].get("content")
         if not isinstance(content, str):
-            return provider_messages, None, ()
+            return provider_messages, None, (), (), ""
         if MENTION_SIGIL not in content:
             # Fast path: no sigil anywhere means neither form can possibly
             # apply -- plain-text sends never touch the skills service.
-            return provider_messages, None, ()
+            return provider_messages, None, (), (), ""
 
         context = await self._skills_service.get_context(mode="local")
         candidates = self._skill_candidates_from_context(context)
@@ -2088,7 +2179,7 @@ class ConsoleChatController:
                         refuse = SKILL_UNTRUSTED_REFUSE.format(
                             name=resolution.name, reason=exc.reason_code
                         )
-                        return provider_messages, refuse, ()
+                        return provider_messages, refuse, (), (), ""
 
                     rendered = (
                         result.get("rendered_prompt", "")
@@ -2104,6 +2195,16 @@ class ConsoleChatController:
                         if isinstance(result, Mapping)
                         else None
                     )
+                    # Task 5: a resolved leading mention always binds its
+                    # name (fork AND inline outcomes -- never on refuse,
+                    # which already returned above) and its block is
+                    # rendered from this single execute_skill result.
+                    bindings = (resolution.name,)
+                    block = (
+                        _render_skill_bundle_block([result])
+                        if isinstance(result, Mapping)
+                        else ""
+                    )
                     if execution_mode == "fork":
                         leading = (
                             [provider_messages[0]]
@@ -2112,11 +2213,11 @@ class ConsoleChatController:
                             == ConsoleMessageRole.SYSTEM.value
                             else []
                         )
-                        return leading + [rendered_message], None, ()
+                        return leading + [rendered_message], None, (), bindings, block
 
                     new_messages = list(provider_messages)
                     new_messages[final_index] = rendered_message
-                    return new_messages, None, ()
+                    return new_messages, None, (), bindings, block
 
         # --- Embedded pass: no leading mention, or the leading word didn't
         # resolve to a known skill. Scans the ORIGINAL (unstripped) content
@@ -2128,9 +2229,15 @@ class ConsoleChatController:
         names = frozenset(candidate.name for candidate in detection_candidates)
         mentions = find_embedded_mentions(content, names)
         if not mentions:
-            return provider_messages, None, ()
+            return provider_messages, None, (), (), ""
 
         rendered_by_name: dict[str, str | None] = {}
+        # Task 5: results_by_name only keeps a name's execute_skill result
+        # when that mention actually SPLICED (execution_mode == "inline")
+        # -- a blocked-literal or fork-literal mention's result is
+        # discarded here, so it can never leak into skill_bindings or the
+        # rendered bundle block below.
+        results_by_name: dict[str, Mapping[str, Any]] = {}
         notes: list[str] = []
         for mention in mentions:
             if mention.name in rendered_by_name:
@@ -2156,6 +2263,8 @@ class ConsoleChatController:
             rendered_by_name[mention.name] = (
                 rendered if execution_mode == "inline" else None
             )
+            if execution_mode == "inline" and isinstance(result, Mapping):
+                results_by_name[mention.name] = result
 
         new_content = content
         for mention in reversed(mentions):
@@ -2166,14 +2275,27 @@ class ConsoleChatController:
                 new_content[: mention.start] + body + new_content[mention.end :]
             )
         if new_content == content:
-            return provider_messages, None, tuple(notes)
+            return provider_messages, None, tuple(notes), (), ""
 
+        # Task 5: bound names are every unique mention that actually
+        # spliced, in first-occurrence document order (`dict.fromkeys` on
+        # `mentions` dedups while preserving order) -- never a
+        # blocked-literal or fork-literal mention, which never reached
+        # `results_by_name`.
+        spliced_names = tuple(
+            name
+            for name in dict.fromkeys(mention.name for mention in mentions)
+            if rendered_by_name.get(name) is not None
+        )
+        block = _render_skill_bundle_block(
+            results_by_name[name] for name in spliced_names if name in results_by_name
+        )
         new_messages = list(provider_messages)
         new_messages[final_index] = {
             "role": ConsoleMessageRole.USER.value,
             "content": new_content,
         }
-        return new_messages, None, tuple(notes)
+        return new_messages, None, tuple(notes), spliced_names, block
 
     async def _apply_world_info(
         self, provider_messages: list[dict[str, Any]], session_id: str
@@ -2520,6 +2642,8 @@ class ConsoleChatController:
         variant_mode: bool = False,
         prefill: str | None = None,
         prefill_from_one_shot: bool = False,
+        skill_bindings: tuple[str, ...] = (),
+        skill_bundle_block: str = "",
     ) -> ConsoleSubmitResult:
         try:
             owner_id = self.store.session_id_for_message(assistant_message_id)
@@ -2565,6 +2689,8 @@ class ConsoleChatController:
                 assistant_message_id=assistant_message_id,
                 prepare_retry=prepare_retry,
                 variant_mode=variant_mode,
+                skill_bindings=skill_bindings,
+                skill_bundle_block=skill_bundle_block,
             )
         one_shot_used = prefill if prefill_from_one_shot else None
         if prefill:
@@ -2719,6 +2845,8 @@ class ConsoleChatController:
         assistant_message_id: str,
         prepare_retry: bool,
         variant_mode: bool,
+        skill_bindings: tuple[str, ...] = (),
+        skill_bundle_block: str = "",
     ) -> ConsoleSubmitResult:
         """Run the agent loop as the reply engine, streaming into the target row."""
         logger.info(
@@ -2809,6 +2937,8 @@ class ConsoleChatController:
                 supersede_previous=bool(prepare_retry or variant_mode),
                 mcp_provider=mcp_provider,
                 review_tool_calls=mcp_review_hook,
+                turn_skill_bindings=skill_bindings,
+                turn_bundle_block=skill_bundle_block,
             )
         except asyncio.CancelledError:
             if self._stop_requested:

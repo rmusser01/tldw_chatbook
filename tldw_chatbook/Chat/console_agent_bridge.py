@@ -32,6 +32,7 @@ from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
     AgentStep,
     RunOutcome,
+    SkillFileBindings,
     ToolCall,
     ToolCatalogEntry,
     ToolResult,
@@ -742,10 +743,12 @@ class _BridgeSkillRunner:
         skills_service: Any,
         skill_names: frozenset[str],
         builtin_names: tuple[str, ...],
+        skill_file_bindings: SkillFileBindings | None = None,
     ) -> None:
         self._skills_service = skills_service
         self._skill_names = skill_names
         self._builtin_names = builtin_names
+        self._skill_file_bindings = skill_file_bindings
 
     def is_skill_tool(self, name: str) -> bool:
         return name in self._skill_names
@@ -769,6 +772,23 @@ class _BridgeSkillRunner:
         allowed_tools = intersect_skill_tools(
             declared_allowed_tools, self._builtin_names
         )
+        # task-4 (skills-fork-reachability): grant the spawned skill's own
+        # name skill_file authorization BEFORE spawn -- so the child's very
+        # first turn can already read its own bundled reference files (see
+        # SkillFileBindings' own docstring: authorization lives here, never
+        # in config.allowed_tools) -- then append a "Bundled files" pointer
+        # block to the rendered task text whenever execute_skill reported
+        # any (absent when the skill has no bundle beyond SKILL.md).
+        if self._skill_file_bindings is not None:
+            self._skill_file_bindings.authorized.add(name)
+        refs = result.get("reference_files") if isinstance(result, Mapping) else None
+        if refs and self._skill_file_bindings is not None:
+            rows = ", ".join(
+                f"{r['path']} ({r['size']} bytes"
+                f"{'' if r.get('is_text', True) else ', binary'})"
+                for r in refs
+            )
+            rendered = f"{rendered}\n\nBundled files (readable via skill_file): {rows}"
         return spawn(rendered, allowed_tools=allowed_tools)
 
 
@@ -843,6 +863,8 @@ class ConsoleAgentBridge:
         supersede_previous: bool = False,
         mcp_provider: Any | None = None,
         review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None,
+        turn_skill_bindings: tuple[str, ...] = (),
+        turn_bundle_block: str = "",
     ) -> RunOutcome:
         # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
         # MCP): rebuilt FRESH for this run whenever there is a skills
@@ -862,6 +884,16 @@ class ConsoleAgentBridge:
         registry = self._registry
         allowed_tools = self._allowed_tools
         skill_runner = None
+        # task-4 (skills-fork-reachability): one SkillFileBindings per run,
+        # handed to BOTH AgentService (the loop's authorization + reader
+        # closure -- Task 3) and this run's _BridgeSkillRunner (which grants
+        # a spawned skill's own name pre-spawn) -- never two independently-
+        # seeded copies, or the runner's grant would never reach the loop's
+        # check. `authorized` starts empty here (Task 5 seeds the turn's
+        # $skill names); the reader is a SYNC adapter over the async scope-
+        # service read, matching _BridgeSkillRunner.run's own
+        # asyncio.run-in-worker-thread pattern just below.
+        skill_file_bindings = None
         if self._skills_service is not None or mcp_provider is not None:
             context: Mapping[str, Any] = {}
             if self._skills_service is not None:
@@ -874,11 +906,32 @@ class ConsoleAgentBridge:
                     str(item["name"])
                     for item in _non_colliding_skill_entries(context, builtin_names)
                 )
+                skill_file_bindings = SkillFileBindings(
+                    authorized=set(),
+                    reader=lambda skill_name, path: asyncio.run(
+                        self._skills_service.read_skill_file(
+                            skill_name, path, mode="local"
+                        )
+                    ),
+                )
                 skill_runner = _BridgeSkillRunner(
                     skills_service=self._skills_service,
                     skill_names=skill_names,
                     builtin_names=builtin_names,
+                    skill_file_bindings=skill_file_bindings,
                 )
+        # task-5 (skills-fork-reachability): seed this run's own bindings
+        # with the names the CONTROLLER already resolved/spliced for the
+        # triggering turn (a leading `$skill` mention, or embedded mentions
+        # that actually spliced) -- so the primary agent's very first turn
+        # can already read that skill's bundle via skill_file, matching
+        # what a spawned skill child gets for its OWN bundle (Task 4).
+        # `skill_file_bindings` is None whenever there is no skills service
+        # for this run, in which case a non-empty `turn_skill_bindings`
+        # (which can only happen when the controller's own skills-service-
+        # gated substitution ran) has nothing to seed.
+        if skill_file_bindings is not None:
+            skill_file_bindings.authorized.update(turn_skill_bindings)
         # [console] native_tool_calls kill-switch (Task 5): a caller-supplied
         # predicate (chat_screen.py's _console_native_tool_calls_enabled)
         # gates whether this run may use native provider tool-calls at all;
@@ -996,6 +1049,7 @@ class ConsoleAgentBridge:
             clock=self._clock,
             on_step=on_step,
             skill_runner=skill_runner,
+            skill_file_bindings=skill_file_bindings,
             review_tool_calls=review_tool_calls,
             review_state_scope=review_state_scope,
         )
@@ -1005,10 +1059,36 @@ class ConsoleAgentBridge:
             if supersede_previous
             else None
         )
+        # task-5 (skills-fork-reachability): append the turn's pre-rendered
+        # "Bundled files" block (built controller-side as pure string work
+        # over `execute_skill` results already in hand -- Task 4's
+        # byte-identical row format) to the LAST role=="user" entry of THIS
+        # run's OWN copy of `agent_messages` -- the caller's list and
+        # message dict are never mutated. This is the only place the block
+        # is ever inserted into a payload: substitution built it but never
+        # wrote it into messages, and plain (non-agent) sends never call
+        # run_reply at all, so they drop it unused. No-op (the original
+        # `agent_messages` list is used unchanged) when there is no block
+        # to append or no user message to append it to.
+        run_messages = agent_messages
+        if turn_bundle_block:
+            for index in range(len(agent_messages) - 1, -1, -1):
+                message = agent_messages[index]
+                content = message.get("content")
+                if (
+                    message.get("role") == ConsoleMessageRole.USER.value
+                    and isinstance(content, str)
+                ):
+                    run_messages = list(agent_messages)
+                    run_messages[index] = {
+                        **message,
+                        "content": f"{content}\n\n{turn_bundle_block}",
+                    }
+                    break
         try:
             _run_id, outcome = service.run_turn(
                 conversation_id=conversation_id,
-                messages=agent_messages,
+                messages=run_messages,
                 config=config,
                 # execution_key-first (Task 5): the service's capability
                 # check keys off api_endpoint, and execution_key is by

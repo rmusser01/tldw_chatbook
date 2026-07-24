@@ -7,6 +7,7 @@ No Textual, app, DB, or I/O imports — see the vertical-slice spec
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Callable
 
 RUN_RUNNING = "running"
 RUN_DONE = "done"
@@ -30,10 +31,26 @@ STEP_ERROR = "error"
 SPAWN_TOOL_NAME = "spawn_subagent"
 FIND_TOOLS_NAME = "find_tools"
 LOAD_TOOLS_NAME = "load_tools"
-RUNTIME_TOOL_NAMES = frozenset({SPAWN_TOOL_NAME, FIND_TOOLS_NAME, LOAD_TOOLS_NAME})
+SKILL_FILE_TOOL_NAME = "skill_file"
+RUNTIME_TOOL_NAMES = frozenset(
+    {SPAWN_TOOL_NAME, FIND_TOOLS_NAME, LOAD_TOOLS_NAME, SKILL_FILE_TOOL_NAME}
+)
 
 DIRECT_DISCLOSE_THRESHOLD = 8
 LOOP_DETECTION_N = 3
+
+
+@dataclass
+class SkillFileBindings:
+    """Per-run authorization + reader for the skill_file runtime tool.
+
+    Mutable by design: seeded with the turn's $skill names; SkillRunner adds
+    each spawned skill's name before spawn so a skill can always read its own
+    bundle. Authorization lives here, never in config.allowed_tools.
+    """
+
+    authorized: set[str]
+    reader: Callable[[str, str], dict] | None = None
 
 
 @dataclass(frozen=True)

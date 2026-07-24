@@ -190,6 +190,7 @@ class SkillExecutionResult(BaseModel):
     model_override: str | None = None
     execution_mode: Literal["inline", "fork"]
     fork_output: str | None = None
+    reference_files: list[dict] | None = None
 
     model_config = ConfigDict(from_attributes=True, extra="allow")
 

@@ -316,6 +316,45 @@ class SkillsScopeService:
             kwargs=kwargs,
         )
 
+    async def read_skill_file(
+        self,
+        skill_name: str,
+        relative_path: str,
+        *,
+        mode: SkillsBackend | str | None = None,
+    ) -> dict[str, Any]:
+        """Read a bundled file of a LOCAL trusted skill (runtime skill_file seam).
+
+        Local-only by design: the server backend has no read_skill_file and
+        every runtime skill path is already hardcoded local. Rejecting server
+        mode here beats surfacing a raw AttributeError from _call.
+
+        Args:
+            skill_name: Canonical skill name.
+            relative_path: POSIX relative path within the skill's bundle
+                (or the literal ``"SKILL.md"`` for the body itself).
+            mode: Backend selector; only ``None``/``SkillsBackend.LOCAL`` is
+                accepted (defaults to local, unlike this class's other
+                methods, which default to server).
+
+        Returns:
+            ``{"content", "truncated", "size"}``; a binary file yields a
+            clean refusal string as ``content`` (never bytes, never raises).
+
+        Raises:
+            ValueError: ``mode`` resolves to server (``"skill_file reads
+                are local-only"``), the local backend is unavailable, or
+                the underlying local read rejects the path/skill (bad
+                path, unknown skill, or missing file).
+            SkillTrustBlockedError: Skill not currently trusted.
+        """
+        normalized_mode = self._normalize_mode(mode) if mode is not None else SkillsBackend.LOCAL
+        if normalized_mode is not SkillsBackend.LOCAL:
+            raise ValueError("skill_file reads are local-only")
+        service = self._require_service(SkillsBackend.LOCAL)
+        self._enforce_policy("skills.read_file.launch.local")
+        return await self._maybe_await(service.read_skill_file(skill_name, relative_path))
+
     async def seed_builtin_skills(
         self, *, mode: SkillsBackend | str | None = None, **kwargs: Any
     ) -> dict[str, Any]:

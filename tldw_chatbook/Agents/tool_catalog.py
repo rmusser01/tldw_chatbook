@@ -19,6 +19,7 @@ from .agent_models import (
     FIND_TOOLS_NAME,
     LOAD_TOOLS_NAME,
     RunBudget,
+    SKILL_FILE_TOOL_NAME,
     SPAWN_TOOL_NAME,
     ToolCatalogEntry,
     ToolResult,
@@ -63,6 +64,24 @@ LOAD_TOOLS_SCHEMA = ToolSchema(
         "type": "object",
         "properties": {"ids": {"type": "array", "items": {"type": "string"}}},
         "required": ["ids"],
+    },
+)
+
+SKILL_FILE_TOOL_SCHEMA = ToolSchema(
+    id="runtime:skill_file",
+    name=SKILL_FILE_TOOL_NAME,
+    description=(
+        "Read a bundled reference file of a skill active in this run. "
+        "Args: skill_name (the skill whose bundle to read), path (relative "
+        "POSIX path, e.g. references/api.md). Text files only."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "skill_name": {"type": "string"},
+            "path": {"type": "string"},
+        },
+        "required": ["skill_name", "path"],
     },
 )
 
