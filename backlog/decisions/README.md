@@ -24,6 +24,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-022](022-local-private-data-boundary.md) | Accepted | Enforce owner-only POSIX storage for local private artifacts, make config persistence single-owner, keep persistent logs payload-free, and contain legacy Notes sync paths. |
 | [ADR-023](023-derived-index-lifecycle-and-atomic-media-migrations.md) | Accepted | Keep media SQLite authoritative, reconcile derived semantic-index deletion asynchronously, and make versioned media migrations genuinely atomic. |
 | [ADR-024](024-bounded-evaluation-and-tool-worker-execution.md) | Accepted | Adapt synchronous eval providers off-loop, bound eval/tool concurrency, and make failure and cancellation terminal states truthful. |
+| [ADR-025](025-immutable-installed-distribution-assets.md) | Accepted | Treat installed distributions as immutable, package explicit runtime assets and vendored notices, and verify built artifacts outside the source checkout. |
 
 ## Historical Decision Material
 
