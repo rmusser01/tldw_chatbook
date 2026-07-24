@@ -171,7 +171,14 @@ async def main() -> None:
         (OUT / "02-builtin-readonly.svg").write_text(svg)
 
     # --- Captures 3 + 5: a writable (non-builtin) profile active. ---
-    _wire_profiles(tmp_dir / "session2", active_id=None)
+    # Rerank ENABLED with top_k (25) > default results (15) so capture 5
+    # demonstrates the display-only advisory Static under the Reranking group.
+    _mgr2, _profile2, _state2 = _wire_profiles(tmp_dir / "session2", active_id=None)
+    from tldw_chatbook.RAG_Search.reranker import RerankingConfig as _RerankingConfig
+    _profile2.reranking_config = _RerankingConfig(top_k_to_rerank=25)
+    _profile2.rag_config.search.enable_reranking = True
+    _profile2.rag_config.search.default_top_k = 15
+    _mgr2.save_profile(_profile2)
     app2 = QAApp(_build_app_instance())
     async with app2.run_test(size=TERMINAL_SIZE) as pilot:
         screen = pilot.app.screen
