@@ -56,8 +56,12 @@ def validate_path(
             )
             raise ValueError(f"Path '{user_path}' is outside the allowed directory")
 
-        # Additional checks for safety
-        if any(part.startswith(".") for part in full_path.parts if part != "."):
+        # Additional checks for safety.
+        # Hidden-file check applies only to the user-supplied portion (relative
+        # to base_directory) — a base dir that itself lives under a dotted
+        # ancestor (e.g. ~/.local/share/...) must not falsely trip this.
+        relative_parts = full_path.relative_to(base_directory).parts
+        if any(part.startswith(".") for part in relative_parts if part != "."):
             logger.warning(f"Hidden file/directory access attempt: {full_path}")
             log_counter(
                 "path_validation_security_violation",

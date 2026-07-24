@@ -4246,13 +4246,31 @@ class LocalMediaReadingService:
     def _clone_git_repository(
         repo_url: str, checkout_path: Path, *, ref: Any = None
     ) -> None:
+        import os
         import subprocess
 
+        from ..Utils.input_validation import (
+            validate_git_repo_url,
+            validate_git_ref,
+        )
+
+        validate_git_repo_url(repo_url)
         command = ["git", "clone", "--depth", "1"]
         if ref:
+            validate_git_ref(str(ref))
             command.extend(["--branch", str(ref)])
-        command.extend([repo_url, str(checkout_path)])
-        completed = subprocess.run(command, capture_output=True, text=True, check=False)
+        # `--` separates options from positionals so a hostile URL/path can
+        # never be parsed as a git option; the env restricts git to https/ssh
+        # transports even across redirects/submodules (blocks ext::/file:: etc.).
+        command.extend(["--", repo_url, str(checkout_path)])
+        clone_env = {
+            **os.environ,
+            "GIT_ALLOW_PROTOCOL": "https:ssh",
+            "GIT_PROTOCOL_FROM_USER": "0",
+        }
+        completed = subprocess.run(
+            command, capture_output=True, text=True, check=False, env=clone_env
+        )
         if completed.returncode != 0:
             message = (
                 completed.stderr.strip()
