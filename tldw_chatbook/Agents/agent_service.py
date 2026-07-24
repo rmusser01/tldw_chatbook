@@ -45,6 +45,7 @@ from .native_tools import (
 )
 from .tool_catalog import (
     FIND_TOOLS_SCHEMA,
+    INSTALL_SKILL_TOOL_SCHEMA,
     LOAD_TOOLS_SCHEMA,
     SKILL_FILE_TOOL_SCHEMA,
     SPAWN_TOOL_SCHEMA,
@@ -174,6 +175,7 @@ class AgentService:
         review_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None,
         review_state_scope: Callable[[], "contextlib.AbstractContextManager"]
         | None = None,
+        install_skill_tool: Callable[[str], ToolResult] | None = None,
     ) -> None:
         self.db = db
         self.registry = registry
@@ -212,6 +214,12 @@ class AgentService:
         # the concrete MCP-specific context manager wired here by
         # `console_agent_bridge.ConsoleAgentBridge.run_reply`.
         self.review_state_scope = review_state_scope
+        # Agent-callable skill install (5th runtime tool). A ready-built
+        # closure (enforce -> classify -> confirm -> install -> wrap) supplied
+        # by the bridge. Pinned/wired ONLY for the top-level agent
+        # (agent_kind == primary) in _run_one; a spawned subagent never gets
+        # it. `None` (the default) means the run is not wired for install.
+        self._install_skill_tool = install_skill_tool
 
     # -- internals -------------------------------------------------------
 
@@ -360,6 +368,8 @@ class AgentService:
             and self.skill_file_bindings.authorized
         ):
             runtime_schemas.append(SKILL_FILE_TOOL_SCHEMA)
+        if agent_kind == AGENT_KIND_PRIMARY and self._install_skill_tool is not None:
+            runtime_schemas.append(INSTALL_SKILL_TOOL_SCHEMA)
 
         def find_tools(query: str):
             # Q7(b): never surface a disallowed tool through find_tools,
@@ -620,6 +630,12 @@ class AgentService:
                 read_skill_file_tool
                 if self.skill_file_bindings is not None
                 and self.skill_file_bindings.authorized
+                else None
+            ),
+            install_skill=(
+                self._install_skill_tool
+                if agent_kind == AGENT_KIND_PRIMARY
+                and self._install_skill_tool is not None
                 else None
             ),
         )

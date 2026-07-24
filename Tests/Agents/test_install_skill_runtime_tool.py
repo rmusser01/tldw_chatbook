@@ -120,3 +120,80 @@ def test_install_skill_falls_through_when_not_wired():
     assert out.status == RUN_DONE
     results = [s.result for s in out.steps if s.kind == "tool_result"]
     assert any("Tool not permitted: install_skill" in (r or "") for r in results)
+
+
+# -- AgentService wiring, gated to the top-level agent ----------------------
+
+from tldw_chatbook.Agents.agent_service import AgentService
+from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
+from tldw_chatbook.Agents.agent_models import SPAWN_TOOL_NAME
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+
+def _svc_fence(name, args):
+    return {"choices": [{"message": {"content": _fence(name, args)}}]}
+
+
+def test_top_level_agent_dispatches_install_skill(tmp_path):
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    reg = ToolCatalogRegistry()
+    reg.register_provider(BuiltinToolProvider())
+    seen = []
+
+    def installer(url):
+        seen.append(url)
+        return ToolResult(ok=True, content=f"installed {url}")
+
+    script = [
+        _svc_fence("install_skill", {"url": "https://github.com/o/r"}),
+        {"choices": [{"message": {"content": "Done."}}]},
+    ]
+    service = AgentService(
+        db, reg, chat_call=lambda **k: script.pop(0), install_skill_tool=installer
+    )
+    _rid, outcome = service.run_turn(
+        conversation_id="c1",
+        messages=[{"role": "user", "content": "install it"}],
+        config=AgentConfig(
+            model="m", system_prompt="s",
+            allowed_tools=("calculator",), budget=RunBudget(),
+        ),
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    assert seen == ["https://github.com/o/r"]
+
+
+def test_subagent_cannot_call_install_skill(tmp_path):
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    reg = ToolCatalogRegistry()
+    reg.register_provider(BuiltinToolProvider())
+
+    def installer(url):
+        raise AssertionError("subagent must never reach the installer")
+
+    script = [
+        _svc_fence(SPAWN_TOOL_NAME, {"task": "native task"}),   # parent spawns
+        _svc_fence("install_skill", {"url": "https://github.com/o/r"}),  # child tries
+        {"choices": [{"message": {"content": "child gave up"}}]},
+        {"choices": [{"message": {"content": "final"}}]},
+    ]
+    service = AgentService(
+        db, reg, chat_call=lambda **k: script.pop(0), install_skill_tool=installer
+    )
+    _rid, outcome = service.run_turn(
+        conversation_id="c1",
+        messages=[{"role": "user", "content": "go"}],
+        config=AgentConfig(
+            model="m", system_prompt="s",
+            allowed_tools=("calculator", SPAWN_TOOL_NAME), budget=RunBudget(),
+        ),
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    child_runs = [r for r in db.list_runs("c1") if r["agent_kind"] == "subagent"]
+    assert len(child_runs) == 1
+    tool_results = [
+        s["result"] for s in child_runs[0]["steps"] if s["kind"] == "tool_result"
+    ]
+    assert any("Tool not permitted: install_skill" in r for r in tool_results)
