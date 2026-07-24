@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from collections.abc import Mapping
+from contextvars import ContextVar
 
 import httpx
 
@@ -27,7 +29,20 @@ from tldw_chatbook.TTS.audio_cpp_contract import (
 _PROVIDER_ID = "audio_cpp"
 _TRANSIENT_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504})
 _MAX_GET_ATTEMPTS = 2
-_HTTP_LOGGER_NAMES = ("httpx", "httpcore")
+_MAX_CONTENT_LENGTH_DIGITS = len(str(sys.maxsize))
+_HTTP_LOGGER_NAMES = (
+    "httpx",
+    "httpcore",
+    "httpcore.connection",
+    "httpcore.http11",
+    "httpcore.http2",
+    "httpcore.proxy",
+    "httpcore.socks",
+)
+_HTTP_LOG_SUPPRESSION_ACTIVE: ContextVar[bool] = ContextVar(
+    "audio_cpp_http_log_suppression_active",
+    default=False,
+)
 
 _INITIAL_HEALTH = ProviderHealth(
     state="unavailable",
@@ -66,25 +81,11 @@ class _HttpContractFailure(Exception):
 
 
 class _HttpxPrivacyFilter(logging.Filter):
-    """Suppress httpx's value-bearing request summary for this origin."""
-
-    def __init__(self, origin: str) -> None:
-        super().__init__()
-        self._origin = httpx.URL(origin)
-        self._origin_prefix = origin.rstrip("/")
+    """Suppress HTTP-library records only inside this adapter's request."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        args = record.args
-        if isinstance(args, tuple) and any(
-            isinstance(value, httpx.URL)
-            and value.scheme == self._origin.scheme
-            and value.host == self._origin.host
-            and value.port == self._origin.port
-            for value in args
-        ):
-            return False
-        message = record.getMessage()
-        return self._origin_prefix not in message and self._origin.host not in message
+        del record
+        return not _HTTP_LOG_SUPPRESSION_ACTIVE.get()
 
 
 class AudioCppAdapter:
@@ -132,7 +133,7 @@ class AudioCppAdapter:
         self._voice_locks: dict[tuple[int, str], asyncio.Lock] = {}
         self._close_lock = asyncio.Lock()
         self._closed = False
-        self._httpx_privacy_filter = _HttpxPrivacyFilter(config.base_url)
+        self._httpx_privacy_filter = _HttpxPrivacyFilter()
         for logger_name in _HTTP_LOGGER_NAMES:
             logging.getLogger(logger_name).addFilter(self._httpx_privacy_filter)
 
@@ -328,6 +329,7 @@ class AudioCppAdapter:
         params: Mapping[str, str] | None = None,
     ) -> bytes:
         for attempt in range(_MAX_GET_ATTEMPTS):
+            suppression_token = _HTTP_LOG_SUPPRESSION_ACTIVE.set(True)
             try:
                 self._client.cookies.clear()
                 async with self._client.stream(
@@ -354,6 +356,8 @@ class AudioCppAdapter:
             except (TimeoutError, httpx.TransportError):
                 if attempt + 1 >= _MAX_GET_ATTEMPTS:
                     raise _TransientHttpFailure from None
+            finally:
+                _HTTP_LOG_SUPPRESSION_ACTIVE.reset(suppression_token)
         raise _TransientHttpFailure
 
     async def _read_bounded_metadata(
@@ -372,17 +376,26 @@ class AudioCppAdapter:
         declared_length: int | None = None
         if declared_lengths:
             raw_length = declared_lengths[0]
-            if not raw_length or not raw_length.isascii() or not raw_length.isdecimal():
+            if (
+                not raw_length
+                or len(raw_length) > _MAX_CONTENT_LENGTH_DIGITS
+                or not raw_length.isascii()
+                or not raw_length.isdecimal()
+            ):
                 raise _HttpContractFailure
             declared_length = int(raw_length)
-            if declared_length > self._config.max_metadata_bytes:
+            if (
+                declared_length > sys.maxsize
+                or declared_length > self._config.max_metadata_bytes
+            ):
                 raise _HttpContractFailure
 
         body = bytearray()
         async for chunk in response.aiter_raw():
-            body.extend(chunk)
-            if len(body) > self._config.max_metadata_bytes:
+            remaining = self._config.max_metadata_bytes - len(body)
+            if len(chunk) > remaining:
                 raise _HttpContractFailure
+            body.extend(chunk)
         if declared_length is not None and len(body) != declared_length:
             raise _HttpContractFailure
         return bytes(body)

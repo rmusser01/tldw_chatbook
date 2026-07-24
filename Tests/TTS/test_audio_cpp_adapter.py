@@ -16,6 +16,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSModelInfo,
     TTSRequest,
 )
+from tldw_chatbook.TTS.adapters import audio_cpp as audio_cpp_module
 from tldw_chatbook.TTS.adapters.audio_cpp import AudioCppAdapter
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
 
@@ -497,6 +498,107 @@ async def test_bounded_reader_stops_at_first_oversized_chunk_and_closes() -> Non
 
 
 @pytest.mark.asyncio
+async def test_bounded_reader_rejects_one_huge_chunk_before_accumulating_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    phase = "ready"
+    huge_stream = TrackingStream(b"x" * (MAX_METADATA_BYTES * 4096))
+    peak_accumulated = 0
+
+    class GuardedBytearray(bytearray):
+        def extend(self, value: bytes) -> None:
+            nonlocal peak_accumulated
+            proposed_size = len(self) + len(value)
+            peak_accumulated = max(peak_accumulated, proposed_size)
+            if proposed_size > MAX_METADATA_BYTES:
+                raise AssertionError("oversized chunk was copied")
+            super().extend(value)
+
+    monkeypatch.setattr(
+        audio_cpp_module,
+        "bytearray",
+        GuardedBytearray,
+        raising=False,
+    )
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if phase == "oversized" and request.url.path == "/health":
+            return httpx.Response(200, stream=huge_stream)
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        return _streaming_response(_models_body(_model("retained")))
+
+    async with _adapter(respond) as adapter:
+        ready = await adapter.get_catalog()
+        phase = "oversized"
+        failed = await adapter.get_catalog(refresh=True)
+
+    assert failed.revision == ready.revision
+    assert failed.models == ready.models
+    assert failed.health == CONTRACT_HEALTH
+    assert peak_accumulated <= MAX_METADATA_BYTES
+    assert huge_stream.close_count == 1
+
+
+@pytest.mark.asyncio
+async def test_unreasonably_long_content_lengths_fail_safely_without_value_leakage(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    declared_length = "7" * 5000
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return httpx.Response(
+                200,
+                headers={"Content-Length": declared_length},
+                stream=TrackingStream(_health_body()),
+            )
+        raise AssertionError("models must not be requested after invalid length")
+
+    caplog.set_level(logging.DEBUG)
+    async with _adapter(respond) as adapter:
+        catalog = await adapter.get_catalog()
+
+    assert catalog.revision == 0
+    assert catalog.models == ()
+    assert catalog.health == CONTRACT_HEALTH
+    assert declared_length not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_long_content_length_failures_have_value_independent_stale_health() -> (
+    None
+):
+    phase = "ready"
+    digit_count = 5000
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if phase == "failure" and request.url.path == "/health":
+            return httpx.Response(
+                200,
+                headers={"Content-Length": "9" * digit_count},
+                stream=TrackingStream(_health_body()),
+            )
+        if request.url.path == "/health":
+            return _streaming_response(_health_body())
+        return _streaming_response(_models_body(_model("retained")))
+
+    async with _adapter(respond) as adapter:
+        ready = await adapter.get_catalog()
+        phase = "failure"
+        failures = []
+        for digit_count in (5000, 5003):
+            failures.append(await adapter.get_catalog(refresh=True))
+
+    assert all(failure.revision == ready.revision for failure in failures)
+    assert all(failure.models == ready.models for failure in failures)
+    assert [failure.health for failure in failures] == [
+        CONTRACT_HEALTH,
+        CONTRACT_HEALTH,
+    ]
+
+
+@pytest.mark.asyncio
 async def test_required_operation_has_one_deadline_for_health_models_and_retry() -> (
     None
 ):
@@ -838,13 +940,22 @@ async def test_diagnostics_and_logs_do_not_echo_remote_values(
         "REMOTE_BODY_SENTINEL",
         "REMOTE_MODEL_SENTINEL",
         "REMOTE_VOICE_SENTINEL",
+        "REMOTE_RESPONSE_HEADER_SENTINEL",
+        "REMOTE_COOKIE_SENTINEL",
     )
+    request_active = asyncio.Event()
+    release_request = asyncio.Event()
 
-    def respond(request: httpx.Request) -> httpx.Response:
-        logging.getLogger("httpcore").debug(
-            "connect url=%s",
-            request.url,
+    async def respond(request: httpx.Request) -> httpx.Response:
+        logging.getLogger("httpcore.http11").debug(
+            "receive_response_headers.complete headers=%r",
+            (
+                (b"x-model", b"REMOTE_RESPONSE_HEADER_SENTINEL"),
+                (b"set-cookie", b"REMOTE_COOKIE_SENTINEL"),
+            ),
         )
+        request_active.set()
+        await release_request.wait()
         return _streaming_response(
             (
                 b'{"status":"ok","backend":"REMOTE_MODEL_SENTINEL","models":1,'
@@ -854,17 +965,22 @@ async def test_diagnostics_and_logs_do_not_echo_remote_values(
 
     caplog.set_level(logging.DEBUG)
     async with _adapter(respond, base_url=sentinel_url) as adapter:
-        catalog = await adapter.get_catalog()
-        voices = await adapter.get_voices("REMOTE_MODEL_SENTINEL")
+        request = asyncio.create_task(adapter.get_catalog())
+        await request_active.wait()
+        logging.getLogger("httpcore.http11").debug(
+            "OUTSIDE_UNRELATED_HTTP_LOG_SENTINEL"
+        )
+        release_request.set()
+        catalog = await request
 
     public_output = " ".join(
         (
             str(catalog.health),
             str(catalog.revision),
             str(catalog.models),
-            str(voices),
             caplog.text,
         )
     )
     assert catalog.health == CONTRACT_HEALTH
     assert all(value not in public_output for value in remote_values)
+    assert "OUTSIDE_UNRELATED_HTTP_LOG_SENTINEL" in caplog.text
