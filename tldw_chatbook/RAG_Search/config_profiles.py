@@ -748,6 +748,11 @@ class ConfigProfileManager:
                 defeated by flipping ``read_only`` on a shared instance), or
                 ``profile.id`` collides with a different, read-only,
                 already-registered profile.
+            OSError: Propagated from a failed disk write (``_save_one``).
+                Transactional: the write happens BEFORE the profile is
+                registered in ``self._profiles``, so a failed write never
+                leaves the in-memory registry pointing at an object that was
+                never actually persisted (PR #829 review finding 5(b)).
         """
         if profile.read_only or profile.id in self._builtin_ids:
             raise ValueError(f"Profile '{profile.id}' is read-only")
@@ -756,8 +761,8 @@ class ConfigProfileManager:
             raise ValueError(
                 f"Profile id '{profile.id}' collides with read-only builtin '{existing.name}'"
             )
-        self._profiles[profile.id] = profile
         self._save_one(profile)
+        self._profiles[profile.id] = profile
         return profile
 
     def delete_profile(self, profile_id: str) -> bool:

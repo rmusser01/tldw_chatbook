@@ -28,6 +28,17 @@ from tldw_chatbook.RAG_Search.simplified.collection_fingerprint import (
 # monkeypatch `ad.index_status` directly to simulate a broken/unavailable
 # vector store without touching a real Chroma instance.
 from tldw_chatbook.RAG_Search.simplified.collection_indexes import index_status
+# Module seam (same convention as `set_active_profile`/`index_status`
+# above): saving edits to the ALREADY-ACTIVE profile must also drop the
+# process-wide shared RAG service, mirroring what `set_active_profile`
+# already does when flipping to a DIFFERENT profile -- otherwise a saved
+# index-determining change (chunking, embedding model, distance metric...)
+# silently never takes effect until something else happens to reset the
+# singleton (PR #829 review finding 4). Importing from ingestion_indexing
+# here is safe: it only imports active_config at FUNCTION level (to avoid
+# a real cycle), never at module top-level, so this module can import it at
+# module top-level without introducing one.
+from tldw_chatbook.RAG_Search.ingestion_indexing import reset_shared_rag_service
 from .settings_library_rag_defaults import (
     SettingsLibraryRagDefaults,
     _strict_float,
@@ -373,14 +384,31 @@ def fetch_index_status() -> dict:
 def save_rag_defaults_to_active_profile(
     values: SettingsLibraryRagDefaults,
 ) -> tuple[bool, str]:
-    """Persist values into the active profile's file. (False, "builtin") if read-only."""
+    """Persist values into the active profile's file. (False, "builtin") if read-only.
+
+    Transactional (PR #829 review finding 5(a)): ``values`` are applied onto
+    a deep-copied CLONE of the manager-cached active profile, never the
+    cached object itself -- so a failed save (e.g. a disk write error inside
+    ``save_profile``) leaves the cached profile at its pre-edit values
+    instead of diverging from what actually made it to disk. Combined with
+    ``ConfigProfileManager.save_profile`` writing to disk before registering
+    (finding 5(b)), a failed save is a true no-op on both sides.
+
+    On a SUCCESSFUL save, also drops the process-wide shared RAG service
+    (finding 4) -- mirrors ``set_active_profile``'s own reset, which only
+    fires when the ACTIVE POINTER changes, not when the already-active
+    profile's own settings are edited in place. Never resets on a
+    refused (read-only/missing) or failed save.
+    """
     profile = _active_profile()
     if profile is None:
         return False, "no-active-profile"
     if profile.read_only:
         return False, "builtin"
     try:
-        _manager().save_profile(apply_defaults_to_profile(profile, values))
+        scratch = copy.deepcopy(profile)
+        _manager().save_profile(apply_defaults_to_profile(scratch, values))
+        reset_shared_rag_service()
         return True, ""
     except Exception as e:  # save must never crash the settings screen
         logger.error(f"Saving RAG defaults to active profile failed: {e}")
@@ -388,6 +416,15 @@ def save_rag_defaults_to_active_profile(
 
 
 def active_profile_info() -> dict:
+    """Summary of the active profile for the Settings caption/header.
+
+    Returns:
+        ``{"id": str, "name": str, "read_only": bool, "description": str}``
+        for the active profile. When no profile resolves for the active
+        pointer (e.g. it names a since-deleted id), returns a synthetic
+        ``{"id": <active pointer>, "name": "(missing)", "read_only": True,
+        "description": ""}`` instead of raising.
+    """
     profile = _active_profile()
     if profile is None:
         return {

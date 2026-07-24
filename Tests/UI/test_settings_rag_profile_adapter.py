@@ -955,3 +955,100 @@ def test_fetch_index_status_returns_unknown_without_raising_on_error(
     status = ad.fetch_index_status()
 
     assert status == {"state": "unknown", "count": 0, "provenance": {}}
+
+
+# --- PR #829 review finding 4: saving edits to the ALREADY-ACTIVE profile
+# must reset the shared RAG service (mirroring set_active_profile's own
+# reset), or a saved index-determining change silently never takes effect
+# at runtime -- the process-wide shared service keeps the OLD
+# snapshot/collection until something else happens to reset it. Bound as a
+# module seam (`ad.reset_shared_rag_service`, same convention as
+# `set_active_profile`/`index_status` above) so it can be monkeypatched
+# without touching the real ingestion_indexing singleton. ---
+
+
+def test_save_resets_the_shared_rag_service_on_success(wired, monkeypatch):
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        load_rag_defaults_from_active_profile, save_rag_defaults_to_active_profile)
+    import tldw_chatbook.UI.Screens.settings_rag_profile_adapter as ad
+    mgr, state = wired
+    _user_profile(mgr, state)
+    reset_calls: list[None] = []
+    monkeypatch.setattr(ad, "reset_shared_rag_service", lambda: reset_calls.append(None))
+
+    d = load_rag_defaults_from_active_profile()
+    d = dataclasses.replace(d, default_top_k=d.default_top_k + 1)
+    ok, reason = save_rag_defaults_to_active_profile(d)
+
+    assert ok and reason == ""
+    assert len(reset_calls) == 1
+
+
+def test_save_refused_for_a_builtin_does_not_reset_the_shared_rag_service(
+    wired, monkeypatch
+):
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        load_rag_defaults_from_active_profile, save_rag_defaults_to_active_profile)
+    import tldw_chatbook.UI.Screens.settings_rag_profile_adapter as ad
+    mgr, state = wired  # active = hybrid_basic (builtin)
+    reset_calls: list[None] = []
+    monkeypatch.setattr(ad, "reset_shared_rag_service", lambda: reset_calls.append(None))
+
+    d = load_rag_defaults_from_active_profile()
+    ok, reason = save_rag_defaults_to_active_profile(d)
+
+    assert not ok and reason == "builtin"
+    assert reset_calls == []
+
+
+def test_save_failure_does_not_reset_the_shared_rag_service(wired, monkeypatch):
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        load_rag_defaults_from_active_profile, save_rag_defaults_to_active_profile)
+    import tldw_chatbook.UI.Screens.settings_rag_profile_adapter as ad
+    mgr, state = wired
+    _user_profile(mgr, state)
+    reset_calls: list[None] = []
+    monkeypatch.setattr(ad, "reset_shared_rag_service", lambda: reset_calls.append(None))
+    monkeypatch.setattr(
+        mgr, "save_profile", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full"))
+    )
+
+    d = load_rag_defaults_from_active_profile()
+    ok, reason = save_rag_defaults_to_active_profile(d)
+
+    assert not ok
+    assert reset_calls == []
+
+
+# --- PR #829 review finding 5(a): save_rag_defaults_to_active_profile must
+# be transactional on the adapter side too -- it used to call
+# apply_defaults_to_profile(profile, values) directly on the manager-CACHED
+# active profile (mutating it in place) and only THEN hand it to
+# save_profile(). A failed disk write left the in-memory cached profile
+# already mutated with the attempted (never-persisted) edit even though the
+# UI reports "save failed". Fix: apply onto a deep-copied clone and save
+# THE COPY -- the cached original is never touched until save_profile's own
+# (now-transactional, see config_profiles.save_profile) write succeeds. ---
+
+
+def test_save_failure_leaves_the_cached_active_profile_at_its_original_values(
+    wired, monkeypatch
+):
+    from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
+        load_rag_defaults_from_active_profile, save_rag_defaults_to_active_profile)
+    mgr, state = wired
+    p = _user_profile(mgr, state, default_top_k=42)
+    original_top_k = p.rag_config.search.default_top_k
+    assert original_top_k == 42
+    monkeypatch.setattr(
+        mgr, "save_profile", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full"))
+    )
+
+    d = load_rag_defaults_from_active_profile()
+    d = dataclasses.replace(d, default_top_k=999)
+    ok, reason = save_rag_defaults_to_active_profile(d)
+
+    assert not ok
+    # The manager's OWN cached object (identity, not just value) must be
+    # untouched -- get_profile(p.id) still returns the pre-edit profile.
+    assert mgr.get_profile(p.id).rag_config.search.default_top_k == original_top_k
