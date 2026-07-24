@@ -305,10 +305,15 @@ class ConfigProfileManager:
         hybrid_full_rag = RAGConfig()
         hybrid_full_rag.embedding.model = "BAAI/bge-base-en-v1.5"
         hybrid_full_rag.embedding.batch_size = 32
-        hybrid_full_rag.chunking.chunk_size = 512
-        hybrid_full_rag.chunking.chunk_overlap = 128
         # was "hierarchical" (invalid at runtime); paragraphs is the closest
-        # structure-respecting valid method (see task-484)
+        # structure-respecting valid method (see task-484). Chunker._chunk_text_by_paragraphs
+        # (Chunking/Chunk_Lib.py) treats chunk_size/chunk_overlap as a PARAGRAPH COUNT, not
+        # a word count, and hard-caps chunk_size at MAX_CHUNK_SIZE_PARAGRAPHS=100 -- 512 would
+        # raise ValueError the moment paragraph chunking actually runs. 5/1 keeps this profile
+        # slightly larger than technical_docs (denser/precise) but smaller than research_papers
+        # (long-context intent).
+        hybrid_full_rag.chunking.chunk_size = 5
+        hybrid_full_rag.chunking.chunk_overlap = 1
         hybrid_full_rag.chunking.chunking_method = "paragraphs"
         hybrid_full_rag.chunking.enable_parent_retrieval = True
         hybrid_full_rag.chunking.parent_size_multiplier = 3
@@ -439,9 +444,16 @@ class ConfigProfileManager:
         # Technical Documentation Profile
         tech_rag = RAGConfig()
         tech_rag.embedding.model = "sentence-transformers/all-mpnet-base-v2"
-        tech_rag.chunking.chunk_size = 512
         # was "structural" (invalid at runtime); paragraphs is the closest
-        # structure-respecting valid method (see task-484)
+        # structure-respecting valid method (see task-484). chunk_size/chunk_overlap are a
+        # PARAGRAPH COUNT under this method (Chunker._chunk_text_by_paragraphs), capped at
+        # MAX_CHUNK_SIZE_PARAGRAPHS=100 -- the prior 512 (word-denominated) value would raise
+        # ValueError. 4/1 is deliberately the smallest of the three paragraphs-method builtins:
+        # technical content favors precise, dense chunks over the tables/code it preserves.
+        # Previously this profile did not set chunk_overlap at all and inherited the
+        # words-denominated default (100), which as a paragraph count would exceed chunk_size.
+        tech_rag.chunking.chunk_size = 4
+        tech_rag.chunking.chunk_overlap = 1
         tech_rag.chunking.chunking_method = "paragraphs"  # Preserve document structure
         tech_rag.chunking.clean_artifacts = True
         tech_rag.chunking.preserve_tables = True
@@ -464,9 +476,17 @@ class ConfigProfileManager:
         research_rag.embedding.model = (
             "allenai-specter"  # Specialized for scientific text
         )
-        research_rag.chunking.chunk_size = 512
         # was "hierarchical" (invalid at runtime); paragraphs is the closest
-        # structure-respecting valid method (see task-484)
+        # structure-respecting valid method (see task-484). chunk_size/chunk_overlap are a
+        # PARAGRAPH COUNT under this method (Chunker._chunk_text_by_paragraphs), capped at
+        # MAX_CHUNK_SIZE_PARAGRAPHS=100 -- the prior 512 (word-denominated) value would raise
+        # ValueError. 6/2 is the largest of the three paragraphs-method builtins: research
+        # papers have longer structured sections (abstract/methods/results) than technical
+        # docs or the general hybrid_full profile. Previously this profile did not set
+        # chunk_overlap at all and inherited the words-denominated default (100), which as a
+        # paragraph count would exceed chunk_size.
+        research_rag.chunking.chunk_size = 6
+        research_rag.chunking.chunk_overlap = 2
         research_rag.chunking.chunking_method = "paragraphs"
         research_rag.chunking.clean_artifacts = True  # Clean PDF artifacts
         research_rag.chunking.preserve_structure = True
