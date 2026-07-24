@@ -246,6 +246,77 @@ def test_runner_defaults_to_five_warmups_and_at_least_thirty_samples() -> None:
     assert args.mode == "baseline"
 
 
+def test_parse_args_docstring_describes_arguments_and_return_value() -> None:
+    benchmark = _load_benchmark()
+
+    docstring = benchmark.parse_args.__doc__ or ""
+
+    assert "Args:" in docstring
+    assert "Returns:" in docstring
+
+
+def test_main_uses_validated_cli_paths_for_baseline_read_and_output_write(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    benchmark = _load_benchmark()
+    raw_baseline = tmp_path / "raw-baseline.json"
+    validated_baseline = tmp_path / "validated-baseline.json"
+    raw_output = tmp_path / "raw-output.json"
+    validated_output = tmp_path / "validated-output.json"
+    baseline_document = _load_json(BASELINE_PATH)
+    raw_baseline.write_text(json.dumps(baseline_document), encoding="utf-8")
+    validated_baseline.write_text(json.dumps(baseline_document), encoding="utf-8")
+    validated_paths = {
+        raw_baseline: validated_baseline,
+        raw_output: validated_output,
+    }
+    validation_calls: list[tuple[Path, bool]] = []
+
+    def validate_cli_path(
+        path: Path,
+        require_exists: bool = False,
+    ) -> Path:
+        validation_calls.append((path, require_exists))
+        return validated_paths[path]
+
+    async def record_benchmark(**kwargs):
+        assert kwargs["baseline"] == baseline_document
+        return {"budgets": {"overall_pass": True}}
+
+    monkeypatch.setattr(
+        benchmark,
+        "_validate_cli_path",
+        validate_cli_path,
+    )
+    monkeypatch.setattr(benchmark, "run_benchmark", record_benchmark)
+
+    exit_code = benchmark.main(
+        [
+            "--mode",
+            "qualification",
+            "--samples",
+            "30",
+            "--warmups",
+            "5",
+            "--baseline",
+            str(raw_baseline),
+            "--output",
+            str(raw_output),
+        ]
+    )
+
+    assert exit_code == 0
+    assert validation_calls == [
+        (raw_baseline, True),
+        (raw_output, False),
+    ]
+    assert not raw_output.exists()
+    assert json.loads(validated_output.read_text(encoding="utf-8")) == {
+        "budgets": {"overall_pass": True}
+    }
+
+
 def test_sample_group_uses_isolated_temp_chachanotes_db_and_sidecar(
     tmp_path: Path,
 ) -> None:

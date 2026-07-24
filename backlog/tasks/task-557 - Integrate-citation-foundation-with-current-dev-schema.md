@@ -90,4 +90,15 @@ Publication:
 - The task remains In Progress because repository Definition of Done requires an
   uncontaminated full-suite pass; that gate remains deferred for the concurrent
   full-suite reason documented above.
+
+PR review follow-up:
+- Routed benchmark `--baseline` and `--output` paths through the shared path
+  validator before filesystem access while preserving the runner's suppression
+  of application import-time logs.
+- Completed the requested Google-style `Args`/`Returns` documentation for the
+  benchmark parser and canonical-write config accessor.
+- Added regression coverage for validated-path substitution and docstring
+  contracts. The updated citation/config gate passed 780 tests; focused Ruff
+  passed with the two unrelated `config.py` F841 findings already present on
+  `origin/dev` excluded.
 <!-- SECTION:NOTES:END -->

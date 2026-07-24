@@ -226,7 +226,14 @@ class _SQLiteConsolePersistence:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    """Parse the stable v1 runner command line."""
+    """Parse the stable v1 runner command line.
+
+    Args:
+        argv: Optional command-line arguments. Uses ``sys.argv`` when omitted.
+
+    Returns:
+        Parsed benchmark runner arguments.
+    """
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -278,6 +285,15 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError(
                 f"qualification --baseline does not exist: {args.baseline}"
             )
+
+
+def _validate_cli_path(path: Path, *, require_exists: bool) -> Path:
+    """Validate one CLI path without exposing application import-time logs."""
+
+    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+        from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+        return validate_path_simple(path, require_exists=require_exists)
 
 
 @contextmanager
@@ -2027,6 +2043,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         args = parse_args(argv)
+        if args.baseline is not None:
+            args.baseline = _validate_cli_path(
+                args.baseline,
+                require_exists=True,
+            )
+        if args.output is not None:
+            args.output = _validate_cli_path(
+                args.output,
+                require_exists=False,
+            )
         validate_args(args)
         baseline = None
         if args.mode == "external":

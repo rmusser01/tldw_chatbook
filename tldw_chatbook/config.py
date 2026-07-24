@@ -4010,7 +4010,11 @@ def get_chat_defaults_streaming(default: bool = True) -> bool:
 
 
 def get_rag_citation_canonical_writes_enabled() -> bool:
-    """Return the typed, fail-closed canonical citation write switch."""
+    """Return the typed, fail-closed canonical citation write switch.
+
+    Returns:
+        ``True`` when canonical citation writes are explicitly enabled.
+    """
 
     config = load_cli_config_and_ensure_existence()
     section = config.get("rag_citations")

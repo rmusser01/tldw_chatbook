@@ -16,6 +16,12 @@ def test_rag_citation_canonical_writes_default_off() -> None:
     }
 
 
+def test_rag_citation_switch_docstring_describes_return_value() -> None:
+    docstring = config.get_rag_citation_canonical_writes_enabled.__doc__ or ""
+
+    assert "Returns:" in docstring
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
