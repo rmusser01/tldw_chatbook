@@ -2443,6 +2443,13 @@ per-generation waiting-status task after cancellation, and remove only
 handler-created temporary playground audio. Generated audiobook paths are
 user-owned output and must never be deleted by handler cleanup.
 
+The handler cleanup must be retained and joined before propagating caller
+cancellation. Register a conversion destination as owned before awaiting
+ffmpeg, and terminate/join ffmpeg on cancellation so partial output cannot
+escape cleanup. Place the application-owned `_close_tts_service()` call in an
+outer `finally` so cancellation or failure in earlier handler cleanup cannot
+skip service shutdown.
+
 - [ ] **Step 6: Run ownership, service, STTS, and startup tests**
 
 Run: `pytest Tests/TTS/test_tts_app_ownership.py Tests/TTS/test_tts_registry_service.py Tests/TTS/test_tts_improvements.py Tests/Performance/test_app_startup_performance.py -q`
