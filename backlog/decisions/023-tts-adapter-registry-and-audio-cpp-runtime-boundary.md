@@ -32,7 +32,7 @@ TTS models and voices, request complete WAV output, and use registry metadata to
 control model, voice, format, and speed UI.
 
 Existing providers remain separate registry entries backed by provider-specific
-views over one shared legacy host. The compatibility bridge is temporary and
+hosts around the existing manager. The compatibility bridge is temporary and
 may be removed only after every retained provider has a native adapter, every
 caller supplies explicit provider/model IDs, wildcard internal IDs are absent,
 and compatibility tests prove the legacy accessor, internal-model resolver, and
@@ -92,7 +92,9 @@ policy, and a cross-module interface.
 - Registration at the app boundary is explicit and sealed. Legacy wildcard
   matching is quarantined inside `LegacyBackendHost`, reset deterministically
   in tests, closed to new providers, and removed with the bridge.
-- Request routing uses canonical provider IDs and opaque model IDs.
+- Request routing uses canonical provider IDs and opaque model IDs. The native
+  ID is `audio_cpp`; `audio.cpp` is a display label. The initial provider alias
+  map is empty.
 - Response lifetime extends through async byte consumption, allowing registry
   retirement without closing in-flight resources.
 - Settings updates can replace one provider without restarting the application
@@ -100,11 +102,14 @@ policy, and a cross-module interface.
 - audio.cpp reconfiguration is an exclusive handoff: new operations are blocked
   while active leases drain, the old adapter and owned child close before the
   new configuration becomes active, and the replacement remains lazy.
-- One shared legacy host preserves current implementations while exposing
-  provider-specific compatibility entries.
+- Provider-scoped legacy hosts preserve current implementations while isolating
+  configuration replacement and backend caches. The quarantined class registry
+  is their only shared legacy state.
+- Per-internal-backend operation locks prevent double initialization and safely
+  serialize mutable legacy progress callbacks.
 - Existing callers retain their generation signature through the bridge.
   Provider-neutral, operation-scoped progress prevents UI access to concrete
-  backends; mutable legacy callbacks are serialized and cleared.
+  backends; progress-sink failures never fail synthesis.
 - The Playground becomes catalog-driven, while legacy catalogs remain marked as
   approximate until migrated.
 - audio.cpp managed mode launches only a user-provided executable and
@@ -112,6 +117,9 @@ policy, and a cross-module interface.
   bind; `localhost` and `::1` are not accepted by that server version.
 - Managed process ownership is explicit: Chatbook stops only children it
   started and never silently adopts an existing listener.
+- A managed failure before first readiness rolls back the owned child and joins
+  its monitor and log drains. A live child that becomes unhealthy after reaching
+  Ready remains available for explicit restart.
 - The first audio.cpp contract supports complete WAV output and default speed
   only. Upstream streaming metadata does not imply client streaming support.
 - Complete-response synthesis uses a connection deadline and an overall
@@ -127,12 +135,20 @@ policy, and a cross-module interface.
   generation or the opt-in live smoke test.
 - External mode sends synthesis text to the configured server and communicates
   that privacy boundary in the UI. HTTP redirects are disabled.
+- Metadata bodies, model and voice counts, and identifiers are bounded.
+  Requests require identity content encoding so decompression cannot bypass
+  response limits.
 - Bounded responses receive structural uncompressed 16-bit PCM WAV validation;
   a RIFF/WAVE signature alone is insufficient.
 - The adapter trusts the pinned structured `server_busy` response but does not
   parse free-form `server_error` text. After a speech `500`, it refreshes model
   discovery once to distinguish a vanished model from a generation failure and
   never retries the POST.
+- Successful authoritative catalog refreshes invalidate voice caches through a
+  new catalog revision, even when the model list is unchanged.
+- Chatbook logs setting names and outcomes, never values or API keys. Managed
+  child output is treated as potentially sensitive, retained only in a bounded
+  in-memory diagnostic ring, and never copied into general logs or persisted.
 - Normal CI uses fakes and contract fixtures. audio.cpp and model downloads are
   not test dependencies.
 - Fixture provenance is pinned to audio.cpp commit
@@ -148,8 +164,8 @@ policy, and a cross-module interface.
   provider entries continue through the compatibility bridge.
 - Do not silently fall back during an audio.cpp request. Users explicitly
   select another provider after a reported failure.
-- During implementation rollout, retain the legacy host and accessor until the
-  bridge deletion criteria are met.
+- During implementation rollout, retain the provider-scoped legacy hosts and
+  accessor until the bridge deletion criteria are met.
 - If the new Playground routing must be reverted, restore its legacy provider
   selection path while leaving the native registry code unselected; no data or
   schema migration is involved.
