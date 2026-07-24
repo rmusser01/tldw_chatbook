@@ -321,6 +321,27 @@ def test_httpx_cross_origin_hop_strips_credentials(monkeypatch):
     assert second.headers.get("x-keep") == "y"
 
 
+def test_httpx_client_default_header_stripped_cross_origin(monkeypatch):
+    """Client-level default headers (e.g. httpx.Client(headers=...)) must not
+    leak to a cross-origin redirect target, even with no per-call headers."""
+    _resolve_to(monkeypatch, ["93.184.216.34"])
+    seen = []
+    routes = {
+        "https://a.example/": (302, {"location": "https://b.example/x"}, b""),
+        "https://b.example/": (200, {}, b"done"),
+    }
+    with httpx.Client(
+        transport=_transport(routes, seen), headers={"Authorization": "Bearer sekret"}
+    ) as client:
+        resp = guarded_fetch_httpx(
+            "https://a.example/start", client=client, max_bytes=1024
+        )
+    assert resp.content == b"done"
+    first, second = seen[0], seen[1]
+    assert first.headers.get("authorization") == "Bearer sekret"
+    assert "authorization" not in second.headers
+
+
 def test_httpx_hop_cap():
     seen = []
     routes = {"https://example.com/": (302, {"location": "/loop"}, b"")}
@@ -379,6 +400,27 @@ async def test_httpx_async_variant_and_auth_suppression(monkeypatch):
     assert resp.content == b"ok"
     assert "authorization" in seen[0].headers
     assert "authorization" not in seen[1].headers
+
+
+@pytest.mark.asyncio
+async def test_httpx_async_client_default_header_stripped_cross_origin(monkeypatch):
+    """Async variant: client-level default headers must not leak cross-origin."""
+    _resolve_to(monkeypatch, ["93.184.216.34"])
+    seen = []
+    routes = {
+        "https://a.example/": (302, {"location": "https://b.example/x"}, b""),
+        "https://b.example/": (200, {}, b"done"),
+    }
+    async with httpx.AsyncClient(
+        transport=_transport(routes, seen), headers={"Authorization": "Bearer sekret"}
+    ) as client:
+        resp = await guarded_fetch_httpx_async(
+            "https://a.example/start", client=client, max_bytes=1024
+        )
+    assert resp.content == b"done"
+    first, second = seen[0], seen[1]
+    assert first.headers.get("authorization") == "Bearer sekret"
+    assert "authorization" not in second.headers
 
 
 # ---------------------------------------------------------------------------

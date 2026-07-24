@@ -20,10 +20,11 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import json as _json
 import socket
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable, List
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from loguru import logger
 
@@ -192,12 +193,34 @@ async def evaluate_url_policy_async(
 
 
 def check_url_or_raise(url: str, *, trusted_origins=frozenset()) -> None:
+    """Evaluate the egress policy for ``url`` (sync — blocking DNS) and raise if blocked.
+
+    Args:
+        url: The URL to check.
+        trusted_origins: Hostnames the caller has already established as
+            user-intended; private/internal IPs are allowed for these (cloud
+            metadata endpoints are still blocked regardless).
+
+    Raises:
+        EgressBlockedError: If ``url`` is not allowed by the egress policy.
+    """
     decision = evaluate_url_policy(url, trusted_origins=trusted_origins)
     if not decision.allowed:
         raise EgressBlockedError(url, decision.reason)
 
 
 async def check_url_or_raise_async(url: str, *, trusted_origins=frozenset()) -> None:
+    """Async variant of :func:`check_url_or_raise` (event-loop DNS).
+
+    Args:
+        url: The URL to check.
+        trusted_origins: Hostnames the caller has already established as
+            user-intended; private/internal IPs are allowed for these (cloud
+            metadata endpoints are still blocked regardless).
+
+    Raises:
+        EgressBlockedError: If ``url`` is not allowed by the egress policy.
+    """
     decision = await evaluate_url_policy_async(url, trusted_origins=trusted_origins)
     if not decision.allowed:
         raise EgressBlockedError(url, decision.reason)
@@ -206,10 +229,6 @@ async def check_url_or_raise_async(url: str, *, trusted_origins=frozenset()) -> 
 # ---------------------------------------------------------------------------
 # Guarded transport helpers
 # ---------------------------------------------------------------------------
-import json as _json
-from dataclasses import field
-from urllib.parse import urljoin
-
 _STRIP_HEADERS = ("authorization", "cookie", "proxy-authorization")
 
 
@@ -286,14 +305,14 @@ def _hop_headers(headers, same_origin: bool) -> dict:
 
 
 def guarded_fetch_httpx(
-    url,
+    url: str,
     *,
     client,
-    max_bytes,
-    trusted_origins=frozenset(),
-    headers=None,
-    params=None,
-):
+    max_bytes: int,
+    trusted_origins: frozenset = frozenset(),
+    headers: dict | None = None,
+    params: dict | None = None,
+) -> GuardedResponse:
     """Capped GET via httpx.Client with per-hop egress re-validation."""
     first_host = _host_of(url)
     current = url
@@ -306,6 +325,14 @@ def guarded_fetch_httpx(
             headers=_hop_headers(headers, same_origin),
             params=params if hop == 0 else None,
         )
+        if not same_origin:
+            # Strip credentials the client attaches at the transport-object
+            # level (e.g. httpx.Client(headers={"Authorization": ...})) —
+            # these are merged onto the built request by httpx and are
+            # invisible to _hop_headers, which only sees the per-call
+            # `headers` argument.
+            for _h in _STRIP_HEADERS:
+                request.headers.pop(_h, None)
         response = client.send(request, stream=True, follow_redirects=False)
         try:
             if response.is_redirect and response.status_code != 304:
@@ -334,18 +361,24 @@ def guarded_fetch_httpx(
 
 
 async def guarded_fetch_httpx_async(
-    url,
+    url: str,
     *,
     client,
-    max_bytes,
-    trusted_origins=frozenset(),
-    headers=None,
-    params=None,
+    max_bytes: int,
+    trusted_origins: frozenset = frozenset(),
+    headers: dict | None = None,
+    params: dict | None = None,
     auth=None,
-):
+) -> GuardedResponse:
     """Async capped GET via httpx.AsyncClient with per-hop re-validation.
 
     ``auth`` is applied on same-origin hops only (credential-stripping rule).
+    Client-default sensitive headers (e.g. an ``httpx.AsyncClient(headers=...)``
+    default ``Authorization``) are also stripped on cross-origin hops. A
+    client-level ``auth=`` CALLABLE (set on the ``httpx.Client``/``AsyncClient``
+    itself, as opposed to the ``auth`` parameter of this function) is NOT
+    suppressed by this guard — no live caller uses that flow today; this is a
+    documented residual risk.
     """
     first_host = _host_of(url)
     current = url
@@ -358,6 +391,11 @@ async def guarded_fetch_httpx_async(
             headers=_hop_headers(headers, same_origin),
             params=params if hop == 0 else None,
         )
+        if not same_origin:
+            # Strip credentials the client attaches at the transport-object
+            # level — see guarded_fetch_httpx for the rationale.
+            for _h in _STRIP_HEADERS:
+                request.headers.pop(_h, None)
         send_kwargs = {"stream": True, "follow_redirects": False}
         if auth is not None and same_origin:
             send_kwargs["auth"] = auth
@@ -389,15 +427,15 @@ async def guarded_fetch_httpx_async(
 
 
 def guarded_fetch_requests(
-    url,
+    url: str,
     *,
     session=None,
-    max_bytes,
-    trusted_origins=frozenset(),
-    timeout=30.0,
-    headers=None,
+    max_bytes: int,
+    trusted_origins: frozenset = frozenset(),
+    timeout: float = 30.0,
+    headers: dict | None = None,
     sink=None,
-):
+) -> "requests.Response":
     """Capped GET via requests with per-hop egress re-validation.
 
     Returns the final ``requests.Response`` with ``._content`` preloaded
@@ -462,14 +500,14 @@ def guarded_fetch_requests(
 
 
 async def guarded_fetch_aiohttp(
-    url,
+    url: str,
     *,
     session,
-    max_bytes,
-    trusted_origins=frozenset(),
-    headers=None,
+    max_bytes: int,
+    trusted_origins: frozenset = frozenset(),
+    headers: dict | None = None,
     timeout=None,
-):
+) -> GuardedResponse:
     """Capped GET via aiohttp.ClientSession with per-hop re-validation."""
     from multidict import CIMultiDict
 
