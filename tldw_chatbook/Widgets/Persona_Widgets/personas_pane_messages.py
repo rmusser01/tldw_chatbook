@@ -128,6 +128,14 @@ class PreviewResetRequested(Message):
     """The preview-conversation transcript was reset."""
 
 
+class PreviewGreetingSelected(Message):
+    """The user picked a greeting (index into the greetings list) to seed from."""
+
+    def __init__(self, index: int) -> None:
+        super().__init__()
+        self.index = index
+
+
 class PreviewOpenInConsoleRequested(Message):
     """Open the preview-conversation transcript in Console."""
 

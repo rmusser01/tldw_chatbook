@@ -96,6 +96,7 @@ from ...Widgets.Persona_Widgets.personas_pane_messages import (
     PersonaProfileEditCancelled,
     PersonaProfileSaveRequested,
     PreviewConfigureProviderRequested,
+    PreviewGreetingSelected,
     PreviewOpenInConsoleRequested,
     PreviewReplyRequested,
     PreviewResetRequested,
@@ -759,6 +760,7 @@ class PersonasScreen(BaseAppScreen):
                 "greeting": greeting,
                 "history": [dict(m) for m in preview.history],
                 "seeded_for": preview.seeded_for,
+                "greeting_index": preview._current_greeting_index,
             }
         return state
 
@@ -1814,6 +1816,7 @@ class PersonasScreen(BaseAppScreen):
                 greeting=str(restore_preview.get("greeting") or ""),
                 history=list(restore_preview.get("history") or []),
                 seeded_for=entity_id,
+                greeting_index=int(restore_preview.get("greeting_index") or 0),
             )
         else:
             # Seed the ephemeral preview with the character's greeting. The
@@ -3615,6 +3618,13 @@ class PersonasScreen(BaseAppScreen):
     ) -> None:
         message.stop()
         self.preview.open_provider_settings()
+
+    @on(PreviewGreetingSelected)
+    async def _handle_preview_greeting_selected(
+        self, message: PreviewGreetingSelected
+    ) -> None:
+        message.stop()
+        await self.preview.handle_greeting_selected(message.index)
 
     # ===== Create / edit =====
 

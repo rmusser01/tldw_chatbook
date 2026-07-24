@@ -2,9 +2,10 @@
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Select, Static
 
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+    PreviewGreetingSelected,
     PreviewOpenInConsoleRequested,
     PreviewReplyRequested,
     PreviewResetRequested,
@@ -510,3 +511,52 @@ async def test_reset_speakers_restores_defaults():
         pane.append_reply("Hello.")
         await pilot.pause()
         assert _line_texts(app) == ["you: Hi", "character: Hello."]
+
+
+# ===== TASK-438: alternate-greeting selector =====
+
+
+async def test_greeting_selector_hidden_without_alternates():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.set_greetings(["Only greeting."])
+        await pilot.pause()
+        assert app.query_one("#personas-preview-greeting-row").display is False
+
+
+async def test_greeting_selector_shown_with_alternates():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+        pane.set_greetings(["Primary.", "Alt one.", "Alt two."])
+        await pilot.pause()
+        assert app.query_one("#personas-preview-greeting-row").display is True
+        select = app.query_one("#personas-preview-greeting-select", Select)
+        assert len(list(select._options)) == 3  # 3 greetings
+
+
+async def test_choosing_greeting_posts_message():
+    posted: list[int] = []
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = app.query_one(PersonasPreviewPane)
+
+        original_post_message = pane.post_message
+
+        def _capture(message):
+            if isinstance(message, PreviewGreetingSelected):
+                posted.append(message.index)
+            return original_post_message(message)
+
+        pane.post_message = _capture
+
+        pane.set_greetings(["Primary.", "Alt one."])
+        await pilot.pause()
+        select = app.query_one("#personas-preview-greeting-select", Select)
+        select.value = 1
+        await pilot.pause()
+        # set_greetings populates the Select under prevent(Select.Changed), so the
+        # only PreviewGreetingSelected is this genuine user pick (index 1) - no
+        # spurious programmatic index-0 post (task-438 review).
+        assert posted == [1]

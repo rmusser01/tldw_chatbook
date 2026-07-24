@@ -238,9 +238,12 @@ class TestPreviewRestore:
             screen.preview.history.append(
                 {"role": "assistant", "content": "well met"}
             )
+            # simulate a chosen alternate greeting (task-438)
+            screen.preview._current_greeting_index = 1
 
             saved = screen.save_state()
             assert saved["personas_preview"]["greeting"] == "Greetings, traveller."
+            assert saved["personas_preview"]["greeting_index"] == 1
             assert saved["personas_preview"]["history"] == [
                 {"role": "user", "content": "hi"},
                 {"role": "assistant", "content": "well met"},
@@ -251,6 +254,8 @@ class TestPreviewRestore:
             screen2 = await _mounted(pilot2)
             pane2 = screen2.query_one(PersonasPreviewPane)
             assert pane2.greeting_text == "Greetings, traveller."
+            # the chosen greeting index survives the round-trip (task-438 review)
+            assert screen2.preview._current_greeting_index == 1
             text = pane2.transcript_text()
             assert "Greetings, traveller." in text
             assert "hi" in text

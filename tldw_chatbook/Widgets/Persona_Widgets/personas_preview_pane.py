@@ -15,11 +15,12 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Select, Static
 
 from ...Utils.input_validation import validate_text_input
 from .personas_pane_messages import (
     PreviewConfigureProviderRequested,
+    PreviewGreetingSelected,
     PreviewOpenInConsoleRequested,
     PreviewReplyRequested,
     PreviewResetRequested,
@@ -121,6 +122,19 @@ class PersonasPreviewPane(Vertical):
             # BELOW the transcript so provider/error messages never render
             # above the chronological greeting -> you -> character history.
             yield Static("", id="personas-preview-status")
+            with Horizontal(id="personas-preview-greeting-row", classes="ds-toolbar"):
+                yield Static("Greeting:", classes="personas-preview-greeting-label")
+                yield Select(
+                    # A single placeholder option: this Textual version's
+                    # Select requires allow_blank=False constructions to have
+                    # at least one option. The row stays hidden (on_mount)
+                    # until set_greetings() replaces this with the real list.
+                    [("Greeting", 0)],
+                    id="personas-preview-greeting-select",
+                    classes="form-select",
+                    allow_blank=False,
+                    prompt="Greeting",
+                )
             yield Input(placeholder="Test message...", id="personas-preview-input")
             with Horizontal(classes="ds-toolbar"):
                 yield Button(
@@ -148,6 +162,7 @@ class PersonasPreviewPane(Vertical):
 
     def on_mount(self) -> None:
         self.query_one("#personas-preview-body").display = False
+        self.query_one("#personas-preview-greeting-row").display = False
 
     # ===== Public API =====
 
@@ -207,6 +222,42 @@ class PersonasPreviewPane(Vertical):
         """
         self._character_label = _DEFAULT_CHARACTER_LABEL
         self._user_label = _DEFAULT_USER_LABEL
+
+    def set_greetings(self, greetings: list[str], selected_index: int = 0) -> None:
+        """Populate the greeting selector; show it only when alternates exist.
+
+        Args:
+            greetings: Processed greetings, ``greetings[0]`` the primary
+                ``first_message`` and the rest alternates.
+            selected_index: Index to point the Select at (bounds-checked); used
+                to keep a chosen alternate on a same-character reload.
+        """
+        row = self.query_one("#personas-preview-greeting-row")
+        if len(greetings) > 1:
+            select = self.query_one("#personas-preview-greeting-select", Select)
+            target = selected_index if 0 <= selected_index < len(greetings) else 0
+            # Populate/repoint the Select WITHOUT firing Select.Changed. set_options
+            # snaps value back to 0 and the explicit assignment would each post a
+            # (spurious) Changed that _handle_greeting_selected would misread as a
+            # user pick and re-seed — wiping an in-progress transcript on a
+            # same-character reload (task-438 review). prevent() suppresses both.
+            with self.prevent(Select.Changed):
+                select.set_options(
+                    [(self._greeting_option_label(i, g), i) for i, g in enumerate(greetings)]
+                )
+                select.value = target
+            row.display = True
+        else:
+            row.display = False
+
+    def _greeting_option_label(self, index: int, text: str) -> str:
+        """Dropdown label: 'Greeting N (default): <~40-char preview>'."""
+        preview = " ".join(str(text).split())
+        if len(preview) > 40:
+            preview = preview[:39] + "…"
+        tag = " (default)" if index == 0 else ""
+        base = f"Greeting {index + 1}{tag}"
+        return f"{base}: {preview}" if preview else base
 
     def _relabel_character_lines(self, old_label: str, new_label: str) -> None:
         """Rewrite already-rendered character-role lines to a new speaker label.
@@ -427,6 +478,12 @@ class PersonasPreviewPane(Vertical):
     def _handle_configure(self, event: Button.Pressed) -> None:
         event.stop()
         self.post_message(PreviewConfigureProviderRequested())
+
+    @on(Select.Changed, "#personas-preview-greeting-select")
+    def _handle_greeting_selected(self, event: Select.Changed) -> None:
+        event.stop()
+        if isinstance(event.value, int):
+            self.post_message(PreviewGreetingSelected(event.value))
 
 
 __all__ = ["PersonasPreviewPane"]
