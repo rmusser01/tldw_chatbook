@@ -1614,6 +1614,8 @@ class CitationTraceRepository:
                            snapshot.origin_namespace
                        AND tombstone.origin_payload_id =
                            snapshot.origin_payload_id
+                       AND tombstone.revocation_scope_id =
+                           snapshot.revocation_scope_id
                       WHERE reference.profile_id = trace.profile_id
                         AND reference.trace_id = trace.trace_id
                         AND snapshot.redaction_state = 'purged'
@@ -1676,6 +1678,8 @@ class CitationTraceRepository:
                                           snapshot.origin_namespace
                                       AND tombstone.origin_payload_id =
                                           snapshot.origin_payload_id
+                                      AND tombstone.revocation_scope_id =
+                                          snapshot.revocation_scope_id
                                 )
                             )
                             OR (
@@ -1689,6 +1693,8 @@ class CitationTraceRepository:
                                           snapshot.origin_namespace
                                       AND tombstone.origin_payload_id =
                                           snapshot.origin_payload_id
+                                      AND tombstone.revocation_scope_id =
+                                          snapshot.revocation_scope_id
                                 )
                             )
                         )

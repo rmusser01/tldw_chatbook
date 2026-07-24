@@ -441,6 +441,41 @@ def test_revoke_invalidates_capabilities_issued_by_every_repository_instance(
     assert reading_repository.verify_active_trace_result(refreshed) is False
 
 
+def test_mismatched_scope_tombstone_cannot_authorize_revocation_warning(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    identity = _identity(db)
+    CitationPayloadLifecycle(
+        repository,
+        retention_policy=_policy(),
+    ).revoke(
+        local_trace_namespace(identity, trace_id="trace-1"),
+        snapshot_payload_id="snapshot-1",
+        tombstone=_tombstone(db),
+    )
+    with db.transaction() as cursor:
+        cursor.execute(
+            """
+            UPDATE rag_payload_tombstones
+            SET revocation_scope_id = 'different-scope'
+            WHERE origin_payload_id = 'snapshot-1'
+            """
+        )
+
+    refreshed = _repository(db).get_active_trace_for_message(
+        "message-1",
+        1,
+        "Answer [S1].",
+        TEST_FINGERPRINT_CODEC,
+    )
+
+    assert refreshed.state.value != "active"
+    assert refreshed.summary is None
+    assert refreshed.availability_warning is None
+
+
 @pytest.mark.parametrize("completeness", ["partial", "redacted", "unavailable"])
 def test_revoke_never_upgrades_noncomplete_seals_to_grounded_warning_capabilities(
     db: CharactersRAGDB,
