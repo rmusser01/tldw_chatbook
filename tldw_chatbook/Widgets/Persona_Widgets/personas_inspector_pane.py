@@ -301,7 +301,7 @@ class PersonasInspectorPane(Vertical):
             readiness.update("Console ready")
         export_enabled = selected and not unsaved
         export_tooltip = _UNSAVED_TOOLTIP if (selected and unsaved) else None
-        # Attach: the selection gate only (staging context defers the reply).
+        # Attach tooltip only surfaces when the selection gate itself is closed.
         attach_tooltip = None
         if not self._console_actions_enabled:
             attach_tooltip = (

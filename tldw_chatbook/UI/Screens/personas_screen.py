@@ -363,14 +363,11 @@ class PersonasScreen(BaseAppScreen):
         background: $background;
     }
 
-    /* Red cue when the staged Console handoff provider is unready (task-523).
-       At runtime `status-blocked` lands on the DestinationHeader (#personas-header)
-       while the badge word is on a child Static (#workbench-header-status), so the
-       color rule is a descendant of the blocked header. ($error is the Textual
-       built-in error color; $ds-* vars aren't resolvable in inline DEFAULT_CSS.) */
-    #personas-header.status-blocked .workbench-header-status {
-        color: $error;
-    }
+    /* Red cue when the staged Console handoff provider is unready (task-523):
+       the "Blocked" badge word turns $ds-status-blocked. The rule CANNOT live
+       here — app-bundle CSS (`.ds-status-badge { color: $ds-text-primary }`)
+       outranks any widget DEFAULT_CSS regardless of specificity — so it lives
+       in the app-tier source css/components/_workbench.tcss instead. */
 
     #personas-mode-strip {
         height: 1;

@@ -3036,6 +3036,45 @@ class TestConsoleActions:
             await pilot.pause()
             assert header.has_class("status-blocked") is False
 
+    async def test_blocked_header_badge_renders_red_under_real_bundle(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Task-523 regression guard for the red cue's CSS cascade.
+
+        The colour rule MUST live in app-tier CSS: a widget ``DEFAULT_CSS``
+        rule is outranked by the bundle's ``.ds-status-badge`` (color:
+        $ds-text-primary) regardless of selector specificity, so the badge
+        would stay primary and the cue would never render. Uses
+        ``StyledPersonasTestApp`` (loads the real bundle) and asserts the
+        blocked-state badge colour DIFFERS from the ready-state colour - if the
+        rule were outranked, both states would render the identical primary
+        colour and this fails.
+        """
+        mock_app_instance.app_config = {
+            "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+            "chat_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
+        }
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            badge = screen.query_one(
+                "#personas-header #workbench-header-status", Static
+            )
+            assert screen.query_one("#personas-header").has_class("status-blocked")
+            blocked_color = badge.styles.color
+
+            mock_app_instance.app_config["api_settings"] = {
+                "anthropic": {"api_key": "unit-test-placeholder-key"}
+            }
+            screen._sync_title_and_console_actions()
+            await pilot.pause()
+            assert not screen.query_one("#personas-header").has_class(
+                "status-blocked"
+            )
+            ready_color = badge.styles.color
+
+        assert blocked_color != ready_color
+
     async def test_attach_stages_profile_payload(
         self, mock_app_instance, stub_characters, stub_conversations, stub_scope_service
     ):
