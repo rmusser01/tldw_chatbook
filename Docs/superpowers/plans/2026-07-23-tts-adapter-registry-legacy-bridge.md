@@ -2278,7 +2278,7 @@ git commit -m "refactor(tts): route service through adapters"
 
 **Interfaces:**
 - Consumes: `build_default_tts_service()`, `bind_tts_service()`,
-  `reset_tts_service_binding()`, and the
+  `close_tts_resources()`, and the
   `TTSService.generate_audio_stream(request, internal_model_id,
   progress_sink)` compatibility method.
 - Produces: `TldwCli.tts_service`, `_bind_tts_service()`, and
@@ -2290,9 +2290,13 @@ git commit -m "refactor(tts): route service through adapters"
 class FakeOwnedService:
     def __init__(self) -> None:
         self.close_calls = 0
+        self.wait_closed_calls = 0
 
     async def close(self) -> None:
         self.close_calls += 1
+
+    async def wait_closed(self) -> None:
+        self.wait_closed_calls += 1
 
 
 def test_app_constructs_one_tts_service(
@@ -2318,6 +2322,7 @@ async def test_app_binding_and_close_are_explicit() -> None:
 
     await TldwCli._close_tts_service(owner)
     assert service.close_calls == 1
+    assert service.wait_closed_calls == 1
     with pytest.raises(RuntimeError, match="not bound"):
         await get_tts_service()
 
@@ -2366,9 +2371,8 @@ def _bind_tts_service(self) -> None:
 
 async def _close_tts_service(self) -> None:
     try:
-        await self.tts_service.close()
+        await close_tts_resources()
     finally:
-        reset_tts_service_binding(expected=self.tts_service)
         self._tts_binding_active = False
 
 
@@ -2378,6 +2382,10 @@ async def on_mount(self) -> None:
 
 The current `TldwCli` class has no `on_mount()` method, so TASK-402 adds the
 single method above.
+
+`close_tts_resources()` retains and joins the service's definitive
+`wait_closed()` path before it clears the binding, including when the shutdown
+caller is cancelled. Do not duplicate that lifecycle logic in `TldwCli`.
 
 - [ ] **Step 4: Replace handler-owned progress callback mutation**
 
