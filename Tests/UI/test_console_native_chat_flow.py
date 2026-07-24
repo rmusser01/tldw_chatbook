@@ -22,11 +22,13 @@ from tldw_chatbook.Chat.chat_conversation_scope_service import (
     ChatConversationScopeService,
 )
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleRunStatus,
+    GenerationVariantMeta,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.Chat.console_image_view import IMAGE_CACHE_MAX_ENTRIES
@@ -6327,6 +6329,110 @@ async def test_console_workspace_conversation_resume_uses_real_local_services(tm
         restored_session = store.switch_session(store.active_session_id)
         assert restored_session.persisted_conversation_id == conversation_id
         assert restored_session.workspace_id == workspace.workspace_id
+
+
+def _resume_generation_variant_meta(seed: int) -> GenerationVariantMeta:
+    return GenerationVariantMeta(
+        prompt="a red dragon",
+        negative_prompt="",
+        backend="swarmui",
+        model=None,
+        seed=seed,
+        style=None,
+        params={},
+    )
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_conversation_resume_hydrates_generation_metadata(
+    tmp_path,
+):
+    """Resuming a saved conversation rehydrates a generation card (P2a §2).
+
+    Task 9's report flagged a real gap: ``ChatScreen
+    ._resume_console_workspace_conversation`` -- the production path a
+    saved-conversation click (and, after an app restart, the only way back
+    into a persisted conversation) drives -- restores a generation
+    message's tree node and its kept-variant bytes, but never calls the
+    store's documented hydration seam (``get_generation_metadata_for_messages``
+    + ``hydrate_generation_metadata``), so the resumed message's
+    ``generation_metadata`` comes back empty and the transcript renders a
+    plain image instead of a generation card (losing the ``< >``/keep/
+    regenerate actions and the other variant).
+
+    Persists a 2-variant generation message via a real ``ConsoleChatStore``
+    bound to a real ``ChatPersistenceService``, keeps variant position 1
+    (promoting it to canonical), then resumes the SAME conversation by
+    driving the real production coroutine directly against a FRESH app/
+    screen/store -- the same "real production coroutine, not a rebuilt
+    double" pattern ``test_console_scope_row.py`` uses for this exact
+    method. Asserts the resumed message is card-eligible: non-empty
+    ``generation_metadata`` in kept-first order, matching the DB, with no
+    manual hydrate call in this test.
+    """
+    db = CharactersRAGDB(tmp_path / "resume_hydrate.sqlite", "test-client")
+    try:
+        chat_service = ChatConversationService(db)
+
+        setup_store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        setup_session = setup_store.create_session(title="Generation resume")
+        setup_store.active_session_id = setup_session.id
+        seed_message = setup_store.append_generation_message(
+            setup_session.id,
+            content="[image] a red dragon",
+            variants=[
+                (b"variant-a-bytes", "image/png", _resume_generation_variant_meta(1)),
+                (b"variant-b-bytes", "image/png", _resume_generation_variant_meta(2)),
+            ],
+            persist=True,
+        )
+        setup_store.keep_generation_variant(
+            setup_session.id, seed_message.id, position=1
+        )
+        conversation_id = setup_session.persisted_conversation_id
+        assert conversation_id is not None
+        persisted_message_id = seed_message.persisted_message_id
+        assert persisted_message_id is not None
+
+        app = _build_test_app()
+        _configure_native_ready_console(app)
+        app.chachanotes_db = db
+        app.chat_conversation_scope_service = ChatConversationScopeService(
+            local_service=chat_service,
+            server_service=None,
+        )
+        host = ConsoleHarness(app)
+        async with host.run_test(size=(160, 48)) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+            resumed = await console._resume_console_workspace_conversation(
+                conversation_id
+            )
+            await pilot.pause()
+            assert resumed is True
+
+            store = console._ensure_console_chat_store()
+            active_session = store.switch_session(store.active_session_id)
+            assert active_session.persisted_conversation_id == conversation_id
+
+            reloaded = store.messages_for_session(active_session.id)
+            reloaded_generation_msg = next(
+                m for m in reloaded if m.persisted_message_id == persisted_message_id
+            )
+
+            # Card-eligible: non-empty generation_metadata survived resume,
+            # kept variant (seed 2) first, matching the DB's post-keep order.
+            assert len(reloaded_generation_msg.generation_metadata) == 2
+            assert [
+                variant.seed
+                for variant in reloaded_generation_msg.generation_metadata
+            ] == [2, 1]
+            # Position-0/canonical bytes are still the kept variant's.
+            assert reloaded_generation_msg.image_data == b"variant-b-bytes"
+            assert reloaded_generation_msg.attachments[0].data == b"variant-b-bytes"
+    finally:
+        db.close_connection()
 
 
 @pytest.mark.asyncio

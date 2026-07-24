@@ -317,6 +317,175 @@ def test_unimplemented_actions_return_wip_reason():
     assert "WIP" in result.visible_copy
 
 
+def test_regression_no_generation_kwargs_matches_text_sibling_gating():
+    """Regression guard: callers that don't pass the new generation kwargs
+    (every existing call site as of this task) must see byte-identical
+    behavior to before -- pinned against a real text-sibling case."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="reply",
+        id="m1",
+        sibling_index=1,
+        sibling_count=3,
+    )
+
+    actions = service.available_actions(message)
+
+    assert [action.label for action in actions] == [
+        "Copy",
+        "Edit",
+        "Save as...",
+        "<",
+        ">",
+        "♻",
+        "--->",
+        "Feedback",
+        "🗑",
+    ]
+    by_id = {action.action_id: action for action in actions}
+    assert by_id["variant-previous"].enabled is True
+    assert by_id["variant-next"].enabled is True
+    assert "keep" not in by_id
+
+
+def test_generation_variant_nav_hidden_at_count_one():
+    """A single-variant generation message offers no `<`/`>`/keep at all."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="[image] x")
+
+    action_ids = [
+        action.action_id
+        for action in service.available_actions(
+            message, generation_variant_count=1, generation_browsed_index=0
+        )
+    ]
+
+    assert "variant-previous" not in action_ids
+    assert "variant-next" not in action_ids
+    assert "keep" not in action_ids
+
+
+def test_generation_variant_nav_visible_at_count_two():
+    """Two-plus variants show `<`/`>`, gated by the GENERATION browsed index
+    -- not by the message's (absent) text-sibling fields."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="[image] x")
+
+    actions = {
+        action.action_id: action
+        for action in service.available_actions(
+            message, generation_variant_count=2, generation_browsed_index=0
+        )
+    }
+
+    assert "variant-previous" in actions
+    assert "variant-next" in actions
+    assert actions["variant-previous"].enabled is False
+    assert actions["variant-next"].enabled is True
+
+
+@pytest.mark.parametrize(
+    ("browsed_index", "variant_count", "previous_enabled", "next_enabled"),
+    [
+        (0, 3, False, True),
+        (1, 3, True, True),
+        (2, 3, True, False),
+    ],
+)
+def test_generation_variant_nav_boundary_enables(
+    browsed_index: int,
+    variant_count: int,
+    previous_enabled: bool,
+    next_enabled: bool,
+):
+    """Boundary-enable mirrors the text-sibling check exactly, but keyed off
+    the generation browsed index/count instead of sibling_index/count."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="[image] x")
+
+    actions = {
+        action.action_id: action
+        for action in service.available_actions(
+            message,
+            generation_variant_count=variant_count,
+            generation_browsed_index=browsed_index,
+        )
+    }
+
+    assert actions["variant-previous"].enabled is previous_enabled
+    assert actions["variant-next"].enabled is next_enabled
+
+
+@pytest.mark.parametrize("browsed_index", [0, 1, 2])
+def test_keep_action_only_visible_when_browsed_away_from_canonical(browsed_index: int):
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="[image] x")
+
+    action_ids = [
+        action.action_id
+        for action in service.available_actions(
+            message, generation_variant_count=3, generation_browsed_index=browsed_index
+        )
+    ]
+
+    assert ("keep" in action_ids) is (browsed_index != 0)
+
+
+def test_generation_message_ignores_text_sibling_fields():
+    """A generation message that (hypothetically) also carries stale
+    text-sibling fields must still be gated by the generation kwargs --
+    generation-variant gating takes precedence (spec §5.1/§7)."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT,
+        content="[image] x",
+        sibling_index=0,
+        sibling_count=1,  # would hide <> under the old sibling-only gate
+    )
+
+    actions = {
+        action.action_id: action
+        for action in service.available_actions(
+            message, generation_variant_count=4, generation_browsed_index=2
+        )
+    }
+
+    assert "variant-previous" in actions
+    assert "variant-next" in actions
+    assert actions["variant-previous"].enabled is True
+    assert actions["variant-next"].enabled is True
+    assert "keep" in actions
+
+
+def test_generation_regenerate_stays_visible_and_enabled():
+    """Regenerate (`♻`) stays visible on a generation message, still gated
+    only by assistant-role as today (spec §7)."""
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="[image] x")
+
+    actions = {
+        action.action_id: action
+        for action in service.available_actions(
+            message, generation_variant_count=3, generation_browsed_index=1
+        )
+    }
+
+    assert actions["regenerate"].enabled is True
+
+
+def test_keep_action_dispatch_returns_completed_result():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="[image] x", id="m1"
+    )
+
+    result = service.dispatch("keep", message)
+
+    assert result.status == "completed"
+    assert result.target_message_id == "m1"
+
+
 def test_continue_action_targets_selected_variant_content():
     service = ConsoleMessageActionService()
     message = ConsoleChatMessage(

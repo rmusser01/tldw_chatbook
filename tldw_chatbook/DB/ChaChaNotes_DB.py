@@ -157,7 +157,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 24  # Adds conversations.active_leaf_message_id (Console branching Phase A).
+    _CURRENT_SCHEMA_VERSION = 25  # Adds message_generation_metadata sidecar (image-gen P2a). NOT sync-integrated (deliberate, v19/v24 precedent); prompts NOT in FTS.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -2494,6 +2494,29 @@ UPDATE db_schema_version
 """
 
     # Keep this runner SQL aligned with
+    # tldw_chatbook/DB/migrations/chachanotes_v24_to_v25_message_generation_metadata.sql.
+    _MIGRATE_V24_TO_V25_SQL = """
+CREATE TABLE IF NOT EXISTS message_generation_metadata(
+  message_id      TEXT    NOT NULL REFERENCES messages(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  position        INTEGER NOT NULL CHECK (position >= 0),
+  prompt          TEXT    NOT NULL,
+  negative_prompt TEXT    NOT NULL DEFAULT '',
+  backend         TEXT    NOT NULL,
+  model           TEXT,
+  seed            INTEGER,
+  style           TEXT,
+  params_json     TEXT    NOT NULL DEFAULT '{}',
+  created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (message_id, position)
+);
+CREATE INDEX IF NOT EXISTS idx_msg_gen_meta_message ON message_generation_metadata(message_id);
+UPDATE db_schema_version
+   SET version = 25
+ WHERE schema_name = 'rag_char_chat_schema'
+   AND version = 24;
+"""
+
+    # Keep this runner SQL aligned with
     # tldw_chatbook/DB/migrations/chachanotes_v18_to_v19_message_attachments.sql.
     _MIGRATE_V18_TO_V19_SQL = """
 CREATE TABLE IF NOT EXISTS message_attachments(
@@ -3884,6 +3907,27 @@ UPDATE db_schema_version
             logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V23→V24] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V23 to V24 for '{self._SCHEMA_NAME}': {e}") from e
 
+    def _migrate_from_v24_to_v25(self, conn: sqlite3.Connection):
+        """Migrate schema V24→V25: add the ``message_generation_metadata`` sidecar
+        table for storing image generation metadata (prompts, backend, model, etc.).
+        No sync triggers are added; this table is local-only (v19/v24 precedent)."""
+        logger.info(f"Migrating schema from V24 to V25 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}...")
+        try:
+            conn.executescript(self._MIGRATE_V24_TO_V25_SQL)
+            logger.debug(f"[{self._SCHEMA_NAME} V24→V25] Migration script executed.")
+            final_version = self._get_db_version(conn)
+            if final_version != 25:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V24→V25] Migration version check failed. Expected 25, got: {final_version}"
+                )
+            logger.info(f"[{self._SCHEMA_NAME} V24→V25] Migration completed successfully for DB: {self.db_path_str}.")
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V24→V25] Migration failed: {e}")
+            raise SchemaError(f"Migration from V24 to V25 failed for '{self._SCHEMA_NAME}': {e}") from e
+        except Exception as e:
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V24→V25] Unexpected error during migration: {e}")
+            raise SchemaError(f"Unexpected error migrating from V24 to V25 for '{self._SCHEMA_NAME}': {e}") from e
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -4038,6 +4082,7 @@ UPDATE db_schema_version
                     21: self._migrate_from_v21_to_v22,
                     22: self._migrate_from_v22_to_v23,
                     23: self._migrate_from_v23_to_v24,
+                    24: self._migrate_from_v24_to_v25,
                 }
 
                 if current_db_version == 0:
@@ -7292,6 +7337,283 @@ UPDATE db_schema_version
                         }
                     )
         return result
+
+    def set_message_generation_metadata(self, message_id: str, rows: list[dict]) -> None:
+        """Set the authoritative generation metadata for a message.
+
+        Performs a full rewrite (DELETE then INSERT) in one transaction.
+        Mirrors the set_message_attachments pattern.
+
+        Args:
+            message_id: Target message UUID.
+            rows: Dicts with keys: ``position`` (int >= 0), ``prompt`` (str),
+                ``negative_prompt`` (str), ``backend`` (str), ``model`` (str|None),
+                ``seed`` (int|None), ``style`` (str|None), ``params_json`` (str).
+
+        Raises:
+            ValueError: If any row has position < 0, or if positions are not unique.
+            CharactersRAGDBError: On database errors.
+        """
+        # Validate positions: >= 0 and unique
+        positions = [int(row.get("position", 0)) for row in rows]
+        for pos in positions:
+            if pos < 0:
+                raise ValueError("message_generation_metadata positions must be >= 0.")
+        if len(set(positions)) != len(positions):
+            raise ValueError("message_generation_metadata positions must be unique.")
+        with self.transaction() as cursor:
+            cursor.execute(
+                "DELETE FROM message_generation_metadata WHERE message_id = ?",
+                (message_id,),
+            )
+            cursor.executemany(
+                "INSERT INTO message_generation_metadata"
+                " (message_id, position, prompt, negative_prompt, backend, model, seed, style, params_json)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        message_id,
+                        int(row["position"]),
+                        row["prompt"],
+                        row.get("negative_prompt", ""),
+                        row["backend"],
+                        row.get("model"),
+                        row.get("seed"),
+                        row.get("style"),
+                        row.get("params_json", "{}"),
+                    )
+                    for row in rows
+                ],
+            )
+
+    def get_generation_metadata_for_messages(
+        self, message_ids: "Sequence[str]"
+    ) -> dict[str, list[dict]]:
+        """Batch-fetch generation metadata for messages.
+
+        Args:
+            message_ids: Message UUIDs to fetch for.
+
+        Returns:
+            Mapping of message_id to position-ordered metadata row dicts
+            (position, prompt, negative_prompt, backend, model, seed, style,
+            params_json); ids with no rows are absent. created_at is omitted.
+        """
+        ids = [str(m) for m in message_ids if m]
+        if not ids:
+            return {}
+        result: dict[str, list[dict]] = {}
+        with self.transaction() as cursor:
+            for start in range(0, len(ids), 500):
+                chunk = ids[start : start + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                cursor.execute(
+                    "SELECT message_id, position, prompt, negative_prompt, backend, model, seed, style, params_json"
+                    f" FROM message_generation_metadata WHERE message_id IN ({placeholders})"
+                    " ORDER BY message_id, position",
+                    chunk,
+                )
+                for row in cursor.fetchall():
+                    result.setdefault(row["message_id"], []).append(
+                        {
+                            "position": row["position"],
+                            "prompt": row["prompt"],
+                            "negative_prompt": row["negative_prompt"],
+                            "backend": row["backend"],
+                            "model": row["model"],
+                            "seed": row["seed"],
+                            "style": row["style"],
+                            "params_json": row["params_json"],
+                        }
+                    )
+        return result
+
+    def append_message_attachment_with_metadata(
+        self,
+        message_id: str,
+        *,
+        data: bytes,
+        mime_type: str,
+        display_name: str = "",
+        generation_metadata: Optional[dict] = None,
+    ) -> int:
+        """Append one new image variant to a message without rewriting existing bytes.
+
+        Unlike ``set_message_attachments`` (a full-list DELETE+INSERT rewrite
+        that can silently drop stored bytes if the caller doesn't pass every
+        existing row back), this inserts a single new
+        ``message_attachments`` row at the next free position and,
+        optionally, a matching ``message_generation_metadata`` sidecar row --
+        both in one transaction. No existing attachment or sidecar row is
+        read or written. The message row's ``version``/``last_modified`` are
+        bumped (mirroring the ``update_message`` idiom) so optimistic-lock
+        callers observe the change.
+
+        Args:
+            message_id: Target message UUID. Must already exist (not
+                soft-deleted) with a position-0 image (non-NULL
+                ``messages.image_data``) -- i.e. be an image-bearing message
+                -- otherwise ``ValueError`` is raised.
+            data: The new variant's image bytes.
+            mime_type: The new variant's MIME type.
+            display_name: Optional label for the new variant.
+            generation_metadata: Optional dict of generation-metadata fields
+                for the new position (``prompt``, ``negative_prompt``,
+                ``backend``, ``model``, ``seed``, ``style``,
+                ``params_json``); any ``position`` key it contains is
+                ignored -- the position is always the one this call assigns.
+
+        Returns:
+            The position assigned to the new variant (always >= 1).
+
+        Raises:
+            ValueError: If the message does not exist, is soft-deleted, or
+                has no position-0 image.
+            CharactersRAGDBError: On database errors.
+        """
+        now = self._get_current_utc_timestamp_iso()
+        with self.transaction() as cursor:
+            msg_row = cursor.execute(
+                "SELECT image_data FROM messages WHERE id = ? AND deleted = 0",
+                (message_id,),
+            ).fetchone()
+            if not msg_row or msg_row["image_data"] is None:
+                raise ValueError(
+                    f"Message {message_id} not found or has no position-0 image."
+                )
+
+            max_row = cursor.execute(
+                "SELECT MAX(position) AS max_pos FROM message_attachments WHERE message_id = ?",
+                (message_id,),
+            ).fetchone()
+            next_position = (max_row["max_pos"] or 0) + 1
+
+            cursor.execute(
+                "INSERT INTO message_attachments (message_id, position, data, mime_type, display_name)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (message_id, next_position, data, mime_type, display_name),
+            )
+
+            if generation_metadata is not None:
+                cursor.execute(
+                    "INSERT INTO message_generation_metadata"
+                    " (message_id, position, prompt, negative_prompt, backend, model, seed, style, params_json)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        message_id,
+                        next_position,
+                        generation_metadata["prompt"],
+                        generation_metadata.get("negative_prompt", ""),
+                        generation_metadata["backend"],
+                        generation_metadata.get("model"),
+                        generation_metadata.get("seed"),
+                        generation_metadata.get("style"),
+                        generation_metadata.get("params_json", "{}"),
+                    ),
+                )
+
+            cursor.execute(
+                "UPDATE messages SET version = version + 1, last_modified = ?, client_id = ?"
+                " WHERE id = ? AND deleted = 0",
+                (now, self.client_id, message_id),
+            )
+        return next_position
+
+    def swap_message_attachment_with_scalar(
+        self, message_id: str, position: int
+    ) -> None:
+        """Promote a stored variant to be the message's canonical image.
+
+        Swaps the bytes held in the ``messages.image_data``/
+        ``image_mime_type`` scalar columns with the bytes held in the
+        ``message_attachments`` row at ``position`` -- byte-identical, in
+        place, in one transaction. Only those two variants' bytes are read
+        or written; no other attachment row is touched. If
+        ``message_generation_metadata`` sidecar rows exist at position 0
+        and/or ``position``, they are re-keyed to follow the swap (moved via
+        a temporary sentinel position to dodge the
+        ``(message_id, position)`` primary key, since -- unlike
+        ``message_attachments``, where position 0 lives only in the scalar
+        columns -- the sidecar table can hold a physical row at position 0).
+        The message row's ``version``/``last_modified`` are bumped.
+
+        Args:
+            message_id: Target message UUID.
+            position: The ``message_attachments`` position (>= 1) to
+                promote to canonical.
+
+        Raises:
+            ValueError: If ``position < 1``, the message does not exist
+                (or is soft-deleted), no attachment row exists at ``position``,
+                or the message has no position-0 image to swap.
+            CharactersRAGDBError: On database errors.
+        """
+        if position < 1:
+            raise ValueError("swap position must be >= 1.")
+
+        # CHECK (position >= 0) on message_generation_metadata blocks
+        # negative sentinels, so route the position-0 row through a large
+        # out-of-range value while its slot is briefly occupied by the
+        # other row.
+        temp_position = 1_000_000
+
+        now = self._get_current_utc_timestamp_iso()
+        with self.transaction() as cursor:
+            msg_row = cursor.execute(
+                "SELECT image_data, image_mime_type FROM messages WHERE id = ? AND deleted = 0",
+                (message_id,),
+            ).fetchone()
+            if not msg_row:
+                raise ValueError(f"Message {message_id} not found.")
+            if msg_row["image_data"] is None:
+                raise ValueError("message has no position-0 image to swap")
+
+            attachment_row = cursor.execute(
+                "SELECT data, mime_type FROM message_attachments WHERE message_id = ? AND position = ?",
+                (message_id, position),
+            ).fetchone()
+            if not attachment_row:
+                raise ValueError(
+                    f"No attachment at position {position} for message {message_id}."
+                )
+
+            scalar_data, scalar_mime = (
+                msg_row["image_data"],
+                msg_row["image_mime_type"],
+            )
+            variant_data, variant_mime = (
+                attachment_row["data"],
+                attachment_row["mime_type"],
+            )
+
+            cursor.execute(
+                "UPDATE messages SET image_data = ?, image_mime_type = ?,"
+                " version = version + 1, last_modified = ?, client_id = ?"
+                " WHERE id = ? AND deleted = 0",
+                (variant_data, variant_mime, now, self.client_id, message_id),
+            )
+            cursor.execute(
+                "UPDATE message_attachments SET data = ?, mime_type = ?"
+                " WHERE message_id = ? AND position = ?",
+                (scalar_data, scalar_mime, message_id, position),
+            )
+
+            # Re-key the two sidecar rows (if present) via the temp slot.
+            cursor.execute(
+                "UPDATE message_generation_metadata SET position = ?"
+                " WHERE message_id = ? AND position = 0",
+                (temp_position, message_id),
+            )
+            cursor.execute(
+                "UPDATE message_generation_metadata SET position = 0"
+                " WHERE message_id = ? AND position = ?",
+                (message_id, position),
+            )
+            cursor.execute(
+                "UPDATE message_generation_metadata SET position = ?"
+                " WHERE message_id = ? AND position = ?",
+                (position, message_id, temp_position),
+            )
 
     def get_messages_for_conversation(
         self,

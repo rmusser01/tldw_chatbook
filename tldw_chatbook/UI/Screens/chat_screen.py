@@ -66,6 +66,8 @@ from ...Chat.scope_picker_listers import (
     build_notes_source_lister,
 )
 from ...Chat.console_command_grammar import (
+    GENERATE_IMAGE_COMMAND_HANDLER_ID,
+    GENERATE_IMAGE_COMMAND_NAME,
     KIND_COMMAND,
     KIND_FALLBACK,
     KIND_NOT_COMMAND,
@@ -92,6 +94,14 @@ from ...Chat.console_prefill import (
     parse_prefill_args,
     pinned_prefill_from_conversation_metadata,
 )
+from ...Chat.console_generate_image import (
+    clamp_initial_batch,
+    generation_content_marker,
+    parse_generate_image_args,
+    run_generation_batch,
+)
+from ...Image_Generation.config import get_image_generation_config
+from ...Image_Generation.listing import list_image_models_for_catalog
 from ...Chat.console_skill_resolver import (
     SKILL_UNTRUSTED_REFUSE,
     SkillCommandCandidate,
@@ -274,6 +284,10 @@ from ...Widgets.Console import (
     ConsoleWorkspaceSwitcherModal,
 )
 from ...Widgets.Console.console_context_modal import ConsoleContextModal
+from ...Widgets.Console.console_generation_card import (
+    ConsoleGenerationCardSpec,
+    generation_card_signature,
+)
 from ...Widgets.Console.console_status_chips import (
     ConsoleScopeChip,
     ConsoleStatusChips,
@@ -3083,6 +3097,12 @@ class ChatScreen(BaseAppScreen):
 
         Mirrors the provider payload's most-recent-N image policy
         (``_provider_message_payloads``'s ``image_ids[-image_budget:]``).
+
+        Excludes image-generation messages (non-empty ``generation_metadata``)
+        -- those render as a ``"generation-card"`` row instead of the plain
+        ``"image"`` row (see ``_build_generation_card_specs``), so including
+        them here would double-render and burn a plain-image LRU slot under
+        their bare message id for no row that ever reads it (TASK P2a-7).
         """
         # Bound the working set to the cache capacity so prep can never evict
         # what the transcript still shows (churn guard).
@@ -3090,6 +3110,7 @@ class ChatScreen(BaseAppScreen):
             message
             for message in messages
             if getattr(message, "image_data", None) is not None
+            and not getattr(message, "generation_metadata", ())
         ]
         return image_messages[-IMAGE_CACHE_MAX_ENTRIES:]
 
@@ -3112,6 +3133,97 @@ class ChatScreen(BaseAppScreen):
                 pil=pil if mode == "graphics" else None,
             )
         return specs
+
+    def _console_generation_browse(self) -> dict[str, int]:
+        """Return the lazily-created browsed-variant-index map for generation cards.
+
+        Ephemeral (never persisted) and not initialized in ``__init__`` --
+        mirrors the getattr/setdefault pattern
+        ``_console_imagegen_inflight_sessions`` uses for other screen-owned,
+        purely in-memory bookkeeping. Absent entries default a generation
+        message to its canonical variant (index 0) until a later task's
+        browse controls change it.
+        """
+        browse = getattr(self, "_generation_browse", None)
+        if browse is None:
+            browse = {}
+            self._generation_browse = browse
+        return browse
+
+    def _build_generation_card_specs(
+        self, messages
+    ) -> dict[str, ConsoleGenerationCardSpec]:
+        """Build image-generation card row payloads for generation messages.
+
+        Mirrors ``_build_console_image_specs``'s mode/cache resolution, but
+        keys the render cache under the browsed variant's composite key
+        (``f"{message_id}:{browsed_index}"``) instead of the plain message
+        id -- one generation message can browse between several decoded
+        variants sharing the same bounded render cache.
+
+        Unlike a plain image row, an undecoded/byte-less browsed variant
+        does NOT drop the row here: the card still carries real value from
+        its details block alone, so ``ConsoleGenerationCard`` renders a
+        placeholder line for the missing image instead.
+        """
+        state, cache = self._ensure_console_image_view()
+        default_mode = self._console_image_default_mode
+        browse = self._console_generation_browse()
+        specs: dict[str, ConsoleGenerationCardSpec] = {}
+        for message in messages:
+            generation_metadata = getattr(message, "generation_metadata", ())
+            if not generation_metadata:
+                continue
+            mode = state.mode_for(message.id, default=default_mode)
+            if mode == "hidden":
+                continue
+            variant_count = len(generation_metadata)
+            browsed_index = browse.get(message.id, 0)
+            if not (0 <= browsed_index < variant_count):
+                browsed_index = 0
+            cache_key = f"{message.id}:{browsed_index}"
+            specs[message.id] = ConsoleGenerationCardSpec(
+                message_id=message.id,
+                browsed_index=browsed_index,
+                variant_count=variant_count,
+                meta=generation_metadata[browsed_index],
+                mode=mode,
+                pixels=cache.get_pixels(cache_key) if mode == "pixels" else None,
+                pil=cache.get_pil(cache_key) if mode == "graphics" else None,
+            )
+        return specs
+
+    def _pending_console_generation_card_images(
+        self,
+        messages,
+        card_specs: Mapping[str, ConsoleGenerationCardSpec],
+    ) -> list[tuple[str, bytes]]:
+        """Return (cache-key, bytes) pairs for un-decoded browsed generation variants.
+
+        Feeds the same generic ``_prep_console_images`` off-thread decode
+        path as plain image rows -- its ``pending`` list is already opaque
+        ``(cache_key, bytes)`` pairs, so no separate prep routine is needed.
+        Bytes come from ``message.attachments[browsed_index].data``; a
+        rehydrated-without-bytes attachment (``data is None``) is skipped
+        (never queued), leaving the card's placeholder-image fallback in
+        place rather than queuing dead work.
+        """
+        _state, cache = self._ensure_console_image_view()
+        by_id = {message.id: message for message in messages}
+        pending: list[tuple[str, bytes]] = []
+        for message_id, spec in card_specs.items():
+            message = by_id.get(message_id)
+            attachments = getattr(message, "attachments", ()) or () if message else ()
+            if not (0 <= spec.browsed_index < len(attachments)):
+                continue
+            data = attachments[spec.browsed_index].data
+            if data is None:
+                continue
+            cache_key = f"{message_id}:{spec.browsed_index}"
+            if cache.get_pil(cache_key) is not None or cache.is_failed(cache_key):
+                continue
+            pending.append((cache_key, data))
+        return pending
 
     async def _prep_console_images(self, pending: list[tuple[str, bytes]]) -> None:
         """Prepare pending transcript images off-loop, then resync once."""
@@ -10576,6 +10688,8 @@ class ChatScreen(BaseAppScreen):
             transcript.sync_jump_indicator(self._current_console_run_status_value())
             image_specs = self._build_console_image_specs(messages)
             transcript.set_image_specs(image_specs)
+            card_specs = self._build_generation_card_specs(messages)
+            transcript.set_generation_card_specs(card_specs)
             _state, cache = self._ensure_console_image_view()
             # Same bounded subset as `_build_console_image_specs` — computing
             # pending work over the full transcript would prep messages the
@@ -10591,6 +10705,16 @@ class ChatScreen(BaseAppScreen):
                 )
                 if mid not in self._console_image_preparing
             ]
+            # Browsed generation-card variants share the same off-thread
+            # prep worker (its pending list is already opaque
+            # (cache-key, bytes) pairs) and the same in-flight guard set.
+            pending_images.extend(
+                (cache_key, data)
+                for cache_key, data in self._pending_console_generation_card_images(
+                    messages, card_specs
+                )
+                if cache_key not in self._console_image_preparing
+            )
             if pending_images:
                 self._console_image_preparing.update(mid for mid, _ in pending_images)
                 self.run_worker(
@@ -10602,15 +10726,23 @@ class ChatScreen(BaseAppScreen):
             # message-signature fingerprint below has already stabilized, so
             # fold the built specs (id + mode) into the gate too - otherwise
             # a sync that only differs by "the image finished decoding" (or
-            # a view-mode toggle) would be skipped as a no-op refresh.
+            # a view-mode toggle) would be skipped as a no-op refresh. The
+            # generation-card signature covers the same case for cards
+            # (browse/keep changes, mode toggles, and variant decode
+            # completion all alter it -- see `generation_card_signature`).
             image_signature = tuple(
                 (message_id, image_specs[message_id].mode)
                 for message_id in sorted(image_specs)
+            )
+            card_signature = tuple(
+                generation_card_signature(card_specs[message_id])
+                for message_id in sorted(card_specs)
             )
             refresh_key = (
                 id(transcript),
                 self._native_console_transcript_fingerprint(messages),
                 image_signature,
+                card_signature,
             )
             if refresh_key != self._last_native_transcript_refresh_key:
                 await transcript.refresh_messages()
@@ -11138,6 +11270,7 @@ class ChatScreen(BaseAppScreen):
         SYSTEM_COMMAND_NAME: SYSTEM_COMMAND_HANDLER_ID,
         SKILLS_COMMAND_NAME: SKILLS_COMMAND_HANDLER_ID,
         PREFILL_COMMAND_NAME: PREFILL_COMMAND_HANDLER_ID,
+        GENERATE_IMAGE_COMMAND_NAME: GENERATE_IMAGE_COMMAND_HANDLER_ID,
     }
 
     def _console_unknown_command_hint(self, name: str) -> str:
@@ -11174,6 +11307,7 @@ class ChatScreen(BaseAppScreen):
             "apply-system": self._console_command_apply_system,
             SKILLS_COMMAND_HANDLER_ID: self._console_command_skills,
             PREFILL_COMMAND_HANDLER_ID: self._console_command_prefill,
+            GENERATE_IMAGE_COMMAND_HANDLER_ID: self._console_command_generate_image,
         }
         handler = dispatch_map.get(handler_id)
         if handler is None:
@@ -11535,6 +11669,215 @@ class ChatScreen(BaseAppScreen):
                 "prefilled sends."
             )
         return
+
+    def _console_imagegen_inflight_sessions(self) -> set[str]:
+        """Return the lazily-created set of sessions with a batch in flight.
+
+        Not initialized in ``__init__`` — mirrors the getattr/setdefault
+        pattern the composer/store use for other screen-owned, purely
+        in-memory bookkeeping — so `/generate-image` never assumes it ran
+        during construction.
+        """
+        sessions = getattr(self, "_imagegen_inflight_sessions", None)
+        if sessions is None:
+            sessions = set()
+            self._imagegen_inflight_sessions = sessions
+        return sessions
+
+    def _console_imagegen_inflight_message_ids(self) -> set[str]:
+        """Return the lazily-created set of messages with a regenerate-append in flight.
+
+        Mirrors ``_console_imagegen_inflight_sessions``'s lazy
+        getattr/setdefault pattern but keyed by MESSAGE id, not session id:
+        the regenerate (``♻``) action appends one variant to a single
+        generation message, and this guard must not block regenerate on one
+        message in a session while another message in the same session is
+        still generating.
+        """
+        message_ids = getattr(self, "_imagegen_inflight_message_ids", None)
+        if message_ids is None:
+            message_ids = set()
+            self._imagegen_inflight_message_ids = message_ids
+        return message_ids
+
+    async def _console_command_generate_image(self, parse: CommandParse) -> None:
+        """Resolve and run one `/generate-image` batch (`[:backend] <prompt>`).
+
+        Refusals (empty prompt, no resolvable/configured backend, or a
+        batch already running for this session) leave the composer draft
+        untouched, mirroring `/system`'s no-system-part behavior, and never
+        touch the store. Once a batch is actually going to run the draft is
+        cleared up front (this IS the "successful dispatch" point — not
+        "successful generation"): the blocking batch loop
+        (`run_generation_batch`) then runs off the UI loop via
+        `asyncio.to_thread`, exactly like `_prep_console_images`. On the
+        zero-success path the original draft is restored so the user can
+        edit and retry. One or more successes append a single generation
+        message via `ConsoleChatStore.append_generation_message` with a
+        trailing partial status line when some variants failed. The in-flight
+        guard is always cleared in a `finally`, so a crashed/cancelled batch
+        never wedges the session against further `/generate-image` commands.
+        """
+        args = parse_generate_image_args(parse.args)
+        store = self._ensure_console_chat_store()
+        session = store.ensure_session(
+            workspace_id=store.workspace_context.active_workspace_id,
+            settings=self._default_console_session_settings(),
+        )
+        if not args.prompt:
+            await self._append_native_console_system_message(
+                "Usage: /generate-image [:backend] <prompt>"
+            )
+            return
+        cfg = get_image_generation_config()
+        backend = args.backend or cfg.default_backend
+        if not backend:
+            await self._append_native_console_system_message(
+                "No image generation backend configured. Set "
+                "[image_generation].default_backend, or use "
+                "/generate-image :backend <prompt>."
+            )
+            return
+        catalog = list_image_models_for_catalog()
+        entry = next(
+            (item for item in catalog if item.get("name") == backend), None
+        )
+        if entry is None or not entry.get("is_configured"):
+            await self._append_native_console_system_message(
+                f"Image backend '{backend}' is not enabled/configured. "
+                "Check [image_generation] settings."
+            )
+            return
+        inflight = self._console_imagegen_inflight_sessions()
+        if session.id in inflight:
+            await self._append_native_console_system_message(
+                "An image generation is already running for this session."
+            )
+            return
+        inflight.add(session.id)
+        # Capture draft before clearing so we can restore it on zero-success.
+        composer = self._console_composer_or_none()
+        saved_draft = composer.draft_text() if composer is not None else ""
+        self._clear_console_composer_draft()
+        try:
+            count = clamp_initial_batch(cfg.default_batch, cfg.max_variants_per_message)
+            batch = await asyncio.to_thread(
+                run_generation_batch,
+                backend=backend,
+                prompt=args.prompt,
+                negative_prompt=None,
+                seed=None,
+                count=count,
+            )
+            if not batch.successes:
+                # Restore the saved draft so the user can edit and retry.
+                if composer is not None and saved_draft:
+                    composer.clear_draft()
+                    composer.insert_text_as_paste(saved_draft)
+                detail = "; ".join(batch.errors) or "unknown error"
+                await self._append_native_console_system_message(
+                    f"Image generation failed: {detail}"
+                )
+                return
+            store.append_generation_message(
+                session.id,
+                content=generation_content_marker(args.prompt),
+                variants=batch.successes,
+                persist=True,
+            )
+            if len(batch.successes) < count:
+                store.append_message(
+                    session.id,
+                    role=ConsoleMessageRole.SYSTEM,
+                    content=(
+                        f"{len(batch.successes)}/{count} generated "
+                        f"({'; '.join(batch.errors)})"
+                    ),
+                )
+            await self._sync_native_console_chat_ui()
+        finally:
+            inflight.discard(session.id)
+
+    async def _regenerate_console_generation_variant(self, message_id: str) -> None:
+        """Append one new generated variant to an existing generation message.
+
+        This is the generation-message branch of the selected-message
+        regenerate (``♻``) action (Task 8): unlike text regeneration it
+        never creates an LLM sibling turn -- it rebuilds a request from the
+        message's position-0 (canonical) ``GenerationVariantMeta`` -- same
+        backend/prompt/negative -- with ``seed`` forced to ``-1`` so the new
+        variant is never a duplicate of the kept image, generates ONE
+        variant off the UI loop (mirroring ``_console_command_generate_image``'s
+        ``asyncio.to_thread(run_generation_batch, ...)`` offload), appends it
+        via ``ConsoleChatStore.append_generation_variant``, and browses to
+        the newly-appended index.
+
+        Refuses with a status line and makes no mutation when a generation
+        is already running for this message, or the message already carries
+        ``[image_generation].max_variants_per_message`` variants. A failed
+        batch (zero successes) leaves the existing message completely
+        untouched, per spec §4 ("a failed append leaves the existing
+        message untouched and reports the error"). The in-flight guard is
+        always cleared in a ``finally``, so a crashed/cancelled batch never
+        wedges this message against further regenerate presses.
+        """
+        store = self._ensure_console_chat_store()
+        try:
+            message = store.get_message(message_id)
+        except KeyError:
+            self.app_instance.notify(
+                "Console message action target no longer exists.",
+                severity="warning",
+            )
+            return
+        if not message.generation_metadata:
+            return
+        inflight = self._console_imagegen_inflight_message_ids()
+        if message_id in inflight:
+            self.app_instance.notify(
+                "An image generation is already running for this message.",
+                severity="warning",
+            )
+            return
+        cfg = get_image_generation_config()
+        if len(message.generation_metadata) >= cfg.max_variants_per_message:
+            self.app_instance.notify(
+                f"Already at the maximum of {cfg.max_variants_per_message} "
+                "variants for this message.",
+                severity="warning",
+            )
+            return
+        inflight.add(message_id)
+        try:
+            base_meta = message.generation_metadata[0]
+            batch = await asyncio.to_thread(
+                run_generation_batch,
+                backend=base_meta.backend,
+                prompt=base_meta.prompt,
+                negative_prompt=base_meta.negative_prompt or None,
+                seed=-1,
+                count=1,
+            )
+            if not batch.successes:
+                detail = "; ".join(batch.errors) or "unknown error"
+                self.app_instance.notify(
+                    f"Image regeneration failed: {detail}", severity="error"
+                )
+                return
+            data, mime_type, meta = batch.successes[0]
+            session_id = store.session_id_for_message(message_id)
+            new_position = store.append_generation_variant(
+                session_id,
+                message_id,
+                data=data,
+                mime_type=mime_type,
+                meta=meta,
+                persist=True,
+            )
+            self._console_generation_browse()[message_id] = new_position
+            await self._sync_native_console_chat_ui()
+        finally:
+            inflight.discard(message_id)
 
     def _clear_console_composer_draft(self) -> None:
         """Clear the native Console composer's draft text, if mounted.
@@ -12473,6 +12816,14 @@ class ChatScreen(BaseAppScreen):
             )
             return True
         if action_id == "regenerate" and result.status == "wip":
+            if message.generation_metadata:
+                # A generation message's regenerate ALWAYS appends one new
+                # image variant -- never an LLM text sibling -- so it skips
+                # the controller/run-state gate entirely (that gate exists
+                # for chat runs; image generation has its own in-flight
+                # guard, checked inside this call).
+                await self._regenerate_console_generation_variant(message_id)
+                return True
             controller = self._ensure_console_chat_controller()
             if not controller.run_state.is_send_allowed:
                 self.app_instance.notify(
@@ -12489,8 +12840,16 @@ class ChatScreen(BaseAppScreen):
             action_id in {"variant-previous", "variant-next"}
             and result.status == "completed"
         ):
-            self._select_console_message_variant(message_id, direction=action_id)
+            if message.generation_metadata:
+                self._select_console_generation_variant(message, direction=action_id)
+            else:
+                self._select_console_message_variant(message_id, direction=action_id)
             await self._sync_native_console_chat_ui()
+            return True
+        if action_id == "keep" and result.status == "completed":
+            self._keep_console_generation_variant(message)
+            await self._sync_native_console_chat_ui()
+            self.app_instance.notify(result.visible_copy, severity="information")
             return True
         if (
             action_id in {"feedback-up", "feedback-down"}
@@ -13084,6 +13443,7 @@ class ChatScreen(BaseAppScreen):
             ("console-message-action-feedback-down-", "feedback-down"),
             ("console-message-action-variant-previous-", "variant-previous"),
             ("console-message-action-variant-next-", "variant-next"),
+            ("console-message-action-keep-", "keep"),
             ("console-message-action-save-as-", "save-as"),
             ("console-message-action-save-image-", "save-image"),
             ("console-message-action-toggle-image-view-", "toggle-image-view"),
@@ -13184,6 +13544,83 @@ class ChatScreen(BaseAppScreen):
         target_sibling_id = siblings[target_index].id
         session_id = store.session_id_for_message(message_id)
         store.set_active_leaf(session_id, store._leaf_under(target_sibling_id))
+
+    def _select_console_generation_variant(
+        self, message: ConsoleChatMessage, *, direction: str
+    ) -> None:
+        """Move a generation message's ephemeral browsed-variant index (clamped).
+
+        The generation-message counterpart of ``_select_console_message_variant``:
+        purely screen-side, in-memory state (``self._generation_browse``) --
+        never touches the store/DB, matching `<`/`>` browsing's documented
+        ephemeral-vs-durable-Keep split (spec §5.2). A no-op at either end of
+        the variant list (nothing before the first / after the last), mirroring
+        the text-sibling version's own boundary behavior.
+        """
+        variant_count = len(message.generation_metadata)
+        if variant_count <= 1:
+            return
+        browse = self._console_generation_browse()
+        current = browse.get(message.id, 0)
+        if not (0 <= current < variant_count):
+            current = 0
+        if direction == "variant-previous":
+            target = current - 1
+        elif direction == "variant-next":
+            target = current + 1
+        else:
+            return
+        if target < 0 or target >= variant_count:
+            return
+        browse[message.id] = target
+
+    def _keep_console_generation_variant(self, message: ConsoleChatMessage) -> None:
+        """Promote the browsed variant to canonical (position 0) -- durable.
+
+        A no-op when the browsed index is already 0 (nothing to promote) or
+        ``message`` isn't a generation message. Defensive: ``available_actions()``
+        only ever offers "keep" when ``generation_browsed_index != 0`` (which
+        implies a generation message), but this guards direct callers too.
+
+        ``store.keep_generation_variant`` swaps attachment bytes between
+        position 0 and the browsed position, but the render cache
+        (``_build_generation_card_specs``) still holds the OLD decoded
+        images under the composite keys ``f"{message_id}:{i}"`` -- and the
+        prep path skips re-decoding whatever is already cached. Left alone,
+        the card would keep showing the pre-keep canonical image (paired
+        with the now-correct details block) until the next full reload or
+        an unrelated LRU eviction. Evict every variant key for this message
+        so the next spec build re-decodes from the now-correct in-memory
+        bytes; ``generation_card_signature``'s ``decoded`` bit then drives
+        the row rebuild once prep catches up.
+        """
+        if not message.generation_metadata:
+            return
+        browse = self._console_generation_browse()
+        browsed_index = browse.get(message.id, 0)
+        if browsed_index <= 0 or browsed_index >= len(message.generation_metadata):
+            return
+        store = self._ensure_console_chat_store()
+        session_id = store.session_id_for_message(message.id)
+        variant_count = len(message.generation_metadata)
+        store.keep_generation_variant(
+            session_id, message.id, position=browsed_index, persist=True
+        )
+        browse[message.id] = 0
+        # `evict_session` is key-agnostic despite its session-closing name
+        # and docstring -- it just pops whatever string keys it's handed
+        # from the image/pixels dicts and clears their failure marks, which
+        # is exactly what a composite `f"{message_id}:{i}"` key needs too.
+        _state, cache = self._ensure_console_image_view()
+        stale_keys = [f"{message.id}:{i}" for i in range(variant_count)]
+        cache.evict_session(stale_keys)
+        # `getattr(..., None)`, not `self._console_image_preparing`: bare
+        # test screens built via `ChatScreen.__new__` (bypassing `__init__`,
+        # which normally seeds this set) never touch the in-flight prep
+        # guard, so it may not exist yet.
+        preparing = getattr(self, "_console_image_preparing", None)
+        if preparing is not None:
+            preparing.difference_update(stale_keys)
 
     def _get_shell_bar(self):
         """Get the mounted combined chat shell bar."""

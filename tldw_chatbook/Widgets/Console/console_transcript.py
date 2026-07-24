@@ -16,6 +16,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content
 from textual.css.query import NoMatches
+from textual.dom import NoScreen
 from textual.events import Click, Key
 from textual.widget import Widget
 from textual.widgets import Button, Static
@@ -37,6 +38,11 @@ from tldw_chatbook.Chat.console_message_actions import (
 from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_QUIET_EMPTY_COPY,
     ConsoleSetupCardState,
+)
+from tldw_chatbook.Widgets.Console.console_generation_card import (
+    ConsoleGenerationCard,
+    ConsoleGenerationCardSpec,
+    generation_card_signature,
 )
 
 
@@ -66,6 +72,7 @@ _ACTION_TOOLTIPS = {
     "delete": "Delete this message from the Console transcript.",
     "variant-previous": "Show the previous regenerated variant.",
     "variant-next": "Show the next regenerated variant.",
+    "keep": "Keep the browsed variant as this message's canonical image.",
 }
 
 
@@ -273,7 +280,9 @@ def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Cont
 @dataclass(frozen=True)
 class _TranscriptRow:
     key: str
-    kind: Literal["rule", "message", "image", "actions", "action-help", "empty"]
+    kind: Literal[
+        "rule", "message", "image", "generation-card", "actions", "action-help", "empty"
+    ]
     signature: tuple
     message: ConsoleChatMessage | None = None
     selected: bool = False
@@ -282,6 +291,7 @@ class _TranscriptRow:
     action_tooltip: str = EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP
     card_state: ConsoleSetupCardState | None = None
     image_spec: "ConsoleImageRowSpec | None" = None
+    generation_card_spec: "ConsoleGenerationCardSpec | None" = None
 
 
 class ConsoleTranscriptMessage(Static):
@@ -531,6 +541,7 @@ class ConsoleTranscript(VerticalScroll):
         self._row_signatures: dict[str, tuple] = {}
         self._row_build_counts: dict[str, int] = {}
         self._image_specs: dict[str, ConsoleImageRowSpec] = {}
+        self._generation_card_specs: dict[str, ConsoleGenerationCardSpec] = {}
         # TASK-259: per-message render-signature cache. Maps message id ->
         # (cheap change-token, expensive row signature). `_transcript_rows`
         # re-derives the render payload (Content assembly) only when the
@@ -725,6 +736,22 @@ class ConsoleTranscript(VerticalScroll):
                 hidden mode, unprepared cache, and metadata-only messages).
         """
         self._image_specs = dict(specs)
+
+    def set_generation_card_specs(
+        self, specs: Mapping[str, ConsoleGenerationCardSpec]
+    ) -> None:
+        """Replace the prebuilt image-generation card row payloads keyed by message ID.
+
+        Args:
+            specs: Mapping of message ID to its prepared generation-card
+                payload. A message id present here renders a
+                ``"generation-card"`` row INSTEAD of any ``"image"`` row
+                for that same message (mutually exclusive per message id --
+                see ``_transcript_rows``). Messages absent from the mapping
+                render no card row (covers non-generation messages and a
+                generation message in hidden view mode).
+        """
+        self._generation_card_specs = dict(specs)
 
     def sync_empty_state(
         self,
@@ -996,17 +1023,31 @@ class ConsoleTranscript(VerticalScroll):
                     selected=selected,
                 )
             )
-            image_spec = self._image_specs.get(message.id)
-            if image_spec is not None:
+            card_spec = self._generation_card_specs.get(message.id)
+            if card_spec is not None:
+                # A generation-card message renders the card row INSTEAD of
+                # the plain image row -- mutually exclusive per message id.
                 rows.append(
                     _TranscriptRow(
-                        key=f"image:{message.id}",
-                        kind="image",
-                        signature=("image", message.id, image_spec.mode),
+                        key=f"generation-card:{message.id}",
+                        kind="generation-card",
+                        signature=generation_card_signature(card_spec),
                         message=message,
-                        image_spec=image_spec,
+                        generation_card_spec=card_spec,
                     )
                 )
+            else:
+                image_spec = self._image_specs.get(message.id)
+                if image_spec is not None:
+                    rows.append(
+                        _TranscriptRow(
+                            key=f"image:{message.id}",
+                            kind="image",
+                            signature=("image", message.id, image_spec.mode),
+                            message=message,
+                            image_spec=image_spec,
+                        )
+                    )
             if selected:
                 rows.append(
                     _TranscriptRow(
@@ -1147,6 +1188,8 @@ class ConsoleTranscript(VerticalScroll):
             return ConsoleTranscriptMessage(row.message, selected=row.selected)
         if row.kind == "image" and row.image_spec is not None:
             return self._image_row_widget(row.image_spec)
+        if row.kind == "generation-card" and row.generation_card_spec is not None:
+            return ConsoleGenerationCard(row.generation_card_spec)
         if row.kind == "actions" and row.message is not None:
             return self._action_row(row.message)
         raise ValueError(f"Unsupported transcript row: {row}")
@@ -1313,10 +1356,49 @@ class ConsoleTranscript(VerticalScroll):
             variants_signature,
         )
 
-    @staticmethod
-    def _action_row_signature(message: ConsoleChatMessage) -> tuple:
+    def _generation_browsed_index(self, message_id: str, variant_count: int) -> int:
+        """Return the screen's ephemeral browsed-variant index for ``message_id``.
+
+        Reads directly off the owning screen's ``_generation_browse`` map
+        (the same ephemeral, never-persisted state ``ChatScreen`` uses to
+        build ``ConsoleGenerationCardSpec``s) rather than the card-spec map
+        this widget also holds, since a card spec can be absent for a
+        message currently in "hidden" view mode while the action row (and
+        its `<`/`>`/Keep gating) still needs the real browsed index. Falls
+        back to 0 -- the canonical variant -- when unmounted (bare
+        unit-construction in tests) or the screen hasn't created its browse
+        map yet, both of which correctly describe "nothing browsed".
+        """
+        try:
+            browse = getattr(self.screen, "_generation_browse", None)
+        except NoScreen:
+            browse = None
+        browsed_index = (browse or {}).get(message_id, 0)
+        if not (0 <= browsed_index < variant_count):
+            return 0
+        return browsed_index
+
+    def _generation_action_kwargs(self, message: ConsoleChatMessage) -> dict[str, int]:
+        """Return the ``available_actions()`` generation kwargs for ``message``.
+
+        Empty for a non-generation message, so ``available_actions(message)``
+        sees its old, un-keyworded call shape unchanged (regression guard).
+        """
+        variant_count = len(message.generation_metadata)
+        if variant_count == 0:
+            return {}
+        return {
+            "generation_variant_count": variant_count,
+            "generation_browsed_index": self._generation_browsed_index(
+                message.id, variant_count
+            ),
+        }
+
+    def _action_row_signature(self, message: ConsoleChatMessage) -> tuple:
         actions = []
-        for action in ConsoleMessageActionService().available_actions(message):
+        for action in ConsoleMessageActionService().available_actions(
+            message, **self._generation_action_kwargs(message)
+        ):
             if action.action_id == "feedback":
                 actions.append(("feedback-up", "👍", True, ""))
                 actions.append(("feedback-down", "👎", True, ""))
@@ -1333,7 +1415,9 @@ class ConsoleTranscript(VerticalScroll):
 
     def _action_row(self, message: ConsoleChatMessage) -> Horizontal:
         buttons: list[Button] = []
-        for action in ConsoleMessageActionService().available_actions(message):
+        for action in ConsoleMessageActionService().available_actions(
+            message, **self._generation_action_kwargs(message)
+        ):
             if action.action_id == "feedback":
                 buttons.append(
                     self._action_button(

@@ -18,6 +18,8 @@ DEFAULT_MAX_PIXELS = 1024 * 1024
 DEFAULT_MAX_STEPS = 50
 DEFAULT_MAX_PROMPT_LENGTH = 1000
 DEFAULT_INLINE_MAX_BYTES = 4_000_000
+DEFAULT_IMAGE_BATCH = 1
+DEFAULT_MAX_VARIANTS_PER_MESSAGE = 8
 
 DEFAULT_SD_CPP_STEPS = 25
 DEFAULT_SD_CPP_CFG_SCALE = 7.5
@@ -96,6 +98,7 @@ _NON_SECRET = {
 _GLOBAL_KEYS = [
     "default_backend", "enabled_backends", "max_width", "max_height",
     "max_pixels", "max_steps", "max_prompt_length", "inline_max_bytes",
+    "default_batch", "max_variants_per_message",
 ]
 
 
@@ -157,6 +160,8 @@ class ImageGenerationConfig:
     max_steps: int
     max_prompt_length: int
     inline_max_bytes: int | None
+    default_batch: int
+    max_variants_per_message: int
     sd_cpp_diffusion_model_path: str | None
     sd_cpp_llm_path: str | None
     sd_cpp_binary_path: str | None
@@ -315,6 +320,9 @@ def get_image_generation_config(*, reload: bool = False) -> ImageGenerationConfi
     if inline_max_bytes_raw is not None:
         inline_max_bytes = max(1, _coerce_int(inline_max_bytes_raw, DEFAULT_INLINE_MAX_BYTES))
 
+    default_batch = max(1, _coerce_int(section.get("default_batch"), DEFAULT_IMAGE_BATCH))
+    max_variants_per_message = max(1, _coerce_int(section.get("max_variants_per_message"), DEFAULT_MAX_VARIANTS_PER_MESSAGE))
+
     config = ImageGenerationConfig(
         default_backend=default_backend,
         enabled_backends=enabled_backends,
@@ -405,6 +413,8 @@ def get_image_generation_config(*, reload: bool = False) -> ImageGenerationConfi
         ),
         modelstudio_image_allowed_extra_params=_parse_list(section.get("modelstudio_image_allowed_extra_params")),
         reference_image_supported_models=_parse_mapping_of_lists(section.get("reference_image_supported_models")),
+        default_batch=default_batch,
+        max_variants_per_message=max_variants_per_message,
     )
 
     _config_cache = config

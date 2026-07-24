@@ -182,6 +182,33 @@ def test_cache_pending_ids_and_session_eviction():
     assert cache.get_pil("m-done") is None
 
 
+def test_cache_evict_session_drops_composite_variant_keys():
+    """``evict_session`` is key-agnostic: composite ``f"{message_id}:{i}"``
+    generation-card cache keys (see ``ConsoleGenerationCardSpec``) pop the
+    same way plain message-id keys do -- images, pixels, AND failure marks
+    all clear (regression guard for the Keep-leaves-stale-image bug: keep
+    swaps store bytes but never invalidated these composite keys, so the
+    card kept showing the pre-keep image)."""
+    cache = ConsoleImageRenderCache()
+    payload = _png_bytes()
+    cache.prepare("gen-1:0", payload)
+    cache.prepare("gen-1:1", payload)
+    assert cache.get_pixels("gen-1:0") is not None  # populate the pixels cache too
+    cache.prepare("gen-1:2", b"not an image")  # negative-cached (failed)
+    assert cache.is_failed("gen-1:2") is True
+
+    cache.evict_session([f"gen-1:{i}" for i in range(3)])
+
+    assert cache.get_pil("gen-1:0") is None
+    assert cache.get_pil("gen-1:1") is None
+    assert cache.get_pixels("gen-1:0") is None
+    assert cache.is_failed("gen-1:2") is False
+    # A sibling message's own composite key is untouched by the eviction.
+    cache.prepare("gen-2:0", payload)
+    cache.evict_session([f"gen-1:{i}" for i in range(3)])
+    assert cache.get_pil("gen-2:0") is not None
+
+
 def test_resolve_default_mode_reads_live_app_config_shape(monkeypatch):
     """The real app nests raw TOML under COMPREHENSIVE_CONFIG_RAW (config.py:1326)."""
     import tldw_chatbook.Chat.console_image_view as civ

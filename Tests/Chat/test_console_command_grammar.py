@@ -86,13 +86,22 @@ def test_second_fallback_resolver_is_consulted_after_first_declines():
     assert registry.parse("/found here") == CommandParse("fallback", "found", "here")
 
 
-def test_default_console_registry_registers_prompt_system_skills_and_prefill_with_stable_ids():
+def test_default_console_registry_registers_prompt_system_skills_prefill_and_generate_image_with_stable_ids():
     registry = default_console_registry()
 
-    assert registry.available_names() == ("prompt", "system", "skills", "prefill")
+    assert registry.available_names() == (
+        "prompt",
+        "system",
+        "skills",
+        "prefill",
+        "generate-image",
+    )
     assert registry.parse("/prompt") == CommandParse("command", "prompt", "")
     assert registry.parse("/system") == CommandParse("command", "system", "")
     assert registry.parse("/skills") == CommandParse("command", "skills", "")
+    assert registry.parse("/generate-image") == CommandParse(
+        "command", "generate-image", ""
+    )
 
 
 def test_available_names_includes_skills():
