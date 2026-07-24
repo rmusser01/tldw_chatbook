@@ -156,11 +156,8 @@ def legacy_provider_config(
         raise ValueError(f"Unknown legacy TTS provider: {provider_id}")
 
     raw = _legacy_config_snapshot(app_config)
-    normalized_tts = app_config.get("APP_TTS_CONFIG")
     raw_tts = raw.get("app_tts")
     effective_tts = dict(raw_tts) if isinstance(raw_tts, Mapping) else {}
-    if isinstance(normalized_tts, Mapping):
-        effective_tts.update(normalized_tts)
 
     prefix = _APP_TTS_PREFIXES[provider_id]
     projected: dict[str, Any] = {
@@ -216,13 +213,14 @@ def legacy_provider_config(
         if api_key:
             projected["elevenlabs_api"] = {"api_key": api_key}
     elif provider_id == "kokoro":
-        model_path = os.getenv("KOKORO_MODEL_PATH")
-        if model_path:
+        if "KOKORO_MODEL_PATH" in os.environ:
+            model_path = os.environ["KOKORO_MODEL_PATH"]
             projected["app_tts"]["KOKORO_ONNX_MODEL_PATH_DEFAULT"] = model_path
             projected["app_tts"]["KOKORO_PT_MODEL_PATH_DEFAULT"] = model_path
-        voices_path = os.getenv("KOKORO_VOICES_PATH")
-        if voices_path:
-            projected["app_tts"]["KOKORO_ONNX_VOICES_JSON_DEFAULT"] = voices_path
+        if "KOKORO_VOICES_PATH" in os.environ:
+            projected["app_tts"]["KOKORO_ONNX_VOICES_JSON_DEFAULT"] = os.environ[
+                "KOKORO_VOICES_PATH"
+            ]
     elif provider_id == "higgs":
         higgs_settings = raw.get("HiggsSettings")
         effective_higgs = (
@@ -235,9 +233,8 @@ def legacy_provider_config(
                 effective_higgs[str(key).removeprefix("HIGGS_").lower()] = deepcopy(
                     value
                 )
-        model_path = os.getenv("HIGGS_MODEL_PATH")
-        if model_path:
-            effective_higgs["model_path"] = model_path
+        if "HIGGS_MODEL_PATH" in os.environ:
+            effective_higgs["model_path"] = os.environ["HIGGS_MODEL_PATH"]
         projected["HiggsSettings"] = effective_higgs
         projected["app_tts"] = {}
 

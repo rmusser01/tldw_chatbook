@@ -192,7 +192,7 @@ async def test_mixed_provider_save_retires_only_effectively_changed_provider(
     def normalized(raw: dict[str, Any]) -> dict[str, Any]:
         return {
             "COMPREHENSIVE_CONFIG_RAW": raw,
-            "APP_TTS_CONFIG": raw["app_tts"],
+            "APP_TTS_CONFIG": {"KOKORO_DEVICE_DEFAULT": "cpu"},
             "openai_api": {"api_key": "stable-openai-key"},
             "elevenlabs_api": {"api_key": "environment-elevenlabs-key"},
         }
@@ -240,6 +240,13 @@ async def test_mixed_provider_save_retires_only_effectively_changed_provider(
     assert registry.configuration_revision("elevenlabs") == 1
     assert registry.configuration_revision("kokoro") == 2
     assert registry.configuration_revision("higgs") == 1
+    assert (
+        legacy_provider_config(
+            "kokoro",
+            normalized(effective_raw),
+        )["app_config"]["app_tts"]["KOKORO_DEVICE_DEFAULT"]
+        == "mps"
+    )
     assert registry._slots["openai"].active is None
     assert materialized["elevenlabs"].host._closed is False
     assert materialized["kokoro"].host._closed is True

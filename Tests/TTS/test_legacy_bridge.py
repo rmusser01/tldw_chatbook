@@ -7,6 +7,10 @@ from typing import Any, Protocol
 
 import pytest
 
+from tldw_chatbook.TTS.adapter_registry import (
+    ReconfigureResult,
+    TTSAdapterRegistry,
+)
 from tldw_chatbook.TTS.adapter_types import (
     TTSAudioResponse,
     TTSProgress,
@@ -541,6 +545,89 @@ def test_each_provider_spec_owns_a_deep_config_snapshot() -> None:
     )
     assert source_config["global_tts_settings"]["shared"]["format"] == "wav"
     assert all("default_format" not in snapshot["app_tts"] for snapshot in snapshots)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("environment_value", ("", "/environment/override"))
+@pytest.mark.parametrize(
+    (
+        "provider_id",
+        "environment_name",
+        "stored_key",
+        "backend_id",
+        "effective_key",
+    ),
+    (
+        (
+            "kokoro",
+            "KOKORO_MODEL_PATH",
+            "KOKORO_ONNX_MODEL_PATH_DEFAULT",
+            "local_kokoro_default_onnx",
+            "KOKORO_MODEL_PATH",
+        ),
+        (
+            "kokoro",
+            "KOKORO_VOICES_PATH",
+            "KOKORO_ONNX_VOICES_JSON_DEFAULT",
+            "local_kokoro_default_onnx",
+            "KOKORO_VOICES_JSON_PATH",
+        ),
+        (
+            "higgs",
+            "HIGGS_MODEL_PATH",
+            "model_path",
+            "local_higgs_v2",
+            "HIGGS_MODEL_PATH",
+        ),
+    ),
+)
+async def test_environment_path_override_shadows_stored_reconfiguration(
+    monkeypatch: pytest.MonkeyPatch,
+    environment_value: str,
+    provider_id: str,
+    environment_name: str,
+    stored_key: str,
+    backend_id: str,
+    effective_key: str,
+) -> None:
+    from tldw_chatbook.TTS.TTS_Backends import TTSBackendManager
+
+    for name in (
+        "KOKORO_MODEL_PATH",
+        "KOKORO_VOICES_PATH",
+        "HIGGS_MODEL_PATH",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(environment_name, environment_value)
+
+    def settings(stored_value: str) -> dict[str, Any]:
+        if provider_id == "higgs":
+            return {"HiggsSettings": {stored_key: stored_value}}
+        return {"app_tts": {stored_key: stored_value}}
+
+    initial_settings = settings("/stored/before")
+    replacement = legacy_provider_config(
+        provider_id,
+        settings("/stored/after"),
+    )
+    registry = TTSAdapterRegistry(
+        specs=legacy_provider_specs(initial_settings),
+        aliases={},
+    )
+
+    assert (
+        await registry.reconfigure_provider(provider_id, replacement)
+        is ReconfigureResult.UNCHANGED
+    )
+    projected_section = "HiggsSettings" if provider_id == "higgs" else "app_tts"
+    assert replacement["app_config"][projected_section][stored_key] == environment_value
+    manager = TTSBackendManager(replacement["app_config"])
+    assert (
+        manager._prepare_backend_config(backend_id)[effective_key] == environment_value
+    )
+
+    await registry.close()
+    await registry.wait_closed()
 
 
 @pytest.mark.asyncio
