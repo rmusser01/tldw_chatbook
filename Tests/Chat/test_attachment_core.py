@@ -78,6 +78,24 @@ def test_inline_attachment_label_shows_real_file_size_not_wrapped_size():
     assert _format_size(240) in attach.label
 
 
+def test_inline_attachment_label_reports_zero_for_empty_file():
+    """TASK-376 (Qodo #818): a genuinely empty inline file shows its real 0-byte
+    size, not a fallback to the wrapped-content length."""
+    from tldw_chatbook.Chat.attachment_core import PendingAttachment, _format_size
+
+    empty = PendingAttachment(
+        file_path="/x/empty.txt",
+        display_name="empty.txt",
+        file_type="text",
+        insert_mode="inline",
+        text_content="wrapper-header\n\nwrapper-footer",
+        original_size=0,
+        processed_size=30,
+    )
+    assert empty.label == f"empty.txt · {_format_size(0)}"
+    assert _format_size(30) not in empty.label
+
+
 def test_process_attachment_path_attaches_images(tmp_path):
     image = tmp_path / "photo.png"
     _write_png(image)

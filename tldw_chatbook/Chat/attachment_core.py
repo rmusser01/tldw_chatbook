@@ -220,9 +220,16 @@ class PendingAttachment:
         real FILE size the user picked, not the wrapped-content length -- the
         latter is larger and misleading (e.g. ``115 B`` for a 60-byte file). Real
         attachments keep their processed (attached) byte size.
+
+        Returns:
+            ``"<display_name> · <size>"``. For an inline insert the size is the
+            real file size (``original_size``, used directly so a genuine 0-byte
+            file is not mistaken for "missing" and does not fall back to the
+            wrapped-content length); for an attachment it is the processed byte
+            size, falling back to the original when the processed size is unset.
         """
         if self.insert_mode == "inline":
-            size = self.original_size or self.processed_size
+            size = self.original_size
         else:
             size = self.processed_size or self.original_size
         return f"{self.display_name} · {_format_size(size)}"
