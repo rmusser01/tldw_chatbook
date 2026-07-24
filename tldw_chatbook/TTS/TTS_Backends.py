@@ -2,6 +2,7 @@
 # Description: File contains
 #
 # Imports
+import importlib
 from typing import Optional, Dict, Any, List
 
 #
@@ -29,15 +30,91 @@ from tldw_chatbook.TTS.base_backends import TTSBackendBase
 
 # --- Backend Registry ---
 class BackendRegistry:
-    """Registry for TTS backend classes"""
+    """Sealed bridge for the legacy wildcard TTS backend IDs."""
 
     _registry: Dict[str, type[TTSBackendBase]] = {}
+    _builtins_loaded = False
+    _builtin_ids = frozenset(
+        {
+            "openai_official_*",
+            "local_kokoro_*",
+            "elevenlabs_*",
+            "local_chatterbox_*",
+            "alltalk_*",
+            "local_higgs_*",
+        }
+    )
 
     @classmethod
-    def register(cls, backend_id: str, backend_class: type[TTSBackendBase]):
-        """Register a backend class"""
+    def register(cls, backend_id: str, backend_class: type[TTSBackendBase]) -> None:
+        """Reject runtime extension of the sealed legacy registry."""
+        raise RuntimeError("The sealed legacy registry accepts no new providers")
+
+    @classmethod
+    def _register_builtin(
+        cls, backend_id: str, backend_class: type[TTSBackendBase]
+    ) -> None:
+        if backend_id not in cls._builtin_ids:
+            raise ValueError(f"Unknown legacy backend ID: {backend_id}")
+        existing = cls._registry.get(backend_id)
+        if existing is not None and existing is not backend_class:
+            raise RuntimeError(f"Conflicting legacy backend: {backend_id}")
         cls._registry[backend_id] = backend_class
-        logger.info(f"Registered TTS backend: {backend_id} -> {backend_class.__name__}")
+
+    @classmethod
+    def ensure_builtins(cls) -> tuple[str, ...]:
+        """Load the enumerated legacy bridge once and return its IDs."""
+        if not cls._builtins_loaded:
+            cls._load_builtin_classes()
+            cls._builtins_loaded = True
+        return tuple(cls._registry)
+
+    @classmethod
+    def _load_builtin_classes(cls) -> None:
+        builtin_imports = (
+            (
+                "openai_official_*",
+                "tldw_chatbook.TTS.backends.openai",
+                "OpenAITTSBackend",
+            ),
+            (
+                "local_kokoro_*",
+                "tldw_chatbook.TTS.backends.kokoro",
+                "KokoroTTSBackend",
+            ),
+            (
+                "elevenlabs_*",
+                "tldw_chatbook.TTS.backends.elevenlabs",
+                "ElevenLabsTTSBackend",
+            ),
+            (
+                "local_chatterbox_*",
+                "tldw_chatbook.TTS.backends.chatterbox",
+                "ChatterboxTTSBackend",
+            ),
+            (
+                "alltalk_*",
+                "tldw_chatbook.TTS.backends.alltalk",
+                "AllTalkTTSBackend",
+            ),
+            (
+                "local_higgs_*",
+                "tldw_chatbook.TTS.backends.higgs",
+                "HiggsAudioTTSBackend",
+            ),
+        )
+        for backend_id, module_name, class_name in builtin_imports:
+            try:
+                module = importlib.import_module(module_name)
+                backend_class = getattr(module, class_name)
+                cls._register_builtin(backend_id, backend_class)
+            except ImportError:
+                logger.warning("Legacy TTS backend is unavailable: {}", backend_id)
+
+    @classmethod
+    def _reset_for_tests(cls) -> None:
+        cls._registry.clear()
+        cls._builtins_loaded = False
 
     @classmethod
     def get(cls, backend_id: str) -> Optional[type[TTSBackendBase]]:
@@ -66,53 +143,7 @@ class TTSBackendManager:
         self._backends: Dict[str, TTSBackendBase] = {}
         self._initialized_backends: set[str] = set()
 
-        # Register built-in backends
-        self._register_builtin_backends()
-
-    def _register_builtin_backends(self):
-        """Register built-in backend implementations"""
-        # Lazy imports to avoid circular dependencies
-        try:
-            from tldw_chatbook.TTS.backends.openai import OpenAITTSBackend
-
-            BackendRegistry.register("openai_official_*", OpenAITTSBackend)
-        except ImportError:
-            logger.warning("OpenAI TTS backend not available")
-
-        try:
-            from tldw_chatbook.TTS.backends.kokoro import KokoroTTSBackend
-
-            BackendRegistry.register("local_kokoro_*", KokoroTTSBackend)
-        except ImportError:
-            logger.warning("Kokoro TTS backend not available")
-
-        try:
-            from tldw_chatbook.TTS.backends.elevenlabs import ElevenLabsTTSBackend
-
-            BackendRegistry.register("elevenlabs_*", ElevenLabsTTSBackend)
-        except ImportError:
-            logger.warning("ElevenLabs TTS backend not available")
-
-        try:
-            from tldw_chatbook.TTS.backends.chatterbox import ChatterboxTTSBackend
-
-            BackendRegistry.register("local_chatterbox_*", ChatterboxTTSBackend)
-        except ImportError:
-            logger.warning("Chatterbox TTS backend not available")
-
-        try:
-            from tldw_chatbook.TTS.backends.alltalk import AllTalkTTSBackend
-
-            BackendRegistry.register("alltalk_*", AllTalkTTSBackend)
-        except ImportError:
-            logger.warning("AllTalk TTS backend not available")
-
-        try:
-            from tldw_chatbook.TTS.backends.higgs import HiggsAudioTTSBackend
-
-            BackendRegistry.register("local_higgs_*", HiggsAudioTTSBackend)
-        except ImportError:
-            logger.warning("Higgs Audio TTS backend not available")
+        BackendRegistry.ensure_builtins()
 
     async def get_backend(self, backend_id: str) -> Optional[TTSBackendBase]:
         if backend_id not in self._backends:
