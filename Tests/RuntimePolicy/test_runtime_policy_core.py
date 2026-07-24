@@ -837,8 +837,12 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         skills.export.launch.server
         skills.import.launch.local
         skills.import.launch.server
+        skills.install_remote.launch.local
+        skills.install_remote.launch.server
         skills.list.local
         skills.list.server
+        skills.read_file.launch.local
+        skills.read_file.launch.server
         skills.seed.launch.local
         skills.seed.launch.server
         skills.trust.approve.local

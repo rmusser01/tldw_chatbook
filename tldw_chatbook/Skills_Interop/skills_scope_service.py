@@ -355,6 +355,18 @@ class SkillsScopeService:
         self._enforce_policy("skills.read_file.launch.local")
         return await self._maybe_await(service.read_skill_file(skill_name, relative_path))
 
+    def enforce_install_remote(self) -> None:
+        """Gate a remote skill install (public seam for skill_remote_fetch).
+
+        Enforces ``skills.install_remote.launch.local`` BEFORE any network
+        I/O happens. Public by design: the fetch module must not reach the
+        private ``_enforce_policy`` across the class boundary.
+
+        Raises:
+            PolicyDeniedError: When a wired policy enforcer denies the action.
+        """
+        self._enforce_policy("skills.install_remote.launch.local")
+
     async def seed_builtin_skills(
         self, *, mode: SkillsBackend | str | None = None, **kwargs: Any
     ) -> dict[str, Any]:

@@ -565,3 +565,140 @@ async def test_import_row_imports_nested_reference_subfolder(
     supporting_files = record.get("supporting_files") or {}
     assert "references/note.md" in supporting_files
     assert supporting_files["references/note.md"] == "A nested reference file."
+
+
+# ---------------------------------------------------------------------------
+# Task 5: the Import row's URL branch. ``install_skill_from_url`` (the
+# network-touching seam) is monkeypatched IN THE SCREEN MODULE'S OWN
+# NAMESPACE -- it is imported there directly (``from
+# ...Skills_Interop.skill_remote_fetch import install_skill_from_url``),
+# not looked up dynamically off a service object -- so these tests prove
+# routing/outcome-translation only, never real network I/O. The seam's own
+# network/classification/re-root behavior is covered by
+# ``Tests/Skills/test_skill_remote_fetch.py``.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_import_row_url_routes_to_remote_install_and_primes_review(
+    tmp_path, monkeypatch
+):
+    """A pasted ``http(s)://`` URL in the Import row's path field routes to
+    ``install_skill_from_url`` instead of the local file/folder path, and a
+    successful install reports the SAME outcome shape as every other
+    import path: the outcome line names the service-reported skill, and
+    the Review button is primed with it (mirrors
+    ``test_skills_import_success_offers_review_button`` in
+    ``Tests/UI/test_library_skills_canvas.py``).
+    """
+    from tldw_chatbook.UI.Screens import library_screen
+
+    _local_service, service = _real_skills_scope_service_with_trust(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    host = LibraryHarness(app)
+
+    captured: dict = {}
+
+    async def _fake_install_skill_from_url(url, *, scope_service, **kwargs):
+        captured["url"] = url
+        captured["scope_service"] = scope_service
+        captured["kwargs"] = kwargs
+        return {"name": "remote-skill"}
+
+    monkeypatch.setattr(
+        library_screen, "install_skill_from_url", _fake_install_skill_from_url
+    )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_skills_import_row(screen, pilot)
+
+        status = await _run_skills_import_via_ui(
+            screen, pilot, "https://github.com/o/remote-skill"
+        )
+        assert status == 'Imported "remote-skill" · re-review it in the trust panel'
+        review = screen.query_one("#library-skills-import-review", Button)
+        assert "remote-skill" in str(review.label)
+
+    assert captured["url"] == "https://github.com/o/remote-skill"
+    assert captured["scope_service"] is service
+
+
+@pytest.mark.asyncio
+async def test_import_row_url_remote_skill_error_becomes_status_line(
+    tmp_path, monkeypatch
+):
+    """``RemoteSkillError`` messages are user-presentable by construction --
+    the Import row must surface the message verbatim, not a generic
+    failure line."""
+    from tldw_chatbook.Skills_Interop.skill_remote_fetch import RemoteSkillError
+    from tldw_chatbook.UI.Screens import library_screen
+
+    _local_service, service = _real_skills_scope_service_with_trust(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    host = LibraryHarness(app)
+
+    async def _fake_install_skill_from_url(url, *, scope_service, **kwargs):
+        raise RemoteSkillError("Only .zip release assets are supported.")
+
+    monkeypatch.setattr(
+        library_screen, "install_skill_from_url", _fake_install_skill_from_url
+    )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_skills_import_row(screen, pilot)
+
+        status = await _run_skills_import_via_ui(
+            screen, pilot, "https://github.com/o/r/releases/download/v1/pkg"
+        )
+        assert status == "Only .zip release assets are supported."
+
+    context = await service.get_context(mode="local")
+    assert context["available_skills"] == []
+    assert context["blocked_skills"] == []
+
+
+@pytest.mark.asyncio
+async def test_import_row_url_generic_failure_uses_classified_name_guess(
+    tmp_path, monkeypatch
+):
+    """A non-``RemoteSkillError`` failure (e.g. the underlying
+    ``import_skill_file`` call rejecting a duplicate name) routes through
+    the SAME exception translator every other import path uses
+    (``_apply_library_skills_import_outcome_from_exception``), with a name
+    guess derived from classifying the URL -- the same "derive a plausible
+    skill name from what the user typed" convention the loose-file branch
+    uses (``file_path.stem``), here via the seam's own classification so
+    the guess matches what the seam would actually have named the skill.
+    """
+    from tldw_chatbook.UI.Screens import library_screen
+
+    _local_service, service = _real_skills_scope_service_with_trust(tmp_path)
+    app = _build_test_app()
+    _wire_empty_non_skill_services(app)
+    app.skills_scope_service = service
+    host = LibraryHarness(app)
+
+    async def _fake_install_skill_from_url(url, *, scope_service, **kwargs):
+        raise ValueError("local_skill_exists: brainstorm")
+
+    monkeypatch.setattr(
+        library_screen, "install_skill_from_url", _fake_install_skill_from_url
+    )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_skills_import_row(screen, pilot)
+
+        status = await _run_skills_import_via_ui(
+            screen, pilot, "https://github.com/o/brainstorm/tree/main"
+        )
+        assert status == 'Skipped — a skill named "brainstorm" already exists.'

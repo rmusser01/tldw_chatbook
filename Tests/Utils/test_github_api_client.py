@@ -191,10 +191,12 @@ class TestGitHubAPIClient:
         # Get branches
         branches = await api_client.get_branches("owner", "repo")
 
-        # Verify
+        # Verify (per_page=100: remote-skill-fetch slash-ref disambiguation
+        # needs the full first page — GitHub defaults to 30/page).
         assert branches == ["main", "develop", "feature/test"]
         mock_http_client.get.assert_called_once_with(
-            "https://api.github.com/repos/owner/repo/branches"
+            "https://api.github.com/repos/owner/repo/branches",
+            params={"per_page": 100},
         )
 
     @pytest.mark.asyncio
