@@ -829,9 +829,9 @@ def _anthropic_block_index(event: dict) -> int | None:
 def _anthropic_tools_payload(tools: list) -> list:
     """Convert OpenAI function-format tool entries to Anthropic's format.
 
-    Entries already in Anthropic shape (carrying ``input_schema``) pass
-    through untouched — the handler's historical contract. Non-dict junk is
-    dropped.
+    Valid entries already in Anthropic shape are copied through with their
+    native fields preserved. Malformed entries are dropped without rendering
+    caller-controlled values in diagnostics.
 
     Args:
         tools: The ``tools`` list as received (OpenAI or Anthropic shaped).
@@ -842,6 +842,9 @@ def _anthropic_tools_payload(tools: list) -> list:
     converted = []
     for entry in tools or []:
         if not isinstance(entry, dict):
+            logger.warning(
+                "Anthropic: dropping invalid tools entry (expected a mapping)."
+            )
             continue
         function = entry.get("function")
         if entry.get("type") == "function" and isinstance(function, dict):
@@ -850,6 +853,10 @@ def _anthropic_tools_payload(tools: list) -> list:
                 # Anthropic rejects empty tool names — dropping the entry
                 # keeps the failure local instead of a provider 400
                 # (PR #659 review).
+                logger.warning(
+                    "Anthropic: dropping invalid tools entry "
+                    "(expected an OpenAI function tool or Anthropic native tool)."
+                )
                 continue
             parameters = function.get("parameters")
             if not isinstance(parameters, dict) or not parameters:
@@ -861,12 +868,16 @@ def _anthropic_tools_payload(tools: list) -> list:
                     "input_schema": parameters,
                 }
             )
+        elif (
+            isinstance(entry.get("name"), str)
+            and entry["name"].strip()
+            and isinstance(entry.get("input_schema"), dict)
+        ):
+            converted.append(dict(entry))
         else:
-            # v2's native tools shape IS the OpenAI shape -- anything that
-            # isn't a valid function entry is junk and would 400 the request
-            # (Qodo #690-6).
             logger.warning(
-                "Cohere: dropping tools entry that is not a valid function tool."
+                "Anthropic: dropping invalid tools entry "
+                "(expected an OpenAI function tool or Anthropic native tool)."
             )
     return converted
 

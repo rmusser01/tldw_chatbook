@@ -22,6 +22,7 @@ import json
 from unittest.mock import Mock, patch
 
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+from tldw_chatbook.LLM_Calls.LLM_API_Calls import _anthropic_tools_payload
 
 
 def _anthropic_text_response(text="ok"):
@@ -89,7 +90,7 @@ def test_openai_tools_convert_to_anthropic_input_schema(mock_post):
 
 
 @patch("requests.Session.post")
-def test_anthropic_shaped_tools_pass_through_untouched(mock_post):
+def test_anthropic_shaped_tools_pass_through_as_defensive_copies(mock_post):
     native = [{"name": "t", "description": "d", "input_schema": {"type": "object"}}]
     sent = _call_anthropic(
         mock_post,
@@ -97,6 +98,45 @@ def test_anthropic_shaped_tools_pass_through_untouched(mock_post):
         tools=native,
     )
     assert sent["tools"] == native
+    assert sent["tools"][0] is not native[0]
+    assert native == [
+        {"name": "t", "description": "d", "input_schema": {"type": "object"}}
+    ]
+
+
+def test_anthropic_converter_drops_invalid_shapes_without_rendering_values():
+    from loguru import logger as loguru_logger
+
+    class RaisingRepr:
+        def __repr__(self):
+            raise AssertionError("diagnostics must not render caller-controlled values")
+
+    messages = []
+    sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
+    try:
+        converted = _anthropic_tools_payload(
+            [
+                RaisingRepr(),
+                {"type": "function", "function": {"name": ""}},
+                {"name": "", "input_schema": {}},
+                {"name": "bad-schema", "input_schema": "not-a-dict"},
+                {"api_key": "sk-review-secret", "unrelated": "x" * 500},
+            ]
+        )
+    finally:
+        loguru_logger.remove(sink_id)
+
+    assert converted == []
+    assert messages == [
+        "Anthropic: dropping invalid tools entry (expected a mapping).\n",
+        *[
+            "Anthropic: dropping invalid tools entry "
+            "(expected an OpenAI function tool or Anthropic native tool).\n"
+        ]
+        * 4,
+    ]
+    assert all("sk-review-secret" not in message for message in messages)
+    assert all("api_key" not in message for message in messages)
 
 
 @patch("requests.Session.post")
