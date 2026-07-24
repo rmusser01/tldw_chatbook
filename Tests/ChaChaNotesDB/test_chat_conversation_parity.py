@@ -6,6 +6,7 @@ import pytest
 
 from Tests.ChaChaNotesDB.legacy_conversation_schema import (
     create_legacy_v12_conversations_db,
+    migrated_legacy_conversations_db,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError
 
@@ -124,15 +125,22 @@ class TestConversationParity:
             ],
         )
 
-        db = CharactersRAGDB(db_path, client_id)
-        try:
-            conversation = db.get_conversation_by_id(legacy_conversation_id)
+        with migrated_legacy_conversations_db(
+            db_path,
+            CharactersRAGDB._migrate_from_v12_to_v13,
+        ) as connection:
+            conversation = connection.execute(
+                """
+                SELECT scope_type, workspace_id, state
+                FROM conversations
+                WHERE id = ?
+                """,
+                (legacy_conversation_id,),
+            ).fetchone()
             assert conversation is not None
             assert conversation["scope_type"] == "global"
             assert conversation["workspace_id"] is None
             assert conversation["state"] == "in-progress"
-        finally:
-            db.close_connection()
 
     def test_legacy_character_rows_backfill_character_assistant_identity(
         self, db_path, client_id
@@ -158,23 +166,26 @@ class TestConversationParity:
             ],
         )
 
-        db = CharactersRAGDB(db_path, client_id)
-        try:
-            conversation = db.get_conversation_by_id(legacy_conversation_id)
+        with migrated_legacy_conversations_db(
+            db_path,
+            CharactersRAGDB._migrate_from_v12_to_v13,
+        ) as connection:
+            conversation = connection.execute(
+                """
+                SELECT assistant_kind, assistant_id, character_id
+                FROM conversations
+                WHERE id = ?
+                """,
+                (legacy_conversation_id,),
+            ).fetchone()
             assert conversation is not None
             assert conversation["assistant_kind"] == "character"
             assert conversation["assistant_id"] == "77"
             assert conversation["character_id"] == 77
-            sync_rows = (
-                db.get_connection()
-                .execute(
-                    "SELECT entity, operation FROM sync_log WHERE entity = 'conversations'"
-                )
-                .fetchall()
-            )
+            sync_rows = connection.execute(
+                "SELECT entity, operation FROM sync_log WHERE entity = 'conversations'"
+            ).fetchall()
             assert sync_rows == []
-        finally:
-            db.close_connection()
 
     def test_search_conversations_page_filters_by_state_and_topic_and_excludes_deleted_rows_by_default(
         self,

@@ -6,6 +6,7 @@ import pytest
 
 from Tests.ChaChaNotesDB.legacy_conversation_schema import (
     create_legacy_v13_conversations_db,
+    migrated_legacy_conversations_db,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
@@ -93,15 +94,22 @@ def test_legacy_v13_rows_default_runtime_and_discovery_metadata(db_path, client_
         ],
     )
 
-    db = CharactersRAGDB(db_path, client_id)
-    try:
-        conversation = db.get_conversation_by_id(legacy_conversation_id)
+    with migrated_legacy_conversations_db(
+        db_path,
+        CharactersRAGDB._migrate_from_v13_to_v14,
+    ) as connection:
+        conversation = connection.execute(
+            """
+            SELECT runtime_backend, discovery_owner, discovery_entity_id
+            FROM conversations
+            WHERE id = ?
+            """,
+            (legacy_conversation_id,),
+        ).fetchone()
         assert conversation is not None
         assert conversation["runtime_backend"] == "local"
         assert conversation["discovery_owner"] == "general_chat"
         assert conversation["discovery_entity_id"] is None
-    finally:
-        db.close_connection()
 
 
 def test_update_conversation_supports_runtime_and_discovery_metadata(

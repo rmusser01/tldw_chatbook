@@ -7,7 +7,6 @@ created_date: '2026-07-24 16:36'
 updated_date: '2026-07-24 16:39'
 labels: []
 dependencies: []
-parent_task_id: TASK-401
 ---
 
 ## Description
@@ -18,7 +17,10 @@ Keep older ChaChaNotes migration tests valid after the citation-provenance schem
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 World-book v20 and v21 migration fixtures remove the citation-provenance schema before version rollback,Citation migration remains fail-closed for pre-existing or partial provenance tables,Focused world-book and citation migration tests pass,DB verification distinguishes confirmed base failures from branch regressions
+- [x] #1 World-book v20 and v21 migration fixtures remove the citation-provenance schema before version rollback
+- [x] #2 Citation migration remains fail-closed for pre-existing or partial provenance tables
+- [x] #3 Focused world-book and citation migration tests pass
+- [x] #4 DB verification distinguishes confirmed base failures from branch regressions
 <!-- AC:END -->
 
 ## Implementation Plan
