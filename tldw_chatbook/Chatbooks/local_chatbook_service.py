@@ -686,10 +686,14 @@ class LocalChatbookService:
             }
             cursor = registry["provenance_reconcile_cursor"] % len(outbox)
             attempted = 0
-            while attempted < min(limit, len(outbox)):
+            scanned = 0
+            scan_limit = len(outbox)
+            while attempted < limit and scanned < scan_limit:
                 item = outbox[cursor]
+                scanned += 1
                 if item.get("entry_kind") != "deferred_unlink":
-                    break
+                    cursor = (cursor + 1) % len(outbox)
+                    continue
                 deferred = DeferredArtifactOwnerUnlink.model_validate_json(
                     json.dumps(item),
                     strict=True,

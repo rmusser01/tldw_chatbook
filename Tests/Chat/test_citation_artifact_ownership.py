@@ -1376,6 +1376,116 @@ async def test_fair_cursor_never_selects_unlink_before_its_pending_link(
     )
 
 
+@pytest.mark.asyncio
+async def test_deferred_unlink_crosses_blocked_pair_with_limit_one_restarts(
+    ownership,
+) -> None:
+    repository, service, coordinator = ownership
+    artifact_b = await service.create_chatbook(
+        name="Live artifact B",
+        provenance_owner_request=_owner_request(repository),
+    )
+    assert coordinator.reconcile_pending(limit=1).completed == 1
+
+    artifact_a = await service.create_chatbook(
+        name="Deleted artifact A",
+        provenance_owner_request=_owner_request(repository),
+    )
+    await service.delete_chatbook(artifact_a["chatbook_id"])
+    registry = json.loads(service.registry_path.read_text(encoding="utf-8"))
+    binding_id = registry["provenance_outbox"][0]["binding"]["binding_id"]
+    invalid_binding_id = binding_id[:-1] + ("0" if binding_id[-1] != "0" else "1")
+    for item in registry["provenance_outbox"]:
+        item["binding"]["binding_id"] = invalid_binding_id
+    service.registry_path.write_text(json.dumps(registry), encoding="utf-8")
+
+    disabled_repository = CitationTraceRepository(
+        repository.db,
+        policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=False),
+        identity_context=_identity(repository.db),
+        fingerprint_codec=None,
+    )
+    disabled = CitationArtifactOwnershipCoordinator(
+        artifact_store=service,
+        trace_repository=disabled_repository,
+    )
+    service.set_citation_ownership_coordinator(disabled)
+    assert await service.delete_chatbook(artifact_b["chatbook_id"]) is True
+
+    def restart() -> CitationArtifactOwnershipCoordinator:
+        restarted_service = LocalChatbookService(
+            db_paths={},
+            registry_path=service.registry_path,
+        )
+        restarted = CitationArtifactOwnershipCoordinator(
+            artifact_store=restarted_service,
+            trace_repository=repository,
+        )
+        restarted_service.set_citation_ownership_coordinator(restarted)
+        return restarted
+
+    first = restart()
+    first_result = first.reconcile_pending(limit=1)
+    assert (first_result.completed, first_result.failed) == (0, 1)
+    materialized = json.loads(service.registry_path.read_text(encoding="utf-8"))
+    assert materialized["provenance_outbox"][2]["operation_kind"] == "unlink"
+
+    second = restart()
+    second_result = second.reconcile_pending(limit=1)
+    assert (second_result.completed, second_result.failed) == (1, 0)
+    assert (
+        repository.db.get_connection()
+        .execute(
+            """
+            SELECT state
+            FROM rag_artifact_owner_leases
+            WHERE artifact_id = ?
+            """,
+            (str(artifact_b["chatbook_id"]),),
+        )
+        .fetchone()[0]
+        == "released"
+    )
+
+    third = restart()
+    third_result = third.reconcile_pending(limit=1)
+    assert (third_result.completed, third_result.failed) == (0, 1)
+    remaining = third.artifact_store.list_provenance_outbox(limit=2)
+    assert [item.operation_kind for item in remaining] == [
+        ArtifactOwnerOperationKind.LINK,
+        ArtifactOwnerOperationKind.UNLINK,
+    ]
+    assert remaining[0].binding == remaining[1].binding
+
+
+@pytest.mark.asyncio
+async def test_deferred_materialization_preserves_max_size_normal_ring_cursor(
+    ownership,
+) -> None:
+    repository, service, coordinator = ownership
+    await service.create_chatbook(
+        name="Pending normal operation",
+        provenance_owner_request=_owner_request(repository),
+    )
+    registry = json.loads(service.registry_path.read_text(encoding="utf-8"))
+    registry["provenance_outbox"] *= ARTIFACT_PROVENANCE_OUTBOX_MAX_ENTRIES
+    registry["provenance_reconcile_cursor"] = (
+        ARTIFACT_PROVENANCE_OUTBOX_MAX_ENTRIES // 2
+    )
+    service.registry_path.write_text(json.dumps(registry), encoding="utf-8")
+
+    service.materialize_deferred_provenance_unlinks(coordinator, limit=1)
+
+    unchanged = json.loads(service.registry_path.read_text(encoding="utf-8"))
+    assert (
+        unchanged["provenance_reconcile_cursor"]
+        == ARTIFACT_PROVENANCE_OUTBOX_MAX_ENTRIES // 2
+    )
+    assert len(unchanged["provenance_outbox"]) == (
+        ARTIFACT_PROVENANCE_OUTBOX_MAX_ENTRIES
+    )
+
+
 def test_artifact_phase_one_precedes_collection_and_holds_pending_barrier(
     ownership,
     monkeypatch,
