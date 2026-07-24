@@ -4,7 +4,12 @@
  * Scheduling workbench specific styles
  * ======================================== */
 
-SchedulesWorkbench #screen-content > TabbedContent {
+SchedulesWorkbench #schedules-shell {
+    height: 1fr;
+    min-height: 0;
+}
+
+SchedulesWorkbench #schedules-shell > TabbedContent {
     height: 1fr;
     min-height: 0;
 }

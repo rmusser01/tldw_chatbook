@@ -59,6 +59,7 @@ DESTINATION_BODY_SELECTORS: dict[str, tuple[str, ...]] = {
     "mcp": ("#mcp-shell", "#mcp-hub-workbench"),
     "acp": ("#acp-shell",),
     "lab": ("#llm-destination-header",),
+    "logs": ("#logs-destination-header",),
     "settings": ("#settings-shell",),
 }
 BROKEN_TEXT_PATTERNS = (
@@ -270,6 +271,10 @@ async def test_phase6_visual_chrome_survives_release_terminal_size_matrix(
                 _assert_visual_snapshot_is_healthy(
                     app, destination.destination_id, size_label
                 )
+
+
+def test_phase6_visual_body_selectors_cover_top_level_destinations() -> None:
+    assert set(DESTINATION_BODY_SELECTORS) == set(TOP_LEVEL_DESTINATION_IDS)
 
 
 @pytest.mark.asyncio

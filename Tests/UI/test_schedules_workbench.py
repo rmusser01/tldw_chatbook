@@ -162,6 +162,7 @@ async def test_schedules_workbench_renders_panes():
     async with app.run_test() as pilot:
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         assert isinstance(pilot.app.screen, SchedulesWorkbench)
+        assert pilot.app.screen.query_one("#schedules-shell") is not None
         assert pilot.app.screen.query_one("#scheduling-workbench") is not None
         assert pilot.app.screen.query_one("#scheduling-list-pane") is not None
         assert pilot.app.screen.query_one("#scheduling-detail-pane") is not None
