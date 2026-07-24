@@ -4,6 +4,7 @@ import dataclasses
 
 from tldw_chatbook.Agents.agent_models import (
     DIRECT_DISCLOSE_THRESHOLD,
+    INSTALL_SKILL_TOOL_NAME,
     LOOP_DETECTION_N,
     RUN_CANCELLED,
     RUN_DONE,
@@ -53,6 +54,7 @@ def test_runtime_tool_names():
         "find_tools",
         "load_tools",
         "skill_file",
+        INSTALL_SKILL_TOOL_NAME,
     }
     assert DIRECT_DISCLOSE_THRESHOLD == 8 and LOOP_DETECTION_N == 3
 

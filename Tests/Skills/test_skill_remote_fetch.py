@@ -8,6 +8,7 @@ defaults to 30 results/page -- installers need the full branch list).
 
 import asyncio
 import io
+import json
 import zipfile
 
 import pytest
@@ -876,3 +877,201 @@ async def test_e2e_install_skill_from_github_tree_url_real_services(tmp_path, mo
     fetched = await scope_service.get_skill("demo", mode="local")
     assert fetched["trust_status"] == "quarantined_added"
     assert fetched["trust_blocked"] is True
+
+
+# ---------------------------------------------------------------------------
+# Task 7: end-to-end -- an agent calls the `install_skill` runtime tool
+# through the REAL ConsoleAgentBridge + real LocalSkillsService/
+# SkillsScopeService/SkillTrustService/ServicePolicyEnforcer stack (mirrors
+# test_e2e_install_skill_from_github_tree_url_real_services above). Only the
+# HTTP fetch (`skill_remote_fetch.fetch_zip_bytes`) and GitHub branch listing
+# are faked; classify/enforce/re-root/import all run for real. The scripted
+# provider gateway below drives the agent loop: the model "calls"
+# install_skill(url), the bridge's in-chat confirm callback either allows or
+# denies it, and the second script turn supplies the model's follow-up reply.
+# ---------------------------------------------------------------------------
+
+
+from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
+
+
+def _fence(name, args):
+    return f"{FENCE_OPEN}\n{json.dumps({'name': name, 'arguments': args})}\n```"
+
+
+class _ChunkGateway:
+    """A provider gateway whose stream_chat replays a script per call index."""
+
+    def __init__(self, scripts):
+        self._scripts = list(scripts)
+        self.calls = 0
+
+    async def stream_chat(self, resolution, messages, tools=None):
+        chunks = self._scripts[self.calls]
+        self.calls += 1
+        for chunk in chunks:
+            yield chunk
+
+
+def test_e2e_agent_install_skill_confirm_allow(tmp_path, monkeypatch):
+    """A scripted model calls install_skill(url); the confirm auto-allows;
+    real services install the skill trust-pending on disk. Only the network
+    (fetch_zip_bytes) and branch listing are faked; policy is REAL.
+
+    Deliberately NOT ``@pytest.mark.asyncio``/``async def``: ``run_reply``
+    is a synchronous method that itself calls ``asyncio.run()`` internally
+    (it is designed to be driven from a worker thread, off the Textual
+    event loop -- see its own docstring), so calling it from inside a
+    pytest-asyncio test would nest one ``asyncio.run()`` inside another and
+    raise ``RuntimeError: asyncio.run() cannot be called from a running
+    event loop``. This mirrors every other ``bridge.run_reply(...)`` call
+    in ``Tests/Chat/test_console_agent_bridge.py`` (e.g. its ``_run``
+    helper), which are all plain sync ``def`` tests for the same reason.
+    The one bit of async work this test needs at the end
+    (``scope_service.get_skill``) is driven via a fresh top-level
+    ``asyncio.run()`` after ``run_reply`` has already returned.
+    """
+    import tldw_chatbook.Skills_Interop.skill_remote_fetch as srf
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
+    from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
+    from tldw_chatbook.Skills_Interop.skill_trust_store import (
+        FileSkillTrustGenerationMarkerStore, SkillTrustStore,
+    )
+    from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
+    from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
+    from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+    from tldw_chatbook.Utils.github_api_client import GitHubAPIClient
+
+    trust_service = SkillTrustService(
+        skills_dir=tmp_path / "skills",
+        trust_store=SkillTrustStore(
+            store_dir=tmp_path / "trust",
+            marker_store=FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json"),
+        ),
+    )
+    trust_service.unlock_with_passphrase("e2e-passphrase", salt=b"7" * 32)
+    trust_service.bootstrap_trust()
+    policy_enforcer = ServicePolicyEnforcer(
+        state_provider=lambda: RuntimeSourceState(active_source="local"),
+    )
+    local_service = LocalSkillsService(
+        store_dir=tmp_path, trust_service=trust_service, policy_enforcer=policy_enforcer,
+    )
+    scope_service = SkillsScopeService(
+        local_service=local_service, server_service=None, policy_enforcer=policy_enforcer,
+    )
+
+    async def _fake_get_branches(self, owner, repo):
+        return ["main", "master"]
+    monkeypatch.setattr(GitHubAPIClient, "get_branches", _fake_get_branches)
+
+    zip_bytes = _zipball(
+        [("skills/demo/SKILL.md", "---\nname: demo\n---\nBody.\n"),
+         ("skills/demo/references/api.md", "# API\n")],
+        wrapper="superpowers-abc/",
+    )
+
+    async def _fake_fetch(url, *, token=None, transport=None, resolver=None):
+        return zip_bytes
+    monkeypatch.setattr(srf, "fetch_zip_bytes", _fake_fetch)
+
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="install it")
+    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+
+    scripts = [
+        [_fence("install_skill",
+                {"url": "https://github.com/obra/superpowers/tree/main/skills/demo"})],
+        ["Installed."],
+    ]
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        skills_service=scope_service,
+    )
+    _rid, outcome = bridge.run_reply(
+        conversation_id="conv-e2e", session_id=session.id, resolution=object(),
+        assistant_message_id=assistant.id, model="m", session_system_prompt="",
+        agent_messages=[{"role": "user", "content": "install it"}],
+        should_cancel=lambda: False,
+        request_skill_install_confirm=lambda url: True,
+    )
+    assert outcome.status == "done"
+    skill_dir = tmp_path / "skills" / "demo"
+    assert (skill_dir / "SKILL.md").is_file()
+    assert (skill_dir / "references" / "api.md").is_file()
+    fetched = asyncio.run(scope_service.get_skill("demo", mode="local"))
+    assert fetched["trust_blocked"] is True
+
+
+def test_e2e_agent_install_skill_confirm_deny(tmp_path, monkeypatch):
+    """Denying the confirm installs nothing and never fetches.
+
+    Also a plain sync ``def`` for the same ``run_reply``-calls-
+    ``asyncio.run()`` reason documented on
+    ``test_e2e_agent_install_skill_confirm_allow`` above; this test has no
+    trailing async assertion so no fixup ``asyncio.run()`` is needed here.
+    """
+    import tldw_chatbook.Skills_Interop.skill_remote_fetch as srf
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
+    from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
+    from tldw_chatbook.Skills_Interop.skill_trust_store import (
+        FileSkillTrustGenerationMarkerStore, SkillTrustStore,
+    )
+    from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
+    from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
+    from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+
+    trust_service = SkillTrustService(
+        skills_dir=tmp_path / "skills",
+        trust_store=SkillTrustStore(
+            store_dir=tmp_path / "trust",
+            marker_store=FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json"),
+        ),
+    )
+    trust_service.unlock_with_passphrase("e2e-passphrase", salt=b"7" * 32)
+    trust_service.bootstrap_trust()
+    policy_enforcer = ServicePolicyEnforcer(
+        state_provider=lambda: RuntimeSourceState(active_source="local"),
+    )
+    local_service = LocalSkillsService(
+        store_dir=tmp_path, trust_service=trust_service, policy_enforcer=policy_enforcer,
+    )
+    scope_service = SkillsScopeService(
+        local_service=local_service, server_service=None, policy_enforcer=policy_enforcer,
+    )
+
+    async def _boom(*a, **k):
+        raise AssertionError("fetch must not run on deny")
+    monkeypatch.setattr(srf, "fetch_zip_bytes", _boom)
+
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="install it")
+    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store,
+        provider_gateway=_ChunkGateway(
+            [[_fence("install_skill", {"url": "https://github.com/o/r"})], ["Cancelled."]]
+        ),
+        skills_service=scope_service,
+    )
+    _rid, outcome = bridge.run_reply(
+        conversation_id="conv-e2e-deny", session_id=session.id, resolution=object(),
+        assistant_message_id=assistant.id, model="m", session_system_prompt="",
+        agent_messages=[{"role": "user", "content": "install it"}],
+        should_cancel=lambda: False,
+        request_skill_install_confirm=lambda url: False,
+    )
+    assert outcome.status == "done"
+    assert not (tmp_path / "skills" / "demo").exists()

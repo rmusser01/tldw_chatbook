@@ -1983,3 +1983,181 @@ def test_native_tool_schemas_returns_builtin_tool_schemas():
         assert "name" in schema
         assert "description" in schema
         assert "parameters" in schema
+
+
+# -- task-4 (skills-agent-install): the install_skill closure built in
+# run_reply and threaded via AgentService(install_skill_tool=...). Order is
+# load-bearing: enforce policy -> classify URL -> in-chat confirm -> install
+# -> broad-catch wrap. --
+
+
+def _install_skills_service():
+    svc = _FakeSkillsService()
+
+    def enforce_install_remote():
+        return None
+
+    async def import_skill_file(*a, **k):  # not used (install_skill_from_url is patched)
+        return {"name": "unused"}
+
+    svc.enforce_install_remote = enforce_install_remote
+    svc.import_skill_file = import_skill_file
+    return svc
+
+
+def test_install_skill_confirm_allow_installs(tmp_path, monkeypatch):
+    import tldw_chatbook.Skills_Interop.skill_remote_fetch as srf
+
+    installed = []
+
+    async def fake_install(url, *, scope_service, **kw):
+        installed.append(url)
+        return {"name": "demo", "trust_status": "quarantined_added", "trust_blocked": True}
+
+    monkeypatch.setattr(srf, "install_skill_from_url", fake_install)
+
+    scripts = [
+        [_fence("install_skill", {"url": "https://github.com/o/r"})],
+        ["Installed it."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        skills_service=_install_skills_service(),
+    )
+    confirmed = []
+
+    outcome = _run(
+        bridge, store, session, assistant.id,
+        conversation_id="conv-install",
+        request_skill_install_confirm=lambda url: confirmed.append(url) or True,
+    )
+    assert outcome.status == "done"
+    assert confirmed == ["https://github.com/o/r"]
+    assert installed == ["https://github.com/o/r"]
+    tool_msgs = [m.content for m in store.messages_for_session(session.id)
+                 if m.role == ConsoleMessageRole.TOOL]
+    assert any("demo" in c and "pending" in c.lower() for c in tool_msgs)
+
+
+def test_install_skill_confirm_deny_does_not_install(tmp_path, monkeypatch):
+    import tldw_chatbook.Skills_Interop.skill_remote_fetch as srf
+
+    async def fake_install(url, *, scope_service, **kw):
+        raise AssertionError("install must not run when the user denies")
+
+    monkeypatch.setattr(srf, "install_skill_from_url", fake_install)
+
+    scripts = [
+        [_fence("install_skill", {"url": "https://github.com/o/r"})],
+        ["Okay, cancelled."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        skills_service=_install_skills_service(),
+    )
+    outcome = _run(
+        bridge, store, session, assistant.id,
+        conversation_id="conv-deny",
+        request_skill_install_confirm=lambda url: False,
+    )
+    assert outcome.status == "done"
+    tool_msgs = [m.content for m in store.messages_for_session(session.id)
+                 if m.role == ConsoleMessageRole.TOOL]
+    assert any("declined" in c.lower() for c in tool_msgs)
+
+
+def test_install_skill_malformed_url_never_prompts(tmp_path):
+    """A URL that fails classification returns an error WITHOUT prompting."""
+    prompted = []
+    scripts = [
+        [_fence("install_skill", {"url": "not-a-url"})],
+        ["That URL is not valid."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        skills_service=_install_skills_service(),
+    )
+    outcome = _run(
+        bridge, store, session, assistant.id, conversation_id="conv-bad",
+        request_skill_install_confirm=lambda url: prompted.append(url) or True,
+    )
+    assert outcome.status == "done"
+    assert prompted == []  # classification failed before any prompt
+
+
+def test_install_skill_collision_error_survives_turn(tmp_path, monkeypatch):
+    """A bare ValueError('local_skill_exists:...') is wrapped, not fatal."""
+    import tldw_chatbook.Skills_Interop.skill_remote_fetch as srf
+
+    async def fake_install(url, *, scope_service, **kw):
+        raise ValueError("local_skill_exists:demo")
+
+    monkeypatch.setattr(srf, "install_skill_from_url", fake_install)
+    scripts = [
+        [_fence("install_skill", {"url": "https://github.com/o/r"})],
+        ["It already exists."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        skills_service=_install_skills_service(),
+    )
+    outcome = _run(
+        bridge, store, session, assistant.id, conversation_id="conv-exists",
+        request_skill_install_confirm=lambda url: True,
+    )
+    assert outcome.status == "done"  # turn survives the bare ValueError
+    tool_msgs = [m.content for m in store.messages_for_session(session.id)
+                 if m.role == ConsoleMessageRole.TOOL]
+    assert any("local_skill_exists" in c for c in tool_msgs)
+
+
+def test_install_skill_absent_without_confirm_callback(tmp_path):
+    """No request_skill_install_confirm wired -> the tool is ABSENT, not auto-denied.
+
+    A skills service alone is not enough to advertise install_skill: without a
+    confirm callback, run_reply must never pin/dispatch the tool at all, so a
+    model call to it falls through the same "Tool not permitted" path as any
+    other undisclosed tool -- never the misleading "declined" message.
+    """
+    scripts = [
+        [_fence("install_skill", {"url": "https://github.com/o/r"})],
+        ["It seems that tool is unavailable."],
+    ]
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        skills_service=_install_skills_service(),
+    )
+    outcome = _run(
+        bridge, store, session, assistant.id, conversation_id="conv-no-confirm",
+        # request_skill_install_confirm intentionally omitted.
+    )
+    assert outcome.status == "done"
+    tool_msgs = [m.content for m in store.messages_for_session(session.id)
+                 if m.role == ConsoleMessageRole.TOOL]
+    assert any("Tool not permitted: install_skill" in c for c in tool_msgs)
+    assert not any("declined" in c.lower() for c in tool_msgs)
