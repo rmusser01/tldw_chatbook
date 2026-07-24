@@ -28,6 +28,14 @@ def _legacy_config_snapshot(
 def build_default_tts_service(
     app_config: Mapping[str, Any],
 ) -> TTSService:
+    """Build the lazy application-owned service from a configuration snapshot.
+
+    Args:
+        app_config: Normalized application settings with optional raw config.
+
+    Returns:
+        A service whose adapters remain unmaterialized until first use.
+    """
     registry = TTSAdapterRegistry(
         specs=legacy_provider_specs(_legacy_config_snapshot(app_config)),
         aliases={},

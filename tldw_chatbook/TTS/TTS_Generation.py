@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any
 
 from tldw_chatbook.TTS.adapter_registry import (
     ReconfigureResult,
+    TTSAdapterLease,
     TTSAdapterRegistry,
 )
 from tldw_chatbook.TTS.adapter_types import (
+    CleanupCallback,
     ProgressSink,
     TTSAudioResponse,
     TTSProgress,
@@ -21,8 +23,99 @@ from tldw_chatbook.TTS.legacy_bridge import resolve_legacy_route
 
 logger = logging.getLogger(__name__)
 
+_CLEANUP_FAILURE_NOTE = "TTS cleanup also failed while preserving the original error"
+
+
+def _record_cleanup_failure(primary_error: BaseException) -> None:
+    primary_error.add_note(_CLEANUP_FAILURE_NOTE)
+    logger.warning("TTS cleanup failed while preserving an earlier error")
+
+
+async def _join_retained_task(task: asyncio.Task[None]) -> None:
+    cancellation: asyncio.CancelledError | None = None
+    waiter = asyncio.current_task()
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as error:
+            if waiter is not None and waiter.cancelling():
+                cancellation = cancellation or error
+        except BaseException:
+            if not task.done():
+                raise
+            break
+
+    task_error: BaseException | None = None
+    try:
+        task.result()
+    except BaseException as error:
+        task_error = error
+
+    if cancellation is not None:
+        if task_error is not None:
+            _record_cleanup_failure(cancellation)
+        raise cancellation
+    if task_error is not None:
+        raise task_error
+
+
+async def _cleanup_preserving_primary(
+    cleanup: Callable[[], Awaitable[None]],
+    primary_error: BaseException,
+) -> None:
+    try:
+        await cleanup()
+    except BaseException:
+        _record_cleanup_failure(primary_error)
+
+
+class _OperationResources:
+    def __init__(
+        self,
+        lease: TTSAdapterLease,
+        operation_limit: asyncio.Semaphore,
+    ) -> None:
+        self._lease = lease
+        self._operation_limit = operation_limit
+        self._cleanup_task: asyncio.Task[None] | None = None
+
+    async def close(self) -> None:
+        if self._cleanup_task is None:
+            self._cleanup_task = asyncio.create_task(self._release())
+        await _join_retained_task(self._cleanup_task)
+
+    async def _release(self) -> None:
+        try:
+            await self._lease.release()
+        finally:
+            self._operation_limit.release()
+
+
+class _ManagedAudioResponse(TTSAudioResponse):
+    def __init__(self, response: TTSAudioResponse) -> None:
+        super().__init__(
+            provider_id=response.provider_id,
+            model_id=response.model_id,
+            audio_format=response.audio_format,
+            content_type=response.content_type,
+            byte_stream=response.byte_stream,
+            sample_rate=response.sample_rate,
+        )
+        self._response = response
+        self._response_close_task: asyncio.Task[None] | None = None
+
+    def add_cleanup(self, callback: CleanupCallback) -> None:
+        self._response.add_cleanup(callback)
+
+    async def aclose(self) -> None:
+        if self._response_close_task is None:
+            self._response_close_task = asyncio.create_task(self._response.aclose())
+        await _join_retained_task(self._response_close_task)
+
 
 class TTSService:
+    """Coordinate registry-backed TTS operations and response lifetimes."""
+
     def __init__(
         self,
         registry: TTSAdapterRegistry,
@@ -39,6 +132,15 @@ class TTSService:
         request: TTSRequest,
         progress_sink: ProgressSink | None = None,
     ) -> TTSAudioResponse:
+        """Synthesize audio while retaining provider resources for the response.
+
+        Args:
+            request: Native provider, model, and audio options.
+            progress_sink: Optional asynchronous progress reporter.
+
+        Returns:
+            A response that releases its registry lease when closed.
+        """
         await self._operation_limit.acquire()
         try:
             lease = await self.registry.acquire(request.provider_id)
@@ -46,23 +148,21 @@ class TTSService:
             self._operation_limit.release()
             raise
 
+        resources = _OperationResources(lease, self._operation_limit)
         safe_sink = _isolate_progress_sink(progress_sink)
         try:
             await lease.adapter.ensure_ready()
             response = await lease.adapter.synthesize(request, safe_sink)
-        except BaseException:
-            try:
-                await lease.release()
-            finally:
-                self._operation_limit.release()
+        except BaseException as error:
+            await _cleanup_preserving_primary(resources.close, error)
             raise
 
-        response.add_cleanup(lease.release)
-        response.add_cleanup(self._release_operation_slot)
-        return response
-
-    async def _release_operation_slot(self) -> None:
-        self._operation_limit.release()
+        try:
+            response.add_cleanup(resources.close)
+        except BaseException as error:
+            await _cleanup_preserving_primary(resources.close, error)
+            raise
+        return _ManagedAudioResponse(response)
 
     async def generate_audio_stream(
         self,
@@ -70,6 +170,16 @@ class TTSService:
         internal_model_id: str,
         progress_sink: ProgressSink | None = None,
     ) -> AsyncIterator[bytes]:
+        """Stream audio through the legacy OpenAI-compatible request interface.
+
+        Args:
+            request: Existing OpenAI-compatible speech request.
+            internal_model_id: Exact legacy model route identifier.
+            progress_sink: Optional asynchronous progress reporter.
+
+        Yields:
+            Audio byte chunks from the selected provider.
+        """
         route = resolve_legacy_route(internal_model_id)
         native_request = TTSRequest(
             provider_id=route.provider_id,
@@ -87,7 +197,10 @@ class TTSService:
         try:
             async for chunk in response.byte_stream:
                 yield chunk
-        finally:
+        except BaseException as error:
+            await _cleanup_preserving_primary(response.aclose, error)
+            raise
+        else:
             await response.aclose()
 
     async def get_catalog(
@@ -95,6 +208,7 @@ class TTSService:
         provider_id: str,
         refresh: bool = False,
     ) -> TTSProviderCatalog:
+        """Return a provider catalog, optionally refreshing its contents."""
         return await self.registry.get_catalog(provider_id, refresh=refresh)
 
     async def reconfigure_provider(
@@ -102,9 +216,11 @@ class TTSService:
         provider_id: str,
         config: Mapping[str, Any],
     ) -> ReconfigureResult:
+        """Apply provider configuration through the registry lifecycle."""
         return await self.registry.reconfigure_provider(provider_id, config)
 
     async def close(self) -> None:
+        """Close the registry and all materialized provider adapters."""
         await self.registry.close()
 
 
@@ -126,9 +242,19 @@ def _isolate_progress_sink(
 
 
 _bound_tts_service: TTSService | None = None
+_bound_tts_close_service: TTSService | None = None
+_bound_tts_close_task: asyncio.Task[None] | None = None
 
 
 def bind_tts_service(service: TTSService) -> None:
+    """Bind the application-owned TTS service.
+
+    Args:
+        service: Service instance owned by the application lifecycle.
+
+    Raises:
+        RuntimeError: If a different service is already bound.
+    """
     global _bound_tts_service
     if _bound_tts_service is not None and _bound_tts_service is not service:
         raise RuntimeError("A different TTS service is already bound")
@@ -138,6 +264,17 @@ def bind_tts_service(service: TTSService) -> None:
 async def get_tts_service(
     app_config: Mapping[str, Any] | None = None,
 ) -> TTSService:
+    """Return the explicitly bound service without retaining caller config.
+
+    Args:
+        app_config: Compatibility argument that is intentionally ignored.
+
+    Returns:
+        The application-owned service.
+
+    Raises:
+        RuntimeError: If no service is bound.
+    """
     del app_config
     if _bound_tts_service is None:
         raise RuntimeError("The application TTS service is not bound")
@@ -148,17 +285,46 @@ def reset_tts_service_binding(
     *,
     expected: TTSService | None = None,
 ) -> None:
+    """Clear the binding when it is absent or identical to the expected owner.
+
+    Args:
+        expected: Optional service identity allowed to clear the binding.
+
+    Raises:
+        RuntimeError: If another service currently owns the binding.
+    """
     global _bound_tts_service
-    if expected is not None and _bound_tts_service not in (None, expected):
+    if (
+        expected is not None
+        and _bound_tts_service is not None
+        and _bound_tts_service is not expected
+    ):
         raise RuntimeError("Refusing to reset a different TTS service")
     _bound_tts_service = None
 
 
-async def close_tts_resources() -> None:
-    service = _bound_tts_service
-    if service is None:
-        return
+async def _close_bound_service(service: TTSService) -> None:
+    global _bound_tts_close_service, _bound_tts_close_task
     try:
         await service.close()
     finally:
-        reset_tts_service_binding(expected=service)
+        try:
+            reset_tts_service_binding(expected=service)
+        finally:
+            if _bound_tts_close_task is asyncio.current_task():
+                _bound_tts_close_service = None
+                _bound_tts_close_task = None
+
+
+async def close_tts_resources() -> None:
+    """Close the bound service before releasing its application binding."""
+    global _bound_tts_close_service, _bound_tts_close_task
+    service = _bound_tts_service
+    if service is None:
+        return
+    close_task = _bound_tts_close_task
+    if close_task is None or _bound_tts_close_service is not service:
+        close_task = asyncio.create_task(_close_bound_service(service))
+        _bound_tts_close_service = service
+        _bound_tts_close_task = close_task
+    await _join_retained_task(close_task)
