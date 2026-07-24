@@ -1,0 +1,21 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "pocket-tts",
+      "object": "model",
+      "owned_by": "engine",
+      "family": "pocket_tts",
+      "task": "tts",
+      "mode": "offline"
+    },
+    {
+      "id": "qwen3-asr",
+      "object": "model",
+      "owned_by": "engine",
+      "family": "qwen3_asr",
+      "task": "asr",
+      "mode": "offline"
+    }
+  ]
+}

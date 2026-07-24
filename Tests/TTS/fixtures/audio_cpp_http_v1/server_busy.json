@@ -1,0 +1,6 @@
+{
+  "error": {
+    "message": "model is busy; retry later",
+    "type": "server_busy"
+  }
+}
