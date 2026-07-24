@@ -28,6 +28,11 @@ logger = logging.getLogger(__name__)
 _CLEANUP_FAILURE_NOTE = "TTS cleanup also failed while preserving the original error"
 
 
+def _sanitized_shutdown_error(*failures: BaseException) -> RuntimeError:
+    failure_types = ", ".join(sorted({type(failure).__name__ for failure in failures}))
+    return RuntimeError(f"TTS shutdown cleanup failed ({failure_types})")
+
+
 def _record_cleanup_failure(
     primary_error: BaseException,
     cleanup_error: BaseException,
@@ -270,7 +275,25 @@ class TTSService:
     async def close(self) -> None:
         """Seal admission and begin bounded provider shutdown."""
         registry_close_task, _ = self._start_close()
-        await _join_retained_task(registry_close_task)
+        caller = asyncio.current_task()
+        cancellation_requests = caller.cancelling() if caller is not None else 0
+        caller_cancellation: asyncio.CancelledError | None = None
+        sanitized_error: RuntimeError | None = None
+        try:
+            await _join_retained_task(registry_close_task)
+        except asyncio.CancelledError as error:
+            if caller is not None and caller.cancelling() > cancellation_requests:
+                caller_cancellation = asyncio.CancelledError()
+                if _CLEANUP_FAILURE_NOTE in getattr(error, "__notes__", ()):
+                    caller_cancellation.add_note(_CLEANUP_FAILURE_NOTE)
+            else:
+                sanitized_error = _sanitized_shutdown_error(error)
+        except BaseException as error:
+            sanitized_error = _sanitized_shutdown_error(error)
+        if caller_cancellation is not None:
+            raise caller_cancellation from None
+        if sanitized_error is not None:
+            raise sanitized_error from None
 
     async def wait_closed(self) -> None:
         """Join response and provider cleanup and report sanitized failures."""
@@ -350,12 +373,7 @@ class TTSService:
             result for result in results if isinstance(result, BaseException)
         )
         if failures:
-            failure_types = ", ".join(
-                sorted({type(failure).__name__ for failure in failures})
-            )
-            raise RuntimeError(
-                f"TTS shutdown cleanup failed ({failure_types})"
-            ) from None
+            raise _sanitized_shutdown_error(*failures) from None
 
     @staticmethod
     def _task_acquired_slot(task: asyncio.Task[bool]) -> bool:

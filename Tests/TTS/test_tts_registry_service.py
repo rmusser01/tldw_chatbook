@@ -1361,6 +1361,47 @@ async def test_cancelled_resource_shutdown_retains_binding_until_close_finishes(
         await get_tts_service()
 
 
+@pytest.mark.parametrize("cleanup_error_type", [RuntimeError, asyncio.CancelledError])
+@pytest.mark.asyncio
+async def test_bound_shutdown_sanitizes_adapter_close_failure(
+    cleanup_error_type: type[BaseException],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    secret = "SENSITIVE_BOUND_SHUTDOWN_73b8e1"
+    raw_error = cleanup_error_type(f"provider cleanup exposed {secret}")
+
+    class FailingCloseAdapter(FakeAdapter):
+        async def close(self) -> None:
+            self.close_calls += 1
+            raise raw_error
+
+    adapter = FailingCloseAdapter("openai")
+    service = TTSService(
+        registry_for_adapter(adapter, shutdown_timeout_seconds=1),
+    )
+    response = await service.synthesize(tts_request())
+    await response.aclose()
+    bind_tts_service(service)
+    caplog.set_level(logging.WARNING, logger="tldw_chatbook.TTS.TTS_Generation")
+
+    with pytest.raises(RuntimeError) as error:
+        await close_tts_resources()
+
+    assert str(error.value) == (
+        f"TTS shutdown cleanup failed ({cleanup_error_type.__name__})"
+    )
+    assert error.value.__context__ is None
+    assert secret not in str(error.value)
+    assert str(raw_error) not in str(error.value)
+    assert secret not in caplog.text
+    assert str(raw_error) not in caplog.text
+    assert service._shutdown_task is not None
+    assert service._shutdown_task.done()
+    assert adapter.close_calls == 1
+    with pytest.raises(RuntimeError, match="not bound"):
+        await get_tts_service()
+
+
 @pytest.mark.asyncio
 async def test_close_resources_is_idempotent_and_clears_binding() -> None:
     adapter = FakeAdapter("openai")
