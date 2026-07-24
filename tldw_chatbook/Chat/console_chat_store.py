@@ -21,6 +21,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleVariant,
     ConsoleVariantSet,
     ConsoleWorkspaceContext,
+    GenerationVariantMeta,
     MessageAttachment,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
@@ -144,6 +145,48 @@ class ConsoleChatPersistence(Protocol):
         Optional: not all persistence fakes implement this. Callers should
         probe with ``getattr(persistence, "get_attachments_for_messages", None)``
         before invoking it (see Task 5).
+        """
+
+    def append_message_attachment(
+        self,
+        message_id: str,
+        *,
+        data: bytes,
+        mime_type: str,
+        display_name: str = "",
+        generation_metadata: Mapping[str, Any] | None = None,
+    ) -> int:
+        """Append one new image variant to a message, in place (no rewrite).
+
+        Optional: not all persistence fakes implement this. Callers should
+        probe with ``getattr(persistence, "append_message_attachment", None)``
+        before invoking it -- the narrow, additive counterpart to
+        ``update_message_content(attachments=...)`` used by
+        ``ConsoleChatStore.append_generation_variant``.
+        """
+
+    def keep_message_attachment(self, message_id: str, position: int) -> None:
+        """Promote a stored variant to be the message's canonical image.
+
+        Optional: not all persistence fakes implement this. Callers should
+        probe with ``getattr(persistence, "keep_message_attachment", None)``
+        before invoking it -- a targeted position swap, used by
+        ``ConsoleChatStore.keep_generation_variant`` instead of the
+        full-list ``update_message_content(attachments=...)`` rewrite (which
+        would NULL any in-memory byte-less variant it re-sends).
+        """
+
+    def get_generation_metadata_for_messages(
+        self, message_ids: Sequence[str]
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Batch-fetch generation-metadata sidecar rows for messages.
+
+        Optional: not all persistence fakes implement this. Callers should
+        probe with
+        ``getattr(persistence, "get_generation_metadata_for_messages", None)``
+        before invoking it -- feeds
+        ``ConsoleChatStore.hydrate_generation_metadata`` at conversation
+        load.
         """
 
 
@@ -829,6 +872,233 @@ class ConsoleChatStore:
         # the old ``set_active_leaf`` call with a still-``None`` id, which is fine.
         self._persist_active_leaf(session_id, message.id)
         return self._snapshot(message)
+
+    def append_generation_message(
+        self,
+        session_id: str,
+        *,
+        content: str,
+        variants: Sequence[tuple[bytes, str, GenerationVariantMeta]],
+        persist: bool = False,
+    ) -> ConsoleChatMessage:
+        """Append an assistant image-generation message with N variants.
+
+        Builds the full 0..N-1 attachment list and the index-aligned
+        ``generation_metadata`` tuple from ``variants`` in one shot, then
+        (optionally) persists both atomically via
+        ``create_message(attachments=..., generation_metadata=...)`` --
+        the ONE place the full attachment list is authoritative and safe to
+        send, because these bytes are fresh (never rehydrated-without-bytes
+        like a reloaded message's attachments can be).
+
+        Args:
+            session_id: Target Console session id.
+            content: Short marker text for the message body (e.g.
+                ``"[image] a red dragon"``).
+            variants: Ordered ``(data, mime_type, meta)`` tuples; index i
+                becomes attachment position i and
+                ``generation_metadata[i]``.
+            persist: When True, persist the message and its sidecar
+                metadata through the durable adapter immediately.
+
+        Returns:
+            The LIVE internal message node -- deliberately NOT a snapshot,
+            unlike most other append methods. Callers holding this
+            reference observe in-place mutations from subsequent
+            ``keep_generation_variant``/``append_generation_variant`` calls
+            against this message's id, without needing to re-fetch.
+
+        Raises:
+            KeyError: If ``session_id`` is unknown.
+        """
+        self._session_or_raise(session_id)
+        attachments = tuple(
+            MessageAttachment(
+                data=data, mime_type=mime_type, display_name="", position=index
+            )
+            for index, (data, mime_type, _meta) in enumerate(variants)
+        )
+        message = ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT,
+            content=content,
+            status=self._initial_status(
+                role=ConsoleMessageRole.ASSISTANT, content=content
+            ),
+        )
+        self._set_message_attachments(message, attachments)
+        message.generation_metadata = tuple(meta for _, _, meta in variants)
+        self._sessions[session_id].updated_at = _utc_now_iso()
+        old_leaf = self._active_leaf_by_session[session_id]
+        self._register_tree_node(session_id, message, parent_native_id=old_leaf)
+        self._active_leaf_by_session[session_id] = message.id
+        self._recompute_active_path(session_id)
+        if persist:
+            self._persist_new_message_or_defer(session_id=session_id, message=message)
+        return message
+
+    def append_generation_variant(
+        self,
+        session_id: str,
+        message_id: str,
+        *,
+        data: bytes,
+        mime_type: str,
+        meta: GenerationVariantMeta,
+        persist: bool = True,
+    ) -> int:
+        """Append one new generated variant to an existing generation message.
+
+        Extends the in-memory attachments tuple (through
+        ``_set_message_attachments``, the store's one mutation seam) and the
+        ``generation_metadata`` tuple in lockstep, then -- when persisting --
+        writes through via the probed, narrow
+        ``persistence.append_message_attachment`` (a single INSERT; never
+        the full-list ``update_message_content(attachments=...)`` rewrite,
+        which would re-send and risk nulling every other variant's bytes).
+
+        Args:
+            session_id: Session the message belongs to (used to touch
+                ``updated_at``; the message itself is resolved by id).
+            message_id: Target message id; must already be a generation
+                message (non-empty ``generation_metadata``).
+            data: The new variant's image bytes.
+            mime_type: The new variant's MIME type.
+            meta: Generation metadata for the new variant.
+            persist: When True, write through the probed narrow append op.
+                Silently skipped (in-memory-only) when no persistence
+                adapter is configured, the message was never persisted, or
+                the adapter doesn't implement the op.
+
+        Returns:
+            The position assigned to the new variant -- index-aligned with
+            the updated ``generation_metadata`` tuple.
+
+        Raises:
+            KeyError: If ``session_id`` or ``message_id`` is unknown.
+        """
+        self._session_or_raise(session_id)
+        message = self._message_or_raise(message_id)
+        new_position = len(message.attachments)
+        new_attachment = MessageAttachment(
+            data=data, mime_type=mime_type, display_name="", position=new_position
+        )
+        self._set_message_attachments(message, (*message.attachments, new_attachment))
+        message.generation_metadata = (*message.generation_metadata, meta)
+        self._sessions[session_id].updated_at = _utc_now_iso()
+        if (
+            persist
+            and self.persistence is not None
+            and message.persisted_message_id is not None
+            and getattr(self.persistence, "append_message_attachment", None) is not None
+        ):
+            self.persistence.append_message_attachment(
+                message.persisted_message_id,
+                data=data,
+                mime_type=mime_type,
+                display_name="",
+                generation_metadata=meta.to_row(new_position),
+            )
+        return new_position
+
+    def keep_generation_variant(
+        self,
+        session_id: str,
+        message_id: str,
+        *,
+        position: int,
+        persist: bool = True,
+    ) -> None:
+        """Promote a browsed variant to be the message's canonical (position-0) image.
+
+        Reorders the in-memory attachments tuple -- the kept variant and
+        position 0 SWAP places -- and the ``generation_metadata`` tuple in
+        lockstep, through ``_set_message_attachments``. When the in-memory
+        bytes for either affected variant are ``None`` (e.g. a
+        rehydrated-without-bytes message), the swap still happens in memory
+        (bytes stay ``None``); this is safe because persistence performs the
+        real swap by reading bytes from the DB itself, via the narrow
+        ``keep_message_attachment`` op -- NEVER the full-list
+        ``update_message_content(attachments=...)`` rewrite, which would
+        NULL any byte-less variant it re-sends (the spec's footgun
+        scenario).
+
+        Args:
+            session_id: Session the message belongs to (used to touch
+                ``updated_at``).
+            message_id: Target message id.
+            position: The attachment position (>= 1) to promote to
+                canonical.
+            persist: When True, write through the probed narrow keep op
+                (see ``append_generation_variant`` for the skip conditions).
+
+        Raises:
+            KeyError: If ``session_id`` or ``message_id`` is unknown.
+            ValueError: If ``position`` is out of range for this message's
+                attachments.
+        """
+        self._session_or_raise(session_id)
+        message = self._message_or_raise(message_id)
+        if position <= 0 or position >= len(message.attachments):
+            raise ValueError(
+                f"No attachment at position {position} to keep for message"
+                f" {message_id}."
+            )
+        reordered = list(message.attachments)
+        reordered[0], reordered[position] = reordered[position], reordered[0]
+        self._set_message_attachments(message, tuple(reordered))
+        if message.generation_metadata:
+            reordered_metadata = list(message.generation_metadata)
+            reordered_metadata[0], reordered_metadata[position] = (
+                reordered_metadata[position],
+                reordered_metadata[0],
+            )
+            message.generation_metadata = tuple(reordered_metadata)
+        self._sessions[session_id].updated_at = _utc_now_iso()
+        if (
+            persist
+            and self.persistence is not None
+            and message.persisted_message_id is not None
+            and getattr(self.persistence, "keep_message_attachment", None) is not None
+        ):
+            self.persistence.keep_message_attachment(
+                message.persisted_message_id, position
+            )
+
+    def hydrate_generation_metadata(
+        self,
+        session_id: str,
+        rows_by_message: Mapping[str, Sequence[Mapping[str, Any]]],
+    ) -> None:
+        """Populate messages' ``generation_metadata`` from DB sidecar rows.
+
+        Called after a conversation's messages have been restored as tree
+        nodes (so ``persisted_message_id`` is already set on each), using
+        rows the caller batch-fetched via the probed
+        ``persistence.get_generation_metadata_for_messages`` -- keyed by
+        PERSISTED message id, matching that method's contract. Rows are
+        converted with ``GenerationVariantMeta.from_row`` and assigned in
+        the given (position-ordered) sequence; a message absent from
+        ``rows_by_message``, or mapped to an empty sequence, is left alone
+        (stays a non-generation message when its ``generation_metadata`` was
+        already empty).
+
+        Args:
+            session_id: Session whose messages should be hydrated.
+            rows_by_message: Mapping of PERSISTED message id to its
+                position-ordered generation-metadata row sequence.
+        """
+        self._session_or_raise(session_id)
+        nodes = self._nodes_by_session.get(session_id, {})
+        for message in nodes.values():
+            persisted_id = message.persisted_message_id
+            if persisted_id is None:
+                continue
+            rows = rows_by_message.get(persisted_id)
+            if not rows:
+                continue
+            message.generation_metadata = tuple(
+                GenerationVariantMeta.from_row(row) for row in rows
+            )
 
     def messages_for_session(self, session_id: str) -> list[ConsoleChatMessage]:
         """Return messages for a session in transcript order."""
@@ -1651,7 +1921,17 @@ class ConsoleChatStore:
             conversation_id=conversation_id,
             sender=message.role.value,
             content=message.content,
-            message_id=None,
+            # Generation messages (Task 5) pin the DB row to the SAME id as
+            # the store's own native tree-node id: ``message.id`` is already
+            # a globally-unique uuid4, and ``add_message`` accepts an
+            # explicit id. This makes ``persisted_message_id == message.id``
+            # for generation messages specifically, so the narrow
+            # keep/append-variant ops -- which callers address by the
+            # store's native ``message_id`` -- can pass
+            # ``message.persisted_message_id`` straight through with no
+            # separate id-translation bookkeeping. Every other message kind
+            # keeps letting the DB assign its own id (unchanged).
+            message_id=message.id if message.generation_metadata else None,
             parent_message_id=parent_persisted_id,
             feedback=message.feedback,
         )
@@ -1659,8 +1939,11 @@ class ConsoleChatStore:
         # legacy position-0 slot to address -- a lone image (whether staged
         # via scalar kwargs or a single-item attachments tuple) keeps using
         # the scalar image_data/image_mime_type kwargs exactly as before.
+        # A generation message ALWAYS engages split addressing, even with a
+        # single variant, since it needs the ``message_attachments``
+        # position-0 semantics narrow keep/append-variant ops rely on.
         attachments_payload = None
-        if len(message.attachments) > 1:
+        if len(message.attachments) > 1 or message.generation_metadata:
             attachments_payload = [
                 {
                     "position": attachment.position,
@@ -1684,6 +1967,20 @@ class ConsoleChatStore:
         else:
             create_kwargs["image_data"] = message.image_data
             create_kwargs["image_mime_type"] = message.image_mime_type
+        # Generation-metadata sidecar rows ride the SAME create_message call
+        # as the attachments write above -- one atomic transaction on the
+        # real service (Task 2) -- rather than a follow-up write, so a
+        # sidecar failure rolls back the whole message instead of leaving an
+        # image-bearing message with no generation metadata.
+        if message.generation_metadata and self._persistence_accepts_kwarg(
+            self.persistence.create_message, "generation_metadata"
+        ):
+            create_kwargs["generation_metadata"] = [
+                meta.to_row(attachment.position)
+                for attachment, meta in zip(
+                    message.attachments, message.generation_metadata
+                )
+            ]
         message.persisted_message_id = self.persistence.create_message(**create_kwargs)
         self._pending_persistence_message_ids.discard(message.id)
         # Carried-forward (Task 8): when this newly persisted message IS the

@@ -657,6 +657,25 @@ class ChatPersistenceService:
         """
         return self.db.get_attachments_for_messages(message_ids)
 
+    def get_generation_metadata_for_messages(
+        self, message_ids: Sequence[str]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Batch-fetch generation-metadata sidecar rows for messages.
+
+        Passthrough to ``CharactersRAGDB.get_generation_metadata_for_messages``
+        -- feeds ``ConsoleChatStore.hydrate_generation_metadata`` at
+        conversation load (P2a).
+
+        Args:
+            message_ids: Message ids to fetch generation-metadata rows for.
+
+        Returns:
+            A mapping of message id to its position-ordered
+            generation-metadata row dicts; message ids with no sidecar rows
+            are omitted.
+        """
+        return self.db.get_generation_metadata_for_messages(message_ids)
+
     def save_history(
         self,
         *,
