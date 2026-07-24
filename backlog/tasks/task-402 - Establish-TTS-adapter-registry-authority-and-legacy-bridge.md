@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-07-24 00:42'
-updated_date: '2026-07-24 07:03'
+updated_date: '2026-07-24 08:08'
 labels:
   - tts
   - architecture
@@ -54,7 +54,7 @@ Reason: ADR-023 governs the provider boundary, lifecycle, compatibility bridge, 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented the app-owned sealed TTSAdapterRegistry and TTSService binding, with exact canonical provider IDs, operation leases, targeted provider retirement, and bounded close plus definitive wait_closed shutdown. Added six provider-scoped legacy adapters with enumerated routing, isolated legacy hosts, per-backend locking, and operation-scoped progress delivery; STTS now uses the owned service and owns its task and temporary-audio cleanup. Published the provider-neutral package boundary, updated the TTS module guide, and removed the OpenAI API-key-prefix diagnostic. Primary changes cover tldw_chatbook/TTS adapter contracts, registry, bridge, catalogs, bootstrap, generation service, package exports, app/STTS lifecycle wiring, focused Tests/TTS coverage, and the TTS guide. Verification: 118 focused tests passed; 230 regression tests passed with 14 optional skips; compileall, scoped mypy, boundary grep, diff hygiene, and feature-scoped Ruff checks passed. ADR-023 is the governing decision; native audio.cpp transport and supervision remain deferred to later ordered tasks.
+Implemented the app-owned sealed TTSAdapterRegistry and TTSService binding with exact canonical provider IDs, cancellation-safe operation leases, targeted retirement, and bounded definitive shutdown. Added six provider-scoped legacy adapters with enumerated routing, isolated managers, per-backend locking, operation-scoped progress, and stream-lifetime shutdown handles that drain, cancel, join, close abandoned partial responses, and preserve real cleanup errors without stale timeouts. STTS now uses the owned service, owns temporary/task cleanup, and logs settings and initialization outcomes without credential values or raw exception text. Published the provider-neutral API boundary and updated the TTS guide. Final verification: 129 focused tests passed; 241 broad regressions passed with 14 optional skips; compileall, scoped mypy, boundary grep, ADR/scope audit, diff hygiene, and Ruff check/format on 19 changed Python files passed. Independent correctness, quality, and whole-branch reviews found no remaining Critical or Important issues. ADR-023 remains governing; native audio.cpp transport and supervision remain deferred to later ordered tasks.
 <!-- SECTION:NOTES:END -->
 
 ## Definition of Done

@@ -2596,7 +2596,7 @@ git commit -m "docs(tts): publish adapter service boundary"
 - Consumes: all TASK-402 production and test changes.
 - Produces: verified task notes, checked acceptance criteria, and Done status.
 
-- [ ] **Step 0: Close final-review lifecycle and privacy regressions**
+- [x] **Step 0: Close final-review lifecycle and privacy regressions**
 
 Before repeating closeout verification, add failing tests and fixes proving:
 
