@@ -83,6 +83,37 @@ def test_high_accuracy_has_no_stray_method_attr(tmp_path):
     assert chunking.chunking_method in {"words", "sentences", "paragraphs"}
 
 
+# Runtime-accepted chunking_method values, enumerated from the terminal
+# if/elif dispatch chain in Chunking/Chunk_Lib.py's Chunker.chunk_text
+# (the elif chunk_method == "..." branches immediately before the final
+# `else: raise InvalidChunkingMethodError(...)`). Any value not in this set
+# raises InvalidChunkingMethodError the moment the enhanced/full chunker
+# path (Chunker.chunk_text) is exercised for it -- see task-484.
+RUNTIME_VALID_CHUNKING_METHODS = {
+    "words", "sentences", "paragraphs", "tokens", "semantic",
+    "json", "ebook_chapters", "xml", "rolling_summarize",
+}
+
+
+def test_all_builtins_use_a_runtime_valid_chunking_method(tmp_path):
+    # task-484: hybrid_full, technical_docs, and research_papers set
+    # chunking_method to "hierarchical"/"structural", values Chunk_Lib's
+    # Chunker.chunk_text does not accept -- it raises
+    # InvalidChunkingMethodError for anything outside RUNTIME_VALID_CHUNKING_METHODS.
+    # ChunkingService.chunk_text (RAG_Search/chunking_service.py) does not
+    # special-case those two values either (only "words"/"sentences"/
+    # "paragraphs" get its in-process fast path), so it delegates straight
+    # into Chunker.chunk_text and the raise propagates (wrapped) up through
+    # indexing whenever a profile with an invalid method is actually used.
+    m = _mgr(tmp_path)
+    invalid = {}
+    for name in m.list_profiles():
+        method = m.get_profile(name).rag_config.chunking.chunking_method
+        if method not in RUNTIME_VALID_CHUNKING_METHODS:
+            invalid[name] = method
+    assert invalid == {}, f"builtins with a runtime-invalid chunking_method: {invalid}"
+
+
 def test_builtins_are_read_only_with_ids(tmp_path):
     m = _mgr(tmp_path)
     hb = m.get_profile("hybrid_basic")

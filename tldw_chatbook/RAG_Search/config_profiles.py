@@ -307,7 +307,9 @@ class ConfigProfileManager:
         hybrid_full_rag.embedding.batch_size = 32
         hybrid_full_rag.chunking.chunk_size = 512
         hybrid_full_rag.chunking.chunk_overlap = 128
-        hybrid_full_rag.chunking.chunking_method = "hierarchical"
+        # was "hierarchical" (invalid at runtime); paragraphs is the closest
+        # structure-respecting valid method (see task-484)
+        hybrid_full_rag.chunking.chunking_method = "paragraphs"
         hybrid_full_rag.chunking.enable_parent_retrieval = True
         hybrid_full_rag.chunking.parent_size_multiplier = 3
         hybrid_full_rag.chunking.clean_artifacts = True
@@ -438,7 +440,9 @@ class ConfigProfileManager:
         tech_rag = RAGConfig()
         tech_rag.embedding.model = "sentence-transformers/all-mpnet-base-v2"
         tech_rag.chunking.chunk_size = 512
-        tech_rag.chunking.chunking_method = "structural"  # Preserve document structure
+        # was "structural" (invalid at runtime); paragraphs is the closest
+        # structure-respecting valid method (see task-484)
+        tech_rag.chunking.chunking_method = "paragraphs"  # Preserve document structure
         tech_rag.chunking.clean_artifacts = True
         tech_rag.chunking.preserve_tables = True
         tech_rag.chunking.preserve_structure = True
@@ -461,7 +465,9 @@ class ConfigProfileManager:
             "allenai-specter"  # Specialized for scientific text
         )
         research_rag.chunking.chunk_size = 512
-        research_rag.chunking.chunking_method = "hierarchical"
+        # was "hierarchical" (invalid at runtime); paragraphs is the closest
+        # structure-respecting valid method (see task-484)
+        research_rag.chunking.chunking_method = "paragraphs"
         research_rag.chunking.clean_artifacts = True  # Clean PDF artifacts
         research_rag.chunking.preserve_structure = True
         research_rag.search.include_citations = True
