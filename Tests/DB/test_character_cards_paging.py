@@ -80,7 +80,7 @@ def test_search_composes_with_tag_and_sort(db):
 
 
 def test_sort_by_modified_desc(db):
-    a = _add(db, "alpha", [])
+    _add(db, "alpha", [])
     # `last_modified` has millisecond precision; a real gap avoids a flaky
     # tie against alpha's creation timestamp on fast (e.g. in-memory-like)
     # SQLite round-trips, which would otherwise land beta's update in the
