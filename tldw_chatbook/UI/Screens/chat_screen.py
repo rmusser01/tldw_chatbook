@@ -4473,29 +4473,6 @@ class ChatScreen(BaseAppScreen):
         return None
 
     @staticmethod
-    def _iter_console_tree_messages(nodes: Any) -> list[dict[str, Any]]:
-        """Return the ``children[-1]`` (latest-branch) path through the tree.
-
-        No longer the resume path (Task 8 loads the full tree; see
-        ``_console_messages_from_conversation_tree``); retained as the
-        most-recent-branch leaf resolver and still directly unit-tested.
-        """
-        ordered: list[dict[str, Any]] = []
-
-        def _visit(node: Any) -> None:
-            if not isinstance(node, dict):
-                return
-            ordered.append(node)
-            children = node.get("children")
-            if isinstance(children, list) and children:
-                _visit(children[-1])
-
-        if isinstance(nodes, list):
-            for root in nodes:
-                _visit(root)
-        return ordered
-
-    @staticmethod
     def _console_message_role_from_persisted(
         message: dict[str, Any],
     ) -> ConsoleMessageRole:
@@ -12127,10 +12104,25 @@ class ChatScreen(BaseAppScreen):
         exclusive `console-run` worker, gated on `is_send_allowed` the same way
         restore is (never mutates while a run is streaming).
 
+        A `ModalScreen` blocks session switching while the rewind modal is up,
+        so today this is theoretical -- but the callback still re-checks the
+        store's active session against the one captured when the modal opened
+        (`session_id`) before doing anything, and no-ops with a notify on a
+        mismatch. This keeps the flow robust against future modal/timing
+        changes (e.g. a background auto-switch or a non-modal rewind surface)
+        that could let the active session change out from under a pending
+        choice.
+
         Args:
             session_id: Native Console session id the modal was opened for.
             choice: The modal's result, or `None`.
         """
+        store = self._ensure_console_chat_store()
+        if store.active_session_id != session_id:
+            self.app_instance.notify(
+                "Console session changed — rewind cancelled.", severity="warning"
+            )
+            return
         if choice is None:
             self._focus_console_composer_if_needed(force=True)
             return
@@ -12152,7 +12144,6 @@ class ChatScreen(BaseAppScreen):
             return
         if choice.kind != "restore":
             return
-        store = self._ensure_console_chat_store()
         controller = self._ensure_console_chat_controller()
         if not controller.run_state.is_send_allowed:
             self.app_instance.notify(

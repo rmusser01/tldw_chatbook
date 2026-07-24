@@ -345,6 +345,95 @@ async def test_restore_to_a_stale_message_id_makes_no_mutation_and_notifies():
 
 
 @pytest.mark.asyncio
+async def test_restore_choice_guards_against_changed_active_session():
+    """TASK-549: if the active session changed while the modal was up (a
+    ``ModalScreen`` blocks this today, but the guard is future-proofing), a
+    restore choice captured for the OLD session must no-op with a notify
+    instead of mutating the now-different active session's tree.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session, ids = await _seed_u1_a1_u2_a2(console)
+        original_path = store.active_path_message_ids(session.id)
+
+        # Simulate the active session changing out from under the modal
+        # between "opened" and "choice applied".
+        other_session = store.create_session(title="other")
+        store.switch_session(other_session.id)
+        other_path = store.active_path_message_ids(other_session.id)
+
+        spy_insert = MagicMock(return_value=True)
+        console._insert_prompt_text_into_composer = spy_insert
+
+        notices: list[tuple[str, str]] = []
+        app.notify = lambda message_text, **kwargs: notices.append(
+            (str(message_text), kwargs.get("severity", ""))
+        )
+
+        await console._apply_console_rewind_choice(
+            session.id,
+            ConsoleRewindChoice(kind="restore", message_id=ids["u2"].id, prompt_text="U2"),
+        )
+        await pilot.pause()
+
+    # No mutation anywhere: neither session's tree nor the composer changed.
+    assert store.active_path_message_ids(session.id) == original_path
+    assert store.active_path_message_ids(other_session.id) == other_path
+    spy_insert.assert_not_called()
+    assert any(
+        "session changed" in text.lower() and severity == "warning"
+        for text, severity in notices
+    )
+
+
+@pytest.mark.asyncio
+async def test_summarize_choice_guards_against_changed_active_session():
+    """Same session-changed guard covers the summarize-up-to branch: no
+    worker is dispatched and nothing is stored."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session, ids = await _seed_u1_a1_u2_a2(console)
+        original_path = store.active_path_message_ids(session.id)
+
+        other_session = store.create_session(title="other")
+        store.switch_session(other_session.id)
+
+        spy_worker = MagicMock(side_effect=lambda coro, **kwargs: coro.close())
+        console.run_worker = spy_worker
+
+        notices: list[tuple[str, str]] = []
+        app.notify = lambda message_text, **kwargs: notices.append(
+            (str(message_text), kwargs.get("severity", ""))
+        )
+
+        await console._apply_console_rewind_choice(
+            session.id,
+            ConsoleRewindChoice(
+                kind="summarize-up-to", message_id=ids["u2"].id, prompt_text="U2"
+            ),
+        )
+        await pilot.pause()
+
+    assert spy_worker.call_count == 0
+    assert store.active_path_message_ids(session.id) == original_path
+    assert store.session_context_summary(session.id) == (None, None)
+    assert any(
+        "session changed" in text.lower() and severity == "warning"
+        for text, severity in notices
+    )
+
+
+@pytest.mark.asyncio
 async def test_console_command_rewind_pushes_modal_with_newest_first_rows():
     app = _build_test_app()
     host = ConsoleHarness(app)
