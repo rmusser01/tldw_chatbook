@@ -1,7 +1,7 @@
 # Console `/rewind` Menu — Design (SP2)
 
 **Date:** 2026-07-24
-**Status:** Draft — pending user review (open decisions D1–D3 below)
+**Status:** Approved decisions (user, 2026-07-24): **D1 = conversation-field boundary summary (A)**, **D2 = v1 ships Restore + Summarize-up-to-here**, **D3 = session's provider via the Console gateway + editable Internal_Prompts entry**. Pending final spec read-through before planning.
 **Program:** "Console `/rewind`" — SP1 branching foundation COMPLETE (Phase A #799, Phase B #811 merged; Phase C #827 at gate). This spec is SP2, the user-facing payoff.
 
 ## Why
