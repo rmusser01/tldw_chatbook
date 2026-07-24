@@ -205,6 +205,22 @@ async def test_character_search_defaults_to_relevance_sort(
         await pilot.pause()
 
 
+async def test_sort_cycle_excludes_relevance_outside_characters_mode(
+    mock_app_instance, scaled_db, monkeypatch
+):
+    """task-463 #4: personas page in-memory (no FTS), so a searching
+    non-characters mode must not offer a "Relevance" option that would be
+    silently remapped to name_asc."""
+    _seed(scaled_db, 5)
+    async with _personas(mock_app_instance, scaled_db, monkeypatch) as (pilot, screen):
+        screen.state.search_query = "abc"
+        assert screen.state.active_mode == "characters"
+        assert any(key == "relevance" for key, _ in screen._character_sort_cycle())
+        screen.state.active_mode = "personas"
+        assert all(key != "relevance" for key, _ in screen._character_sort_cycle())
+        await pilot.pause()
+
+
 async def test_page_nav_reuses_count_cache(mock_app_instance, scaled_db, monkeypatch):
     """Sort/page navigation must not recompute the count for an unchanged filter."""
     _seed(scaled_db, 130)
