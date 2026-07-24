@@ -21,10 +21,11 @@ in either of two modes:
 - Lazily launch and supervise a user-provided binary with a user-provided
   `server.json`.
 
-Managed mode is loopback-only. Chatbook will not download or build audio.cpp,
-generate or modify its configuration, adopt an existing process, expose
-arbitrary server-side voice paths, or provide true client streaming in the
-first milestone.
+Managed mode is loopback-only and, for the pinned contract, accepts only
+audio.cpp's default or explicit `127.0.0.1` IPv4 bind. Chatbook will not
+download or build audio.cpp, generate or modify its configuration, adopt an
+existing process, expose arbitrary server-side voice paths, or provide true
+client streaming in the first milestone.
 
 The STTS Playground is the first user-facing vertical slice. It will discover
 TTS models and voices, request complete WAV output, and use registry metadata to
@@ -34,13 +35,14 @@ Existing providers remain separate registry entries backed by provider-specific
 views over one shared legacy host. The compatibility bridge is temporary and
 may be removed only after every retained provider has a native adapter, every
 caller supplies explicit provider/model IDs, wildcard internal IDs are absent,
-and compatibility tests prove the legacy accessor is unused.
+and compatibility tests prove the legacy accessor, internal-model resolver, and
+generation method are unused.
 
-Delivery is split into four ordered, atomic implementation slices: registry
-authority and legacy containment, the external audio.cpp adapter, the managed
-supervisor, and catalog-driven STTS integration. Each slice receives its own
-single-PR Backlog task and plan rather than being combined into an omnibus
-task.
+Delivery is split into five ordered, atomic implementation slices: registry
+authority and legacy containment, the external audio.cpp adapter, the external
+STTS vertical, the managed supervisor, and managed STTS integration. Each slice
+receives its own single-PR Backlog task and plan rather than being combined into
+an omnibus task.
 
 This ADR supersedes the registration direction in the non-canonical historical
 Higgs backend-registration document. That material remains historical context
@@ -95,12 +97,19 @@ policy, and a cross-module interface.
   retirement without closing in-flight resources.
 - Settings updates can replace one provider without restarting the application
   or disturbing unrelated providers.
+- audio.cpp reconfiguration is an exclusive handoff: new operations are blocked
+  while active leases drain, the old adapter and owned child close before the
+  new configuration becomes active, and the replacement remains lazy.
 - One shared legacy host preserves current implementations while exposing
   provider-specific compatibility entries.
+- Existing callers retain their generation signature through the bridge.
+  Provider-neutral, operation-scoped progress prevents UI access to concrete
+  backends; mutable legacy callbacks are serialized and cleared.
 - The Playground becomes catalog-driven, while legacy catalogs remain marked as
   approximate until migrated.
 - audio.cpp managed mode launches only a user-provided executable and
-  configuration on a loopback bind.
+  configuration using the pinned server's default or explicit `127.0.0.1`
+  bind; `localhost` and `::1` are not accepted by that server version.
 - Managed process ownership is explicit: Chatbook stops only children it
   started and never silently adopts an existing listener.
 - The first audio.cpp contract supports complete WAV output and default speed
@@ -110,14 +119,20 @@ policy, and a cross-module interface.
   native inference before the WAV response begins.
 - Default safety bounds are 10,000 input characters and 128 MiB of response
   data; both remain configurable.
-- When voice discovery returns IDs, the first discovered voice is the initial
-  UI default. Server default remains explicit and is selected automatically
-  only when discovery returns no voices.
+- Server default is the initial voice selection because audio.cpp's configured
+  default is not identified by the voices endpoint. Discovered voices remain
+  explicit alternatives.
 - Readiness probes health and model discovery without generating hidden audio;
   speech-endpoint compatibility is established by the first user-requested
   generation or the opt-in live smoke test.
 - External mode sends synthesis text to the configured server and communicates
-  that privacy boundary in the UI.
+  that privacy boundary in the UI. HTTP redirects are disabled.
+- Bounded responses receive structural uncompressed 16-bit PCM WAV validation;
+  a RIFF/WAVE signature alone is insufficient.
+- The adapter trusts the pinned structured `server_busy` response but does not
+  parse free-form `server_error` text. After a speech `500`, it refreshes model
+  discovery once to distinguish a vanished model from a generation failure and
+  never retries the POST.
 - Normal CI uses fakes and contract fixtures. audio.cpp and model downloads are
   not test dependencies.
 - Fixture provenance is pinned to audio.cpp commit
