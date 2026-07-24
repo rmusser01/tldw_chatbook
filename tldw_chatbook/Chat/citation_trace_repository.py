@@ -12,7 +12,7 @@ import sqlite3
 from typing import Any
 import weakref
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict
 
 from tldw_chatbook.Chat.citation_provenance_runtime import (
     CitationProvenanceRuntimePolicy,
@@ -114,26 +114,32 @@ class CitationHydrationResult(_FrozenModel):
     governed_payloads: GovernedCitationPayloads | None = None
 
 
-class ActiveCitationTraceResult(_FrozenModel):
-    """An active summary only when its current message owner was verified."""
+@dataclass(frozen=True, slots=True, weakref_slot=True, eq=False, init=False)
+class ActiveCitationTraceResult:
+    """Bounded lookup result; active summaries are repository-issued capabilities."""
 
     state: ActiveCitationTraceState
-    summary: CitationTraceSummary | None = None
+    summary: CitationTraceSummary | None
 
-    @model_validator(mode="after")
-    def _validate_summary_state(self) -> "ActiveCitationTraceResult":
-        if self.state is ActiveCitationTraceState.ACTIVE or self.summary is not None:
+    def __init__(
+        self,
+        *,
+        state: ActiveCitationTraceState,
+        summary: CitationTraceSummary | None = None,
+    ) -> None:
+        if not isinstance(state, ActiveCitationTraceState):
+            raise TypeError("state must be an ActiveCitationTraceState")
+        if state is ActiveCitationTraceState.ACTIVE or summary is not None:
             raise ValueError("active summary results are repository-issued only")
-        return self
+        object.__setattr__(self, "state", state)
+        object.__setattr__(self, "summary", None)
 
+    def __copy__(self) -> "ActiveCitationTraceResult":
+        raise TypeError("active citation results cannot be copied")
 
-def _verified_active_result(
-    summary: CitationTraceSummary,
-) -> ActiveCitationTraceResult:
-    return ActiveCitationTraceResult.model_construct(
-        state=ActiveCitationTraceState.ACTIVE,
-        summary=summary,
-    )
+    def __deepcopy__(self, memo: dict[int, Any]) -> "ActiveCitationTraceResult":
+        del memo
+        raise TypeError("active citation results cannot be copied")
 
 
 _SqlValue = str | int | None
@@ -152,6 +158,8 @@ class PreparedCitationWrite:
     profile_id: str
     trace_id: str
     sealed_at: str
+    selected_answer_body: str = field(repr=False)
+    selected_body_fingerprint: str = field(repr=False)
     trace_row: _PreparedRow = field(repr=False)
     run_rows: tuple[_PreparedRow, ...] = field(repr=False)
     snapshot_rows: tuple[_PreparedRow, ...] = field(repr=False)
@@ -179,12 +187,28 @@ def _prepared_write_digest(prepared: PreparedCitationWrite) -> bytes:
             prepared.profile_id,
             prepared.trace_id,
             prepared.sealed_at,
+            prepared.selected_answer_body,
+            prepared.selected_body_fingerprint,
             prepared.trace_row,
             prepared.run_rows,
             prepared.snapshot_rows,
             prepared.answer_rows,
             prepared.reference_rows,
             prepared.identity_context.model_dump(mode="json"),
+        )
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).digest()
+
+
+def _active_result_digest(result: ActiveCitationTraceResult) -> bytes:
+    """Digest the complete repository-issued active result."""
+
+    if result.state is not ActiveCitationTraceState.ACTIVE or result.summary is None:
+        raise ValueError("result is not active")
+    canonical = _canonical_json(
+        (
+            result.state.value,
+            result.summary.model_dump(mode="json"),
         )
     )
     return hashlib.sha256(canonical.encode("utf-8")).digest()
@@ -241,6 +265,10 @@ class CitationTraceRepository:
         self._issued_prepared_writes: dict[
             int,
             tuple[weakref.ReferenceType[PreparedCitationWrite], bytes],
+        ] = {}
+        self._issued_active_results: dict[
+            int,
+            tuple[weakref.ReferenceType[ActiveCitationTraceResult], bytes],
         ] = {}
 
     @classmethod
@@ -305,7 +333,8 @@ class CitationTraceRepository:
             raise CitationPersistenceUnavailable(
                 "citation_identity_context_unavailable"
             )
-        if self._fingerprint_codec is None:
+        codec = self._fingerprint_codec
+        if codec is None:
             raise CitationPersistenceUnavailable("fingerprint_key_unavailable")
         persisted = load_local_citation_identity_context(self.db)
         if persisted is None:
@@ -333,6 +362,35 @@ class CitationTraceRepository:
                 raise CitationPersistenceUnavailable("run_authority_mismatch")
 
         trace = validated.trace
+        selected_attempt = next(
+            attempt
+            for attempt in trace.answer_attempts
+            if attempt.attempt_id == trace.selected_attempt_id
+        )
+        selected_payload = next(
+            (
+                payload
+                for payload in validated.answer_attempt_payloads
+                if payload.payload_id == selected_attempt.answer_payload_ref
+                and payload.attempt_id == selected_attempt.attempt_id
+            ),
+            None,
+        )
+        if (
+            selected_payload is None
+            or selected_payload.answer_body is None
+            or selected_payload.body_integrity_hmac is None
+        ):
+            raise CitationPersistenceUnavailable("selected_answer_payload_unavailable")
+        selected_body_fingerprint = codec.fingerprint(
+            CitationFingerprintDomain.MESSAGE_BODY,
+            selected_payload.answer_body,
+        )
+        if not hmac.compare_digest(
+            selected_payload.body_integrity_hmac,
+            selected_body_fingerprint,
+        ):
+            raise CitationPersistenceUnavailable("selected_answer_integrity_mismatch")
         profile_id = identity.profile_id
         sealed_at = trace.sealed_at.isoformat()
         run_payloads = {
@@ -420,6 +478,8 @@ class CitationTraceRepository:
             profile_id=profile_id,
             trace_id=trace.trace_id,
             sealed_at=sealed_at,
+            selected_answer_body=selected_payload.answer_body,
+            selected_body_fingerprint=selected_body_fingerprint,
             trace_row=(
                 profile_id,
                 trace.trace_id,
@@ -457,17 +517,40 @@ class CitationTraceRepository:
     ) -> None:
         """Write all row families through an already-active outer transaction."""
 
+        execution_identity = self._require_active_write_cursor(cursor)
+        if execution_identity != prepared.identity_context:
+            raise CitationPersistenceUnavailable("citation_identity_context_mismatch")
         if not self._owns_prepared_write(prepared):
             raise CitationPersistenceUnavailable("prepared_citation_write_not_owned")
-        if cursor.connection is not self.db.get_connection():
-            raise RuntimeError(
-                "citation persistence requires the repository database transaction"
-            )
-        if not cursor.connection.in_transaction:
-            raise RuntimeError("citation persistence requires an active transaction")
         codec = self._fingerprint_codec
         if codec is None:  # guarded by prepare_write
             raise CitationPersistenceUnavailable("fingerprint_key_unavailable")
+        if message_body != prepared.selected_answer_body:
+            raise CitationPersistenceUnavailable("selected_answer_message_mismatch")
+        body_fingerprint = codec.fingerprint(
+            CitationFingerprintDomain.MESSAGE_BODY,
+            message_body,
+        )
+        if not hmac.compare_digest(
+            body_fingerprint,
+            prepared.selected_body_fingerprint,
+        ):
+            raise CitationPersistenceUnavailable("selected_answer_integrity_mismatch")
+        message = cursor.execute(
+            """
+            SELECT id, version, content
+            FROM messages
+            WHERE id = ? AND deleted = 0
+            """,
+            (message_id,),
+        ).fetchone()
+        if (
+            message is None
+            or message["id"] != message_id
+            or message["version"] != message_revision
+            or message["content"] != message_body
+        ):
+            raise CitationPersistenceUnavailable("message_row_identity_conflict")
         self._insert_or_verify(
             cursor,
             """
@@ -610,10 +693,6 @@ class CitationTraceRepository:
             )
         self._fail_after("refs")
 
-        body_fingerprint = codec.fingerprint(
-            CitationFingerprintDomain.MESSAGE_BODY,
-            message_body,
-        )
         namespace = local_trace_namespace(
             prepared.identity_context,
             trace_id=prepared.trace_id,
@@ -880,7 +959,24 @@ class CitationTraceRepository:
         )
         if summary is None or summary.visibility_state != "active":
             return ActiveCitationTraceResult(state=ActiveCitationTraceState.NOT_FOUND)
-        return _verified_active_result(summary)
+        return self._issue_active_trace_result(summary)
+
+    def verify_active_trace_result(
+        self,
+        result: ActiveCitationTraceResult,
+    ) -> bool:
+        """Verify exact repository issuance and integrity before presentation."""
+
+        if not isinstance(result, ActiveCitationTraceResult):
+            return False
+        issued = self._issued_active_results.get(id(result))
+        if issued is None or issued[0]() is not result:
+            return False
+        try:
+            current_digest = _active_result_digest(result)
+        except (AttributeError, TypeError, ValueError):
+            return False
+        return hmac.compare_digest(issued[1], current_digest)
 
     def transition_owner_for_message_update(
         self,
@@ -1052,6 +1148,35 @@ class CitationTraceRepository:
             prepared_ref,
             _prepared_write_digest(prepared),
         )
+
+    def _issue_active_trace_result(
+        self,
+        summary: CitationTraceSummary,
+    ) -> ActiveCitationTraceResult:
+        """Issue and register one exact active-result capability."""
+
+        result = object.__new__(ActiveCitationTraceResult)
+        object.__setattr__(result, "state", ActiveCitationTraceState.ACTIVE)
+        object.__setattr__(result, "summary", summary)
+        result_id = id(result)
+        repository_ref = weakref.ref(self)
+
+        def discard(
+            result_ref: weakref.ReferenceType[ActiveCitationTraceResult],
+        ) -> None:
+            repository = repository_ref()
+            if repository is None:
+                return
+            issued = repository._issued_active_results.get(result_id)
+            if issued is not None and issued[0] is result_ref:
+                repository._issued_active_results.pop(result_id, None)
+
+        result_ref = weakref.ref(result, discard)
+        self._issued_active_results[result_id] = (
+            result_ref,
+            _active_result_digest(result),
+        )
+        return result
 
     def _owns_prepared_write(self, prepared: PreparedCitationWrite) -> bool:
         """Verify repository, exact object identity, and every prepared row."""

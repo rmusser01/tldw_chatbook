@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import replace
 from datetime import UTC, datetime
 import gc
@@ -20,6 +21,7 @@ from tldw_chatbook.Chat.citation_source_locators import (
 )
 from tldw_chatbook.Chat.citation_trace_identity import (
     CitationFingerprintCodec,
+    CitationFingerprintDomain,
     CitationFingerprintKeyUnavailable,
     LocalCitationIdentityContext,
     local_trace_namespace,
@@ -58,6 +60,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 NOW = datetime(2026, 7, 24, 7, 0, tzinfo=UTC)
 ROW_FAMILIES = ("trace", "runs", "snapshots", "attempts", "refs", "owner")
+TEST_FINGERPRINT_CODEC = CitationFingerprintCodec(b"k" * 32)
 
 
 @pytest.fixture
@@ -174,7 +177,10 @@ def _sealed_write(*, authority_id: str | None = None) -> SealedCitationWrite:
                 payload_id="answer-payload-1",
                 attempt_id=attempt.attempt_id,
                 answer_body=answer,
-                body_integrity_hmac="answer-hmac",
+                body_integrity_hmac=TEST_FINGERPRINT_CODEC.fingerprint(
+                    CitationFingerprintDomain.MESSAGE_BODY,
+                    answer,
+                ),
             ),
         ),
     )
@@ -192,11 +198,22 @@ def _repository(
         db,
         policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=enabled),
         identity_context=identity if identity is not None else _identity(db),
-        fingerprint_codec=(
-            codec if codec is not None else CitationFingerprintCodec(b"k" * 32)
-        ),
+        fingerprint_codec=(codec if codec is not None else TEST_FINGERPRINT_CODEC),
         failure_after_row_family=failure_after,
     )
+
+
+def _assert_no_citation_rows(db: CharactersRAGDB) -> None:
+    connection = db.get_connection()
+    for table in (
+        "rag_citation_traces",
+        "rag_evidence_runs",
+        "rag_evidence_snapshots",
+        "rag_answer_attempt_payloads",
+        "rag_trace_evidence_refs",
+        "rag_message_trace_owners",
+    ):
+        assert connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
 
 
 def _exact_governed_payload_write() -> SealedCitationWrite:
@@ -420,6 +437,219 @@ def test_preflight_accepts_null_or_matching_run_authority(
     repository.prepare_write(
         _sealed_write(authority_id=_identity(db).local_authority_id)
     )
+
+
+def test_preflight_requires_the_selected_attempt_exact_answer_body(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    write = _sealed_write()
+    selected = write.trace.answer_attempts[0]
+    without_occurrences = selected.model_copy(update={"occurrences": ()})
+    unavailable = write.model_copy(
+        update={
+            "trace": write.trace.model_copy(
+                update={"answer_attempts": (without_occurrences,)}
+            ),
+            "answer_attempt_payloads": (
+                write.answer_attempt_payloads[0].model_copy(
+                    update={"answer_body": None, "body_integrity_hmac": None}
+                ),
+            ),
+        }
+    )
+
+    with pytest.raises(
+        CitationPersistenceUnavailable,
+        match="selected_answer_payload_unavailable",
+    ):
+        repository.prepare_write(unavailable)
+
+
+def test_preflight_rejects_a_tampered_selected_answer_fingerprint(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    write = _sealed_write()
+    tampered = write.model_copy(
+        update={
+            "answer_attempt_payloads": (
+                write.answer_attempt_payloads[0].model_copy(
+                    update={"body_integrity_hmac": "tampered-answer-hmac"}
+                ),
+            ),
+        }
+    )
+
+    with pytest.raises(
+        CitationPersistenceUnavailable,
+        match="selected_answer_integrity_mismatch",
+    ):
+        repository.prepare_write(tampered)
+
+
+def test_preflight_does_not_bind_a_diagnostic_attempt_body_to_the_final_message(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    write = _sealed_write()
+    diagnostic_attempt = AnswerAttempt(
+        attempt_id="attempt-2",
+        attempt_ordinal=2,
+        kind=AnswerAttemptKind.PIPELINE_RERUN,
+        prompt_evidence_set_id=write.trace.prompt_evidence_sets[0].prompt_set_id,
+        answer_payload_ref="answer-payload-2",
+        occurrences=(),
+        created_at=NOW,
+    )
+    with_diagnostic = write.model_copy(
+        update={
+            "trace": write.trace.model_copy(
+                update={
+                    "answer_attempts": (
+                        write.trace.answer_attempts[0],
+                        diagnostic_attempt,
+                    )
+                }
+            ),
+            "answer_attempt_payloads": (
+                write.answer_attempt_payloads[0],
+                AnswerAttemptPayload(
+                    payload_id="answer-payload-2",
+                    attempt_id="attempt-2",
+                    answer_body="Discarded diagnostic answer.",
+                    body_integrity_hmac="diagnostic-hmac-is-not-the-final-body-hmac",
+                ),
+            ),
+        }
+    )
+
+    prepared = repository.prepare_write(with_diagnostic)
+
+    assert prepared.selected_answer_body == "Answer [S1]."
+    assert len(prepared.answer_rows) == 2
+
+
+def test_write_prepared_rejects_a_body_other_than_the_selected_answer_before_insert(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    prepared = repository.prepare_write(_sealed_write())
+    conversation_id = _conversation(db)
+
+    with pytest.raises(
+        CitationPersistenceUnavailable,
+        match="selected_answer_message_mismatch",
+    ):
+        with db.transaction() as cursor:
+            db.add_message(
+                {
+                    "id": "selected-body-mismatch",
+                    "conversation_id": conversation_id,
+                    "sender": "assistant",
+                    "content": "Different persisted answer.",
+                    "client_id": db.client_id,
+                }
+            )
+            repository.write_prepared(
+                cursor,
+                prepared,
+                message_id="selected-body-mismatch",
+                message_revision=1,
+                message_body="Different persisted answer.",
+            )
+
+    assert db.get_message_by_id("selected-body-mismatch") is None
+    _assert_no_citation_rows(db)
+
+
+@pytest.mark.parametrize(
+    ("persisted_body", "persisted_revision"),
+    [
+        ("Different persisted answer.", 1),
+        ("Answer [S1].", 2),
+    ],
+)
+def test_write_prepared_verifies_the_actual_message_row_before_insert(
+    db: CharactersRAGDB,
+    persisted_body: str,
+    persisted_revision: int,
+) -> None:
+    repository = _repository(db)
+    prepared = repository.prepare_write(_sealed_write())
+    conversation_id = _conversation(db)
+
+    with pytest.raises(
+        CitationPersistenceUnavailable,
+        match="message_row_identity_conflict",
+    ):
+        with db.transaction() as cursor:
+            db.add_message(
+                {
+                    "id": "persisted-message-mismatch",
+                    "conversation_id": conversation_id,
+                    "sender": "assistant",
+                    "content": persisted_body,
+                    "client_id": db.client_id,
+                }
+            )
+            if persisted_revision != 1:
+                cursor.execute(
+                    "UPDATE messages SET version = ? WHERE id = ?",
+                    (persisted_revision, "persisted-message-mismatch"),
+                )
+            repository.write_prepared(
+                cursor,
+                prepared,
+                message_id="persisted-message-mismatch",
+                message_revision=1,
+                message_body="Answer [S1].",
+            )
+
+    assert db.get_message_by_id("persisted-message-mismatch") is None
+    _assert_no_citation_rows(db)
+
+
+def test_write_prepared_revalidates_execution_identity_before_insert(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    prepared = repository.prepare_write(_sealed_write())
+    conversation_id = _conversation(db)
+    with db.transaction() as cursor:
+        cursor.execute(
+            """
+            UPDATE rag_identity_context
+            SET local_authority_id = ?
+            WHERE context_name = 'default'
+            """,
+            ("replacement-authority",),
+        )
+
+    with pytest.raises(
+        CitationPersistenceUnavailable,
+        match="citation_identity_context_mismatch",
+    ):
+        with db.transaction() as cursor:
+            db.add_message(
+                {
+                    "id": "changed-execution-identity",
+                    "conversation_id": conversation_id,
+                    "sender": "assistant",
+                    "content": "Answer [S1].",
+                    "client_id": db.client_id,
+                }
+            )
+            repository.write_prepared(
+                cursor,
+                prepared,
+                message_id="changed-execution-identity",
+                message_revision=1,
+                message_body="Answer [S1].",
+            )
+
+    assert db.get_message_by_id("changed-execution-identity") is None
+    _assert_no_citation_rows(db)
 
 
 def test_prepared_write_is_an_immutable_snapshot_of_nested_governed_values(
@@ -693,6 +923,40 @@ def test_prepared_digest_rejects_exact_object_row_tampering_before_insert(
         .fetchone()[0]
         == 0
     )
+
+
+def test_prepared_digest_rejects_selected_answer_tampering_before_insert(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    prepared = repository.prepare_write(_sealed_write())
+    object.__setattr__(prepared, "selected_answer_body", "Tampered selected answer.")
+    conversation_id = _conversation(db)
+
+    with pytest.raises(
+        CitationPersistenceUnavailable,
+        match="prepared_citation_write_not_owned",
+    ):
+        with db.transaction() as cursor:
+            db.add_message(
+                {
+                    "id": "selected-answer-tamper",
+                    "conversation_id": conversation_id,
+                    "sender": "assistant",
+                    "content": "Tampered selected answer.",
+                    "client_id": db.client_id,
+                }
+            )
+            repository.write_prepared(
+                cursor,
+                prepared,
+                message_id="selected-answer-tamper",
+                message_revision=1,
+                message_body="Tampered selected answer.",
+            )
+
+    assert db.get_message_by_id("selected-answer-tamper") is None
+    _assert_no_citation_rows(db)
 
 
 def test_prepared_registration_is_removed_when_the_exact_object_is_collected(
@@ -1354,7 +1618,12 @@ def test_committed_identity_reuse_with_different_immutable_data_fails_closed(
         message_id = "message-1"
 
     prepared = repository.prepare_write(write)
-    with pytest.raises(CitationPersistenceUnavailable, match="identity_conflict"):
+    expected_reason = (
+        "selected_answer_message_mismatch"
+        if mutation == "body"
+        else "identity_conflict"
+    )
+    with pytest.raises(CitationPersistenceUnavailable, match=expected_reason):
         with db.transaction() as cursor:
             repository.write_prepared(
                 cursor,
@@ -1537,21 +1806,60 @@ def test_active_lookup_never_promotes_summary_without_owner_verification(
     assert summary is not None
     assert result.state is ActiveCitationTraceState.NOT_FOUND
     assert result.summary is None
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValueError, match="repository-issued"):
         ActiveCitationTraceResult(
             state=ActiveCitationTraceState.ACTIVE,
             summary=None,
         )
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValueError, match="repository-issued"):
         ActiveCitationTraceResult(
             state=ActiveCitationTraceState.ACTIVE,
             summary=summary,
         )
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValueError, match="repository-issued"):
         ActiveCitationTraceResult(
             state=ActiveCitationTraceState.UNVERIFIABLE,
             summary=summary,
         )
+    with pytest.raises(TypeError, match="ActiveCitationTraceState"):
+        ActiveCitationTraceResult(state="active")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="repository-issued"):
+        replace(
+            result,
+            state=ActiveCitationTraceState.ACTIVE,
+            summary=summary,
+        )
+    assert not hasattr(ActiveCitationTraceResult, "model_construct")
+    assert not hasattr(result, "model_copy")
+
+
+def test_active_result_requires_repository_issuance_and_exact_object_verification(
+    db: CharactersRAGDB,
+) -> None:
+    repository = _repository(db)
+    _persist(db, repository)
+    active = repository.get_active_trace_for_message(
+        "message-1",
+        1,
+        "Answer [S1].",
+        TEST_FINGERPRINT_CODEC,
+    )
+
+    assert active.state is ActiveCitationTraceState.ACTIVE
+    assert active.summary is not None
+    assert repository.verify_active_trace_result(active) is True
+    with pytest.raises((TypeError, ValueError)):
+        replace(active)
+    with pytest.raises(TypeError):
+        copy.copy(active)
+
+    forged = object.__new__(ActiveCitationTraceResult)
+    object.__setattr__(forged, "state", ActiveCitationTraceState.ACTIVE)
+    object.__setattr__(forged, "summary", active.summary)
+    assert repository.verify_active_trace_result(forged) is False
+
+    object.__setattr__(active, "state", ActiveCitationTraceState.UNVERIFIABLE)
+    assert repository.verify_active_trace_result(active) is False
 
 
 def test_active_lookup_rejects_stale_caller_body_that_is_not_the_message_row(

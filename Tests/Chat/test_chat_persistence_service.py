@@ -376,6 +376,44 @@ class TestChatPersistenceService:
             == 1
         )
 
+    def test_selected_answer_mismatch_rolls_back_message_and_citation_rows(
+        self,
+        db_instance: CharactersRAGDB,
+    ):
+        conversation_id = db_instance.add_conversation(
+            {"title": "Selected answer mismatch", "character_id": None}
+        )
+        service = ChatPersistenceService(
+            db_instance,
+            citation_repository=citation_repository(db_instance),
+        )
+
+        with pytest.raises(
+            CitationPersistenceUnavailable,
+            match="selected_answer_message_mismatch",
+        ):
+            service.create_message(
+                conversation_id=conversation_id,
+                sender="assistant",
+                content="Different persisted answer.",
+                message_id="selected-answer-mismatch",
+                citation_write=_sealed_write(),
+            )
+
+        assert db_instance.get_message_by_id("selected-answer-mismatch") is None
+        connection = db_instance.get_connection()
+        for table in (
+            "rag_citation_traces",
+            "rag_evidence_runs",
+            "rag_evidence_snapshots",
+            "rag_answer_attempt_payloads",
+            "rag_trace_evidence_refs",
+            "rag_message_trace_owners",
+        ):
+            assert (
+                connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+            )
+
     def test_repository_failure_rolls_back_message_attachments_feedback_and_trace(
         self,
         db_instance: CharactersRAGDB,

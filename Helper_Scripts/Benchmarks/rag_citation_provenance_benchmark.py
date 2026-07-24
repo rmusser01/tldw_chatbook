@@ -39,6 +39,7 @@ EXTERNAL_PROVIDER = "external-http-v1"
 DEFAULT_SAMPLES = 30
 DEFAULT_WARMUPS = 5
 MOCK_FIRST_TOKEN_DELAY_SECONDS = 0.020
+REPOSITORY_BENCHMARK_FINGERPRINT_SECRET = b"b" * 32
 
 LIMITS = {
     "aggregate_json_bytes": 256 * 1024,
@@ -1112,6 +1113,10 @@ def _sealed_repository_write(
 ) -> Any:
     """Build one complete sealed repository candidate outside timed writes."""
 
+    from tldw_chatbook.Chat.citation_trace_identity import (
+        CitationFingerprintCodec,
+        CitationFingerprintDomain,
+    )
     from tldw_chatbook.Chat.citation_trace_models import (
         AnswerAttempt,
         AnswerAttemptKind,
@@ -1232,7 +1237,12 @@ def _sealed_repository_write(
                 payload_id=attempt.answer_payload_ref,
                 attempt_id=attempt.attempt_id,
                 answer_body=answer,
-                body_integrity_hmac=f"{prefix}-answer-integrity",
+                body_integrity_hmac=CitationFingerprintCodec(
+                    REPOSITORY_BENCHMARK_FINGERPRINT_SECRET
+                ).fingerprint(
+                    CitationFingerprintDomain.MESSAGE_BODY,
+                    answer,
+                ),
             ),
         ),
     )
@@ -1270,7 +1280,9 @@ def _measure_repository_storage(
             db,
             policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=True),
             identity_context=identity,
-            fingerprint_codec=CitationFingerprintCodec(b"b" * 32),
+            fingerprint_codec=CitationFingerprintCodec(
+                REPOSITORY_BENCHMARK_FINGERPRINT_SECRET
+            ),
         )
         service = ChatPersistenceService(db, citation_repository=repository)
         conversation_id = db.add_conversation(
